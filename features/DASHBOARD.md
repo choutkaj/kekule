@@ -12,4 +12,4 @@ Generated from `features/*/feature.toml`. Do not hand-edit this file.
 | `dashboard.feature-registry` | Feature registry and dashboard | infrastructure | P0 | planned | no | no | 2026-06-17 |
 | `io.mmcif.parse` | mmCIF parser | io | P0 | planned | no | no | 2026-06-17 |
 | `io.sdf.v2000.parse` | SDF V2000 parser | io | P0 | planned | no | no | 2026-06-17 |
-| `validation.harness` | Reference validation harness | infrastructure | P0 | planned | no | no | 2026-06-17 |
+| `validation.harness` | Reference validation harness | infrastructure | P0 | implemented | yes | no | 2026-06-17 |

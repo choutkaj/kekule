@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 fn main() {
@@ -57,7 +57,23 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     println!("validation harness found feature `{feature}`");
-    println!("reference validation is feature-specific and may not be implemented yet");
+    let manifest_path = validation_manifest_path(feature);
+    if manifest_path.exists() {
+        let manifest = read_validation_manifest(&manifest_path)?;
+        if manifest.feature_id != feature {
+            return Err(boxed_error(format!(
+                "{} declares feature_id `{}`, expected `{feature}`",
+                manifest_path.display(),
+                manifest.feature_id
+            )));
+        }
+        println!(
+            "validation manifest uses {} {}",
+            manifest.reference_tool, manifest.reference_version
+        );
+    } else {
+        println!("no reference validation manifest configured for `{feature}`");
+    }
     Ok(())
 }
 
@@ -149,6 +165,30 @@ fn parse_simple_toml(text: &str) -> BTreeMap<String, String> {
     map
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ValidationManifest {
+    feature_id: String,
+    reference_tool: String,
+    reference_version: String,
+}
+
+fn validation_manifest_path(feature: &str) -> PathBuf {
+    Path::new("validation")
+        .join("features")
+        .join(feature)
+        .join("validation.toml")
+}
+
+fn read_validation_manifest(path: &Path) -> Result<ValidationManifest, Box<dyn Error>> {
+    let text = fs::read_to_string(path)?;
+    let map = parse_simple_toml(&text);
+    Ok(ValidationManifest {
+        feature_id: required(&map, "feature_id", path)?,
+        reference_tool: required(&map, "reference_tool", path)?,
+        reference_version: required(&map, "reference_version", path)?,
+    })
+}
+
 fn normalize_value(value: &str) -> String {
     let value = value.trim().trim_end_matches(',').trim();
     if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
@@ -190,4 +230,43 @@ fn yes_no(value: &str) -> &'static str {
 
 fn boxed_error(message: impl Into<String>) -> Box<dyn Error> {
     std::io::Error::other(message.into()).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn value_after_flag_finds_following_value() {
+        let args = vec![
+            "validate".to_owned(),
+            "--feature".to_owned(),
+            "core.graph".to_owned(),
+        ];
+
+        assert_eq!(value_after_flag(&args, "--feature"), Some("core.graph"));
+    }
+
+    #[test]
+    fn simple_toml_parser_normalizes_strings_booleans_and_arrays() {
+        let parsed = parse_simple_toml(
+            r#"
+            id = "core.graph"
+            implemented = true
+            depends_on = []
+            "#,
+        );
+
+        assert_eq!(parsed.get("id"), Some(&"core.graph".to_owned()));
+        assert_eq!(parsed.get("implemented"), Some(&"true".to_owned()));
+        assert_eq!(parsed.get("depends_on"), Some(&"[]".to_owned()));
+    }
+
+    #[test]
+    fn validation_manifest_path_is_feature_scoped() {
+        assert_eq!(
+            validation_manifest_path("core.graph"),
+            PathBuf::from("validation/features/core.graph/validation.toml")
+        );
+    }
 }
