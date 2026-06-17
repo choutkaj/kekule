@@ -5,8 +5,9 @@ use std::fmt;
 
 pub mod prelude {
     pub use crate::{
-        Atom, AtomId, AtomStereo, BioHierarchy, Bond, BondId, BondOrder, BondStereo, ComputedState,
-        Element, MacroMolecule, Molecule, MoleculeError, PropMap, PropValue, Result, SmallMolecule,
+        read_sdf_v2000_str, Atom, AtomId, AtomStereo, BioHierarchy, Bond, BondId, BondOrder,
+        BondStereo, ComputedState, Element, MacroMolecule, Molecule, MoleculeError, PropMap,
+        PropValue, Result, SdfParseError, SdfParseOptions, SdfRecord, SmallMolecule,
     };
 }
 
@@ -449,6 +450,266 @@ pub struct SmallMolecule {
     pub mol: Molecule,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SdfParseOptions {
+    pub allow_missing_final_delimiter: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SdfRecord {
+    pub title: String,
+    pub molecule: SmallMolecule,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SdfParseError {
+    pub record: usize,
+    pub line: usize,
+    pub message: String,
+}
+
+impl SdfParseError {
+    fn new(record: usize, line: usize, message: impl Into<String>) -> Self {
+        Self {
+            record,
+            line,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for SdfParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "SDF parse error in record {} at line {}: {}",
+            self.record, self.line, self.message
+        )
+    }
+}
+
+impl std::error::Error for SdfParseError {}
+
+pub fn read_sdf_v2000_str(
+    input: &str,
+    options: SdfParseOptions,
+) -> std::result::Result<Vec<SmallMolecule>, SdfParseError> {
+    read_sdf_v2000_records(input, options)
+        .map(|records| records.into_iter().map(|record| record.molecule).collect())
+}
+
+pub fn read_sdf_v2000_records(
+    input: &str,
+    options: SdfParseOptions,
+) -> std::result::Result<Vec<SdfRecord>, SdfParseError> {
+    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+    let mut records = Vec::new();
+    let mut current = Vec::new();
+    let mut start_line = 1usize;
+    let mut saw_delimiter = false;
+
+    for (offset, line) in normalized.lines().enumerate() {
+        let line_number = offset + 1;
+        if line.trim() == "$$$$" {
+            saw_delimiter = true;
+            if current.iter().any(|line: &&str| !line.trim().is_empty()) {
+                records.push(parse_sdf_record(records.len() + 1, start_line, &current)?);
+            }
+            current.clear();
+            start_line = line_number + 1;
+        } else {
+            current.push(line);
+        }
+    }
+
+    if current.iter().any(|line| !line.trim().is_empty()) {
+        if saw_delimiter || options.allow_missing_final_delimiter {
+            records.push(parse_sdf_record(records.len() + 1, start_line, &current)?);
+        } else {
+            return Err(SdfParseError::new(
+                records.len() + 1,
+                start_line + current.len().saturating_sub(1),
+                "missing final $$$$ record delimiter",
+            ));
+        }
+    }
+
+    Ok(records)
+}
+
+fn parse_sdf_record(
+    record: usize,
+    start_line: usize,
+    lines: &[&str],
+) -> std::result::Result<SdfRecord, SdfParseError> {
+    if lines.len() < 4 {
+        return Err(SdfParseError::new(
+            record,
+            start_line,
+            "record must contain three header lines and a counts line",
+        ));
+    }
+    let title = lines[0].to_owned();
+    let counts = lines[3];
+    if counts.contains("V3000") {
+        return Err(SdfParseError::new(
+            record,
+            start_line + 3,
+            "V3000 records are not supported by the V2000 parser",
+        ));
+    }
+    if !counts.contains("V2000") {
+        return Err(SdfParseError::new(
+            record,
+            start_line + 3,
+            "counts line must declare V2000",
+        ));
+    }
+    let (atom_count, bond_count) = parse_counts_line(counts)
+        .ok_or_else(|| SdfParseError::new(record, start_line + 3, "invalid V2000 counts line"))?;
+
+    let mut mol = Molecule::new();
+    mol.props_mut()
+        .insert("sdf.title".to_owned(), PropValue::String(title.clone()));
+    mol.props_mut().insert(
+        "sdf.program".to_owned(),
+        PropValue::String(lines[1].to_owned()),
+    );
+    mol.props_mut().insert(
+        "sdf.comment".to_owned(),
+        PropValue::String(lines[2].to_owned()),
+    );
+
+    let atom_start = 4;
+    let bond_start = atom_start + atom_count;
+    let property_start = bond_start + bond_count;
+    if lines.len() < property_start {
+        return Err(SdfParseError::new(
+            record,
+            start_line + lines.len(),
+            "record ended before declared atom and bond blocks",
+        ));
+    }
+
+    let mut atom_ids = Vec::with_capacity(atom_count);
+    for atom_index in 0..atom_count {
+        let line_number = start_line + atom_start + atom_index;
+        let symbol = atom_symbol_from_v2000_line(lines[atom_start + atom_index])
+            .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom line"))?;
+        let element = Element::from_symbol(symbol).ok_or_else(|| {
+            SdfParseError::new(
+                record,
+                line_number,
+                format!("unknown element symbol `{symbol}`"),
+            )
+        })?;
+        atom_ids.push(mol.add_atom(Atom::new(element)));
+    }
+
+    for bond_index in 0..bond_count {
+        let line_number = start_line + bond_start + bond_index;
+        let (a, b, order) = parse_v2000_bond_line(lines[bond_start + bond_index])
+            .ok_or_else(|| SdfParseError::new(record, line_number, "invalid bond line"))?;
+        let a = atom_ids.get(a - 1).copied().ok_or_else(|| {
+            SdfParseError::new(record, line_number, "bond endpoint outside atom block")
+        })?;
+        let b = atom_ids.get(b - 1).copied().ok_or_else(|| {
+            SdfParseError::new(record, line_number, "bond endpoint outside atom block")
+        })?;
+        mol.add_bond(a, b, order).map_err(|error| {
+            SdfParseError::new(record, line_number, format!("invalid graph bond: {error}"))
+        })?;
+    }
+
+    let end_index = lines[property_start..]
+        .iter()
+        .position(|line| line.trim() == "M  END")
+        .map(|index| property_start + index)
+        .ok_or_else(|| SdfParseError::new(record, start_line + property_start, "missing M  END"))?;
+    parse_sdf_data_fields(record, start_line, &mut mol, &lines[end_index + 1..])?;
+
+    Ok(SdfRecord {
+        title,
+        molecule: SmallMolecule { mol },
+    })
+}
+
+fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    let atoms = fields.first()?.parse().ok()?;
+    let bonds = fields.get(1)?.parse().ok()?;
+    Some((atoms, bonds))
+}
+
+fn atom_symbol_from_v2000_line(line: &str) -> Option<&str> {
+    line.get(31..34)
+        .map(str::trim)
+        .filter(|symbol| !symbol.is_empty())
+        .or_else(|| line.split_whitespace().nth(3))
+}
+
+fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder)> {
+    let mut fields = line.split_whitespace();
+    let a = fields.next()?.parse().ok()?;
+    let b = fields.next()?.parse().ok()?;
+    let order_code: u8 = fields.next()?.parse().ok()?;
+    let order = match order_code {
+        0 => BondOrder::Zero,
+        1 => BondOrder::Single,
+        2 => BondOrder::Double,
+        3 => BondOrder::Triple,
+        4 => BondOrder::Aromatic,
+        9 => BondOrder::Dative,
+        _ => return None,
+    };
+    Some((a, b, order))
+}
+
+fn parse_sdf_data_fields(
+    record: usize,
+    start_line: usize,
+    mol: &mut Molecule,
+    lines: &[&str],
+) -> std::result::Result<(), SdfParseError> {
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        if !line.trim_start().starts_with('>') {
+            index += 1;
+            continue;
+        }
+        let field_name = sdf_field_name(line).ok_or_else(|| {
+            SdfParseError::new(record, start_line + index, "invalid SDF data field header")
+        })?;
+        index += 1;
+        let mut values = Vec::new();
+        while index < lines.len() && !lines[index].trim_start().starts_with('>') {
+            if lines[index].is_empty() {
+                index += 1;
+                break;
+            }
+            values.push(lines[index]);
+            index += 1;
+        }
+        mol.props_mut().insert(
+            format!("sdf.field.{field_name}"),
+            PropValue::String(values.join("\n")),
+        );
+    }
+    Ok(())
+}
+
+fn sdf_field_name(line: &str) -> Option<String> {
+    let start = line.find('<')?;
+    let end = line[start + 1..].find('>')? + start + 1;
+    let name = line[start + 1..end].trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_owned())
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BioHierarchy {
     pub props: PropMap,
@@ -678,6 +939,162 @@ mod tests {
         mark_all_fresh(&mut mol);
         mol.bond_mut(bond).expect("bond exists").order = BondOrder::Double;
         assert_all_stale(&mol);
+    }
+
+    #[test]
+    fn sdf_v2000_parses_single_record_atoms_bonds_and_fields() {
+        let input = "\
+Water
+  molecules
+comment
+  2  1  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0
+    1.0000    0.0000    0.0000 H   0  0  0  0  0  0
+  1  2  1  0  0  0  0
+M  END
+>  <NAME>
+water
+
+$$$$
+";
+
+        let molecules =
+            read_sdf_v2000_str(input, SdfParseOptions::default()).expect("record should parse");
+        let mol = &molecules[0].mol;
+
+        assert_eq!(molecules.len(), 1);
+        assert_eq!(mol.atom_count(), 2);
+        assert_eq!(mol.bond_count(), 1);
+        assert_eq!(
+            mol.atom(AtomId::new(0))
+                .expect("atom exists")
+                .element
+                .symbol(),
+            "O"
+        );
+        assert_eq!(
+            mol.bond(BondId::new(0)).expect("bond exists").order,
+            BondOrder::Single
+        );
+        assert_eq!(
+            mol.props().get("sdf.field.NAME"),
+            Some(&PropValue::String("water".to_owned()))
+        );
+    }
+
+    #[test]
+    fn sdf_v2000_parses_multiple_records_in_order() {
+        let input = "\
+One
+  molecules
+
+  1  0  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0
+M  END
+$$$$
+Two
+  molecules
+
+  1  0  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0
+M  END
+$$$$
+";
+
+        let records = read_sdf_v2000_records(input, SdfParseOptions::default())
+            .expect("records should parse");
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].title, "One");
+        assert_eq!(records[1].title, "Two");
+        assert_eq!(
+            records[1]
+                .molecule
+                .mol
+                .atom(AtomId::new(0))
+                .expect("atom exists")
+                .element
+                .symbol(),
+            "O"
+        );
+    }
+
+    #[test]
+    fn sdf_v2000_can_allow_missing_final_delimiter() {
+        let input = "\
+Methane
+  molecules
+
+  1  0  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0
+M  END
+";
+
+        let molecules = read_sdf_v2000_str(
+            input,
+            SdfParseOptions {
+                allow_missing_final_delimiter: true,
+            },
+        )
+        .expect("record should parse");
+
+        assert_eq!(molecules.len(), 1);
+        assert_eq!(molecules[0].mol.atom_count(), 1);
+    }
+
+    #[test]
+    fn sdf_v2000_rejects_v3000_and_bad_endpoints() {
+        let v3000 = "\
+V3000
+  molecules
+
+  0  0  0  0  0  0            999 V3000
+M  END
+$$$$
+";
+        let err =
+            read_sdf_v2000_str(v3000, SdfParseOptions::default()).expect_err("V3000 should fail");
+        assert!(err.message.contains("V3000"));
+
+        let bad_endpoint = "\
+Bad
+  molecules
+
+  1  1  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0
+  1  2  1  0  0  0  0
+M  END
+$$$$
+";
+        let err = read_sdf_v2000_str(bad_endpoint, SdfParseOptions::default())
+            .expect_err("bad endpoint should fail");
+        assert!(err.message.contains("outside atom block"));
+    }
+
+    #[test]
+    fn sdf_v2000_parse_does_not_perceive_chemistry() {
+        let input = "\
+Benzene-ish
+  molecules
+
+  2  1  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0
+    1.0000    0.0000    0.0000 C   0  0  0  0  0  0
+  1  2  4  0  0  0  0
+M  END
+$$$$
+";
+
+        let molecules =
+            read_sdf_v2000_str(input, SdfParseOptions::default()).expect("record should parse");
+        let mol = &molecules[0].mol;
+
+        assert_eq!(mol.perception().rings, ComputedState::Absent);
+        assert_eq!(mol.perception().aromaticity, ComputedState::Absent);
+        assert_eq!(
+            mol.bond(BondId::new(0)).expect("bond exists").order,
+            BondOrder::Aromatic
+        );
     }
 
     #[test]
