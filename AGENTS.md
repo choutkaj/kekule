@@ -9,6 +9,7 @@ These rules apply to AI agents working in this repository.
 3. Keep changes scoped to the requested feature.
 4. Update feature metadata only when the implementation and validation status genuinely changed.
 5. Run the relevant checks before handing work back.
+6. Commit and push code in logical chunks.
 
 ## Anti-slop rules
 

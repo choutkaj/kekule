@@ -8,6 +8,6 @@ Given a feature ID, write a concrete implementation plan.
 
 ## Output
 
-Write or update `features/<feature-id>/implementation_plan.md` with public API, internal modules touched, data model changes, algorithm outline, tests, reference validation format, risks, and edge cases.
+Write or update `features/<feature-id>/implementation_plan.md` with public API, internal modules touched, data model changes, algorithm outline, tests, reference validation format, risks, and edge cases. Commit and push the implementation_plan.md file.
 
 Do not implement code in this skill.

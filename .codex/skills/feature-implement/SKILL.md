@@ -10,3 +10,4 @@ Start by reading `ARCHITECTURE.md`, `AGENTS.md`, and the requested `features/<fe
 - Add validation data or leave validation status as false.
 - Run formatting, linting, tests, dashboard check, and relevant validation.
 - Update `feature.toml` only when implementation or validation status has genuinely changed.
+- Commit and push the code.

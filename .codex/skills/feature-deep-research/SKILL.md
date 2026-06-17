@@ -8,6 +8,6 @@ Given a feature ID, research the specification, reference behavior, algorithms, 
 
 ## Output
 
-Write or update `features/<feature-id>/research.md` with official specs or primary references, RDKit or Biopython behavior to match, algorithm options and tradeoffs, edge cases, validation ideas, and citations or links.
+Write or update `features/<feature-id>/research.md` with official specs or primary references, RDKit or Biopython behavior to match, algorithm options and tradeoffs, edge cases, validation ideas, and citations or links. Commit and push the research.md file.
 
 Do not implement code in this skill.

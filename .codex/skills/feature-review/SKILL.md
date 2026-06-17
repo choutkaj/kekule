@@ -8,6 +8,6 @@ Review a feature implementation against its spec, algorithm notes, validation no
 
 ## Output
 
-Write `features/<feature-id>/reviews/YYYY-MM-DD-ai-review.md` with summary, architecture compliance, correctness concerns, validation status, and required fixes or follow-up work.
+Write `features/<feature-id>/reviews/YYYY-MM-DD-ai-review.md` with summary, architecture compliance, correctness concerns, validation status, and required fixes or follow-up work. Commit and push the review file.
 
 Check specifically for duplicate graph logic, hidden global state, unscoped edits, undocumented behavior, and validation claims without evidence.
