@@ -1,0 +1,10 @@
+id = "validation.harness"
+title = "Reference validation harness"
+area = "infrastructure"
+priority = "P0"
+status = "planned"
+implemented = false
+validated = false
+last_ai_review = "2026-06-17"
+description = "Provide commands and conventions for comparing molecules against RDKit and Biopython generated golden data."
+depends_on = []

@@ -1,0 +1,18 @@
+name: Reference validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      feature:
+        description: Feature ID to validate
+        required: true
+        type: string
+
+jobs:
+  validate:
+    name: Validate feature
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo xtask validate --feature "${{ inputs.feature }}"

@@ -1,0 +1,10 @@
+[package]
+name = "molecules"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Pure Rust cheminformatics and molecular-structure backend."
+publish = false
+
+[dependencies]

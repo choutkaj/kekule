@@ -1,0 +1,10 @@
+id = "core.atom-bond"
+title = "Core atom and bond model"
+area = "core"
+priority = "P0"
+status = "planned"
+implemented = false
+validated = false
+last_ai_review = "2026-06-17"
+description = "Represent chemically general atom and bond data shared by small and macromolecular workflows."
+depends_on = ["core.graph"]

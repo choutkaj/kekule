@@ -1,0 +1,10 @@
+id = "io.sdf.v2000.parse"
+title = "SDF V2000 parser"
+area = "io"
+priority = "P0"
+status = "planned"
+implemented = false
+validated = false
+last_ai_review = "2026-06-17"
+description = "Parse multi-record SDF files and attach data fields as molecule properties."
+depends_on = ["core.graph"]

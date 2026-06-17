@@ -1,0 +1,10 @@
+id = "io.mmcif.parse"
+title = "mmCIF parser"
+area = "io"
+priority = "P0"
+status = "planned"
+implemented = false
+validated = false
+last_ai_review = "2026-06-17"
+description = "Parse mmCIF atom-site data into MacroMolecule while preserving label and author identifiers."
+depends_on = ["bio.hierarchy.smcra"]
