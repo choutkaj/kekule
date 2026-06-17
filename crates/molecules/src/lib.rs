@@ -6,10 +6,11 @@ use std::fmt;
 pub mod prelude {
     pub use crate::{
         perceive_aromaticity, perceive_ring_membership, read_sdf_v2000_str, AromaticityError,
-        AromaticityModel, Atom, AtomId, AtomStereo, BioHierarchy, Bond, BondId, BondOrder,
-        BondStereo, ComputedState, Element, MacroMolecule, Molecule, MoleculeError, PropMap,
-        PropValue, Result, RingMembership, SdfParseError, SdfParseOptions, SdfRecord,
-        SmallMolecule,
+        AromaticityModel, Atom, AtomId, AtomSite, AtomSiteId, AtomSiteMetadata, AtomStereo,
+        BioHierarchy, BioHierarchyError, Bond, BondId, BondOrder, BondStereo, Chain, ChainId,
+        ComputedState, Element, MacroMolecule, Model, ModelId, Molecule, MoleculeError, PropMap,
+        PropValue, Residue, ResidueId, Result, RingMembership, SdfParseError, SdfParseOptions,
+        SdfRecord, SmallMolecule,
     };
 }
 
@@ -991,15 +992,305 @@ fn sdf_field_name(line: &str) -> Option<String> {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct BioHierarchy {
-    pub props: PropMap,
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
 pub struct MacroMolecule {
     pub mol: Molecule,
     pub hierarchy: BioHierarchy,
 }
+
+impl MacroMolecule {
+    pub fn add_atom_site(
+        &mut self,
+        residue: ResidueId,
+        atom: AtomId,
+        metadata: AtomSiteMetadata,
+    ) -> std::result::Result<AtomSiteId, BioHierarchyError> {
+        self.mol
+            .atom(atom)
+            .map_err(|_| BioHierarchyError::InvalidAtomId(atom))?;
+        self.hierarchy.add_atom_site(residue, atom, metadata)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModelId(u32);
+
+impl ModelId {
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChainId(u32);
+
+impl ChainId {
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ResidueId(u32);
+
+impl ResidueId {
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AtomSiteId(u32);
+
+impl AtomSiteId {
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BioHierarchy {
+    models: Vec<Model>,
+    chains: Vec<Chain>,
+    residues: Vec<Residue>,
+    atom_sites: Vec<AtomSite>,
+    atom_lookup: BTreeMap<AtomId, AtomSiteId>,
+    pub props: PropMap,
+}
+
+impl BioHierarchy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn add_model(&mut self, model_id: impl Into<String>) -> ModelId {
+        let id = ModelId::new(self.models.len() as u32);
+        self.models.push(Model {
+            id,
+            model_id: model_id.into(),
+            chains: Vec::new(),
+            props: PropMap::new(),
+        });
+        id
+    }
+
+    pub fn add_chain(
+        &mut self,
+        model: ModelId,
+        label_id: impl Into<String>,
+        author_id: Option<String>,
+    ) -> std::result::Result<ChainId, BioHierarchyError> {
+        self.model(model)?;
+        let id = ChainId::new(self.chains.len() as u32);
+        self.chains.push(Chain {
+            id,
+            model,
+            label_id: label_id.into(),
+            author_id,
+            residues: Vec::new(),
+            props: PropMap::new(),
+        });
+        self.models[model.index()].chains.push(id);
+        Ok(id)
+    }
+
+    pub fn add_residue(
+        &mut self,
+        chain: ChainId,
+        name: impl Into<String>,
+        label_seq_id: Option<i32>,
+        author_seq_id: Option<String>,
+        insertion_code: Option<String>,
+    ) -> std::result::Result<ResidueId, BioHierarchyError> {
+        self.chain(chain)?;
+        let id = ResidueId::new(self.residues.len() as u32);
+        self.residues.push(Residue {
+            id,
+            chain,
+            name: name.into(),
+            label_seq_id,
+            author_seq_id,
+            insertion_code,
+            atom_sites: Vec::new(),
+            props: PropMap::new(),
+        });
+        self.chains[chain.index()].residues.push(id);
+        Ok(id)
+    }
+
+    pub fn add_atom_site(
+        &mut self,
+        residue: ResidueId,
+        atom: AtomId,
+        metadata: AtomSiteMetadata,
+    ) -> std::result::Result<AtomSiteId, BioHierarchyError> {
+        self.residue(residue)?;
+        if self.atom_lookup.contains_key(&atom) {
+            return Err(BioHierarchyError::DuplicateAtomPlacement(atom));
+        }
+        let id = AtomSiteId::new(self.atom_sites.len() as u32);
+        self.atom_sites.push(AtomSite {
+            id,
+            residue,
+            atom,
+            metadata,
+            props: PropMap::new(),
+        });
+        self.residues[residue.index()].atom_sites.push(id);
+        self.atom_lookup.insert(atom, id);
+        Ok(id)
+    }
+
+    pub fn model(&self, id: ModelId) -> std::result::Result<&Model, BioHierarchyError> {
+        self.models
+            .get(id.index())
+            .ok_or(BioHierarchyError::InvalidModelId(id))
+    }
+
+    pub fn chain(&self, id: ChainId) -> std::result::Result<&Chain, BioHierarchyError> {
+        self.chains
+            .get(id.index())
+            .ok_or(BioHierarchyError::InvalidChainId(id))
+    }
+
+    pub fn residue(&self, id: ResidueId) -> std::result::Result<&Residue, BioHierarchyError> {
+        self.residues
+            .get(id.index())
+            .ok_or(BioHierarchyError::InvalidResidueId(id))
+    }
+
+    pub fn atom_site(&self, id: AtomSiteId) -> std::result::Result<&AtomSite, BioHierarchyError> {
+        self.atom_sites
+            .get(id.index())
+            .ok_or(BioHierarchyError::InvalidAtomSiteId(id))
+    }
+
+    pub fn atom_site_for_atom(&self, atom: AtomId) -> Option<&AtomSite> {
+        self.atom_lookup
+            .get(&atom)
+            .and_then(|id| self.atom_sites.get(id.index()))
+    }
+
+    pub fn models(&self) -> impl Iterator<Item = (ModelId, &Model)> {
+        self.models.iter().map(|model| (model.id, model))
+    }
+
+    pub fn chains(&self) -> impl Iterator<Item = (ChainId, &Chain)> {
+        self.chains.iter().map(|chain| (chain.id, chain))
+    }
+
+    pub fn residues(&self) -> impl Iterator<Item = (ResidueId, &Residue)> {
+        self.residues.iter().map(|residue| (residue.id, residue))
+    }
+
+    pub fn atom_sites(&self) -> impl Iterator<Item = (AtomSiteId, &AtomSite)> {
+        self.atom_sites.iter().map(|site| (site.id, site))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Model {
+    pub id: ModelId,
+    pub model_id: String,
+    pub chains: Vec<ChainId>,
+    pub props: PropMap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Chain {
+    pub id: ChainId,
+    pub model: ModelId,
+    pub label_id: String,
+    pub author_id: Option<String>,
+    pub residues: Vec<ResidueId>,
+    pub props: PropMap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Residue {
+    pub id: ResidueId,
+    pub chain: ChainId,
+    pub name: String,
+    pub label_seq_id: Option<i32>,
+    pub author_seq_id: Option<String>,
+    pub insertion_code: Option<String>,
+    pub atom_sites: Vec<AtomSiteId>,
+    pub props: PropMap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AtomSite {
+    pub id: AtomSiteId,
+    pub residue: ResidueId,
+    pub atom: AtomId,
+    pub metadata: AtomSiteMetadata,
+    pub props: PropMap,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AtomSiteMetadata {
+    pub label_atom_id: Option<String>,
+    pub auth_atom_id: Option<String>,
+    pub label_alt_id: Option<String>,
+    pub occupancy: Option<f64>,
+    pub b_factor: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BioHierarchyError {
+    InvalidModelId(ModelId),
+    InvalidChainId(ChainId),
+    InvalidResidueId(ResidueId),
+    InvalidAtomSiteId(AtomSiteId),
+    InvalidAtomId(AtomId),
+    DuplicateAtomPlacement(AtomId),
+}
+
+impl fmt::Display for BioHierarchyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidModelId(id) => write!(f, "invalid model id: {}", id.raw()),
+            Self::InvalidChainId(id) => write!(f, "invalid chain id: {}", id.raw()),
+            Self::InvalidResidueId(id) => write!(f, "invalid residue id: {}", id.raw()),
+            Self::InvalidAtomSiteId(id) => write!(f, "invalid atom-site id: {}", id.raw()),
+            Self::InvalidAtomId(id) => write!(f, "invalid hierarchy atom id: {id}"),
+            Self::DuplicateAtomPlacement(id) => write!(f, "duplicate hierarchy placement for {id}"),
+        }
+    }
+}
+
+impl std::error::Error for BioHierarchyError {}
 
 pub type Result<T> = std::result::Result<T, MoleculeError>;
 
@@ -2034,6 +2325,155 @@ $$$$
             mol.bond(bond).expect("bond exists").props.get("source"),
             Some(&PropValue::Bool(true))
         );
+    }
+
+    #[test]
+    fn bio_hierarchy_adds_models_chains_residues_and_atom_sites() {
+        let mut hierarchy = BioHierarchy::new();
+        let model = hierarchy.add_model("1");
+        let chain = hierarchy
+            .add_chain(model, "A", Some("authA".to_owned()))
+            .expect("chain should be valid");
+        let residue = hierarchy
+            .add_residue(
+                chain,
+                "GLY",
+                Some(10),
+                Some("42".to_owned()),
+                Some("A".to_owned()),
+            )
+            .expect("residue should be valid");
+        let metadata = AtomSiteMetadata {
+            label_atom_id: Some("CA".to_owned()),
+            auth_atom_id: Some("CAY".to_owned()),
+            label_alt_id: Some("B".to_owned()),
+            occupancy: Some(0.5),
+            b_factor: Some(12.25),
+        };
+        let site = hierarchy
+            .add_atom_site(residue, AtomId::new(7), metadata.clone())
+            .expect("atom site should be valid");
+
+        assert_eq!(model.raw(), 0);
+        assert_eq!(chain.raw(), 0);
+        assert_eq!(residue.raw(), 0);
+        assert_eq!(site.raw(), 0);
+        assert_eq!(
+            hierarchy.model(model).expect("model exists").chains,
+            vec![chain]
+        );
+        assert_eq!(
+            hierarchy.chain(chain).expect("chain exists").residues,
+            vec![residue]
+        );
+        assert_eq!(
+            hierarchy
+                .residue(residue)
+                .expect("residue exists")
+                .atom_sites,
+            vec![site]
+        );
+        assert_eq!(
+            hierarchy
+                .atom_site_for_atom(AtomId::new(7))
+                .expect("site exists")
+                .metadata,
+            metadata
+        );
+    }
+
+    #[test]
+    fn bio_hierarchy_iteration_is_insertion_order() {
+        let mut hierarchy = BioHierarchy::new();
+        let first_model = hierarchy.add_model("1");
+        let second_model = hierarchy.add_model("2");
+        let first_chain = hierarchy.add_chain(first_model, "A", None).expect("chain");
+        let second_chain = hierarchy.add_chain(second_model, "B", None).expect("chain");
+
+        assert_eq!(
+            hierarchy.models().map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![first_model, second_model]
+        );
+        assert_eq!(
+            hierarchy.chains().map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![first_chain, second_chain]
+        );
+    }
+
+    #[test]
+    fn bio_hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
+        let mut hierarchy = BioHierarchy::new();
+        assert_eq!(
+            hierarchy
+                .add_chain(ModelId::new(99), "A", None)
+                .expect_err("missing model should fail"),
+            BioHierarchyError::InvalidModelId(ModelId::new(99))
+        );
+
+        let model = hierarchy.add_model("1");
+        let chain = hierarchy.add_chain(model, "A", None).expect("chain");
+        assert_eq!(
+            hierarchy
+                .add_residue(ChainId::new(99), "GLY", None, None, None)
+                .expect_err("missing chain should fail"),
+            BioHierarchyError::InvalidChainId(ChainId::new(99))
+        );
+        let residue = hierarchy
+            .add_residue(chain, "GLY", None, None, None)
+            .expect("residue");
+        let atom = AtomId::new(2);
+        hierarchy
+            .add_atom_site(residue, atom, AtomSiteMetadata::default())
+            .expect("first placement should work");
+        assert_eq!(
+            hierarchy
+                .add_atom_site(residue, atom, AtomSiteMetadata::default())
+                .expect_err("duplicate atom placement should fail"),
+            BioHierarchyError::DuplicateAtomPlacement(atom)
+        );
+    }
+
+    #[test]
+    fn macro_molecule_validates_atom_site_atom_ids() {
+        let mut macro_mol = MacroMolecule::default();
+        let atom = macro_mol.mol.add_atom(carbon());
+        let model = macro_mol.hierarchy.add_model("1");
+        let chain = macro_mol
+            .hierarchy
+            .add_chain(model, "A", Some("authA".to_owned()))
+            .expect("chain");
+        let residue = macro_mol
+            .hierarchy
+            .add_residue(chain, "ALA", Some(1), Some("1".to_owned()), None)
+            .expect("residue");
+
+        macro_mol
+            .add_atom_site(
+                residue,
+                atom,
+                AtomSiteMetadata {
+                    label_atom_id: Some("CA".to_owned()),
+                    auth_atom_id: Some("CA".to_owned()),
+                    label_alt_id: None,
+                    occupancy: Some(1.0),
+                    b_factor: Some(10.0),
+                },
+            )
+            .expect("valid atom should attach");
+        assert_eq!(
+            macro_mol
+                .add_atom_site(residue, AtomId::new(99), AtomSiteMetadata::default())
+                .expect_err("missing atom should fail"),
+            BioHierarchyError::InvalidAtomId(AtomId::new(99))
+        );
+    }
+
+    #[test]
+    fn core_atom_does_not_store_biomolecular_labels() {
+        let atom = carbon();
+
+        assert_eq!(atom.element.symbol(), "C");
+        assert!(atom.props.is_empty());
     }
 
     #[test]

@@ -6,7 +6,7 @@ Generated from `features/*/feature.toml`. Do not hand-edit this file.
 |---|---|---|---|---|---|---|---|
 | `algo.aromaticity.rdkit-like-basic` | Basic RDKit-like aromaticity perception | algorithms | P0 | implemented | yes | no | 2026-06-17 |
 | `algo.rings.fast` | Fast ring membership detection | algorithms | P0 | implemented | yes | no | 2026-06-17 |
-| `bio.hierarchy.smcra` | SMCRA-like biomolecular hierarchy | bio | P0 | planned | no | no | 2026-06-17 |
+| `bio.hierarchy.smcra` | SMCRA-like biomolecular hierarchy | bio | P0 | implemented | yes | no | 2026-06-17 |
 | `core.atom-bond` | Core atom and bond model | core | P0 | implemented | yes | no | 2026-06-17 |
 | `core.graph` | Core molecular graph | core | P0 | implemented | yes | no | 2026-06-17 |
 | `dashboard.feature-registry` | Feature registry and dashboard | infrastructure | P0 | planned | no | no | 2026-06-17 |
