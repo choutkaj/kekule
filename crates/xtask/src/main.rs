@@ -38,7 +38,9 @@ fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     if check {
         let existing = fs::read_to_string(path)?;
         if existing != rendered {
-            return Err(boxed_error("features/DASHBOARD.md is out of date; run `cargo xtask dashboard`"));
+            return Err(boxed_error(
+                "features/DASHBOARD.md is out of date; run `cargo xtask dashboard`",
+            ));
         }
     } else {
         fs::write(path, rendered)?;
@@ -47,7 +49,8 @@ fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 }
 
 fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    let feature = value_after_flag(&args, "--feature").ok_or_else(|| boxed_error("missing required flag: --feature FEATURE_ID"))?;
+    let feature = value_after_flag(&args, "--feature")
+        .ok_or_else(|| boxed_error("missing required flag: --feature FEATURE_ID"))?;
     let path = Path::new("features").join(feature);
     if !path.join("feature.toml").exists() {
         return Err(boxed_error(format!("unknown feature: {feature}")));
@@ -122,7 +125,11 @@ fn read_feature(path: &Path) -> Result<Feature, Box<dyn Error>> {
     })
 }
 
-fn required(map: &BTreeMap<String, String>, key: &str, path: &Path) -> Result<String, Box<dyn Error>> {
+fn required(
+    map: &BTreeMap<String, String>,
+    key: &str,
+    path: &Path,
+) -> Result<String, Box<dyn Error>> {
     map.get(key)
         .cloned()
         .ok_or_else(|| boxed_error(format!("{} is missing `{key}`", path.display())))
@@ -182,5 +189,5 @@ fn yes_no(value: &str) -> &'static str {
 }
 
 fn boxed_error(message: impl Into<String>) -> Box<dyn Error> {
-    std::io::Error::new(std::io::ErrorKind::Other, message.into()).into()
+    std::io::Error::other(message.into()).into()
 }
