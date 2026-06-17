@@ -5,12 +5,12 @@ use std::fmt;
 
 pub mod prelude {
     pub use crate::{
-        perceive_aromaticity, perceive_ring_membership, read_sdf_v2000_str, AromaticityError,
-        AromaticityModel, Atom, AtomId, AtomSite, AtomSiteId, AtomSiteMetadata, AtomStereo,
-        BioHierarchy, BioHierarchyError, Bond, BondId, BondOrder, BondStereo, Chain, ChainId,
-        ComputedState, Element, MacroMolecule, Model, ModelId, Molecule, MoleculeError, PropMap,
-        PropValue, Residue, ResidueId, Result, RingMembership, SdfParseError, SdfParseOptions,
-        SdfRecord, SmallMolecule,
+        perceive_aromaticity, perceive_ring_membership, read_mmcif_str, read_sdf_v2000_str,
+        AromaticityError, AromaticityModel, Atom, AtomId, AtomSite, AtomSiteId, AtomSiteMetadata,
+        AtomStereo, BioHierarchy, BioHierarchyError, Bond, BondId, BondOrder, BondStereo, Chain,
+        ChainId, ComputedState, Element, MacroMolecule, MmcifParseError, MmcifParseOptions, Model,
+        ModelId, Molecule, MoleculeError, PropMap, PropValue, Residue, ResidueId, Result,
+        RingMembership, SdfParseError, SdfParseOptions, SdfRecord, SmallMolecule,
     };
 }
 
@@ -1292,6 +1292,347 @@ impl fmt::Display for BioHierarchyError {
 
 impl std::error::Error for BioHierarchyError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmcifParseOptions {
+    pub strict: bool,
+}
+
+impl Default for MmcifParseOptions {
+    fn default() -> Self {
+        Self { strict: true }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MmcifParseError {
+    pub line: usize,
+    pub message: String,
+}
+
+impl MmcifParseError {
+    fn new(line: usize, message: impl Into<String>) -> Self {
+        Self {
+            line,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for MmcifParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "mmCIF parse error at line {}: {}",
+            self.line, self.message
+        )
+    }
+}
+
+impl std::error::Error for MmcifParseError {}
+
+pub fn read_mmcif_str(
+    input: &str,
+    options: MmcifParseOptions,
+) -> std::result::Result<MacroMolecule, MmcifParseError> {
+    let tokens = tokenize_mmcif(input)?;
+    let atom_site_loop = find_atom_site_loop(&tokens)
+        .ok_or_else(|| MmcifParseError::new(1, "missing _atom_site loop"))?;
+    build_macro_molecule_from_atom_site_loop(atom_site_loop, options)
+}
+
+#[derive(Debug, Clone)]
+struct MmcifToken {
+    text: String,
+    line: usize,
+}
+
+#[derive(Debug, Clone)]
+struct MmcifLoop<'a> {
+    tags: Vec<&'a MmcifToken>,
+    values: Vec<&'a MmcifToken>,
+}
+
+fn tokenize_mmcif(input: &str) -> std::result::Result<Vec<MmcifToken>, MmcifParseError> {
+    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+    let lines = normalized.lines().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut line_index = 0usize;
+
+    while line_index < lines.len() {
+        let line_number = line_index + 1;
+        let line = lines[line_index];
+        if line.starts_with(';') {
+            let mut text = String::new();
+            line_index += 1;
+            while line_index < lines.len() && !lines[line_index].starts_with(';') {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(lines[line_index]);
+                line_index += 1;
+            }
+            if line_index == lines.len() {
+                return Err(MmcifParseError::new(
+                    line_number,
+                    "unterminated semicolon text",
+                ));
+            }
+            tokens.push(MmcifToken {
+                text,
+                line: line_number,
+            });
+            line_index += 1;
+            continue;
+        }
+
+        let bytes = line.as_bytes();
+        let mut column = 0usize;
+        while column < bytes.len() {
+            while column < bytes.len() && bytes[column].is_ascii_whitespace() {
+                column += 1;
+            }
+            if column == bytes.len() || bytes[column] == b'#' {
+                break;
+            }
+            let start = column;
+            let text = if bytes[column] == b'\'' || bytes[column] == b'"' {
+                let quote = bytes[column];
+                column += 1;
+                let value_start = column;
+                while column < bytes.len() && bytes[column] != quote {
+                    column += 1;
+                }
+                if column == bytes.len() {
+                    return Err(MmcifParseError::new(
+                        line_number,
+                        "unterminated quoted value",
+                    ));
+                }
+                let value = &line[value_start..column];
+                column += 1;
+                value.to_owned()
+            } else {
+                while column < bytes.len()
+                    && !bytes[column].is_ascii_whitespace()
+                    && bytes[column] != b'#'
+                {
+                    column += 1;
+                }
+                line[start..column].to_owned()
+            };
+            tokens.push(MmcifToken {
+                text,
+                line: line_number,
+            });
+        }
+        line_index += 1;
+    }
+
+    Ok(tokens)
+}
+
+fn find_atom_site_loop(tokens: &[MmcifToken]) -> Option<MmcifLoop<'_>> {
+    let mut index = 0usize;
+    while index < tokens.len() {
+        if tokens[index].text != "loop_" {
+            index += 1;
+            continue;
+        }
+        index += 1;
+        let tag_start = index;
+        while index < tokens.len() && tokens[index].text.starts_with('_') {
+            index += 1;
+        }
+        let tags = tokens[tag_start..index].iter().collect::<Vec<_>>();
+        let value_start = index;
+        while index < tokens.len()
+            && tokens[index].text != "loop_"
+            && !tokens[index].text.starts_with("data_")
+            && !tokens[index].text.starts_with('_')
+        {
+            index += 1;
+        }
+        if tags.iter().any(|tag| tag.text.starts_with("_atom_site.")) {
+            return Some(MmcifLoop {
+                tags,
+                values: tokens[value_start..index].iter().collect(),
+            });
+        }
+    }
+    None
+}
+
+fn build_macro_molecule_from_atom_site_loop(
+    atom_loop: MmcifLoop<'_>,
+    options: MmcifParseOptions,
+) -> std::result::Result<MacroMolecule, MmcifParseError> {
+    let width = atom_loop.tags.len();
+    if width == 0 || atom_loop.values.len() % width != 0 {
+        let line = atom_loop
+            .values
+            .first()
+            .map(|token| token.line)
+            .unwrap_or(1);
+        return Err(MmcifParseError::new(line, "atom-site loop has ragged rows"));
+    }
+
+    let tag_index = atom_loop
+        .tags
+        .iter()
+        .enumerate()
+        .map(|(index, token)| (token.text.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut macro_mol = MacroMolecule::default();
+    let mut models = BTreeMap::<String, ModelId>::new();
+    let mut chains = BTreeMap::<(String, String), ChainId>::new();
+    let mut residues = BTreeMap::<(ChainId, String, Option<i32>, Option<String>), ResidueId>::new();
+
+    for row in atom_loop.values.chunks(width) {
+        let line = row.first().map(|token| token.line).unwrap_or(1);
+        let type_symbol = required_mmcif_value(row, &tag_index, "_atom_site.type_symbol", line)?;
+        let element = Element::from_symbol(type_symbol).ok_or_else(|| {
+            MmcifParseError::new(line, format!("unknown atom-site element `{type_symbol}`"))
+        })?;
+        let label_atom_id = optional_mmcif_value(row, &tag_index, "_atom_site.label_atom_id");
+        let auth_atom_id = optional_mmcif_value(row, &tag_index, "_atom_site.auth_atom_id");
+        let label_asym_id = optional_mmcif_value(row, &tag_index, "_atom_site.label_asym_id");
+        let auth_asym_id = optional_mmcif_value(row, &tag_index, "_atom_site.auth_asym_id");
+        let label_comp_id = optional_mmcif_value(row, &tag_index, "_atom_site.label_comp_id");
+        let auth_comp_id = optional_mmcif_value(row, &tag_index, "_atom_site.auth_comp_id");
+        let label_seq_id =
+            optional_i32_mmcif_value(row, &tag_index, "_atom_site.label_seq_id", line)?;
+        let auth_seq_id = optional_mmcif_value(row, &tag_index, "_atom_site.auth_seq_id");
+        let insertion_code = optional_mmcif_value(row, &tag_index, "_atom_site.pdbx_PDB_ins_code");
+        let model_key = optional_mmcif_value(row, &tag_index, "_atom_site.pdbx_PDB_model_num")
+            .unwrap_or("1")
+            .to_owned();
+        let label_alt_id = optional_mmcif_value(row, &tag_index, "_atom_site.label_alt_id");
+        let occupancy = optional_f64_mmcif_value(row, &tag_index, "_atom_site.occupancy", line)?;
+        let b_factor =
+            optional_f64_mmcif_value(row, &tag_index, "_atom_site.B_iso_or_equiv", line)?;
+
+        let chain_label = label_asym_id
+            .or(auth_asym_id)
+            .ok_or_else(|| MmcifParseError::new(line, "missing atom-site chain identifier"))?;
+        let residue_name = label_comp_id
+            .or(auth_comp_id)
+            .ok_or_else(|| MmcifParseError::new(line, "missing atom-site residue name"))?;
+        if options.strict && label_atom_id.is_none() {
+            return Err(MmcifParseError::new(
+                line,
+                "missing atom-site label atom id",
+            ));
+        }
+
+        let model = *models
+            .entry(model_key.clone())
+            .or_insert_with(|| macro_mol.hierarchy.add_model(model_key.clone()));
+        let chain_key = (model_key.clone(), chain_label.to_owned());
+        let chain = if let Some(chain) = chains.get(&chain_key) {
+            *chain
+        } else {
+            let chain = macro_mol
+                .hierarchy
+                .add_chain(
+                    model,
+                    chain_label.to_owned(),
+                    auth_asym_id.map(str::to_owned),
+                )
+                .map_err(|error| MmcifParseError::new(line, error.to_string()))?;
+            chains.insert(chain_key, chain);
+            chain
+        };
+        let residue_key = (
+            chain,
+            residue_name.to_owned(),
+            label_seq_id,
+            insertion_code.map(str::to_owned),
+        );
+        let residue = if let Some(residue) = residues.get(&residue_key) {
+            *residue
+        } else {
+            let residue = macro_mol
+                .hierarchy
+                .add_residue(
+                    chain,
+                    residue_name.to_owned(),
+                    label_seq_id,
+                    auth_seq_id.map(str::to_owned),
+                    insertion_code.map(str::to_owned),
+                )
+                .map_err(|error| MmcifParseError::new(line, error.to_string()))?;
+            residues.insert(residue_key, residue);
+            residue
+        };
+
+        let atom = macro_mol.mol.add_atom(Atom::new(element));
+        macro_mol
+            .add_atom_site(
+                residue,
+                atom,
+                AtomSiteMetadata {
+                    label_atom_id: label_atom_id.map(str::to_owned),
+                    auth_atom_id: auth_atom_id.map(str::to_owned),
+                    label_alt_id: label_alt_id.map(str::to_owned),
+                    occupancy,
+                    b_factor,
+                },
+            )
+            .map_err(|error| MmcifParseError::new(line, error.to_string()))?;
+    }
+
+    Ok(macro_mol)
+}
+
+fn required_mmcif_value<'a>(
+    row: &'a [&'a MmcifToken],
+    tag_index: &BTreeMap<&str, usize>,
+    tag: &str,
+    line: usize,
+) -> std::result::Result<&'a str, MmcifParseError> {
+    optional_mmcif_value(row, tag_index, tag)
+        .ok_or_else(|| MmcifParseError::new(line, format!("missing required {tag}")))
+}
+
+fn optional_mmcif_value<'a>(
+    row: &'a [&'a MmcifToken],
+    tag_index: &BTreeMap<&str, usize>,
+    tag: &str,
+) -> Option<&'a str> {
+    let value = row.get(*tag_index.get(tag)?)?.text.as_str();
+    (!matches!(value, "." | "?")).then_some(value)
+}
+
+fn optional_i32_mmcif_value(
+    row: &[&MmcifToken],
+    tag_index: &BTreeMap<&str, usize>,
+    tag: &str,
+    line: usize,
+) -> std::result::Result<Option<i32>, MmcifParseError> {
+    optional_mmcif_value(row, tag_index, tag)
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| MmcifParseError::new(line, format!("invalid integer {tag}")))
+        })
+        .transpose()
+}
+
+fn optional_f64_mmcif_value(
+    row: &[&MmcifToken],
+    tag_index: &BTreeMap<&str, usize>,
+    tag: &str,
+    line: usize,
+) -> std::result::Result<Option<f64>, MmcifParseError> {
+    optional_mmcif_value(row, tag_index, tag)
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| MmcifParseError::new(line, format!("invalid float {tag}")))
+        })
+        .transpose()
+}
+
 pub type Result<T> = std::result::Result<T, MoleculeError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2474,6 +2815,151 @@ $$$$
 
         assert_eq!(atom.element.symbol(), "C");
         assert!(atom.props.is_empty());
+    }
+
+    #[test]
+    fn mmcif_parse_builds_macro_molecule_hierarchy() {
+        let input = r#"
+data_demo
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.auth_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.pdbx_PDB_model_num
+ATOM 1 C CA CAY . GLY GLY A X 10 42 A 0.50 12.25 1
+ATOM 2 O O O . GLY GLY A X 10 42 A 1.00 10.00 1
+"#;
+
+        let macro_mol =
+            read_mmcif_str(input, MmcifParseOptions::default()).expect("mmCIF should parse");
+
+        assert_eq!(macro_mol.mol.atom_count(), 2);
+        assert_eq!(macro_mol.mol.bond_count(), 0);
+        assert_eq!(macro_mol.hierarchy.models().count(), 1);
+        assert_eq!(macro_mol.hierarchy.chains().count(), 1);
+        assert_eq!(macro_mol.hierarchy.residues().count(), 1);
+        assert_eq!(macro_mol.hierarchy.atom_sites().count(), 2);
+        let (_, chain) = macro_mol.hierarchy.chains().next().expect("chain exists");
+        assert_eq!(chain.label_id, "A");
+        assert_eq!(chain.author_id, Some("X".to_owned()));
+        let (_, residue) = macro_mol
+            .hierarchy
+            .residues()
+            .next()
+            .expect("residue exists");
+        assert_eq!(residue.name, "GLY");
+        assert_eq!(residue.label_seq_id, Some(10));
+        assert_eq!(residue.author_seq_id, Some("42".to_owned()));
+        assert_eq!(residue.insertion_code, Some("A".to_owned()));
+        let site = macro_mol
+            .hierarchy
+            .atom_site_for_atom(AtomId::new(0))
+            .expect("site exists");
+        assert_eq!(site.metadata.label_atom_id, Some("CA".to_owned()));
+        assert_eq!(site.metadata.auth_atom_id, Some("CAY".to_owned()));
+        assert_eq!(site.metadata.occupancy, Some(0.5));
+        assert_eq!(site.metadata.b_factor, Some(12.25));
+    }
+
+    #[test]
+    fn mmcif_parse_handles_missing_values_and_quotes() {
+        let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.auth_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.label_alt_id
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.pdbx_PDB_model_num
+C "C A" ? "LIG" "AA" . ? ? ? ? . 2
+"#;
+
+        let macro_mol =
+            read_mmcif_str(input, MmcifParseOptions::default()).expect("mmCIF should parse");
+        let (_, model) = macro_mol.hierarchy.models().next().expect("model exists");
+        let site = macro_mol
+            .hierarchy
+            .atom_site_for_atom(AtomId::new(0))
+            .expect("site exists");
+
+        assert_eq!(model.model_id, "2");
+        assert_eq!(site.metadata.label_atom_id, Some("C A".to_owned()));
+        assert_eq!(site.metadata.auth_atom_id, None);
+        assert_eq!(site.metadata.label_alt_id, None);
+        assert_eq!(site.metadata.occupancy, None);
+        assert_eq!(site.metadata.b_factor, None);
+    }
+
+    #[test]
+    fn mmcif_parse_rejects_missing_strict_atom_id_and_unknown_element() {
+        let missing_atom_id = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+C GLY A
+"#;
+        let err = read_mmcif_str(missing_atom_id, MmcifParseOptions::default())
+            .expect_err("strict mode should require label atom id");
+        assert!(err.message.contains("label atom id"));
+
+        let unknown_element = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+Xx CA GLY A
+"#;
+        let err = read_mmcif_str(unknown_element, MmcifParseOptions::default())
+            .expect_err("unknown element should fail");
+        assert!(err.message.contains("unknown atom-site element"));
+    }
+
+    #[test]
+    fn mmcif_parse_does_not_infer_bonds_or_perception() {
+        let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+C C1 BEN A
+C C2 BEN A
+"#;
+
+        let macro_mol =
+            read_mmcif_str(input, MmcifParseOptions::default()).expect("mmCIF should parse");
+
+        assert_eq!(macro_mol.mol.atom_count(), 2);
+        assert_eq!(macro_mol.mol.bond_count(), 0);
+        assert_eq!(macro_mol.mol.perception().rings, ComputedState::Absent);
+        assert_eq!(
+            macro_mol.mol.perception().aromaticity,
+            ComputedState::Absent
+        );
     }
 
     #[test]
