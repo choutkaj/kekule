@@ -1,6 +1,11 @@
-# molecules
+# Molecules!
 
-`molecules` is planned as a pure Rust cheminformatics and molecular-structure backend for small molecules and macromolecules.
+<p align="center">
+  <img src="assets/molecules_logo.png" alt="Molecules!" width="400">
+</p>
+
+
+`molecules` is a pure Rust cheminformatics and molecular-structure backend for small molecules and macromolecules.
 
 The repo is organized around feature-scoped development: every meaningful capability has a feature directory, validation plan, and review trail. RDKit and Biopython are reference implementations for validation only; they are not runtime dependencies of the Rust library.
 
