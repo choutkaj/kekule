@@ -5,10 +5,11 @@ use std::fmt;
 
 pub mod prelude {
     pub use crate::{
-        perceive_ring_membership, read_sdf_v2000_str, Atom, AtomId, AtomStereo, BioHierarchy, Bond,
-        BondId, BondOrder, BondStereo, ComputedState, Element, MacroMolecule, Molecule,
-        MoleculeError, PropMap, PropValue, Result, RingMembership, SdfParseError, SdfParseOptions,
-        SdfRecord, SmallMolecule,
+        perceive_aromaticity, perceive_ring_membership, read_sdf_v2000_str, AromaticityError,
+        AromaticityModel, Atom, AtomId, AtomStereo, BioHierarchy, Bond, BondId, BondOrder,
+        BondStereo, ComputedState, Element, MacroMolecule, Molecule, MoleculeError, PropMap,
+        PropValue, Result, RingMembership, SdfParseError, SdfParseOptions, SdfRecord,
+        SmallMolecule,
     };
 }
 
@@ -488,6 +489,161 @@ pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
     membership
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AromaticityModel {
+    RdkitLikeBasic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AromaticityError {
+    UnsupportedElement(AtomId),
+}
+
+impl fmt::Display for AromaticityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedElement(id) => {
+                write!(f, "unsupported aromaticity element at atom {id}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AromaticityError {}
+
+pub fn perceive_aromaticity(
+    mol: &mut Molecule,
+    model: AromaticityModel,
+) -> std::result::Result<(), AromaticityError> {
+    match model {
+        AromaticityModel::RdkitLikeBasic => perceive_rdkit_like_basic_aromaticity(mol),
+    }
+}
+
+fn perceive_rdkit_like_basic_aromaticity(
+    mol: &mut Molecule,
+) -> std::result::Result<(), AromaticityError> {
+    for atom in mol.atoms.iter_mut().flatten() {
+        atom.aromatic = false;
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        bond.aromatic = false;
+    }
+
+    let membership = if mol.perception.rings == ComputedState::Fresh {
+        mol.ring_membership
+            .clone()
+            .unwrap_or_else(|| compute_ring_membership(mol))
+    } else {
+        perceive_ring_membership(mol)
+    };
+
+    for component in aromatic_ring_components(mol, &membership) {
+        let electrons = aromatic_pi_electrons(mol, &component)?;
+        if electrons >= 2 && (electrons - 2) % 4 == 0 {
+            for atom_id in component.atoms {
+                if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+                    atom.aromatic = true;
+                }
+            }
+            for bond_id in component.bonds {
+                if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                    bond.aromatic = true;
+                }
+            }
+        }
+    }
+
+    mol.perception.aromaticity = ComputedState::Fresh;
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct AromaticComponent {
+    atoms: Vec<AtomId>,
+    bonds: Vec<BondId>,
+}
+
+fn aromatic_ring_components(mol: &Molecule, membership: &RingMembership) -> Vec<AromaticComponent> {
+    let mut visited_atoms = vec![false; mol.atoms.len()];
+    let mut components = Vec::new();
+
+    for start in membership.ring_atom_ids() {
+        if visited_atoms[start.index()] {
+            continue;
+        }
+        let mut stack = vec![start];
+        let mut atoms = Vec::new();
+        let mut bonds = Vec::new();
+        visited_atoms[start.index()] = true;
+
+        while let Some(atom_id) = stack.pop() {
+            atoms.push(atom_id);
+            if let Ok(incident) = mol.incident_bonds(atom_id) {
+                for (bond_id, bond) in incident {
+                    if !membership.bond_in_ring(bond_id) {
+                        continue;
+                    }
+                    bonds.push(bond_id);
+                    let neighbor = bond.other_atom(atom_id);
+                    if !visited_atoms[neighbor.index()] {
+                        visited_atoms[neighbor.index()] = true;
+                        stack.push(neighbor);
+                    }
+                }
+            }
+        }
+        bonds.sort();
+        bonds.dedup();
+        components.push(AromaticComponent { atoms, bonds });
+    }
+
+    components
+}
+
+fn aromatic_pi_electrons(
+    mol: &Molecule,
+    component: &AromaticComponent,
+) -> std::result::Result<u8, AromaticityError> {
+    let mut electrons = 0u8;
+    for bond_id in &component.bonds {
+        let bond = mol.bond(*bond_id).expect("component bond should be live");
+        if matches!(bond.order, BondOrder::Double | BondOrder::Aromatic) {
+            electrons += 2;
+        }
+    }
+
+    for atom_id in &component.atoms {
+        let atom = mol.atom(*atom_id).expect("component atom should be live");
+        match atom.element.symbol() {
+            "C" | "N" => {}
+            "O" | "S" | "P" => {
+                if !component_atom_has_pi_bond(mol, component, *atom_id) {
+                    electrons += 2;
+                }
+            }
+            _ => return Err(AromaticityError::UnsupportedElement(*atom_id)),
+        }
+    }
+
+    Ok(electrons)
+}
+
+fn component_atom_has_pi_bond(
+    mol: &Molecule,
+    component: &AromaticComponent,
+    atom_id: AtomId,
+) -> bool {
+    component.bonds.iter().any(|bond_id| {
+        mol.bond(*bond_id)
+            .map(|bond| {
+                (bond.a == atom_id || bond.b == atom_id)
+                    && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+            })
+            .unwrap_or(false)
+    })
+}
+
 fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.atoms.len()];
     let mut live_bonds = Vec::new();
@@ -880,6 +1036,31 @@ mod tests {
 
     fn oxygen() -> Atom {
         Atom::new(Element::from_symbol("O").expect("oxygen should be available"))
+    }
+
+    fn ring_molecule(
+        symbols: &[&str],
+        orders: &[BondOrder],
+    ) -> (Molecule, Vec<AtomId>, Vec<BondId>) {
+        assert_eq!(symbols.len(), orders.len());
+        let mut mol = Molecule::new();
+        let atoms = symbols
+            .iter()
+            .map(|symbol| {
+                mol.add_atom(Atom::new(
+                    Element::from_symbol(symbol).expect("test element should be available"),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let mut bonds = Vec::new();
+        for index in 0..atoms.len() {
+            let next = (index + 1) % atoms.len();
+            bonds.push(
+                mol.add_bond(atoms[index], atoms[next], orders[index])
+                    .expect("ring bond should be valid"),
+            );
+        }
+        (mol, atoms, bonds)
     }
 
     fn sorted_atom_ids(ids: impl IntoIterator<Item = AtomId>) -> Vec<AtomId> {
@@ -1339,6 +1520,149 @@ $$$$
         mol.add_bond(c, a, BondOrder::Single).expect("bond");
         assert_eq!(mol.perception().rings, ComputedState::Stale);
         assert!(mol.ring_membership().is_some());
+    }
+
+    #[test]
+    fn aromaticity_marks_benzene_like_ring() {
+        let (mut mol, atoms, bonds) = ring_molecule(
+            &["C", "C", "C", "C", "C", "C"],
+            &[
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+            ],
+        );
+
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+            .expect("benzene should be supported");
+
+        assert_eq!(mol.perception().aromaticity, ComputedState::Fresh);
+        assert!(atoms
+            .iter()
+            .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
+        assert!(bonds
+            .iter()
+            .all(|bond| mol.bond(*bond).expect("bond exists").aromatic));
+    }
+
+    #[test]
+    fn aromaticity_leaves_cyclohexane_and_cyclobutadiene_non_aromatic() {
+        let (mut cyclohexane, atoms, bonds) =
+            ring_molecule(&["C", "C", "C", "C", "C", "C"], &[BondOrder::Single; 6]);
+        perceive_aromaticity(&mut cyclohexane, AromaticityModel::RdkitLikeBasic)
+            .expect("cyclohexane should be supported");
+        assert!(atoms
+            .iter()
+            .all(|atom| !cyclohexane.atom(*atom).expect("atom exists").aromatic));
+        assert!(bonds
+            .iter()
+            .all(|bond| !cyclohexane.bond(*bond).expect("bond exists").aromatic));
+
+        let (mut cyclobutadiene, atoms, bonds) = ring_molecule(
+            &["C", "C", "C", "C"],
+            &[
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+            ],
+        );
+        perceive_aromaticity(&mut cyclobutadiene, AromaticityModel::RdkitLikeBasic)
+            .expect("cyclobutadiene should be supported");
+        assert!(atoms
+            .iter()
+            .all(|atom| !cyclobutadiene.atom(*atom).expect("atom exists").aromatic));
+        assert!(bonds
+            .iter()
+            .all(|bond| !cyclobutadiene.bond(*bond).expect("bond exists").aromatic));
+    }
+
+    #[test]
+    fn aromaticity_supports_basic_heteroaromatic_ring() {
+        let (mut furan_like, atoms, bonds) = ring_molecule(
+            &["O", "C", "C", "C", "C"],
+            &[
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+            ],
+        );
+
+        perceive_aromaticity(&mut furan_like, AromaticityModel::RdkitLikeBasic)
+            .expect("furan-like ring should be supported");
+
+        assert!(atoms
+            .iter()
+            .all(|atom| furan_like.atom(*atom).expect("atom exists").aromatic));
+        assert!(bonds
+            .iter()
+            .all(|bond| furan_like.bond(*bond).expect("bond exists").aromatic));
+    }
+
+    #[test]
+    fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
+        let mut mol = Molecule::new();
+        let a = mol.add_atom(carbon());
+        let b = mol.add_atom(carbon());
+        let c = mol.add_atom(carbon());
+        mol.add_bond(a, b, BondOrder::Double).expect("bond");
+        mol.add_bond(b, c, BondOrder::Single).expect("bond");
+
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+            .expect("acyclic molecule should be supported");
+
+        assert!(!mol.atom(a).expect("atom exists").aromatic);
+        assert!(!mol.bond(BondId::new(0)).expect("bond exists").aromatic);
+    }
+
+    #[test]
+    fn aromaticity_clears_existing_flags_before_assignment() {
+        let (mut mol, atoms, bonds) =
+            ring_molecule(&["C", "C", "C", "C", "C", "C"], &[BondOrder::Single; 6]);
+        for atom in &atoms {
+            mol.atom_mut(*atom).expect("atom exists").aromatic = true;
+        }
+        for bond in &bonds {
+            mol.bond_mut(*bond).expect("bond exists").aromatic = true;
+        }
+
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+            .expect("cyclohexane should be supported");
+
+        assert!(atoms
+            .iter()
+            .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
+        assert!(bonds
+            .iter()
+            .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+    }
+
+    #[test]
+    fn aromaticity_becomes_stale_after_topology_mutation() {
+        let (mut mol, atoms, _) = ring_molecule(
+            &["C", "C", "C", "C", "C", "C"],
+            &[
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+            ],
+        );
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+            .expect("benzene should be supported");
+
+        mol.add_atom(oxygen());
+        assert_eq!(mol.perception().aromaticity, ComputedState::Stale);
+        assert!(atoms
+            .iter()
+            .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
     }
 
     #[test]
