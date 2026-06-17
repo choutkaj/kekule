@@ -5,9 +5,8 @@ use std::fmt;
 
 pub mod prelude {
     pub use crate::{
-        Atom, AtomId, AtomStereo, BioHierarchy, Bond, BondId, BondOrder, BondStereo,
-        ComputedState, Element, MacroMolecule, Molecule, MoleculeError, PropMap, PropValue,
-        Result, SmallMolecule,
+        Atom, AtomId, AtomStereo, BioHierarchy, Bond, BondId, BondOrder, BondStereo, ComputedState,
+        Element, MacroMolecule, Molecule, MoleculeError, PropMap, PropValue, Result, SmallMolecule,
     };
 }
 
@@ -208,17 +207,12 @@ pub enum BondStereo {
     Unspecified,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum ComputedState {
+    #[default]
     Absent,
     Stale,
     Fresh,
-}
-
-impl Default for ComputedState {
-    fn default() -> Self {
-        Self::Absent
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -281,9 +275,10 @@ impl Molecule {
     }
 
     pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
-        self.atoms.iter().enumerate().filter_map(|(index, atom)| {
-            atom.as_ref().map(|atom| (AtomId::new(index as u32), atom))
-        })
+        self.atoms
+            .iter()
+            .enumerate()
+            .filter_map(|(index, atom)| atom.as_ref().map(|atom| (AtomId::new(index as u32), atom)))
     }
 
     pub fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
@@ -309,9 +304,10 @@ impl Molecule {
     }
 
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
-        self.bonds.iter().enumerate().filter_map(|(index, bond)| {
-            bond.as_ref().map(|bond| (BondId::new(index as u32), bond))
-        })
+        self.bonds
+            .iter()
+            .enumerate()
+            .filter_map(|(index, bond)| bond.as_ref().map(|bond| (BondId::new(index as u32), bond)))
     }
 
     pub fn props(&self) -> &PropMap {
@@ -335,9 +331,10 @@ impl Molecule {
     }
 
     fn has_bond_between(&self, a: AtomId, b: AtomId) -> bool {
-        self.bonds.iter().flatten().any(|bond| {
-            (bond.a == a && bond.b == b) || (bond.a == b && bond.b == a)
-        })
+        self.bonds
+            .iter()
+            .flatten()
+            .any(|bond| (bond.a == a && bond.b == b) || (bond.a == b && bond.b == a))
     }
 }
 
@@ -395,7 +392,9 @@ mod tests {
         let mut mol = Molecule::new();
         let a = mol.add_atom(carbon());
         let b = mol.add_atom(carbon());
-        let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond should be valid");
+        let bond = mol
+            .add_bond(a, b, BondOrder::Single)
+            .expect("bond should be valid");
 
         assert_eq!(mol.atom_count(), 2);
         assert_eq!(mol.bond_count(), 1);
@@ -407,9 +406,12 @@ mod tests {
         let mut mol = Molecule::new();
         let a = mol.add_atom(carbon());
         let b = mol.add_atom(carbon());
-        mol.add_bond(a, b, BondOrder::Single).expect("first bond should be valid");
+        mol.add_bond(a, b, BondOrder::Single)
+            .expect("first bond should be valid");
 
-        let err = mol.add_bond(a, b, BondOrder::Double).expect_err("duplicate should fail");
+        let err = mol
+            .add_bond(a, b, BondOrder::Double)
+            .expect_err("duplicate should fail");
         assert_eq!(err, MoleculeError::DuplicateBond { a, b });
     }
 
