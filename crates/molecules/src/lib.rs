@@ -5,9 +5,10 @@ use std::fmt;
 
 pub mod prelude {
     pub use crate::{
-        read_sdf_v2000_str, Atom, AtomId, AtomStereo, BioHierarchy, Bond, BondId, BondOrder,
-        BondStereo, ComputedState, Element, MacroMolecule, Molecule, MoleculeError, PropMap,
-        PropValue, Result, SdfParseError, SdfParseOptions, SdfRecord, SmallMolecule,
+        perceive_ring_membership, read_sdf_v2000_str, Atom, AtomId, AtomStereo, BioHierarchy, Bond,
+        BondId, BondOrder, BondStereo, ComputedState, Element, MacroMolecule, Molecule,
+        MoleculeError, PropMap, PropValue, Result, RingMembership, SdfParseError, SdfParseOptions,
+        SdfRecord, SmallMolecule,
     };
 }
 
@@ -254,6 +255,7 @@ pub struct Molecule {
     adjacency: Vec<Vec<BondId>>,
     props: PropMap,
     perception: PerceptionState,
+    ring_membership: Option<RingMembership>,
 }
 
 impl Molecule {
@@ -420,6 +422,10 @@ impl Molecule {
         &mut self.perception
     }
 
+    pub fn ring_membership(&self) -> Option<&RingMembership> {
+        self.ring_membership.as_ref()
+    }
+
     pub fn invalidate_topology(&mut self) {
         self.perception.invalidate_all();
     }
@@ -441,6 +447,124 @@ impl Bond {
             self.b
         } else {
             self.a
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RingMembership {
+    atom_flags: Vec<bool>,
+    bond_flags: Vec<bool>,
+}
+
+impl RingMembership {
+    pub fn atom_in_ring(&self, atom: AtomId) -> bool {
+        self.atom_flags.get(atom.index()).copied().unwrap_or(false)
+    }
+
+    pub fn bond_in_ring(&self, bond: BondId) -> bool {
+        self.bond_flags.get(bond.index()).copied().unwrap_or(false)
+    }
+
+    pub fn ring_atom_ids(&self) -> impl Iterator<Item = AtomId> + '_ {
+        self.atom_flags
+            .iter()
+            .enumerate()
+            .filter_map(|(index, in_ring)| in_ring.then_some(AtomId::new(index as u32)))
+    }
+
+    pub fn ring_bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
+        self.bond_flags
+            .iter()
+            .enumerate()
+            .filter_map(|(index, in_ring)| in_ring.then_some(BondId::new(index as u32)))
+    }
+}
+
+pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
+    let membership = compute_ring_membership(mol);
+    mol.ring_membership = Some(membership.clone());
+    mol.perception.rings = ComputedState::Fresh;
+    membership
+}
+
+fn compute_ring_membership(mol: &Molecule) -> RingMembership {
+    let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.atoms.len()];
+    let mut live_bonds = Vec::new();
+    for (bond_id, bond) in mol.bonds() {
+        graph[bond.a.index()].push((bond.b, bond_id));
+        graph[bond.b.index()].push((bond.a, bond_id));
+        live_bonds.push(bond_id);
+    }
+
+    let mut discovery = vec![None; mol.atoms.len()];
+    let mut low = vec![0usize; mol.atoms.len()];
+    let mut bridge = vec![false; mol.bonds.len()];
+    let mut time = 0usize;
+
+    for atom_id in mol.atom_ids().collect::<Vec<_>>() {
+        if discovery[atom_id.index()].is_none() {
+            ring_dfs(
+                atom_id,
+                None,
+                &graph,
+                &mut discovery,
+                &mut low,
+                &mut bridge,
+                &mut time,
+            );
+        }
+    }
+
+    let mut membership = RingMembership {
+        atom_flags: vec![false; mol.atoms.len()],
+        bond_flags: vec![false; mol.bonds.len()],
+    };
+    for bond_id in live_bonds {
+        if !bridge[bond_id.index()] {
+            let bond = mol.bond(bond_id).expect("live bond should be readable");
+            membership.bond_flags[bond_id.index()] = true;
+            membership.atom_flags[bond.a.index()] = true;
+            membership.atom_flags[bond.b.index()] = true;
+        }
+    }
+    membership
+}
+
+fn ring_dfs(
+    atom: AtomId,
+    parent_bond: Option<BondId>,
+    graph: &[Vec<(AtomId, BondId)>],
+    discovery: &mut [Option<usize>],
+    low: &mut [usize],
+    bridge: &mut [bool],
+    time: &mut usize,
+) {
+    discovery[atom.index()] = Some(*time);
+    low[atom.index()] = *time;
+    *time += 1;
+
+    for (neighbor, bond_id) in &graph[atom.index()] {
+        if Some(*bond_id) == parent_bond {
+            continue;
+        }
+        if discovery[neighbor.index()].is_none() {
+            ring_dfs(
+                *neighbor,
+                Some(*bond_id),
+                graph,
+                discovery,
+                low,
+                bridge,
+                time,
+            );
+            low[atom.index()] = low[atom.index()].min(low[neighbor.index()]);
+            if low[neighbor.index()] > discovery[atom.index()].expect("atom is discovered") {
+                bridge[bond_id.index()] = true;
+            }
+        } else {
+            low[atom.index()] =
+                low[atom.index()].min(discovery[neighbor.index()].expect("neighbor discovered"));
         }
     }
 }
@@ -1095,6 +1219,126 @@ $$$$
             mol.bond(BondId::new(0)).expect("bond exists").order,
             BondOrder::Aromatic
         );
+    }
+
+    #[test]
+    fn ring_membership_empty_and_linear_molecules_have_no_rings() {
+        let mut empty = Molecule::new();
+        let empty_membership = perceive_ring_membership(&mut empty);
+        assert!(empty_membership.ring_atom_ids().next().is_none());
+        assert!(empty_membership.ring_bond_ids().next().is_none());
+
+        let mut chain = Molecule::new();
+        let a = chain.add_atom(carbon());
+        let b = chain.add_atom(carbon());
+        let c = chain.add_atom(carbon());
+        let ab = chain
+            .add_bond(a, b, BondOrder::Single)
+            .expect("bond should be valid");
+        let bc = chain
+            .add_bond(b, c, BondOrder::Single)
+            .expect("bond should be valid");
+        let chain_membership = perceive_ring_membership(&mut chain);
+
+        assert!(!chain_membership.atom_in_ring(a));
+        assert!(!chain_membership.atom_in_ring(b));
+        assert!(!chain_membership.bond_in_ring(ab));
+        assert!(!chain_membership.bond_in_ring(bc));
+        assert_eq!(chain.perception().rings, ComputedState::Fresh);
+    }
+
+    #[test]
+    fn ring_membership_marks_triangle_atoms_and_bonds() {
+        let mut mol = Molecule::new();
+        let a = mol.add_atom(carbon());
+        let b = mol.add_atom(carbon());
+        let c = mol.add_atom(carbon());
+        let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+        let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
+        let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
+
+        let membership = perceive_ring_membership(&mut mol);
+
+        assert_eq!(sorted_atom_ids(membership.ring_atom_ids()), vec![a, b, c]);
+        assert_eq!(
+            sorted_bond_ids(membership.ring_bond_ids()),
+            vec![ab, bc, ca]
+        );
+    }
+
+    #[test]
+    fn ring_membership_excludes_tail_from_ring() {
+        let mut mol = Molecule::new();
+        let a = mol.add_atom(carbon());
+        let b = mol.add_atom(carbon());
+        let c = mol.add_atom(carbon());
+        let tail = mol.add_atom(oxygen());
+        let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+        let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
+        let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
+        let tail_bond = mol.add_bond(c, tail, BondOrder::Single).expect("bond");
+
+        let membership = perceive_ring_membership(&mut mol);
+
+        assert_eq!(sorted_atom_ids(membership.ring_atom_ids()), vec![a, b, c]);
+        assert_eq!(
+            sorted_bond_ids(membership.ring_bond_ids()),
+            vec![ab, bc, ca]
+        );
+        assert!(!membership.atom_in_ring(tail));
+        assert!(!membership.bond_in_ring(tail_bond));
+    }
+
+    #[test]
+    fn ring_membership_handles_fused_and_disconnected_components() {
+        let mut mol = Molecule::new();
+        let a = mol.add_atom(carbon());
+        let b = mol.add_atom(carbon());
+        let c = mol.add_atom(carbon());
+        let d = mol.add_atom(carbon());
+        let isolated_a = mol.add_atom(oxygen());
+        let isolated_b = mol.add_atom(oxygen());
+        let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+        let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
+        let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
+        let cd = mol.add_bond(c, d, BondOrder::Single).expect("bond");
+        let da = mol.add_bond(d, a, BondOrder::Single).expect("bond");
+        let bridge = mol
+            .add_bond(isolated_a, isolated_b, BondOrder::Single)
+            .expect("bond");
+
+        let membership = perceive_ring_membership(&mut mol);
+
+        assert_eq!(
+            sorted_atom_ids(membership.ring_atom_ids()),
+            vec![a, b, c, d]
+        );
+        assert_eq!(
+            sorted_bond_ids(membership.ring_bond_ids()),
+            vec![ab, bc, ca, cd, da]
+        );
+        assert!(!membership.bond_in_ring(bridge));
+    }
+
+    #[test]
+    fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
+        let mut mol = Molecule::new();
+        let a = mol.add_atom(carbon());
+        let b = mol.add_atom(carbon());
+        let c = mol.add_atom(carbon());
+        let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+        let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
+        let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
+        mol.delete_bond(ca).expect("bond should delete");
+
+        let membership = perceive_ring_membership(&mut mol);
+        assert!(!membership.bond_in_ring(ab));
+        assert!(!membership.bond_in_ring(bc));
+        assert!(!membership.bond_in_ring(ca));
+
+        mol.add_bond(c, a, BondOrder::Single).expect("bond");
+        assert_eq!(mol.perception().rings, ComputedState::Stale);
+        assert!(mol.ring_membership().is_some());
     }
 
     #[test]
