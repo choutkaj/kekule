@@ -1,0 +1,14 @@
+feature_id = "bio.hierarchy.smcra"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-17-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "../io.mmcif.parse/fixtures/valid/minimal_peptide.cif",
+  "../io.mmcif.parse/fixtures/valid/multi_model_altloc_hetero.cif",
+]
+
+notes = [
+  "Reference Biopython goldens have not been generated yet.",
+  "These fixtures should be used to compare hierarchy normalization once golden generation exists.",
+]

@@ -1,0 +1,13 @@
+feature_id = "algo.rings.fast"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-17-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "fixtures/ring_membership_cases.sdf",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "Fixtures include acyclic, monocyclic, tail, fused, and disconnected graph cases.",
+]

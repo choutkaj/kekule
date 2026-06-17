@@ -1,0 +1,17 @@
+feature_id = "io.sdf.v2000.parse"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-17-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "fixtures/valid/minimal_ethanol.sdf",
+  "fixtures/valid/multi_record_properties.sdf",
+  "fixtures/valid/charged_isotope_records.sdf",
+  "fixtures/invalid/v3000_unsupported.sdf",
+  "fixtures/invalid/bad_bond_endpoint.sdf",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "M CHG and M ISO fixtures are intentionally included even if current parsing ignores them.",
+]

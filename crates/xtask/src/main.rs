@@ -71,6 +71,11 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             "validation manifest uses {} {}",
             manifest.reference_tool, manifest.reference_version
         );
+        validate_manifest_paths(&manifest_path, &manifest)?;
+        println!(
+            "validation manifest lists {} fixture(s)",
+            manifest.fixtures.len()
+        );
     } else {
         println!("no reference validation manifest configured for `{feature}`");
     }
@@ -164,13 +169,30 @@ fn required(
 
 fn parse_simple_toml(text: &str) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
+    let mut pending: Option<(String, String)> = None;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        if let Some((key, mut value)) = pending.take() {
+            value.push(' ');
+            value.push_str(line);
+            if line.ends_with(']') {
+                map.insert(key, normalize_value(&value));
+            } else {
+                pending = Some((key, value));
+            }
+            continue;
+        }
         if let Some((key, value)) = line.split_once('=') {
-            map.insert(key.trim().to_owned(), normalize_value(value));
+            let key = key.trim().to_owned();
+            let value = value.trim();
+            if value.starts_with('[') && !value.ends_with(']') {
+                pending = Some((key, value.to_owned()));
+            } else {
+                map.insert(key, normalize_value(value));
+            }
         }
     }
     map
@@ -213,6 +235,7 @@ fn parse_string_array(value: &str) -> Option<Vec<String>> {
     }
     inner
         .split(',')
+        .filter(|item| !item.trim().is_empty())
         .map(|item| {
             let item = item.trim();
             if item.starts_with('"') && item.ends_with('"') && item.len() >= 2 {
@@ -303,6 +326,7 @@ struct ValidationManifest {
     feature_id: String,
     reference_tool: String,
     reference_version: String,
+    fixtures: Vec<String>,
 }
 
 fn validation_manifest_path(feature: &str) -> PathBuf {
@@ -319,7 +343,46 @@ fn read_validation_manifest(path: &Path) -> Result<ValidationManifest, Box<dyn E
         feature_id: required(&map, "feature_id", path)?,
         reference_tool: required(&map, "reference_tool", path)?,
         reference_version: required(&map, "reference_version", path)?,
+        fixtures: optional_string_array(&map, "fixtures", path)?,
     })
+}
+
+fn optional_string_array(
+    map: &BTreeMap<String, String>,
+    key: &str,
+    path: &Path,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    match map.get(key) {
+        Some(value) => parse_string_array(value).ok_or_else(|| {
+            boxed_error(format!(
+                "{} has invalid string array `{key}` value `{value}`",
+                path.display()
+            ))
+        }),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn validate_manifest_paths(
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+) -> Result<(), Box<dyn Error>> {
+    let base = manifest_path.parent().ok_or_else(|| {
+        boxed_error(format!(
+            "{} has no parent directory",
+            manifest_path.display()
+        ))
+    })?;
+    for fixture in &manifest.fixtures {
+        let path = base.join(fixture);
+        if !path.exists() {
+            return Err(boxed_error(format!(
+                "{} references missing fixture `{fixture}`",
+                manifest_path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn normalize_value(value: &str) -> String {
@@ -407,6 +470,27 @@ mod tests {
             ])
         );
         assert_eq!(parse_string_array("[core.graph]"), None);
+    }
+
+    #[test]
+    fn simple_toml_parser_accepts_multiline_string_arrays() {
+        let parsed = parse_simple_toml(
+            r#"
+            feature_id = "io.sdf.v2000.parse"
+            fixtures = [
+              "fixtures/a.sdf",
+              "fixtures/b.sdf",
+            ]
+            "#,
+        );
+
+        assert_eq!(
+            parse_string_array(parsed.get("fixtures").expect("fixtures should parse")),
+            Some(vec![
+                "fixtures/a.sdf".to_owned(),
+                "fixtures/b.sdf".to_owned()
+            ])
+        );
     }
 
     #[test]
@@ -622,6 +706,46 @@ depends_on = ["missing.feature"]
             validation_manifest_path("core.graph"),
             PathBuf::from("validation/features/core.graph/validation.toml")
         );
+    }
+
+    #[test]
+    fn validation_manifest_reads_and_checks_fixture_paths() {
+        let root = temp_feature_root("validation-manifest");
+        let feature_dir = root.join("validation").join("features").join("example");
+        let fixture_dir = feature_dir.join("fixtures");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir should create");
+        fs::write(fixture_dir.join("ok.txt"), "{}").expect("fixture should write");
+        let manifest_path = feature_dir.join("validation.toml");
+        fs::write(
+            &manifest_path,
+            r#"feature_id = "example"
+reference_tool = "manual-fixtures"
+reference_version = "test"
+fixtures = [
+  "fixtures/ok.txt",
+]
+"#,
+        )
+        .expect("manifest should write");
+
+        let manifest = read_validation_manifest(&manifest_path).expect("manifest should parse");
+        assert_eq!(manifest.fixtures, vec!["fixtures/ok.txt"]);
+        validate_manifest_paths(&manifest_path, &manifest).expect("fixture should exist");
+
+        fs::write(
+            &manifest_path,
+            r#"feature_id = "example"
+reference_tool = "manual-fixtures"
+reference_version = "test"
+fixtures = [
+  "fixtures/missing.txt",
+]
+"#,
+        )
+        .expect("manifest should rewrite");
+        let manifest = read_validation_manifest(&manifest_path).expect("manifest should parse");
+        assert!(validate_manifest_paths(&manifest_path, &manifest).is_err());
+        fs::remove_dir_all(root).ok();
     }
 
     fn temp_feature_root(label: &str) -> PathBuf {

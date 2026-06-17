@@ -1,0 +1,15 @@
+feature_id = "io.mmcif.parse"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-17-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "fixtures/valid/minimal_peptide.cif",
+  "fixtures/valid/multi_model_altloc_hetero.cif",
+  "fixtures/invalid/missing_atom_identifier.cif",
+]
+
+notes = [
+  "Reference Biopython goldens have not been generated yet.",
+  "Fixtures intentionally include hierarchy edge cases before all semantics are fully supported.",
+]

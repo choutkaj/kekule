@@ -1,0 +1,13 @@
+feature_id = "algo.aromaticity.rdkit-like-basic"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-17-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "fixtures/aromaticity_basic_cases.sdf",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "Fixtures include expected-pass common cases and expected-pressure hetero/charged cases.",
+]

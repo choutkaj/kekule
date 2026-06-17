@@ -1,0 +1,30 @@
+data_minimal_peptide
+#
+_entry.id minimal_peptide
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.auth_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . GLY GLY A A 1 10 ? 1.00 12.0 0.000 0.000 0.000 1
+ATOM 2 C CA . GLY GLY A A 1 10 ? 1.00 12.5 1.200 0.000 0.000 1
+ATOM 3 C C . GLY GLY A A 1 10 ? 1.00 13.0 2.000 1.000 0.000 1
+ATOM 4 O O . GLY GLY A A 1 10 ? 1.00 13.5 2.000 2.200 0.000 1
+ATOM 5 N N . ALA ALA A A 2 11 ? 1.00 14.0 3.200 0.800 0.000 1
+#
