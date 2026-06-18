@@ -23,3 +23,4 @@ These rules apply to AI agents working in this repository.
 8. Biomolecular labels belong in `BioHierarchy`, not in core `Atom`, unless chemically general.
 9. Algorithms must document assumptions and edge cases.
 10. The dashboard is generated from feature metadata; do not hand-edit `features/DASHBOARD.md`.
+11. Every tracked feature must have schema-v2 `feature.toml` and canonical `feature.md`; do not recreate split feature docs.

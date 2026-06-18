@@ -48,4 +48,4 @@ Reference tools are used only in validation infrastructure: RDKit for small mole
 
 ## Feature-driven development
 
-Every nontrivial capability gets a directory under `features/`. The feature metadata is the source of truth. The generated dashboard is derived from feature metadata and should not be hand-edited.
+Every nontrivial capability gets a directory under `features/`. `feature.toml` is the machine-readable source of truth, and `feature.md` is the human-readable source of truth. The generated dashboard is derived from feature metadata and should not be hand-edited.

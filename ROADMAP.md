@@ -5,7 +5,7 @@
 - Cargo workspace and CI.
 - Minimal `molecules` crate skeleton.
 - Feature registry, dashboard, and templates.
-- Codex skills for research, planning, implementation, and review.
+- Codex skills for feature work and independent review.
 - Core atom/bond/graph/property/conformer data structures.
 
 ## P0: first chemistry features

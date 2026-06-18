@@ -7,7 +7,7 @@
 
 `molecules` is a pure Rust cheminformatics and molecular-structure backend for small molecules and macromolecules.
 
-The repo is organized around feature-scoped development: every meaningful capability has a feature directory, validation plan, and review trail. RDKit and Biopython are reference implementations for validation only; they are not runtime dependencies of the Rust library.
+The repo is organized around feature-scoped development: every meaningful capability has a feature directory with machine-readable `feature.toml` metadata and one canonical human-readable `feature.md`. RDKit and Biopython are reference implementations for validation only; they are not runtime dependencies of the Rust library.
 
 ## Current scaffold
 
@@ -15,7 +15,7 @@ The repo is organized around feature-scoped development: every meaningful capabi
 - Minimal pure Rust molecule data model skeleton.
 - Architecture, roadmap, agent rules, and contribution docs.
 - Feature registry, generated dashboard, and feature templates.
-- Codex skills for feature research, planning, implementation, and review.
+- Codex skills for feature work and independent feature review.
 - Reference-validation directories for RDKit and Biopython.
 
 ## Common commands
@@ -24,6 +24,7 @@ The repo is organized around feature-scoped development: every meaningful capabi
 cargo test --workspace
 cargo xtask dashboard
 cargo xtask dashboard --check
+cargo xtask skills --check
 cargo xtask validate --feature core.graph
 ```
 

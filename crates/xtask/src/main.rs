@@ -18,6 +18,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("dashboard") => dashboard(args.collect()),
         Some("validate") => validate(args.collect()),
         Some("features") => list_features(),
+        Some("skills") => skills(args.collect()),
         _ => {
             print_help();
             Ok(())
@@ -26,7 +27,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn print_help() {
-    eprintln!("usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID\n  cargo xtask features");
+    eprintln!(
+        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID\n  cargo xtask skills --check\n  cargo xtask features"
+    );
 }
 
 fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -84,8 +87,20 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
 fn list_features() -> Result<(), Box<dyn Error>> {
     for feature in read_features()? {
-        println!("{}\t{}\t{}", feature.id, feature.priority, feature.status);
+        println!(
+            "{}\t{}\tv{}\timplemented={}\tvalidated={}",
+            feature.id, feature.area, feature.version, feature.implemented, feature.validated
+        );
     }
+    Ok(())
+}
+
+fn skills(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    if args.iter().any(|arg| arg != "--check") {
+        return Err(boxed_error("usage: cargo xtask skills --check"));
+    }
+    check_skills(Path::new(".codex/skills"))?;
+    println!("repo-local feature skills are in sync");
     Ok(())
 }
 
@@ -100,11 +115,9 @@ struct Feature {
     id: String,
     title: String,
     area: String,
-    priority: String,
-    status: String,
+    version: u32,
     implemented: bool,
     validated: bool,
-    last_ai_review: String,
     description: String,
     depends_on: Vec<String>,
 }
@@ -141,15 +154,14 @@ fn is_hidden_or_template(path: &Path) -> bool {
 fn read_feature(path: &Path) -> Result<Feature, Box<dyn Error>> {
     let text = fs::read_to_string(path)?;
     let map = parse_simple_toml(&text);
+    reject_deprecated_feature_keys(&map, path)?;
     let feature = Feature {
         id: required(&map, "id", path)?,
         title: required(&map, "title", path)?,
         area: required(&map, "area", path)?,
-        priority: required(&map, "priority", path)?,
-        status: required(&map, "status", path)?,
+        version: required_u32(&map, "version", path)?,
         implemented: required_bool(&map, "implemented", path)?,
         validated: required_bool(&map, "validated", path)?,
-        last_ai_review: required(&map, "last_ai_review", path)?,
         description: required(&map, "description", path)?,
         depends_on: required_string_array(&map, "depends_on", path)?,
     };
@@ -165,6 +177,21 @@ fn required(
     map.get(key)
         .cloned()
         .ok_or_else(|| boxed_error(format!("{} is missing `{key}`", path.display())))
+}
+
+fn reject_deprecated_feature_keys(
+    map: &BTreeMap<String, String>,
+    path: &Path,
+) -> Result<(), Box<dyn Error>> {
+    for key in ["priority", "status", "last_ai_review"] {
+        if map.contains_key(key) {
+            return Err(boxed_error(format!(
+                "{} uses deprecated feature metadata key `{key}`",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn parse_simple_toml(text: &str) -> BTreeMap<String, String> {
@@ -211,6 +238,27 @@ fn required_bool(
             path.display()
         ))),
     }
+}
+
+fn required_u32(
+    map: &BTreeMap<String, String>,
+    key: &str,
+    path: &Path,
+) -> Result<u32, Box<dyn Error>> {
+    let value = required(map, key, path)?;
+    let parsed = value.parse::<u32>().map_err(|_| {
+        boxed_error(format!(
+            "{} has invalid integer `{key}` value `{value}`",
+            path.display()
+        ))
+    })?;
+    if parsed == 0 {
+        return Err(boxed_error(format!(
+            "{} has invalid zero `{key}` value",
+            path.display()
+        )));
+    }
+    Ok(parsed)
 }
 
 fn required_string_array(
@@ -269,7 +317,6 @@ fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box<dyn Error>
         ("title", feature.title.as_str()),
         ("area", feature.area.as_str()),
         ("description", feature.description.as_str()),
-        ("last_ai_review", feature.last_ai_review.as_str()),
     ] {
         if value.trim().is_empty() {
             return Err(boxed_error(format!(
@@ -278,21 +325,11 @@ fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box<dyn Error>
             )));
         }
     }
-    if !matches!(feature.priority.as_str(), "P0" | "P1" | "P2" | "P3") {
+    let feature_doc = path.with_file_name("feature.md");
+    if !feature_doc.exists() {
         return Err(boxed_error(format!(
-            "{} has invalid priority `{}`",
-            path.display(),
-            feature.priority
-        )));
-    }
-    if !matches!(
-        feature.status.as_str(),
-        "planned" | "implemented" | "validated" | "deferred" | "blocked"
-    ) {
-        return Err(boxed_error(format!(
-            "{} has invalid status `{}`",
-            path.display(),
-            feature.status
+            "{} is missing required feature.md",
+            path.parent().unwrap_or_else(|| Path::new(".")).display()
         )));
     }
     Ok(())
@@ -398,30 +435,135 @@ fn render_dashboard(features: &[Feature]) -> String {
     let mut out = String::new();
     out.push_str("# Feature Dashboard\n\n");
     out.push_str("Generated from `features/*/feature.toml`. Do not hand-edit this file.\n\n");
-    out.push_str("| Feature | Title | Area | Priority | Status | Implemented | Validated | Last AI review |\n");
-    out.push_str("|---|---|---|---|---|---|---|---|\n");
+    out.push_str("| Feature | Title | Area | Version | Implemented | Validated |\n");
+    out.push_str("|---|---|---|---:|:---:|:---:|\n");
     for feature in features {
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} |\n",
             feature.id,
             feature.title,
             feature.area,
-            feature.priority,
-            feature.status,
-            yes_no(feature.implemented),
-            yes_no(feature.validated),
-            feature.last_ai_review
+            feature.version,
+            checkmark(feature.implemented),
+            checkmark(feature.validated)
         ));
     }
     out
 }
 
-fn yes_no(value: bool) -> &'static str {
+fn checkmark(value: bool) -> &'static str {
     if value {
-        "yes"
+        "✅"
     } else {
-        "no"
+        "❌"
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SkillMetadata {
+    name: String,
+    description: String,
+}
+
+fn check_skills(root: &Path) -> Result<(), Box<dyn Error>> {
+    for expected in expected_skills() {
+        let path = root.join(expected.name).join("SKILL.md");
+        if !path.exists() {
+            return Err(boxed_error(format!(
+                "missing repo-local skill `{}` at {}",
+                expected.name,
+                path.display()
+            )));
+        }
+        let text = fs::read_to_string(&path)?;
+        let metadata = parse_skill_metadata(&text, &path)?;
+        if metadata.name != expected.name {
+            return Err(boxed_error(format!(
+                "{} declares skill name `{}`, expected `{}`",
+                path.display(),
+                metadata.name,
+                expected.name
+            )));
+        }
+        let lower = text.to_lowercase();
+        for required in expected.required_phrases {
+            if !lower.contains(&required.to_lowercase()) {
+                return Err(boxed_error(format!(
+                    "{} is missing required phrase `{required}`",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+struct ExpectedSkill {
+    name: &'static str,
+    required_phrases: &'static [&'static str],
+}
+
+fn expected_skills() -> &'static [ExpectedSkill] {
+    &[
+        ExpectedSkill {
+            name: "feature-work",
+            required_phrases: &[
+                "add -> optional research -> plan -> implement",
+                "feature.md",
+                "implemented = true",
+                "validated = true",
+                "cargo xtask dashboard --check",
+                "cargo xtask validate --feature",
+            ],
+        },
+        ExpectedSkill {
+            name: "feature-review",
+            required_phrases: &[
+                "independent audit",
+                "architecture",
+                "validation claims",
+                "feature.md",
+                "cargo test --workspace",
+                "cargo xtask validate --feature",
+            ],
+        },
+    ]
+}
+
+fn parse_skill_metadata(text: &str, path: &Path) -> Result<SkillMetadata, Box<dyn Error>> {
+    let mut lines = text.lines();
+    if lines.next() != Some("---") {
+        return Err(boxed_error(format!(
+            "{} is missing YAML frontmatter",
+            path.display()
+        )));
+    }
+    let mut fields = BTreeMap::<String, String>::new();
+    for line in lines.by_ref() {
+        if line == "---" {
+            let name = fields
+                .get("name")
+                .cloned()
+                .ok_or_else(|| boxed_error(format!("{} is missing `name`", path.display())))?;
+            let description = fields.get("description").cloned().ok_or_else(|| {
+                boxed_error(format!("{} is missing `description`", path.display()))
+            })?;
+            if name.trim().is_empty() || description.trim().is_empty() {
+                return Err(boxed_error(format!(
+                    "{} has empty skill frontmatter",
+                    path.display()
+                )));
+            }
+            return Ok(SkillMetadata { name, description });
+        }
+        if let Some((key, value)) = line.split_once(':') {
+            fields.insert(key.trim().to_owned(), value.trim().to_owned());
+        }
+    }
+    Err(boxed_error(format!(
+        "{} has unterminated YAML frontmatter",
+        path.display()
+    )))
 }
 
 fn boxed_error(message: impl Into<String>) -> Box<dyn Error> {
@@ -502,11 +644,9 @@ mod tests {
             r#"id = "example.feature"
 title = "Example"
 area = "infrastructure"
-priority = "P1"
-status = "planned"
+version = 2
 implemented = false
 validated = true
-last_ai_review = "2026-06-17"
 description = "Example feature."
 depends_on = ["core.graph"]
 "#,
@@ -516,7 +656,7 @@ depends_on = ["core.graph"]
             .expect("feature should parse");
 
         assert_eq!(feature.id, "example.feature");
-        assert_eq!(feature.priority, "P1");
+        assert_eq!(feature.version, 2);
         assert!(!feature.implemented);
         assert!(feature.validated);
         assert_eq!(feature.depends_on, vec!["core.graph"]);
@@ -524,7 +664,7 @@ depends_on = ["core.graph"]
     }
 
     #[test]
-    fn read_feature_rejects_bad_boolean_priority_status_and_directory_mismatch() {
+    fn read_feature_rejects_bad_boolean_deprecated_keys_missing_docs_and_directory_mismatch() {
         let root = temp_feature_root("bad-feature");
         write_feature(
             &root,
@@ -532,11 +672,9 @@ depends_on = ["core.graph"]
             r#"id = "bad.bool"
 title = "Bad"
 area = "infrastructure"
-priority = "P0"
-status = "planned"
+version = 1
 implemented = maybe
 validated = false
-last_ai_review = "2026-06-17"
 description = "Bad feature."
 depends_on = []
 "#,
@@ -545,37 +683,49 @@ depends_on = []
 
         write_feature(
             &root,
-            "bad.priority",
-            r#"id = "bad.priority"
+            "bad.deprecated",
+            r#"id = "bad.deprecated"
 title = "Bad"
 area = "infrastructure"
-priority = "P9"
-status = "planned"
+version = 1
+priority = "P0"
 implemented = false
 validated = false
-last_ai_review = "2026-06-17"
 description = "Bad feature."
 depends_on = []
 "#,
         );
-        assert!(read_feature(&root.join("bad.priority").join("feature.toml")).is_err());
+        assert!(read_feature(&root.join("bad.deprecated").join("feature.toml")).is_err());
 
         write_feature(
             &root,
-            "bad.status",
-            r#"id = "bad.status"
+            "bad.version",
+            r#"id = "bad.version"
 title = "Bad"
 area = "infrastructure"
-priority = "P0"
-status = "maybe"
+version = 0
 implemented = false
 validated = false
-last_ai_review = "2026-06-17"
 description = "Bad feature."
 depends_on = []
 "#,
         );
-        assert!(read_feature(&root.join("bad.status").join("feature.toml")).is_err());
+        assert!(read_feature(&root.join("bad.version").join("feature.toml")).is_err());
+
+        write_feature_without_doc(
+            &root,
+            "missing.doc",
+            r#"id = "missing.doc"
+title = "Bad"
+area = "infrastructure"
+version = 1
+implemented = false
+validated = false
+description = "Bad feature."
+depends_on = []
+"#,
+        );
+        assert!(read_feature(&root.join("missing.doc").join("feature.toml")).is_err());
 
         write_feature(
             &root,
@@ -583,11 +733,9 @@ depends_on = []
             r#"id = "wrong.id"
 title = "Bad"
 area = "infrastructure"
-priority = "P0"
-status = "planned"
+version = 1
 implemented = false
 validated = false
-last_ai_review = "2026-06-17"
 description = "Bad feature."
 depends_on = []
 "#,
@@ -605,11 +753,9 @@ depends_on = []
             r#"id = "z.feature"
 title = "Zed"
 area = "core"
-priority = "P0"
-status = "implemented"
+version = 1
 implemented = true
 validated = false
-last_ai_review = "2026-06-17"
 description = "Z feature."
 depends_on = ["a.feature"]
 "#,
@@ -620,11 +766,9 @@ depends_on = ["a.feature"]
             r#"id = "a.feature"
 title = "Aye"
 area = "core"
-priority = "P0"
-status = "planned"
+version = 1
 implemented = false
 validated = false
-last_ai_review = "2026-06-17"
 description = "A feature."
 depends_on = []
 "#,
@@ -649,11 +793,9 @@ depends_on = []
             r#"id = "bad.dependency"
 title = "Bad"
 area = "core"
-priority = "P0"
-status = "planned"
+version = 1
 implemented = false
 validated = false
-last_ai_review = "2026-06-17"
 description = "Bad dependency."
 depends_on = ["missing.feature"]
 "#,
@@ -669,11 +811,9 @@ depends_on = ["missing.feature"]
                 id: "a.feature".to_owned(),
                 title: "Aye".to_owned(),
                 area: "core".to_owned(),
-                priority: "P0".to_owned(),
-                status: "planned".to_owned(),
+                version: 1,
                 implemented: false,
                 validated: false,
-                last_ai_review: "2026-06-17".to_owned(),
                 description: "A feature.".to_owned(),
                 depends_on: Vec::new(),
             },
@@ -681,11 +821,9 @@ depends_on = ["missing.feature"]
                 id: "z.feature".to_owned(),
                 title: "Zed".to_owned(),
                 area: "io".to_owned(),
-                priority: "P1".to_owned(),
-                status: "implemented".to_owned(),
+                version: 3,
                 implemented: true,
                 validated: false,
-                last_ai_review: "2026-06-18".to_owned(),
                 description: "Z feature.".to_owned(),
                 depends_on: vec!["a.feature".to_owned()],
             },
@@ -693,11 +831,52 @@ depends_on = ["missing.feature"]
 
         let dashboard = render_dashboard(&features);
 
-        assert!(dashboard
-            .contains("| `a.feature` | Aye | core | P0 | planned | no | no | 2026-06-17 |"));
-        assert!(dashboard
-            .contains("| `z.feature` | Zed | io | P1 | implemented | yes | no | 2026-06-18 |"));
+        assert!(
+            dashboard.contains("| Feature | Title | Area | Version | Implemented | Validated |")
+        );
+        assert!(dashboard.contains("| `a.feature` | Aye | core | 1 | ❌ | ❌ |"));
+        assert!(dashboard.contains("| `z.feature` | Zed | io | 3 | ✅ | ❌ |"));
         assert!(dashboard.ends_with('\n'));
+    }
+
+    #[test]
+    fn skill_metadata_parser_and_check_validate_repo_skill_contract() {
+        let root = temp_feature_root("skills-check");
+        write_skill(
+            &root,
+            "feature-work",
+            r#"---
+name: feature-work
+description: Builder skill.
+---
+# Feature Work
+add -> optional research -> plan -> implement
+Use feature.md. Only set implemented = true and validated = true with evidence.
+Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id>.
+"#,
+        );
+        write_skill(
+            &root,
+            "feature-review",
+            r#"---
+name: feature-review
+description: Review skill.
+---
+# Feature Review
+Independent audit for architecture and validation claims.
+Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <feature-id>.
+"#,
+        );
+
+        check_skills(&root).expect("skills should pass");
+
+        fs::write(
+            root.join("feature-review").join("SKILL.md"),
+            "# Missing frontmatter",
+        )
+        .expect("skill should rewrite");
+        assert!(check_skills(&root).is_err());
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -763,5 +942,18 @@ fixtures = [
         let dir = root.join(id);
         fs::create_dir_all(&dir).expect("feature dir should create");
         fs::write(dir.join("feature.toml"), metadata).expect("feature metadata should write");
+        fs::write(dir.join("feature.md"), "# Feature\n").expect("feature doc should write");
+    }
+
+    fn write_feature_without_doc(root: &Path, id: &str, metadata: &str) {
+        let dir = root.join(id);
+        fs::create_dir_all(&dir).expect("feature dir should create");
+        fs::write(dir.join("feature.toml"), metadata).expect("feature metadata should write");
+    }
+
+    fn write_skill(root: &Path, name: &str, text: &str) {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).expect("skill dir should create");
+        fs::write(dir.join("SKILL.md"), text).expect("skill should write");
     }
 }

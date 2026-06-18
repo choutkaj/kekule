@@ -1,10 +1,8 @@
 id = "bio.hierarchy.smcra"
 title = "SMCRA-like biomolecular hierarchy"
 area = "bio"
-priority = "P0"
-status = "implemented"
+version = 1
 implemented = true
 validated = false
-last_ai_review = "2026-06-17"
 description = "Represent model, chain, residue, and atom-site hierarchy as a sidecar over the core molecule graph."
 depends_on = ["core.graph"]

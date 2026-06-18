@@ -18,3 +18,4 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo xtask dashboard --check
+      - run: cargo xtask skills --check

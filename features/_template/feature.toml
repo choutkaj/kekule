@@ -1,11 +1,9 @@
 id = "area.name"
 title = "Human-readable feature title"
 area = "core"
-priority = "P0"
-status = "planned"
+version = 1
 implemented = false
 validated = false
-last_ai_review = "YYYY-MM-DD"
 description = "One-sentence description."
 
 # depends_on = ["core.graph"]
