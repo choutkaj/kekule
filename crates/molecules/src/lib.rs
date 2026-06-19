@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 pub mod prelude {
@@ -2073,77 +2073,211 @@ pub fn write_smiles(
     _options: SmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
     let mol = &molecule.mol;
-    let mut visited = BTreeMap::<AtomId, ()>::new();
-    let mut ring_numbers = BTreeMap::<(AtomId, AtomId), usize>::new();
-    let mut next_ring = 1usize;
+    let plan = plan_smiles_write(mol)?;
     let mut parts = Vec::new();
+    for start in &plan.roots {
+        parts.push(write_smiles_component(mol, *start, None, &plan)?);
+    }
+    Ok(parts.join("."))
+}
+
+#[derive(Debug, Clone)]
+struct SmilesWritePlan {
+    roots: Vec<AtomId>,
+    tree_bonds: BTreeSet<BondId>,
+    closures: BTreeMap<AtomId, Vec<(usize, BondOrder)>>,
+    subtree_sizes: BTreeMap<AtomId, usize>,
+}
+
+fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, MolWriteError> {
+    let mut roots = Vec::new();
+    let mut visited = BTreeSet::<AtomId>::new();
+    let mut tree_bonds = BTreeSet::<BondId>::new();
+    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, BondOrder)>::new();
+
     for start in mol.atom_ids() {
-        if visited.contains_key(&start) {
+        if visited.contains(&start) {
             continue;
         }
-        parts.push(write_smiles_component(
+        roots.push(start);
+        collect_smiles_tree(
             mol,
             start,
             None,
             &mut visited,
-            &mut ring_numbers,
-            &mut next_ring,
-        )?);
+            &mut tree_bonds,
+            &mut ring_bonds,
+        )?;
     }
-    Ok(parts.join("."))
+
+    let mut ring_bonds = ring_bonds
+        .into_iter()
+        .map(|(bond_id, (a, b, order))| {
+            let (first, second) = ordered_atom_pair(a, b);
+            (bond_id, first, second, order)
+        })
+        .collect::<Vec<_>>();
+    ring_bonds.sort_by_key(|(bond_id, first, second, _)| (*first, *second, *bond_id));
+
+    let mut closures = BTreeMap::<AtomId, Vec<(usize, BondOrder)>>::new();
+    for (index, (_, first, second, order)) in ring_bonds.into_iter().enumerate() {
+        let number = index + 1;
+        closures.entry(first).or_default().push((number, order));
+        closures.entry(second).or_default().push((number, order));
+    }
+
+    let mut subtree_sizes = BTreeMap::new();
+    for root in &roots {
+        compute_smiles_subtree_sizes(mol, *root, None, &tree_bonds, &mut subtree_sizes)?;
+    }
+
+    Ok(SmilesWritePlan {
+        roots,
+        tree_bonds,
+        closures,
+        subtree_sizes,
+    })
+}
+
+fn collect_smiles_tree(
+    mol: &Molecule,
+    atom_id: AtomId,
+    parent_bond: Option<BondId>,
+    visited: &mut BTreeSet<AtomId>,
+    tree_bonds: &mut BTreeSet<BondId>,
+    ring_bonds: &mut BTreeMap<BondId, (AtomId, AtomId, BondOrder)>,
+) -> std::result::Result<(), MolWriteError> {
+    visited.insert(atom_id);
+    let mut incident = smiles_incident_bonds(mol, atom_id)?;
+    incident.sort_by_key(|(_, _, neighbor)| *neighbor);
+
+    for (bond_id, order, neighbor) in incident {
+        if Some(bond_id) == parent_bond {
+            continue;
+        }
+        if visited.contains(&neighbor) {
+            if !tree_bonds.contains(&bond_id) {
+                let bond = mol
+                    .bond(bond_id)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+                ring_bonds
+                    .entry(bond_id)
+                    .or_insert((bond.a(), bond.b(), order));
+            }
+            continue;
+        }
+        tree_bonds.insert(bond_id);
+        collect_smiles_tree(
+            mol,
+            neighbor,
+            Some(bond_id),
+            visited,
+            tree_bonds,
+            ring_bonds,
+        )?;
+    }
+    Ok(())
+}
+
+fn compute_smiles_subtree_sizes(
+    mol: &Molecule,
+    atom_id: AtomId,
+    parent: Option<AtomId>,
+    tree_bonds: &BTreeSet<BondId>,
+    subtree_sizes: &mut BTreeMap<AtomId, usize>,
+) -> std::result::Result<usize, MolWriteError> {
+    let mut size = 1usize;
+    for (bond_id, _, neighbor) in smiles_incident_bonds(mol, atom_id)? {
+        if tree_bonds.contains(&bond_id) && Some(neighbor) != parent {
+            size += compute_smiles_subtree_sizes(
+                mol,
+                neighbor,
+                Some(atom_id),
+                tree_bonds,
+                subtree_sizes,
+            )?;
+        }
+    }
+    subtree_sizes.insert(atom_id, size);
+    Ok(size)
 }
 
 fn write_smiles_component(
     mol: &Molecule,
     atom_id: AtomId,
     parent: Option<AtomId>,
-    visited: &mut BTreeMap<AtomId, ()>,
-    ring_numbers: &mut BTreeMap<(AtomId, AtomId), usize>,
-    next_ring: &mut usize,
+    plan: &SmilesWritePlan,
 ) -> std::result::Result<String, MolWriteError> {
-    visited.insert(atom_id, ());
     let atom = mol
         .atom(atom_id)
         .map_err(|error| MolWriteError::new(error.to_string()))?;
     let mut out = smiles_atom(atom);
-    let mut children = Vec::<(BondOrder, AtomId)>::new();
-    for (_, bond) in mol
-        .incident_bonds(atom_id)
-        .map_err(|error| MolWriteError::new(error.to_string()))?
-    {
-        let neighbor = bond.other_atom(atom_id);
-        if Some(neighbor) == parent {
-            continue;
-        }
-        if visited.contains_key(&neighbor) {
-            let key = ordered_atom_pair(atom_id, neighbor);
-            if let std::collections::btree_map::Entry::Vacant(entry) = ring_numbers.entry(key) {
-                let number = *next_ring;
-                *next_ring += 1;
-                entry.insert(number);
-                out.push_str(smiles_bond(bond.order));
-                out.push_str(&number.to_string());
-            }
-        } else {
-            children.push((bond.order, neighbor));
+    if let Some(closures) = plan.closures.get(&atom_id) {
+        for (number, order) in closures {
+            out.push_str(smiles_bond(*order));
+            out.push_str(&smiles_ring_number(*number));
         }
     }
-    children.sort_by_key(|(_, atom)| *atom);
-    for (index, (order, child)) in children.into_iter().enumerate() {
+
+    let mut children = smiles_incident_bonds(mol, atom_id)?
+        .into_iter()
+        .filter(|(bond_id, _, neighbor)| {
+            plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
+        })
+        .collect::<Vec<_>>();
+    children.sort_by_key(|(bond_id, _, atom)| (*atom, *bond_id));
+    let main_child_index = children
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, child_entry)| {
+            let child = child_entry.2;
+            (plan.subtree_sizes.get(&child).copied().unwrap_or(0), child)
+        })
+        .map(|(index, _)| index);
+
+    for (index, (_, order, child)) in children.iter().copied().enumerate() {
+        if Some(index) == main_child_index {
+            continue;
+        }
         let child_text = format!(
             "{}{}",
             smiles_bond(order),
-            write_smiles_component(mol, child, Some(atom_id), visited, ring_numbers, next_ring)?
+            write_smiles_component(mol, child, Some(atom_id), plan)?
         );
-        if index == 0 {
-            out.push_str(&child_text);
-        } else {
-            out.push('(');
-            out.push_str(&child_text);
-            out.push(')');
-        }
+        out.push('(');
+        out.push_str(&child_text);
+        out.push(')');
+    }
+
+    if let Some(index) = main_child_index {
+        let (_, order, child) = children[index];
+        out.push_str(smiles_bond(order));
+        out.push_str(&write_smiles_component(mol, child, Some(atom_id), plan)?);
     }
     Ok(out)
+}
+
+fn smiles_incident_bonds(
+    mol: &Molecule,
+    atom_id: AtomId,
+) -> std::result::Result<Vec<(BondId, BondOrder, AtomId)>, MolWriteError> {
+    let mut incident = Vec::new();
+    for (bond_id, bond) in mol
+        .incident_bonds(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+    {
+        incident.push((bond_id, bond.order, bond.other_atom(atom_id)));
+    }
+    incident.sort_by_key(|(bond_id, _, atom)| (*atom, *bond_id));
+    Ok(incident)
+}
+
+fn smiles_ring_number(number: usize) -> String {
+    if number < 10 {
+        number.to_string()
+    } else {
+        format!("%{number}")
+    }
 }
 
 fn smiles_bond(order: BondOrder) -> &'static str {

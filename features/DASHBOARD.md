@@ -27,7 +27,7 @@ Generated from `features/*/feature.toml`. Do not hand-edit this file.
 | `io.sdf.v2000.write` | SDF V2000 writer | io | 1 | ✅ | ❌ |
 | `io.smiles.canonical` | Canonical SMILES writer | io | 1 | ❌ | ❌ |
 | `io.smiles.parse` | SMILES parser | io | 1 | ✅ | ❌ |
-| `io.smiles.write` | Noncanonical SMILES writer | io | 1 | ✅ | ❌ |
+| `io.smiles.write` | Noncanonical SMILES writer | io | 2 | ✅ | ✅ |
 | `query.smarts` | SMARTS query parsing | query | 1 | ❌ | ❌ |
 | `stereo.cip` | CIP stereochemistry | stereo | 1 | ❌ | ❌ |
 | `stereo.representation` | Stereochemistry representation | stereo | 1 | ❌ | ❌ |

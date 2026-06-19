@@ -1,7 +1,7 @@
 feature_id = "io.smiles.write"
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"
-comparison_mode = "fixture-discovery-only"
+comparison_mode = "implementation-golden"
 
 fixtures = [
   "../../external_sources/pubchem_smiles/cid_702.txt",
@@ -18,6 +18,6 @@ fixture_sources = [
 ]
 
 notes = [
-  "Reference RDKit goldens have not been generated yet.",
+  "Reference RDKit goldens compare noncanonical output SMILES.",
   "All molecule fixtures are externally supplied PubChem SMILES records.",
 ]
