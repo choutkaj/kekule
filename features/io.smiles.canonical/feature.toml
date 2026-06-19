@@ -1,0 +1,8 @@
+id = "io.smiles.canonical"
+title = "Canonical SMILES writer"
+area = "io"
+version = 1
+implemented = false
+validated = false
+description = "Plan canonical SMILES output built on canonical ranking."
+depends_on = ["io.smiles.write", "algo.canonical-ranking"]

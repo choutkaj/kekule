@@ -1,0 +1,13 @@
+feature_id = "io.mol.v2000.write"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-19-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "../core.conformers/fixtures/coordinate_metadata.mol",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "Fixture should be used for parse/write/parse round trips.",
+]

@@ -1,0 +1,13 @@
+feature_id = "algo.valence.rdkit-like-basic"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-19-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "fixtures/valence_cases.sdf",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "Fixtures include common neutral and charged organic cases plus pressure cases.",
+]

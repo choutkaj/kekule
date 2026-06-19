@@ -5,12 +5,17 @@ use std::fmt;
 
 pub mod prelude {
     pub use crate::{
-        perceive_aromaticity, perceive_ring_membership, read_mmcif_str, read_sdf_v2000_str,
-        AromaticityError, AromaticityModel, Atom, AtomId, AtomSite, AtomSiteId, AtomSiteMetadata,
-        AtomStereo, BioHierarchy, BioHierarchyError, Bond, BondId, BondOrder, BondStereo, Chain,
-        ChainId, ComputedState, Element, MacroMolecule, MmcifParseError, MmcifParseOptions, Model,
-        ModelId, Molecule, MoleculeError, PropMap, PropValue, Residue, ResidueId, Result,
-        RingMembership, SdfParseError, SdfParseOptions, SdfRecord, SmallMolecule,
+        perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
+        read_mmcif_str, read_mol_v2000_str, read_sdf_v2000_str, read_smiles_str,
+        sanitize_small_molecule, write_mol_v2000, write_sdf_v2000, write_smiles, AromaticityError,
+        AromaticityModel, Atom, AtomId, AtomSite, AtomSiteId, AtomSiteMetadata, AtomStereo,
+        BioHierarchy, BioHierarchyError, Bond, BondId, BondOrder, BondStereo, Chain, ChainId,
+        ComputedState, Conformer, ConformerId, Element, MacroMolecule, MmcifParseError,
+        MmcifParseOptions, Model, ModelId, MolWriteError, Molecule, MoleculeError, Point3, PropMap,
+        PropValue, Residue, ResidueId, Result, Ring, RingMembership, RingSet, SanitizeError,
+        SanitizeOptions, SanitizeReport, SdfParseError, SdfParseOptions, SdfRecord, SmallMolecule,
+        SmilesParseError, SmilesParseOptions, SmilesWriteOptions, ValenceIssue, ValenceModel,
+        ValenceReport,
     };
 }
 
@@ -57,6 +62,83 @@ impl BondId {
 impl fmt::Display for BondId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "b{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ConformerId(u32);
+
+impl ConformerId {
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl fmt::Display for ConformerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "c{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Point3 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+impl Point3 {
+    pub const fn new(x: f64, y: f64, z: f64) -> Self {
+        Self { x, y, z }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Conformer {
+    positions: Vec<Option<Point3>>,
+}
+
+impl Conformer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_atom_capacity(atom_capacity: usize) -> Self {
+        Self {
+            positions: vec![None; atom_capacity],
+        }
+    }
+
+    pub fn set_position(&mut self, atom: AtomId, point: Point3) {
+        if self.positions.len() <= atom.index() {
+            self.positions.resize(atom.index() + 1, None);
+        }
+        self.positions[atom.index()] = Some(point);
+    }
+
+    pub fn clear_position(&mut self, atom: AtomId) {
+        if let Some(position) = self.positions.get_mut(atom.index()) {
+            *position = None;
+        }
+    }
+
+    pub fn position(&self, atom: AtomId) -> Option<Point3> {
+        self.positions.get(atom.index()).copied().flatten()
+    }
+
+    pub fn positions(&self) -> impl Iterator<Item = (AtomId, Point3)> + '_ {
+        self.positions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, point)| point.map(|point| (AtomId::new(index as u32), point)))
     }
 }
 
@@ -255,9 +337,11 @@ pub struct Molecule {
     atoms: Vec<Option<Atom>>,
     bonds: Vec<Option<Bond>>,
     adjacency: Vec<Vec<BondId>>,
+    conformers: Vec<Option<Conformer>>,
     props: PropMap,
     perception: PerceptionState,
     ring_membership: Option<RingMembership>,
+    ring_set: Option<RingSet>,
 }
 
 impl Molecule {
@@ -298,6 +382,9 @@ impl Molecule {
         let atom = self.atoms[id.index()]
             .take()
             .ok_or(MoleculeError::InvalidAtomId(id))?;
+        for conformer in self.conformers.iter_mut().flatten() {
+            conformer.clear_position(id);
+        }
         self.invalidate_topology();
         Ok(atom)
     }
@@ -428,8 +515,51 @@ impl Molecule {
         self.ring_membership.as_ref()
     }
 
+    pub fn ring_set(&self) -> Option<&RingSet> {
+        self.ring_set.as_ref()
+    }
+
+    pub fn add_conformer(&mut self, mut conformer: Conformer) -> ConformerId {
+        if conformer.positions.len() < self.atoms.len() {
+            conformer.positions.resize(self.atoms.len(), None);
+        }
+        let id = ConformerId::new(self.conformers.len() as u32);
+        self.conformers.push(Some(conformer));
+        id
+    }
+
+    pub fn conformer(&self, id: ConformerId) -> Result<&Conformer> {
+        self.conformers
+            .get(id.index())
+            .and_then(Option::as_ref)
+            .ok_or(MoleculeError::InvalidConformerId(id))
+    }
+
+    pub fn conformer_mut(&mut self, id: ConformerId) -> Result<&mut Conformer> {
+        self.conformers
+            .get_mut(id.index())
+            .and_then(Option::as_mut)
+            .ok_or(MoleculeError::InvalidConformerId(id))
+    }
+
+    pub fn conformers(&self) -> impl Iterator<Item = (ConformerId, &Conformer)> {
+        self.conformers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, conformer)| {
+                conformer
+                    .as_ref()
+                    .map(|conformer| (ConformerId::new(index as u32), conformer))
+            })
+    }
+
+    pub fn first_conformer(&self) -> Option<(ConformerId, &Conformer)> {
+        self.conformers().next()
+    }
+
     pub fn invalidate_topology(&mut self) {
         self.perception.invalidate_all();
+        self.ring_set = None;
     }
 
     fn remove_incident_bond(&mut self, atom: AtomId, bond: BondId) {
@@ -726,10 +856,355 @@ fn ring_dfs(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ring {
+    pub atoms: Vec<AtomId>,
+    pub bonds: Vec<BondId>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RingSet {
+    rings: Vec<Ring>,
+}
+
+impl RingSet {
+    pub fn rings(&self) -> &[Ring] {
+        &self.rings
+    }
+
+    pub fn len(&self) -> usize {
+        self.rings.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rings.is_empty()
+    }
+}
+
+pub fn perceive_ring_set(mol: &mut Molecule) -> RingSet {
+    let membership = perceive_ring_membership(mol);
+    let mut graph = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
+    for (bond_id, bond) in mol.bonds() {
+        if membership.bond_in_ring(bond_id) {
+            graph.entry(bond.a()).or_default().push((bond.b(), bond_id));
+            graph.entry(bond.b()).or_default().push((bond.a(), bond_id));
+        }
+    }
+    for edges in graph.values_mut() {
+        edges.sort_by_key(|(atom, bond)| (*atom, *bond));
+    }
+
+    let mut parent = BTreeMap::<AtomId, (AtomId, BondId)>::new();
+    let mut depth = BTreeMap::<AtomId, usize>::new();
+    let mut visited_edges = BTreeMap::<(AtomId, AtomId), ()>::new();
+    let mut rings = Vec::new();
+
+    for start in mol.atom_ids() {
+        if !graph.contains_key(&start) || depth.contains_key(&start) {
+            continue;
+        }
+        depth.insert(start, 0);
+        let mut stack = vec![start];
+        while let Some(atom) = stack.pop() {
+            for (neighbor, bond_id) in graph.get(&atom).into_iter().flatten().copied() {
+                let edge_key = ordered_atom_pair(atom, neighbor);
+                if visited_edges.insert(edge_key, ()).is_some() {
+                    continue;
+                }
+                if !depth.contains_key(&neighbor) {
+                    parent.insert(neighbor, (atom, bond_id));
+                    depth.insert(neighbor, depth[&atom] + 1);
+                    stack.push(neighbor);
+                } else if parent.get(&atom).map(|(p, _)| *p) != Some(neighbor)
+                    && parent.get(&neighbor).map(|(p, _)| *p) != Some(atom)
+                {
+                    if let Some(ring) = fundamental_cycle(atom, neighbor, bond_id, &parent, &depth)
+                    {
+                        if !rings
+                            .iter()
+                            .any(|existing: &Ring| same_ring(existing, &ring))
+                        {
+                            rings.push(ring);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    rings.sort_by_key(|ring| (ring.atoms.len(), ring.atoms.clone()));
+    let cyclomatic = mol.bond_count().saturating_add(connected_components(mol)) - mol.atom_count();
+    rings.truncate(cyclomatic);
+    let ring_set = RingSet { rings };
+    mol.ring_set = Some(ring_set.clone());
+    ring_set
+}
+
+fn ordered_atom_pair(a: AtomId, b: AtomId) -> (AtomId, AtomId) {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+fn fundamental_cycle(
+    a: AtomId,
+    b: AtomId,
+    closing_bond: BondId,
+    parent: &BTreeMap<AtomId, (AtomId, BondId)>,
+    depth: &BTreeMap<AtomId, usize>,
+) -> Option<Ring> {
+    let mut left = a;
+    let mut right = b;
+    let mut left_atoms = vec![left];
+    let mut right_atoms = vec![right];
+    let mut left_bonds = Vec::new();
+    let mut right_bonds = Vec::new();
+
+    while left != right {
+        let left_depth = *depth.get(&left)?;
+        let right_depth = *depth.get(&right)?;
+        if left_depth >= right_depth {
+            let (next, bond) = *parent.get(&left)?;
+            left_bonds.push(bond);
+            left = next;
+            left_atoms.push(left);
+        } else {
+            let (next, bond) = *parent.get(&right)?;
+            right_bonds.push(bond);
+            right = next;
+            right_atoms.push(right);
+        }
+    }
+
+    right_atoms.reverse();
+    right_bonds.reverse();
+    let mut atoms = left_atoms;
+    atoms.extend(right_atoms.into_iter().skip(1));
+    atoms.sort();
+    atoms.dedup();
+    let mut bonds = left_bonds;
+    bonds.extend(right_bonds);
+    bonds.push(closing_bond);
+    bonds.sort();
+    bonds.dedup();
+    Some(Ring { atoms, bonds })
+}
+
+fn same_ring(a: &Ring, b: &Ring) -> bool {
+    a.atoms == b.atoms && a.bonds == b.bonds
+}
+
+fn connected_components(mol: &Molecule) -> usize {
+    let mut seen = BTreeMap::<AtomId, ()>::new();
+    let mut count = 0;
+    for start in mol.atom_ids() {
+        if seen.contains_key(&start) {
+            continue;
+        }
+        count += 1;
+        let mut stack = vec![start];
+        seen.insert(start, ());
+        while let Some(atom) = stack.pop() {
+            if let Ok(neighbors) = mol.neighbors(atom) {
+                for neighbor in neighbors {
+                    if seen.insert(neighbor, ()).is_none() {
+                        stack.push(neighbor);
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValenceModel {
+    RdkitLikeBasic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValenceIssue {
+    UnsupportedElement(AtomId),
+    ValenceExceeded {
+        atom: AtomId,
+        explicit_valence: u8,
+        max_allowed: u8,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ValenceReport {
+    pub issues: Vec<ValenceIssue>,
+}
+
+impl ValenceReport {
+    pub fn is_ok(&self) -> bool {
+        self.issues.is_empty()
+    }
+}
+
+pub fn perceive_valence(mol: &mut Molecule, model: ValenceModel) -> ValenceReport {
+    match model {
+        ValenceModel::RdkitLikeBasic => perceive_basic_valence(mol),
+    }
+}
+
+fn perceive_basic_valence(mol: &mut Molecule) -> ValenceReport {
+    let mut assignments = Vec::<(AtomId, u8)>::new();
+    let mut issues = Vec::new();
+    for (atom_id, atom) in mol.atoms() {
+        let explicit = explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens);
+        match allowed_valences(atom) {
+            Some(allowed) => {
+                if let Some(max_allowed) = allowed.iter().copied().max() {
+                    if explicit > max_allowed {
+                        issues.push(ValenceIssue::ValenceExceeded {
+                            atom: atom_id,
+                            explicit_valence: explicit,
+                            max_allowed,
+                        });
+                        assignments.push((atom_id, 0));
+                    } else {
+                        let target = allowed
+                            .iter()
+                            .copied()
+                            .find(|allowed| *allowed >= explicit)
+                            .unwrap_or(explicit);
+                        assignments.push((atom_id, target - explicit));
+                    }
+                }
+            }
+            None => issues.push(ValenceIssue::UnsupportedElement(atom_id)),
+        }
+    }
+    for (atom_id, hydrogens) in assignments {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.implicit_hydrogens = Some(hydrogens);
+        }
+    }
+    mol.perception.valence = ComputedState::Fresh;
+    ValenceReport { issues }
+}
+
+fn explicit_valence(mol: &Molecule, atom: AtomId) -> u8 {
+    mol.incident_bonds(atom)
+        .ok()
+        .into_iter()
+        .flatten()
+        .map(|(_, bond)| bond_order_valence(bond.order))
+        .sum()
+}
+
+fn bond_order_valence(order: BondOrder) -> u8 {
+    match order {
+        BondOrder::Zero | BondOrder::Dative => 0,
+        BondOrder::Single | BondOrder::Aromatic => 1,
+        BondOrder::Double => 2,
+        BondOrder::Triple => 3,
+        BondOrder::Quadruple => 4,
+    }
+}
+
+fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
+    match (atom.element.symbol(), atom.formal_charge) {
+        ("H", 0) => Some(&[1]),
+        ("B", _) => Some(&[3]),
+        ("C", 0) => Some(&[4]),
+        ("C", 1 | -1) => Some(&[3]),
+        ("N", 1) => Some(&[4]),
+        ("N", -1) => Some(&[2]),
+        ("N", 0) => Some(&[3, 5]),
+        ("O", 0) => Some(&[2]),
+        ("O", -1 | 1) => Some(&[1]),
+        ("F" | "Cl" | "Br" | "I", 0) => Some(&[1]),
+        ("P", 0) => Some(&[3, 5]),
+        ("S", 0) => Some(&[2, 4, 6]),
+        ("S", -1 | 1) => Some(&[1, 3, 5]),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SanitizeOptions {
+    pub perceive_valence: bool,
+    pub perceive_rings: bool,
+    pub perceive_aromaticity: bool,
+}
+
+impl Default for SanitizeOptions {
+    fn default() -> Self {
+        Self {
+            perceive_valence: true,
+            perceive_rings: true,
+            perceive_aromaticity: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SanitizeReport {
+    pub valence: Option<ValenceReport>,
+    pub ring_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SanitizeError {
+    Valence(ValenceReport),
+    Aromaticity(AromaticityError),
+}
+
+impl fmt::Display for SanitizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Valence(report) => write!(
+                f,
+                "valence perception reported {} issue(s)",
+                report.issues.len()
+            ),
+            Self::Aromaticity(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for SanitizeError {}
+
+pub fn sanitize_small_molecule(
+    molecule: &mut SmallMolecule,
+    options: SanitizeOptions,
+) -> std::result::Result<SanitizeReport, SanitizeError> {
+    let valence = if options.perceive_valence {
+        let report = perceive_valence(&mut molecule.mol, ValenceModel::RdkitLikeBasic);
+        if !report.is_ok() {
+            return Err(SanitizeError::Valence(report));
+        }
+        Some(report)
+    } else {
+        None
+    };
+    let ring_count = if options.perceive_rings {
+        Some(perceive_ring_set(&mut molecule.mol).len())
+    } else {
+        None
+    };
+    if options.perceive_aromaticity {
+        perceive_aromaticity(&mut molecule.mol, AromaticityModel::RdkitLikeBasic)
+            .map_err(SanitizeError::Aromaticity)?;
+    }
+    Ok(SanitizeReport {
+        valence,
+        ring_count,
+    })
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SmallMolecule {
     pub mol: Molecule,
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MolParseOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfParseOptions {
@@ -770,6 +1245,12 @@ impl fmt::Display for SdfParseError {
 }
 
 impl std::error::Error for SdfParseError {}
+
+pub fn read_mol_v2000_str(input: &str) -> std::result::Result<SmallMolecule, SdfParseError> {
+    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+    let lines = normalized.lines().collect::<Vec<_>>();
+    parse_mol_v2000_lines(1, 1, &lines)
+}
 
 pub fn read_sdf_v2000_str(
     input: &str,
@@ -823,6 +1304,26 @@ fn parse_sdf_record(
     start_line: usize,
     lines: &[&str],
 ) -> std::result::Result<SdfRecord, SdfParseError> {
+    let title = lines.first().copied().unwrap_or_default().to_owned();
+    let end_index = lines
+        .iter()
+        .position(|line| line.trim() == "M  END")
+        .ok_or_else(|| SdfParseError::new(record, start_line, "missing M  END"))?;
+    let mut molecule = parse_mol_v2000_lines(record, start_line, &lines[..=end_index])?;
+    parse_sdf_data_fields(
+        record,
+        start_line + end_index + 1,
+        &mut molecule.mol,
+        &lines[end_index + 1..],
+    )?;
+    Ok(SdfRecord { title, molecule })
+}
+
+fn parse_mol_v2000_lines(
+    record: usize,
+    start_line: usize,
+    lines: &[&str],
+) -> std::result::Result<SmallMolecule, SdfParseError> {
     if lines.len() < 4 {
         return Err(SdfParseError::new(
             record,
@@ -873,9 +1374,11 @@ fn parse_sdf_record(
     }
 
     let mut atom_ids = Vec::with_capacity(atom_count);
+    let mut conformer = Conformer::with_atom_capacity(atom_count);
     for atom_index in 0..atom_count {
         let line_number = start_line + atom_start + atom_index;
-        let symbol = atom_symbol_from_v2000_line(lines[atom_start + atom_index])
+        let atom_line = lines[atom_start + atom_index];
+        let symbol = atom_symbol_from_v2000_line(atom_line)
             .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom line"))?;
         let element = Element::from_symbol(symbol).ok_or_else(|| {
             SdfParseError::new(
@@ -884,7 +1387,13 @@ fn parse_sdf_record(
                 format!("unknown element symbol `{symbol}`"),
             )
         })?;
-        atom_ids.push(mol.add_atom(Atom::new(element)));
+        let mut atom = Atom::new(element);
+        apply_atom_v2000_fields(&mut atom, atom_line);
+        let atom_id = mol.add_atom(atom);
+        if let Some(point) = atom_coordinates_from_v2000_line(atom_line) {
+            conformer.set_position(atom_id, point);
+        }
+        atom_ids.push(atom_id);
     }
 
     for bond_index in 0..bond_count {
@@ -907,12 +1416,18 @@ fn parse_sdf_record(
         .position(|line| line.trim() == "M  END")
         .map(|index| property_start + index)
         .ok_or_else(|| SdfParseError::new(record, start_line + property_start, "missing M  END"))?;
-    parse_sdf_data_fields(record, start_line, &mut mol, &lines[end_index + 1..])?;
+    parse_m_records(
+        record,
+        start_line + property_start,
+        &mut mol,
+        &atom_ids,
+        &lines[property_start..end_index],
+    )?;
+    if conformer.positions().next().is_some() {
+        mol.add_conformer(conformer);
+    }
 
-    Ok(SdfRecord {
-        title,
-        molecule: SmallMolecule { mol },
-    })
+    Ok(SmallMolecule { mol })
 }
 
 fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
@@ -927,6 +1442,39 @@ fn atom_symbol_from_v2000_line(line: &str) -> Option<&str> {
         .map(str::trim)
         .filter(|symbol| !symbol.is_empty())
         .or_else(|| line.split_whitespace().nth(3))
+}
+
+fn atom_coordinates_from_v2000_line(line: &str) -> Option<Point3> {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    Some(Point3::new(
+        fields.first()?.parse().ok()?,
+        fields.get(1)?.parse().ok()?,
+        fields.get(2)?.parse().ok()?,
+    ))
+}
+
+fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    if let Some(charge_code) = fields.get(5).and_then(|value| value.parse::<i8>().ok()) {
+        atom.formal_charge = match charge_code {
+            1 => 3,
+            2 => 2,
+            3 => 1,
+            5 => -1,
+            6 => -2,
+            7 => -3,
+            _ => 0,
+        };
+    }
+    if let Some(atom_map) = fields
+        .get(13)
+        .or_else(|| fields.get(12))
+        .and_then(|value| value.parse::<u32>().ok())
+    {
+        if atom_map != 0 {
+            atom.atom_map = Some(atom_map);
+        }
+    }
 }
 
 fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder)> {
@@ -980,6 +1528,103 @@ fn parse_sdf_data_fields(
     Ok(())
 }
 
+fn parse_m_records(
+    record: usize,
+    start_line: usize,
+    mol: &mut Molecule,
+    atom_ids: &[AtomId],
+    lines: &[&str],
+) -> std::result::Result<(), SdfParseError> {
+    for (offset, line) in lines.iter().enumerate() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        match fields.as_slice() {
+            ["M", "CHG", count, rest @ ..] => {
+                parse_atom_value_pairs(
+                    record,
+                    start_line + offset,
+                    count,
+                    rest,
+                    mol,
+                    atom_ids,
+                    |atom, value| {
+                        atom.formal_charge = value as i8;
+                    },
+                )?;
+            }
+            ["M", "ISO", count, rest @ ..] => {
+                parse_atom_value_pairs(
+                    record,
+                    start_line + offset,
+                    count,
+                    rest,
+                    mol,
+                    atom_ids,
+                    |atom, value| {
+                        atom.isotope = (value > 0).then_some(value as u16);
+                    },
+                )?;
+            }
+            ["M", "RAD", count, rest @ ..] => {
+                parse_atom_value_pairs(
+                    record,
+                    start_line + offset,
+                    count,
+                    rest,
+                    mol,
+                    atom_ids,
+                    |atom, value| {
+                        atom.radical_electrons = match value {
+                            1 => 2,
+                            2 => 1,
+                            3 => 2,
+                            _ => 0,
+                        };
+                    },
+                )?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn parse_atom_value_pairs<F>(
+    record: usize,
+    line: usize,
+    count: &str,
+    rest: &[&str],
+    mol: &mut Molecule,
+    atom_ids: &[AtomId],
+    mut apply: F,
+) -> std::result::Result<(), SdfParseError>
+where
+    F: FnMut(&mut Atom, i32),
+{
+    let count = count
+        .parse::<usize>()
+        .map_err(|_| SdfParseError::new(record, line, "invalid M record count"))?;
+    if rest.len() < count * 2 {
+        return Err(SdfParseError::new(record, line, "truncated M record"));
+    }
+    for pair in rest.chunks(2).take(count) {
+        let atom_index = pair[0]
+            .parse::<usize>()
+            .map_err(|_| SdfParseError::new(record, line, "invalid M record atom index"))?;
+        let value = pair[1]
+            .parse::<i32>()
+            .map_err(|_| SdfParseError::new(record, line, "invalid M record value"))?;
+        let atom_id = atom_ids
+            .get(atom_index.saturating_sub(1))
+            .copied()
+            .ok_or_else(|| SdfParseError::new(record, line, "M record atom outside atom block"))?;
+        let atom = mol
+            .atom_mut(atom_id)
+            .map_err(|error| SdfParseError::new(record, line, error.to_string()))?;
+        apply(atom, value);
+    }
+    Ok(())
+}
+
 fn sdf_field_name(line: &str) -> Option<String> {
     let start = line.find('<')?;
     let end = line[start + 1..].find('>')? + start + 1;
@@ -988,6 +1633,584 @@ fn sdf_field_name(line: &str) -> Option<String> {
         None
     } else {
         Some(name.to_owned())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MolWriteError {
+    pub message: String,
+}
+
+impl MolWriteError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for MolWriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for MolWriteError {}
+
+pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
+    let mol = &molecule.mol;
+    if mol.atom_count() > 999 || mol.bond_count() > 999 {
+        return Err(MolWriteError::new(
+            "V2000 writer supports at most 999 atoms and 999 bonds",
+        ));
+    }
+    let atoms = mol.atom_ids().collect::<Vec<_>>();
+    let bonds = mol.bond_ids().collect::<Vec<_>>();
+    let mut atom_index = BTreeMap::new();
+    for (index, atom_id) in atoms.iter().enumerate() {
+        atom_index.insert(*atom_id, index + 1);
+    }
+
+    let title = prop_string(mol, "sdf.title").unwrap_or_default();
+    let program = prop_string(mol, "sdf.program").unwrap_or_else(|| "molecules".to_owned());
+    let comment = prop_string(mol, "sdf.comment").unwrap_or_default();
+    let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
+    let mut out = String::new();
+    out.push_str(&format!("{title}\n{program}\n{comment}\n"));
+    out.push_str(&format!(
+        "{:>3}{:>3}  0  0  0  0            999 V2000\n",
+        atoms.len(),
+        bonds.len()
+    ));
+
+    for atom_id in &atoms {
+        let atom = mol
+            .atom(*atom_id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        let point = conformer
+            .and_then(|conformer| conformer.position(*atom_id))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "{:>10.4}{:>10.4}{:>10.4} {:<3}{:>2}{:>3}  0  0  0  0  0  0  0{:>3}  0  0\n",
+            point.x,
+            point.y,
+            point.z,
+            atom.element.symbol(),
+            0,
+            v2000_charge_code(atom.formal_charge),
+            atom.atom_map.unwrap_or(0)
+        ));
+    }
+
+    for bond_id in &bonds {
+        let bond = mol
+            .bond(*bond_id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        let a = atom_index
+            .get(&bond.a())
+            .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
+        let b = atom_index
+            .get(&bond.b())
+            .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
+        out.push_str(&format!(
+            "{:>3}{:>3}{:>3}  0  0  0  0\n",
+            a,
+            b,
+            v2000_bond_code(bond.order)?
+        ));
+    }
+
+    push_m_record(
+        &mut out,
+        "CHG",
+        atoms
+            .iter()
+            .filter_map(|id| {
+                let atom = mol.atom(*id).ok()?;
+                (atom.formal_charge != 0)
+                    .then_some((*atom_index.get(id)? as i32, atom.formal_charge as i32))
+            })
+            .collect(),
+    );
+    push_m_record(
+        &mut out,
+        "ISO",
+        atoms
+            .iter()
+            .filter_map(|id| {
+                let atom = mol.atom(*id).ok()?;
+                atom.isotope.map(|isotope| {
+                    (
+                        *atom_index.get(id).expect("atom indexed") as i32,
+                        isotope as i32,
+                    )
+                })
+            })
+            .collect(),
+    );
+    push_m_record(
+        &mut out,
+        "RAD",
+        atoms
+            .iter()
+            .filter_map(|id| {
+                let atom = mol.atom(*id).ok()?;
+                (atom.radical_electrons != 0)
+                    .then_some((*atom_index.get(id)? as i32, atom.radical_electrons as i32))
+            })
+            .collect(),
+    );
+    out.push_str("M  END\n");
+    Ok(out)
+}
+
+pub fn write_sdf_v2000(molecules: &[SmallMolecule]) -> std::result::Result<String, MolWriteError> {
+    let mut out = String::new();
+    for molecule in molecules {
+        out.push_str(&write_mol_v2000(molecule)?);
+        for (key, value) in molecule.mol.props() {
+            if let (Some(name), PropValue::String(text)) = (key.strip_prefix("sdf.field."), value) {
+                out.push_str(&format!(">  <{name}>\n{text}\n\n"));
+            }
+        }
+        out.push_str("$$$$\n");
+    }
+    Ok(out)
+}
+
+fn prop_string(mol: &Molecule, key: &str) -> Option<String> {
+    match mol.props().get(key) {
+        Some(PropValue::String(value)) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn v2000_charge_code(charge: i8) -> i8 {
+    match charge {
+        3 => 1,
+        2 => 2,
+        1 => 3,
+        -1 => 5,
+        -2 => 6,
+        -3 => 7,
+        _ => 0,
+    }
+}
+
+fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
+    match order {
+        BondOrder::Zero => Ok(0),
+        BondOrder::Single => Ok(1),
+        BondOrder::Double => Ok(2),
+        BondOrder::Triple => Ok(3),
+        BondOrder::Aromatic => Ok(4),
+        BondOrder::Dative => Ok(9),
+        BondOrder::Quadruple => Err(MolWriteError::new(
+            "V2000 writer does not support quadruple bonds",
+        )),
+    }
+}
+
+fn push_m_record(out: &mut String, code: &str, pairs: Vec<(i32, i32)>) {
+    for chunk in pairs.chunks(8) {
+        if chunk.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("M  {code} {:>2}", chunk.len()));
+        for (atom, value) in chunk {
+            out.push_str(&format!("{atom:>4}{value:>4}"));
+        }
+        out.push('\n');
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SmilesParseOptions;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SmilesWriteOptions;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmilesParseError {
+    pub offset: usize,
+    pub message: String,
+}
+
+impl SmilesParseError {
+    fn new(offset: usize, message: impl Into<String>) -> Self {
+        Self {
+            offset,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for SmilesParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SMILES parse error at {}: {}", self.offset, self.message)
+    }
+}
+
+impl std::error::Error for SmilesParseError {}
+
+pub fn read_smiles_str(
+    input: &str,
+    _options: SmilesParseOptions,
+) -> std::result::Result<SmallMolecule, SmilesParseError> {
+    let chars = input.char_indices().collect::<Vec<_>>();
+    let mut mol = Molecule::new();
+    let mut current: Option<AtomId> = None;
+    let mut stack = Vec::<AtomId>::new();
+    let mut pending_bond = BondOrder::Single;
+    let mut rings = BTreeMap::<char, (AtomId, BondOrder)>::new();
+    let mut cursor = 0;
+    while cursor < chars.len() {
+        let (offset, ch) = chars[cursor];
+        match ch {
+            '(' => {
+                let atom =
+                    current.ok_or_else(|| SmilesParseError::new(offset, "branch without atom"))?;
+                stack.push(atom);
+                cursor += 1;
+            }
+            ')' => {
+                current = Some(
+                    stack
+                        .pop()
+                        .ok_or_else(|| SmilesParseError::new(offset, "unmatched branch close"))?,
+                );
+                cursor += 1;
+            }
+            '.' => {
+                current = None;
+                pending_bond = BondOrder::Single;
+                cursor += 1;
+            }
+            '-' => {
+                pending_bond = BondOrder::Single;
+                cursor += 1;
+            }
+            '=' => {
+                pending_bond = BondOrder::Double;
+                cursor += 1;
+            }
+            '#' => {
+                pending_bond = BondOrder::Triple;
+                cursor += 1;
+            }
+            ':' => {
+                pending_bond = BondOrder::Aromatic;
+                cursor += 1;
+            }
+            '0'..='9' => {
+                let atom = current
+                    .ok_or_else(|| SmilesParseError::new(offset, "ring closure without atom"))?;
+                if let Some((other, order)) = rings.remove(&ch) {
+                    let order = if pending_bond == BondOrder::Single {
+                        order
+                    } else {
+                        pending_bond
+                    };
+                    mol.add_bond(other, atom, order)
+                        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                    pending_bond = BondOrder::Single;
+                } else {
+                    rings.insert(ch, (atom, pending_bond));
+                    pending_bond = BondOrder::Single;
+                }
+                cursor += 1;
+            }
+            '[' => {
+                let (atom, next_cursor) = parse_bracket_atom(&chars, cursor)?;
+                let atom_id = mol.add_atom(atom);
+                if let Some(previous) = current {
+                    mol.add_bond(previous, atom_id, pending_bond)
+                        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                }
+                current = Some(atom_id);
+                pending_bond = BondOrder::Single;
+                cursor = next_cursor;
+            }
+            _ => {
+                let (atom, next_cursor) = parse_organic_atom(&chars, cursor)?;
+                let atom_id = mol.add_atom(atom);
+                if let Some(previous) = current {
+                    mol.add_bond(previous, atom_id, pending_bond)
+                        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                }
+                current = Some(atom_id);
+                pending_bond = BondOrder::Single;
+                cursor = next_cursor;
+            }
+        }
+    }
+    if !stack.is_empty() {
+        return Err(SmilesParseError::new(input.len(), "unclosed branch"));
+    }
+    if !rings.is_empty() {
+        return Err(SmilesParseError::new(input.len(), "unclosed ring closure"));
+    }
+    Ok(SmallMolecule { mol })
+}
+
+fn parse_organic_atom(
+    chars: &[(usize, char)],
+    cursor: usize,
+) -> std::result::Result<(Atom, usize), SmilesParseError> {
+    let (offset, ch) = chars[cursor];
+    let mut symbol = ch.to_string();
+    let mut aromatic = false;
+    let mut next = cursor + 1;
+    if matches!(ch, 'B' | 'C') && chars.get(cursor + 1).map(|(_, c)| *c) == Some('l')
+        || ch == 'B' && chars.get(cursor + 1).map(|(_, c)| *c) == Some('r')
+    {
+        symbol.push(chars[cursor + 1].1);
+        next += 1;
+    } else if matches!(ch, 'b' | 'c' | 'n' | 'o' | 'p' | 's') {
+        symbol = ch.to_ascii_uppercase().to_string();
+        aromatic = true;
+    }
+    let element = Element::from_symbol(&symbol)
+        .ok_or_else(|| SmilesParseError::new(offset, format!("unsupported atom `{ch}`")))?;
+    let mut atom = Atom::new(element);
+    atom.aromatic = aromatic;
+    Ok((atom, next))
+}
+
+fn parse_bracket_atom(
+    chars: &[(usize, char)],
+    cursor: usize,
+) -> std::result::Result<(Atom, usize), SmilesParseError> {
+    let start = chars[cursor].0;
+    let mut end = cursor + 1;
+    while end < chars.len() && chars[end].1 != ']' {
+        end += 1;
+    }
+    if end == chars.len() {
+        return Err(SmilesParseError::new(start, "unclosed bracket atom"));
+    }
+    let text = chars[cursor + 1..end]
+        .iter()
+        .map(|(_, c)| *c)
+        .collect::<String>();
+    let mut index = 0;
+    let isotope_digits = take_digits(&text, &mut index);
+    let symbol = take_element_symbol(&text, &mut index)
+        .ok_or_else(|| SmilesParseError::new(start, "bracket atom missing element"))?;
+    let mut aromatic = false;
+    let canonical_symbol = if symbol.chars().next().is_some_and(char::is_lowercase) {
+        aromatic = true;
+        let mut chars = symbol.chars();
+        let first = chars.next().expect("symbol has first").to_ascii_uppercase();
+        format!("{first}{}", chars.as_str())
+    } else {
+        symbol
+    };
+    let element = Element::from_symbol(&canonical_symbol)
+        .ok_or_else(|| SmilesParseError::new(start, "unsupported bracket element"))?;
+    let mut atom = Atom::new(element);
+    atom.aromatic = aromatic;
+    if !isotope_digits.is_empty() {
+        atom.isotope = isotope_digits.parse::<u16>().ok();
+    }
+    while index < text.len() {
+        let rest = &text[index..];
+        if let Some(after_h) = rest.strip_prefix('H') {
+            index += 1;
+            let mut h_index = 0;
+            let digits = take_digits(after_h, &mut h_index);
+            atom.explicit_hydrogens = if digits.is_empty() {
+                1
+            } else {
+                digits.parse().unwrap_or(0)
+            };
+            index += h_index;
+        } else if rest.starts_with('+') || rest.starts_with('-') {
+            let sign = if rest.starts_with('+') { 1 } else { -1 };
+            index += 1;
+            let mut repeats = 1i8;
+            while text[index..].starts_with(if sign > 0 { '+' } else { '-' }) {
+                repeats += 1;
+                index += 1;
+            }
+            let mut charge_index = 0;
+            let digits = take_digits(&text[index..], &mut charge_index);
+            if !digits.is_empty() {
+                repeats = digits.parse().unwrap_or(repeats);
+                index += charge_index;
+            }
+            atom.formal_charge = sign * repeats;
+        } else if let Some(after_colon) = rest.strip_prefix(':') {
+            let mut map_index = 0;
+            let digits = take_digits(after_colon, &mut map_index);
+            atom.atom_map = digits.parse::<u32>().ok();
+            index += 1 + map_index;
+        } else {
+            index += 1;
+        }
+    }
+    Ok((atom, end + 1))
+}
+
+fn take_digits(text: &str, index: &mut usize) -> String {
+    let start = *index;
+    while *index < text.len() && text.as_bytes()[*index].is_ascii_digit() {
+        *index += 1;
+    }
+    text[start..*index].to_owned()
+}
+
+fn take_element_symbol(text: &str, index: &mut usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    if *index >= bytes.len() || !bytes[*index].is_ascii_alphabetic() {
+        return None;
+    }
+    let mut symbol = String::new();
+    symbol.push(bytes[*index] as char);
+    *index += 1;
+    if *index < bytes.len() && bytes[*index].is_ascii_lowercase() {
+        symbol.push(bytes[*index] as char);
+        *index += 1;
+    }
+    Some(symbol)
+}
+
+pub fn write_smiles(
+    molecule: &SmallMolecule,
+    _options: SmilesWriteOptions,
+) -> std::result::Result<String, MolWriteError> {
+    let mol = &molecule.mol;
+    let mut visited = BTreeMap::<AtomId, ()>::new();
+    let mut ring_numbers = BTreeMap::<(AtomId, AtomId), usize>::new();
+    let mut next_ring = 1usize;
+    let mut parts = Vec::new();
+    for start in mol.atom_ids() {
+        if visited.contains_key(&start) {
+            continue;
+        }
+        parts.push(write_smiles_component(
+            mol,
+            start,
+            None,
+            &mut visited,
+            &mut ring_numbers,
+            &mut next_ring,
+        )?);
+    }
+    Ok(parts.join("."))
+}
+
+fn write_smiles_component(
+    mol: &Molecule,
+    atom_id: AtomId,
+    parent: Option<AtomId>,
+    visited: &mut BTreeMap<AtomId, ()>,
+    ring_numbers: &mut BTreeMap<(AtomId, AtomId), usize>,
+    next_ring: &mut usize,
+) -> std::result::Result<String, MolWriteError> {
+    visited.insert(atom_id, ());
+    let atom = mol
+        .atom(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?;
+    let mut out = smiles_atom(atom);
+    let mut children = Vec::<(BondOrder, AtomId)>::new();
+    for (_, bond) in mol
+        .incident_bonds(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+    {
+        let neighbor = bond.other_atom(atom_id);
+        if Some(neighbor) == parent {
+            continue;
+        }
+        if visited.contains_key(&neighbor) {
+            let key = ordered_atom_pair(atom_id, neighbor);
+            if let std::collections::btree_map::Entry::Vacant(entry) = ring_numbers.entry(key) {
+                let number = *next_ring;
+                *next_ring += 1;
+                entry.insert(number);
+                out.push_str(smiles_bond(bond.order));
+                out.push_str(&number.to_string());
+            }
+        } else {
+            children.push((bond.order, neighbor));
+        }
+    }
+    children.sort_by_key(|(_, atom)| *atom);
+    for (index, (order, child)) in children.into_iter().enumerate() {
+        let child_text = format!(
+            "{}{}",
+            smiles_bond(order),
+            write_smiles_component(mol, child, Some(atom_id), visited, ring_numbers, next_ring)?
+        );
+        if index == 0 {
+            out.push_str(&child_text);
+        } else {
+            out.push('(');
+            out.push_str(&child_text);
+            out.push(')');
+        }
+    }
+    Ok(out)
+}
+
+fn smiles_bond(order: BondOrder) -> &'static str {
+    match order {
+        BondOrder::Single => "",
+        BondOrder::Double => "=",
+        BondOrder::Triple => "#",
+        BondOrder::Aromatic => ":",
+        BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => "-",
+    }
+}
+
+fn smiles_atom(atom: &Atom) -> String {
+    let organic = atom.isotope.is_none()
+        && atom.formal_charge == 0
+        && atom.explicit_hydrogens == 0
+        && atom.atom_map.is_none()
+        && matches!(
+            atom.element.symbol(),
+            "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
+        );
+    if organic {
+        if atom.aromatic {
+            atom.element.symbol().to_ascii_lowercase()
+        } else {
+            atom.element.symbol().to_owned()
+        }
+    } else {
+        let mut out = String::from("[");
+        if let Some(isotope) = atom.isotope {
+            out.push_str(&isotope.to_string());
+        }
+        if atom.aromatic {
+            out.push_str(&atom.element.symbol().to_ascii_lowercase());
+        } else {
+            out.push_str(atom.element.symbol());
+        }
+        if atom.explicit_hydrogens > 0 {
+            out.push('H');
+            if atom.explicit_hydrogens > 1 {
+                out.push_str(&atom.explicit_hydrogens.to_string());
+            }
+        }
+        if atom.formal_charge > 0 {
+            out.push('+');
+            if atom.formal_charge > 1 {
+                out.push_str(&atom.formal_charge.to_string());
+            }
+        } else if atom.formal_charge < 0 {
+            out.push('-');
+            if atom.formal_charge < -1 {
+                out.push_str(&(-atom.formal_charge).to_string());
+            }
+        }
+        if let Some(map) = atom.atom_map {
+            out.push(':');
+            out.push_str(&map.to_string());
+        }
+        out.push(']');
+        out
     }
 }
 
@@ -1639,6 +2862,7 @@ pub type Result<T> = std::result::Result<T, MoleculeError>;
 pub enum MoleculeError {
     InvalidAtomId(AtomId),
     InvalidBondId(BondId),
+    InvalidConformerId(ConformerId),
     SelfBond(AtomId),
     DuplicateBond { a: AtomId, b: AtomId },
     UnsupportedFeature(&'static str),
@@ -1649,6 +2873,7 @@ impl fmt::Display for MoleculeError {
         match self {
             Self::InvalidAtomId(id) => write!(f, "invalid atom id: {id}"),
             Self::InvalidBondId(id) => write!(f, "invalid bond id: {id}"),
+            Self::InvalidConformerId(id) => write!(f, "invalid conformer id: {id}"),
             Self::SelfBond(id) => write!(f, "cannot create a bond from atom {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate bond between {a} and {b}"),
             Self::UnsupportedFeature(name) => write!(f, "unsupported feature: {name}"),
@@ -2032,6 +3257,173 @@ $$$$
             mol.bond(BondId::new(0)).expect("bond exists").order,
             BondOrder::Aromatic
         );
+    }
+
+    #[test]
+    fn mol_v2000_preserves_coordinates_charges_isotopes_radicals_and_atom_maps() {
+        let input = "\
+charged radical
+molecules validation
+metadata fixture
+  2  1  0  0  0  0            999 V2000
+    0.1000    0.2000    0.3000 N   0  0  0  0  0  0  0  0  0  7  0  0
+    1.4000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+M  CHG  1   1   1
+M  ISO  1   2  13
+M  RAD  1   1   2
+M  END
+";
+
+        let small = read_mol_v2000_str(input).expect("mol should parse");
+        let atom0 = small.mol.atom(AtomId::new(0)).expect("atom exists");
+        let atom1 = small.mol.atom(AtomId::new(1)).expect("atom exists");
+        assert_eq!(atom0.formal_charge, 1);
+        assert_eq!(atom0.radical_electrons, 1);
+        assert_eq!(atom0.atom_map, Some(7));
+        assert_eq!(atom1.isotope, Some(13));
+        let (_, conformer) = small.mol.first_conformer().expect("conformer exists");
+        assert_eq!(
+            conformer.position(AtomId::new(0)),
+            Some(Point3::new(0.1, 0.2, 0.3))
+        );
+    }
+
+    #[test]
+    fn mol_and_sdf_v2000_writers_round_trip_metadata_and_fields() {
+        let input = "\
+ammonium_acetate_like
+molecules validation
+M CHG and M ISO fixture
+  4  2  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.4000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.6000    0.7000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.6000   -0.7000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+  2  3  2  0  0  0  0
+  2  4  1  0  0  0  0
+M  CHG  2   1   1   4  -1
+M  ISO  1   2  13
+M  END
+>  <fixture_id>
+charged_isotope_records
+
+$$$$
+";
+
+        let records =
+            read_sdf_v2000_records(input, SdfParseOptions::default()).expect("sdf should parse");
+        let molecules = records
+            .iter()
+            .map(|record| record.molecule.clone())
+            .collect::<Vec<_>>();
+        let sdf = write_sdf_v2000(&molecules).expect("sdf should write");
+        let reparsed =
+            read_sdf_v2000_records(&sdf, SdfParseOptions::default()).expect("written sdf parses");
+
+        assert_eq!(reparsed.len(), 1);
+        assert_eq!(
+            reparsed[0]
+                .molecule
+                .mol
+                .atom(AtomId::new(0))
+                .expect("atom")
+                .formal_charge,
+            1
+        );
+        assert_eq!(
+            reparsed[0].molecule.mol.props().get("sdf.field.fixture_id"),
+            Some(&PropValue::String("charged_isotope_records".to_owned()))
+        );
+    }
+
+    #[test]
+    fn valence_and_sanitization_are_explicit() {
+        let mut small = read_smiles_str("CCO", SmilesParseOptions).expect("smiles should parse");
+        assert_eq!(small.mol.perception().valence, ComputedState::Absent);
+
+        let report = sanitize_small_molecule(&mut small, SanitizeOptions::default())
+            .expect("ethanol should sanitize");
+
+        assert!(report.valence.expect("valence report").is_ok());
+        assert_eq!(small.mol.perception().valence, ComputedState::Fresh);
+        assert_eq!(small.mol.perception().rings, ComputedState::Fresh);
+        assert_eq!(
+            small
+                .mol
+                .atom(AtomId::new(2))
+                .expect("oxygen")
+                .implicit_hydrogens,
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn valence_reports_excess_common_valence() {
+        let mut mol = Molecule::new();
+        let c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("C")));
+        for _ in 0..5 {
+            let h = mol.add_atom(Atom::new(Element::from_symbol("H").expect("H")));
+            mol.add_bond(c, h, BondOrder::Single).expect("bond");
+        }
+
+        let report = perceive_valence(&mut mol, ValenceModel::RdkitLikeBasic);
+
+        assert_eq!(report.issues.len(), 1);
+        assert!(!report.is_ok());
+    }
+
+    #[test]
+    fn ring_set_reports_a_basis_for_fused_rings() {
+        let (mut mol, _, _) = ring_molecule(
+            &["C", "C", "C", "C", "C", "C"],
+            &[
+                BondOrder::Single,
+                BondOrder::Single,
+                BondOrder::Single,
+                BondOrder::Single,
+                BondOrder::Single,
+                BondOrder::Single,
+            ],
+        );
+        let a = mol.add_atom(carbon());
+        let b = mol.add_atom(carbon());
+        mol.add_bond(AtomId::new(0), a, BondOrder::Single)
+            .expect("bond");
+        mol.add_bond(a, b, BondOrder::Single).expect("bond");
+        mol.add_bond(b, AtomId::new(3), BondOrder::Single)
+            .expect("bond");
+
+        let ring_set = perceive_ring_set(&mut mol);
+
+        assert_eq!(ring_set.len(), 2);
+        assert!(ring_set.rings().iter().all(|ring| ring.atoms.len() >= 4));
+    }
+
+    #[test]
+    fn smiles_parses_branches_rings_brackets_and_fragments_without_sanitizing() {
+        let small = read_smiles_str("C(C)O.C1=CC=CC=C1.[13NH4+:7]", SmilesParseOptions)
+            .expect("smiles should parse");
+
+        assert_eq!(small.mol.atom_count(), 10);
+        assert_eq!(small.mol.bond_count(), 8);
+        assert_eq!(small.mol.perception().valence, ComputedState::Absent);
+        let bracket_atom = small.mol.atom(AtomId::new(9)).expect("bracket atom");
+        assert_eq!(bracket_atom.isotope, Some(13));
+        assert_eq!(bracket_atom.explicit_hydrogens, 4);
+        assert_eq!(bracket_atom.formal_charge, 1);
+        assert_eq!(bracket_atom.atom_map, Some(7));
+    }
+
+    #[test]
+    fn smiles_writer_round_trips_basic_graph_shape() {
+        let small = read_smiles_str("CC(=O)O", SmilesParseOptions).expect("smiles should parse");
+        let text = write_smiles(&small, SmilesWriteOptions).expect("smiles should write");
+        let reparsed =
+            read_smiles_str(&text, SmilesParseOptions).expect("written smiles should parse");
+
+        assert_eq!(reparsed.mol.atom_count(), small.mol.atom_count());
+        assert_eq!(reparsed.mol.bond_count(), small.mol.bond_count());
     }
 
     #[test]

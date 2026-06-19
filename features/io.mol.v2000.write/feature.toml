@@ -1,0 +1,8 @@
+id = "io.mol.v2000.write"
+title = "Molfile V2000 writer"
+area = "io"
+version = 1
+implemented = true
+validated = false
+description = "Write small molecules as V2000 Molfile blocks with coordinates and common atom metadata."
+depends_on = ["io.mol.v2000.parse"]

@@ -1,0 +1,14 @@
+feature_id = "io.sdf.v2000.write"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-19-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "../io.sdf.v2000.parse/fixtures/valid/multi_record_properties.sdf",
+  "../io.sdf.v2000.parse/fixtures/valid/charged_isotope_records.sdf",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "Fixtures should be used for SDF parse/write/parse round trips.",
+]

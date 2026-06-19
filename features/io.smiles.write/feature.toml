@@ -1,0 +1,8 @@
+id = "io.smiles.write"
+title = "Noncanonical SMILES writer"
+area = "io"
+version = 1
+implemented = true
+validated = false
+description = "Write small molecules as deterministic noncanonical SMILES using current graph order."
+depends_on = ["io.smiles.parse"]
