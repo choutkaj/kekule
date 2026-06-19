@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 70" role="img" aria-labelledby="title description">
+  <title id="title">Molecules</title>
+  <desc id="description">The word Molecules rendered as compact box-drawing art.</desc>
+  <style>
+    text {
+      fill: #1f2328;
+      font-family: Consolas, "Cascadia Mono", "Liberation Mono", monospace;
+      font-size: 24px;
+      font-weight: 400;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      text {
+        fill: #f0f6fc;
+      }
+    }
+  </style>
+  <text x="210" y="21" text-anchor="middle" xml:space="preserve">┏┳┓┏━┓╻  ┏━╸┏━╸╻ ╻╻  ┏━╸┏━┓</text>
+  <text x="210" y="43" text-anchor="middle" xml:space="preserve">┃┃┃┃ ┃┃  ┣╸ ┃  ┃ ┃┃  ┣╸ ┗━┓</text>
+  <text x="210" y="65" text-anchor="middle" xml:space="preserve">╹ ╹┗━┛┗━╸┗━╸┗━╸┗━┛┗━╸┗━╸┗━┛</text>
+</svg>

@@ -1,9 +1,8 @@
 # Molecules!
 
 <p align="center">
-  <img src="assets/molecules_logo.png" alt="Molecules!" width="400">
+  <img src="assets/molecules_logo.svg" alt="Molecules!" width="400">
 </p>
-
 
 `molecules` is a pure Rust cheminformatics and molecular-structure backend for small molecules and macromolecules.
 
