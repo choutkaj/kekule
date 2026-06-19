@@ -7,3 +7,5 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+molecules = { path = "../molecules" }
+serde_json = "1"
