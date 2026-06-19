@@ -1,0 +1,10 @@
+feature_id = "stereo.representation.basic"
+reference_tool = "planned-manual-fixtures"
+reference_version = "2026-06-19-no-fixtures-yet"
+comparison_mode = "planned"
+
+fixtures = []
+
+notes = [
+  "Planned feature placeholder; fixtures will be added when implementation starts.",
+]

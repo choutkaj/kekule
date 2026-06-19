@@ -1,0 +1,8 @@
+id = "query.smarts.basic"
+title = "Basic SMARTS query parsing"
+area = "query"
+version = 1
+implemented = false
+validated = false
+description = "Plan a basic SMARTS-like query representation and parser."
+depends_on = ["io.smiles.parse"]

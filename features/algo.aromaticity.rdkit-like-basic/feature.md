@@ -7,14 +7,16 @@ Assign aromatic atom and bond flags for common organic ring systems using an ini
 ## Behavior/API
 
 - Exposes `AromaticityModel::RdkitLikeBasic` and `perceive_aromaticity`.
-- Requires or computes ring membership before assigning aromaticity.
+- Requires or computes ring perception before assigning aromaticity.
 - Marks supported aromatic atoms and bonds and sets aromaticity perception state to fresh.
 - Clears prior aromatic flags deterministically before assignment.
+- Can be run directly or through the explicit sanitization pipeline.
 
 ## Implementation Notes
 
 - Operates on the shared core `Molecule` graph.
 - Uses ring membership from `algo.rings.fast`.
+- Integrates with the first-wave valence and ring-set perception stack.
 - Applies a basic 4n+2 electron-count model for common C, N, O, S, and P rings.
 - Leaves unsupported or ambiguous systems non-aromatic rather than claiming full RDKit parity.
 
@@ -33,3 +35,4 @@ Assign aromatic atom and bond flags for common organic ring systems using an ini
 ## Revision Notes
 
 - v1: Initial basic aromaticity perception for common organic rings.
+- v2: Document integration with explicit sanitization and ring/valence perception.

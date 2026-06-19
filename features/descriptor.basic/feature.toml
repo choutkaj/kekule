@@ -1,0 +1,8 @@
+id = "descriptor.basic"
+title = "Basic molecular descriptors"
+area = "descriptors"
+version = 1
+implemented = false
+validated = false
+description = "Plan basic small-molecule descriptors such as formula and molecular weight."
+depends_on = ["chem.sanitize.rdkit-like-basic"]

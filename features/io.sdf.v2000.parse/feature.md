@@ -2,22 +2,21 @@
 
 ## Summary
 
-Parse multi-record SDF V2000 input into small molecules using the shared core graph.
+Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 parser for each record.
 
 ## Behavior/API
 
 - Exposes `SdfParseOptions`, `SdfRecord`, `SdfParseError`, `read_sdf_v2000_str`, and `read_sdf_v2000_records`.
-- Parses V2000 counts, atom blocks, bond blocks, and SDF data fields.
+- Parses V2000 Molfile blocks, coordinates, common atom metadata, bond blocks, and SDF data fields.
 - Preserves SDF title, program, comment, and data fields as molecule properties.
 - Rejects V3000 input and malformed graph endpoints.
 - Does not run sanitization or perception.
 
 ## Implementation Notes
 
-- Converts SDF one-based atom indices to stable `AtomId`s.
-- Supports the initial documented bond order mappings.
+- Delegates Molfile block parsing to `io.mol.v2000.parse`.
+- Preserves common V2000 `M  CHG`, `M  ISO`, and `M  RAD` metadata.
 - Treats raw parsing as separate from chemistry interpretation.
-- Some V2000 metadata records such as `M  CHG` and `M  ISO` are fixture pressure cases for future parser expansion.
 
 ## Validation
 
@@ -33,3 +32,4 @@ Parse multi-record SDF V2000 input into small molecules using the shared core gr
 ## Revision Notes
 
 - v1: Initial raw multi-record SDF V2000 parser.
+- v2: Delegate Molfile parsing and preserve coordinates plus common atom metadata.

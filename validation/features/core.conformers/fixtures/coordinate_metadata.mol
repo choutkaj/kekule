@@ -1,0 +1,11 @@
+coordinate_metadata
+molecules validation
+coordinate fixture
+  2  1  0  0  0  0            999 V2000
+    0.1000    0.2000    0.3000 N   0  0  0  0  0  0  0  0  0  7  0  0
+    1.4000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+M  CHG  1   1   1
+M  ISO  1   2  13
+M  RAD  1   1   2
+M  END

@@ -1,0 +1,14 @@
+feature_id = "io.mol.v2000.parse"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-19-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "../core.conformers/fixtures/coordinate_metadata.mol",
+  "../io.sdf.v2000.parse/fixtures/valid/charged_isotope_records.sdf",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "Fixtures cover coordinates, charges, isotopes, radicals, and atom maps.",
+]

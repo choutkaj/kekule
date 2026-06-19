@@ -1,0 +1,14 @@
+feature_id = "chem.sanitize.rdkit-like-basic"
+reference_tool = "manual-fixtures"
+reference_version = "2026-06-19-no-reference-goldens"
+comparison_mode = "fixture-discovery-only"
+
+fixtures = [
+  "../algo.valence.rdkit-like-basic/fixtures/valence_cases.sdf",
+  "../algo.aromaticity.rdkit-like-basic/fixtures/aromaticity_basic_cases.sdf",
+]
+
+notes = [
+  "Reference RDKit goldens have not been generated yet.",
+  "Fixtures cover opt-in valence, ring, and aromaticity perception.",
+]
