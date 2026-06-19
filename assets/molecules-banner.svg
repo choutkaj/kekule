@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1480 280"
+     width="1480" height="280"
+     preserveAspectRatio="xMidYMid meet"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Molecules animated banner</title>
+  <desc id="desc">The word Molecules is centered over a dark field of slowly drifting molecular fragments.</desc>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#15181a"/>
+      <stop offset="0.52" stop-color="#101315"/>
+      <stop offset="1" stop-color="#0c0f11"/>
+    </linearGradient>
+
+    <radialGradient id="centerHalo" cx="50%" cy="50%" rx="50%" ry="50%">
+      <stop offset="0" stop-color="#101315" stop-opacity="1"/>
+      <stop offset="0.42" stop-color="#101315" stop-opacity="0.96"/>
+      <stop offset="0.72" stop-color="#101315" stop-opacity="0.58"/>
+      <stop offset="1" stop-color="#101315" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="edgeFadeGradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="black"/>
+      <stop offset="0.055" stop-color="white"/>
+      <stop offset="0.945" stop-color="white"/>
+      <stop offset="1" stop-color="black"/>
+    </linearGradient>
+
+    <radialGradient id="verticalFadeGradient" cx="50%" cy="50%" rx="72%" ry="72%">
+      <stop offset="0" stop-color="white"/>
+      <stop offset="0.82" stop-color="white"/>
+      <stop offset="1" stop-color="#666"/>
+    </radialGradient>
+
+    <mask id="fragmentMask">
+      <rect width="1480" height="280" fill="url(#edgeFadeGradient)"/>
+      <rect width="1480" height="280" fill="url(#verticalFadeGradient)" style="mix-blend-mode:multiply"/>
+    </mask>
+
+    <filter id="titleGlow" x="-40%" y="-80%" width="180%" height="260%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="1 0 0 0 0.74
+                0 1 0 0 0.80
+                0 0 1 0 0.84
+                0 0 0 0.18 0" result="softGlow"/>
+      <feMerge>
+        <feMergeNode in="softGlow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="farBlur" x="-5%" y="-30%" width="110%" height="160%">
+      <feGaussianBlur stdDeviation="0.45"/>
+    </filter>
+  </defs>
+
+  <style><![CDATA[
+    .molecular-text {
+      fill: #aab3b8;
+      font-family: "DejaVu Sans Mono", "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.35px;
+      font-variant-ligatures: none;
+      text-rendering: geometricPrecision;
+    }
+
+    .stream { opacity: 0.18; }
+    .stream.near { opacity: 0.25; }
+    .stream.far { opacity: 0.105; filter: url(#farBlur); }
+
+    .fragment {
+      fill: #c0c8cc;
+      font-family: "DejaVu Sans Mono", "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: 0.45px;
+      font-variant-ligatures: none;
+      text-rendering: geometricPrecision;
+    }
+
+    .fragment.dim { opacity: 0.17; }
+    .fragment.mid { opacity: 0.27; }
+    .fragment.bright { opacity: 0.38; }
+
+    .title {
+      fill: #f2f4f5;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      font-size: 76px;
+      font-weight: 620;
+      letter-spacing: -2.2px;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      filter: url(#titleGlow);
+    }
+
+    .stream-a { animation: streamA 28s ease-in-out -8s infinite; }
+    .stream-b { animation: streamB 34s ease-in-out -19s infinite; }
+    .stream-c { animation: streamC 40s ease-in-out -27s infinite; }
+    .stream-d { animation: streamD 31s ease-in-out -13s infinite; }
+
+    .float-a { animation: floatA 18s ease-in-out -5s infinite; }
+    .float-b { animation: floatB 22s ease-in-out -14s infinite; }
+    .float-c { animation: floatC 26s ease-in-out -9s infinite; }
+    .float-d { animation: floatD 20s ease-in-out -17s infinite; }
+
+    .title-breathe { animation: titleBreathe 8s ease-in-out -2s infinite; }
+    .halo-breathe { animation: haloBreathe 9s ease-in-out -6s infinite; }
+
+    @keyframes streamA {
+      0%, 100% { transform: translate(0, 0); }
+      32%      { transform: translate(58px, -3px); }
+      68%      { transform: translate(-24px, 3px); }
+    }
+    @keyframes streamB {
+      0%, 100% { transform: translate(0, 0); }
+      38%      { transform: translate(-72px, 3px); }
+      74%      { transform: translate(26px, -2px); }
+    }
+    @keyframes streamC {
+      0%, 100% { transform: translate(0, 0); }
+      45%      { transform: translate(42px, 4px); }
+      78%      { transform: translate(-54px, -2px); }
+    }
+    @keyframes streamD {
+      0%, 100% { transform: translate(0, 0); }
+      35%      { transform: translate(-38px, -4px); }
+      72%      { transform: translate(65px, 2px); }
+    }
+
+    @keyframes floatA {
+      0%, 100% { transform: translate(0, 0); opacity: 0.72; }
+      34%      { transform: translate(18px, -7px); opacity: 1; }
+      71%      { transform: translate(-9px, 5px); opacity: 0.82; }
+    }
+    @keyframes floatB {
+      0%, 100% { transform: translate(0, 0); opacity: 0.8; }
+      39%      { transform: translate(-22px, 6px); opacity: 1; }
+      77%      { transform: translate(8px, -5px); opacity: 0.7; }
+    }
+    @keyframes floatC {
+      0%, 100% { transform: translate(0, 0); opacity: 0.7; }
+      43%      { transform: translate(13px, 8px); opacity: 0.94; }
+      73%      { transform: translate(-16px, -4px); opacity: 0.78; }
+    }
+    @keyframes floatD {
+      0%, 100% { transform: translate(0, 0); opacity: 0.76; }
+      31%      { transform: translate(-11px, -8px); opacity: 1; }
+      66%      { transform: translate(20px, 4px); opacity: 0.73; }
+    }
+
+    @keyframes titleBreathe {
+      0%, 100% { opacity: 0.94; }
+      50%      { opacity: 1; }
+    }
+    @keyframes haloBreathe {
+      0%, 100% { transform: scale(0.98, 0.96); opacity: 0.9; }
+      50%      { transform: scale(1.025, 1.04); opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .stream-a, .stream-b, .stream-c, .stream-d,
+      .float-a, .float-b, .float-c, .float-d,
+      .title-breathe, .halo-breathe {
+        animation: none !important;
+      }
+    }
+  ]]></style>
+
+  <rect width="1480" height="280" rx="16" fill="url(#background)"/>
+
+  <g mask="url(#fragmentMask)">
+    <!-- Slow molecular streams: a nod to the Codex landing field, but built from chemistry fragments. -->
+    <g transform="translate(-105 23)">
+      <g class="stream stream-a far">
+        <text class="molecular-text" xml:space="preserve">C─C═C─N─O   ·   O═C─N─C≡N   ·   HO─C─C─NH₂   ·   C─O─P(═O)─O   ·   N≡C─C═O   ·   C─S─S─C   ·   H₂N─C─C(═O)─O   ·   C₆H₅─C═O   ·   N─C(═N)─N   ·   O─C─C─C─O   ·   C═C─C≡C   ·   C─C(═O)─N</text>
+      </g>
+    </g>
+
+    <g transform="translate(-55 49)">
+      <g class="stream stream-b near">
+        <text class="molecular-text" xml:space="preserve">O─C─C─C─O   ·   C─C(═O)─N   ·   N≡C─C═O   ·   C─C═C─N─O   ·   C─S─S─C   ·   O═C─N─C≡N   ·   C₆H₅─C═O   ·   HO─C─C─NH₂   ·   C═C─C≡C   ·   H₂N─C─C(═O)─O   ·   C─O─P(═O)─O</text>
+      </g>
+    </g>
+
+    <g transform="translate(-128 76)">
+      <g class="stream stream-c">
+        <text class="molecular-text" xml:space="preserve">H₂N─C─C(═O)─O   ·   C─O─P(═O)─O   ·   C═C─C≡C   ·   N─C(═N)─N   ·   O═C─N─C≡N   ·   C─C═C─N─O   ·   O─C─C─C─O   ·   C₆H₅─C═O   ·   N≡C─C═O   ·   C─S─S─C   ·   HO─C─C─NH₂</text>
+      </g>
+    </g>
+
+    <g transform="translate(-72 104)">
+      <g class="stream stream-d far">
+        <text class="molecular-text" xml:space="preserve">C─S─S─C   ·   C₆H₅─C═O   ·   C─C═C─N─O   ·   H₂N─C─C(═O)─O   ·   N≡C─C═O   ·   O─C─C─C─O   ·   C─C(═O)─N   ·   C─O─P(═O)─O   ·   O═C─N─C≡N   ·   C═C─C≡C   ·   N─C(═N)─N</text>
+      </g>
+    </g>
+
+    <g transform="translate(-96 132)">
+      <g class="stream stream-a">
+        <text class="molecular-text" xml:space="preserve">N─C(═N)─N   ·   HO─C─C─NH₂   ·   O═C─N─C≡N   ·   C─S─S─C   ·   C─O─P(═O)─O   ·   C─C═C─N─O   ·   H₂N─C─C(═O)─O   ·   N≡C─C═O   ·   C═C─C≡C   ·   O─C─C─C─O   ·   C₆H₅─C═O</text>
+      </g>
+    </g>
+
+    <g transform="translate(-40 160)">
+      <g class="stream stream-b far">
+        <text class="molecular-text" xml:space="preserve">C═C─C≡C   ·   C─C(═O)─N   ·   C₆H₅─C═O   ·   O─C─C─C─O   ·   C─S─S─C   ·   H₂N─C─C(═O)─O   ·   C─C═C─N─O   ·   N─C(═N)─N   ·   N≡C─C═O   ·   C─O─P(═O)─O   ·   HO─C─C─NH₂</text>
+      </g>
+    </g>
+
+    <g transform="translate(-120 188)">
+      <g class="stream stream-c near">
+        <text class="molecular-text" xml:space="preserve">O═C─N─C≡N   ·   C─O─P(═O)─O   ·   C─C═C─N─O   ·   HO─C─C─NH₂   ·   C═C─C≡C   ·   C₆H₅─C═O   ·   N─C(═N)─N   ·   C─S─S─C   ·   H₂N─C─C(═O)─O   ·   O─C─C─C─O   ·   N≡C─C═O</text>
+      </g>
+    </g>
+
+    <g transform="translate(-67 216)">
+      <g class="stream stream-d">
+        <text class="molecular-text" xml:space="preserve">HO─C─C─NH₂   ·   N≡C─C═O   ·   O─C─C─C─O   ·   C─S─S─C   ·   C─C(═O)─N   ·   C═C─C≡C   ·   C─O─P(═O)─O   ·   C₆H₅─C═O   ·   O═C─N─C≡N   ·   C─C═C─N─O   ·   H₂N─C─C(═O)─O</text>
+      </g>
+    </g>
+
+    <g transform="translate(-102 244)">
+      <g class="stream stream-a far">
+        <text class="molecular-text" xml:space="preserve">C₆H₅─C═O   ·   N─C(═N)─N   ·   C─C═C─N─O   ·   O═C─N─C≡N   ·   C─O─P(═O)─O   ·   O─C─C─C─O   ·   C─S─S─C   ·   HO─C─C─NH₂   ·   C═C─C≡C   ·   N≡C─C═O   ·   C─C(═O)─N</text>
+      </g>
+    </g>
+
+    <g transform="translate(-48 271)">
+      <g class="stream stream-b near">
+        <text class="molecular-text" xml:space="preserve">N≡C─C═O   ·   C═C─C≡C   ·   H₂N─C─C(═O)─O   ·   C─C(═O)─N   ·   O═C─N─C≡N   ·   C─S─S─C   ·   C₆H₅─C═O   ·   C─C═C─N─O   ·   O─C─C─C─O   ·   N─C(═N)─N   ·   C─O─P(═O)─O</text>
+      </g>
+    </g>
+
+    <!-- Larger, independently drifting fragments establish depth and keep the field from feeling like plain text rows. -->
+    <g transform="translate(68 43)"><g class="float-a"><text class="fragment bright">C─C═C─N─O</text></g></g>
+    <g transform="translate(306 31)"><g class="float-c"><text class="fragment dim">O═C─N─C≡N</text></g></g>
+    <g transform="translate(600 42)"><g class="float-b"><text class="fragment mid">H₂N─C─C(═O)─O</text></g></g>
+    <g transform="translate(1023 45)"><g class="float-d"><text class="fragment mid">C─O─P(═O)─O</text></g></g>
+    <g transform="translate(1265 34)"><g class="float-b"><text class="fragment bright">N≡C─C═O</text></g></g>
+
+    <g transform="translate(126 103)"><g class="float-c"><text class="fragment mid">C═C─C≡C</text></g></g>
+    <g transform="translate(362 104)"><g class="float-d"><text class="fragment dim">C₆H₅─C═O</text></g></g>
+    <g transform="translate(1115 105)"><g class="float-a"><text class="fragment bright">C─S─S─C</text></g></g>
+    <g transform="translate(1302 117)"><g class="float-c"><text class="fragment dim">N─C(═N)─N</text></g></g>
+
+    <g transform="translate(72 205)"><g class="float-b"><text class="fragment bright">HO─C─C─NH₂</text></g></g>
+    <g transform="translate(292 247)"><g class="float-d"><text class="fragment mid">C₆H₅─C═O</text></g></g>
+    <g transform="translate(561 234)"><g class="float-a"><text class="fragment dim">N─C(═N)─N</text></g></g>
+    <g transform="translate(939 244)"><g class="float-c"><text class="fragment mid">O─C─C─C─O</text></g></g>
+    <g transform="translate(1207 219)"><g class="float-b"><text class="fragment bright">C─C(═O)─N</text></g></g>
+    <g transform="translate(1328 260)"><g class="float-d"><text class="fragment dim">O═C─N─C≡N</text></g></g>
+  </g>
+
+  <!-- The halo creates a quiet center without making the molecular field disappear abruptly. -->
+  <g transform="translate(740 140)">
+    <g class="halo-breathe">
+      <ellipse cx="0" cy="0" rx="285" ry="92" fill="url(#centerHalo)"/>
+    </g>
+  </g>
+
+  <g class="title-breathe">
+    <text class="title" x="740" y="144">Molecules</text>
+  </g>
+
+  <rect x="0.5" y="0.5" width="1479" height="279" rx="15.5"
+        fill="none" stroke="#ffffff" stroke-opacity="0.055"/>
+</svg>

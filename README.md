@@ -1,3 +1,6 @@
+<img src="./molecules-banner.svg" alt="Molecules" width="100%">
+<img src="./molecules-banner.gif" alt="Molecules" width="100%">
+
 <pre style="line-height: 1; font-family: monospace;">
 ╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮
 ││││ ││  ├╴ │  │ ││  ├╴ ╰─╮
