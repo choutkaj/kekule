@@ -13,12 +13,13 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 ## Implementation Notes
 
 - The writer targets readability and deterministic output, not canonical ranking.
+- A deterministic DFS tree is rendered with preassigned ring closures at both endpoints and branch children before the selected continuation path.
 - Unsupported advanced stereo/query details are omitted until later feature work.
 
 ## Validation
 
 - Unit tests cover parse/write/parse round trips for branches, rings, brackets, and fragments.
-- RDKit reference generator support is included for fixture/golden generation.
+- RDKit-generated goldens compare noncanonical output SMILES for external PubChem SMILES fixtures.
 
 ## Out Of Scope
 
@@ -27,3 +28,4 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 ## Revision Notes
 
 - v1: Noncanonical writer.
+- v2: Deterministic ring-closure and branch emission passes the RDKit-backed `tiny` corpus.

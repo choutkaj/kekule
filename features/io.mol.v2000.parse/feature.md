@@ -15,12 +15,13 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 
 - SDF V2000 parsing delegates Molfile-block parsing to this feature.
 - V2000 one-based atom indices are mapped to stable `AtomId`s.
+- Counts and bond lines are parsed as fixed-width V2000 records, with whitespace fallback for permissive inputs.
 - Coordinates are stored in the first conformer.
 
 ## Validation
 
 - Unit tests cover coordinates, `M  CHG`, `M  ISO`, radicals, atom maps, and malformed blocks.
-- RDKit reference generator support is included for fixture/golden generation.
+- RDKit-generated goldens compare raw Molfile-preserved atom, bond, metadata, and coordinate records for external PubChem fixtures.
 
 ## Out Of Scope
 
@@ -29,3 +30,4 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 ## Revision Notes
 
 - v1: Raw Molfile V2000 parser.
+- v2: Preserve RDKit-compatible V2000 double-bond `STEREOANY` markers and parse fixed-width three-digit counts/endpoints.

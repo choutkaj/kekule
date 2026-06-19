@@ -1,8 +1,9 @@
 id = "io.sdf.v2000.parse"
 title = "SDF V2000 parser"
 area = "io"
-version = 2
+version = 3
 implemented = true
 validated = false
 description = "Parse multi-record SDF V2000 files through Molfile V2000 parsing and attach data fields as molecule properties."
 depends_on = ["io.mol.v2000.parse"]
+validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pl-rex", "enamine-diversity"]

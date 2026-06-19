@@ -21,7 +21,7 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 
 - Current coverage is unit-test based.
 - Biopython golden validation is planned through `validation.harness`.
-- Fixtures live under `validation/features/io.mmcif.parse/`.
+- Fixtures, goldens, and evidence live under each applicable corpus directory.
 
 ## Out Of Scope
 

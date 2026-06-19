@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import re
@@ -45,6 +46,7 @@ def main() -> int:
         description="Generate normalized JSON golden data with Biopython."
     )
     parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
+    parser.add_argument("--corpus", default="tiny")
     parser.add_argument(
         "--repo-root",
         type=Path,
@@ -54,12 +56,12 @@ def main() -> int:
     parser.add_argument(
         "--fixture",
         action="append",
-        help="Fixture path from validation.toml to generate. May be repeated.",
+        help="Fixture path from the selected corpus manifest. May be repeated.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Directory for JSON output. Defaults to validation/features/<feature>/golden.",
+        help="Directory for JSON output. Defaults to validation/corpora/<corpus>/golden/<feature>.",
     )
     parser.add_argument(
         "--check-deps",
@@ -74,19 +76,26 @@ def main() -> int:
         return 0
 
     repo_root = args.repo_root.resolve()
-    feature_dir = repo_root / "validation" / "features" / args.feature
-    manifest_path = feature_dir / "validation.toml"
+    corpus_dir = repo_root / "validation" / "corpora" / args.corpus
+    manifest_path = corpus_dir / "features" / f"{args.feature}.toml"
     manifest = read_manifest(manifest_path)
+    if manifest.get("corpus_id") != args.corpus:
+        raise SystemExit(
+            f"{manifest_path} declares corpus_id {manifest.get('corpus_id')!r}, "
+            f"expected {args.corpus!r}"
+        )
     fixtures = selected_fixtures(manifest, args.fixture)
-    output_dir = (args.output_dir or feature_dir / "golden").resolve()
+    output_dir = (args.output_dir or corpus_dir / "golden" / args.feature).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for fixture in fixtures:
-        fixture_path = (feature_dir / fixture).resolve()
+        fixture_path = (corpus_dir / fixture).resolve()
         if not fixture_path.exists():
             raise SystemExit(f"{manifest_path} references missing fixture: {fixture}")
-        document = generate_document(args.feature, fixture, fixture_path, biopython)
-        output_path = output_dir / f"{slugify_fixture(fixture)}.json"
+        document = generate_document(
+            args.feature, args.corpus, fixture, fixture_path, biopython
+        )
+        output_path = output_dir / f"{slugify_fixture(fixture)}.json.gz"
         write_json(output_path, document)
         print(output_path)
     return 0
@@ -156,6 +165,7 @@ def selected_fixtures(manifest: dict[str, Any], requested: list[str] | None) -> 
 
 def generate_document(
     feature_id: str,
+    corpus_id: str,
     fixture: str,
     fixture_path: Path,
     biopython: dict[str, Any],
@@ -165,6 +175,7 @@ def generate_document(
     return {
         "schema_version": 1,
         "feature_id": feature_id,
+        "corpus_id": corpus_id,
         "fixture_id": slugify_fixture(fixture),
         "fixture_path": fixture,
         "input_sha256": sha256_file(fixture_path),
@@ -282,7 +293,10 @@ def slugify_fixture(fixture: str) -> str:
 
 
 def write_json(path: Path, document: dict[str, Any]) -> None:
-    path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    with path.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as handle:
+            handle.write(payload)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 
 - Current coverage is unit-test based.
 - Biopython golden validation is planned through `validation.harness`.
-- Fixtures live under `validation/features/bio.hierarchy.smcra/`.
+- Fixtures, goldens, and evidence live under each applicable corpus directory.
 
 ## Out Of Scope
 

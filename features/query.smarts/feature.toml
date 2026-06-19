@@ -6,3 +6,4 @@ implemented = false
 validated = false
 description = "Plan a SMARTS-like query representation and parser."
 depends_on = ["io.smiles.parse"]
+validation_required = []

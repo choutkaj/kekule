@@ -1,0 +1,327 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1480 200" width="1480" height="200"
+     preserveAspectRatio="xMidYMid meet"
+     role="img" aria-labelledby="title desc">
+  <title id="title">MOLECULES smooth animated chemical-stream banner</title>
+  <desc id="desc">MOLECULES is centered over twelve separated, infinitely scrolling rows of chemically valid polymer repeat-unit formulae. The rows move continuously in alternating directions and slowly crossfade between valid chains.</desc>
+  <metadata>
+      Motion uses continuous CSS transforms rather than animated text-path offsets.
+      Each displayed chain repeats a neutral, closed-shell repeat unit.
+      All repeat-unit SMILES were sanitized with RDKit 2025.09.4 and have exactly two attachment atoms.
+      polyoxymethylene: CH₂-O- | *CO*
+      polyethylene oxide: CH₂-CH₂-O- | *CCO*
+      polyacetylene: CH=CH- | *C=C*
+      poly(p-phenylene vinylene): p-C₆H₄-CH=CH- | *c1ccc(C=C*)cc1
+      polyglycine: NH-CH₂-C(=O)- | *NCC(=O)*
+      polyalanine: NH-CH(CH₃)-C(=O)- | *NC(C)C(=O)*
+      poly(ethylene terephthalate): O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)- | *OCCOC(=O)c1ccc(C(=O)*)cc1
+      bisphenol A polycarbonate: O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)- | *Oc1ccc(C(C)(C)c2ccc(OC(=O)*)cc2)cc1
+      polybutadiene (1,4-addition): CH₂-CH=CH-CH₂- | *CC=CC*
+      polyisoprene (1,4-addition): CH₂-C(CH₃)=CH-CH₂- | *CC(C)=CC*
+      polyacrylonitrile: CH₂-CH(C≡N)- | *CC(C#N)*
+      poly(methyl methacrylate): CH₂-C(CH₃)(C(=O)-O-CH₃)- | *CC(C)(C(=O)OC)*
+      nylon 6: NH-(CH₂)₅-C(=O)- | *NCCCCCC(=O)*
+      nylon 6,6: NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)- | *NCCCCCCNC(=O)CCCCC(=O)*
+      polydimethylsiloxane: Si(CH₃)₂-O- | *[Si](C)(C)O*
+      poly(ethylene sulfide): CH₂-CH₂-S- | *CCS*
+      poly(vinyl alcohol): CH₂-CH(OH)- | *CC(O)*
+      poly(vinyl acetate): CH₂-CH(O-C(=O)-CH₃)- | *CC(OC(=O)C)*
+      polystyrene: CH₂-CH(C₆H₅)- | *CC(c1ccccc1)*
+      poly(p-phenylene ethynylene): p-C₆H₄-C≡C- | *c1ccc(C#C*)cc1
+      segmented polyurethane model: O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)- | *OCCOC(=O)NCCNC(=O)*
+      polyurea model: NH-CH₂-CH₂-NH-C(=O)- | *NCCNC(=O)*
+      polyphosphoester model: O-CH₂-CH₂-O-P(=O)(OCH₃)- | *OCCOP(=O)(OC)*
+      polyboronate model: O-CH₂-CH₂-O-B(OH)- | *OCCOB(O)*
+  </metadata>
+
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#14191b"/>
+      <stop offset="0.50" stop-color="#0d1214"/>
+      <stop offset="1" stop-color="#090d0f"/>
+    </linearGradient>
+    <radialGradient id="titleWell" cx="50%" cy="50%" rx="50%" ry="50%">
+      <stop offset="0" stop-color="#090d0f" stop-opacity="1"/>
+      <stop offset="0.38" stop-color="#090d0f" stop-opacity="0.98"/>
+      <stop offset="0.70" stop-color="#090d0f" stop-opacity="0.63"/>
+      <stop offset="1" stop-color="#090d0f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="leftFade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#090d0f" stop-opacity="1"/>
+      <stop offset="1" stop-color="#090d0f" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rightFade" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#090d0f" stop-opacity="1"/>
+      <stop offset="1" stop-color="#090d0f" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="verticalShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#070a0b" stop-opacity="0.28"/>
+      <stop offset="0.16" stop-color="#070a0b" stop-opacity="0"/>
+      <stop offset="0.84" stop-color="#070a0b" stop-opacity="0"/>
+      <stop offset="1" stop-color="#070a0b" stop-opacity="0.34"/>
+    </linearGradient>
+    <clipPath id="roundClip"><rect width="1480" height="200" rx="14"/></clipPath>
+    <clipPath id="lane0"><rect x="0" y="4" width="1480" height="16"/></clipPath>
+    <clipPath id="lane1"><rect x="0" y="20" width="1480" height="16"/></clipPath>
+    <clipPath id="lane2"><rect x="0" y="36" width="1480" height="16"/></clipPath>
+    <clipPath id="lane3"><rect x="0" y="52" width="1480" height="16"/></clipPath>
+    <clipPath id="lane4"><rect x="0" y="68" width="1480" height="16"/></clipPath>
+    <clipPath id="lane5"><rect x="0" y="84" width="1480" height="16"/></clipPath>
+    <clipPath id="lane6"><rect x="0" y="100" width="1480" height="16"/></clipPath>
+    <clipPath id="lane7"><rect x="0" y="116" width="1480" height="16"/></clipPath>
+    <clipPath id="lane8"><rect x="0" y="132" width="1480" height="16"/></clipPath>
+    <clipPath id="lane9"><rect x="0" y="148" width="1480" height="16"/></clipPath>
+    <clipPath id="lane10"><rect x="0" y="164" width="1480" height="16"/></clipPath>
+    <clipPath id="lane11"><rect x="0" y="180" width="1480" height="16"/></clipPath>
+    <filter id="titleGlow" x="-35%" y="-120%" width="170%" height="340%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4.4" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="1 0 0 0 0.78
+                0 1 0 0 0.83
+                0 0 1 0 0.86
+                0 0 0 0.13 0" result="glow"/>
+      <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <style><![CDATA[
+    .formula {
+      fill: #b5bec3;
+      font-family: "DejaVu Sans Mono", "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-weight: 500;
+      letter-spacing: 0.08px;
+      font-variant-ligatures: none;
+      text-rendering: optimizeSpeed;
+      pointer-events: none;
+    }
+    .track {
+      transform-box: view-box;
+      transform-origin: 0 0;
+      will-change: transform;
+      animation-duration: var(--scroll-duration);
+      animation-delay: var(--scroll-delay);
+      animation-timing-function: linear;
+      animation-iteration-count: infinite;
+    }
+    .scroll-left { animation-name: scrollLeft; }
+    .scroll-right { animation-name: scrollRight; }
+    .variant {
+      animation-duration: var(--morph-duration);
+      animation-delay: var(--morph-delay);
+      animation-timing-function: linear;
+      animation-iteration-count: infinite;
+      will-change: opacity;
+    }
+    .variant-a { animation-name: morphA; }
+    .variant-b { animation-name: morphB; }
+    .banner-title {
+      fill: #f2f4f5;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      font-size: 47px;
+      font-weight: 650;
+      letter-spacing: 5.1px;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      filter: url(#titleGlow);
+      animation: titleBreathe 8.4s ease-in-out infinite;
+    }
+    .title-well {
+      transform-box: view-box;
+      transform-origin: 740px 100px;
+      animation: wellBreathe 11.8s ease-in-out infinite;
+    }
+    @keyframes scrollLeft {
+      from { transform: translateX(0); }
+      to { transform: translateX(-1800px); }
+    }
+    @keyframes scrollRight {
+      from { transform: translateX(-1800px); }
+      to { transform: translateX(0); }
+    }
+    @keyframes morphA {
+      0%, 39% { opacity: 1; }
+      49%, 89% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    @keyframes morphB {
+      0%, 39% { opacity: 0; }
+      49%, 89% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    @keyframes titleBreathe {
+      0%, 100% { opacity: 0.95; }
+      50% { opacity: 1; }
+    }
+    @keyframes wellBreathe {
+      0%, 100% { transform: scale(0.985, 0.96); opacity: 0.93; }
+      50% { transform: scale(1.025, 1.06); opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .track, .variant, .banner-title, .title-well { animation: none !important; }
+      .scroll-right { transform: translateX(-1800px); }
+      .variant-b { opacity: 0; }
+    }
+  ]]></style>
+
+  <g clip-path="url(#roundClip)">
+    <rect width="1480" height="200" fill="url(#background)"/>
+
+    <g clip-path="url(#lane0)" opacity="0.105">
+      <g class="track scroll-left" style="--scroll-duration:126s; --scroll-delay:-31s;">
+        <g class="variant variant-a" style="--morph-duration:47s; --morph-delay:-7s;">
+          <text class="formula" x="0" y="15.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-</text>
+          <text class="formula" x="1800" y="15.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-CH₂-O-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:47s; --morph-delay:-7s;">
+          <text class="formula" x="0" y="15.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-</text>
+          <text class="formula" x="1800" y="15.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-CH₂-CH₂-O-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane1)" opacity="0.175">
+      <g class="track scroll-right" style="--scroll-duration:92s; --scroll-delay:-53s;">
+        <g class="variant variant-a" style="--morph-duration:53s; --morph-delay:-19s;">
+          <text class="formula" x="0" y="31.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-</text>
+          <text class="formula" x="1800" y="31.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-CH=CH-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:53s; --morph-delay:-19s;">
+          <text class="formula" x="0" y="31.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-</text>
+          <text class="formula" x="1800" y="31.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-p-C₆H₄-CH=CH-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane2)" opacity="0.145">
+      <g class="track scroll-left" style="--scroll-duration:112s; --scroll-delay:-67s;">
+        <g class="variant variant-a" style="--morph-duration:61s; --morph-delay:-33s;">
+          <text class="formula" x="0" y="47.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-</text>
+          <text class="formula" x="1800" y="47.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-NH-CH₂-C(=O)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:61s; --morph-delay:-33s;">
+          <text class="formula" x="0" y="47.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-</text>
+          <text class="formula" x="1800" y="47.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-NH-CH(CH₃)-C(=O)-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane3)" opacity="0.155">
+      <g class="track scroll-right" style="--scroll-duration:149s; --scroll-delay:-118s;">
+        <g class="variant variant-a" style="--morph-duration:67s; --morph-delay:-41s;">
+          <text class="formula" x="0" y="63.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-</text>
+          <text class="formula" x="1800" y="63.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-O-CH₂-CH₂-O-C(=O)-p-C₆H₄-C(=O)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:67s; --morph-delay:-41s;">
+          <text class="formula" x="0" y="63.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-</text>
+          <text class="formula" x="1800" y="63.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-O-p-C₆H₄-C(CH₃)₂-p-C₆H₄-O-C(=O)-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane4)" opacity="0.195">
+      <g class="track scroll-left" style="--scroll-duration:83s; --scroll-delay:-44s;">
+        <g class="variant variant-a" style="--morph-duration:43s; --morph-delay:-26s;">
+          <text class="formula" x="0" y="79.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-</text>
+          <text class="formula" x="1800" y="79.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-CH₂-CH=CH-CH₂-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:43s; --morph-delay:-26s;">
+          <text class="formula" x="0" y="79.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-</text>
+          <text class="formula" x="1800" y="79.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-CH₂-C(CH₃)=CH-CH₂-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane5)" opacity="0.205">
+      <g class="track scroll-right" style="--scroll-duration:119s; --scroll-delay:-72s;">
+        <g class="variant variant-a" style="--morph-duration:59s; --morph-delay:-11s;">
+          <text class="formula" x="0" y="95.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-</text>
+          <text class="formula" x="1800" y="95.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-CH₂-CH(C≡N)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:59s; --morph-delay:-11s;">
+          <text class="formula" x="0" y="95.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-</text>
+          <text class="formula" x="1800" y="95.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-CH₂-C(CH₃)(C(=O)-O-CH₃)-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane6)" opacity="0.185">
+      <g class="track scroll-left" style="--scroll-duration:137s; --scroll-delay:-95s;">
+        <g class="variant variant-a" style="--morph-duration:71s; --morph-delay:-55s;">
+          <text class="formula" x="0" y="111.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-</text>
+          <text class="formula" x="1800" y="111.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-NH-(CH₂)₅-C(=O)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:71s; --morph-delay:-55s;">
+          <text class="formula" x="0" y="111.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-</text>
+          <text class="formula" x="1800" y="111.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-NH-(CH₂)₆-NH-C(=O)-(CH₂)₄-C(=O)-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane7)" opacity="0.195">
+      <g class="track scroll-right" style="--scroll-duration:101s; --scroll-delay:-23s;">
+        <g class="variant variant-a" style="--morph-duration:49s; --morph-delay:-38s;">
+          <text class="formula" x="0" y="127.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-</text>
+          <text class="formula" x="1800" y="127.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-Si(CH₃)₂-O-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:49s; --morph-delay:-38s;">
+          <text class="formula" x="0" y="127.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-</text>
+          <text class="formula" x="1800" y="127.2" font-size="9.8" textLength="1800" lengthAdjust="spacing">CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-CH₂-CH₂-S-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane8)" opacity="0.135">
+      <g class="track scroll-left" style="--scroll-duration:157s; --scroll-delay:-134s;">
+        <g class="variant variant-a" style="--morph-duration:73s; --morph-delay:-17s;">
+          <text class="formula" x="0" y="143.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-</text>
+          <text class="formula" x="1800" y="143.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-CH₂-CH(OH)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:73s; --morph-delay:-17s;">
+          <text class="formula" x="0" y="143.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-</text>
+          <text class="formula" x="1800" y="143.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-CH₂-CH(O-C(=O)-CH₃)-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane9)" opacity="0.185">
+      <g class="track scroll-right" style="--scroll-duration:88s; --scroll-delay:-61s;">
+        <g class="variant variant-a" style="--morph-duration:57s; --morph-delay:-29s;">
+          <text class="formula" x="0" y="159.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-</text>
+          <text class="formula" x="1800" y="159.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-CH₂-CH(C₆H₅)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:57s; --morph-delay:-29s;">
+          <text class="formula" x="0" y="159.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-</text>
+          <text class="formula" x="1800" y="159.2" font-size="9.7" textLength="1800" lengthAdjust="spacing">p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-p-C₆H₄-C≡C-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane10)" opacity="0.155">
+      <g class="track scroll-left" style="--scroll-duration:132s; --scroll-delay:-109s;">
+        <g class="variant variant-a" style="--morph-duration:65s; --morph-delay:-47s;">
+          <text class="formula" x="0" y="175.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-</text>
+          <text class="formula" x="1800" y="175.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-O-CH₂-CH₂-O-C(=O)-NH-CH₂-CH₂-NH-C(=O)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:65s; --morph-delay:-47s;">
+          <text class="formula" x="0" y="175.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-</text>
+          <text class="formula" x="1800" y="175.2" font-size="9.5" textLength="1800" lengthAdjust="spacing">NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-NH-CH₂-CH₂-NH-C(=O)-</text>
+        </g>
+      </g>
+    </g>
+    <g clip-path="url(#lane11)" opacity="0.115">
+      <g class="track scroll-right" style="--scroll-duration:144s; --scroll-delay:-82s;">
+        <g class="variant variant-a" style="--morph-duration:69s; --morph-delay:-5s;">
+          <text class="formula" x="0" y="191.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-</text>
+          <text class="formula" x="1800" y="191.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-O-CH₂-CH₂-O-P(=O)(OCH₃)-</text>
+        </g>
+        <g class="variant variant-b" style="--morph-duration:69s; --morph-delay:-5s;">
+          <text class="formula" x="0" y="191.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-</text>
+          <text class="formula" x="1800" y="191.2" font-size="9.6" textLength="1800" lengthAdjust="spacing">O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-O-CH₂-CH₂-O-B(OH)-</text>
+        </g>
+      </g>
+    </g>
+
+    <rect width="1480" height="200" fill="url(#verticalShade)" pointer-events="none"/>
+    <rect x="0" y="0" width="105" height="200" fill="url(#leftFade)" pointer-events="none"/>
+    <rect x="1375" y="0" width="105" height="200" fill="url(#rightFade)" pointer-events="none"/>
+
+    <g class="title-well">
+      <ellipse cx="740" cy="100" rx="280" ry="63" fill="url(#titleWell)"/>
+    </g>
+    <text class="banner-title" x="740" y="102">MOLECULES</text>
+
+    <rect x="0.5" y="0.5" width="1479" height="199" rx="13.5"
+          fill="none" stroke="#ffffff" stroke-opacity="0.052"/>
+  </g>
+</svg>

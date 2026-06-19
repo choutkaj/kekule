@@ -19,7 +19,7 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Validation
 
 - Unit tests cover Molfile parse/write/parse round trips.
-- RDKit reference generator support is included for fixture/golden generation.
+- RDKit-generated goldens compare Molfile-preservable atoms, bonds, coordinates, charges, isotopes, atom maps, and headers for external PubChem fixtures.
 
 ## Out Of Scope
 
@@ -28,3 +28,4 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Revision Notes
 
 - v1: V2000 writer.
+- v2: Validation contract excludes SDF data fields and passes the RDKit-backed `tiny` corpus.

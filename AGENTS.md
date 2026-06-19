@@ -9,7 +9,7 @@ These rules apply to AI agents working in this repository.
 3. Keep changes scoped to the requested feature.
 4. Update feature metadata only when the implementation and validation status genuinely changed.
 5. Run the relevant checks before handing work back.
-6. Commit and push code in logical chunks.
+6. Commit and push code in logical chunks. Write "Co-authored-by: codex <codex@openai.com>" at the end of every commit message.
 
 ## Anti-slop rules
 

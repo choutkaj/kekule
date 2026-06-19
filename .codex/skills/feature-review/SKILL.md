@@ -21,7 +21,7 @@ Lead with findings ordered by severity. Check:
 - Correctness and edge cases.
 - Mutation and perception invalidation, when relevant.
 - Parsing versus sanitization/perception boundaries, when relevant.
-- Validation claims and whether `validated = true` has evidence.
+- Validation requirements, per-corpus generated evidence, manifest hashes, and whether overall `validated = true` is derived correctly.
 - Metadata and `feature.md` sync.
 - Dashboard generation and skill workflow sync.
 - Tests and missing coverage.
@@ -36,7 +36,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask validate --feature <feature-id>
+cargo xtask validate --feature <feature-id> --corpus tiny
+cargo xtask validate --feature all --corpus all
+cargo xtask corpus check --corpus all
 ```
 
 Report any checks that were not run.

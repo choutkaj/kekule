@@ -6,3 +6,4 @@ implemented = true
 validated = false
 description = "Parse mmCIF atom-site data into MacroMolecule while preserving label and author identifiers."
 depends_on = ["bio.hierarchy.smcra"]
+validation_required = ["tiny", "pdb-10", "pdb-100"]

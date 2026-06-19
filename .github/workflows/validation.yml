@@ -4,8 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       feature:
-        description: Feature ID to validate
+        description: Feature ID or all
         required: true
+        type: string
+      corpus:
+        description: Corpus ID or all
+        required: true
+        default: tiny
         type: string
 
 jobs:
@@ -15,4 +20,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo xtask validate --feature "${{ inputs.feature }}"
+      - run: cargo xtask validate --feature "${{ inputs.feature }}" --corpus "${{ inputs.corpus }}"

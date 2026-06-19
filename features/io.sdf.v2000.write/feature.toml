@@ -6,3 +6,4 @@ implemented = true
 validated = false
 description = "Write one or more small molecules as SDF V2000 records with data fields."
 depends_on = ["io.mol.v2000.write", "io.sdf.v2000.parse"]
+validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pl-rex", "enamine-diversity"]

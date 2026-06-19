@@ -6,3 +6,4 @@ implemented = true
 validated = false
 description = "Detect whether atoms and bonds are members of any cycle without computing a canonical ring basis."
 depends_on = ["core.graph"]
+validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pl-rex", "enamine-diversity"]

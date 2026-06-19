@@ -1,60 +1,14 @@
-
-<p align="center">
-  <img src="assets/molecules_logo.png" alt="Molecules!" width="400">
-</p>
+<img src="./assets/molecules-character-waves-v3.svg" alt="Molecules banner." width="100%">
 
 
 <pre style="line-height: 1; font-family: monospace;">
 ╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮
 ││││ ││  ├╴ │  │ ││  ├╴ ╰─╮
 ╵ ╵╰─╯╰─╴╰─╴╰─╴╰─╯╰─╴╰─╴╰─╯
-cheminformatics in pure Rust
+  cheminformatics in Rust
 </pre>
 
-
-<pre style="line-height: 1; font-family: monospace;">
-┏┳┓┏━┓╻  ┏━╸┏━╸╻ ╻╻  ┏━╸┏━┓
-┃┃┃┃ ┃┃  ┣╸ ┃  ┃ ┃┃  ┣╸ ┗━┓
-╹ ╹┗━┛┗━╸┗━╸┗━╸┗━┛┗━╸┗━╸┗━┛
-cheminformatics in pure Rust
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-┳┳┓┏┓┓ ┏┓┏┓┳┳┓ ┏┓┏┓
-┃┃┃┃┃┃ ┣ ┃ ┃┃┃ ┣ ┗┓
-┛ ┗┗┛┗┛┗┛┗┛┗┛┗┛┗┛┗┛
-
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-░█▄█░█▀█░█░░░█▀▀░█▀▀░█░█░█░░░█▀▀░█▀▀
-░█░█░█░█░█░░░█▀▀░█░░░█░█░█░░░█▀▀░▀▀█
-░▀░▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀
- cheminformatics in pure Rust
- C─C═C─N─O
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-███╗   ███╗ ██████╗ ██╗     ███████╗ ██████╗██╗   ██╗██╗     ███████╗███████╗
-████╗ ████║██╔═══██╗██║     ██╔════╝██╔════╝██║   ██║██║     ██╔════╝██╔════╝
-██╔████╔██║██║   ██║██║     █████╗  ██║     ██║   ██║██║     █████╗  ███████╗
-██║╚██╔╝██║██║   ██║██║     ██╔══╝  ██║     ██║   ██║██║     ██╔══╝  ╚════██║
-██║ ╚═╝ ██║╚██████╔╝███████╗███████╗╚██████╗╚██████╔╝███████╗███████╗███████║
-╚═╝     ╚═╝ ╚═════╝ ╚══════╝╚══════╝ ╚═════╝ ╚═════╝ ╚══════╝╚══════╝╚══════╝
- cheminformatics in pure Rust
-</pre>
-
-</pre>
-
-
-
-<pre style="line-height: 1; font-family: monospace;">
-
-
-
-`molecules` is a pure Rust cheminformatics and molecular-structure backend for small molecules and macromolecules.
-
-The repo is organized around feature-scoped development: every meaningful capability has a feature directory with machine-readable `feature.toml` metadata and one canonical human-readable `feature.md`. RDKit and Biopython are reference implementations for validation only; they are not runtime dependencies of the Rust library.
+`molecules` is an AI-coded cheminformatics backend for small molecules and macromolecules written in pure Rust. The repo is organized around feature-scoped development: every meaningful capability is treated as a feature and is validated against established codebases (RDKit and Biopython). 
 
 ## Current scaffold
 
@@ -72,7 +26,8 @@ cargo test --workspace
 cargo xtask dashboard
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask validate --feature core.graph
+cargo xtask validate --feature io.smiles.parse --corpus tiny
+cargo xtask validate --feature all --corpus all
 ```
 
 The `cargo xtask` alias is defined in `.cargo/config.toml`.

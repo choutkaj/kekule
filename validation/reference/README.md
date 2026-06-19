@@ -19,26 +19,30 @@ micromamba create -f validation/reference/biopython/environment.yml
 Run dependency checks through those environments:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --check-deps
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --check-deps
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus tiny --check-deps
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus tiny --check-deps
 ```
 
 Generate goldens for a feature:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.rings.fast
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus tiny
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.rings.fast --corpus tiny
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like --corpus tiny
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus tiny
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra --corpus tiny
 ```
 
-By default, output goes to `validation/features/<feature-id>/golden/`. Use `--fixture` to limit
-generation to a listed fixture, and `--output-dir` to write elsewhere for review.
+By default, output goes to `validation/corpora/<corpus-id>/golden/<feature-id>/`. Use `--fixture`
+to limit generation to a listed fixture, and `--output-dir` to write elsewhere for review.
 
-Golden files should be reviewed before committing. Creating a golden file does not automatically make
-a feature validated; update feature metadata only after the validation criteria are actually met.
+Golden files should be reviewed before committing. Creating a golden file does not automatically
+record validation evidence; run the Rust comparison with `--update` only after the corpus is ready.
 
 Do not create molecule fixtures by hand for reference validation. Add compact records from external
-sources under `validation/external_sources/`, record their source URL and SHA-256 in
-`fixture_sources`, then generate goldens with RDKit or Biopython.
+sources under the corpus `data/` directory, record their source URL and SHA-256 in
+`sources.lock.json`, then generate goldens with RDKit or Biopython.
+
+The PubChem builder uses the official `CID-SMILES.gz` snapshot and the first `CURRENT-Full` SDF
+shard. Selection remains seeded and deterministic; the shard constraint and source checksums are
+recorded in corpus metadata and locks.

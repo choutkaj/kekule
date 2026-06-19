@@ -10,4 +10,6 @@
 __pycache__/
 .pytest_cache/
 .mypy_cache/
-validation/data/
+validation/corpora/*/data/
+!validation/corpora/tiny/data/
+!validation/corpora/tiny/data/**
