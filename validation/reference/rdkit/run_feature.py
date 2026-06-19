@@ -12,9 +12,18 @@ from typing import Any
 
 
 SUPPORTED_FEATURES = {
-    "io.sdf.v2000.parse",
-    "algo.rings.fast",
     "algo.aromaticity.rdkit-like-basic",
+    "algo.rings.fast",
+    "algo.rings.sssr",
+    "algo.valence.rdkit-like-basic",
+    "chem.sanitize.rdkit-like-basic",
+    "core.conformers",
+    "io.mol.v2000.parse",
+    "io.mol.v2000.write",
+    "io.sdf.v2000.parse",
+    "io.sdf.v2000.write",
+    "io.smiles.parse",
+    "io.smiles.write",
 }
 
 
@@ -132,12 +141,32 @@ def generate_document(
     fixture_path: Path,
     rdkit: dict[str, Any],
 ) -> dict[str, Any]:
-    records = read_sdf_records(fixture_path, rdkit["Chem"])
     if feature_id == "io.sdf.v2000.parse":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [sdf_record(record) for record in records]}
+    elif feature_id in {"io.sdf.v2000.write", "io.mol.v2000.write"}:
+        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
+        expected = {"records": [sdf_record(record) for record in records]}
+    elif feature_id in {"core.conformers", "io.mol.v2000.parse"}:
+        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
+        expected = {"records": [conformer_record(record) for record in records]}
+    elif feature_id == "io.smiles.parse":
+        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
+        expected = {"records": [sdf_record(record) for record in records]}
+    elif feature_id == "io.smiles.write":
+        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
+        expected = {"records": [smiles_record(record, canonical=False) for record in records]}
     elif feature_id == "algo.rings.fast":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_record(record) for record in records]}
+    elif feature_id == "algo.rings.sssr":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
+        expected = {"records": [ring_set_record(record) for record in records]}
+    elif feature_id in {"algo.valence.rdkit-like-basic", "chem.sanitize.rdkit-like-basic"}:
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
+        expected = {"records": [sanitized_atom_record(record) for record in records]}
     elif feature_id == "algo.aromaticity.rdkit-like-basic":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [aromaticity_record(record) for record in records]}
     else:
         raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
@@ -187,6 +216,47 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
     return records
 
 
+def read_records_by_suffix(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
+    if fixture_path.suffix.lower() in {".mol", ".mdl"}:
+        mol = Chem.MolFromMolFile(
+            str(fixture_path),
+            sanitize=False,
+            removeHs=False,
+            strictParsing=False,
+        )
+        return [
+            {
+                "record_index": 0,
+                "status": "ok" if mol is not None else "parse_error",
+                "title": mol.GetProp("_Name") if mol is not None and mol.HasProp("_Name") else "",
+                "mol": mol,
+            }
+        ]
+    return read_sdf_records(fixture_path, Chem)
+
+
+def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=1)
+        smiles = parts[0]
+        title = parts[1] if len(parts) > 1 else ""
+        mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
+        records.append(
+            {
+                "record_index": index,
+                "status": "ok" if mol is not None else "parse_error",
+                "title": title,
+                "smiles": smiles,
+                "mol": mol,
+            }
+        )
+    return records
+
+
 def sdf_record(record: dict[str, Any]) -> dict[str, Any]:
     mol = record["mol"]
     if mol is None:
@@ -223,6 +293,89 @@ def ring_record(record: dict[str, Any]) -> dict[str, Any]:
         "title": record["title"],
         "atom_in_ring": [atom.IsInRing() for atom in mol.GetAtoms()],
         "bond_in_ring": [rings.NumBondRings(bond.GetIdx()) > 0 for bond in mol.GetBonds()],
+    }
+
+
+def ring_set_record(record: dict[str, Any]) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+        }
+    rings = [list(ring) for ring in Chem.GetSymmSSSR(mol)]
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "rings": rings,
+    }
+
+
+def conformer_record(record: dict[str, Any]) -> dict[str, Any]:
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+        }
+    conformers = []
+    for conformer in mol.GetConformers():
+        conformers.append(
+            [
+                {
+                    "atom_index": index,
+                    "x": conformer.GetAtomPosition(index).x,
+                    "y": conformer.GetAtomPosition(index).y,
+                    "z": conformer.GetAtomPosition(index).z,
+                }
+                for index in range(mol.GetNumAtoms())
+            ]
+        )
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atom_count": mol.GetNumAtoms(),
+        "conformers": conformers,
+        "atoms": [atom_json(atom) for atom in mol.GetAtoms()],
+    }
+
+
+def sanitized_atom_record(record: dict[str, Any]) -> dict[str, Any]:
+    sanitized = clone_and_sanitize(record["mol"]) if record["mol"] is not None else None
+    if sanitized is None:
+        return {
+            "record_index": record["record_index"],
+            "status": "sanitize_error",
+            "title": record["title"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atoms": [atom_json(atom) for atom in sanitized.GetAtoms()],
+    }
+
+
+def smiles_record(record: dict[str, Any], canonical: bool) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+            "input_smiles": record["smiles"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "input_smiles": record["smiles"],
+        "output_smiles": Chem.MolToSmiles(mol, canonical=canonical),
     }
 
 
