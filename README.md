@@ -1,61 +1,9 @@
-
-
-<pre style="line-height: 1; font-family: monospace;">
-  +-+-+-+-+-+-+-+-+-+
-  |M|O|L|E|C|U|L|E|S|
-  +-+-+-+-+-+-+-+-+-+
-cheminformatics in Rust
-</pre>
-
-
 <pre style="line-height: 1; font-family: monospace;">
 ╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮
 ││││ ││  ├╴ │  │ ││  ├╴ ╰─╮
 ╵ ╵╰─╯╰─╴╰─╴╰─╴╰─╯╰─╴╰─╴╰─╯
   cheminformatics in Rust
 </pre>
-
-
-<pre style="line-height: 1; font-family: monospace;">
-┏┳┓┏━┓╻  ┏━╸┏━╸╻ ╻╻  ┏━╸┏━┓
-┃┃┃┃ ┃┃  ┣╸ ┃  ┃ ┃┃  ┣╸ ┗━┓
-╹ ╹┗━┛┗━╸┗━╸┗━╸┗━┛┗━╸┗━╸┗━┛
-  cheminformatics in Rust
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-  ┳┳┓┏┓┓ ┏┓┏┓┳┳┓ ┏┓┏┓
-  ┃┃┃┃┃┃ ┣ ┃ ┃┃┃ ┣ ┗┓
-  ┛ ┗┗┛┗┛┗┛┗┛┗┛┗┛┗┛┗┛
-cheminformatics in Rust
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-╔╦╗╔═╗╦  ╔═╗╔═╗╦ ╦╦  ╔═╗╔═╗
-║║║║ ║║  ║╣ ║  ║ ║║  ║╣ ╚═╗
-╩ ╩╚═╝╩═╝╚═╝╚═╝╚═╝╩═╝╚═╝╚═╝
- cheminformatics in Rust
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-░█▄█░█▀█░█░░░█▀▀░█▀▀░█░█░█░░░█▀▀░█▀▀
-░█░█░█░█░█░░░█▀▀░█░░░█░█░█░░░█▀▀░▀▀█
-░▀░▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀░▀▀▀
- cheminformatics in Rust
-</pre>
-
-
-
-
-
-<p align="center">
-  <img src="assets/molecules_logo.png" alt="Molecules!" width="400">
-</p>
-
-
-
-
-
 
 `molecules` is an AI-coded cheminformatics backend for small molecules and macromolecules written in pure Rust. The repo is organized around feature-scoped development: every meaningful capability is treated as a feature and is validated against established codebases (RDKit and Biopython). 
 
