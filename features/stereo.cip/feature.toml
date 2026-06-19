@@ -1,0 +1,8 @@
+id = "stereo.cip"
+title = "CIP stereochemistry"
+area = "stereo"
+version = 1
+implemented = false
+validated = false
+description = "Plan CIP stereochemistry assignment for small molecules."
+depends_on = ["stereo.representation", "chem.sanitize.rdkit-like"]

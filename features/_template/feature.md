@@ -22,4 +22,4 @@ List boundaries that prevent scope creep.
 
 ## Revision Notes
 
-- v1: Initial planned feature contract.
+- v1: Feature contract established.

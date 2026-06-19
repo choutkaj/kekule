@@ -19,7 +19,7 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 ## Validation
 
 - Current coverage is unit-test based.
-- No RDKit or Biopython golden data is required for the initial representation feature.
+- No RDKit or Biopython golden data is required for the representation feature.
 
 ## Out Of Scope
 
@@ -28,4 +28,4 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 
 ## Revision Notes
 
-- v1: Initial chemically general atom and bond payload model.
+- v1: Chemically general atom and bond payload model.

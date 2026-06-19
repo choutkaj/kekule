@@ -13,7 +13,7 @@ Compute a compact ring basis for downstream small-molecule perception.
 ## Implementation Notes
 
 - Uses graph traversal to derive a deterministic fundamental cycle basis.
-- The initial basis is intended for common small molecules and fixture validation, not full RDKit SymmSSSR parity.
+- The basis is intended for common small molecules and fixture validation, not full RDKit SymmSSSR parity.
 
 ## Validation
 
@@ -26,4 +26,4 @@ Compute a compact ring basis for downstream small-molecule perception.
 
 ## Revision Notes
 
-- v1: Initial deterministic ring basis.
+- v1: Deterministic ring basis.

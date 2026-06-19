@@ -12,11 +12,11 @@ from typing import Any
 
 
 SUPPORTED_FEATURES = {
-    "algo.aromaticity.rdkit-like-basic",
+    "algo.aromaticity.rdkit-like",
     "algo.rings.fast",
     "algo.rings.sssr",
-    "algo.valence.rdkit-like-basic",
-    "chem.sanitize.rdkit-like-basic",
+    "algo.valence.rdkit-like",
+    "chem.sanitize.rdkit-like",
     "core.conformers",
     "io.mol.v2000.parse",
     "io.mol.v2000.write",
@@ -162,10 +162,10 @@ def generate_document(
     elif feature_id == "algo.rings.sssr":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_set_record(record) for record in records]}
-    elif feature_id in {"algo.valence.rdkit-like-basic", "chem.sanitize.rdkit-like-basic"}:
+    elif feature_id in {"algo.valence.rdkit-like", "chem.sanitize.rdkit-like"}:
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [sanitized_atom_record(record) for record in records]}
-    elif feature_id == "algo.aromaticity.rdkit-like-basic":
+    elif feature_id == "algo.aromaticity.rdkit-like":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [aromaticity_record(record) for record in records]}
     else:

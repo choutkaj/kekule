@@ -622,7 +622,7 @@ pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AromaticityModel {
-    RdkitLikeBasic,
+    RdkitLike,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -647,11 +647,11 @@ pub fn perceive_aromaticity(
     model: AromaticityModel,
 ) -> std::result::Result<(), AromaticityError> {
     match model {
-        AromaticityModel::RdkitLikeBasic => perceive_rdkit_like_basic_aromaticity(mol),
+        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(mol),
     }
 }
 
-fn perceive_rdkit_like_basic_aromaticity(
+fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
 ) -> std::result::Result<(), AromaticityError> {
     for atom in mol.atoms.iter_mut().flatten() {
@@ -1021,7 +1021,7 @@ fn connected_components(mol: &Molecule) -> usize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValenceModel {
-    RdkitLikeBasic,
+    RdkitLike,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1047,11 +1047,11 @@ impl ValenceReport {
 
 pub fn perceive_valence(mol: &mut Molecule, model: ValenceModel) -> ValenceReport {
     match model {
-        ValenceModel::RdkitLikeBasic => perceive_basic_valence(mol),
+        ValenceModel::RdkitLike => perceive_rdkit_like_valence(mol),
     }
 }
 
-fn perceive_basic_valence(mol: &mut Molecule) -> ValenceReport {
+fn perceive_rdkit_like_valence(mol: &mut Molecule) -> ValenceReport {
     let mut assignments = Vec::<(AtomId, u8)>::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
@@ -1175,7 +1175,7 @@ pub fn sanitize_small_molecule(
     options: SanitizeOptions,
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
     let valence = if options.perceive_valence {
-        let report = perceive_valence(&mut molecule.mol, ValenceModel::RdkitLikeBasic);
+        let report = perceive_valence(&mut molecule.mol, ValenceModel::RdkitLike);
         if !report.is_ok() {
             return Err(SanitizeError::Valence(report));
         }
@@ -1189,7 +1189,7 @@ pub fn sanitize_small_molecule(
         None
     };
     if options.perceive_aromaticity {
-        perceive_aromaticity(&mut molecule.mol, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut molecule.mol, AromaticityModel::RdkitLike)
             .map_err(SanitizeError::Aromaticity)?;
     }
     Ok(SanitizeReport {
@@ -3367,7 +3367,7 @@ $$$$
             mol.add_bond(c, h, BondOrder::Single).expect("bond");
         }
 
-        let report = perceive_valence(&mut mol, ValenceModel::RdkitLikeBasic);
+        let report = perceive_valence(&mut mol, ValenceModel::RdkitLike);
 
         assert_eq!(report.issues.len(), 1);
         assert!(!report.is_ok());
@@ -3416,7 +3416,7 @@ $$$$
     }
 
     #[test]
-    fn smiles_writer_round_trips_basic_graph_shape() {
+    fn smiles_writer_round_trips_graph_shape() {
         let small = read_smiles_str("CC(=O)O", SmilesParseOptions).expect("smiles should parse");
         let text = write_smiles(&small, SmilesWriteOptions).expect("smiles should write");
         let reparsed =
@@ -3560,7 +3560,7 @@ $$$$
             ],
         );
 
-        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
             .expect("benzene should be supported");
 
         assert_eq!(mol.perception().aromaticity, ComputedState::Fresh);
@@ -3576,7 +3576,7 @@ $$$$
     fn aromaticity_leaves_cyclohexane_and_cyclobutadiene_non_aromatic() {
         let (mut cyclohexane, atoms, bonds) =
             ring_molecule(&["C", "C", "C", "C", "C", "C"], &[BondOrder::Single; 6]);
-        perceive_aromaticity(&mut cyclohexane, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut cyclohexane, AromaticityModel::RdkitLike)
             .expect("cyclohexane should be supported");
         assert!(atoms
             .iter()
@@ -3594,7 +3594,7 @@ $$$$
                 BondOrder::Single,
             ],
         );
-        perceive_aromaticity(&mut cyclobutadiene, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut cyclobutadiene, AromaticityModel::RdkitLike)
             .expect("cyclobutadiene should be supported");
         assert!(atoms
             .iter()
@@ -3605,7 +3605,7 @@ $$$$
     }
 
     #[test]
-    fn aromaticity_supports_basic_heteroaromatic_ring() {
+    fn aromaticity_supports_heteroaromatic_ring() {
         let (mut furan_like, atoms, bonds) = ring_molecule(
             &["O", "C", "C", "C", "C"],
             &[
@@ -3617,7 +3617,7 @@ $$$$
             ],
         );
 
-        perceive_aromaticity(&mut furan_like, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut furan_like, AromaticityModel::RdkitLike)
             .expect("furan-like ring should be supported");
 
         assert!(atoms
@@ -3637,7 +3637,7 @@ $$$$
         mol.add_bond(a, b, BondOrder::Double).expect("bond");
         mol.add_bond(b, c, BondOrder::Single).expect("bond");
 
-        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
             .expect("acyclic molecule should be supported");
 
         assert!(!mol.atom(a).expect("atom exists").aromatic);
@@ -3655,7 +3655,7 @@ $$$$
             mol.bond_mut(*bond).expect("bond exists").aromatic = true;
         }
 
-        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
             .expect("cyclohexane should be supported");
 
         assert!(atoms
@@ -3679,7 +3679,7 @@ $$$$
                 BondOrder::Single,
             ],
         );
-        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLikeBasic)
+        perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
             .expect("benzene should be supported");
 
         mol.add_atom(oxygen());

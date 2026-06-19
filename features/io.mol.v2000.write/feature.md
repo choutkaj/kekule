@@ -27,4 +27,4 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 
 ## Revision Notes
 
-- v1: Initial V2000 writer.
+- v1: V2000 writer.

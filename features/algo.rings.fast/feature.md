@@ -31,4 +31,4 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 
 ## Revision Notes
 
-- v1: Initial graph-cycle membership perception.
+- v1: Graph-cycle membership perception.

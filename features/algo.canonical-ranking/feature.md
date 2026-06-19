@@ -22,4 +22,4 @@ Current first-wave implementation work.
 
 ## Revision Notes
 
-- v1: Planned feature placeholder.
+- v1: Feature contract reserved.

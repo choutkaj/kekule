@@ -1,15 +1,17 @@
 feature_id = "io.mmcif.parse"
-reference_tool = "manual-fixtures"
-reference_version = "2026-06-17-no-reference-goldens"
+reference_tool = "biopython"
+reference_version = "2026-06-19-external-fixtures-no-goldens"
 comparison_mode = "fixture-discovery-only"
 
 fixtures = [
-  "fixtures/valid/minimal_peptide.cif",
-  "fixtures/valid/multi_model_altloc_hetero.cif",
-  "fixtures/invalid/missing_atom_identifier.cif",
+  "../../external_sources/rcsb/1CRN.cif",
+]
+
+fixture_sources = [
+  "../../external_sources/rcsb/1CRN.cif | source=RCSB PDB 1CRN | url=https://files.rcsb.org/download/1CRN.cif | sha256=23787562c427d7c1abe5420e86d5f1d0a6c7007dec1e8ce85645a6d69c32e8ba",
 ]
 
 notes = [
   "Reference Biopython goldens have not been generated yet.",
-  "Fixtures intentionally include hierarchy edge cases before all semantics are fully supported.",
+  "All molecule fixtures are externally supplied RCSB mmCIF records.",
 ]

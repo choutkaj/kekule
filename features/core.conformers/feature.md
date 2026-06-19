@@ -19,7 +19,7 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 ## Validation
 
 - Unit tests cover insertion, lookup, and SDF/Molfile coordinate preservation.
-- No external reference golden is required for the initial storage feature.
+- No external reference golden is required for the storage feature.
 
 ## Out Of Scope
 
@@ -27,4 +27,4 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 
 ## Revision Notes
 
-- v1: Initial shared conformer storage.
+- v1: Shared conformer storage.

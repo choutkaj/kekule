@@ -1,6 +1,7 @@
 # Reference Generators
 
-Reference generators produce normalized JSON golden data from external tools.
+Reference generators produce normalized JSON golden data from external tools using externally supplied
+fixtures declared in each feature's validation manifest.
 
 These scripts are validation infrastructure only:
 
@@ -20,7 +21,7 @@ Generate goldens for a feature:
 ```bash
 python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse
 python validation/reference/rdkit/run_feature.py --feature algo.rings.fast
-python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like-basic
+python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like
 python validation/reference/biopython/run_feature.py --feature io.mmcif.parse
 python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra
 ```
@@ -30,3 +31,7 @@ generation to a listed fixture, and `--output-dir` to write elsewhere for review
 
 Golden files should be reviewed before committing. Creating a golden file does not automatically make
 a feature validated; update feature metadata only after the validation criteria are actually met.
+
+Do not create molecule fixtures by hand for reference validation. Add compact records from external
+sources under `validation/external_sources/`, record their source URL and SHA-256 in
+`fixture_sources`, then generate goldens with RDKit or Biopython.

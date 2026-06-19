@@ -26,4 +26,4 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 
 ## Revision Notes
 
-- v1: Initial SDF V2000 writer.
+- v1: SDF V2000 writer.

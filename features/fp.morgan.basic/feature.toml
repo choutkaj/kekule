@@ -1,8 +1,0 @@
-id = "fp.morgan.basic"
-title = "Basic Morgan fingerprint"
-area = "fingerprints"
-version = 1
-implemented = false
-validated = false
-description = "Plan a basic Morgan-style circular fingerprint for small molecules."
-depends_on = ["chem.sanitize.rdkit-like-basic"]
