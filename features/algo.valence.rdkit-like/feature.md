@@ -19,7 +19,7 @@ Provide conservative valence perception for common organic molecules.
 ## Validation
 
 - Unit tests cover neutral organics, charged species, and valence error reporting.
-- RDKit goldens are planned but not committed yet.
+- RDKit-generated goldens compare valence status, explicit valence, and implicit hydrogen assignments for external PubChem fixtures.
 
 ## Out Of Scope
 
@@ -28,3 +28,4 @@ Provide conservative valence perception for common organic molecules.
 ## Revision Notes
 
 - v1: Conservative valence perception.
+- v2: Validation contract narrowed to valence-specific outputs and marked validated against RDKit goldens.

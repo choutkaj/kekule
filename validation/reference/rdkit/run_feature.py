@@ -144,9 +144,12 @@ def generate_document(
     if feature_id == "io.sdf.v2000.parse":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [sdf_record(record) for record in records]}
-    elif feature_id in {"io.sdf.v2000.write", "io.mol.v2000.write"}:
+    elif feature_id == "io.sdf.v2000.write":
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [sdf_record(record) for record in records]}
+    elif feature_id == "io.mol.v2000.write":
+        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
+        expected = {"records": [mol_record(record) for record in records]}
     elif feature_id in {"core.conformers", "io.mol.v2000.parse"}:
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [conformer_record(record) for record in records]}
@@ -162,7 +165,10 @@ def generate_document(
     elif feature_id == "algo.rings.sssr":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_set_record(record) for record in records]}
-    elif feature_id in {"algo.valence.rdkit-like", "chem.sanitize.rdkit-like"}:
+    elif feature_id == "algo.valence.rdkit-like":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
+        expected = {"records": [valence_record(record) for record in records]}
+    elif feature_id == "chem.sanitize.rdkit-like":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [sanitized_atom_record(record) for record in records]}
     elif feature_id == "algo.aromaticity.rdkit-like":
@@ -276,6 +282,24 @@ def sdf_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def mol_record(record: dict[str, Any]) -> dict[str, Any]:
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atom_count": mol.GetNumAtoms(),
+        "bond_count": mol.GetNumBonds(),
+        "atoms": [atom_json(atom) for atom in mol.GetAtoms()],
+        "bonds": [bond_json(bond) for bond in mol.GetBonds()],
+    }
+
+
 def ring_record(record: dict[str, Any]) -> dict[str, Any]:
     from rdkit import Chem
 
@@ -360,6 +384,32 @@ def sanitized_atom_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def valence_record(record: dict[str, Any]) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+        }
+    prepared = Chem.Mol(mol)
+    try:
+        prepared.UpdatePropertyCache(strict=False)
+    except Exception:
+        return {
+            "record_index": record["record_index"],
+            "status": "valence_error",
+            "title": record["title"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atoms": [valence_atom_json(atom) for atom in prepared.GetAtoms()],
+    }
+
+
 def smiles_record(record: dict[str, Any], canonical: bool) -> dict[str, Any]:
     from rdkit import Chem
 
@@ -423,6 +473,20 @@ def atom_json(atom: Any) -> dict[str, Any]:
         "explicit_hydrogens": atom.GetNumExplicitHs(),
         "atom_map": atom.GetAtomMapNum() or None,
         "aromatic": atom.GetIsAromatic(),
+    }
+
+
+def valence_atom_json(atom: Any) -> dict[str, Any]:
+    from rdkit import Chem
+
+    return {
+        "index": atom.GetIdx(),
+        "atomic_number": atom.GetAtomicNum(),
+        "symbol": atom.GetSymbol(),
+        "formal_charge": atom.GetFormalCharge(),
+        "explicit_hydrogens": atom.GetNumExplicitHs(),
+        "implicit_hydrogens": atom.GetNumImplicitHs(),
+        "explicit_valence": atom.GetValence(Chem.rdchem.ValenceType.EXPLICIT),
     }
 
 

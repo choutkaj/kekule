@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use molecules::prelude::{
-    perceive_aromaticity, perceive_ring_membership, perceive_ring_set, read_mmcif_str,
-    read_mol_v2000_str, read_smiles_str, sanitize_small_molecule, write_mol_v2000, write_sdf_v2000,
-    write_smiles, AromaticityModel, Atom, AtomId, Bond, BondOrder, BondStereo, MacroMolecule,
-    MmcifParseOptions, Molecule, PropValue, SanitizeOptions, SdfParseOptions, SdfRecord,
-    SmallMolecule, SmilesParseOptions, SmilesWriteOptions,
+    perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
+    read_mmcif_str, read_mol_v2000_str, read_smiles_str, sanitize_small_molecule, write_mol_v2000,
+    write_sdf_v2000, write_smiles, AromaticityModel, Atom, AtomId, Bond, BondOrder, BondStereo,
+    MacroMolecule, MmcifParseOptions, Molecule, PropValue, SanitizeOptions, SdfParseOptions,
+    SdfRecord, SmallMolecule, SmilesParseOptions, SmilesWriteOptions, ValenceModel,
 };
 use molecules::read_sdf_v2000_records;
 use serde_json::{json, Value};
@@ -553,7 +553,7 @@ fn implementation_expected(feature: &str, fixture_path: &Path) -> Result<Value, 
                     })
                 })
                 .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
-            Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
+            Ok(json!({ "records": records.iter().map(mol_record_json).collect::<Vec<_>>() }))
         }
         "io.smiles.parse" => {
             let records = read_smiles_records(fixture_path)?;
@@ -582,7 +582,13 @@ fn implementation_expected(feature: &str, fixture_path: &Path) -> Result<Value, 
                 json!({ "records": records.iter_mut().map(ring_set_record_json).collect::<Vec<_>>() }),
             )
         }
-        "algo.valence.rdkit-like" | "chem.sanitize.rdkit-like" => {
+        "algo.valence.rdkit-like" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(
+                json!({ "records": records.iter_mut().map(valence_record_json).collect::<Vec<_>>() }),
+            )
+        }
+        "chem.sanitize.rdkit-like" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(
                 json!({ "records": records.iter_mut().map(sanitized_atom_record_json).collect::<Vec<_>>() }),
@@ -683,6 +689,19 @@ fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
     })
 }
 
+fn mol_record_json(record: &IndexedSmallRecord) -> Value {
+    let mol = &record.molecule.mol;
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "atoms": atoms_json(mol),
+        "bonds": bonds_json(mol),
+    })
+}
+
 fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
     let mol = &record.molecule.mol;
     json!({
@@ -746,6 +765,28 @@ fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Value {
             "title": record.title,
         }),
     }
+}
+
+fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let report = perceive_valence(&mut record.molecule.mol, ValenceModel::RdkitLike);
+    if !report.is_ok() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "valence_error",
+            "title": record.title,
+        });
+    }
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atoms": record
+            .molecule
+            .mol
+            .atoms()
+            .map(|(id, atom)| valence_atom_json(&record.molecule.mol, id, atom))
+            .collect::<Vec<_>>(),
+    })
 }
 
 fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value {
@@ -813,6 +854,33 @@ fn atom_json(id: AtomId, atom: &Atom) -> Value {
         "atom_map": atom.atom_map,
         "aromatic": atom.aromatic,
     })
+}
+
+fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
+    json!({
+        "index": id.raw(),
+        "atomic_number": atom.element.atomic_number(),
+        "symbol": atom.element.symbol(),
+        "formal_charge": atom.formal_charge,
+        "explicit_hydrogens": atom.explicit_hydrogens,
+        "implicit_hydrogens": atom.implicit_hydrogens.unwrap_or(0),
+        "explicit_valence": explicit_valence_json(mol, id) + atom.explicit_hydrogens,
+    })
+}
+
+fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
+    mol.incident_bonds(atom)
+        .ok()
+        .into_iter()
+        .flatten()
+        .map(|(_, bond)| match bond.order {
+            BondOrder::Zero | BondOrder::Dative => 0,
+            BondOrder::Single | BondOrder::Aromatic => 1,
+            BondOrder::Double => 2,
+            BondOrder::Triple => 3,
+            BondOrder::Quadruple => 4,
+        })
+        .sum()
 }
 
 fn bonds_json(mol: &Molecule) -> Vec<Value> {

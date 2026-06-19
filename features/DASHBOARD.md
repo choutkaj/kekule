@@ -9,7 +9,7 @@ Generated from `features/*/feature.toml`. Do not hand-edit this file.
 | `algo.rings.fast` | Fast ring membership detection | algorithms | 1 | ✅ | ❌ |
 | `algo.rings.sssr` | Smallest-set ring basis | algorithms | 1 | ✅ | ❌ |
 | `algo.substructure.vf2` | VF2 substructure search | algorithms | 1 | ❌ | ❌ |
-| `algo.valence.rdkit-like` | RDKit-like valence perception | algorithms | 1 | ✅ | ❌ |
+| `algo.valence.rdkit-like` | RDKit-like valence perception | algorithms | 2 | ✅ | ✅ |
 | `bio.hierarchy.smcra` | SMCRA-like biomolecular hierarchy | bio | 1 | ✅ | ❌ |
 | `chem.sanitize.rdkit-like` | RDKit-like sanitization pipeline | chemistry | 1 | ✅ | ❌ |
 | `core.atom-bond` | Core atom and bond model | core | 1 | ✅ | ❌ |
@@ -20,7 +20,7 @@ Generated from `features/*/feature.toml`. Do not hand-edit this file.
 | `fp.morgan` | Morgan fingerprint | fingerprints | 1 | ❌ | ❌ |
 | `io.mmcif.parse` | mmCIF parser | io | 1 | ✅ | ❌ |
 | `io.mol.v2000.parse` | Molfile V2000 parser | io | 1 | ✅ | ❌ |
-| `io.mol.v2000.write` | Molfile V2000 writer | io | 1 | ✅ | ❌ |
+| `io.mol.v2000.write` | Molfile V2000 writer | io | 2 | ✅ | ✅ |
 | `io.mol.v3000.parse` | Molfile V3000 parser | io | 1 | ❌ | ❌ |
 | `io.mol.v3000.write` | Molfile V3000 writer | io | 1 | ❌ | ❌ |
 | `io.sdf.v2000.parse` | SDF V2000 parser | io | 2 | ✅ | ❌ |

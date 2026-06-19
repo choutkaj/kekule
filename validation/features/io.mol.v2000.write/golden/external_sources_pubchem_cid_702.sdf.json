@@ -162,30 +162,6 @@
             "stereo": "STEREONONE"
           }
         ],
-        "properties": {
-          "PUBCHEM_ATOM_DEF_STEREO_COUNT": "0",
-          "PUBCHEM_ATOM_UDEF_STEREO_COUNT": "0",
-          "PUBCHEM_BOND_DEF_STEREO_COUNT": "0",
-          "PUBCHEM_BOND_UDEF_STEREO_COUNT": "0",
-          "PUBCHEM_CACTVS_TAUTO_COUNT": "1",
-          "PUBCHEM_COMPONENT_COUNT": "1",
-          "PUBCHEM_COMPOUND_CID": "702",
-          "PUBCHEM_CONFORMER_DIVERSEORDER": "1",
-          "PUBCHEM_CONFORMER_ID": "000002BE00000001",
-          "PUBCHEM_CONFORMER_RMSD": "0.4",
-          "PUBCHEM_COORDINATE_TYPE": "2\n5\n10",
-          "PUBCHEM_EFFECTIVE_ROTOR_COUNT": "0",
-          "PUBCHEM_FEATURE_SELFOVERLAP": "10.148",
-          "PUBCHEM_HEAVY_ATOM_COUNT": "3",
-          "PUBCHEM_ISOTOPIC_ATOM_COUNT": "0",
-          "PUBCHEM_MMFF94_ENERGY": "-1.3096",
-          "PUBCHEM_MMFF94_PARTIAL_CHARGES": "3\n1 -0.68\n2 0.28\n9 0.4",
-          "PUBCHEM_PHARMACOPHORE_FEATURES": "2\n1 1 acceptor\n1 1 donor",
-          "PUBCHEM_SHAPE_FINGERPRINT": "139733 1 18410856563987595332\n21015797 1 18192151726869919494",
-          "PUBCHEM_SHAPE_MULTIPOLES": "55.87\n1.48\n0.75\n0.58\n0.08\n0.07\n0\n-0.26\n0\n-0.01\n0\n0.04\n0.01\n0",
-          "PUBCHEM_SHAPE_SELFOVERLAP": "84.621",
-          "PUBCHEM_SHAPE_VOLUME": "41.5"
-        },
         "record_index": 0,
         "status": "ok",
         "title": "702"
@@ -195,7 +171,7 @@
   "feature_id": "io.mol.v2000.write",
   "fixture_id": "external_sources_pubchem_cid_702.sdf",
   "fixture_path": "../../external_sources/pubchem/cid_702.sdf",
-  "input_sha256": "d0cfb665af2d152c5b963456333097a014cf9ce0fafe6f8d4970bc34739e721e",
+  "input_sha256": "75878b2cc3b687a00df68a8297f9a27664087b7b5b72712d35479ca9204a63af",
   "reference": {
     "runtime_dependency": false,
     "tool": "rdkit",
