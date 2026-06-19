@@ -16,11 +16,12 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - Feature metadata schema v2 requires `id`, `title`, `area`, `version`, `implemented`, `validated`, `description`, `depends_on`, and `validation_required`.
 - Deprecated metadata keys `priority`, `status`, and `last_ai_review` are rejected.
 - Each tracked feature directory must include `feature.md`.
-- The dashboard renders overall validation plus one column per known corpus.
+- The dashboard renders a generated HTML table with feature metadata and one column per known corpus.
 - Overall validation is true only when every corpus in `validation_required` has current passing evidence.
 - Per-feature evidence is read from each corpus-owned `status.toml`.
 - Dashboard generation rejects drift between generated evidence and the cached overall `validated` field.
 - Boolean dashboard values render as check and cross marks.
+- The dashboard omits the redundant overall `validated` column, uses rotated compact headers, and supports client-side column sorting.
 
 ## Validation
 
@@ -31,12 +32,12 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 ## Out Of Scope
 
 - Chemistry implementation or validation.
-- Web dashboards.
-- Automatically marking features implemented.
 - Pulling feature metadata from external services.
+- Automatically marking features implemented.
 
 ## Revision Notes
 
 - v1: Registry, dashboard, validation command, schema v2, and repo-skill check behavior.
 - v2: Corpus requirements, generated validation evidence, and corpus dashboard columns.
 - v3: Corpus-owned evidence and validation layout.
+- v4: Switch generated dashboard from Markdown to sortable HTML with compact rotated headers.
