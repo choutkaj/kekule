@@ -1,0 +1,43 @@
+{
+  "expected": {
+    "records": [
+      {
+        "atom_aromatic": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false,
+          false,
+          false
+        ],
+        "bond_aromatic": [
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false
+        ],
+        "record_index": 0,
+        "status": "ok",
+        "title": "8029"
+      }
+    ]
+  },
+  "feature_id": "algo.aromaticity.rdkit-like",
+  "fixture_id": "external_sources_pubchem_cid_8029.sdf",
+  "fixture_path": "../../external_sources/pubchem/cid_8029.sdf",
+  "input_sha256": "f5f04ce49e999aaf0de627e7e93e780de696cc8240de06fbacf2099181a7794e",
+  "reference": {
+    "runtime_dependency": false,
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "schema_version": 1
+}

@@ -1,6 +1,6 @@
 feature_id = "io.smiles.write"
 reference_tool = "rdkit"
-reference_version = "2026-06-19-external-fixtures-no-goldens"
+reference_version = "RDKit 2026.03.3"
 comparison_mode = "fixture-discovery-only"
 
 fixtures = [

@@ -1,6 +1,6 @@
 feature_id = "io.mmcif.parse"
 reference_tool = "biopython"
-reference_version = "2026-06-19-external-fixtures-no-goldens"
+reference_version = "Biopython 1.87"
 comparison_mode = "fixture-discovery-only"
 
 fixtures = [

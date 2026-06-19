@@ -1,0 +1,23 @@
+{
+  "expected": {
+    "records": [
+      {
+        "input_smiles": "C1=CC=C2C=CC=CC2=C1",
+        "output_smiles": "C1=CC=C2C=CC=CC2=C1",
+        "record_index": 0,
+        "status": "ok",
+        "title": ""
+      }
+    ]
+  },
+  "feature_id": "io.smiles.write",
+  "fixture_id": "external_sources_pubchem_smiles_cid_931.txt",
+  "fixture_path": "../../external_sources/pubchem_smiles/cid_931.txt",
+  "input_sha256": "f225e8a5ef788aa1ff42ec14f47c83d63116795cd5773c0edc07bd81c4714605",
+  "reference": {
+    "runtime_dependency": false,
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "schema_version": 1
+}
