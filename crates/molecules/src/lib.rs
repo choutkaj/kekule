@@ -761,12 +761,12 @@ fn aromatic_fused_component_pi_electrons(
                     electrons += 2;
                 }
             }
-            "O" | "S" | "P" => {
+            "O" | "S" | "Se" | "Te" | "P" => {
                 if !ring_atom_has_pi_bond(mol, ring, *atom_id) {
                     electrons += 2;
                 }
             }
-            _ => return Err(AromaticityError::UnsupportedElement(*atom_id)),
+            _ => return Ok(0),
         }
     }
 
@@ -793,25 +793,52 @@ fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
         return false;
     }
     let pi_bonds = ring_pi_bond_count(mol, ring);
-    pi_bonds >= 2
-        || (pi_bonds >= 1 && ring_has_hetero_atom(mol, ring))
-        || ring_has_fused_hetero_donor(mol, ring)
+    ring_has_conjugated_atom_path(mol, ring)
+        && (pi_bonds >= 2
+            || ring_hetero_donor_count(mol, ring) > 0
+                && !ring_has_low_unsaturation_chalcogen_bridge(mol, ring)
+            || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N"))
 }
 
-fn ring_has_hetero_atom(mol: &Molecule, ring: &Ring) -> bool {
+fn ring_has_conjugated_atom_path(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().all(|atom_id| {
+        let Ok(atom) = mol.atom(*atom_id) else {
+            return false;
+        };
+        match atom.element.symbol() {
+            "C" => {
+                ring_atom_has_pi_bond(mol, ring, *atom_id)
+                    || atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
+            }
+            "N" | "O" | "S" | "Se" | "Te" | "P" => true,
+            _ => false,
+        }
+    })
+}
+
+fn ring_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
+    ring.atoms
+        .iter()
+        .filter(|atom_id| {
+            mol.atom(**atom_id)
+                .map(|atom| matches!(atom.element.symbol(), "N" | "O" | "S" | "Se" | "Te" | "P"))
+                .unwrap_or(false)
+        })
+        .count()
+}
+
+fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
     ring.atoms.iter().any(|atom_id| {
         mol.atom(*atom_id)
-            .map(|atom| !matches!(atom.element.symbol(), "C" | "H"))
+            .map(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
             .unwrap_or(false)
     })
 }
 
-fn ring_has_fused_hetero_donor(mol: &Molecule, ring: &Ring) -> bool {
-    ring.atoms.iter().any(|atom_id| {
-        mol.atom(*atom_id)
-            .map(|atom| matches!(atom.element.symbol(), "N" | "S" | "P"))
-            .unwrap_or(false)
-    })
+fn ring_has_low_unsaturation_chalcogen_bridge(mol: &Molecule, ring: &Ring) -> bool {
+    ring_pi_bond_count(mol, ring) < 2
+        && ring_hetero_donor_count(mol, ring) > 1
+        && ring_has_chalcogen_donor(mol, ring)
 }
 
 fn rings_share_bond(left: &Ring, right: &Ring) -> bool {
@@ -839,6 +866,9 @@ fn aromatic_ring_pi_electrons(
         && ring_pi_bond_count(mol, ring) < 2
         && !ring_contains_element(mol, ring, "N")
     {
+        return Ok(0);
+    }
+    if ring.atoms.len() > 5 && ring_has_low_unsaturation_chalcogen_bridge(mol, ring) {
         return Ok(0);
     }
 
@@ -869,12 +899,12 @@ fn aromatic_ring_pi_electrons(
                     electrons += 2;
                 }
             }
-            "O" | "S" | "P" => {
+            "O" | "S" | "Se" | "Te" | "P" => {
                 if !ring_atom_has_pi_bond(mol, ring, *atom_id) {
                     electrons += 2;
                 }
             }
-            _ => return Err(AromaticityError::UnsupportedElement(*atom_id)),
+            _ => return Ok(0),
         }
     }
 
@@ -1325,11 +1355,15 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule) -> ValenceReport {
                         });
                         assignments.push((atom_id, 0));
                     } else {
-                        let target = allowed
-                            .iter()
-                            .copied()
-                            .find(|allowed| *allowed >= explicit)
-                            .unwrap_or(explicit);
+                        let target = if atom.radical_electrons > 0 {
+                            explicit
+                        } else {
+                            allowed
+                                .iter()
+                                .copied()
+                                .find(|allowed| *allowed >= explicit)
+                                .unwrap_or(explicit)
+                        };
                         assignments.push((atom_id, target - explicit));
                     }
                 }
@@ -1376,24 +1410,29 @@ fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
         ("N", -1) => Some(&[2]),
         ("N", 0) => Some(&[3, 5]),
         ("O", 0) => Some(&[2]),
-        ("O", -1 | 1) => Some(&[1]),
+        ("O", -1) => Some(&[1]),
+        ("O", 1) => Some(&[1, 3]),
         ("Li" | "Na" | "K", 1) => Some(&[0]),
-        ("Mg" | "Ca" | "Mn" | "Fe" | "Co" | "Ni" | "Cu" | "Zn", 1..=3) => Some(&[0]),
-        ("Zr", 0 | 4) => Some(&[0]),
-        ("Hf", 0) => Some(&[0]),
+        ("Mg" | "Ca" | "Sr" | "Ba", 1..=3) => Some(&[0]),
+        (
+            "Sc" | "Ti" | "V" | "Cr" | "Mn" | "Fe" | "Co" | "Ni" | "Cu" | "Zn" | "Y" | "Zr" | "Nb"
+            | "Mo" | "Tc" | "Ru" | "Rh" | "Pd" | "Ag" | "Cd" | "La" | "Ce" | "Pr" | "Nd" | "Sm"
+            | "Eu" | "Gd" | "Tb" | "Dy" | "Ho" | "Er" | "Tm" | "Yb" | "Lu" | "Hf" | "Ta" | "W"
+            | "Re" | "Os" | "Ir" | "Pt" | "Au" | "Hg",
+            -1..=4,
+        ) => Some(&[0, 1, 2, 3, 4, 5, 6]),
         ("F" | "Cl" | "Br" | "I", -1) => Some(&[0]),
         ("F", 0) => Some(&[1]),
         ("Cl" | "Br" | "I", 1) => Some(&[4]),
         ("Cl" | "Br" | "I", 0) => Some(&[1, 3, 5, 7]),
-        ("P", 0) => Some(&[3, 5]),
+        ("P" | "As" | "Sb" | "Bi", 0) => Some(&[3, 5]),
         ("P", 1) => Some(&[4]),
         ("Si", 0) => Some(&[4]),
-        ("S", 0) => Some(&[2, 4, 6]),
-        ("S", -1 | 1) => Some(&[1, 3, 5]),
-        ("Hg", 1) => Some(&[1]),
-        ("Hg", 2) => Some(&[2]),
-        ("Pt", 2) => Some(&[2]),
-        ("Pr", 0) => Some(&[0]),
+        ("Ge", 0) => Some(&[0, 4]),
+        ("Sn", 0) => Some(&[0, 2, 4]),
+        ("Sn", 4) => Some(&[0]),
+        ("S" | "Se" | "Te", 0) => Some(&[2, 4, 6]),
+        ("S" | "Se" | "Te", -1 | 1) => Some(&[1, 3, 5]),
         ("Tl", 0) => Some(&[3]),
         _ => None,
     }
