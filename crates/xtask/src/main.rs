@@ -313,6 +313,8 @@ struct CorpusDescriptor {
     formats: Vec<String>,
     #[serde(default)]
     categories: BTreeMap<String, usize>,
+    #[serde(default, rename = "notes")]
+    _notes: Vec<String>,
     build_command: String,
 }
 
@@ -508,8 +510,63 @@ fn check_corpus_artifacts(
             )));
         }
         check_data_file(&root, &pack.path, &pack.sha256, build_command)?;
+        let actual_members = read_pack_members(&root.join(&pack.path), &pack.format)?;
+        if actual_members != pack.members {
+            return Err(boxed_error(format!(
+                "{} pack `{}` member order differs from sources.lock.json",
+                corpus, pack.path
+            )));
+        }
     }
     Ok(())
+}
+
+fn read_pack_members(path: &Path, format: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let text = fs::read_to_string(path)?;
+    match format {
+        "smiles" => text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                line.split_whitespace()
+                    .last()
+                    .and_then(|title| title.strip_prefix("CID:"))
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        boxed_error(format!(
+                            "{} contains a SMILES row without a CID title",
+                            path.display()
+                        ))
+                    })
+            })
+            .collect(),
+        "sdf-v2000" => {
+            let marker = "> <PUBCHEM_COMPOUND_CID>";
+            let mut members = Vec::new();
+            for record in text.split("$$$$") {
+                if record.trim().is_empty() {
+                    continue;
+                }
+                let position = record.find(marker).ok_or_else(|| {
+                    boxed_error(format!(
+                        "{} contains an SDF record without PUBCHEM_COMPOUND_CID",
+                        path.display()
+                    ))
+                })?;
+                let cid = record[position + marker.len()..]
+                    .trim_start_matches(['\r', '\n'])
+                    .lines()
+                    .next()
+                    .ok_or_else(|| boxed_error("missing PubChem CID value"))?;
+                members.push(cid.trim().to_owned());
+            }
+            Ok(members)
+        }
+        value => Err(boxed_error(format!(
+            "{} uses unsupported pack format `{value}`",
+            path.display()
+        ))),
+    }
 }
 
 fn check_data_file(

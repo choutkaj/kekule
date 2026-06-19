@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""Build the deterministic PubChem validation corpora."""
+"""Build deterministic PubChem validation corpora from official bulk/PUG data."""
 
 from __future__ import annotations
 
-import concurrent.futures
-import base64
+import gzip
 import hashlib
 import json
 import shutil
 import subprocess
 import sys
-import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -19,6 +16,9 @@ from rdkit import Chem, rdBase
 
 SEED = "molecules-pubchem-v1"
 CID_MAX = 200_000_000
+HASH_COUNTER_LIMIT = 5_000_000
+SHARD_CID_MAX = 500_000
+POOL_SIZE = 2_000
 CATEGORIES = (
     "disconnected",
     "charged",
@@ -27,6 +27,13 @@ CATEGORIES = (
     "remaining",
 )
 TARGET_PER_CATEGORY = 200
+SMILES_SNAPSHOT_URL = (
+    "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/Extras/CID-SMILES.gz"
+)
+SDF_SHARD_URL = (
+    "https://ftp.ncbi.nlm.nih.gov/pubchem/Compound/CURRENT-Full/SDF/"
+    "Compound_000000001_000500000.sdf.gz"
+)
 SDF_FEATURES = (
     "algo.aromaticity.rdkit-like",
     "algo.rings.fast",
@@ -45,80 +52,105 @@ SMILES_FEATURES = ("io.smiles.parse", "io.smiles.write")
 def main() -> int:
     repo = Path(__file__).resolve().parents[3]
     corpus_root = repo / "validation" / "corpora"
-    checkpoint_path = repo / "target" / "pubchem-corpus-checkpoint.json"
-    selected, seen, counter = load_checkpoint(checkpoint_path)
+    cache = repo / "target" / "pubchem-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    snapshot = cache / "CID-SMILES.gz"
+    sdf_shard = cache / "Compound_000000001_000500000.sdf.gz"
+    pools_path = cache / "shard-candidate-pools.json"
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        while min(len(values) for values in selected.values()) < TARGET_PER_CATEGORY:
-            candidates = []
-            while len(candidates) < 40:
-                cid = candidate_cid(counter)
-                counter += 1
-                if cid not in seen:
-                    seen.add(cid)
-                    candidates.append(cid)
-            for result in executor.map(fetch_candidate, candidates):
-                if result is None:
-                    continue
-                category = result["category"]
-                if len(selected[category]) < TARGET_PER_CATEGORY:
-                    selected[category].append(result)
-                    save_checkpoint(checkpoint_path, selected, seen, counter)
-            counts = " ".join(f"{name}={len(selected[name])}" for name in CATEGORIES)
-            print(f"examined={counter} {counts}", flush=True)
+    if not snapshot.exists():
+        download_file(SMILES_SNAPSHOT_URL, snapshot)
+    if not sdf_shard.exists():
+        download_file(SDF_SHARD_URL, sdf_shard)
+    selected = load_or_build_pools(snapshot, sdf_shard, pools_path)
 
     ordered = [
         selected[category][index]
         for index in range(TARGET_PER_CATEGORY)
         for category in CATEGORIES
     ]
-    build_tier(corpus_root / "pubchem-1000", ordered)
-    build_tier(corpus_root / "pubchem-100", ordered[:100])
+    build_tier(corpus_root / "pubchem-1000", ordered, snapshot, sdf_shard)
+    build_tier(corpus_root / "pubchem-100", ordered[:100], snapshot, sdf_shard)
     generate_goldens(repo, "pubchem-100")
     generate_goldens(repo, "pubchem-1000")
-    checkpoint_path.unlink(missing_ok=True)
     return 0
 
 
-def load_checkpoint(path: Path) -> tuple[dict[str, list[dict]], set[int], int]:
-    if not path.exists():
-        return {category: [] for category in CATEGORIES}, set(), 0
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    selected = {category: [] for category in CATEGORIES}
-    for category, entries in raw["selected"].items():
-        for entry in entries:
-            entry["sdf"] = base64.b64decode(entry["sdf"])
-            entry["smiles"] = base64.b64decode(entry["smiles"])
-            selected[category].append(entry)
-    print(
-        "resuming checkpoint "
-        + " ".join(f"{name}={len(selected[name])}" for name in CATEGORIES),
-        flush=True,
-    )
-    return selected, set(raw["seen"]), raw["counter"]
+def load_or_build_pools(
+    snapshot: Path, sdf_shard: Path, path: Path
+) -> dict[str, list[dict]]:
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    ranks: dict[int, int] = {}
+    for counter in range(HASH_COUNTER_LIMIT):
+        cid = candidate_cid(counter)
+        if cid <= SHARD_CID_MAX:
+            ranks.setdefault(cid, counter)
+    candidates: dict[int, dict] = {}
+    with gzip.open(snapshot, "rt", encoding="utf-8") as handle:
+        for line in handle:
+            cid_text, smiles = line.rstrip("\n").split("\t", 1)
+            cid = int(cid_text)
+            if cid > SHARD_CID_MAX:
+                break
+            rank = ranks.get(cid)
+            if rank is None:
+                continue
+            classified = classify_smiles(smiles)
+            if classified is None:
+                continue
+            category, heavy_atoms = classified
+            candidates[cid] = {
+                "id": str(cid),
+                "rank": rank,
+                "category": category,
+                "smiles": smiles,
+                "heavy_atoms": heavy_atoms,
+            }
+    pools = {category: [] for category in CATEGORIES}
+    with gzip.open(sdf_shard, "rt", encoding="utf-8", errors="replace") as handle:
+        record_lines: list[str] = []
+        for line in handle:
+            record_lines.append(line)
+            if line.rstrip("\r\n") != "$$$$":
+                continue
+            record = "".join(record_lines)
+            record_lines.clear()
+            cid = record_cid(record)
+            candidate = candidates.get(cid)
+            if candidate is None or " V2000" not in record:
+                continue
+            mol = Chem.MolFromMolBlock(
+                record, sanitize=False, removeHs=False, strictParsing=False
+            )
+            if mol is None or mol.GetNumAtoms() > 200:
+                continue
+            pools[candidate["category"]].append(
+                {
+                    **candidate,
+                    "record_type": "2d-current-full-shard",
+                    "sdf_url": SDF_SHARD_URL,
+                    "sdf_hex": record.encode("utf-8").hex(),
+                }
+            )
+    for category in CATEGORIES:
+        pools[category].sort(key=lambda item: item["rank"])
+        pools[category] = pools[category][:POOL_SIZE]
+        if len(pools[category]) < TARGET_PER_CATEGORY:
+            raise SystemExit(
+                f"only {len(pools[category])} deterministic candidates for {category}"
+            )
+    path.write_text(json.dumps(pools, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return pools
 
 
-def save_checkpoint(
-    path: Path, selected: dict[str, list[dict]], seen: set[int], counter: int
-) -> None:
-    serializable = {}
-    for category, entries in selected.items():
-        serializable[category] = []
-        for entry in entries:
-            encoded = dict(entry)
-            encoded["sdf"] = base64.b64encode(entry["sdf"]).decode("ascii")
-            encoded["smiles"] = base64.b64encode(entry["smiles"]).decode("ascii")
-            serializable[category].append(encoded)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(
-            {"counter": counter, "seen": sorted(seen), "selected": serializable},
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+def record_cid(record: str) -> int:
+    marker = "> <PUBCHEM_COMPOUND_CID>"
+    position = record.find(marker)
+    if position < 0:
+        return -1
+    value = record[position + len(marker) :].lstrip("\r\n").splitlines()[0]
+    return int(value)
 
 
 def candidate_cid(counter: int) -> int:
@@ -126,77 +158,40 @@ def candidate_cid(counter: int) -> int:
     return int.from_bytes(digest[:8], "big") % CID_MAX + 1
 
 
-def fetch_candidate(cid: int) -> dict | None:
-    smiles_url = (
-        f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/"
-        "property/IsomericSMILES/TXT"
-    )
-    try:
-        smiles_bytes = fetch(smiles_url)
-    except Exception:
-        return None
-    smiles = smiles_bytes.decode("utf-8").strip()
-    record_type = "2d" if "." in smiles else "3d"
-    sdf_url = (
-        f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/SDF"
-        f"?record_type={record_type}"
-    )
-    try:
-        sdf_bytes = fetch(sdf_url)
-    except Exception:
-        return None
-    text = sdf_bytes.decode("utf-8", "replace")
-    if text.count("$$$$") != 1 or " V2000" not in text:
-        return None
-    mol = Chem.MolFromMolBlock(text, sanitize=False, removeHs=False, strictParsing=False)
+def classify_smiles(smiles: str) -> tuple[str, int] | None:
+    mol = Chem.MolFromSmiles(smiles, sanitize=False)
     if mol is None:
         return None
     heavy = sum(atom.GetAtomicNum() > 1 for atom in mol.GetAtoms())
-    total = mol.GetNumAtoms()
-    if not 1 <= heavy <= 150 or total > 200:
+    if not 1 <= heavy <= 150:
         return None
-    Chem.GetSymmSSSR(mol)
     fragments = len(Chem.GetMolFrags(mol))
     charged = any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
-    ring_count = mol.GetRingInfo().NumRings()
+    try:
+        Chem.GetSymmSSSR(mol)
+        ring_count = mol.GetRingInfo().NumRings()
+    except Exception:
+        return None
     heteroatoms = sum(atom.GetAtomicNum() not in (1, 6) for atom in mol.GetAtoms())
     if fragments > 1:
-        category = "disconnected"
-    elif charged:
-        category = "charged"
-    elif ring_count >= 2:
-        category = "multi-ring"
-    elif heteroatoms >= 3:
-        category = "heteroatom-rich"
-    else:
-        category = "remaining"
-    return {
-        "id": str(cid),
-        "category": category,
-        "record_type": record_type,
-        "sdf_url": sdf_url,
-        "smiles_url": smiles_url,
-        "sdf": sdf_bytes,
-        "smiles": smiles_bytes,
-    }
+        return "disconnected", heavy
+    if charged:
+        return "charged", heavy
+    if ring_count >= 2:
+        return "multi-ring", heavy
+    if heteroatoms >= 3:
+        return "heteroatom-rich", heavy
+    return "remaining", heavy
 
 
-def fetch(url: str) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "molecules-validation/1"})
-    for attempt in range(5):
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                payload = response.read()
-                time.sleep(0.08)
-                return payload
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
-            if attempt == 4:
-                raise
-            time.sleep(0.5 * (2**attempt))
-    raise RuntimeError("unreachable")
+def download_file(url: str, path: Path) -> None:
+    temporary = path.with_suffix(".part")
+    with urllib.request.urlopen(url, timeout=120) as response, temporary.open("wb") as output:
+        shutil.copyfileobj(response, output)
+    temporary.replace(path)
 
 
-def build_tier(root: Path, entries: list[dict]) -> None:
+def build_tier(root: Path, entries: list[dict], snapshot: Path, sdf_shard: Path) -> None:
     data = root / "data"
     if data.exists():
         shutil.rmtree(data)
@@ -208,15 +203,20 @@ def build_tier(root: Path, entries: list[dict]) -> None:
         cid = item["id"]
         sdf_path = data / "raw" / f"cid_{cid}.sdf"
         smiles_path = data / "raw" / f"cid_{cid}.smi"
-        sdf_path.write_bytes(item["sdf"])
-        smiles_path.write_bytes(item["smiles"])
+        sdf_path.write_bytes(bytes.fromhex(item["sdf_hex"]))
+        smiles_path.write_text(item["smiles"] + "\n", encoding="utf-8")
         lock_entries.append(
             {
                 "id": cid,
                 "category": item["category"],
                 "files": [
                     source_file(root, sdf_path, item["sdf_url"], item["record_type"]),
-                    source_file(root, smiles_path, item["smiles_url"], "isomeric-smiles"),
+                    source_file(
+                        root,
+                        smiles_path,
+                        SMILES_SNAPSHOT_URL,
+                        "isomeric-smiles-snapshot",
+                    ),
                 ],
             }
         )
@@ -228,9 +228,9 @@ def build_tier(root: Path, entries: list[dict]) -> None:
         number = pack_index // 100 + 1
         sdf_pack = data / "packs" / f"pack_{number:02}.sdf"
         smi_pack = data / "packs" / f"pack_{number:02}.smi"
-        sdf_pack.write_bytes(b"".join(item["sdf"] for item in members))
+        sdf_pack.write_bytes(b"".join(bytes.fromhex(item["sdf_hex"]) for item in members))
         smi_pack.write_text(
-            "".join(f"{item['smiles'].decode().strip()} CID:{item['id']}\n" for item in members),
+            "".join(f"{item['smiles']} CID:{item['id']}\n" for item in members),
             encoding="utf-8",
         )
         ids = [item["id"] for item in members]
@@ -245,7 +245,11 @@ def build_tier(root: Path, entries: list[dict]) -> None:
     lock = {
         "schema_version": 1,
         "corpus_id": root.name,
-        "source": "PubChem PUG REST",
+        "source": (
+            "PubChem CID-SMILES snapshot "
+            f"sha256:{hashlib.sha256(snapshot.read_bytes()).hexdigest()} and CURRENT-Full SDF "
+            f"shard sha256:{hashlib.sha256(sdf_shard.read_bytes()).hexdigest()}"
+        ),
         "selection_seed": SEED,
         "entries": lock_entries,
         "packs": packs,

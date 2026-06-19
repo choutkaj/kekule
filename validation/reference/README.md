@@ -42,3 +42,7 @@ record validation evidence; run the Rust comparison with `--update` only after t
 Do not create molecule fixtures by hand for reference validation. Add compact records from external
 sources under the corpus `data/` directory, record their source URL and SHA-256 in
 `sources.lock.json`, then generate goldens with RDKit or Biopython.
+
+The PubChem builder uses the official `CID-SMILES.gz` snapshot and the first `CURRENT-Full` SDF
+shard. Selection remains seeded and deterministic; the shard constraint and source checksums are
+recorded in corpus metadata and locks.
