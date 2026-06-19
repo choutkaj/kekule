@@ -18,7 +18,7 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 ## Validation
 
 - Unit tests cover multi-record round trips and data fields.
-- RDKit reference generator support is included for fixture/golden generation.
+- RDKit-generated goldens compare SDF writer records for external PubChem fixtures.
 
 ## Out Of Scope
 

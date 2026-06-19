@@ -19,7 +19,7 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 ## Validation
 
 - Unit tests cover insertion, lookup, and SDF/Molfile coordinate preservation.
-- No external reference golden is required for the storage feature.
+- RDKit-generated goldens compare conformer coordinate preservation for external PubChem fixtures.
 
 ## Out Of Scope
 

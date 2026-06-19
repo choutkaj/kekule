@@ -18,7 +18,7 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 ## Validation
 
 - Unit tests cover branches, ring closures, bracket atoms, and dot fragments.
-- RDKit reference generator support is included for fixture/golden generation.
+- RDKit-generated goldens compare parsed graph records for external PubChem SMILES fixtures.
 
 ## Out Of Scope
 

@@ -3,6 +3,6 @@ title = "Fast ring membership detection"
 area = "algorithms"
 version = 1
 implemented = true
-validated = false
+validated = true
 description = "Detect whether atoms and bonds are members of any cycle without computing a canonical ring basis."
 depends_on = ["core.graph"]

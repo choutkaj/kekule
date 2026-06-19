@@ -3,6 +3,6 @@ title = "SDF V2000 writer"
 area = "io"
 version = 1
 implemented = true
-validated = false
+validated = true
 description = "Write one or more small molecules as SDF V2000 records with data fields."
 depends_on = ["io.mol.v2000.write", "io.sdf.v2000.parse"]

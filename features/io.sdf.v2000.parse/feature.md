@@ -20,9 +20,8 @@ Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 
 
 ## Validation
 
-- Current coverage is unit-test based.
-- RDKit golden validation is planned through `validation.harness`.
-- Fixtures live under `validation/features/io.sdf.v2000.parse/`.
+- Unit tests cover multi-record parsing, data fields, malformed blocks, and explicit parse-without-perceive behavior.
+- RDKit-generated goldens compare SDF records and preserved properties for external PubChem fixtures.
 
 ## Out Of Scope
 

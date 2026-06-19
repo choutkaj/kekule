@@ -20,7 +20,7 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 ## Validation
 
 - Unit tests cover coordinates, `M  CHG`, `M  ISO`, radicals, atom maps, and malformed blocks.
-- RDKit reference generator support is included for fixture/golden generation.
+- RDKit-generated goldens compare raw Molfile-preserved atom, bond, metadata, and coordinate records for external PubChem fixtures.
 
 ## Out Of Scope
 

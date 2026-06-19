@@ -1,7 +1,7 @@
 feature_id = "io.sdf.v2000.parse"
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"
-comparison_mode = "fixture-discovery-only"
+comparison_mode = "implementation-golden"
 
 fixtures = [
   "../../external_sources/pubchem/cid_702.sdf",
@@ -18,6 +18,6 @@ fixture_sources = [
 ]
 
 notes = [
-  "Reference RDKit goldens have not been generated yet.",
+  "Reference RDKit goldens compare SDF records and preserved properties.",
   "All molecule fixtures are externally supplied PubChem records; malformed parser cases belong in unit tests, not golden validation fixtures.",
 ]

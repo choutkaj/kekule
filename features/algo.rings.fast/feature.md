@@ -20,9 +20,8 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 
 ## Validation
 
-- Current coverage is unit-test based.
-- RDKit golden validation is planned through `validation.harness`.
-- Fixtures live under `validation/features/algo.rings.fast/`.
+- Unit tests cover core graph-cycle membership behavior.
+- RDKit-generated goldens compare ring membership for external PubChem fixtures.
 
 ## Out Of Scope
 
