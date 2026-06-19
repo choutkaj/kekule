@@ -664,8 +664,11 @@ fn perceive_rdkit_like_aromaticity(
 
     let ring_set = perceive_ring_set(mol);
     for ring in ring_set.rings() {
+        if ring.atoms.len() > 7 {
+            continue;
+        }
         let electrons = aromatic_ring_pi_electrons(mol, ring)?;
-        if electrons >= 2 && (electrons - 2) % 4 == 0 {
+        if electrons >= 6 && (electrons - 2) % 4 == 0 {
             for atom_id in &ring.atoms {
                 if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
                     atom.aromatic = true;
@@ -688,19 +691,24 @@ fn perceive_fused_aromatic_components(
     mol: &mut Molecule,
     rings: &[Ring],
 ) -> std::result::Result<(), AromaticityError> {
-    let mut components = (0..rings.len()).collect::<Vec<_>>();
-    for left in 0..rings.len() {
-        for right in (left + 1)..rings.len() {
-            if rings_share_bond(&rings[left], &rings[right]) {
+    let candidates = rings
+        .iter()
+        .enumerate()
+        .filter_map(|(index, ring)| aromatic_fused_candidate(mol, ring).then_some(index))
+        .collect::<Vec<_>>();
+    let mut components = (0..candidates.len()).collect::<Vec<_>>();
+    for left in 0..candidates.len() {
+        for right in (left + 1)..candidates.len() {
+            if rings_share_bond(&rings[candidates[left]], &rings[candidates[right]]) {
                 union_components(&mut components, left, right);
             }
         }
     }
 
     let mut component_rings = BTreeMap::<usize, Vec<usize>>::new();
-    for index in 0..rings.len() {
-        let root = find_component(&mut components, index);
-        component_rings.entry(root).or_default().push(index);
+    for (component_index, ring_index) in candidates.iter().copied().enumerate() {
+        let root = find_component(&mut components, component_index);
+        component_rings.entry(root).or_default().push(ring_index);
     }
 
     for indexes in component_rings.values() {
@@ -708,8 +716,11 @@ fn perceive_fused_aromatic_components(
             continue;
         }
         let component = fused_component_ring(rings, indexes);
-        let electrons = aromatic_ring_pi_electrons(mol, &component)?;
-        if electrons >= 2 && (electrons - 2) % 4 == 0 {
+        if component.atoms.len() > 24 {
+            continue;
+        }
+        let electrons = aromatic_fused_component_pi_electrons(mol, &component)?;
+        if electrons >= 6 && (electrons - 2) % 4 == 0 {
             for atom_id in &component.atoms {
                 if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
                     atom.aromatic = true;
@@ -723,6 +734,84 @@ fn perceive_fused_aromatic_components(
         }
     }
     Ok(())
+}
+
+fn aromatic_fused_component_pi_electrons(
+    mol: &Molecule,
+    ring: &Ring,
+) -> std::result::Result<u8, AromaticityError> {
+    let mut electrons = 0u8;
+    let mut has_pi_bond = false;
+    for bond_id in &ring.bonds {
+        let bond = mol.bond(*bond_id).expect("ring bond should be live");
+        if matches!(bond.order, BondOrder::Double | BondOrder::Aromatic) {
+            has_pi_bond = true;
+            electrons += 2;
+        }
+    }
+
+    for atom_id in &ring.atoms {
+        let atom = mol.atom(*atom_id).expect("ring atom should be live");
+        match atom.element.symbol() {
+            "C" => {}
+            "N" => {
+                if !(ring_atom_has_pi_bond(mol, ring, *atom_id)
+                    || atom.formal_charge > 0 && atom_has_exocyclic_pi_bond(mol, ring, *atom_id))
+                {
+                    electrons += 2;
+                }
+            }
+            "O" | "S" | "P" => {
+                if !ring_atom_has_pi_bond(mol, ring, *atom_id) {
+                    electrons += 2;
+                }
+            }
+            _ => return Err(AromaticityError::UnsupportedElement(*atom_id)),
+        }
+    }
+
+    if has_pi_bond {
+        Ok(electrons)
+    } else {
+        Ok(0)
+    }
+}
+
+fn ring_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
+    ring.bonds
+        .iter()
+        .filter(|bond_id| {
+            mol.bond(**bond_id)
+                .map(|bond| matches!(bond.order, BondOrder::Double | BondOrder::Aromatic))
+                .unwrap_or(false)
+        })
+        .count()
+}
+
+fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
+    if ring.atoms.len() > 7 {
+        return false;
+    }
+    let pi_bonds = ring_pi_bond_count(mol, ring);
+    pi_bonds >= 2
+        || (pi_bonds >= 1 && ring_has_hetero_atom(mol, ring))
+        || ring_has_fused_hetero_donor(mol, ring)
+}
+
+fn ring_has_hetero_atom(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| !matches!(atom.element.symbol(), "C" | "H"))
+            .unwrap_or(false)
+    })
+}
+
+fn ring_has_fused_hetero_donor(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| matches!(atom.element.symbol(), "N" | "S" | "P"))
+            .unwrap_or(false)
+    })
 }
 
 fn rings_share_bond(left: &Ring, right: &Ring) -> bool {
@@ -746,6 +835,13 @@ fn aromatic_ring_pi_electrons(
     mol: &Molecule,
     ring: &Ring,
 ) -> std::result::Result<u8, AromaticityError> {
+    if ring.atoms.len() == 5
+        && ring_pi_bond_count(mol, ring) < 2
+        && !ring_contains_element(mol, ring, "N")
+    {
+        return Ok(0);
+    }
+
     let mut electrons = 0u8;
     let mut has_pi_bond = false;
     for bond_id in &ring.bonds {
@@ -767,7 +863,9 @@ fn aromatic_ring_pi_electrons(
                 }
             }
             "N" => {
-                if !ring_atom_has_pi_bond(mol, ring, *atom_id) {
+                if !(ring_atom_has_pi_bond(mol, ring, *atom_id)
+                    || atom.formal_charge > 0 && atom_has_exocyclic_pi_bond(mol, ring, *atom_id))
+                {
                     electrons += 2;
                 }
             }
@@ -785,6 +883,14 @@ fn aromatic_ring_pi_electrons(
     } else {
         Ok(0)
     }
+}
+
+fn ring_contains_element(mol: &Molecule, ring: &Ring, symbol: &str) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| atom.element.symbol() == symbol)
+            .unwrap_or(false)
+    })
 }
 
 fn ring_atom_has_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -1272,14 +1378,23 @@ fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
         ("O", 0) => Some(&[2]),
         ("O", -1 | 1) => Some(&[1]),
         ("Li" | "Na" | "K", 1) => Some(&[0]),
+        ("Mg" | "Ca" | "Mn" | "Fe" | "Co" | "Ni" | "Cu" | "Zn", 1..=3) => Some(&[0]),
+        ("Zr", 0 | 4) => Some(&[0]),
+        ("Hf", 0) => Some(&[0]),
         ("F" | "Cl" | "Br" | "I", -1) => Some(&[0]),
         ("F", 0) => Some(&[1]),
+        ("Cl" | "Br" | "I", 1) => Some(&[4]),
         ("Cl" | "Br" | "I", 0) => Some(&[1, 3, 5, 7]),
         ("P", 0) => Some(&[3, 5]),
+        ("P", 1) => Some(&[4]),
+        ("Si", 0) => Some(&[4]),
         ("S", 0) => Some(&[2, 4, 6]),
         ("S", -1 | 1) => Some(&[1, 3, 5]),
         ("Hg", 1) => Some(&[1]),
         ("Hg", 2) => Some(&[2]),
+        ("Pt", 2) => Some(&[2]),
+        ("Pr", 0) => Some(&[0]),
+        ("Tl", 0) => Some(&[3]),
         _ => None,
     }
 }
@@ -1332,6 +1447,7 @@ pub fn sanitize_small_molecule(
     molecule: &mut SmallMolecule,
     options: SanitizeOptions,
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
+    normalize_sanitize_charges(&mut molecule.mol);
     let valence = if options.perceive_valence {
         let report = perceive_valence(&mut molecule.mol, ValenceModel::RdkitLike);
         if !report.is_ok() {
@@ -1354,6 +1470,53 @@ pub fn sanitize_small_molecule(
         valence,
         ring_count,
     })
+}
+
+fn normalize_sanitize_charges(mol: &mut Molecule) {
+    normalize_hypervalent_oxo_halides(mol);
+}
+
+fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {
+    let halogens = mol
+        .atoms()
+        .filter_map(|(atom_id, atom)| {
+            (atom.formal_charge == 0
+                && matches!(atom.element.symbol(), "Cl" | "Br" | "I")
+                && explicit_valence(mol, atom_id) > 1)
+                .then_some(atom_id)
+        })
+        .collect::<Vec<_>>();
+
+    for atom_id in halogens {
+        let Some((oxygen_id, bond_id)) = oxo_bond_to_neutral_oxygen(mol, atom_id) else {
+            continue;
+        };
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.formal_charge = 1;
+        }
+        if let Some(atom) = mol.atoms[oxygen_id.index()].as_mut() {
+            atom.formal_charge = -1;
+        }
+        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+            bond.order = BondOrder::Single;
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn oxo_bond_to_neutral_oxygen(mol: &Molecule, atom_id: AtomId) -> Option<(AtomId, BondId)> {
+    mol.incident_bonds(atom_id)
+        .ok()?
+        .filter_map(|(bond_id, bond)| {
+            if !matches!(bond.order, BondOrder::Double) {
+                return None;
+            }
+            let oxygen_id = if bond.a == atom_id { bond.b } else { bond.a };
+            let oxygen = mol.atom(oxygen_id).ok()?;
+            (oxygen.element.symbol() == "O" && oxygen.formal_charge == 0)
+                .then_some((oxygen_id, bond_id))
+        })
+        .next()
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

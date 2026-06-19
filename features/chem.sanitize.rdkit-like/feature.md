@@ -14,6 +14,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 
 - The pipeline is conservative and returns reports for caller inspection.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
+- Applies sanitization-only charge cleanup for hypervalent oxyhalogen patterns before valence perception.
 - Its valence, ring, and aromaticity passes are compared together against each required corpus.
 
 ## Validation
@@ -29,3 +30,4 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 
 - v1: Explicit sanitization pipeline.
 - v2: Validated through the corrected valence, ring, and aromaticity passes.
+- v3: Add RDKit-like oxyhalogen cleanup and pass PubChem-100 through the corrected valence and aromaticity stack.

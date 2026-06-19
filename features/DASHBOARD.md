@@ -4,14 +4,14 @@ Generated from feature metadata and validation status. Do not hand-edit this fil
 
 | Feature | Title | Area | Version | Implemented | Validated | Tiny | PubChem 100 | PubChem 1000 | PL-REX | Enamine diversity | PDB 10 | PDB 100 |
 |---|---|---|---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `algo.aromaticity.rdkit-like` | RDKit-like aromaticity perception | algorithms | 4 | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | - | - |
+| `algo.aromaticity.rdkit-like` | RDKit-like aromaticity perception | algorithms | 5 | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | - | - |
 | `algo.canonical-ranking` | Canonical atom ranking | algorithms | 1 | ❌ | ❌ | - | - | - | - | - | - | - |
 | `algo.rings.fast` | Fast ring membership detection | algorithms | 1 | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | - | - |
 | `algo.rings.sssr` | Smallest-set ring basis | algorithms | 3 | ✅ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | - | - |
 | `algo.substructure.vf2` | VF2 substructure search | algorithms | 1 | ❌ | ❌ | - | - | - | - | - | - | - |
-| `algo.valence.rdkit-like` | RDKit-like valence perception | algorithms | 3 | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | - | - |
+| `algo.valence.rdkit-like` | RDKit-like valence perception | algorithms | 4 | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | - | - |
 | `bio.hierarchy.smcra` | SMCRA-like biomolecular hierarchy | bio | 1 | ✅ | ❌ | ❌ | - | - | - | - | ❌ | ❌ |
-| `chem.sanitize.rdkit-like` | RDKit-like sanitization pipeline | chemistry | 2 | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | - | - |
+| `chem.sanitize.rdkit-like` | RDKit-like sanitization pipeline | chemistry | 3 | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | - | - |
 | `core.atom-bond` | Core atom and bond model | core | 2 | ✅ | ❌ | - | - | - | - | - | - | - |
 | `core.conformers` | Core conformer coordinate storage | core | 1 | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | - | - |
 | `core.graph` | Core molecular graph | core | 1 | ✅ | ❌ | - | - | - | - | - | - | - |

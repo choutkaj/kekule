@@ -13,7 +13,7 @@ Provide conservative valence perception for common organic molecules.
 
 ## Implementation Notes
 
-- The current model covers common organic elements plus selected charged salts, boranes, hypervalent halogens, and organometallic cases exposed by external PubChem validation.
+- The current model covers common organic elements plus selected charged salts, boranes, silicon, hypervalent halogens, and metal/organometallic cases exposed by external PubChem validation.
 - Perception state is marked fresh only after the pass completes.
 
 ## Validation
@@ -30,3 +30,4 @@ Provide conservative valence perception for common organic molecules.
 - v1: Conservative valence perception.
 - v2: Validation contract narrowed to valence-specific outputs and passes the RDKit-backed `tiny` corpus.
 - v3: Add corpus-driven RDKit-compatible valence cases for charged halides, boron anions, alkali counterions, hypervalent halogens, and simple mercury salts.
+- v4: Expand corpus-driven RDKit-compatible valence cases for PubChem-100 salts, silicon, phosphonium, and selected metal centers.
