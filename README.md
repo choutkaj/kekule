@@ -1,39 +1,10 @@
 
-<p align="center">
-  <img src="assets/molecules_logo.png" alt="Molecules!" width="400">
-</p>
-
-<pre style="line-height: 1; font-family: monospace; font-size: 18;">
-ⓂⓄⓁⒺⒸⓊⓁⒺⓈ
-</pre>
-
 
 <pre style="line-height: 1; font-family: monospace;">
-   _   _   _   _   _   _   _   _   _  
-  / \ / \ / \ / \ / \ / \ / \ / \ / \ 
- ( M | O | L | E | C | U | L | E | S )
-  \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ \_/ 
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
- +-+-+-+-+-+-+-+-+-+
- |M|O|L|E|C|U|L|E|S|
- +-+-+-+-+-+-+-+-+-+
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
- ____ ____ ____ ____ ____ ____ ____ ____ ____ 
-||M |||O |||L |||E |||C |||U |||L |||E |||S ||
-||__|||__|||__|||__|||__|||__|||__|||__|||__||
-|/__\|/__\|/__\|/__\|/__\|/__\|/__\|/__\|/__\|
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-MOLECULES
-</pre>
-
-<pre style="line-height: 1; font-family: monospace;">
-ＭＯＬＥＣＵＬＥＳ
+  +-+-+-+-+-+-+-+-+-+
+  |M|O|L|E|C|U|L|E|S|
+  +-+-+-+-+-+-+-+-+-+
+cheminformatics in Rust
 </pre>
 
 
@@ -73,6 +44,13 @@ cheminformatics in Rust
  cheminformatics in Rust
 </pre>
 
+
+
+
+
+<p align="center">
+  <img src="assets/molecules_logo.png" alt="Molecules!" width="400">
+</p>
 
 
 
