@@ -1,5 +1,5 @@
 feature_id = "stereo.representation"
-reference_tool = "planned-manual-fixtures"
+reference_tool = "planned-external-fixtures"
 reference_version = "2026-06-19-no-fixtures-yet"
 comparison_mode = "planned"
 

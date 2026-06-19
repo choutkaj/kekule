@@ -1,8 +1,0 @@
-data_missing_atom_identifier
-#
-loop_
-_atom_site.type_symbol
-_atom_site.label_comp_id
-_atom_site.label_asym_id
-C GLY A
-#

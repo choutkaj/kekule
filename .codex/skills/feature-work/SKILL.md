@@ -43,6 +43,8 @@ Set `implemented = true` only when implementation is complete. Set `validated = 
 
 Feature IDs and titles must describe canonical long-term capabilities, not maturity levels. Do not encode incomplete implementation status in feature IDs or titles. Use `version`, `implemented`, `validated`, the Validation section, and Revision Notes to describe maturity, partial coverage, or missing goldens.
 
+Molecular validation fixtures must be externally supplied, not invented toy systems. Record source URL and checksum provenance in `validation.toml`, and generate molecular golden data only with the declared reference software.
+
 ## Feature Docs
 
 Every feature must have `features/<feature-id>/feature.md` with these sections:

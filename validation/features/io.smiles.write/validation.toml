@@ -1,13 +1,23 @@
 feature_id = "io.smiles.write"
-reference_tool = "manual-fixtures"
-reference_version = "2026-06-19-no-reference-goldens"
+reference_tool = "rdkit"
+reference_version = "2026-06-19-external-fixtures-no-goldens"
 comparison_mode = "fixture-discovery-only"
 
 fixtures = [
-  "../io.smiles.parse/fixtures/smiles_cases.smi",
+  "../../external_sources/pubchem_smiles/cid_702.txt",
+  "../../external_sources/pubchem_smiles/cid_241.txt",
+  "../../external_sources/pubchem_smiles/cid_931.txt",
+  "../../external_sources/pubchem_smiles/cid_2519.txt",
+]
+
+fixture_sources = [
+  "../../external_sources/pubchem_smiles/cid_702.txt | source=PubChem CID 702 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/702/property/IsomericSMILES/TXT | sha256=5c9aa2a3024d56c903d547798cbd04ff743433ba0950dbfd8e19238e40651172",
+  "../../external_sources/pubchem_smiles/cid_241.txt | source=PubChem CID 241 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/241/property/IsomericSMILES/TXT | sha256=81894c359297b13bab2969c8a95a4ca1fe3c616efb11721210c0effb83728b93",
+  "../../external_sources/pubchem_smiles/cid_931.txt | source=PubChem CID 931 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/931/property/IsomericSMILES/TXT | sha256=f225e8a5ef788aa1ff42ec14f47c83d63116795cd5773c0edc07bd81c4714605",
+  "../../external_sources/pubchem_smiles/cid_2519.txt | source=PubChem CID 2519 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2519/property/IsomericSMILES/TXT | sha256=ab7530ff3599f68d874111336acb2e8b2ac55ea799b4c3584473fea6a320442a",
 ]
 
 notes = [
   "Reference RDKit goldens have not been generated yet.",
-  "Fixtures should be used for parse/write/parse graph-shape round trips.",
+  "All molecule fixtures are externally supplied PubChem SMILES records.",
 ]
