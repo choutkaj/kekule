@@ -5,6 +5,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 
+use molecules::prelude::{
+    perceive_aromaticity, perceive_ring_membership, perceive_ring_set, read_mmcif_str,
+    read_mol_v2000_str, read_smiles_str, sanitize_small_molecule, write_mol_v2000, write_sdf_v2000,
+    write_smiles, AromaticityModel, Atom, AtomId, Bond, BondOrder, BondStereo, MacroMolecule,
+    MmcifParseOptions, Molecule, PropValue, SanitizeOptions, SdfParseOptions, SdfRecord,
+    SmallMolecule, SmilesParseOptions, SmilesWriteOptions,
+};
+use molecules::read_sdf_v2000_records;
+use serde_json::{json, Value};
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("error: {error}");
@@ -79,6 +89,10 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             "validation manifest lists {} fixture(s)",
             manifest.fixtures.len()
         );
+        let compared = validate_golden_outputs(&manifest_path, &manifest)?;
+        if compared > 0 {
+            println!("validation compared {compared} golden file(s)");
+        }
     } else {
         println!("no reference validation manifest configured for `{feature}`");
     }
@@ -423,6 +437,697 @@ fn validate_manifest_paths(
     }
     validate_fixture_sources(manifest_path, manifest)?;
     Ok(())
+}
+
+fn validate_golden_outputs(
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+) -> Result<usize, Box<dyn Error>> {
+    if manifest.fixtures.is_empty() {
+        return Ok(0);
+    }
+    let base = manifest_path.parent().ok_or_else(|| {
+        boxed_error(format!(
+            "{} has no parent directory",
+            manifest_path.display()
+        ))
+    })?;
+    let mut compared = 0;
+    for fixture in &manifest.fixtures {
+        let fixture_path = base.join(fixture);
+        let golden_path = base
+            .join("golden")
+            .join(format!("{}.json", slugify_fixture(fixture)));
+        if !golden_path.exists() {
+            return Err(boxed_error(format!(
+                "{} is missing golden file for fixture `{fixture}`",
+                manifest_path.display()
+            )));
+        }
+        let golden: Value = serde_json::from_str(&fs::read_to_string(&golden_path)?)?;
+        validate_golden_metadata(&golden_path, &golden, manifest, fixture)?;
+        let expected = golden.get("expected").ok_or_else(|| {
+            boxed_error(format!("{} is missing `expected`", golden_path.display()))
+        })?;
+        let actual = implementation_expected(&manifest.feature_id, &fixture_path)?;
+        let expected = normalize_for_comparison(expected);
+        let actual = normalize_for_comparison(&actual);
+        if let Some(diff) = first_json_diff("$", &expected, &actual) {
+            return Err(boxed_error(format!(
+                "{} differs from implementation output for fixture `{fixture}`: {diff}",
+                golden_path.display()
+            )));
+        }
+        compared += 1;
+    }
+    Ok(compared)
+}
+
+fn validate_golden_metadata(
+    golden_path: &Path,
+    golden: &Value,
+    manifest: &ValidationManifest,
+    fixture: &str,
+) -> Result<(), Box<dyn Error>> {
+    if golden.get("schema_version") != Some(&json!(1)) {
+        return Err(boxed_error(format!(
+            "{} has unsupported schema_version",
+            golden_path.display()
+        )));
+    }
+    if golden.get("feature_id").and_then(Value::as_str) != Some(manifest.feature_id.as_str()) {
+        return Err(boxed_error(format!(
+            "{} feature_id does not match manifest",
+            golden_path.display()
+        )));
+    }
+    if golden.get("fixture_path").and_then(Value::as_str) != Some(fixture) {
+        return Err(boxed_error(format!(
+            "{} fixture_path does not match manifest",
+            golden_path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn implementation_expected(feature: &str, fixture_path: &Path) -> Result<Value, Box<dyn Error>> {
+    match feature {
+        "io.sdf.v2000.parse" => {
+            let records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
+        }
+        "io.sdf.v2000.write" => {
+            let records = read_small_records_by_suffix(fixture_path)?;
+            let molecules = records
+                .into_iter()
+                .map(|record| record.molecule)
+                .collect::<Vec<_>>();
+            let written = write_sdf_v2000(&molecules)?;
+            let records = read_sdf_v2000_records(&written, SdfParseOptions::default())?
+                .into_iter()
+                .enumerate()
+                .map(|(index, record)| IndexedSmallRecord {
+                    record_index: index,
+                    title: record.title,
+                    molecule: record.molecule,
+                })
+                .collect::<Vec<_>>();
+            Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
+        }
+        "io.mol.v2000.parse" | "core.conformers" => {
+            let records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({ "records": records.iter().map(conformer_record_json).collect::<Vec<_>>() }))
+        }
+        "io.mol.v2000.write" => {
+            let records = read_small_records_by_suffix(fixture_path)?;
+            let records = records
+                .into_iter()
+                .enumerate()
+                .map(|(index, record)| {
+                    let written = write_mol_v2000(&record.molecule)?;
+                    let molecule = read_mol_v2000_str(&written)?;
+                    Ok(IndexedSmallRecord {
+                        record_index: index,
+                        title: molecule_title(&molecule.mol),
+                        molecule,
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
+        }
+        "io.smiles.parse" => {
+            let records = read_smiles_records(fixture_path)?;
+            Ok(
+                json!({ "records": records.iter().map(smiles_parse_record_json).collect::<Vec<_>>() }),
+            )
+        }
+        "io.smiles.write" => {
+            let records = read_smiles_records(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter()
+                    .map(smiles_write_record_json)
+                    .collect::<Result<Vec<_>, Box<dyn Error>>>()?
+            }))
+        }
+        "algo.rings.fast" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(
+                json!({ "records": records.iter_mut().map(ring_membership_record_json).collect::<Vec<_>>() }),
+            )
+        }
+        "algo.rings.sssr" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(
+                json!({ "records": records.iter_mut().map(ring_set_record_json).collect::<Vec<_>>() }),
+            )
+        }
+        "algo.valence.rdkit-like" | "chem.sanitize.rdkit-like" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(
+                json!({ "records": records.iter_mut().map(sanitized_atom_record_json).collect::<Vec<_>>() }),
+            )
+        }
+        "algo.aromaticity.rdkit-like" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(
+                json!({ "records": records.iter_mut().map(aromaticity_record_json).collect::<Vec<_>>() }),
+            )
+        }
+        "io.mmcif.parse" | "bio.hierarchy.smcra" => {
+            let input = fs::read_to_string(fixture_path)?;
+            let molecule = read_mmcif_str(&input, MmcifParseOptions::default())?;
+            Ok(mmcif_expected_json(&molecule))
+        }
+        _ => Err(boxed_error(format!(
+            "no implementation comparison configured for feature `{feature}`"
+        ))),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct IndexedSmallRecord {
+    record_index: usize,
+    title: String,
+    molecule: SmallMolecule,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedSmilesRecord {
+    record_index: usize,
+    title: String,
+    input_smiles: String,
+    molecule: SmallMolecule,
+}
+
+fn read_small_records_by_suffix(path: &Path) -> Result<Vec<IndexedSmallRecord>, Box<dyn Error>> {
+    let input = fs::read_to_string(path)?;
+    if matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("mol" | "mdl")
+    ) {
+        let molecule = read_mol_v2000_str(&input)?;
+        return Ok(vec![IndexedSmallRecord {
+            record_index: 0,
+            title: molecule_title(&molecule.mol),
+            molecule,
+        }]);
+    }
+    Ok(read_sdf_v2000_records(&input, SdfParseOptions::default())?
+        .into_iter()
+        .enumerate()
+        .map(|(index, record)| small_record(index, record))
+        .collect())
+}
+
+fn small_record(index: usize, record: SdfRecord) -> IndexedSmallRecord {
+    IndexedSmallRecord {
+        record_index: index,
+        title: record.title,
+        molecule: record.molecule,
+    }
+}
+
+fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
+    let mut records = Vec::new();
+    for (index, raw_line) in fs::read_to_string(path)?.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let smiles = parts.next().unwrap_or_default().to_owned();
+        let title = parts.next().unwrap_or_default().trim().to_owned();
+        let molecule = read_smiles_str(&smiles, SmilesParseOptions)?;
+        records.push(IndexedSmilesRecord {
+            record_index: index,
+            title,
+            input_smiles: smiles,
+            molecule,
+        });
+    }
+    Ok(records)
+}
+
+fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
+    let mol = &record.molecule.mol;
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "atoms": atoms_json(mol),
+        "bonds": bonds_json(mol),
+        "properties": sdf_properties_json(mol),
+    })
+}
+
+fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
+    let mol = &record.molecule.mol;
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": mol.atom_count(),
+        "conformers": mol.conformers().map(|(_, conformer)| {
+            mol.atom_ids()
+                .filter_map(|atom_id| {
+                    conformer.position(atom_id).map(|point| json!({
+                        "atom_index": atom_id.raw(),
+                        "x": point.x,
+                        "y": point.y,
+                        "z": point.z,
+                    }))
+                })
+                .collect::<Vec<_>>()
+        }).collect::<Vec<_>>(),
+        "atoms": atoms_json(mol),
+    })
+}
+
+fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let membership = perceive_ring_membership(&mut record.molecule.mol);
+    let mol = &record.molecule.mol;
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_in_ring": mol.atom_ids().map(|id| membership.atom_in_ring(id)).collect::<Vec<_>>(),
+        "bond_in_ring": mol.bond_ids().map(|id| membership.bond_in_ring(id)).collect::<Vec<_>>(),
+    })
+}
+
+fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let ring_set = perceive_ring_set(&mut record.molecule.mol);
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "rings": ring_set
+            .rings()
+            .iter()
+            .map(|ring| ring.atoms.iter().map(|atom| atom.raw()).collect::<Vec<_>>())
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Value {
+    match sanitize_small_molecule(&mut record.molecule, SanitizeOptions::default()) {
+        Ok(_) => json!({
+            "record_index": record.record_index,
+            "status": "ok",
+            "title": record.title,
+            "atoms": atoms_json(&record.molecule.mol),
+        }),
+        Err(_) => json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+        }),
+    }
+}
+
+fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let status = sanitize_small_molecule(
+        &mut record.molecule,
+        SanitizeOptions {
+            perceive_valence: true,
+            perceive_rings: true,
+            perceive_aromaticity: false,
+        },
+    )
+    .and_then(|_| {
+        perceive_aromaticity(&mut record.molecule.mol, AromaticityModel::RdkitLike)
+            .map_err(molecules::prelude::SanitizeError::Aromaticity)
+    });
+    if status.is_err() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+        });
+    }
+    let mol = &record.molecule.mol;
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_aromatic": mol.atoms().map(|(_, atom)| atom.aromatic).collect::<Vec<_>>(),
+        "bond_aromatic": mol.bonds().map(|(_, bond)| bond.aromatic).collect::<Vec<_>>(),
+    })
+}
+
+fn smiles_write_record_json(record: &IndexedSmilesRecord) -> Result<Value, Box<dyn Error>> {
+    Ok(json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "input_smiles": record.input_smiles,
+        "output_smiles": write_smiles(&record.molecule, SmilesWriteOptions)?,
+    }))
+}
+
+fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
+    sdf_record_json(&IndexedSmallRecord {
+        record_index: record.record_index,
+        title: record.title.clone(),
+        molecule: record.molecule.clone(),
+    })
+}
+
+fn atoms_json(mol: &Molecule) -> Vec<Value> {
+    mol.atoms()
+        .map(|(id, atom)| atom_json(id, atom))
+        .collect::<Vec<_>>()
+}
+
+fn atom_json(id: AtomId, atom: &Atom) -> Value {
+    json!({
+        "index": id.raw(),
+        "atomic_number": atom.element.atomic_number(),
+        "symbol": atom.element.symbol(),
+        "formal_charge": atom.formal_charge,
+        "isotope": atom.isotope,
+        "explicit_hydrogens": atom.explicit_hydrogens,
+        "atom_map": atom.atom_map,
+        "aromatic": atom.aromatic,
+    })
+}
+
+fn bonds_json(mol: &Molecule) -> Vec<Value> {
+    mol.bonds()
+        .map(|(id, bond)| bond_json(id.raw(), bond))
+        .collect::<Vec<_>>()
+}
+
+fn bond_json(index: u32, bond: &Bond) -> Value {
+    json!({
+        "index": index,
+        "begin_atom_index": bond.a().raw(),
+        "end_atom_index": bond.b().raw(),
+        "bond_type": bond_order_json(bond.order),
+        "is_aromatic": bond.aromatic,
+        "stereo": bond_stereo_json(bond.stereo),
+    })
+}
+
+fn bond_order_json(order: BondOrder) -> &'static str {
+    match order {
+        BondOrder::Zero => "ZERO",
+        BondOrder::Single => "SINGLE",
+        BondOrder::Double => "DOUBLE",
+        BondOrder::Triple => "TRIPLE",
+        BondOrder::Quadruple => "QUADRUPLE",
+        BondOrder::Aromatic => "AROMATIC",
+        BondOrder::Dative => "DATIVE",
+    }
+}
+
+fn bond_stereo_json(stereo: Option<BondStereo>) -> &'static str {
+    match stereo {
+        None | Some(BondStereo::Unspecified) => "STEREONONE",
+        Some(BondStereo::E) => "STEREOE",
+        Some(BondStereo::Z) => "STEREOZ",
+        Some(BondStereo::Up) => "STEREOANY",
+        Some(BondStereo::Down) => "STEREOANY",
+    }
+}
+
+fn sdf_properties_json(mol: &Molecule) -> Value {
+    let mut props = serde_json::Map::new();
+    for (key, value) in mol.props() {
+        let Some(name) = key.strip_prefix("sdf.field.") else {
+            continue;
+        };
+        if let PropValue::String(text) = value {
+            props.insert(name.to_owned(), json!(text));
+        }
+    }
+    Value::Object(props)
+}
+
+fn molecule_title(mol: &Molecule) -> String {
+    match mol.props().get("sdf.title") {
+        Some(PropValue::String(title)) => title.clone(),
+        _ => String::new(),
+    }
+}
+
+fn mmcif_expected_json(molecule: &MacroMolecule) -> Value {
+    json!({
+        "atom_site_rows": atom_site_rows_json(molecule),
+        "structure": structure_json(molecule),
+    })
+}
+
+fn atom_site_rows_json(molecule: &MacroMolecule) -> Value {
+    let rows = molecule
+        .hierarchy
+        .atom_sites()
+        .map(|(site_id, site)| {
+            let residue = molecule
+                .hierarchy
+                .residue(site.residue)
+                .expect("residue exists");
+            let chain = molecule
+                .hierarchy
+                .chain(residue.chain)
+                .expect("chain exists");
+            let model = molecule.hierarchy.model(chain.model).expect("model exists");
+            let atom = molecule.mol.atom(site.atom).expect("atom exists");
+            json!({
+                "group_PDB": Value::Null,
+                "id": (site_id.raw() + 1).to_string(),
+                "type_symbol": atom.element.symbol(),
+                "label_atom_id": site.metadata.label_atom_id,
+                "auth_atom_id": site.metadata.auth_atom_id,
+                "label_alt_id": site.metadata.label_alt_id,
+                "label_comp_id": residue.name,
+                "auth_comp_id": residue.name,
+                "label_asym_id": chain.label_id,
+                "auth_asym_id": chain.author_id,
+                "label_seq_id": residue.label_seq_id.map(|value| value.to_string()),
+                "auth_seq_id": residue.author_seq_id,
+                "pdbx_PDB_ins_code": residue.insertion_code,
+                "occupancy": site.metadata.occupancy.map(|value| format!("{value:.2}")),
+                "B_iso_or_equiv": site.metadata.b_factor.map(|value| format!("{value:.2}")),
+                "Cartn_x": Value::Null,
+                "Cartn_y": Value::Null,
+                "Cartn_z": Value::Null,
+                "pdbx_PDB_model_num": model.model_id,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "status": "ok",
+        "row_count": rows.len(),
+        "rows": rows,
+    })
+}
+
+fn structure_json(molecule: &MacroMolecule) -> Value {
+    json!({
+        "status": "ok",
+        "models": molecule.hierarchy.models().map(|(model_id, model)| {
+            json!({
+                "id": model_id.raw(),
+                "chains": model.chains.iter().map(|chain_id| {
+                    let chain = molecule.hierarchy.chain(*chain_id).expect("chain exists");
+                    json!({
+                        "id": chain.label_id,
+                        "residues": chain.residues.iter().map(|residue_id| {
+                            let residue = molecule.hierarchy.residue(*residue_id).expect("residue exists");
+                            json!({
+                                "name": residue.name,
+                                "hetflag": Value::Null,
+                                "sequence_id": residue.label_seq_id,
+                                "insertion_code": residue.insertion_code,
+                                "atoms": residue.atom_sites.iter().map(|site_id| {
+                                    let site = molecule.hierarchy.atom_site(*site_id).expect("site exists");
+                                    let atom = molecule.mol.atom(site.atom).expect("atom exists");
+                                    let name = site
+                                        .metadata
+                                        .label_atom_id
+                                        .clone()
+                                        .unwrap_or_else(|| atom.element.symbol().to_owned());
+                                    json!({
+                                        "name": name,
+                                        "full_name": name,
+                                        "altloc": site.metadata.label_alt_id,
+                                        "element": atom.element.symbol(),
+                                        "occupancy": site.metadata.occupancy,
+                                        "bfactor": site.metadata.b_factor,
+                                        "coord": Value::Null,
+                                    })
+                                }).collect::<Vec<_>>(),
+                            })
+                        }).collect::<Vec<_>>(),
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> Option<String> {
+    match (expected, actual) {
+        (Value::Object(expected), Value::Object(actual)) => {
+            for key in expected.keys() {
+                let next = format!("{path}.{key}");
+                let Some(actual_value) = actual.get(key) else {
+                    return Some(format!("{next} missing from actual output"));
+                };
+                if let Some(diff) = first_json_diff(&next, &expected[key], actual_value) {
+                    return Some(diff);
+                }
+            }
+            for key in actual.keys() {
+                if !expected.contains_key(key) {
+                    return Some(format!("{path}.{key} present only in actual output"));
+                }
+            }
+            None
+        }
+        (Value::Array(expected), Value::Array(actual)) => {
+            if expected.len() != actual.len() {
+                return Some(format!(
+                    "{path} length differs: expected {}, actual {}",
+                    expected.len(),
+                    actual.len()
+                ));
+            }
+            for (index, (expected_value, actual_value)) in expected.iter().zip(actual).enumerate() {
+                if let Some(diff) =
+                    first_json_diff(&format!("{path}[{index}]"), expected_value, actual_value)
+                {
+                    return Some(diff);
+                }
+            }
+            None
+        }
+        _ if expected == actual => None,
+        _ => Some(format!(
+            "{path} differs: expected {}, actual {}",
+            expected, actual
+        )),
+    }
+}
+
+fn normalize_for_comparison(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(normalize_for_comparison)
+                .collect::<Vec<_>>(),
+        ),
+        Value::Object(object) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, value) in object {
+                normalized.insert(key.clone(), normalize_for_comparison(value));
+            }
+            normalize_undirected_bond_object(&mut normalized);
+            normalize_bond_array_object(&mut normalized);
+            normalize_ring_set_object(&mut normalized);
+            Value::Object(normalized)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn normalize_undirected_bond_object(object: &mut serde_json::Map<String, Value>) {
+    let Some(begin) = object.get("begin_atom_index").and_then(Value::as_u64) else {
+        return;
+    };
+    let Some(end) = object.get("end_atom_index").and_then(Value::as_u64) else {
+        return;
+    };
+    if begin > end {
+        object.insert("begin_atom_index".to_owned(), json!(end));
+        object.insert("end_atom_index".to_owned(), json!(begin));
+    }
+}
+
+fn normalize_bond_array_object(object: &mut serde_json::Map<String, Value>) {
+    let Some(Value::Array(bonds)) = object.get_mut("bonds") else {
+        return;
+    };
+    for bond in bonds.iter_mut() {
+        if let Value::Object(bond) = bond {
+            bond.remove("index");
+        }
+    }
+    bonds.sort_by_key(bond_sort_key);
+    for (index, bond) in bonds.iter_mut().enumerate() {
+        if let Value::Object(bond) = bond {
+            bond.insert("index".to_owned(), json!(index));
+        }
+    }
+}
+
+fn bond_sort_key(value: &Value) -> (u64, u64, String, String) {
+    let Some(object) = value.as_object() else {
+        return (u64::MAX, u64::MAX, String::new(), String::new());
+    };
+    (
+        object
+            .get("begin_atom_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX),
+        object
+            .get("end_atom_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX),
+        object
+            .get("bond_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        object
+            .get("stereo")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
+fn normalize_ring_set_object(object: &mut serde_json::Map<String, Value>) {
+    let Some(Value::Array(rings)) = object.get_mut("rings") else {
+        return;
+    };
+    for ring in rings.iter_mut() {
+        let Value::Array(atoms) = ring else {
+            continue;
+        };
+        atoms.sort_by_key(|value| value.as_u64().unwrap_or(u64::MAX));
+    }
+    rings.sort_by(|left, right| {
+        let left = left
+            .as_array()
+            .map(|items| items.iter().filter_map(Value::as_u64).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let right = right
+            .as_array()
+            .map(|items| items.iter().filter_map(Value::as_u64).collect::<Vec<_>>())
+            .unwrap_or_default();
+        left.cmp(&right)
+    });
+}
+
+fn slugify_fixture(fixture: &str) -> String {
+    let mut slug = String::new();
+    let mut previous_was_separator = false;
+    for ch in fixture.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            slug.push(ch);
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            slug.push('_');
+            previous_was_separator = true;
+        }
+    }
+    slug.trim_matches(['.', '_', '-']).to_owned()
 }
 
 fn validate_fixture_sources(
@@ -1027,6 +1732,77 @@ fixtures = [
         let manifest = read_validation_manifest(&manifest_path).expect("manifest should parse");
         assert!(validate_manifest_paths(&manifest_path, &manifest).is_err());
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn validation_requires_matching_golden_files() {
+        let root = temp_feature_root("validation-goldens");
+        let feature_dir = root
+            .join("validation")
+            .join("features")
+            .join("io.smiles.parse");
+        let fixture_dir = feature_dir.join("fixtures");
+        fs::create_dir_all(&fixture_dir).expect("fixture dir should create");
+        fs::write(fixture_dir.join("case.smi"), "CCO\n").expect("fixture should write");
+        let manifest_path = feature_dir.join("validation.toml");
+        fs::write(
+            &manifest_path,
+            r#"feature_id = "io.smiles.parse"
+reference_tool = "rdkit"
+reference_version = "test"
+fixtures = [
+  "fixtures/case.smi",
+]
+fixture_sources = [
+  "fixtures/case.smi | source=PubChem | url=https://example.org/case.smi | sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+]
+"#,
+        )
+        .expect("manifest should write");
+
+        let manifest = read_validation_manifest(&manifest_path).expect("manifest should parse");
+        validate_manifest_paths(&manifest_path, &manifest).expect("manifest paths should pass");
+        assert!(validate_golden_outputs(&manifest_path, &manifest).is_err());
+
+        fs::create_dir_all(feature_dir.join("golden")).expect("golden dir should create");
+        fs::write(
+            feature_dir.join("golden").join("fixtures_case.smi.json"),
+            r#"{
+  "schema_version": 1,
+  "feature_id": "wrong.feature",
+  "fixture_path": "fixtures/case.smi",
+  "expected": {}
+}
+"#,
+        )
+        .expect("golden should write");
+        assert!(validate_golden_outputs(&manifest_path, &manifest).is_err());
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn comparison_normalizes_undirected_bonds_and_ring_order() {
+        let expected = json!({
+            "records": [{
+                "bonds": [
+                    {"index": 0, "begin_atom_index": 5, "end_atom_index": 0, "bond_type": "SINGLE", "stereo": "STEREONONE"}
+                ],
+                "rings": [[5, 3, 1]]
+            }]
+        });
+        let actual = json!({
+            "records": [{
+                "bonds": [
+                    {"index": 7, "begin_atom_index": 0, "end_atom_index": 5, "bond_type": "SINGLE", "stereo": "STEREONONE"}
+                ],
+                "rings": [[1, 3, 5]]
+            }]
+        });
+
+        assert_eq!(
+            normalize_for_comparison(&expected),
+            normalize_for_comparison(&actual)
+        );
     }
 
     fn temp_feature_root(label: &str) -> PathBuf {

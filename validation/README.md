@@ -8,9 +8,12 @@ Reference validation is separated from the pure Rust library.
 - `validation/data/` is for local unpacked corpora and is ignored by git.
 - `validation/reference/rdkit/` contains small-molecule reference generators.
 - `validation/reference/biopython/` contains macromolecular reference generators.
-- `validation/golden/` contains normalized JSON expectations checked by Rust tests or `xtask` commands.
+- `validation/features/<feature-id>/golden/` contains normalized JSON expectations checked by `cargo xtask validate --feature FEATURE_ID`.
 
 Golden files should record the input, expected normalized behavior, reference implementation, and reference version.
+For every fixture listed in a validation manifest, `cargo xtask validate --feature FEATURE_ID`
+requires the corresponding `golden/<fixture-slug>.json` file and compares its `expected` payload
+against normalized Rust implementation output.
 
 Validation molecule fixtures must be externally supplied records, not hand-authored toy systems. Each
 fixture listed in `validation.toml` must have a matching `fixture_sources` entry with a non-manual

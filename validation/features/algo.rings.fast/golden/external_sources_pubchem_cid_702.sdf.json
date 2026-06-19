@@ -1,0 +1,42 @@
+{
+  "expected": {
+    "records": [
+      {
+        "atom_in_ring": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "bond_in_ring": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "record_index": 0,
+        "status": "ok",
+        "title": "702"
+      }
+    ]
+  },
+  "feature_id": "algo.rings.fast",
+  "fixture_id": "external_sources_pubchem_cid_702.sdf",
+  "fixture_path": "../../external_sources/pubchem/cid_702.sdf",
+  "input_sha256": "d0cfb665af2d152c5b963456333097a014cf9ce0fafe6f8d4970bc34739e721e",
+  "reference": {
+    "runtime_dependency": false,
+    "tool": "rdkit",
+    "version": "2026.03.3"
+  },
+  "schema_version": 1
+}

@@ -31,4 +31,4 @@ Generated from `features/*/feature.toml`. Do not hand-edit this file.
 | `query.smarts` | SMARTS query parsing | query | 1 | ❌ | ❌ |
 | `stereo.cip` | CIP stereochemistry | stereo | 1 | ❌ | ❌ |
 | `stereo.representation` | Stereochemistry representation | stereo | 1 | ❌ | ❌ |
-| `validation.harness` | Reference validation harness | infrastructure | 1 | ✅ | ❌ |
+| `validation.harness` | Reference validation harness | infrastructure | 2 | ✅ | ❌ |
