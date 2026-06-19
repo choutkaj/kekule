@@ -22,4 +22,4 @@ Current V2000-first implementation.
 
 ## Revision Notes
 
-- v1: Planned feature placeholder.
+- v1: Feature contract reserved.

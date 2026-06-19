@@ -4,5 +4,5 @@ area = "algorithms"
 version = 1
 implemented = true
 validated = false
-description = "Compute an initial smallest-set ring basis for small-molecule workflows."
+description = "Compute a smallest-set ring basis for small-molecule workflows."
 depends_on = ["algo.rings.fast"]

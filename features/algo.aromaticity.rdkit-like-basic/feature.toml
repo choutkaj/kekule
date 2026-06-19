@@ -1,8 +1,0 @@
-id = "algo.aromaticity.rdkit-like-basic"
-title = "Basic RDKit-like aromaticity perception"
-area = "algorithms"
-version = 2
-implemented = true
-validated = false
-description = "Assign aromatic atom and bond flags using an initial RDKit-like aromaticity model for common organic rings."
-depends_on = ["core.graph", "algo.rings.fast", "algo.rings.sssr", "algo.valence.rdkit-like-basic"]

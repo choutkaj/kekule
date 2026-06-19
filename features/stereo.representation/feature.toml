@@ -1,0 +1,8 @@
+id = "stereo.representation"
+title = "Stereochemistry representation"
+area = "stereo"
+version = 1
+implemented = false
+validated = false
+description = "Plan richer atom and bond stereochemistry representation for small molecules."
+depends_on = ["core.atom-bond"]

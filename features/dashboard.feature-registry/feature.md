@@ -34,4 +34,4 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 
 ## Revision Notes
 
-- v1: Initial registry, dashboard, validation command, schema v2, and repo-skill check behavior.
+- v1: Registry, dashboard, validation command, schema v2, and repo-skill check behavior.

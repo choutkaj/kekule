@@ -28,4 +28,4 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 
 ## Revision Notes
 
-- v1: Initial raw Molfile V2000 parser.
+- v1: Raw Molfile V2000 parser.

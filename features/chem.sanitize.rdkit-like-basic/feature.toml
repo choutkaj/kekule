@@ -1,8 +1,0 @@
-id = "chem.sanitize.rdkit-like-basic"
-title = "Basic RDKit-like sanitization pipeline"
-area = "chemistry"
-version = 1
-implemented = true
-validated = false
-description = "Run explicit valence, ring, and aromaticity perception as an opt-in small-molecule sanitization pipeline."
-depends_on = ["algo.valence.rdkit-like-basic", "algo.rings.sssr", "algo.aromaticity.rdkit-like-basic"]

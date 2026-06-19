@@ -2,7 +2,7 @@
 
 ## Summary
 
-Write small molecules as deterministic noncanonical SMILES for basic round-trip workflows.
+Write small molecules as deterministic noncanonical SMILES for round-trip workflows.
 
 ## Behavior/API
 
@@ -26,4 +26,4 @@ Write small molecules as deterministic noncanonical SMILES for basic round-trip 
 
 ## Revision Notes
 
-- v1: Initial noncanonical writer.
+- v1: Noncanonical writer.

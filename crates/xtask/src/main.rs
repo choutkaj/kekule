@@ -364,6 +364,7 @@ struct ValidationManifest {
     reference_tool: String,
     reference_version: String,
     fixtures: Vec<String>,
+    fixture_sources: Vec<String>,
 }
 
 fn validation_manifest_path(feature: &str) -> PathBuf {
@@ -381,6 +382,7 @@ fn read_validation_manifest(path: &Path) -> Result<ValidationManifest, Box<dyn E
         reference_tool: required(&map, "reference_tool", path)?,
         reference_version: required(&map, "reference_version", path)?,
         fixtures: optional_string_array(&map, "fixtures", path)?,
+        fixture_sources: optional_string_array(&map, "fixture_sources", path)?,
     })
 }
 
@@ -419,7 +421,84 @@ fn validate_manifest_paths(
             )));
         }
     }
+    validate_fixture_sources(manifest_path, manifest)?;
     Ok(())
+}
+
+fn validate_fixture_sources(
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+) -> Result<(), Box<dyn Error>> {
+    if manifest.fixtures.is_empty() {
+        if !manifest.fixture_sources.is_empty() {
+            return Err(boxed_error(format!(
+                "{} declares fixture_sources without fixtures",
+                manifest_path.display()
+            )));
+        }
+        return Ok(());
+    }
+    if manifest.fixture_sources.len() != manifest.fixtures.len() {
+        return Err(boxed_error(format!(
+            "{} must declare one external fixture_sources entry for each fixture",
+            manifest_path.display()
+        )));
+    }
+    for fixture in &manifest.fixtures {
+        let source = manifest
+            .fixture_sources
+            .iter()
+            .find(|entry| fixture_source_path(entry).as_deref() == Some(fixture.as_str()))
+            .ok_or_else(|| {
+                boxed_error(format!(
+                    "{} is missing external provenance for fixture `{fixture}`",
+                    manifest_path.display()
+                ))
+            })?;
+        validate_fixture_source_entry(manifest_path, fixture, source)?;
+    }
+    Ok(())
+}
+
+fn fixture_source_path(entry: &str) -> Option<String> {
+    entry.split('|').next().map(|part| part.trim().to_owned())
+}
+
+fn validate_fixture_source_entry(
+    manifest_path: &Path,
+    fixture: &str,
+    source: &str,
+) -> Result<(), Box<dyn Error>> {
+    let mut has_source = false;
+    let mut has_url = false;
+    let mut has_sha256 = false;
+    for part in source.split('|').skip(1) {
+        let Some((key, value)) = part.trim().split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "source" if !value.is_empty() && !value.eq_ignore_ascii_case("manual") => {
+                has_source = true;
+            }
+            "url" if value.starts_with("https://") => has_url = true,
+            "sha256" if is_sha256(value) => has_sha256 = true,
+            _ => {}
+        }
+    }
+    if has_source && has_url && has_sha256 {
+        Ok(())
+    } else {
+        Err(boxed_error(format!(
+            "{} provenance for fixture `{fixture}` must include non-manual source, https url, and sha256",
+            manifest_path.display()
+        )))
+    }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn normalize_value(value: &str) -> String {
@@ -512,6 +591,7 @@ fn expected_skills() -> &'static [ExpectedSkill] {
                 "feature.md",
                 "implemented = true",
                 "validated = true",
+                "externally supplied",
                 "cargo xtask dashboard --check",
                 "cargo xtask validate --feature",
             ],
@@ -852,6 +932,7 @@ description: Builder skill.
 # Feature Work
 add -> optional research -> plan -> implement
 Use feature.md. Only set implemented = true and validated = true with evidence.
+Molecular validation fixtures must be externally supplied.
 Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id>.
 "#,
         );
@@ -903,12 +984,16 @@ reference_version = "test"
 fixtures = [
   "fixtures/ok.txt",
 ]
+fixture_sources = [
+  "fixtures/ok.txt | source=Example External Source | url=https://example.org/ok.txt | sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+]
 "#,
         )
         .expect("manifest should write");
 
         let manifest = read_validation_manifest(&manifest_path).expect("manifest should parse");
         assert_eq!(manifest.fixtures, vec!["fixtures/ok.txt"]);
+        assert_eq!(manifest.fixture_sources.len(), 1);
         validate_manifest_paths(&manifest_path, &manifest).expect("fixture should exist");
 
         fs::write(
@@ -918,6 +1003,23 @@ reference_tool = "manual-fixtures"
 reference_version = "test"
 fixtures = [
   "fixtures/missing.txt",
+]
+fixture_sources = [
+  "fixtures/missing.txt | source=Example External Source | url=https://example.org/missing.txt | sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+]
+"#,
+        )
+        .expect("manifest should rewrite");
+        let manifest = read_validation_manifest(&manifest_path).expect("manifest should parse");
+        assert!(validate_manifest_paths(&manifest_path, &manifest).is_err());
+
+        fs::write(
+            &manifest_path,
+            r#"feature_id = "example"
+reference_tool = "manual-fixtures"
+reference_version = "test"
+fixtures = [
+  "fixtures/ok.txt",
 ]
 "#,
         )

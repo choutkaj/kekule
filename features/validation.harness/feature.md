@@ -32,4 +32,4 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 
 ## Revision Notes
 
-- v1: Initial manifest discovery, fixture path checks, and reference generator conventions.
+- v1: Manifest discovery, fixture path checks, and reference generator conventions.

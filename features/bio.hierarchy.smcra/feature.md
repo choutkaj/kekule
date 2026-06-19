@@ -30,4 +30,4 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 
 ## Revision Notes
 
-- v1: Initial SMCRA sidecar hierarchy for macromolecular parsing.
+- v1: SMCRA sidecar hierarchy for macromolecular parsing.

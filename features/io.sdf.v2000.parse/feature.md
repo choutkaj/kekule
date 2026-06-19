@@ -31,5 +31,5 @@ Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 
 
 ## Revision Notes
 
-- v1: Initial raw multi-record SDF V2000 parser.
+- v1: Raw multi-record SDF V2000 parser.
 - v2: Delegate Molfile parsing and preserve coordinates plus common atom metadata.

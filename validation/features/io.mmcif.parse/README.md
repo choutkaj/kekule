@@ -1,15 +1,7 @@
 # io.mmcif.parse Validation Fixtures
 
-These fixtures are manual PDBx/mmCIF atom-site inputs, not Biopython-generated goldens.
+Validation fixtures for this feature are externally supplied RCSB PDB mmCIF records declared in
+`validation.toml`.
 
-They focus on parser durability:
-
-- minimal `_atom_site` loops
-- label and author identifiers
-- alternate locations
-- insertion codes
-- heterogens and waters
-- multiple models
-- quoted values and text blocks
-
-The parser must keep raw parsing separate from bond perception and sanitization.
+Malformed parser inputs belong in Rust unit tests. Reference validation uses external structure
+records plus Biopython-generated normalized goldens.

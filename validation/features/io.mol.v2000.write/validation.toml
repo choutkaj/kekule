@@ -1,13 +1,19 @@
 feature_id = "io.mol.v2000.write"
-reference_tool = "manual-fixtures"
-reference_version = "2026-06-19-no-reference-goldens"
+reference_tool = "rdkit"
+reference_version = "2026-06-19-external-fixtures-no-goldens"
 comparison_mode = "fixture-discovery-only"
 
 fixtures = [
-  "../core.conformers/fixtures/coordinate_metadata.mol",
+  "../../external_sources/pubchem/cid_702.sdf",
+  "../../external_sources/pubchem/cid_2244.sdf",
+]
+
+fixture_sources = [
+  "../../external_sources/pubchem/cid_702.sdf | source=PubChem CID 702 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/702/SDF?record_type=3d | sha256=d0cfb665af2d152c5b963456333097a014cf9ce0fafe6f8d4970bc34739e721e",
+  "../../external_sources/pubchem/cid_2244.sdf | source=PubChem CID 2244 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/SDF?record_type=3d | sha256=20e215e8b9be1dc44b1c7e277faa9b3893d48ba8be90af14422aac3a14e51ff4",
 ]
 
 notes = [
   "Reference RDKit goldens have not been generated yet.",
-  "Fixture should be used for parse/write/parse round trips.",
+  "All molecule fixtures are externally supplied PubChem records.",
 ]

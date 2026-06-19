@@ -34,4 +34,4 @@ Store atoms, bonds, properties, and computed-state invalidation behind stable ty
 
 ## Revision Notes
 
-- v1: Initial stable-ID molecular graph and wrapper integration.
+- v1: Stable-ID molecular graph and wrapper integration.
