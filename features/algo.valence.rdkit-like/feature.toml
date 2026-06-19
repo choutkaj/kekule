@@ -1,7 +1,7 @@
 id = "algo.valence.rdkit-like"
 title = "RDKit-like valence perception"
 area = "algorithms"
-version = 2
+version = 3
 implemented = true
 validated = false
 description = "Assign simple implicit hydrogen counts and report valence problems for common organic small molecules."

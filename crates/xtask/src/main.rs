@@ -1401,6 +1401,7 @@ fn bond_stereo_json(stereo: Option<BondStereo>) -> &'static str {
         Some(BondStereo::Z) => "STEREOZ",
         Some(BondStereo::Up) => "STEREOANY",
         Some(BondStereo::Down) => "STEREOANY",
+        Some(BondStereo::Any) => "STEREOANY",
     }
 }
 

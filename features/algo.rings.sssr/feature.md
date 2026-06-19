@@ -12,8 +12,9 @@ Compute a compact ring basis for downstream small-molecule perception.
 
 ## Implementation Notes
 
-- Enumerates deterministic shortest-cycle candidates and greedily keeps linearly independent cycles up to cyclomatic rank.
-- The basis is intended for common small molecules and fixture validation, not full RDKit SymmSSSR parity.
+- Enumerates deterministic shortest-cycle candidates and greedily keeps linearly independent cycles.
+- Adds RDKit-like symmetric extra rings when a ring component has exactly one more shortest-cycle candidate than its cycle rank.
+- The basis is intended for common small molecules and fixture validation, not full RDKit SymmSSSR parity for all graph families.
 
 ## Validation
 
@@ -28,3 +29,4 @@ Compute a compact ring basis for downstream small-molecule perception.
 
 - v1: Deterministic ring basis.
 - v2: Shortest-cycle basis passes the RDKit-backed `tiny` corpus; broader required corpora remain pending.
+- v3: Fixed bridged and symmetric ring selection exposed by external PubChem validation.

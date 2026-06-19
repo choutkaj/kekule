@@ -297,6 +297,7 @@ pub enum BondStereo {
     Z,
     Up,
     Down,
+    Any,
     Unspecified,
 }
 
@@ -677,9 +678,68 @@ fn perceive_rdkit_like_aromaticity(
             }
         }
     }
+    perceive_fused_aromatic_components(mol, ring_set.rings())?;
 
     mol.perception.aromaticity = ComputedState::Fresh;
     Ok(())
+}
+
+fn perceive_fused_aromatic_components(
+    mol: &mut Molecule,
+    rings: &[Ring],
+) -> std::result::Result<(), AromaticityError> {
+    let mut components = (0..rings.len()).collect::<Vec<_>>();
+    for left in 0..rings.len() {
+        for right in (left + 1)..rings.len() {
+            if rings_share_bond(&rings[left], &rings[right]) {
+                union_components(&mut components, left, right);
+            }
+        }
+    }
+
+    let mut component_rings = BTreeMap::<usize, Vec<usize>>::new();
+    for index in 0..rings.len() {
+        let root = find_component(&mut components, index);
+        component_rings.entry(root).or_default().push(index);
+    }
+
+    for indexes in component_rings.values() {
+        if indexes.len() < 2 {
+            continue;
+        }
+        let component = fused_component_ring(rings, indexes);
+        let electrons = aromatic_ring_pi_electrons(mol, &component)?;
+        if electrons >= 2 && (electrons - 2) % 4 == 0 {
+            for atom_id in &component.atoms {
+                if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+                    atom.aromatic = true;
+                }
+            }
+            for bond_id in &component.bonds {
+                if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                    bond.aromatic = true;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rings_share_bond(left: &Ring, right: &Ring) -> bool {
+    left.bonds.iter().any(|bond| right.bonds.contains(bond))
+}
+
+fn fused_component_ring(rings: &[Ring], indexes: &[usize]) -> Ring {
+    let mut atoms = BTreeSet::new();
+    let mut bonds = BTreeSet::new();
+    for left in indexes {
+        atoms.extend(rings[*left].atoms.iter().copied());
+        bonds.extend(rings[*left].bonds.iter().copied());
+    }
+    Ring {
+        atoms: atoms.into_iter().collect(),
+        bonds: bonds.into_iter().collect(),
+    }
 }
 
 fn aromatic_ring_pi_electrons(
@@ -690,7 +750,7 @@ fn aromatic_ring_pi_electrons(
     let mut has_pi_bond = false;
     for bond_id in &ring.bonds {
         let bond = mol.bond(*bond_id).expect("ring bond should be live");
-        if bond.aromatic || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic) {
+        if matches!(bond.order, BondOrder::Double | BondOrder::Aromatic) {
             has_pi_bond = true;
             electrons += 2;
         }
@@ -732,8 +792,7 @@ fn ring_atom_has_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
         mol.bond(*bond_id)
             .map(|bond| {
                 (bond.a == atom_id || bond.b == atom_id)
-                    && (bond.aromatic
-                        || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic))
+                    && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
             })
             .unwrap_or(false)
     })
@@ -746,7 +805,7 @@ fn atom_has_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> b
         .flatten()
         .any(|(bond_id, bond)| {
             !ring.bonds.contains(&bond_id)
-                && (bond.aromatic || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic))
+                && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
         })
 }
 
@@ -872,80 +931,180 @@ pub fn perceive_ring_set(mol: &mut Molecule) -> RingSet {
     }
 
     let mut candidates = Vec::<Ring>::new();
+    let mut seen_candidate_bonds = BTreeSet::<Vec<BondId>>::new();
     for (closing_bond, a, b) in ring_bonds {
-        if let Some(mut ring) = shortest_cycle_excluding(&graph, a, b, closing_bond) {
+        for mut ring in shortest_cycles_excluding(&graph, a, b, closing_bond) {
             ring.bonds.push(closing_bond);
-            ring.atoms.sort();
-            ring.atoms.dedup();
-            ring.bonds.sort();
-            ring.bonds.dedup();
-            if !candidates
-                .iter()
-                .any(|existing| existing.bonds == ring.bonds)
-            {
+            let mut bond_key = ring.bonds.clone();
+            bond_key.sort();
+            bond_key.dedup();
+            ring.bonds = bond_key.clone();
+            if seen_candidate_bonds.insert(bond_key) {
                 candidates.push(ring);
             }
         }
     }
 
     candidates.sort_by_key(|ring| (ring.bonds.len(), ring.atoms.clone(), ring.bonds.clone()));
+    let symmetric_extra_allowed = symmetric_extra_candidates(&candidates);
     let cyclomatic = mol.bond_count().saturating_add(connected_components(mol)) - mol.atom_count();
     let bit_len = mol.bonds.len().div_ceil(64);
     let mut basis_rows = BTreeMap::<usize, Vec<u64>>::new();
     let mut rings = Vec::new();
-    for ring in candidates {
+    let mut selected_bonds = BTreeSet::<Vec<BondId>>::new();
+    for ring in &candidates {
         let bits = cycle_bond_bits(&ring.bonds, bit_len);
         if add_independent_cycle(bits, &mut basis_rows) {
-            rings.push(ring);
+            selected_bonds.insert(ring.bonds.clone());
+            rings.push(ring.clone());
             if rings.len() == cyclomatic {
                 break;
             }
         }
     }
-    rings.truncate(cyclomatic);
+    if !rings.is_empty() {
+        for (index, ring) in candidates.into_iter().enumerate() {
+            if symmetric_extra_allowed[index] && selected_bonds.insert(ring.bonds.clone()) {
+                rings.push(ring);
+            }
+        }
+    }
     let ring_set = RingSet { rings };
     mol.ring_set = Some(ring_set.clone());
     ring_set
 }
 
-fn shortest_cycle_excluding(
+fn symmetric_extra_candidates(candidates: &[Ring]) -> Vec<bool> {
+    let mut components = (0..candidates.len()).collect::<Vec<_>>();
+    for left in 0..candidates.len() {
+        for right in (left + 1)..candidates.len() {
+            if rings_share_atom(&candidates[left], &candidates[right]) {
+                union_components(&mut components, left, right);
+            }
+        }
+    }
+
+    let mut component_candidates = BTreeMap::<usize, Vec<usize>>::new();
+    for index in 0..candidates.len() {
+        let root = find_component(&mut components, index);
+        component_candidates.entry(root).or_default().push(index);
+    }
+
+    let mut allowed = vec![false; candidates.len()];
+    for indexes in component_candidates.values() {
+        let mut atoms = BTreeSet::new();
+        let mut bonds = BTreeSet::new();
+        for index in indexes {
+            atoms.extend(candidates[*index].atoms.iter().copied());
+            bonds.extend(candidates[*index].bonds.iter().copied());
+        }
+        let rank = bonds.len().saturating_add(1).saturating_sub(atoms.len());
+        if indexes.len() == rank + 1 {
+            for index in indexes {
+                allowed[*index] = true;
+            }
+        }
+    }
+    allowed
+}
+
+fn rings_share_atom(left: &Ring, right: &Ring) -> bool {
+    left.atoms.iter().any(|atom| right.atoms.contains(atom))
+}
+
+fn union_components(components: &mut [usize], left: usize, right: usize) {
+    let left_root = find_component(components, left);
+    let right_root = find_component(components, right);
+    if left_root != right_root {
+        components[right_root] = left_root;
+    }
+}
+
+fn find_component(components: &mut [usize], index: usize) -> usize {
+    if components[index] != index {
+        components[index] = find_component(components, components[index]);
+    }
+    components[index]
+}
+
+fn shortest_cycles_excluding(
     graph: &BTreeMap<AtomId, Vec<(AtomId, BondId)>>,
     start: AtomId,
     goal: AtomId,
     excluded_bond: BondId,
-) -> Option<Ring> {
+) -> Vec<Ring> {
     let mut queue = VecDeque::new();
-    let mut previous = BTreeMap::<AtomId, Option<(AtomId, BondId)>>::new();
-    previous.insert(start, None);
+    let mut distances = BTreeMap::<AtomId, usize>::new();
+    distances.insert(start, 0);
     queue.push_back(start);
 
     while let Some(atom) = queue.pop_front() {
-        if atom == goal {
-            break;
-        }
+        let distance = distances[&atom];
         for (neighbor, bond_id) in graph.get(&atom).into_iter().flatten().copied() {
-            if bond_id == excluded_bond || previous.contains_key(&neighbor) {
+            if bond_id == excluded_bond || distances.contains_key(&neighbor) {
                 continue;
             }
-            previous.insert(neighbor, Some((atom, bond_id)));
+            distances.insert(neighbor, distance + 1);
             queue.push_back(neighbor);
         }
     }
 
-    if !previous.contains_key(&goal) {
-        return None;
+    if !distances.contains_key(&goal) {
+        return Vec::new();
     }
 
+    let mut rings = Vec::new();
     let mut atoms = vec![goal];
     let mut bonds = Vec::new();
-    let mut current = goal;
-    while current != start {
-        let (parent, bond_id) = previous.get(&current).copied().flatten()?;
-        bonds.push(bond_id);
-        current = parent;
-        atoms.push(current);
+    let search = ShortestPathSearch {
+        graph,
+        start,
+        excluded_bond,
+        distances: &distances,
+    };
+    search.collect(goal, &mut atoms, &mut bonds, &mut rings);
+    rings
+}
+
+struct ShortestPathSearch<'a> {
+    graph: &'a BTreeMap<AtomId, Vec<(AtomId, BondId)>>,
+    start: AtomId,
+    excluded_bond: BondId,
+    distances: &'a BTreeMap<AtomId, usize>,
+}
+
+impl ShortestPathSearch<'_> {
+    fn collect(
+        &self,
+        current: AtomId,
+        atoms: &mut Vec<AtomId>,
+        bonds: &mut Vec<BondId>,
+        rings: &mut Vec<Ring>,
+    ) {
+        if current == self.start {
+            rings.push(Ring {
+                atoms: atoms.clone(),
+                bonds: bonds.clone(),
+            });
+            return;
+        }
+
+        let Some(distance) = self.distances.get(&current).copied() else {
+            return;
+        };
+        for (neighbor, bond_id) in self.graph.get(&current).into_iter().flatten().copied() {
+            if bond_id == self.excluded_bond
+                || self.distances.get(&neighbor).copied() != distance.checked_sub(1)
+            {
+                continue;
+            }
+            atoms.push(neighbor);
+            bonds.push(bond_id);
+            self.collect(neighbor, atoms, bonds, rings);
+            bonds.pop();
+            atoms.pop();
+        }
     }
-    Some(Ring { atoms, bonds })
 }
 
 fn cycle_bond_bits(bonds: &[BondId], bit_len: usize) -> Vec<u64> {
@@ -1103,6 +1262,7 @@ fn bond_order_valence(order: BondOrder) -> u8 {
 fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
     match (atom.element.symbol(), atom.formal_charge) {
         ("H", 0) => Some(&[1]),
+        ("B", -1) => Some(&[4]),
         ("B", _) => Some(&[3]),
         ("C", 0) => Some(&[4]),
         ("C", 1 | -1) => Some(&[3]),
@@ -1111,10 +1271,15 @@ fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
         ("N", 0) => Some(&[3, 5]),
         ("O", 0) => Some(&[2]),
         ("O", -1 | 1) => Some(&[1]),
-        ("F" | "Cl" | "Br" | "I", 0) => Some(&[1]),
+        ("Li" | "Na" | "K", 1) => Some(&[0]),
+        ("F" | "Cl" | "Br" | "I", -1) => Some(&[0]),
+        ("F", 0) => Some(&[1]),
+        ("Cl" | "Br" | "I", 0) => Some(&[1, 3, 5, 7]),
         ("P", 0) => Some(&[3, 5]),
         ("S", 0) => Some(&[2, 4, 6]),
         ("S", -1 | 1) => Some(&[1, 3, 5]),
+        ("Hg", 1) => Some(&[1]),
+        ("Hg", 2) => Some(&[2]),
         _ => None,
     }
 }
@@ -1391,7 +1556,7 @@ fn parse_mol_v2000_lines(
 
     for bond_index in 0..bond_count {
         let line_number = start_line + bond_start + bond_index;
-        let (a, b, order) = parse_v2000_bond_line(lines[bond_start + bond_index])
+        let (a, b, order, stereo) = parse_v2000_bond_line(lines[bond_start + bond_index])
             .ok_or_else(|| SdfParseError::new(record, line_number, "invalid bond line"))?;
         let a = atom_ids.get(a - 1).copied().ok_or_else(|| {
             SdfParseError::new(record, line_number, "bond endpoint outside atom block")
@@ -1399,9 +1564,14 @@ fn parse_mol_v2000_lines(
         let b = atom_ids.get(b - 1).copied().ok_or_else(|| {
             SdfParseError::new(record, line_number, "bond endpoint outside atom block")
         })?;
-        mol.add_bond(a, b, order).map_err(|error| {
+        let bond_id = mol.add_bond(a, b, order).map_err(|error| {
             SdfParseError::new(record, line_number, format!("invalid graph bond: {error}"))
         })?;
+        if let Some(stereo) = stereo {
+            mol.bond_mut(bond_id)
+                .expect("newly added bond should be mutable")
+                .stereo = Some(stereo);
+        }
     }
 
     let end_index = lines[property_start..]
@@ -1424,10 +1594,13 @@ fn parse_mol_v2000_lines(
 }
 
 fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
+    if line.len() >= 6 {
+        if let (Ok(atoms), Ok(bonds)) = (line[0..3].trim().parse(), line[3..6].trim().parse()) {
+            return Some((atoms, bonds));
+        }
+    }
     let fields = line.split_whitespace().collect::<Vec<_>>();
-    let atoms = fields.first()?.parse().ok()?;
-    let bonds = fields.get(1)?.parse().ok()?;
-    Some((atoms, bonds))
+    Some((fields.first()?.parse().ok()?, fields.get(1)?.parse().ok()?))
 }
 
 fn atom_symbol_from_v2000_line(line: &str) -> Option<&str> {
@@ -1470,11 +1643,23 @@ fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
     }
 }
 
-fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder)> {
-    let mut fields = line.split_whitespace();
-    let a = fields.next()?.parse().ok()?;
-    let b = fields.next()?.parse().ok()?;
-    let order_code: u8 = fields.next()?.parse().ok()?;
+fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder, Option<BondStereo>)> {
+    let (a, b, order_code, stereo_code) = if line.len() >= 12 {
+        (
+            line[0..3].trim().parse().ok()?,
+            line[3..6].trim().parse().ok()?,
+            line[6..9].trim().parse().ok()?,
+            line[9..12].trim().parse::<u8>().ok(),
+        )
+    } else {
+        let mut fields = line.split_whitespace();
+        (
+            fields.next()?.parse().ok()?,
+            fields.next()?.parse().ok()?,
+            fields.next()?.parse().ok()?,
+            fields.next().and_then(|value| value.parse::<u8>().ok()),
+        )
+    };
     let order = match order_code {
         0 => BondOrder::Zero,
         1 => BondOrder::Single,
@@ -1484,7 +1669,11 @@ fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder)> {
         9 => BondOrder::Dative,
         _ => return None,
     };
-    Some((a, b, order))
+    let stereo = match stereo_code {
+        Some(3 | 4) => Some(BondStereo::Any),
+        Some(_) | None => None,
+    };
+    Some((a, b, order, stereo))
 }
 
 fn parse_sdf_data_fields(
@@ -1706,10 +1895,11 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .get(&bond.b())
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
         out.push_str(&format!(
-            "{:>3}{:>3}{:>3}  0  0  0  0\n",
+            "{:>3}{:>3}{:>3}{:>3}  0  0  0\n",
             a,
             b,
-            v2000_bond_code(bond.order)?
+            v2000_bond_code(bond.order)?,
+            v2000_bond_stereo_code(bond.stereo)
         ));
     }
 
@@ -1801,6 +1991,15 @@ fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
         BondOrder::Quadruple => Err(MolWriteError::new(
             "V2000 writer does not support quadruple bonds",
         )),
+    }
+}
+
+fn v2000_bond_stereo_code(stereo: Option<BondStereo>) -> u8 {
+    match stereo {
+        Some(BondStereo::Up) => 1,
+        Some(BondStereo::Any) => 4,
+        Some(BondStereo::Down) => 6,
+        _ => 0,
     }
 }
 
@@ -3501,7 +3700,7 @@ $$$$
     }
 
     #[test]
-    fn ring_set_reports_a_basis_for_fused_rings() {
+    fn ring_set_reports_symmetric_cycles_for_fused_rings() {
         let (mut mol, _, _) = ring_molecule(
             &["C", "C", "C", "C", "C", "C"],
             &[
@@ -3523,7 +3722,7 @@ $$$$
 
         let ring_set = perceive_ring_set(&mut mol);
 
-        assert_eq!(ring_set.len(), 2);
+        assert_eq!(ring_set.len(), 3);
         assert!(ring_set.rings().iter().all(|ring| ring.atoms.len() >= 4));
     }
 
