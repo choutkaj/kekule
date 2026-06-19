@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import base64
 import hashlib
 import json
 import shutil
@@ -44,14 +45,13 @@ SMILES_FEATURES = ("io.smiles.parse", "io.smiles.write")
 def main() -> int:
     repo = Path(__file__).resolve().parents[3]
     corpus_root = repo / "validation" / "corpora"
-    selected = {category: [] for category in CATEGORIES}
-    seen: set[int] = set()
-    counter = 0
+    checkpoint_path = repo / "target" / "pubchem-corpus-checkpoint.json"
+    selected, seen, counter = load_checkpoint(checkpoint_path)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         while min(len(values) for values in selected.values()) < TARGET_PER_CATEGORY:
             candidates = []
-            while len(candidates) < 120:
+            while len(candidates) < 40:
                 cid = candidate_cid(counter)
                 counter += 1
                 if cid not in seen:
@@ -63,6 +63,7 @@ def main() -> int:
                 category = result["category"]
                 if len(selected[category]) < TARGET_PER_CATEGORY:
                     selected[category].append(result)
+                    save_checkpoint(checkpoint_path, selected, seen, counter)
             counts = " ".join(f"{name}={len(selected[name])}" for name in CATEGORIES)
             print(f"examined={counter} {counts}", flush=True)
 
@@ -75,7 +76,49 @@ def main() -> int:
     build_tier(corpus_root / "pubchem-100", ordered[:100])
     generate_goldens(repo, "pubchem-100")
     generate_goldens(repo, "pubchem-1000")
+    checkpoint_path.unlink(missing_ok=True)
     return 0
+
+
+def load_checkpoint(path: Path) -> tuple[dict[str, list[dict]], set[int], int]:
+    if not path.exists():
+        return {category: [] for category in CATEGORIES}, set(), 0
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    selected = {category: [] for category in CATEGORIES}
+    for category, entries in raw["selected"].items():
+        for entry in entries:
+            entry["sdf"] = base64.b64decode(entry["sdf"])
+            entry["smiles"] = base64.b64decode(entry["smiles"])
+            selected[category].append(entry)
+    print(
+        "resuming checkpoint "
+        + " ".join(f"{name}={len(selected[name])}" for name in CATEGORIES),
+        flush=True,
+    )
+    return selected, set(raw["seen"]), raw["counter"]
+
+
+def save_checkpoint(
+    path: Path, selected: dict[str, list[dict]], seen: set[int], counter: int
+) -> None:
+    serializable = {}
+    for category, entries in selected.items():
+        serializable[category] = []
+        for entry in entries:
+            encoded = dict(entry)
+            encoded["sdf"] = base64.b64encode(entry["sdf"]).decode("ascii")
+            encoded["smiles"] = base64.b64encode(entry["smiles"]).decode("ascii")
+            serializable[category].append(encoded)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(
+            {"counter": counter, "seen": sorted(seen), "selected": serializable},
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def candidate_cid(counter: int) -> int:
@@ -143,7 +186,9 @@ def fetch(url: str) -> bytes:
     for attempt in range(5):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                return response.read()
+                payload = response.read()
+                time.sleep(0.08)
+                return payload
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
             if attempt == 4:
                 raise
