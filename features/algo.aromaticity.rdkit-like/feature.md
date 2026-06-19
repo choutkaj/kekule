@@ -15,16 +15,15 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 ## Implementation Notes
 
 - Operates on the shared core `Molecule` graph.
-- Uses ring membership from `algo.rings.fast`.
+- Uses per-ring cycle data from `algo.rings.sssr`.
 - Integrates with the first-wave valence and ring-set perception stack.
 - Applies a 4n+2 electron-count model for common C, N, O, S, and P rings.
 - Leaves unsupported or ambiguous systems non-aromatic rather than claiming full RDKit parity.
 
 ## Validation
 
-- Current coverage is unit-test based.
-- RDKit golden validation is planned through `validation.harness`.
-- Fixtures live under `validation/features/algo.aromaticity.rdkit-like/`.
+- Unit tests cover common monocyclic organic rings and stale-state behavior.
+- RDKit-generated goldens compare aromatic atom and bond flags for external PubChem fixtures.
 
 ## Out Of Scope
 
@@ -36,3 +35,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 
 - v1: Aromaticity perception for common organic rings.
 - v2: Document integration with explicit sanitization and ring/valence perception.
+- v3: Per-ring fused aromaticity heuristic validated against RDKit goldens for current external fixtures.

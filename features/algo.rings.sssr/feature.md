@@ -12,13 +12,13 @@ Compute a compact ring basis for downstream small-molecule perception.
 
 ## Implementation Notes
 
-- Uses graph traversal to derive a deterministic fundamental cycle basis.
+- Enumerates deterministic shortest-cycle candidates and greedily keeps linearly independent cycles up to cyclomatic rank.
 - The basis is intended for common small molecules and fixture validation, not full RDKit SymmSSSR parity.
 
 ## Validation
 
 - Unit tests cover monocyclic, fused, and disconnected cases.
-- RDKit reference generator support is included for fixture/golden generation.
+- RDKit-generated goldens compare ring atom sets for external PubChem fixtures.
 
 ## Out Of Scope
 
@@ -27,3 +27,4 @@ Compute a compact ring basis for downstream small-molecule perception.
 ## Revision Notes
 
 - v1: Deterministic ring basis.
+- v2: Shortest-cycle basis validated against RDKit goldens for current external fixtures.
