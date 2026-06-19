@@ -8,19 +8,21 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 
 - Exposes `cargo xtask validate --feature FEATURE_ID|all --corpus CORPUS_ID|all [--update]`.
 - Defaults omitted `--corpus` to `tiny` for compatibility.
-- Discovers corpus manifests under `validation/features/<feature-id>/<corpus-id>.toml`.
+- Discovers corpus manifests under `validation/corpora/<corpus-id>/features/<feature-id>.toml`.
 - Verifies listed fixture paths exist.
-- Requires one golden JSON file under `validation/features/<feature-id>/golden/` for each listed fixture.
+- Requires one deterministic gzip golden under the corpus `golden/<feature-id>/` directory for each listed fixture.
 - Compares normalized Rust implementation output against each golden file's `expected` payload.
 - Normalizes representation-only graph differences such as undirected bond endpoint orientation, bond array order, and ring atom order before comparison.
 - Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
-- Keeps ordinary validation read-only; `--update` records passing evidence under `validation/status/`, synchronizes overall `validated`, and regenerates the dashboard.
+- Exposes `cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]`.
+- Keeps ordinary validation read-only; `--update` records passing evidence in the corpus `status.toml`, synchronizes overall `validated`, and regenerates the dashboard.
 
 ## Implementation Notes
 
 - RDKit reference generators live under `validation/reference/rdkit/`.
 - Biopython reference generators live under `validation/reference/biopython/`.
 - Golden data should be normalized JSON and include reference tool versions.
+- Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
 - Status evidence records fixture and comparison counts, reference versions, the manifest SHA-256, and validation time.
 - The validation command uses the Rust implementation only; RDKit and Biopython are used to generate goldens, not to run validation.
 - Reference tools are never Rust runtime dependencies.
@@ -41,3 +43,4 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - v1: Manifest discovery, fixture path checks, and reference generator conventions.
 - v2: Implementation-vs-golden comparisons for committed per-feature golden JSON.
 - v3: Named corpora, all-feature/all-corpus selection, generated evidence status, and dashboard synchronization.
+- v4: Corpus-owned layout, typed TOML, compressed goldens, source locks, and corpus integrity checks.

@@ -38,6 +38,7 @@ cargo xtask dashboard --check
 cargo xtask skills --check
 cargo xtask validate --feature <feature-id> --corpus tiny
 cargo xtask validate --feature all --corpus all
+cargo xtask corpus check --corpus all
 ```
 
 Report any checks that were not run.

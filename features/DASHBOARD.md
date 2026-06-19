@@ -15,7 +15,7 @@ Generated from feature metadata and validation status. Do not hand-edit this fil
 | `core.atom-bond` | Core atom and bond model | core | 1 | ✅ | ❌ | - | - | - | - | - | - | - |
 | `core.conformers` | Core conformer coordinate storage | core | 1 | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | - | - |
 | `core.graph` | Core molecular graph | core | 1 | ✅ | ❌ | - | - | - | - | - | - | - |
-| `dashboard.feature-registry` | Feature registry and dashboard | infrastructure | 2 | ✅ | ❌ | - | - | - | - | - | - | - |
+| `dashboard.feature-registry` | Feature registry and dashboard | infrastructure | 3 | ✅ | ❌ | - | - | - | - | - | - | - |
 | `descriptor.molecular` | Molecular descriptors | descriptors | 1 | ❌ | ❌ | - | - | - | - | - | - | - |
 | `fp.morgan` | Morgan fingerprint | fingerprints | 1 | ❌ | ❌ | - | - | - | - | - | - | - |
 | `io.mmcif.parse` | mmCIF parser | io | 1 | ✅ | ❌ | ❌ | - | - | - | - | ❌ | ❌ |
@@ -31,4 +31,4 @@ Generated from feature metadata and validation status. Do not hand-edit this fil
 | `query.smarts` | SMARTS query parsing | query | 1 | ❌ | ❌ | - | - | - | - | - | - | - |
 | `stereo.cip` | CIP stereochemistry | stereo | 1 | ❌ | ❌ | - | - | - | - | - | - | - |
 | `stereo.representation` | Stereochemistry representation | stereo | 1 | ❌ | ❌ | - | - | - | - | - | - | - |
-| `validation.harness` | Reference validation harness | infrastructure | 3 | ✅ | ❌ | - | - | - | - | - | - | - |
+| `validation.harness` | Reference validation harness | infrastructure | 4 | ✅ | ❌ | - | - | - | - | - | - | - |

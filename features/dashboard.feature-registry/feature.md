@@ -18,6 +18,7 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - Each tracked feature directory must include `feature.md`.
 - The dashboard renders overall validation plus one column per known corpus.
 - Overall validation is true only when every corpus in `validation_required` has current passing evidence.
+- Per-feature evidence is read from each corpus-owned `status.toml`.
 - Dashboard generation rejects drift between generated evidence and the cached overall `validated` field.
 - Boolean dashboard values render as check and cross marks.
 
@@ -38,3 +39,4 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 
 - v1: Registry, dashboard, validation command, schema v2, and repo-skill check behavior.
 - v2: Corpus requirements, generated validation evidence, and corpus dashboard columns.
+- v3: Corpus-owned evidence and validation layout.

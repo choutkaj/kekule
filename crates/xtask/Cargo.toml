@@ -7,6 +7,9 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+flate2 = "1"
 molecules = { path = "../molecules" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+toml = "0.8"

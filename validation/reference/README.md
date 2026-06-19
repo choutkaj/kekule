@@ -33,12 +33,12 @@ micromamba run -n molecules-biopython-reference python validation/reference/biop
 micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra --corpus tiny
 ```
 
-By default, output goes to `validation/features/<feature-id>/golden/<corpus-id>/`. Use `--fixture`
+By default, output goes to `validation/corpora/<corpus-id>/golden/<feature-id>/`. Use `--fixture`
 to limit generation to a listed fixture, and `--output-dir` to write elsewhere for review.
 
 Golden files should be reviewed before committing. Creating a golden file does not automatically
 record validation evidence; run the Rust comparison with `--update` only after the corpus is ready.
 
 Do not create molecule fixtures by hand for reference validation. Add compact records from external
-sources under `validation/external_sources/`, record their source URL and SHA-256 in
-`fixture_sources`, then generate goldens with RDKit or Biopython.
+sources under the corpus `data/` directory, record their source URL and SHA-256 in
+`sources.lock.json`, then generate goldens with RDKit or Biopython.
