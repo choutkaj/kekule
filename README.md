@@ -23,7 +23,8 @@ cargo test --workspace
 cargo xtask dashboard
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask validate --feature core.graph
+cargo xtask validate --feature io.smiles.parse --corpus tiny
+cargo xtask validate --feature all --corpus all
 ```
 
 The `cargo xtask` alias is defined in `.cargo/config.toml`.

@@ -28,4 +28,4 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Revision Notes
 
 - v1: V2000 writer.
-- v2: Validation contract excludes SDF data fields and is validated against RDKit goldens.
+- v2: Validation contract excludes SDF data fields and passes the RDKit-backed `tiny` corpus.

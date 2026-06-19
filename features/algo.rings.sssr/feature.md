@@ -27,4 +27,4 @@ Compute a compact ring basis for downstream small-molecule perception.
 ## Revision Notes
 
 - v1: Deterministic ring basis.
-- v2: Shortest-cycle basis validated against RDKit goldens for current external fixtures.
+- v2: Shortest-cycle basis passes the RDKit-backed `tiny` corpus; broader required corpora remain pending.

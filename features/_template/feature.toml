@@ -5,6 +5,7 @@ version = 1
 implemented = false
 validated = false
 description = "One-sentence description."
+validation_required = []
 
 # depends_on = ["core.graph"]
 # reference = ["rdkit.Chem.example"]

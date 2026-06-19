@@ -35,4 +35,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 
 - v1: Aromaticity perception for common organic rings.
 - v2: Document integration with explicit sanitization and ring/valence perception.
-- v3: Per-ring fused aromaticity heuristic validated against RDKit goldens for current external fixtures.
+- v3: Per-ring fused aromaticity heuristic passes the RDKit-backed `tiny` corpus; broader required corpora remain pending.

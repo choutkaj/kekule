@@ -28,4 +28,4 @@ Provide conservative valence perception for common organic molecules.
 ## Revision Notes
 
 - v1: Conservative valence perception.
-- v2: Validation contract narrowed to valence-specific outputs and marked validated against RDKit goldens.
+- v2: Validation contract narrowed to valence-specific outputs and passes the RDKit-backed `tiny` corpus.

@@ -32,6 +32,7 @@ def main() -> int:
         description="Generate normalized JSON golden data with RDKit."
     )
     parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
+    parser.add_argument("--corpus", default="tiny")
     parser.add_argument(
         "--repo-root",
         type=Path,
@@ -41,12 +42,12 @@ def main() -> int:
     parser.add_argument(
         "--fixture",
         action="append",
-        help="Fixture path from validation.toml to generate. May be repeated.",
+        help="Fixture path from the selected corpus manifest. May be repeated.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Directory for JSON output. Defaults to validation/features/<feature>/golden.",
+        help="Directory for JSON output. Defaults to validation/features/<feature>/golden/<corpus>.",
     )
     parser.add_argument(
         "--check-deps",
@@ -62,17 +63,22 @@ def main() -> int:
 
     repo_root = args.repo_root.resolve()
     feature_dir = repo_root / "validation" / "features" / args.feature
-    manifest_path = feature_dir / "validation.toml"
+    manifest_path = feature_dir / f"{args.corpus}.toml"
     manifest = read_manifest(manifest_path)
+    if manifest.get("corpus_id") != args.corpus:
+        raise SystemExit(
+            f"{manifest_path} declares corpus_id {manifest.get('corpus_id')!r}, "
+            f"expected {args.corpus!r}"
+        )
     fixtures = selected_fixtures(manifest, args.fixture)
-    output_dir = (args.output_dir or feature_dir / "golden").resolve()
+    output_dir = (args.output_dir or feature_dir / "golden" / args.corpus).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for fixture in fixtures:
         fixture_path = (feature_dir / fixture).resolve()
         if not fixture_path.exists():
             raise SystemExit(f"{manifest_path} references missing fixture: {fixture}")
-        document = generate_document(args.feature, fixture, fixture_path, rdkit)
+        document = generate_document(args.feature, args.corpus, fixture, fixture_path, rdkit)
         output_path = output_dir / f"{slugify_fixture(fixture)}.json"
         write_json(output_path, document)
         print(output_path)
@@ -137,6 +143,7 @@ def selected_fixtures(manifest: dict[str, Any], requested: list[str] | None) -> 
 
 def generate_document(
     feature_id: str,
+    corpus_id: str,
     fixture: str,
     fixture_path: Path,
     rdkit: dict[str, Any],
@@ -180,6 +187,7 @@ def generate_document(
     return {
         "schema_version": 1,
         "feature_id": feature_id,
+        "corpus_id": corpus_id,
         "fixture_id": slugify_fixture(fixture),
         "fixture_path": fixture,
         "input_sha256": sha256_file(fixture_path),

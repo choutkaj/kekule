@@ -6,3 +6,4 @@ implemented = true
 validated = false
 description = "Represent chemically general atom and bond data shared by small and macromolecular workflows."
 depends_on = ["core.graph"]
+validation_required = []

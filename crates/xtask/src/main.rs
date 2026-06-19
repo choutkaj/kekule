@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use molecules::prelude::{
     perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
@@ -14,6 +15,17 @@ use molecules::prelude::{
 };
 use molecules::read_sdf_v2000_records;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+
+const VALIDATION_CORPORA: &[(&str, &str)] = &[
+    ("tiny", "Tiny"),
+    ("pubchem-100", "PubChem 100"),
+    ("pubchem-1000", "PubChem 1000"),
+    ("pl-rex", "PL-REX"),
+    ("enamine-diversity", "Enamine diversity"),
+    ("pdb-10", "PDB 10"),
+    ("pdb-100", "PDB 100"),
+];
 
 fn main() {
     if let Err(error) = run() {
@@ -38,14 +50,16 @@ fn run() -> Result<(), Box<dyn Error>> {
 
 fn print_help() {
     eprintln!(
-        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID\n  cargo xtask skills --check\n  cargo xtask features"
+        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all] [--update]\n  cargo xtask skills --check\n  cargo xtask features"
     );
 }
 
 fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let check = args.iter().any(|arg| arg == "--check");
     let features = read_features()?;
-    let rendered = render_dashboard(&features);
+    let statuses = read_validation_statuses(&features)?;
+    ensure_validation_flags_synced(&features, &statuses)?;
+    let rendered = render_dashboard(&features, &statuses);
     let path = Path::new("features/DASHBOARD.md");
 
     if check {
@@ -62,48 +76,132 @@ fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 }
 
 fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
-    let feature = value_after_flag(&args, "--feature")
+    validate_args(&args)?;
+    let feature_selector = value_after_flag(&args, "--feature")
         .ok_or_else(|| boxed_error("missing required flag: --feature FEATURE_ID"))?;
+    let corpus_selector = value_after_flag(&args, "--corpus").unwrap_or("tiny");
+    let update = args.iter().any(|arg| arg == "--update");
     let features = read_features()?;
-    if !features.iter().any(|candidate| candidate.id == feature) {
-        return Err(boxed_error(format!("unknown feature: {feature}")));
+    if feature_selector != "all"
+        && !features
+            .iter()
+            .any(|candidate| candidate.id == feature_selector)
+    {
+        return Err(boxed_error(format!("unknown feature: {feature_selector}")));
+    }
+    if corpus_selector != "all" && !is_known_corpus(corpus_selector) {
+        return Err(boxed_error(format!("unknown corpus: {corpus_selector}")));
     }
 
-    println!("validation harness found feature `{feature}`");
-    let manifest_path = validation_manifest_path(feature);
-    if manifest_path.exists() {
-        let manifest = read_validation_manifest(&manifest_path)?;
-        if manifest.feature_id != feature {
-            return Err(boxed_error(format!(
-                "{} declares feature_id `{}`, expected `{feature}`",
-                manifest_path.display(),
-                manifest.feature_id
-            )));
-        }
+    let targets = validation_targets(&features, feature_selector, corpus_selector);
+    if targets.is_empty() {
         println!(
-            "validation manifest uses {} {}",
-            manifest.reference_tool, manifest.reference_version
+            "no applicable validation targets for feature `{feature_selector}` and corpus `{corpus_selector}`"
         );
-        validate_manifest_paths(&manifest_path, &manifest)?;
-        println!(
-            "validation manifest lists {} fixture(s)",
-            manifest.fixtures.len()
-        );
-        let compared = validate_golden_outputs(&manifest_path, &manifest)?;
-        if compared > 0 {
-            println!("validation compared {compared} golden file(s)");
+        return Ok(());
+    }
+
+    let mut statuses = read_validation_statuses(&features)?;
+    let mut failures = Vec::new();
+    let mut passed = 0;
+    for (feature, corpus) in targets {
+        println!("validating `{}` against `{corpus}`", feature.id);
+        let manifest_path = validation_manifest_path(&feature.id, &corpus);
+        if !manifest_path.exists() {
+            failures.push(format!(
+                "{} is missing required manifest {}",
+                feature.id,
+                manifest_path.display()
+            ));
+            continue;
         }
-    } else {
-        println!("no reference validation manifest configured for `{feature}`");
+        let result = (|| -> Result<ValidationRun, Box<dyn Error>> {
+            let manifest = read_validation_manifest(&manifest_path)?;
+            if manifest.feature_id != feature.id {
+                return Err(boxed_error(format!(
+                    "{} declares feature_id `{}`, expected `{}`",
+                    manifest_path.display(),
+                    manifest.feature_id,
+                    feature.id
+                )));
+            }
+            if manifest.corpus_id != corpus {
+                return Err(boxed_error(format!(
+                    "{} declares corpus_id `{}`, expected `{corpus}`",
+                    manifest_path.display(),
+                    manifest.corpus_id
+                )));
+            }
+            println!(
+                "validation manifest uses {} {}",
+                manifest.reference_tool, manifest.reference_version
+            );
+            validate_manifest_paths(&manifest_path, &manifest)?;
+            println!(
+                "validation manifest lists {} fixture(s)",
+                manifest.fixtures.len()
+            );
+            let compared = validate_golden_outputs(&manifest_path, &manifest)?;
+            if compared > 0 {
+                println!("validation compared {compared} golden file(s)");
+            }
+            Ok(ValidationRun {
+                fixture_count: manifest.fixtures.len(),
+                compared_count: compared,
+                reference_tool: manifest.reference_tool,
+                reference_version: manifest.reference_version,
+                manifest_hash: hash_file(&manifest_path)?,
+            })
+        })();
+
+        match result {
+            Ok(run) => {
+                passed += 1;
+                if update {
+                    statuses
+                        .entry(feature.id.clone())
+                        .or_insert_with(|| ValidationStatus::new(&feature.id))
+                        .corpora
+                        .insert(corpus, CorpusStatus::from_run(run)?);
+                }
+            }
+            Err(error) => failures.push(format!("{} [{corpus}]: {error}", feature.id)),
+        }
+    }
+
+    if update {
+        write_validation_statuses(&statuses)?;
+        sync_feature_validation_flags(&features, &statuses)?;
+        let refreshed_features = read_features()?;
+        let rendered = render_dashboard(&refreshed_features, &statuses);
+        fs::write("features/DASHBOARD.md", rendered)?;
+        println!("updated validation status and dashboard");
+    }
+
+    println!("validation passed {passed} target(s)");
+    if !failures.is_empty() {
+        for failure in &failures {
+            eprintln!("validation failure: {failure}");
+        }
+        return Err(boxed_error(format!(
+            "{} validation target(s) failed",
+            failures.len()
+        )));
     }
     Ok(())
 }
 
 fn list_features() -> Result<(), Box<dyn Error>> {
-    for feature in read_features()? {
+    let features = read_features()?;
+    let statuses = read_validation_statuses(&features)?;
+    for feature in &features {
         println!(
             "{}\t{}\tv{}\timplemented={}\tvalidated={}",
-            feature.id, feature.area, feature.version, feature.implemented, feature.validated
+            feature.id,
+            feature.area,
+            feature.version,
+            feature.implemented,
+            overall_validated(feature, statuses.get(&feature.id))
         );
     }
     Ok(())
@@ -124,6 +222,23 @@ fn value_after_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .map(|window| window[1].as_str())
 }
 
+fn validate_args(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--feature" | "--corpus" => {
+                if index + 1 >= args.len() {
+                    return Err(boxed_error(format!("missing value after {}", args[index])));
+                }
+                index += 2;
+            }
+            "--update" => index += 1,
+            arg => return Err(boxed_error(format!("unknown validate argument: {arg}"))),
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Feature {
     id: String,
@@ -134,6 +249,7 @@ struct Feature {
     validated: bool,
     description: String,
     depends_on: Vec<String>,
+    validation_required: Vec<String>,
 }
 
 fn read_features() -> Result<Vec<Feature>, Box<dyn Error>> {
@@ -178,6 +294,7 @@ fn read_feature(path: &Path) -> Result<Feature, Box<dyn Error>> {
         validated: required_bool(&map, "validated", path)?,
         description: required(&map, "description", path)?,
         depends_on: required_string_array(&map, "depends_on", path)?,
+        validation_required: required_string_array(&map, "validation_required", path)?,
     };
     validate_feature(&feature, path)?;
     Ok(feature)
@@ -339,6 +456,21 @@ fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box<dyn Error>
             )));
         }
     }
+    let mut seen_corpora = BTreeSet::new();
+    for corpus in &feature.validation_required {
+        if !is_known_corpus(corpus) {
+            return Err(boxed_error(format!(
+                "{} requires unknown validation corpus `{corpus}`",
+                path.display()
+            )));
+        }
+        if !seen_corpora.insert(corpus) {
+            return Err(boxed_error(format!(
+                "{} lists validation corpus `{corpus}` more than once",
+                path.display()
+            )));
+        }
+    }
     let feature_doc = path.with_file_name("feature.md");
     if !feature_doc.exists() {
         return Err(boxed_error(format!(
@@ -375,17 +507,73 @@ fn validate_feature_set(features: &[Feature]) -> Result<(), Box<dyn Error>> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ValidationManifest {
     feature_id: String,
+    corpus_id: String,
     reference_tool: String,
     reference_version: String,
     fixtures: Vec<String>,
     fixture_sources: Vec<String>,
 }
 
-fn validation_manifest_path(feature: &str) -> PathBuf {
+#[derive(Debug)]
+struct ValidationRun {
+    fixture_count: usize,
+    compared_count: usize,
+    reference_tool: String,
+    reference_version: String,
+    manifest_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CorpusStatus {
+    passed: bool,
+    fixture_count: usize,
+    compared_count: usize,
+    reference_tool: String,
+    reference_version: String,
+    manifest_hash: String,
+    validated_at_unix: u64,
+}
+
+impl CorpusStatus {
+    fn from_run(run: ValidationRun) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            passed: true,
+            fixture_count: run.fixture_count,
+            compared_count: run.compared_count,
+            reference_tool: run.reference_tool,
+            reference_version: run.reference_version,
+            manifest_hash: run.manifest_hash,
+            validated_at_unix: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ValidationStatus {
+    feature_id: String,
+    corpora: BTreeMap<String, CorpusStatus>,
+}
+
+impl ValidationStatus {
+    fn new(feature_id: &str) -> Self {
+        Self {
+            feature_id: feature_id.to_owned(),
+            corpora: BTreeMap::new(),
+        }
+    }
+}
+
+fn is_known_corpus(corpus: &str) -> bool {
+    VALIDATION_CORPORA
+        .iter()
+        .any(|(candidate, _)| *candidate == corpus)
+}
+
+fn validation_manifest_path(feature: &str, corpus: &str) -> PathBuf {
     Path::new("validation")
         .join("features")
         .join(feature)
-        .join("validation.toml")
+        .join(format!("{corpus}.toml"))
 }
 
 fn read_validation_manifest(path: &Path) -> Result<ValidationManifest, Box<dyn Error>> {
@@ -393,11 +581,37 @@ fn read_validation_manifest(path: &Path) -> Result<ValidationManifest, Box<dyn E
     let map = parse_simple_toml(&text);
     Ok(ValidationManifest {
         feature_id: required(&map, "feature_id", path)?,
+        corpus_id: required(&map, "corpus_id", path)?,
         reference_tool: required(&map, "reference_tool", path)?,
         reference_version: required(&map, "reference_version", path)?,
         fixtures: optional_string_array(&map, "fixtures", path)?,
         fixture_sources: optional_string_array(&map, "fixture_sources", path)?,
     })
+}
+
+fn validation_targets<'a>(
+    features: &'a [Feature],
+    feature_selector: &str,
+    corpus_selector: &str,
+) -> Vec<(&'a Feature, String)> {
+    let mut targets = Vec::new();
+    for feature in features {
+        if feature_selector != "all" && feature.id != feature_selector {
+            continue;
+        }
+        for corpus in &feature.validation_required {
+            if corpus_selector == "all" || corpus == corpus_selector {
+                targets.push((feature, corpus.clone()));
+            }
+        }
+    }
+    targets
+}
+
+fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
+    let mut hasher = Sha256::new();
+    hasher.update(fs::read(path)?);
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn optional_string_array(
@@ -457,6 +671,7 @@ fn validate_golden_outputs(
         let fixture_path = base.join(fixture);
         let golden_path = base
             .join("golden")
+            .join(&manifest.corpus_id)
             .join(format!("{}.json", slugify_fixture(fixture)));
         if !golden_path.exists() {
             return Err(boxed_error(format!(
@@ -500,6 +715,14 @@ fn validate_golden_metadata(
             "{} feature_id does not match manifest",
             golden_path.display()
         )));
+    }
+    if let Some(corpus_id) = golden.get("corpus_id").and_then(Value::as_str) {
+        if corpus_id != manifest.corpus_id {
+            return Err(boxed_error(format!(
+                "{} corpus_id does not match manifest",
+                golden_path.display()
+            )));
+        }
     }
     if golden.get("fixture_path").and_then(Value::as_str) != Some(fixture) {
         return Err(boxed_error(format!(
@@ -1274,6 +1497,235 @@ fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn read_validation_statuses(
+    features: &[Feature],
+) -> Result<BTreeMap<String, ValidationStatus>, Box<dyn Error>> {
+    let mut statuses = BTreeMap::new();
+    for feature in features {
+        let path = validation_status_path(&feature.id);
+        if path.exists() {
+            let status = read_validation_status(&path)?;
+            if status.feature_id != feature.id {
+                return Err(boxed_error(format!(
+                    "{} declares feature_id `{}`, expected `{}`",
+                    path.display(),
+                    status.feature_id,
+                    feature.id
+                )));
+            }
+            statuses.insert(feature.id.clone(), status);
+        }
+    }
+    Ok(statuses)
+}
+
+fn validation_status_path(feature: &str) -> PathBuf {
+    Path::new("validation")
+        .join("status")
+        .join(format!("{feature}.toml"))
+}
+
+fn read_validation_status(path: &Path) -> Result<ValidationStatus, Box<dyn Error>> {
+    let text = fs::read_to_string(path)?;
+    let map = parse_simple_toml(&text);
+    let feature_id = required(&map, "feature_id", path)?;
+    let mut corpora = BTreeMap::new();
+    for (corpus, _) in VALIDATION_CORPORA {
+        let prefix = format!("corpus.{corpus}");
+        let passed_key = format!("{prefix}.passed");
+        if !map.contains_key(&passed_key) {
+            continue;
+        }
+        corpora.insert(
+            (*corpus).to_owned(),
+            CorpusStatus {
+                passed: required_bool(&map, &passed_key, path)?,
+                fixture_count: required_usize(&map, &format!("{prefix}.fixture_count"), path)?,
+                compared_count: required_usize(&map, &format!("{prefix}.compared_count"), path)?,
+                reference_tool: required(&map, &format!("{prefix}.reference_tool"), path)?,
+                reference_version: required(&map, &format!("{prefix}.reference_version"), path)?,
+                manifest_hash: required(&map, &format!("{prefix}.manifest_hash"), path)?,
+                validated_at_unix: required_u64(
+                    &map,
+                    &format!("{prefix}.validated_at_unix"),
+                    path,
+                )?,
+            },
+        );
+    }
+    Ok(ValidationStatus {
+        feature_id,
+        corpora,
+    })
+}
+
+fn required_usize(
+    map: &BTreeMap<String, String>,
+    key: &str,
+    path: &Path,
+) -> Result<usize, Box<dyn Error>> {
+    required(map, key, path)?
+        .parse::<usize>()
+        .map_err(|_| boxed_error(format!("{} has invalid integer `{key}`", path.display())))
+}
+
+fn required_u64(
+    map: &BTreeMap<String, String>,
+    key: &str,
+    path: &Path,
+) -> Result<u64, Box<dyn Error>> {
+    required(map, key, path)?
+        .parse::<u64>()
+        .map_err(|_| boxed_error(format!("{} has invalid integer `{key}`", path.display())))
+}
+
+fn write_validation_statuses(
+    statuses: &BTreeMap<String, ValidationStatus>,
+) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all("validation/status")?;
+    for status in statuses.values() {
+        let mut text = format!(
+            "# Generated by `cargo xtask validate --update`. Do not hand-edit.\nfeature_id = \"{}\"\n",
+            status.feature_id
+        );
+        for (corpus, corpus_status) in &status.corpora {
+            let prefix = format!("corpus.{corpus}");
+            text.push_str(&format!(
+                "\n{prefix}.passed = {}\n{prefix}.fixture_count = {}\n{prefix}.compared_count = {}\n{prefix}.reference_tool = \"{}\"\n{prefix}.reference_version = \"{}\"\n{prefix}.manifest_hash = \"{}\"\n{prefix}.validated_at_unix = {}\n",
+                corpus_status.passed,
+                corpus_status.fixture_count,
+                corpus_status.compared_count,
+                toml_string(&corpus_status.reference_tool),
+                toml_string(&corpus_status.reference_version),
+                corpus_status.manifest_hash,
+                corpus_status.validated_at_unix
+            ));
+        }
+        fs::write(validation_status_path(&status.feature_id), text)?;
+    }
+    Ok(())
+}
+
+fn toml_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn corpus_passed(feature: &Feature, status: Option<&ValidationStatus>, corpus: &str) -> bool {
+    corpus_passed_at(feature, status, corpus, Path::new("validation"))
+}
+
+fn corpus_passed_at(
+    feature: &Feature,
+    status: Option<&ValidationStatus>,
+    corpus: &str,
+    validation_root: &Path,
+) -> bool {
+    if !feature
+        .validation_required
+        .iter()
+        .any(|item| item == corpus)
+    {
+        return false;
+    }
+    let Some(corpus_status) = status.and_then(|status| status.corpora.get(corpus)) else {
+        return false;
+    };
+    if !corpus_status.passed {
+        return false;
+    }
+    let manifest_path = validation_root
+        .join("features")
+        .join(&feature.id)
+        .join(format!("{corpus}.toml"));
+    manifest_path.exists()
+        && hash_file(&manifest_path)
+            .map(|hash| hash == corpus_status.manifest_hash)
+            .unwrap_or(false)
+}
+
+fn overall_validated(feature: &Feature, status: Option<&ValidationStatus>) -> bool {
+    overall_validated_at(feature, status, Path::new("validation"))
+}
+
+fn overall_validated_at(
+    feature: &Feature,
+    status: Option<&ValidationStatus>,
+    validation_root: &Path,
+) -> bool {
+    feature.implemented
+        && !feature.validation_required.is_empty()
+        && feature
+            .validation_required
+            .iter()
+            .all(|corpus| corpus_passed_at(feature, status, corpus, validation_root))
+}
+
+fn sync_feature_validation_flags(
+    features: &[Feature],
+    statuses: &BTreeMap<String, ValidationStatus>,
+) -> Result<(), Box<dyn Error>> {
+    sync_feature_validation_flags_at(
+        features,
+        statuses,
+        Path::new("features"),
+        Path::new("validation"),
+    )
+}
+
+fn sync_feature_validation_flags_at(
+    features: &[Feature],
+    statuses: &BTreeMap<String, ValidationStatus>,
+    features_root: &Path,
+    validation_root: &Path,
+) -> Result<(), Box<dyn Error>> {
+    for feature in features {
+        let validated = overall_validated_at(feature, statuses.get(&feature.id), validation_root);
+        if validated == feature.validated {
+            continue;
+        }
+        let path = features_root.join(&feature.id).join("feature.toml");
+        let text = fs::read_to_string(&path)?;
+        let replacement = format!("validated = {validated}");
+        let mut replaced = false;
+        let rewritten = text
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("validated =") {
+                    replaced = true;
+                    replacement.as_str()
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !replaced {
+            return Err(boxed_error(format!(
+                "{} is missing `validated`",
+                path.display()
+            )));
+        }
+        fs::write(path, format!("{rewritten}\n"))?;
+    }
+    Ok(())
+}
+
+fn ensure_validation_flags_synced(
+    features: &[Feature],
+    statuses: &BTreeMap<String, ValidationStatus>,
+) -> Result<(), Box<dyn Error>> {
+    for feature in features {
+        let derived = overall_validated(feature, statuses.get(&feature.id));
+        if feature.validated != derived {
+            return Err(boxed_error(format!(
+                "feature `{}` has validated={}, but corpus evidence derives validated={derived}; run validation with --update",
+                feature.id, feature.validated
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn normalize_value(value: &str) -> String {
     let value = value.trim().trim_end_matches(',').trim();
     if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
@@ -1283,22 +1735,45 @@ fn normalize_value(value: &str) -> String {
     }
 }
 
-fn render_dashboard(features: &[Feature]) -> String {
+fn render_dashboard(features: &[Feature], statuses: &BTreeMap<String, ValidationStatus>) -> String {
     let mut out = String::new();
     out.push_str("# Feature Dashboard\n\n");
-    out.push_str("Generated from `features/*/feature.toml`. Do not hand-edit this file.\n\n");
-    out.push_str("| Feature | Title | Area | Version | Implemented | Validated |\n");
-    out.push_str("|---|---|---|---:|:---:|:---:|\n");
+    out.push_str(
+        "Generated from feature metadata and validation status. Do not hand-edit this file.\n\n",
+    );
+    out.push_str("| Feature | Title | Area | Version | Implemented | Validated");
+    for (_, label) in VALIDATION_CORPORA {
+        out.push_str(&format!(" | {label}"));
+    }
+    out.push_str(" |\n|---|---|---|---:|:---:|:---:");
+    for _ in VALIDATION_CORPORA {
+        out.push_str("|:---:");
+    }
+    out.push_str("|\n");
     for feature in features {
+        let status = statuses.get(&feature.id);
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {}",
             feature.id,
             feature.title,
             feature.area,
             feature.version,
             checkmark(feature.implemented),
-            checkmark(feature.validated)
+            checkmark(overall_validated(feature, status))
         ));
+        for (corpus, _) in VALIDATION_CORPORA {
+            let marker = if feature
+                .validation_required
+                .iter()
+                .any(|required| required == corpus)
+            {
+                checkmark(corpus_passed(feature, status, corpus))
+            } else {
+                "-"
+            };
+            out.push_str(&format!(" | {marker}"));
+        }
+        out.push_str(" |\n");
     }
     out
 }
@@ -1363,10 +1838,11 @@ fn expected_skills() -> &'static [ExpectedSkill] {
                 "add -> optional research -> plan -> implement",
                 "feature.md",
                 "implemented = true",
-                "validated = true",
+                "validation_required",
                 "externally supplied",
                 "cargo xtask dashboard --check",
                 "cargo xtask validate --feature",
+                "--corpus",
             ],
         },
         ExpectedSkill {
@@ -1378,6 +1854,7 @@ fn expected_skills() -> &'static [ExpectedSkill] {
                 "feature.md",
                 "cargo test --workspace",
                 "cargo xtask validate --feature",
+                "--corpus",
             ],
         },
     ]
@@ -1502,6 +1979,7 @@ implemented = false
 validated = true
 description = "Example feature."
 depends_on = ["core.graph"]
+validation_required = []
 "#,
         );
 
@@ -1530,6 +2008,7 @@ implemented = maybe
 validated = false
 description = "Bad feature."
 depends_on = []
+validation_required = []
 "#,
         );
         assert!(read_feature(&root.join("bad.bool").join("feature.toml")).is_err());
@@ -1546,6 +2025,7 @@ implemented = false
 validated = false
 description = "Bad feature."
 depends_on = []
+validation_required = []
 "#,
         );
         assert!(read_feature(&root.join("bad.deprecated").join("feature.toml")).is_err());
@@ -1561,6 +2041,7 @@ implemented = false
 validated = false
 description = "Bad feature."
 depends_on = []
+validation_required = []
 "#,
         );
         assert!(read_feature(&root.join("bad.version").join("feature.toml")).is_err());
@@ -1576,6 +2057,7 @@ implemented = false
 validated = false
 description = "Bad feature."
 depends_on = []
+validation_required = []
 "#,
         );
         assert!(read_feature(&root.join("missing.doc").join("feature.toml")).is_err());
@@ -1591,6 +2073,7 @@ implemented = false
 validated = false
 description = "Bad feature."
 depends_on = []
+validation_required = []
 "#,
         );
         assert!(read_feature(&root.join("real.id").join("feature.toml")).is_err());
@@ -1611,6 +2094,7 @@ implemented = true
 validated = false
 description = "Z feature."
 depends_on = ["a.feature"]
+validation_required = []
 "#,
         );
         write_feature(
@@ -1624,6 +2108,7 @@ implemented = false
 validated = false
 description = "A feature."
 depends_on = []
+validation_required = []
 "#,
         );
         fs::create_dir_all(root.join("_template")).expect("template dir should create");
@@ -1651,6 +2136,7 @@ implemented = false
 validated = false
 description = "Bad dependency."
 depends_on = ["missing.feature"]
+validation_required = []
 "#,
         );
         assert!(read_features_from(&root).is_err());
@@ -1669,6 +2155,7 @@ depends_on = ["missing.feature"]
                 validated: false,
                 description: "A feature.".to_owned(),
                 depends_on: Vec::new(),
+                validation_required: Vec::new(),
             },
             Feature {
                 id: "z.feature".to_owned(),
@@ -1679,14 +2166,14 @@ depends_on = ["missing.feature"]
                 validated: false,
                 description: "Z feature.".to_owned(),
                 depends_on: vec!["a.feature".to_owned()],
+                validation_required: Vec::new(),
             },
         ];
 
-        let dashboard = render_dashboard(&features);
+        let dashboard = render_dashboard(&features, &BTreeMap::new());
 
-        assert!(
-            dashboard.contains("| Feature | Title | Area | Version | Implemented | Validated |")
-        );
+        assert!(dashboard
+            .contains("| Feature | Title | Area | Version | Implemented | Validated | Tiny"));
         assert!(dashboard.contains("| `a.feature` | Aye | core | 1 | ❌ | ❌ |"));
         assert!(dashboard.contains("| `z.feature` | Zed | io | 3 | ✅ | ❌ |"));
         assert!(dashboard.ends_with('\n'));
@@ -1704,9 +2191,9 @@ description: Builder skill.
 ---
 # Feature Work
 add -> optional research -> plan -> implement
-Use feature.md. Only set implemented = true and validated = true with evidence.
+Use feature.md. Set implemented = true with evidence and declare validation_required.
 Molecular validation fixtures must be externally supplied.
-Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id>.
+Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id> --corpus tiny.
 "#,
         );
         write_skill(
@@ -1718,7 +2205,7 @@ description: Review skill.
 ---
 # Feature Review
 Independent audit for architecture and validation claims.
-Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <feature-id>.
+Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <feature-id> --corpus tiny.
 "#,
         );
 
@@ -1736,9 +2223,120 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
     #[test]
     fn validation_manifest_path_is_feature_scoped() {
         assert_eq!(
-            validation_manifest_path("core.graph"),
-            PathBuf::from("validation/features/core.graph/validation.toml")
+            validation_manifest_path("core.graph", "tiny"),
+            PathBuf::from("validation/features/core.graph/tiny.toml")
         );
+    }
+
+    #[test]
+    fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
+        let features = vec![
+            Feature {
+                id: "small".to_owned(),
+                title: "Small".to_owned(),
+                area: "io".to_owned(),
+                version: 1,
+                implemented: true,
+                validated: false,
+                description: "Small feature.".to_owned(),
+                depends_on: Vec::new(),
+                validation_required: vec!["tiny".to_owned(), "pubchem-100".to_owned()],
+            },
+            Feature {
+                id: "macro".to_owned(),
+                title: "Macro".to_owned(),
+                area: "bio".to_owned(),
+                version: 1,
+                implemented: true,
+                validated: false,
+                description: "Macro feature.".to_owned(),
+                depends_on: Vec::new(),
+                validation_required: vec!["tiny".to_owned(), "pdb-10".to_owned()],
+            },
+        ];
+
+        assert_eq!(
+            validation_targets(&features, "all", "pubchem-100")
+                .into_iter()
+                .map(|(feature, corpus)| (feature.id.as_str(), corpus))
+                .collect::<Vec<_>>(),
+            vec![("small", "pubchem-100".to_owned())]
+        );
+        assert_eq!(validation_targets(&features, "small", "all").len(), 2);
+        assert_eq!(
+            validation_targets(&features, "macro", "pubchem-100").len(),
+            0
+        );
+    }
+
+    #[test]
+    fn current_status_drives_overall_validation_and_metadata_sync() {
+        let root = temp_feature_root("status-sync");
+        let features_root = root.join("features");
+        let validation_root = root.join("validation");
+        let feature_dir = features_root.join("example");
+        let manifest_dir = validation_root.join("features").join("example");
+        fs::create_dir_all(&feature_dir).expect("feature dir should create");
+        fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
+        let metadata_path = feature_dir.join("feature.toml");
+        fs::write(&metadata_path, "id = \"example\"\nvalidated = false\n")
+            .expect("metadata should write");
+        let manifest_path = manifest_dir.join("tiny.toml");
+        fs::write(
+            &manifest_path,
+            "feature_id = \"example\"\ncorpus_id = \"tiny\"\n",
+        )
+        .expect("manifest should write");
+
+        let feature = Feature {
+            id: "example".to_owned(),
+            title: "Example".to_owned(),
+            area: "io".to_owned(),
+            version: 1,
+            implemented: true,
+            validated: false,
+            description: "Example feature.".to_owned(),
+            depends_on: Vec::new(),
+            validation_required: vec!["tiny".to_owned()],
+        };
+        let corpus_status = CorpusStatus {
+            passed: true,
+            fixture_count: 2,
+            compared_count: 2,
+            reference_tool: "rdkit".to_owned(),
+            reference_version: "test".to_owned(),
+            manifest_hash: hash_file(&manifest_path).expect("manifest should hash"),
+            validated_at_unix: 1,
+        };
+        let status = ValidationStatus {
+            feature_id: feature.id.clone(),
+            corpora: BTreeMap::from([("tiny".to_owned(), corpus_status)]),
+        };
+        let statuses = BTreeMap::from([(feature.id.clone(), status.clone())]);
+
+        assert!(overall_validated_at(
+            &feature,
+            Some(&status),
+            &validation_root
+        ));
+        sync_feature_validation_flags_at(
+            std::slice::from_ref(&feature),
+            &statuses,
+            &features_root,
+            &validation_root,
+        )
+        .expect("metadata should sync");
+        assert!(fs::read_to_string(&metadata_path)
+            .expect("metadata should read")
+            .contains("validated = true"));
+
+        fs::write(&manifest_path, "changed = true\n").expect("manifest should change");
+        assert!(!overall_validated_at(
+            &feature,
+            Some(&status),
+            &validation_root
+        ));
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]
@@ -1748,10 +2346,11 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
         let fixture_dir = feature_dir.join("fixtures");
         fs::create_dir_all(&fixture_dir).expect("fixture dir should create");
         fs::write(fixture_dir.join("ok.txt"), "{}").expect("fixture should write");
-        let manifest_path = feature_dir.join("validation.toml");
+        let manifest_path = feature_dir.join("tiny.toml");
         fs::write(
             &manifest_path,
             r#"feature_id = "example"
+corpus_id = "tiny"
 reference_tool = "manual-fixtures"
 reference_version = "test"
 fixtures = [
@@ -1772,6 +2371,7 @@ fixture_sources = [
         fs::write(
             &manifest_path,
             r#"feature_id = "example"
+corpus_id = "tiny"
 reference_tool = "manual-fixtures"
 reference_version = "test"
 fixtures = [
@@ -1789,6 +2389,7 @@ fixture_sources = [
         fs::write(
             &manifest_path,
             r#"feature_id = "example"
+corpus_id = "tiny"
 reference_tool = "manual-fixtures"
 reference_version = "test"
 fixtures = [
@@ -1812,10 +2413,11 @@ fixtures = [
         let fixture_dir = feature_dir.join("fixtures");
         fs::create_dir_all(&fixture_dir).expect("fixture dir should create");
         fs::write(fixture_dir.join("case.smi"), "CCO\n").expect("fixture should write");
-        let manifest_path = feature_dir.join("validation.toml");
+        let manifest_path = feature_dir.join("tiny.toml");
         fs::write(
             &manifest_path,
             r#"feature_id = "io.smiles.parse"
+corpus_id = "tiny"
 reference_tool = "rdkit"
 reference_version = "test"
 fixtures = [
@@ -1832,9 +2434,13 @@ fixture_sources = [
         validate_manifest_paths(&manifest_path, &manifest).expect("manifest paths should pass");
         assert!(validate_golden_outputs(&manifest_path, &manifest).is_err());
 
-        fs::create_dir_all(feature_dir.join("golden")).expect("golden dir should create");
+        fs::create_dir_all(feature_dir.join("golden").join("tiny"))
+            .expect("golden dir should create");
         fs::write(
-            feature_dir.join("golden").join("fixtures_case.smi.json"),
+            feature_dir
+                .join("golden")
+                .join("tiny")
+                .join("fixtures_case.smi.json"),
             r#"{
   "schema_version": 1,
   "feature_id": "wrong.feature",

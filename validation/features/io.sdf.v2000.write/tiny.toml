@@ -1,0 +1,22 @@
+corpus_id = "tiny"
+feature_id = "io.sdf.v2000.write"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "../../external_sources/pubchem/cid_702.sdf",
+  "../../external_sources/pubchem/cid_2244.sdf",
+  "../../external_sources/pubchem/cid_2519.sdf",
+]
+
+fixture_sources = [
+  "../../external_sources/pubchem/cid_702.sdf | source=PubChem CID 702 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/702/SDF?record_type=3d | sha256=d0cfb665af2d152c5b963456333097a014cf9ce0fafe6f8d4970bc34739e721e",
+  "../../external_sources/pubchem/cid_2244.sdf | source=PubChem CID 2244 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2244/SDF?record_type=3d | sha256=20e215e8b9be1dc44b1c7e277faa9b3893d48ba8be90af14422aac3a14e51ff4",
+  "../../external_sources/pubchem/cid_2519.sdf | source=PubChem CID 2519 | url=https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/2519/SDF?record_type=3d | sha256=7550075ad8a9a05cf68841bd827e7153a386c2eebd100cb99fb36324aa0f4891",
+]
+
+notes = [
+  "Reference RDKit goldens compare SDF writer records.",
+  "All molecule fixtures are externally supplied PubChem records.",
+]

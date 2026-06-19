@@ -34,16 +34,19 @@ Feature metadata uses schema v2:
 - `validated`
 - `description`
 - `depends_on`
+- `validation_required`
 
 Do not use `priority`, `status`, or `last_ai_review`.
 
 Increment `version` only when the feature's behavior, public API, or validation contract intentionally changes. Do not increment for typo fixes.
 
-Set `implemented = true` only when implementation is complete. Set `validated = true` only when reference-generated golden data or documented manual validation evidence exists.
+Set `implemented = true` only when implementation is complete. Declare the corpora required for broad validation in `validation_required`. Do not hand-set corpus results: `cargo xtask validate ... --update` records passing evidence and synchronizes overall `validated`.
 
 Feature IDs and titles must describe canonical long-term capabilities, not maturity levels. Do not encode incomplete implementation status in feature IDs or titles. Use `version`, `implemented`, `validated`, the Validation section, and Revision Notes to describe maturity, partial coverage, or missing goldens.
 
-Molecular validation fixtures must be externally supplied, not invented toy systems. Record source URL and checksum provenance in `validation.toml`, and generate molecular golden data only with the declared reference software.
+Molecular validation fixtures must be externally supplied, not invented toy systems. Record source URL and checksum provenance in each corpus manifest, and generate molecular golden data only with the declared reference software.
+
+The `tiny` corpus is a fast wiring and regression tier, not broad validation by itself. Use the declared PubChem, PDB, PL-REX, and Enamine corpora where applicable. Plain validation is read-only; use `--update` only after a successful implementation-vs-golden comparison should become committed evidence.
 
 ## Feature Docs
 
@@ -78,7 +81,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask validate --feature <feature-id>
+cargo xtask validate --feature <feature-id> --corpus tiny
+cargo xtask validate --feature all --corpus all
 ```
 
 If metadata changes, run `cargo xtask dashboard` before `cargo xtask dashboard --check`.

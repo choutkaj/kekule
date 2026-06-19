@@ -6,3 +6,4 @@ implemented = false
 validated = false
 description = "Plan Molfile V3000 writing for later file I/O coverage."
 depends_on = ["io.mol.v3000.parse"]
+validation_required = []

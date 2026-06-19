@@ -14,7 +14,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 
 - The pipeline is conservative and returns reports for caller inspection.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
-- It uses the validated valence, ring, and aromaticity passes for the current small-molecule fixture set.
+- Its valence, ring, and aromaticity passes are compared together against each required corpus.
 
 ## Validation
 

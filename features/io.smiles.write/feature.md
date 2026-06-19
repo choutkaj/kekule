@@ -28,4 +28,4 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 ## Revision Notes
 
 - v1: Noncanonical writer.
-- v2: Deterministic ring-closure and branch emission validated against RDKit goldens for current external fixtures.
+- v2: Deterministic ring-closure and branch emission passes the RDKit-backed `tiny` corpus.

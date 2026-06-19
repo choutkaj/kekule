@@ -6,3 +6,4 @@ implemented = true
 validated = false
 description = "Store atoms, bonds, properties, and computed-state invalidation behind typed atom and bond IDs."
 depends_on = []
+validation_required = []

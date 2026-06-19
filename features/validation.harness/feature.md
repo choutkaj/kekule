@@ -6,35 +6,38 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 
 ## Behavior/API
 
-- Exposes `cargo xtask validate --feature FEATURE_ID`.
-- Discovers optional validation manifests under `validation/features/<feature-id>/validation.toml`.
+- Exposes `cargo xtask validate --feature FEATURE_ID|all --corpus CORPUS_ID|all [--update]`.
+- Defaults omitted `--corpus` to `tiny` for compatibility.
+- Discovers corpus manifests under `validation/features/<feature-id>/<corpus-id>.toml`.
 - Verifies listed fixture paths exist.
 - Requires one golden JSON file under `validation/features/<feature-id>/golden/` for each listed fixture.
 - Compares normalized Rust implementation output against each golden file's `expected` payload.
 - Normalizes representation-only graph differences such as undirected bond endpoint orientation, bond array order, and ring atom order before comparison.
-- Reports clearly when a feature has no reference validation manifest.
+- Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
+- Keeps ordinary validation read-only; `--update` records passing evidence under `validation/status/`, synchronizes overall `validated`, and regenerates the dashboard.
 
 ## Implementation Notes
 
 - RDKit reference generators live under `validation/reference/rdkit/`.
 - Biopython reference generators live under `validation/reference/biopython/`.
 - Golden data should be normalized JSON and include reference tool versions.
+- Status evidence records fixture and comparison counts, reference versions, the manifest SHA-256, and validation time.
 - The validation command uses the Rust implementation only; RDKit and Biopython are used to generate goldens, not to run validation.
 - Reference tools are never Rust runtime dependencies.
 
 ## Validation
 
-- Current coverage is infrastructure unit-test based plus live `cargo xtask validate --feature ...` comparisons against committed external-source goldens.
+- Current coverage is infrastructure unit-test based plus live corpus comparisons against committed external-source goldens.
 - Passing comparisons are evidence for the compared behavior; failing comparisons identify implementation gaps and should not be papered over.
 
 ## Out Of Scope
 
 - Chemistry algorithms.
 - Runtime RDKit or Biopython dependencies.
-- Automatically marking features validated.
 - Regenerating all goldens by default.
 
 ## Revision Notes
 
 - v1: Manifest discovery, fixture path checks, and reference generator conventions.
 - v2: Implementation-vs-golden comparisons for committed per-feature golden JSON.
+- v3: Named corpora, all-feature/all-corpus selection, generated evidence status, and dashboard synchronization.

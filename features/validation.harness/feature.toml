@@ -1,8 +1,9 @@
 id = "validation.harness"
 title = "Reference validation harness"
 area = "infrastructure"
-version = 2
+version = 3
 implemented = true
 validated = false
 description = "Provide commands and conventions for comparing molecules against RDKit and Biopython generated golden data."
 depends_on = []
+validation_required = []
