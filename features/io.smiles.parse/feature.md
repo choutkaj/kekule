@@ -1,8 +1,8 @@
-# Basic SMILES Parser
+# SMILES Parser
 
 ## Summary
 
-Parse a practical initial subset of SMILES into `SmallMolecule`.
+Parse a practical subset of SMILES into `SmallMolecule`.
 
 ## Behavior/API
 
@@ -13,7 +13,7 @@ Parse a practical initial subset of SMILES into `SmallMolecule`.
 ## Implementation Notes
 
 - The parser is intentionally non-query and non-reaction.
-- Aromatic lowercase atoms set initial aromatic flags but do not replace explicit aromaticity perception.
+- Aromatic lowercase atoms set aromatic flags but do not replace explicit aromaticity perception.
 
 ## Validation
 
@@ -26,4 +26,4 @@ Parse a practical initial subset of SMILES into `SmallMolecule`.
 
 ## Revision Notes
 
-- v1: Initial basic SMILES parser.
+- v1: SMILES parser.

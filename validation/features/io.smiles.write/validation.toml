@@ -4,7 +4,7 @@ reference_version = "2026-06-19-no-reference-goldens"
 comparison_mode = "fixture-discovery-only"
 
 fixtures = [
-  "../io.smiles.parse/fixtures/basic.smi",
+  "../io.smiles.parse/fixtures/smiles_cases.smi",
 ]
 
 notes = [

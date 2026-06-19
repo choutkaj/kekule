@@ -15,7 +15,7 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 
 - Tokenizes mmCIF with support for quotes, comments, missing values, and semicolon text blocks.
 - Keeps biomolecular labels in `BioHierarchy`, not core `Atom`.
-- Unknown categories are ignored by the initial parser.
+- Unknown categories are ignored by this parser version.
 
 ## Validation
 
@@ -30,4 +30,4 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 
 ## Revision Notes
 
-- v1: Initial raw `_atom_site` parser into `MacroMolecule`.
+- v1: Raw `_atom_site` parser into `MacroMolecule`.

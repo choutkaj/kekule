@@ -5,4 +5,4 @@ version = 1
 implemented = false
 validated = false
 description = "Plan canonical atom ranking for canonical SMILES and related deterministic workflows."
-depends_on = ["chem.sanitize.rdkit-like-basic"]
+depends_on = ["chem.sanitize.rdkit-like"]

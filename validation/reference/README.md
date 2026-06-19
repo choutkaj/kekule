@@ -20,7 +20,7 @@ Generate goldens for a feature:
 ```bash
 python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse
 python validation/reference/rdkit/run_feature.py --feature algo.rings.fast
-python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like-basic
+python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like
 python validation/reference/biopython/run_feature.py --feature io.mmcif.parse
 python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra
 ```

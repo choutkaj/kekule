@@ -12,10 +12,10 @@
 
 - Molfile V2000 parse.
 - SDF V2000 parse and data field handling.
-- Basic valence and sanitization pipeline.
+- Valence and sanitization pipeline.
 - Fast ring membership detection.
 - SSSR ring basis.
-- Basic RDKit-like aromaticity model.
+- RDKit-like aromaticity model.
 
 ## P0: first macromolecule features
 
@@ -23,7 +23,7 @@
 - mmCIF parse.
 - SMCRA-like hierarchy.
 - Atom-site labels and alternate locations.
-- Basic sequence extraction and selection API.
+- Sequence extraction and selection API.
 
 ## P1: practical usability
 
@@ -39,7 +39,7 @@
 - Canonical ranking and canonical SMILES.
 - CIP stereochemistry.
 - SMARTS-like substructure search.
-- Fingerprints and basic descriptors.
+- Fingerprints and molecular descriptors.
 
 ## P3: advanced macromolecular support
 

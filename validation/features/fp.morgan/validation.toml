@@ -1,0 +1,10 @@
+feature_id = "fp.morgan"
+reference_tool = "planned-rdkit"
+reference_version = "2026-06-19-no-fixtures-yet"
+comparison_mode = "planned"
+
+fixtures = []
+
+notes = [
+  "Feature contract reserved; fixtures will be added as validation scenarios are specified.",
+]

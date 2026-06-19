@@ -5,4 +5,4 @@ version = 1
 implemented = false
 validated = false
 description = "Plan VF2-style substructure matching for small molecules."
-depends_on = ["query.smarts.basic"]
+depends_on = ["query.smarts"]

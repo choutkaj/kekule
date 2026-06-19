@@ -6,5 +6,5 @@ comparison_mode = "planned"
 fixtures = []
 
 notes = [
-  "Planned feature placeholder; fixtures will be added when implementation starts.",
+  "Feature contract reserved; fixtures will be added as validation scenarios are specified.",
 ]
