@@ -9,6 +9,7 @@ Compute a compact ring basis for downstream small-molecule perception.
 - Exposes `RingSet`, `Ring`, and `perceive_ring_set`.
 - Reports ring atom and bond IDs for a deterministic cycle basis.
 - Sets ring perception state through the existing ring membership machinery.
+- Cached ring sets are accessible only while ring perception remains fresh.
 
 ## Implementation Notes
 
@@ -30,3 +31,4 @@ Compute a compact ring basis for downstream small-molecule perception.
 - v1: Deterministic ring basis.
 - v2: Shortest-cycle basis passes the RDKit-backed `tiny` corpus; broader required corpora remain pending.
 - v3: Fixed bridged and symmetric ring selection exposed by external PubChem validation.
+- v4: Hide and clear cached ring sets after invalidating mutations.

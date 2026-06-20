@@ -2,20 +2,21 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
+use std::ops::{Deref, DerefMut};
 
 pub mod prelude {
     pub use crate::{
         perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
         read_mmcif_str, read_mol_v2000_str, read_sdf_v2000_str, read_smiles_str,
         sanitize_small_molecule, write_mol_v2000, write_sdf_v2000, write_smiles, AromaticityError,
-        AromaticityModel, Atom, AtomId, AtomSite, AtomSiteId, AtomSiteMetadata, AtomStereo,
-        BioHierarchy, BioHierarchyError, Bond, BondId, BondOrder, BondStereo, Chain, ChainId,
-        ComputedState, Conformer, ConformerId, Element, MacroMolecule, MmcifParseError,
-        MmcifParseOptions, Model, ModelId, MolWriteError, Molecule, MoleculeError, Point3, PropMap,
-        PropValue, Residue, ResidueId, Result, Ring, RingMembership, RingSet, SanitizeError,
-        SanitizeOptions, SanitizeReport, SdfParseError, SdfParseOptions, SdfRecord, SmallMolecule,
-        SmilesParseError, SmilesParseOptions, SmilesWriteOptions, ValenceIssue, ValenceModel,
-        ValenceReport,
+        AromaticityModel, Atom, AtomId, AtomMut, AtomSite, AtomSiteId, AtomSiteMetadata,
+        AtomStereo, BioHierarchy, BioHierarchyError, Bond, BondId, BondMut, BondOrder, BondStereo,
+        Chain, ChainId, ComputedState, Conformer, ConformerId, Element, MacroMolecule,
+        MmcifParseError, MmcifParseOptions, Model, ModelId, MolWriteError, Molecule, MoleculeError,
+        Point3, PropMap, PropValue, Residue, ResidueId, Result, Ring, RingMembership, RingSet,
+        SanitizeError, SanitizeOptions, SanitizeReport, SdfParseError, SdfParseOptions, SdfRecord,
+        SmallMolecule, SmilesParseError, SmilesParseOptions, SmilesWriteOptions, ValenceIssue,
+        ValenceModel, ValenceReport,
     };
 }
 
@@ -345,6 +346,114 @@ pub struct Molecule {
     ring_set: Option<RingSet>,
 }
 
+pub struct AtomMut<'a> {
+    molecule: &'a mut Molecule,
+    id: AtomId,
+    original: AtomChemistry,
+}
+
+impl Deref for AtomMut<'_> {
+    type Target = Atom;
+
+    fn deref(&self) -> &Self::Target {
+        self.molecule.atoms[self.id.index()]
+            .as_ref()
+            .expect("validated atom must remain live while borrowed")
+    }
+}
+
+impl DerefMut for AtomMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.molecule.atoms[self.id.index()]
+            .as_mut()
+            .expect("validated atom must remain live while borrowed")
+    }
+}
+
+impl Drop for AtomMut<'_> {
+    fn drop(&mut self) {
+        if AtomChemistry::from(&**self) != self.original {
+            self.molecule.invalidate_topology();
+        }
+    }
+}
+
+pub struct BondMut<'a> {
+    molecule: &'a mut Molecule,
+    id: BondId,
+    original: BondChemistry,
+}
+
+impl Deref for BondMut<'_> {
+    type Target = Bond;
+
+    fn deref(&self) -> &Self::Target {
+        self.molecule.bonds[self.id.index()]
+            .as_ref()
+            .expect("validated bond must remain live while borrowed")
+    }
+}
+
+impl DerefMut for BondMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.molecule.bonds[self.id.index()]
+            .as_mut()
+            .expect("validated bond must remain live while borrowed")
+    }
+}
+
+impl Drop for BondMut<'_> {
+    fn drop(&mut self) {
+        if BondChemistry::from(&**self) != self.original {
+            self.molecule.invalidate_topology();
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AtomChemistry {
+    element: Element,
+    isotope: Option<u16>,
+    formal_charge: i8,
+    radical_electrons: u8,
+    explicit_hydrogens: u8,
+    implicit_hydrogens: Option<u8>,
+    aromatic: bool,
+    chiral: Option<AtomStereo>,
+}
+
+impl From<&Atom> for AtomChemistry {
+    fn from(atom: &Atom) -> Self {
+        Self {
+            element: atom.element,
+            isotope: atom.isotope,
+            formal_charge: atom.formal_charge,
+            radical_electrons: atom.radical_electrons,
+            explicit_hydrogens: atom.explicit_hydrogens,
+            implicit_hydrogens: atom.implicit_hydrogens,
+            aromatic: atom.aromatic,
+            chiral: atom.chiral,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct BondChemistry {
+    order: BondOrder,
+    aromatic: bool,
+    stereo: Option<BondStereo>,
+}
+
+impl From<&Bond> for BondChemistry {
+    fn from(bond: &Bond) -> Self {
+        Self {
+            order: bond.order,
+            aromatic: bond.aromatic,
+            stereo: bond.stereo,
+        }
+    }
+}
+
 impl Molecule {
     pub fn new() -> Self {
         Self::default()
@@ -397,12 +506,13 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidAtomId(id))
     }
 
-    pub fn atom_mut(&mut self, id: AtomId) -> Result<&mut Atom> {
-        self.atom(id)?;
-        self.invalidate_topology();
-        self.atoms[id.index()]
-            .as_mut()
-            .ok_or(MoleculeError::InvalidAtomId(id))
+    pub fn atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
+        let original = AtomChemistry::from(self.atom(id)?);
+        Ok(AtomMut {
+            molecule: self,
+            id,
+            original,
+        })
     }
 
     pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
@@ -452,12 +562,13 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidBondId(id))
     }
 
-    pub fn bond_mut(&mut self, id: BondId) -> Result<&mut Bond> {
-        self.bond(id)?;
-        self.invalidate_topology();
-        self.bonds[id.index()]
-            .as_mut()
-            .ok_or(MoleculeError::InvalidBondId(id))
+    pub fn bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
+        let original = BondChemistry::from(self.bond(id)?);
+        Ok(BondMut {
+            molecule: self,
+            id,
+            original,
+        })
     }
 
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
@@ -508,16 +619,20 @@ impl Molecule {
         &self.perception
     }
 
-    pub fn perception_mut(&mut self) -> &mut PerceptionState {
-        &mut self.perception
-    }
-
     pub fn ring_membership(&self) -> Option<&RingMembership> {
-        self.ring_membership.as_ref()
+        if self.perception.rings == ComputedState::Fresh {
+            self.ring_membership.as_ref()
+        } else {
+            None
+        }
     }
 
     pub fn ring_set(&self) -> Option<&RingSet> {
-        self.ring_set.as_ref()
+        if self.perception.rings == ComputedState::Fresh {
+            self.ring_set.as_ref()
+        } else {
+            None
+        }
     }
 
     pub fn add_conformer(&mut self, mut conformer: Conformer) -> ConformerId {
@@ -560,6 +675,7 @@ impl Molecule {
 
     pub fn invalidate_topology(&mut self) {
         self.perception.invalidate_all();
+        self.ring_membership = None;
         self.ring_set = None;
     }
 
@@ -655,6 +771,8 @@ pub fn perceive_aromaticity(
 fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
 ) -> std::result::Result<(), AromaticityError> {
+    mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
+    mol.perception.stereo = invalidate(mol.perception.stereo);
     for atom in mol.atoms.iter_mut().flatten() {
         atom.aromatic = false;
     }
@@ -766,7 +884,12 @@ fn aromatic_fused_component_pi_electrons(
                     electrons += 2;
                 }
             }
-            _ => return Ok(0),
+            _ => {
+                if ring_has_aromatic_order(mol, ring) {
+                    return Err(AromaticityError::UnsupportedElement(*atom_id));
+                }
+                return Ok(0);
+            }
         }
     }
 
@@ -904,7 +1027,12 @@ fn aromatic_ring_pi_electrons(
                     electrons += 2;
                 }
             }
-            _ => return Ok(0),
+            _ => {
+                if ring_has_aromatic_order(mol, ring) {
+                    return Err(AromaticityError::UnsupportedElement(*atom_id));
+                }
+                return Ok(0);
+            }
         }
     }
 
@@ -919,6 +1047,14 @@ fn ring_contains_element(mol: &Molecule, ring: &Ring, symbol: &str) -> bool {
     ring.atoms.iter().any(|atom_id| {
         mol.atom(*atom_id)
             .map(|atom| atom.element.symbol() == symbol)
+            .unwrap_or(false)
+    })
+}
+
+fn ring_has_aromatic_order(mol: &Molecule, ring: &Ring) -> bool {
+    ring.bonds.iter().any(|bond_id| {
+        mol.bond(*bond_id)
+            .map(|bond| bond.order == BondOrder::Aromatic)
             .unwrap_or(false)
     })
 }
@@ -1371,10 +1507,16 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule) -> ValenceReport {
             None => issues.push(ValenceIssue::UnsupportedElement(atom_id)),
         }
     }
+    let mut changed = false;
     for (atom_id, hydrogens) in assignments {
         if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            changed |= atom.implicit_hydrogens != Some(hydrogens);
             atom.implicit_hydrogens = Some(hydrogens);
         }
+    }
+    if changed {
+        mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
+        mol.perception.stereo = invalidate(mol.perception.stereo);
     }
     mol.perception.valence = ComputedState::Fresh;
     ValenceReport { issues }
@@ -1486,9 +1628,13 @@ pub fn sanitize_small_molecule(
     molecule: &mut SmallMolecule,
     options: SanitizeOptions,
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
-    normalize_sanitize_charges(&mut molecule.mol);
+    let mut staged = molecule.clone();
+    normalize_sanitize_charges(&mut staged.mol);
+    let skipped_ring_state =
+        (!options.perceive_rings).then(|| invalidate(staged.mol.perception.rings));
+    prepare_sanitize_states(&mut staged.mol, options);
     let valence = if options.perceive_valence {
-        let report = perceive_valence(&mut molecule.mol, ValenceModel::RdkitLike);
+        let report = perceive_valence(&mut staged.mol, ValenceModel::RdkitLike);
         if !report.is_ok() {
             return Err(SanitizeError::Valence(report));
         }
@@ -1497,18 +1643,38 @@ pub fn sanitize_small_molecule(
         None
     };
     let ring_count = if options.perceive_rings {
-        Some(perceive_ring_set(&mut molecule.mol).len())
+        Some(perceive_ring_set(&mut staged.mol).len())
     } else {
         None
     };
     if options.perceive_aromaticity {
-        perceive_aromaticity(&mut molecule.mol, AromaticityModel::RdkitLike)
+        perceive_aromaticity(&mut staged.mol, AromaticityModel::RdkitLike)
             .map_err(SanitizeError::Aromaticity)?;
+        if let Some(state) = skipped_ring_state {
+            staged.mol.perception.rings = state;
+            staged.mol.ring_membership = None;
+            staged.mol.ring_set = None;
+        }
     }
+    *molecule = staged;
     Ok(SanitizeReport {
         valence,
         ring_count,
     })
+}
+
+fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {
+    if !options.perceive_valence {
+        mol.perception.valence = invalidate(mol.perception.valence);
+    }
+    if !options.perceive_rings {
+        mol.perception.rings = invalidate(mol.perception.rings);
+        mol.ring_membership = None;
+        mol.ring_set = None;
+    }
+    if !options.perceive_aromaticity {
+        mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
+    }
 }
 
 fn normalize_sanitize_charges(mol: &mut Molecule) {
@@ -1526,20 +1692,27 @@ fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {
         })
         .collect::<Vec<_>>();
 
+    let mut changed = false;
     for atom_id in halogens {
         let Some((oxygen_id, bond_id)) = oxo_bond_to_neutral_oxygen(mol, atom_id) else {
             continue;
         };
         if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
             atom.formal_charge = 1;
+            changed = true;
         }
         if let Some(atom) = mol.atoms[oxygen_id.index()].as_mut() {
             atom.formal_charge = -1;
+            changed = true;
         }
         if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
             bond.order = BondOrder::Single;
             bond.aromatic = false;
+            changed = true;
         }
+    }
+    if changed {
+        mol.invalidate_topology();
     }
 }
 
@@ -2001,10 +2174,10 @@ where
             .get(atom_index.saturating_sub(1))
             .copied()
             .ok_or_else(|| SdfParseError::new(record, line, "M record atom outside atom block"))?;
-        let atom = mol
+        let mut atom = mol
             .atom_mut(atom_id)
             .map_err(|error| SdfParseError::new(record, line, error.to_string()))?;
-        apply(atom, value);
+        apply(&mut atom, value);
     }
     Ok(())
 }
@@ -3614,10 +3787,10 @@ mod tests {
     }
 
     fn mark_all_fresh(mol: &mut Molecule) {
-        mol.perception_mut().valence = ComputedState::Fresh;
-        mol.perception_mut().rings = ComputedState::Fresh;
-        mol.perception_mut().aromaticity = ComputedState::Fresh;
-        mol.perception_mut().stereo = ComputedState::Fresh;
+        mol.perception.valence = ComputedState::Fresh;
+        mol.perception.rings = ComputedState::Fresh;
+        mol.perception.aromaticity = ComputedState::Fresh;
+        mol.perception.stereo = ComputedState::Fresh;
     }
 
     fn assert_all_stale(mol: &Molecule) {
@@ -3782,6 +3955,42 @@ mod tests {
         mark_all_fresh(&mut mol);
         mol.bond_mut(bond).expect("bond exists").order = BondOrder::Double;
         assert_all_stale(&mol);
+    }
+
+    #[test]
+    fn perception_owned_chemistry_edits_invalidate_dependent_state() {
+        let mut methane = Molecule::new();
+        methane.add_atom(carbon());
+        mark_all_fresh(&mut methane);
+
+        let report = perceive_valence(&mut methane, ValenceModel::RdkitLike);
+
+        assert!(report.is_ok());
+        assert_eq!(methane.perception().valence, ComputedState::Fresh);
+        assert_eq!(methane.perception().rings, ComputedState::Fresh);
+        assert_eq!(methane.perception().aromaticity, ComputedState::Stale);
+        assert_eq!(methane.perception().stereo, ComputedState::Stale);
+
+        let (mut benzene, _, _) = ring_molecule(
+            &["C", "C", "C", "C", "C", "C"],
+            &[
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+                BondOrder::Double,
+                BondOrder::Single,
+            ],
+        );
+        mark_all_fresh(&mut benzene);
+
+        perceive_aromaticity(&mut benzene, AromaticityModel::RdkitLike)
+            .expect("benzene should be supported");
+
+        assert_eq!(benzene.perception().valence, ComputedState::Fresh);
+        assert_eq!(benzene.perception().rings, ComputedState::Fresh);
+        assert_eq!(benzene.perception().aromaticity, ComputedState::Fresh);
+        assert_eq!(benzene.perception().stereo, ComputedState::Stale);
     }
 
     #[test]
@@ -4040,6 +4249,138 @@ $$$$
     }
 
     #[test]
+    fn sanitize_options_do_not_leave_skipped_passes_fresh() {
+        let mut baseline =
+            read_smiles_str("C1=CC=CC=C1", SmilesParseOptions).expect("benzene should parse");
+        sanitize_small_molecule(&mut baseline, SanitizeOptions::default())
+            .expect("benzene should sanitize");
+
+        for mask in 0..8 {
+            let options = SanitizeOptions {
+                perceive_valence: mask & 1 != 0,
+                perceive_rings: mask & 2 != 0,
+                perceive_aromaticity: mask & 4 != 0,
+            };
+            let mut molecule = baseline.clone();
+            sanitize_small_molecule(&mut molecule, options)
+                .unwrap_or_else(|error| panic!("options {mask:03b} should succeed: {error}"));
+
+            assert_eq!(
+                molecule.mol.perception().valence,
+                if options.perceive_valence {
+                    ComputedState::Fresh
+                } else {
+                    ComputedState::Stale
+                },
+                "valence state for options {mask:03b}"
+            );
+            assert_eq!(
+                molecule.mol.perception().rings,
+                if options.perceive_rings {
+                    ComputedState::Fresh
+                } else {
+                    ComputedState::Stale
+                },
+                "ring state for options {mask:03b}"
+            );
+            assert_eq!(
+                molecule.mol.perception().aromaticity,
+                if options.perceive_aromaticity {
+                    ComputedState::Fresh
+                } else {
+                    ComputedState::Stale
+                },
+                "aromaticity state for options {mask:03b}"
+            );
+            assert_eq!(
+                molecule.mol.ring_set().is_some(),
+                options.perceive_rings,
+                "ring cache exposure for options {mask:03b}"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_valence_sanitization_is_transactional() {
+        let mut mol = Molecule::new();
+        let carbon = mol.add_atom(carbon());
+        for _ in 0..5 {
+            let hydrogen = mol.add_atom(Atom::new(Element::from_symbol("H").expect("hydrogen")));
+            mol.add_bond(carbon, hydrogen, BondOrder::Single)
+                .expect("bond");
+        }
+        perceive_ring_set(&mut mol);
+        let mut molecule = SmallMolecule { mol };
+        let before = molecule.clone();
+
+        let error = sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect_err("pentavalent carbon should fail valence");
+
+        assert!(matches!(error, SanitizeError::Valence(_)));
+        assert_eq!(molecule, before);
+    }
+
+    #[test]
+    fn failed_aromaticity_sanitization_is_transactional() {
+        let (mol, _, _) =
+            ring_molecule(&["Si", "C", "C", "C", "C", "C"], &[BondOrder::Aromatic; 6]);
+        let mut molecule = SmallMolecule { mol };
+        let before = molecule.clone();
+
+        let error = sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect_err("unsupported explicitly aromatic silicon should fail");
+
+        assert!(matches!(error, SanitizeError::Aromaticity(_)));
+        assert_eq!(molecule, before);
+    }
+
+    #[test]
+    fn successful_sanitization_is_idempotent() {
+        let mut molecule =
+            read_smiles_str("CCO", SmilesParseOptions).expect("ethanol should parse");
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("first sanitize should succeed");
+        let once = molecule.clone();
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("second sanitize should succeed");
+
+        assert_eq!(molecule, once);
+    }
+
+    #[test]
+    fn sanitize_cleanup_invalidates_preexisting_perception() {
+        let mut mol = Molecule::new();
+        let chlorine = mol.add_atom(Atom::new(Element::from_symbol("Cl").expect("chlorine")));
+        let oxygen = mol.add_atom(oxygen());
+        mol.add_bond(chlorine, oxygen, BondOrder::Double)
+            .expect("bond");
+        mark_all_fresh(&mut mol);
+        let mut molecule = SmallMolecule { mol };
+
+        sanitize_small_molecule(
+            &mut molecule,
+            SanitizeOptions {
+                perceive_valence: false,
+                perceive_rings: false,
+                perceive_aromaticity: false,
+            },
+        )
+        .expect("cleanup-only sanitize should succeed");
+
+        assert_all_stale(&molecule.mol);
+        assert_eq!(
+            molecule.mol.atom(chlorine).expect("chlorine").formal_charge,
+            1
+        );
+        assert_eq!(molecule.mol.atom(oxygen).expect("oxygen").formal_charge, -1);
+        assert_eq!(
+            molecule.mol.bond(BondId::new(0)).expect("bond").order,
+            BondOrder::Single
+        );
+    }
+
+    #[test]
     fn valence_reports_excess_common_valence() {
         let mut mol = Molecule::new();
         let c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("C")));
@@ -4224,7 +4565,8 @@ $$$$
 
         mol.add_bond(c, a, BondOrder::Single).expect("bond");
         assert_eq!(mol.perception().rings, ComputedState::Stale);
-        assert!(mol.ring_membership().is_some());
+        assert!(mol.ring_membership().is_none());
+        assert!(mol.ring_set().is_none());
     }
 
     #[test]
@@ -4739,6 +5081,40 @@ $$$$
             mol.bond(bond).expect("bond exists").props.get("source"),
             Some(&PropValue::Bool(true))
         );
+    }
+
+    #[test]
+    fn property_and_coordinate_edits_preserve_computed_state() {
+        let (mut mol, atoms, bonds) = ring_molecule(
+            &["C", "C", "C"],
+            &[BondOrder::Single, BondOrder::Single, BondOrder::Single],
+        );
+        perceive_ring_set(&mut mol);
+        mol.perception.valence = ComputedState::Fresh;
+        mol.perception.aromaticity = ComputedState::Fresh;
+        mol.perception.stereo = ComputedState::Fresh;
+        let before = mol.perception().clone();
+
+        mol.atom_mut(atoms[0])
+            .expect("atom exists")
+            .props
+            .insert("label".to_owned(), PropValue::String("a".to_owned()));
+        mol.bond_mut(bonds[0])
+            .expect("bond exists")
+            .props
+            .insert("score".to_owned(), PropValue::Int(1));
+        mol.props_mut()
+            .insert("name".to_owned(), PropValue::String("triangle".to_owned()));
+        let mut conformer = Conformer::new();
+        conformer.set_position(atoms[0], Point3::new(0.0, 0.0, 0.0));
+        let conformer_id = mol.add_conformer(conformer);
+        mol.conformer_mut(conformer_id)
+            .expect("conformer exists")
+            .set_position(atoms[1], Point3::new(1.0, 0.0, 0.0));
+
+        assert_eq!(mol.perception(), &before);
+        assert!(mol.ring_membership().is_some());
+        assert!(mol.ring_set().is_some());
     }
 
     #[test]

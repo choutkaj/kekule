@@ -10,6 +10,7 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - Reports ring membership for live atoms and bonds.
 - Ignores deleted graph slots.
 - Sets ring perception state to fresh after successful perception.
+- Cached membership is accessible only while ring perception remains fresh.
 
 ## Implementation Notes
 
@@ -17,6 +18,7 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - A bond is a ring bond exactly when it is not a bridge.
 - Ring atoms are atoms incident to at least one ring bond.
 - Handles disconnected components.
+- Topology or chemistry mutation clears cached membership rather than exposing stale results.
 
 ## Validation
 
@@ -31,3 +33,4 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 ## Revision Notes
 
 - v1: Graph-cycle membership perception.
+- v2: Hide and clear cached membership after invalidating mutations.

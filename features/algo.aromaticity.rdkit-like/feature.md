@@ -11,6 +11,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Marks supported aromatic atoms and bonds and sets aromaticity perception state to fresh.
 - Clears prior aromatic flags deterministically before assignment.
 - Can be run directly or through the explicit sanitization pipeline.
+- Returns `UnsupportedElement` for an explicitly aromatic ring containing an unsupported element instead of silently accepting that representation.
 
 ## Implementation Notes
 
@@ -43,3 +44,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v4: Add fused-component aromaticity and order-based electron counting for external PubChem fused-ring systems.
 - v5: Refine fused heteroaromatic handling and conservative ring-size/electron-count guards to pass PubChem-100.
 - v6: Add chalcogen heteroaromatic support and refine fused donor eligibility; PubChem-1000 still exposes fused aromatic bond-selection gaps.
+- v7: Reject unsupported elements in explicitly aromatic ring representations and preserve caller state when sanitization propagates the error.

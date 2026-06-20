@@ -14,7 +14,7 @@ The core graph must remain chemically general. Biomolecular hierarchy informatio
 
 ## Core graph
 
-The core crate owns typed IDs, atoms, bonds, molecule topology, conformers, arbitrary properties, and perception state. Mutation must invalidate computed chemistry state. Parsing and perception are separate operations: a parser should not silently perform full sanitization unless the public API says it does.
+The core crate owns typed IDs, atoms, bonds, molecule topology, conformers, arbitrary properties, and perception state. Scoped atom and bond mutation invalidates computed chemistry state only when chemistry-relevant fields change; property and coordinate edits remain state-neutral. Cached perception objects are exposed only while their state is fresh. Parsing and perception are separate operations: a parser should not silently perform full sanitization unless the public API says it does.
 
 ## Small molecules
 
