@@ -5,7 +5,9 @@
     <img src="./assets/molecules-logo.svg" alt="Molecules banner." width="25%" margin="auto">
 </div>
 
-
+<p align="center">
+  <img src="./assets/molecules-logo.svg" alt="Molecules banner." width="25%" margin="auto" />
+</p>
 
 
 
