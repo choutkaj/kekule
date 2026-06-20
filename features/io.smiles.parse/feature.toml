@@ -1,7 +1,7 @@
 id = "io.smiles.parse"
 title = "SMILES parser"
 area = "io"
-version = 1
+version = 2
 implemented = true
 validated = false
 description = "Parse a practical subset of SMILES into small molecules without implicit sanitization."

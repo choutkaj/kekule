@@ -1739,6 +1739,9 @@ pub struct SmallMolecule {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolParseOptions;
 
+const V2000_MAX_ATOMS: usize = 999;
+const V2000_MAX_BONDS: usize = 999;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfParseOptions {
     pub allow_missing_final_delimiter: bool,
@@ -1821,9 +1824,10 @@ pub fn read_sdf_v2000_records(
         if saw_delimiter || options.allow_missing_final_delimiter {
             records.push(parse_sdf_record(records.len() + 1, start_line, &current)?);
         } else {
+            let final_offset = current.len().saturating_sub(1);
             return Err(SdfParseError::new(
                 records.len() + 1,
-                start_line + current.len().saturating_sub(1),
+                checked_line_number(records.len() + 1, start_line, final_offset)?,
                 "missing final $$$$ record delimiter",
             ));
         }
@@ -1843,11 +1847,14 @@ fn parse_sdf_record(
         .position(|line| line.trim() == "M  END")
         .ok_or_else(|| SdfParseError::new(record, start_line, "missing M  END"))?;
     let mut molecule = parse_mol_v2000_lines(record, start_line, &lines[..=end_index])?;
+    let data_start = end_index
+        .checked_add(1)
+        .ok_or_else(|| SdfParseError::new(record, start_line, "SDF data offset overflow"))?;
     parse_sdf_data_fields(
         record,
-        start_line + end_index + 1,
+        checked_line_number(record, start_line, data_start)?,
         &mut molecule.mol,
-        &lines[end_index + 1..],
+        &lines[data_start..],
     )?;
     Ok(SdfRecord { title, molecule })
 }
@@ -1866,22 +1873,30 @@ fn parse_mol_v2000_lines(
     }
     let title = lines[0].to_owned();
     let counts = lines[3];
+    let counts_line = checked_line_number(record, start_line, 3)?;
     if counts.contains("V3000") {
         return Err(SdfParseError::new(
             record,
-            start_line + 3,
+            counts_line,
             "V3000 records are not supported by the V2000 parser",
         ));
     }
     if !counts.contains("V2000") {
         return Err(SdfParseError::new(
             record,
-            start_line + 3,
+            counts_line,
             "counts line must declare V2000",
         ));
     }
     let (atom_count, bond_count) = parse_counts_line(counts)
-        .ok_or_else(|| SdfParseError::new(record, start_line + 3, "invalid V2000 counts line"))?;
+        .ok_or_else(|| SdfParseError::new(record, counts_line, "invalid V2000 counts line"))?;
+    if atom_count > V2000_MAX_ATOMS || bond_count > V2000_MAX_BONDS {
+        return Err(SdfParseError::new(
+            record,
+            counts_line,
+            "V2000 counts exceed the supported 999 atom or bond limit",
+        ));
+    }
 
     let mut mol = Molecule::new();
     mol.props_mut()
@@ -1895,13 +1910,17 @@ fn parse_mol_v2000_lines(
         PropValue::String(lines[2].to_owned()),
     );
 
-    let atom_start = 4;
-    let bond_start = atom_start + atom_count;
-    let property_start = bond_start + bond_count;
+    let atom_start = 4usize;
+    let bond_start = atom_start.checked_add(atom_count).ok_or_else(|| {
+        SdfParseError::new(record, start_line, "V2000 atom block offset overflow")
+    })?;
+    let property_start = bond_start.checked_add(bond_count).ok_or_else(|| {
+        SdfParseError::new(record, start_line, "V2000 bond block offset overflow")
+    })?;
     if lines.len() < property_start {
         return Err(SdfParseError::new(
             record,
-            start_line + lines.len(),
+            checked_line_number(record, start_line, lines.len())?,
             "record ended before declared atom and bond blocks",
         ));
     }
@@ -1909,8 +1928,14 @@ fn parse_mol_v2000_lines(
     let mut atom_ids = Vec::with_capacity(atom_count);
     let mut conformer = Conformer::with_atom_capacity(atom_count);
     for atom_index in 0..atom_count {
-        let line_number = start_line + atom_start + atom_index;
-        let atom_line = lines[atom_start + atom_index];
+        let block_index = atom_start
+            .checked_add(atom_index)
+            .ok_or_else(|| SdfParseError::new(record, start_line, "V2000 atom index overflow"))?;
+        let line_number = checked_line_number(record, start_line, block_index)?;
+        let atom_line = lines
+            .get(block_index)
+            .copied()
+            .ok_or_else(|| SdfParseError::new(record, line_number, "truncated V2000 atom block"))?;
         let symbol = atom_symbol_from_v2000_line(atom_line)
             .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom line"))?;
         let element = Element::from_symbol(symbol).ok_or_else(|| {
@@ -1922,21 +1947,34 @@ fn parse_mol_v2000_lines(
         })?;
         let mut atom = Atom::new(element);
         apply_atom_v2000_fields(&mut atom, atom_line);
+        let point = atom_coordinates_from_v2000_line(atom_line)
+            .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom coordinates"))?;
         let atom_id = mol.add_atom(atom);
-        if let Some(point) = atom_coordinates_from_v2000_line(atom_line) {
-            conformer.set_position(atom_id, point);
-        }
+        conformer.set_position(atom_id, point);
         atom_ids.push(atom_id);
     }
 
     for bond_index in 0..bond_count {
-        let line_number = start_line + bond_start + bond_index;
-        let (a, b, order, stereo) = parse_v2000_bond_line(lines[bond_start + bond_index])
+        let block_index = bond_start
+            .checked_add(bond_index)
+            .ok_or_else(|| SdfParseError::new(record, start_line, "V2000 bond index overflow"))?;
+        let line_number = checked_line_number(record, start_line, block_index)?;
+        let bond_line = lines
+            .get(block_index)
+            .copied()
+            .ok_or_else(|| SdfParseError::new(record, line_number, "truncated V2000 bond block"))?;
+        let (a, b, order, stereo) = parse_v2000_bond_line(bond_line)
             .ok_or_else(|| SdfParseError::new(record, line_number, "invalid bond line"))?;
-        let a = atom_ids.get(a - 1).copied().ok_or_else(|| {
+        let a_index = a.checked_sub(1).ok_or_else(|| {
+            SdfParseError::new(record, line_number, "bond endpoint must be one-based")
+        })?;
+        let b_index = b.checked_sub(1).ok_or_else(|| {
+            SdfParseError::new(record, line_number, "bond endpoint must be one-based")
+        })?;
+        let a = atom_ids.get(a_index).copied().ok_or_else(|| {
             SdfParseError::new(record, line_number, "bond endpoint outside atom block")
         })?;
-        let b = atom_ids.get(b - 1).copied().ok_or_else(|| {
+        let b = atom_ids.get(b_index).copied().ok_or_else(|| {
             SdfParseError::new(record, line_number, "bond endpoint outside atom block")
         })?;
         let bond_id = mol.add_bond(a, b, order).map_err(|error| {
@@ -1949,14 +1987,21 @@ fn parse_mol_v2000_lines(
         }
     }
 
-    let end_index = lines[property_start..]
+    let property_line = checked_line_number(record, start_line, property_start)?;
+    let relative_end = lines[property_start..]
         .iter()
         .position(|line| line.trim() == "M  END")
-        .map(|index| property_start + index)
-        .ok_or_else(|| SdfParseError::new(record, start_line + property_start, "missing M  END"))?;
+        .ok_or_else(|| SdfParseError::new(record, property_line, "missing M  END"))?;
+    let end_index = property_start.checked_add(relative_end).ok_or_else(|| {
+        SdfParseError::new(
+            record,
+            property_line,
+            "V2000 property block offset overflow",
+        )
+    })?;
     parse_m_records(
         record,
-        start_line + property_start,
+        property_line,
         &mut mol,
         &atom_ids,
         &lines[property_start..end_index],
@@ -1969,8 +2014,12 @@ fn parse_mol_v2000_lines(
 }
 
 fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
-    if line.len() >= 6 {
-        if let (Ok(atoms), Ok(bonds)) = (line[0..3].trim().parse(), line[3..6].trim().parse()) {
+    if !line.is_ascii() {
+        return None;
+    }
+    if let (Some(atom_field), Some(bond_field)) = (ascii_field(line, 0, 3), ascii_field(line, 3, 6))
+    {
+        if let (Ok(atoms), Ok(bonds)) = (atom_field.trim().parse(), bond_field.trim().parse()) {
             return Some((atoms, bonds));
         }
     }
@@ -1979,19 +2028,41 @@ fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
 }
 
 fn atom_symbol_from_v2000_line(line: &str) -> Option<&str> {
-    line.get(31..34)
+    if !line.is_ascii() {
+        return None;
+    }
+    ascii_field(line, 31, 34)
         .map(str::trim)
         .filter(|symbol| !symbol.is_empty())
         .or_else(|| line.split_whitespace().nth(3))
 }
 
 fn atom_coordinates_from_v2000_line(line: &str) -> Option<Point3> {
+    if !line.is_ascii() {
+        return None;
+    }
+    if let (Some(x), Some(y), Some(z)) = (
+        ascii_field(line, 0, 10),
+        ascii_field(line, 10, 20),
+        ascii_field(line, 20, 30),
+    ) {
+        if let (Ok(x), Ok(y), Ok(z)) = (
+            x.trim().parse::<f64>(),
+            y.trim().parse::<f64>(),
+            z.trim().parse::<f64>(),
+        ) {
+            if x.is_finite() && y.is_finite() && z.is_finite() {
+                return Some(Point3::new(x, y, z));
+            }
+        }
+    }
     let fields = line.split_whitespace().collect::<Vec<_>>();
-    Some(Point3::new(
+    let point = Point3::new(
         fields.first()?.parse().ok()?,
         fields.get(1)?.parse().ok()?,
         fields.get(2)?.parse().ok()?,
-    ))
+    );
+    (point.x.is_finite() && point.y.is_finite() && point.z.is_finite()).then_some(point)
 }
 
 fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
@@ -2019,12 +2090,20 @@ fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
 }
 
 fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder, Option<BondStereo>)> {
-    let (a, b, order_code, stereo_code) = if line.len() >= 12 {
+    if !line.is_ascii() {
+        return None;
+    }
+    let (a, b, order_code, stereo_code) = if let (Some(a), Some(b), Some(order), Some(stereo)) = (
+        ascii_field(line, 0, 3),
+        ascii_field(line, 3, 6),
+        ascii_field(line, 6, 9),
+        ascii_field(line, 9, 12),
+    ) {
         (
-            line[0..3].trim().parse().ok()?,
-            line[3..6].trim().parse().ok()?,
-            line[6..9].trim().parse().ok()?,
-            line[9..12].trim().parse::<u8>().ok(),
+            a.trim().parse().ok()?,
+            b.trim().parse().ok()?,
+            order.trim().parse().ok()?,
+            stereo.trim().parse::<u8>().ok(),
         )
     } else {
         let mut fields = line.split_whitespace();
@@ -2049,6 +2128,20 @@ fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder, Option<
         Some(_) | None => None,
     };
     Some((a, b, order, stereo))
+}
+
+fn ascii_field(line: &str, start: usize, end: usize) -> Option<&str> {
+    std::str::from_utf8(line.as_bytes().get(start..end)?).ok()
+}
+
+fn checked_line_number(
+    record: usize,
+    start_line: usize,
+    offset: usize,
+) -> std::result::Result<usize, SdfParseError> {
+    start_line
+        .checked_add(offset)
+        .ok_or_else(|| SdfParseError::new(record, start_line, "line number overflow"))
 }
 
 fn parse_sdf_data_fields(
@@ -2104,7 +2197,9 @@ fn parse_m_records(
                     mol,
                     atom_ids,
                     |atom, value| {
-                        atom.formal_charge = value as i8;
+                        atom.formal_charge =
+                            i8::try_from(value).map_err(|_| "formal charge is outside i8 range")?;
+                        Ok(())
                     },
                 )?;
             }
@@ -2117,7 +2212,12 @@ fn parse_m_records(
                     mol,
                     atom_ids,
                     |atom, value| {
-                        atom.isotope = (value > 0).then_some(value as u16);
+                        atom.isotope = if value > 0 {
+                            Some(u16::try_from(value).map_err(|_| "isotope is outside u16 range")?)
+                        } else {
+                            None
+                        };
+                        Ok(())
                     },
                 )?;
             }
@@ -2134,8 +2234,9 @@ fn parse_m_records(
                             1 => 2,
                             2 => 1,
                             3 => 2,
-                            _ => 0,
+                            _ => return Err("unsupported M  RAD code"),
                         };
+                        Ok(())
                     },
                 )?;
             }
@@ -2155,13 +2256,20 @@ fn parse_atom_value_pairs<F>(
     mut apply: F,
 ) -> std::result::Result<(), SdfParseError>
 where
-    F: FnMut(&mut Atom, i32),
+    F: FnMut(&mut Atom, i32) -> std::result::Result<(), &'static str>,
 {
     let count = count
         .parse::<usize>()
         .map_err(|_| SdfParseError::new(record, line, "invalid M record count"))?;
-    if rest.len() < count * 2 {
-        return Err(SdfParseError::new(record, line, "truncated M record"));
+    let pair_fields = count
+        .checked_mul(2)
+        .ok_or_else(|| SdfParseError::new(record, line, "M record pair count overflow"))?;
+    if rest.len() != pair_fields {
+        return Err(SdfParseError::new(
+            record,
+            line,
+            "M record pair count does not match its fields",
+        ));
     }
     for pair in rest.chunks(2).take(count) {
         let atom_index = pair[0]
@@ -2170,14 +2278,17 @@ where
         let value = pair[1]
             .parse::<i32>()
             .map_err(|_| SdfParseError::new(record, line, "invalid M record value"))?;
+        let atom_offset = atom_index.checked_sub(1).ok_or_else(|| {
+            SdfParseError::new(record, line, "M record atom index must be one-based")
+        })?;
         let atom_id = atom_ids
-            .get(atom_index.saturating_sub(1))
+            .get(atom_offset)
             .copied()
             .ok_or_else(|| SdfParseError::new(record, line, "M record atom outside atom block"))?;
         let mut atom = mol
             .atom_mut(atom_id)
             .map_err(|error| SdfParseError::new(record, line, error.to_string()))?;
-        apply(&mut atom, value);
+        apply(&mut atom, value).map_err(|message| SdfParseError::new(record, line, message))?;
     }
     Ok(())
 }
@@ -2428,85 +2539,156 @@ pub fn read_smiles_str(
     let mut mol = Molecule::new();
     let mut current: Option<AtomId> = None;
     let mut stack = Vec::<AtomId>::new();
-    let mut pending_bond = BondOrder::Single;
-    let mut rings = BTreeMap::<char, (AtomId, BondOrder)>::new();
+    let mut pending_bond = None::<(BondOrder, usize)>;
+    let mut rings = BTreeMap::<usize, (AtomId, Option<BondOrder>, usize)>::new();
+    let mut component = 0usize;
+    let mut previous = SmilesTokenKind::Start;
     let mut cursor = 0;
     while cursor < chars.len() {
         let (offset, ch) = chars[cursor];
         match ch {
             '(' => {
+                if !matches!(
+                    previous,
+                    SmilesTokenKind::Atom | SmilesTokenKind::Ring | SmilesTokenKind::BranchClose
+                ) || pending_bond.is_some()
+                {
+                    return Err(SmilesParseError::new(offset, "invalid branch start"));
+                }
                 let atom =
                     current.ok_or_else(|| SmilesParseError::new(offset, "branch without atom"))?;
                 stack.push(atom);
+                previous = SmilesTokenKind::BranchOpen;
                 cursor += 1;
             }
             ')' => {
+                if matches!(
+                    previous,
+                    SmilesTokenKind::Start
+                        | SmilesTokenKind::BranchOpen
+                        | SmilesTokenKind::Bond
+                        | SmilesTokenKind::Dot
+                ) {
+                    return Err(SmilesParseError::new(offset, "empty or incomplete branch"));
+                }
                 current = Some(
                     stack
                         .pop()
                         .ok_or_else(|| SmilesParseError::new(offset, "unmatched branch close"))?,
                 );
+                previous = SmilesTokenKind::BranchClose;
                 cursor += 1;
             }
             '.' => {
+                if current.is_none()
+                    || pending_bond.is_some()
+                    || !stack.is_empty()
+                    || matches!(
+                        previous,
+                        SmilesTokenKind::Start
+                            | SmilesTokenKind::BranchOpen
+                            | SmilesTokenKind::Bond
+                            | SmilesTokenKind::Dot
+                    )
+                {
+                    return Err(SmilesParseError::new(offset, "invalid component separator"));
+                }
                 current = None;
-                pending_bond = BondOrder::Single;
+                component = component
+                    .checked_add(1)
+                    .ok_or_else(|| SmilesParseError::new(offset, "component counter overflow"))?;
+                previous = SmilesTokenKind::Dot;
                 cursor += 1;
             }
-            '-' => {
-                pending_bond = BondOrder::Single;
+            '-' | '=' | '#' | ':' => {
+                if current.is_none()
+                    || pending_bond.is_some()
+                    || !matches!(
+                        previous,
+                        SmilesTokenKind::Atom
+                            | SmilesTokenKind::Ring
+                            | SmilesTokenKind::BranchClose
+                            | SmilesTokenKind::BranchOpen
+                    )
+                {
+                    return Err(SmilesParseError::new(offset, "bond without left endpoint"));
+                }
+                let order = match ch {
+                    '-' => BondOrder::Single,
+                    '=' => BondOrder::Double,
+                    '#' => BondOrder::Triple,
+                    ':' => BondOrder::Aromatic,
+                    _ => unreachable!(),
+                };
+                pending_bond = Some((order, offset));
+                previous = SmilesTokenKind::Bond;
                 cursor += 1;
             }
-            '=' => {
-                pending_bond = BondOrder::Double;
-                cursor += 1;
-            }
-            '#' => {
-                pending_bond = BondOrder::Triple;
-                cursor += 1;
-            }
-            ':' => {
-                pending_bond = BondOrder::Aromatic;
-                cursor += 1;
-            }
-            '0'..='9' => {
+            '0'..='9' | '%' => {
                 let atom = current
                     .ok_or_else(|| SmilesParseError::new(offset, "ring closure without atom"))?;
-                if let Some((other, order)) = rings.remove(&ch) {
-                    let order = if pending_bond == BondOrder::Single {
-                        order
-                    } else {
-                        pending_bond
-                    };
+                let (label, next_cursor) = parse_smiles_ring_label(&chars, cursor)?;
+                let close_order = pending_bond.take().map(|(order, _)| order);
+                if let Some((other, open_order, open_component)) = rings.remove(&label) {
+                    if open_component != component {
+                        return Err(SmilesParseError::new(
+                            offset,
+                            "ring closure crosses a component separator",
+                        ));
+                    }
+                    if open_order.is_some() && close_order.is_some() && open_order != close_order {
+                        return Err(SmilesParseError::new(
+                            offset,
+                            "conflicting ring bond symbols",
+                        ));
+                    }
+                    let order = close_order.or(open_order).unwrap_or(BondOrder::Single);
                     mol.add_bond(other, atom, order)
                         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-                    pending_bond = BondOrder::Single;
                 } else {
-                    rings.insert(ch, (atom, pending_bond));
-                    pending_bond = BondOrder::Single;
+                    rings.insert(label, (atom, close_order, component));
                 }
-                cursor += 1;
+                previous = SmilesTokenKind::Ring;
+                cursor = next_cursor;
             }
             '[' => {
                 let (atom, next_cursor) = parse_bracket_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
                 if let Some(previous) = current {
-                    mol.add_bond(previous, atom_id, pending_bond)
+                    let order = pending_bond
+                        .take()
+                        .map(|(order, _)| order)
+                        .unwrap_or(BondOrder::Single);
+                    mol.add_bond(previous, atom_id, order)
                         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                } else if pending_bond.is_some() {
+                    return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
                 current = Some(atom_id);
-                pending_bond = BondOrder::Single;
+                previous = SmilesTokenKind::Atom;
                 cursor = next_cursor;
+            }
+            '@' | '/' | '\\' | '*' => {
+                return Err(SmilesParseError::new(
+                    offset,
+                    "unsupported stereochemistry or query syntax",
+                ));
             }
             _ => {
                 let (atom, next_cursor) = parse_organic_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
                 if let Some(previous) = current {
-                    mol.add_bond(previous, atom_id, pending_bond)
+                    let order = pending_bond
+                        .take()
+                        .map(|(order, _)| order)
+                        .unwrap_or(BondOrder::Single);
+                    mol.add_bond(previous, atom_id, order)
                         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                } else if pending_bond.is_some() {
+                    return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
                 current = Some(atom_id);
-                pending_bond = BondOrder::Single;
+                previous = SmilesTokenKind::Atom;
                 cursor = next_cursor;
             }
         }
@@ -2517,7 +2699,51 @@ pub fn read_smiles_str(
     if !rings.is_empty() {
         return Err(SmilesParseError::new(input.len(), "unclosed ring closure"));
     }
+    if let Some((_, offset)) = pending_bond {
+        return Err(SmilesParseError::new(offset, "bond without right endpoint"));
+    }
+    if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
+        return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
+    }
     Ok(SmallMolecule { mol })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmilesTokenKind {
+    Start,
+    Atom,
+    BranchOpen,
+    BranchClose,
+    Bond,
+    Ring,
+    Dot,
+}
+
+fn parse_smiles_ring_label(
+    chars: &[(usize, char)],
+    cursor: usize,
+) -> std::result::Result<(usize, usize), SmilesParseError> {
+    let (offset, ch) = chars[cursor];
+    if ch != '%' {
+        return Ok(((ch as u8 - b'0') as usize, cursor + 1));
+    }
+    let first = chars
+        .get(cursor + 1)
+        .filter(|(_, ch)| ch.is_ascii_digit())
+        .ok_or_else(|| SmilesParseError::new(offset, "malformed percent ring label"))?;
+    let second = chars
+        .get(cursor + 2)
+        .filter(|(_, ch)| ch.is_ascii_digit())
+        .ok_or_else(|| SmilesParseError::new(offset, "malformed percent ring label"))?;
+    let label = first.1.to_digit(10).unwrap_or(0) as usize * 10
+        + second.1.to_digit(10).unwrap_or(0) as usize;
+    if label < 10 {
+        return Err(SmilesParseError::new(
+            offset,
+            "percent ring labels must be between 10 and 99",
+        ));
+    }
+    Ok((label, cursor + 3))
 }
 
 fn parse_organic_atom(
@@ -2528,14 +2754,18 @@ fn parse_organic_atom(
     let mut symbol = ch.to_string();
     let mut aromatic = false;
     let mut next = cursor + 1;
-    if matches!(ch, 'B' | 'C') && chars.get(cursor + 1).map(|(_, c)| *c) == Some('l')
-        || ch == 'B' && chars.get(cursor + 1).map(|(_, c)| *c) == Some('r')
-    {
+    let following = chars.get(cursor + 1).map(|(_, c)| *c);
+    if (ch == 'C' && following == Some('l')) || (ch == 'B' && following == Some('r')) {
         symbol.push(chars[cursor + 1].1);
         next += 1;
     } else if matches!(ch, 'b' | 'c' | 'n' | 'o' | 'p' | 's') {
         symbol = ch.to_ascii_uppercase().to_string();
         aromatic = true;
+    } else if !matches!(ch, 'B' | 'C' | 'N' | 'O' | 'P' | 'S' | 'F' | 'I') {
+        return Err(SmilesParseError::new(
+            offset,
+            format!("unsupported organic-subset atom `{ch}`"),
+        ));
     }
     let element = Element::from_symbol(&symbol)
         .ok_or_else(|| SmilesParseError::new(offset, format!("unsupported atom `{ch}`")))?;
@@ -2560,86 +2790,182 @@ fn parse_bracket_atom(
         .iter()
         .map(|(_, c)| *c)
         .collect::<String>();
+    if text.is_empty() {
+        return Err(SmilesParseError::new(start, "empty bracket atom"));
+    }
+    if !text.is_ascii() {
+        return Err(SmilesParseError::new(
+            start,
+            "bracket atom must use ASCII syntax",
+        ));
+    }
+    let bytes = text.as_bytes();
     let mut index = 0;
-    let isotope_digits = take_digits(&text, &mut index);
-    let symbol = take_element_symbol(&text, &mut index)
-        .ok_or_else(|| SmilesParseError::new(start, "bracket atom missing element"))?;
-    let mut aromatic = false;
-    let canonical_symbol = if symbol.chars().next().is_some_and(char::is_lowercase) {
-        aromatic = true;
-        let mut chars = symbol.chars();
-        let first = chars.next().expect("symbol has first").to_ascii_uppercase();
-        format!("{first}{}", chars.as_str())
+    let isotope_end = ascii_digits_end(bytes, index);
+    let isotope = if isotope_end > index {
+        let value = text[index..isotope_end]
+            .parse::<u16>()
+            .map_err(|_| SmilesParseError::new(start + 1 + index, "invalid isotope"))?;
+        if value == 0 {
+            return Err(SmilesParseError::new(
+                start + 1 + index,
+                "isotope must be positive",
+            ));
+        }
+        index = isotope_end;
+        Some(value)
     } else {
-        symbol
+        None
     };
-    let element = Element::from_symbol(&canonical_symbol)
-        .ok_or_else(|| SmilesParseError::new(start, "unsupported bracket element"))?;
+    let symbol_start = index;
+    let first = *bytes
+        .get(index)
+        .ok_or_else(|| SmilesParseError::new(start, "bracket atom missing element"))?;
+    let aromatic = first.is_ascii_lowercase();
+    let canonical_symbol = if aromatic {
+        let symbol = match first {
+            b'b' => "B",
+            b'c' => "C",
+            b'n' => "N",
+            b'o' => "O",
+            b'p' => "P",
+            b's' => "S",
+            _ => {
+                return Err(SmilesParseError::new(
+                    start + 1 + index,
+                    "unsupported aromatic bracket element",
+                ))
+            }
+        };
+        index += 1;
+        symbol.to_owned()
+    } else if first.is_ascii_uppercase() {
+        index += 1;
+        if bytes.get(index).is_some_and(u8::is_ascii_lowercase) {
+            index += 1;
+        }
+        text[symbol_start..index].to_owned()
+    } else {
+        return Err(SmilesParseError::new(
+            start + 1 + index,
+            "bracket atom missing element",
+        ));
+    };
+    let element = Element::from_symbol(&canonical_symbol).ok_or_else(|| {
+        SmilesParseError::new(start + 1 + symbol_start, "unsupported bracket element")
+    })?;
     let mut atom = Atom::new(element);
     atom.aromatic = aromatic;
-    if !isotope_digits.is_empty() {
-        atom.isotope = isotope_digits.parse::<u16>().ok();
-    }
+    atom.isotope = isotope;
+    let mut saw_hydrogen = false;
+    let mut saw_charge = false;
+    let mut saw_map = false;
     while index < text.len() {
-        let rest = &text[index..];
-        if let Some(after_h) = rest.strip_prefix('H') {
-            index += 1;
-            let mut h_index = 0;
-            let digits = take_digits(after_h, &mut h_index);
-            atom.explicit_hydrogens = if digits.is_empty() {
-                1
-            } else {
-                digits.parse().unwrap_or(0)
-            };
-            index += h_index;
-        } else if rest.starts_with('+') || rest.starts_with('-') {
-            let sign = if rest.starts_with('+') { 1 } else { -1 };
-            index += 1;
-            let mut repeats = 1i8;
-            while text[index..].starts_with(if sign > 0 { '+' } else { '-' }) {
-                repeats += 1;
+        match bytes[index] {
+            b'H' if !saw_hydrogen && !saw_charge && !saw_map => {
+                saw_hydrogen = true;
                 index += 1;
+                let digit_end = ascii_digits_end(bytes, index);
+                atom.explicit_hydrogens = if digit_end == index {
+                    1
+                } else {
+                    let value = text[index..digit_end].parse::<u8>().map_err(|_| {
+                        SmilesParseError::new(start + 1 + index, "invalid hydrogen count")
+                    })?;
+                    if value == 0 {
+                        return Err(SmilesParseError::new(
+                            start + 1 + index,
+                            "hydrogen count must be positive",
+                        ));
+                    }
+                    index = digit_end;
+                    value
+                };
             }
-            let mut charge_index = 0;
-            let digits = take_digits(&text[index..], &mut charge_index);
-            if !digits.is_empty() {
-                repeats = digits.parse().unwrap_or(repeats);
-                index += charge_index;
+            b'+' | b'-' if !saw_charge && !saw_map => {
+                saw_charge = true;
+                let sign_byte = bytes[index];
+                let sign = if sign_byte == b'+' { 1i16 } else { -1i16 };
+                index += 1;
+                let mut magnitude = 1u16;
+                while bytes.get(index) == Some(&sign_byte) {
+                    magnitude = magnitude.checked_add(1).ok_or_else(|| {
+                        SmilesParseError::new(start + 1 + index, "charge overflow")
+                    })?;
+                    index += 1;
+                }
+                let digit_end = ascii_digits_end(bytes, index);
+                if digit_end > index {
+                    if magnitude != 1 {
+                        return Err(SmilesParseError::new(
+                            start + 1 + index,
+                            "charge cannot mix repeated signs and digits",
+                        ));
+                    }
+                    magnitude = text[index..digit_end]
+                        .parse::<u16>()
+                        .map_err(|_| SmilesParseError::new(start + 1 + index, "invalid charge"))?;
+                    if magnitude == 0 {
+                        return Err(SmilesParseError::new(
+                            start + 1 + index,
+                            "charge magnitude must be positive",
+                        ));
+                    }
+                    index = digit_end;
+                }
+                let charge =
+                    sign.checked_mul(i16::try_from(magnitude).map_err(|_| {
+                        SmilesParseError::new(start + 1 + index, "charge overflow")
+                    })?)
+                    .ok_or_else(|| SmilesParseError::new(start + 1 + index, "charge overflow"))?;
+                atom.formal_charge = i8::try_from(charge).map_err(|_| {
+                    SmilesParseError::new(start + 1 + index, "charge is outside i8 range")
+                })?;
             }
-            atom.formal_charge = sign * repeats;
-        } else if let Some(after_colon) = rest.strip_prefix(':') {
-            let mut map_index = 0;
-            let digits = take_digits(after_colon, &mut map_index);
-            atom.atom_map = digits.parse::<u32>().ok();
-            index += 1 + map_index;
-        } else {
-            index += 1;
+            b':' if !saw_map => {
+                saw_map = true;
+                index += 1;
+                let digit_end = ascii_digits_end(bytes, index);
+                if digit_end == index {
+                    return Err(SmilesParseError::new(
+                        start + 1 + index,
+                        "atom map requires digits",
+                    ));
+                }
+                let map = text[index..digit_end]
+                    .parse::<u32>()
+                    .map_err(|_| SmilesParseError::new(start + 1 + index, "invalid atom map"))?;
+                if map == 0 {
+                    return Err(SmilesParseError::new(
+                        start + 1 + index,
+                        "atom map must be positive",
+                    ));
+                }
+                atom.atom_map = Some(map);
+                index = digit_end;
+            }
+            b'@' | b'/' | b'\\' | b'*' => {
+                return Err(SmilesParseError::new(
+                    start + 1 + index,
+                    "unsupported stereochemistry or query syntax",
+                ));
+            }
+            _ => {
+                return Err(SmilesParseError::new(
+                    start + 1 + index,
+                    "unsupported bracket atom syntax",
+                ));
+            }
         }
     }
     Ok((atom, end + 1))
 }
 
-fn take_digits(text: &str, index: &mut usize) -> String {
-    let start = *index;
-    while *index < text.len() && text.as_bytes()[*index].is_ascii_digit() {
-        *index += 1;
+fn ascii_digits_end(bytes: &[u8], mut index: usize) -> usize {
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
     }
-    text[start..*index].to_owned()
-}
-
-fn take_element_symbol(text: &str, index: &mut usize) -> Option<String> {
-    let bytes = text.as_bytes();
-    if *index >= bytes.len() || !bytes[*index].is_ascii_alphabetic() {
-        return None;
-    }
-    let mut symbol = String::new();
-    symbol.push(bytes[*index] as char);
-    *index += 1;
-    if *index < bytes.len() && bytes[*index].is_ascii_lowercase() {
-        symbol.push(bytes[*index] as char);
-        *index += 1;
-    }
-    Some(symbol)
+    index
 }
 
 pub fn write_smiles(
@@ -3229,11 +3555,21 @@ impl std::error::Error for BioHierarchyError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MmcifParseOptions {
     pub strict: bool,
+    pub max_input_bytes: usize,
+    pub max_tokens: usize,
+    pub max_token_bytes: usize,
+    pub max_atom_site_rows: usize,
 }
 
 impl Default for MmcifParseOptions {
     fn default() -> Self {
-        Self { strict: true }
+        Self {
+            strict: true,
+            max_input_bytes: 256 * 1024 * 1024,
+            max_tokens: 10_000_000,
+            max_token_bytes: 16 * 1024 * 1024,
+            max_atom_site_rows: 5_000_000,
+        }
     }
 }
 
@@ -3268,7 +3604,7 @@ pub fn read_mmcif_str(
     input: &str,
     options: MmcifParseOptions,
 ) -> std::result::Result<MacroMolecule, MmcifParseError> {
-    let tokens = tokenize_mmcif(input)?;
+    let tokens = tokenize_mmcif(input, options)?;
     let atom_site_loop = find_atom_site_loop(&tokens)
         .ok_or_else(|| MmcifParseError::new(1, "missing _atom_site loop"))?;
     build_macro_molecule_from_atom_site_loop(atom_site_loop, options)
@@ -3286,7 +3622,16 @@ struct MmcifLoop<'a> {
     values: Vec<&'a MmcifToken>,
 }
 
-fn tokenize_mmcif(input: &str) -> std::result::Result<Vec<MmcifToken>, MmcifParseError> {
+fn tokenize_mmcif(
+    input: &str,
+    options: MmcifParseOptions,
+) -> std::result::Result<Vec<MmcifToken>, MmcifParseError> {
+    if input.len() > options.max_input_bytes {
+        return Err(MmcifParseError::new(
+            1,
+            "input exceeds configured byte limit",
+        ));
+    }
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
     let lines = normalized.lines().collect::<Vec<_>>();
     let mut tokens = Vec::new();
@@ -3302,6 +3647,16 @@ fn tokenize_mmcif(input: &str) -> std::result::Result<Vec<MmcifToken>, MmcifPars
                 if !text.is_empty() {
                     text.push('\n');
                 }
+                let next_len = text
+                    .len()
+                    .checked_add(lines[line_index].len())
+                    .ok_or_else(|| MmcifParseError::new(line_number, "token length overflow"))?;
+                if next_len > options.max_token_bytes {
+                    return Err(MmcifParseError::new(
+                        line_number,
+                        "semicolon value exceeds configured token limit",
+                    ));
+                }
                 text.push_str(lines[line_index]);
                 line_index += 1;
             }
@@ -3311,10 +3666,7 @@ fn tokenize_mmcif(input: &str) -> std::result::Result<Vec<MmcifToken>, MmcifPars
                     "unterminated semicolon text",
                 ));
             }
-            tokens.push(MmcifToken {
-                text,
-                line: line_number,
-            });
+            push_mmcif_token(&mut tokens, text, line_number, options)?;
             line_index += 1;
             continue;
         }
@@ -3354,15 +3706,34 @@ fn tokenize_mmcif(input: &str) -> std::result::Result<Vec<MmcifToken>, MmcifPars
                 }
                 line[start..column].to_owned()
             };
-            tokens.push(MmcifToken {
-                text,
-                line: line_number,
-            });
+            push_mmcif_token(&mut tokens, text, line_number, options)?;
         }
         line_index += 1;
     }
 
     Ok(tokens)
+}
+
+fn push_mmcif_token(
+    tokens: &mut Vec<MmcifToken>,
+    text: String,
+    line: usize,
+    options: MmcifParseOptions,
+) -> std::result::Result<(), MmcifParseError> {
+    if text.len() > options.max_token_bytes {
+        return Err(MmcifParseError::new(
+            line,
+            "value exceeds configured token limit",
+        ));
+    }
+    if tokens.len() >= options.max_tokens {
+        return Err(MmcifParseError::new(
+            line,
+            "input exceeds configured token count",
+        ));
+    }
+    tokens.push(MmcifToken { text, line });
+    Ok(())
 }
 
 fn find_atom_site_loop(tokens: &[MmcifToken]) -> Option<MmcifLoop<'_>> {
@@ -3402,12 +3773,20 @@ fn build_macro_molecule_from_atom_site_loop(
 ) -> std::result::Result<MacroMolecule, MmcifParseError> {
     let width = atom_loop.tags.len();
     if width == 0 || atom_loop.values.len() % width != 0 {
+        let line = atom_loop.values.last().map(|token| token.line).unwrap_or(1);
+        return Err(MmcifParseError::new(line, "atom-site loop has ragged rows"));
+    }
+    let row_count = atom_loop.values.len() / width;
+    if row_count > options.max_atom_site_rows {
         let line = atom_loop
             .values
             .first()
             .map(|token| token.line)
             .unwrap_or(1);
-        return Err(MmcifParseError::new(line, "atom-site loop has ragged rows"));
+        return Err(MmcifParseError::new(
+            line,
+            "atom-site loop exceeds configured row limit",
+        ));
     }
 
     let tag_index = atom_loop
@@ -3683,9 +4062,16 @@ fn optional_f64_mmcif_value(
 ) -> std::result::Result<Option<f64>, MmcifParseError> {
     optional_mmcif_value(row, tag_index, tag)
         .map(|value| {
-            value
+            let parsed = value
                 .parse()
-                .map_err(|_| MmcifParseError::new(line, format!("invalid float {tag}")))
+                .map_err(|_| MmcifParseError::new(line, format!("invalid float {tag}")))?;
+            if !f64::is_finite(parsed) {
+                return Err(MmcifParseError::new(
+                    line,
+                    format!("non-finite float {tag}"),
+                ));
+            }
+            Ok(parsed)
         })
         .transpose()
 }
@@ -3784,6 +4170,27 @@ mod tests {
         let mut ids = ids.into_iter().collect::<Vec<_>>();
         ids.sort();
         ids
+    }
+
+    fn deterministic_text_mutations(seed: &str) -> Vec<String> {
+        let mut mutations = vec![String::new(), seed.to_owned()];
+        for index in 0..=seed.len().min(128) {
+            for inserted in ["\0", "\n", "%", "[", "]", "é"] {
+                let mut value = seed.to_owned();
+                value.insert_str(index, inserted);
+                mutations.push(value);
+            }
+            if index < seed.len() {
+                let mut removed = seed.to_owned();
+                removed.remove(index);
+                mutations.push(removed);
+
+                let mut replaced = seed.to_owned();
+                replaced.replace_range(index..index + 1, "\u{7f}");
+                mutations.push(replaced);
+            }
+        }
+        mutations
     }
 
     fn mark_all_fresh(mol: &mut Molecule) {
@@ -4124,6 +4531,56 @@ $$$$
     }
 
     #[test]
+    fn v2000_malformed_structural_fields_return_errors_without_panicking() {
+        let cases = [
+            (
+                "zero endpoint",
+                "Bad\nmolecules\n\n  1  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n  0  1  1  0  0  0  0\nM  END\n",
+            ),
+            (
+                "non-ASCII counts",
+                "Bad\nmolecules\n\né  1  0  0  0  0            999 V2000\nM  END\n",
+            ),
+            (
+                "non-ASCII atom",
+                "Bad\nmolecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 Cé  0  0  0  0  0  0\nM  END\n",
+            ),
+            (
+                "truncated atom",
+                "Bad\nmolecules\n\n  1  0  0  0  0  0            999 V2000\n0.0 C\nM  END\n",
+            ),
+            (
+                "non-ASCII bond",
+                "Bad\nmolecules\n\n  1  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n  1  é  1  0\nM  END\n",
+            ),
+            (
+                "count over format limit",
+                "Bad\nmolecules\n\n1000 0 V2000\nM  END\n",
+            ),
+            (
+                "inconsistent counts",
+                "Bad\nmolecules\n\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n",
+            ),
+            (
+                "truncated M record",
+                "Bad\nmolecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  CHG  2   1   1\nM  END\n",
+            ),
+            (
+                "zero M-record atom",
+                "Bad\nmolecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  CHG  1   0   1\nM  END\n",
+            ),
+        ];
+
+        for (name, input) in cases {
+            let parsed = std::panic::catch_unwind(|| read_mol_v2000_str(input))
+                .unwrap_or_else(|_| panic!("{name} panicked"));
+            let error = parsed.expect_err("malformed V2000 input should fail");
+            assert!(error.line >= 1, "line for {name}");
+            assert!(!error.message.is_empty(), "message for {name}");
+        }
+    }
+
+    #[test]
     fn sdf_v2000_parse_does_not_perceive_chemistry() {
         let input = "\
 Benzene-ish
@@ -4435,6 +4892,22 @@ $$$$
         assert_eq!(bracket_atom.explicit_hydrogens, 4);
         assert_eq!(bracket_atom.formal_charge, 1);
         assert_eq!(bracket_atom.atom_map, Some(7));
+    }
+
+    #[test]
+    fn malformed_smiles_returns_errors_without_panicking() {
+        let cases = [
+            "C(", "C1", "C%1", "C%a1", "C=", "=C", "C..C", "C1.C1", "[]", "[13]", "[é]", "[C@H]",
+            "[C/]", "[C+999]", "[C:]", "[Clx]", "Cé",
+        ];
+
+        for input in cases {
+            let parsed = std::panic::catch_unwind(|| read_smiles_str(input, SmilesParseOptions))
+                .unwrap_or_else(|_| panic!("`{input}` panicked"));
+            let error = parsed.expect_err("malformed SMILES should fail");
+            assert!(error.offset <= input.len(), "offset for `{input}`");
+            assert!(!error.message.is_empty(), "message for `{input}`");
+        }
     }
 
     #[test]
@@ -5465,6 +5938,143 @@ Xx CA GLY A
         let err = read_mmcif_str(unknown_element, MmcifParseOptions::default())
             .expect_err("unknown element should fail");
         assert!(err.message.contains("unknown atom-site element"));
+    }
+
+    #[test]
+    fn malformed_mmcif_returns_located_errors_without_panicking() {
+        let cases = [
+            ("unterminated quote", "data_x\n_tag 'unterminated\n", 2),
+            ("unterminated semicolon", "data_x\n;\nvalue\n", 2),
+            (
+                "ragged loop",
+                "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\nC C1 O\n",
+                5,
+            ),
+            (
+                "integer overflow",
+                "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\nC C1 BEN A 999999999999999999999\n",
+                8,
+            ),
+            (
+                "float overflow",
+                "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nC C1 BEN A 1 1e999 0 0\n",
+                11,
+            ),
+        ];
+
+        for (name, input, expected_line) in cases {
+            let parsed =
+                std::panic::catch_unwind(|| read_mmcif_str(input, MmcifParseOptions::default()))
+                    .unwrap_or_else(|_| panic!("{name} panicked"));
+            let error = parsed.expect_err("malformed mmCIF should fail");
+            assert_eq!(error.line, expected_line, "line for {name}");
+            assert!(!error.message.is_empty(), "message for {name}");
+        }
+    }
+
+    #[test]
+    fn deterministic_parser_fuzz_smoke_is_panic_free() {
+        let mol_seed = "Methane\n  molecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
+        for input in deterministic_text_mutations(mol_seed) {
+            std::panic::catch_unwind(|| {
+                if let Ok(molecule) = read_mol_v2000_str(&input) {
+                    if let Ok(output) = write_mol_v2000(&molecule) {
+                        let _ = read_mol_v2000_str(&output);
+                    }
+                }
+            })
+            .expect("Molfile parser smoke mutation panicked");
+        }
+
+        let sdf_seed = format!("{mol_seed}$$$$\n");
+        for input in deterministic_text_mutations(&sdf_seed) {
+            std::panic::catch_unwind(|| {
+                if let Ok(records) = read_sdf_v2000_records(
+                    &input,
+                    SdfParseOptions {
+                        allow_missing_final_delimiter: true,
+                    },
+                ) {
+                    let molecules = records
+                        .into_iter()
+                        .map(|record| record.molecule)
+                        .collect::<Vec<_>>();
+                    if let Ok(output) = write_sdf_v2000(&molecules) {
+                        let _ = read_sdf_v2000_records(&output, SdfParseOptions::default());
+                    }
+                }
+            })
+            .expect("SDF parser smoke mutation panicked");
+        }
+
+        for input in deterministic_text_mutations("CC(=O)O") {
+            std::panic::catch_unwind(|| {
+                if let Ok(molecule) = read_smiles_str(&input, SmilesParseOptions) {
+                    if let Ok(output) = write_smiles(&molecule, SmilesWriteOptions) {
+                        let _ = read_smiles_str(&output, SmilesParseOptions);
+                    }
+                }
+            })
+            .expect("SMILES parser smoke mutation panicked");
+        }
+
+        let mmcif_seed = "data_tiny\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\nC C1 LIG A 1\n";
+        for input in deterministic_text_mutations(mmcif_seed) {
+            std::panic::catch_unwind(|| {
+                if let Ok(molecule) = read_mmcif_str(&input, MmcifParseOptions::default()) {
+                    for atom in molecule.mol.atom_ids() {
+                        let _ = molecule.mol.atom(atom);
+                        let _ = molecule.hierarchy.atom_site_for_atom(atom);
+                    }
+                }
+            })
+            .expect("mmCIF parser smoke mutation panicked");
+        }
+    }
+
+    #[test]
+    fn mmcif_parse_options_enforce_documented_resource_limits() {
+        let input = "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\nC C1 BEN A 1\n";
+
+        let input_error = read_mmcif_str(
+            input,
+            MmcifParseOptions {
+                max_input_bytes: input.len() - 1,
+                ..MmcifParseOptions::default()
+            },
+        )
+        .expect_err("input byte limit should fail");
+        assert!(input_error.message.contains("byte limit"));
+
+        let token_error = read_mmcif_str(
+            input,
+            MmcifParseOptions {
+                max_tokens: 2,
+                ..MmcifParseOptions::default()
+            },
+        )
+        .expect_err("token count limit should fail");
+        assert!(token_error.message.contains("token count"));
+
+        let value_error = read_mmcif_str(
+            input,
+            MmcifParseOptions {
+                max_token_bytes: 2,
+                ..MmcifParseOptions::default()
+            },
+        )
+        .expect_err("token byte limit should fail");
+        assert!(value_error.message.contains("token limit"));
+
+        let row_error = read_mmcif_str(
+            input,
+            MmcifParseOptions {
+                max_atom_site_rows: 0,
+                ..MmcifParseOptions::default()
+            },
+        )
+        .expect_err("row limit should fail");
+        assert!(row_error.message.contains("row limit"));
     }
 
     #[test]

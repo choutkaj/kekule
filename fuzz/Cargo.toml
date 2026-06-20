@@ -1,0 +1,43 @@
+[package]
+name = "molecules-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+molecules = { path = "../crates/molecules" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "mol_v2000"
+path = "fuzz_targets/mol_v2000.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sdf_v2000"
+path = "fuzz_targets/sdf_v2000.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "smiles"
+path = "fuzz_targets/smiles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mmcif"
+path = "fuzz_targets/mmcif.rs"
+test = false
+doc = false
+bench = false

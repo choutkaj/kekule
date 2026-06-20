@@ -21,3 +21,15 @@ jobs:
       - run: cargo xtask skills --check
       - run: cargo xtask corpus check --corpus tiny --require-data
       - run: cargo xtask validate --feature all --corpus tiny
+
+  fuzz-smoke:
+    name: Parser fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - run: cargo +nightly fuzz run mol_v2000 -- -runs=256 -max_len=4096 -seed=1
+      - run: cargo +nightly fuzz run sdf_v2000 -- -runs=256 -max_len=4096 -seed=2
+      - run: cargo +nightly fuzz run smiles -- -runs=256 -max_len=4096 -seed=3
+      - run: cargo +nightly fuzz run mmcif -- -runs=256 -max_len=4096 -seed=4

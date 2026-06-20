@@ -1,0 +1,5 @@
+data_bad
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+C C1 O

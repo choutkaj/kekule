@@ -10,6 +10,8 @@
 __pycache__/
 .pytest_cache/
 .mypy_cache/
+fuzz/artifacts/
+fuzz/target/
 validation/corpora/*/data/
 !validation/corpora/tiny/data/
 !validation/corpora/tiny/data/**
