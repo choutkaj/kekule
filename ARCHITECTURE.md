@@ -16,6 +16,20 @@ The core graph must remain chemically general. Biomolecular hierarchy informatio
 
 The core crate owns typed IDs, atoms, bonds, molecule topology, conformers, arbitrary properties, and perception state. Scoped atom and bond mutation invalidates computed chemistry state only when chemistry-relevant fields change; property and coordinate edits remain state-neutral. Cached perception objects are exposed only while their state is fresh. Parsing and perception are separate operations: a parser should not silently perform full sanitization unless the public API says it does.
 
+The library source follows those ownership boundaries:
+
+```text
+crates/molecules/src/
+  core/        typed IDs, elements, atom/bond payloads, conformers, graph state
+  algorithms/  ring membership/sets, valence, and aromaticity
+  chemistry/   transactional small-molecule sanitization
+  io/          V2000/SDF, SMILES, and mmCIF parsing/writing
+  bio/         macromolecule wrappers and BioHierarchy
+  tests/       focused regression modules by domain
+```
+
+`lib.rs` is the stable public facade. It deliberately re-exports the same API and prelude while implementation modules remain private and cross-module internals use crate-private visibility.
+
 ## Small molecules
 
 `SmallMolecule` is the RDKit-like layer. It should expose operations such as sanitization, valence perception, ring detection, aromaticity detection, stereochemistry assignment, small-molecule file I/O, and eventually substructure/search/canonicalization features.
@@ -45,6 +59,25 @@ File readers should be explicit about whether they perform raw parsing only, par
 ## Validation
 
 Reference tools are used only in validation infrastructure: RDKit for small molecules and Biopython for macromolecular parsing/hierarchy behavior. Golden files should be normalized JSON and record the reference tool version used to generate them.
+
+Repository tooling mirrors the validation workflow:
+
+```text
+crates/xtask/src/
+  cli.rs
+  corpus.rs
+  features.rs
+  dashboard.rs
+  skills.rs
+  validation/
+    manifest.rs
+    evidence.rs
+    implementation.rs
+    compare.rs
+    status.rs
+```
+
+The command entry point only dispatches; corpus integrity, feature metadata, generated dashboard state, and validation evidence each have a focused owner.
 
 ## Feature-driven development
 
