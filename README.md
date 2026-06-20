@@ -1,6 +1,5 @@
 <img src="./assets/molecules-character-waves-v3.svg" alt="Molecules banner." width="100%">
 
-
 <div style="text-align: center;">
     <img src="./assets/molecules-logo.svg" alt="Molecules banner." width="25%" margin="auto">
 </div>
@@ -8,8 +7,6 @@
 <p align="center">
   <img src="./assets/molecules-logo.svg" alt="Molecules banner." width="25%" margin="auto" />
 </p>
-
-
 
 <pre style="line-height: 1; font-family: monospace;">
 ╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮
@@ -41,28 +38,6 @@ cargo xtask validate --feature all --corpus all
 ```
 
 The `cargo xtask` alias is defined in `.cargo/config.toml`.
-
-## Codex co-author attribution
-
-Install the repository-local commit hook once in each clone:
-
-```bash
-bash scripts/setup-codex-attribution.sh
-```
-
-The hook appends this trailer exactly once to future non-merge commits:
-
-```text
-Co-authored-by: Codex <noreply@openai.com>
-```
-
-Inspect the local configuration with:
-
-```bash
-bash scripts/show-codex-attribution-status.sh
-```
-
-Set `SKIP_AI_COAUTHORS=1` for a single commit that must omit configured AI co-authors.
 
 ## License
 
