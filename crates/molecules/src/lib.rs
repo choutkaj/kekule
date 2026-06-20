@@ -9,14 +9,14 @@ pub mod prelude {
         perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
         read_mmcif_str, read_mol_v2000_str, read_sdf_v2000_str, read_smiles_str,
         sanitize_small_molecule, write_mol_v2000, write_sdf_v2000, write_smiles, AromaticityError,
-        AromaticityModel, Atom, AtomId, AtomMut, AtomSite, AtomSiteId, AtomSiteMetadata,
-        AtomStereo, BioHierarchy, BioHierarchyError, Bond, BondId, BondMut, BondOrder, BondStereo,
-        Chain, ChainId, ComputedState, Conformer, ConformerId, Element, MacroMolecule,
-        MmcifParseError, MmcifParseOptions, Model, ModelId, MolWriteError, Molecule, MoleculeError,
-        Point3, PropMap, PropValue, Residue, ResidueId, Result, Ring, RingMembership, RingSet,
-        SanitizeError, SanitizeOptions, SanitizeReport, SdfParseError, SdfParseOptions, SdfRecord,
-        SmallMolecule, SmilesParseError, SmilesParseOptions, SmilesWriteOptions, ValenceIssue,
-        ValenceModel, ValenceReport,
+        AromaticityModel, Atom, AtomId, AtomMut, AtomRadical, AtomSite, AtomSiteId,
+        AtomSiteMetadata, AtomStereo, BioHierarchy, BioHierarchyError, Bond, BondId, BondMut,
+        BondOrder, BondStereo, Chain, ChainId, ComputedState, Conformer, ConformerId, Element,
+        MacroMolecule, MmcifParseError, MmcifParseOptions, Model, ModelId, MolWriteError, Molecule,
+        MoleculeError, Point3, PropMap, PropValue, Residue, ResidueId, Result, Ring,
+        RingMembership, RingSet, SanitizeError, SanitizeOptions, SanitizeReport, SdfParseError,
+        SdfParseOptions, SdfRecord, SmallMolecule, SmilesParseError, SmilesParseOptions,
+        SmilesWriteOptions, ValenceIssue, ValenceModel, ValenceReport,
     };
 }
 
@@ -213,7 +213,7 @@ pub struct Atom {
     pub element: Element,
     pub isotope: Option<u16>,
     pub formal_charge: i8,
-    pub radical_electrons: u8,
+    pub radical: Option<AtomRadical>,
     pub explicit_hydrogens: u8,
     pub implicit_hydrogens: Option<u8>,
     pub aromatic: bool,
@@ -228,13 +228,30 @@ impl Atom {
             element,
             isotope: None,
             formal_charge: 0,
-            radical_electrons: 0,
+            radical: None,
             explicit_hydrogens: 0,
             implicit_hydrogens: None,
             aromatic: false,
             chiral: None,
             atom_map: None,
             props: PropMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AtomRadical {
+    Singlet,
+    Doublet,
+    Triplet,
+}
+
+impl AtomRadical {
+    pub const fn unpaired_electron_count(self) -> u8 {
+        match self {
+            Self::Singlet => 0,
+            Self::Doublet => 1,
+            Self::Triplet => 2,
         }
     }
 }
@@ -415,7 +432,7 @@ struct AtomChemistry {
     element: Element,
     isotope: Option<u16>,
     formal_charge: i8,
-    radical_electrons: u8,
+    radical: Option<AtomRadical>,
     explicit_hydrogens: u8,
     implicit_hydrogens: Option<u8>,
     aromatic: bool,
@@ -428,7 +445,7 @@ impl From<&Atom> for AtomChemistry {
             element: atom.element,
             isotope: atom.isotope,
             formal_charge: atom.formal_charge,
-            radical_electrons: atom.radical_electrons,
+            radical: atom.radical,
             explicit_hydrogens: atom.explicit_hydrogens,
             implicit_hydrogens: atom.implicit_hydrogens,
             aromatic: atom.aromatic,
@@ -1491,7 +1508,7 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule) -> ValenceReport {
                         });
                         assignments.push((atom_id, 0));
                     } else {
-                        let target = if atom.radical_electrons > 0 {
+                        let target = if atom.radical.is_some() {
                             explicit
                         } else {
                             allowed
@@ -2123,9 +2140,14 @@ fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder, Option<
         9 => BondOrder::Dative,
         _ => return None,
     };
-    let stereo = match stereo_code {
-        Some(3 | 4) => Some(BondStereo::Any),
-        Some(_) | None => None,
+    let stereo_code = stereo_code.unwrap_or(0);
+    let stereo = match (order, stereo_code) {
+        (_, 0) => None,
+        (BondOrder::Single, 1) => Some(BondStereo::Up),
+        (BondOrder::Single, 4) => Some(BondStereo::Any),
+        (BondOrder::Single, 6) => Some(BondStereo::Down),
+        (BondOrder::Double, 3) => Some(BondStereo::Any),
+        _ => return None,
     };
     Some((a, b, order, stereo))
 }
@@ -2230,12 +2252,12 @@ fn parse_m_records(
                     mol,
                     atom_ids,
                     |atom, value| {
-                        atom.radical_electrons = match value {
-                            1 => 2,
-                            2 => 1,
-                            3 => 2,
+                        atom.radical = Some(match value {
+                            1 => AtomRadical::Singlet,
+                            2 => AtomRadical::Doublet,
+                            3 => AtomRadical::Triplet,
                             _ => return Err("unsupported M  RAD code"),
-                        };
+                        });
                         Ok(())
                     },
                 )?;
@@ -2380,12 +2402,11 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
         let b = atom_index
             .get(&bond.b())
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
+        let order_code = v2000_bond_code(bond.order)?;
+        let stereo_code = v2000_bond_stereo_code(bond.order, bond.stereo)?;
         out.push_str(&format!(
             "{:>3}{:>3}{:>3}{:>3}  0  0  0\n",
-            a,
-            b,
-            v2000_bond_code(bond.order)?,
-            v2000_bond_stereo_code(bond.stereo)
+            a, b, order_code, stereo_code
         ));
     }
 
@@ -2424,8 +2445,9 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .iter()
             .filter_map(|id| {
                 let atom = mol.atom(*id).ok()?;
-                (atom.radical_electrons != 0)
-                    .then_some((*atom_index.get(id)? as i32, atom.radical_electrons as i32))
+                let index = *atom_index.get(id)?;
+                atom.radical
+                    .map(|radical| (index as i32, v2000_radical_code(radical)))
             })
             .collect(),
     );
@@ -2480,12 +2502,30 @@ fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
     }
 }
 
-fn v2000_bond_stereo_code(stereo: Option<BondStereo>) -> u8 {
-    match stereo {
-        Some(BondStereo::Up) => 1,
-        Some(BondStereo::Any) => 4,
-        Some(BondStereo::Down) => 6,
-        _ => 0,
+fn v2000_bond_stereo_code(
+    order: BondOrder,
+    stereo: Option<BondStereo>,
+) -> std::result::Result<u8, MolWriteError> {
+    match (order, stereo) {
+        (_, None | Some(BondStereo::Unspecified)) => Ok(0),
+        (BondOrder::Single, Some(BondStereo::Up)) => Ok(1),
+        (BondOrder::Single, Some(BondStereo::Any)) => Ok(4),
+        (BondOrder::Single, Some(BondStereo::Down)) => Ok(6),
+        (BondOrder::Double, Some(BondStereo::Any)) => Ok(3),
+        (_, Some(BondStereo::E | BondStereo::Z)) => Err(MolWriteError::new(
+            "V2000 cannot encode perceived E/Z bond stereo directly",
+        )),
+        _ => Err(MolWriteError::new(
+            "V2000 bond stereo is incompatible with the bond order",
+        )),
+    }
+}
+
+fn v2000_radical_code(radical: AtomRadical) -> i32 {
+    match radical {
+        AtomRadical::Singlet => 1,
+        AtomRadical::Doublet => 2,
+        AtomRadical::Triplet => 3,
     }
 }
 
@@ -4269,7 +4309,7 @@ mod tests {
         assert_eq!(atom.element.symbol(), "C");
         assert_eq!(atom.isotope, None);
         assert_eq!(atom.formal_charge, 0);
-        assert_eq!(atom.radical_electrons, 0);
+        assert_eq!(atom.radical, None);
         assert_eq!(atom.explicit_hydrogens, 0);
         assert_eq!(atom.implicit_hydrogens, None);
         assert!(!atom.aromatic);
@@ -4283,7 +4323,7 @@ mod tests {
         let mut atom = carbon();
         atom.isotope = Some(13);
         atom.formal_charge = -1;
-        atom.radical_electrons = 1;
+        atom.radical = Some(AtomRadical::Doublet);
         atom.explicit_hydrogens = 3;
         atom.implicit_hydrogens = Some(1);
         atom.aromatic = true;
@@ -4294,7 +4334,7 @@ mod tests {
 
         assert_eq!(atom.isotope, Some(13));
         assert_eq!(atom.formal_charge, -1);
-        assert_eq!(atom.radical_electrons, 1);
+        assert_eq!(atom.radical, Some(AtomRadical::Doublet));
         assert_eq!(atom.explicit_hydrogens, 3);
         assert_eq!(atom.implicit_hydrogens, Some(1));
         assert!(atom.aromatic);
@@ -4304,6 +4344,13 @@ mod tests {
             atom.props.get("label"),
             Some(&PropValue::String("alpha".to_owned()))
         );
+    }
+
+    #[test]
+    fn radical_multiplicity_reports_unpaired_electrons() {
+        assert_eq!(AtomRadical::Singlet.unpaired_electron_count(), 0);
+        assert_eq!(AtomRadical::Doublet.unpaired_electron_count(), 1);
+        assert_eq!(AtomRadical::Triplet.unpaired_electron_count(), 2);
     }
 
     #[test]
@@ -4626,7 +4673,7 @@ M  END
         let atom0 = small.mol.atom(AtomId::new(0)).expect("atom exists");
         let atom1 = small.mol.atom(AtomId::new(1)).expect("atom exists");
         assert_eq!(atom0.formal_charge, 1);
-        assert_eq!(atom0.radical_electrons, 1);
+        assert_eq!(atom0.radical, Some(AtomRadical::Doublet));
         assert_eq!(atom0.atom_map, Some(7));
         assert_eq!(atom1.isotope, Some(13));
         let (_, conformer) = small.mol.first_conformer().expect("conformer exists");
@@ -4634,6 +4681,107 @@ M  END
             conformer.position(AtomId::new(0)),
             Some(Point3::new(0.1, 0.2, 0.3))
         );
+    }
+
+    #[test]
+    fn v2000_radical_codes_round_trip_exact_multiplicity() {
+        for (code, expected) in [
+            (1, AtomRadical::Singlet),
+            (2, AtomRadical::Doublet),
+            (3, AtomRadical::Triplet),
+        ] {
+            let input = format!(
+                "radical {code}\nmolecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  RAD  1   1   {code}\nM  END\n"
+            );
+            let parsed = read_mol_v2000_str(&input).expect("radical record should parse");
+            assert_eq!(
+                parsed.mol.atom(AtomId::new(0)).expect("atom").radical,
+                Some(expected)
+            );
+
+            let written = write_mol_v2000(&parsed).expect("radical record should write");
+            assert!(
+                written.contains(&format!("M  RAD  1   1   {code}")),
+                "written code {code}: {written}"
+            );
+            let reparsed =
+                read_mol_v2000_str(&written).expect("written radical record should parse");
+            assert_eq!(
+                reparsed.mol.atom(AtomId::new(0)).expect("atom").radical,
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn v2000_supported_bond_stereo_codes_round_trip_exactly() {
+        for (order_code, stereo_code, order, expected) in [
+            (1, 1, BondOrder::Single, BondStereo::Up),
+            (1, 4, BondOrder::Single, BondStereo::Any),
+            (1, 6, BondOrder::Single, BondStereo::Down),
+            (2, 3, BondOrder::Double, BondStereo::Any),
+        ] {
+            let input = format!(
+                "stereo\nmolecules\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
+            );
+            let parsed = read_mol_v2000_str(&input).expect("stereo record should parse");
+            let bond = parsed.mol.bond(BondId::new(0)).expect("bond");
+            assert_eq!(bond.order, order);
+            assert_eq!(bond.stereo, Some(expected));
+
+            let written = write_mol_v2000(&parsed).expect("stereo record should write");
+            let reparsed =
+                read_mol_v2000_str(&written).expect("written stereo record should parse");
+            assert_eq!(
+                reparsed.mol.bond(BondId::new(0)).expect("bond").stereo,
+                Some(expected)
+            );
+            assert_eq!(
+                reparsed
+                    .mol
+                    .first_conformer()
+                    .expect("conformer")
+                    .1
+                    .position(AtomId::new(0)),
+                Some(Point3::new(-1.25, 0.0, 0.0))
+            );
+        }
+    }
+
+    #[test]
+    fn v2000_rejects_unsupported_stereo_and_bond_representations() {
+        for bond_line in ["  1  2  1  3  0  0  0", "  1  2  2  4  0  0  0"] {
+            let input = format!(
+                "bad stereo\nmolecules\n\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  0  0  0  0  0\n{bond_line}\nM  END\n"
+            );
+            assert!(read_mol_v2000_str(&input).is_err());
+        }
+
+        let mut molecule = SmallMolecule::default();
+        let a = molecule.mol.add_atom(carbon());
+        let b = molecule.mol.add_atom(carbon());
+        let bond = molecule
+            .mol
+            .add_bond(a, b, BondOrder::Double)
+            .expect("bond");
+        molecule.mol.bond_mut(bond).expect("bond").stereo = Some(BondStereo::E);
+        assert!(write_mol_v2000(&molecule)
+            .expect_err("E stereo should be rejected")
+            .message
+            .contains("E/Z"));
+
+        molecule.mol.bond_mut(bond).expect("bond").stereo = Some(BondStereo::Up);
+        assert!(write_mol_v2000(&molecule)
+            .expect_err("double wedge should be rejected")
+            .message
+            .contains("incompatible"));
+
+        molecule.mol.bond_mut(bond).expect("bond").stereo = None;
+        molecule.mol.bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
+        assert!(write_mol_v2000(&molecule)
+            .expect_err("quadruple bond should be rejected")
+            .message
+            .contains("quadruple"));
     }
 
     #[test]
@@ -4682,6 +4830,94 @@ $$$$
             reparsed[0].molecule.mol.props().get("sdf.field.fixture_id"),
             Some(&PropValue::String("charged_isotope_records".to_owned()))
         );
+    }
+
+    #[test]
+    fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
+        for (charge_code, expected_charge) in
+            [(1, 3), (2, 2), (3, 1), (0, 0), (5, -1), (6, -2), (7, -3)]
+        {
+            let input = format!(
+                "charge\nmolecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 N   0  {charge_code}  0  0  0  0\nM  END\n"
+            );
+            let parsed = read_mol_v2000_str(&input).expect("charge code should parse");
+            assert_eq!(
+                parsed.mol.atom(AtomId::new(0)).expect("atom").formal_charge,
+                expected_charge
+            );
+            let written = write_mol_v2000(&parsed).expect("charge should write");
+            let reparsed = read_mol_v2000_str(&written).expect("charge should reparse");
+            assert_eq!(
+                reparsed
+                    .mol
+                    .atom(AtomId::new(0))
+                    .expect("atom")
+                    .formal_charge,
+                expected_charge
+            );
+        }
+
+        let mut molecule = SmallMolecule::default();
+        molecule.mol.props_mut().insert(
+            "sdf.title".to_owned(),
+            PropValue::String("metadata title".to_owned()),
+        );
+        molecule.mol.props_mut().insert(
+            "sdf.program".to_owned(),
+            PropValue::String("metadata program".to_owned()),
+        );
+        molecule.mol.props_mut().insert(
+            "sdf.comment".to_owned(),
+            PropValue::String("metadata comment".to_owned()),
+        );
+        molecule.mol.props_mut().insert(
+            "sdf.field.NOTES".to_owned(),
+            PropValue::String("line one\nline two".to_owned()),
+        );
+        let mut conformer = Conformer::new();
+        for index in 0..9u32 {
+            let mut atom = carbon();
+            atom.formal_charge = 1;
+            atom.isotope = Some(13 + index as u16);
+            atom.radical = Some(AtomRadical::Doublet);
+            atom.atom_map = Some(index + 1);
+            let atom_id = molecule.mol.add_atom(atom);
+            conformer.set_position(atom_id, Point3::new(-(index as f64), index as f64, 0.0));
+        }
+        molecule.mol.add_conformer(conformer);
+
+        let mol_text = write_mol_v2000(&molecule).expect("metadata molecule should write");
+        assert_eq!(mol_text.matches("M  CHG").count(), 2);
+        assert_eq!(mol_text.matches("M  ISO").count(), 2);
+        assert_eq!(mol_text.matches("M  RAD").count(), 2);
+
+        let sdf_text =
+            write_sdf_v2000(&[molecule.clone(), molecule]).expect("two records should write");
+        let records = read_sdf_v2000_records(&sdf_text, SdfParseOptions::default())
+            .expect("written records should parse");
+        assert_eq!(records.len(), 2);
+        for record in records {
+            assert_eq!(record.title, "metadata title");
+            assert_eq!(
+                record.molecule.mol.props().get("sdf.program"),
+                Some(&PropValue::String("metadata program".to_owned()))
+            );
+            assert_eq!(
+                record.molecule.mol.props().get("sdf.comment"),
+                Some(&PropValue::String("metadata comment".to_owned()))
+            );
+            assert_eq!(
+                record.molecule.mol.props().get("sdf.field.NOTES"),
+                Some(&PropValue::String("line one\nline two".to_owned()))
+            );
+            for index in 0..9u32 {
+                let atom = record.molecule.mol.atom(AtomId::new(index)).expect("atom");
+                assert_eq!(atom.formal_charge, 1);
+                assert_eq!(atom.isotope, Some(13 + index as u16));
+                assert_eq!(atom.radical, Some(AtomRadical::Doublet));
+                assert_eq!(atom.atom_map, Some(index + 1));
+            }
+        }
     }
 
     #[test]

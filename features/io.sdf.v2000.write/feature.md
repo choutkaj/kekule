@@ -8,16 +8,18 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 
 - Exposes `write_sdf_v2000`.
 - Writes Molfile V2000 blocks followed by `sdf.field.*` properties as SDF data fields.
+- Inherits exact radical and supported bond-stereo handling from the Molfile V2000 writer.
 - Does not run sanitization, canonicalization, or perception.
 
 ## Implementation Notes
 
 - The writer uses existing molecule properties for title/program/comment and SDF fields.
 - Records are emitted in input slice order.
+- Unsupported Molfile representations in any record return a structured error and no SDF text is returned.
 
 ## Validation
 
-- Unit tests cover multi-record round trips and data fields.
+- Unit tests cover multi-record round trips, multiline data fields, and Molfile metadata symmetry.
 - RDKit-generated goldens compare SDF writer records for external PubChem fixtures.
 
 ## Out Of Scope
@@ -27,3 +29,4 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 ## Revision Notes
 
 - v1: SDF V2000 writer.
+- v2: Preserve exact Molfile radical and supported bond-stereo semantics in SDF records.

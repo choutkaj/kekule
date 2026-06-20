@@ -1,7 +1,7 @@
 id = "core.atom-bond"
 title = "Core atom and bond model"
 area = "core"
-version = 2
+version = 3
 implemented = true
 validated = false
 description = "Represent chemically general atom and bond data shared by small and macromolecular workflows."

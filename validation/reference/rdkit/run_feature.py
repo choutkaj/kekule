@@ -158,12 +158,15 @@ def generate_document(
     elif feature_id == "io.mol.v2000.write":
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [mol_record(record) for record in records]}
-    elif feature_id in {"core.conformers", "io.mol.v2000.parse"}:
+    elif feature_id == "io.mol.v2000.parse":
+        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
+        expected = {"records": [mol_parse_record(record) for record in records]}
+    elif feature_id == "core.conformers":
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [conformer_record(record) for record in records]}
     elif feature_id == "io.smiles.parse":
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
-        expected = {"records": [sdf_record(record) for record in records]}
+        expected = {"records": [sdf_record_basic(record) for record in records]}
     elif feature_id == "io.smiles.write":
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
         expected = {"records": [smiles_record(record, canonical=False) for record in records]}
@@ -203,6 +206,7 @@ def generate_document(
 
 def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
+    raw_records = read_sdf_blocks(fixture_path)
     supplier = Chem.SDMolSupplier(
         str(fixture_path),
         sanitize=False,
@@ -210,6 +214,7 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
         strictParsing=False,
     )
     for index, mol in enumerate(supplier):
+        raw_block = raw_records[index] if index < len(raw_records) else ""
         if mol is None:
             records.append(
                 {
@@ -217,6 +222,8 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
                     "status": "parse_error",
                     "title": None,
                     "mol": None,
+                    "radicals": parse_mdl_radicals(raw_block),
+                    "bond_stereo": parse_mdl_bond_stereo(raw_block),
                 }
             )
             continue
@@ -226,6 +233,8 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
                 "status": "ok",
                 "title": mol.GetProp("_Name") if mol.HasProp("_Name") else "",
                 "mol": mol,
+                "radicals": parse_mdl_radicals(raw_block),
+                "bond_stereo": parse_mdl_bond_stereo(raw_block),
             }
         )
     return records
@@ -233,6 +242,7 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
 
 def read_records_by_suffix(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
     if fixture_path.suffix.lower() in {".mol", ".mdl"}:
+        raw_block = fixture_path.read_text(encoding="utf-8", errors="replace")
         mol = Chem.MolFromMolFile(
             str(fixture_path),
             sanitize=False,
@@ -245,6 +255,8 @@ def read_records_by_suffix(fixture_path: Path, Chem: Any) -> list[dict[str, Any]
                 "status": "ok" if mol is not None else "parse_error",
                 "title": mol.GetProp("_Name") if mol is not None and mol.HasProp("_Name") else "",
                 "mol": mol,
+                "radicals": parse_mdl_radicals(raw_block),
+                "bond_stereo": parse_mdl_bond_stereo(raw_block),
             }
         ]
     return read_sdf_records(fixture_path, Chem)
@@ -267,9 +279,91 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
                 "title": title,
                 "smiles": smiles,
                 "mol": mol,
+                "radicals": {},
+                "bond_stereo": {},
             }
         )
     return records
+
+
+def read_sdf_blocks(fixture_path: Path) -> list[str]:
+    text = fixture_path.read_text(encoding="utf-8", errors="replace")
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if line == "$$$$":
+            blocks.append("\n".join(current) + "\n")
+            current = []
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current) + "\n")
+    return blocks
+
+
+def parse_mdl_radicals(block: str) -> dict[int, str]:
+    radicals: dict[int, str] = {}
+    code_to_radical = {1: "SINGLET", 2: "DOUBLET", 3: "TRIPLET"}
+    for raw_line in block.splitlines():
+        if not raw_line.startswith("M  RAD"):
+            continue
+        fields = raw_line.split()
+        if len(fields) < 4:
+            continue
+        try:
+            pair_count = int(fields[2])
+            values = [int(field) for field in fields[3:]]
+        except ValueError:
+            continue
+        for offset in range(0, min(len(values), pair_count * 2), 2):
+            if offset + 1 >= len(values):
+                break
+            atom_index = values[offset] - 1
+            radical = code_to_radical.get(values[offset + 1])
+            if atom_index >= 0 and radical is not None:
+                radicals[atom_index] = radical
+    return radicals
+
+
+def parse_mdl_bond_stereo(block: str) -> dict[int, dict[str, str]]:
+    lines = block.splitlines()
+    if len(lines) < 4 or "V2000" not in lines[3]:
+        return {}
+    try:
+        atom_count = int(lines[3][0:3])
+        bond_count = int(lines[3][3:6])
+    except ValueError:
+        count_fields = lines[3].split()
+        if len(count_fields) < 2:
+            return {}
+        try:
+            atom_count = int(count_fields[0])
+            bond_count = int(count_fields[1])
+        except ValueError:
+            return {}
+    bond_start = 4 + atom_count
+    overrides: dict[int, dict[str, str]] = {}
+    for bond_index, line in enumerate(lines[bond_start : bond_start + bond_count]):
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        try:
+            order = int(fields[2])
+            stereo_code = int(fields[3])
+        except ValueError:
+            continue
+        stereo = "STEREONONE"
+        direction = "NONE"
+        if order == 1 and stereo_code == 1:
+            direction = "BEGINWEDGE"
+        elif order == 1 and stereo_code == 4:
+            direction = "UNKNOWN"
+        elif order == 1 and stereo_code == 6:
+            direction = "BEGINDASH"
+        elif order == 2 and stereo_code == 3:
+            stereo = "STEREOANY"
+        overrides[bond_index] = {"stereo": stereo, "bond_direction": direction}
+    return overrides
 
 
 def sdf_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -285,8 +379,33 @@ def sdf_record(record: dict[str, Any]) -> dict[str, Any]:
         "title": record["title"],
         "atom_count": mol.GetNumAtoms(),
         "bond_count": mol.GetNumBonds(),
-        "atoms": [atom_json(atom) for atom in mol.GetAtoms()],
-        "bonds": [bond_json(bond) for bond in mol.GetBonds()],
+        "atoms": [
+            atom_json(atom, record["radicals"].get(atom.GetIdx()))
+            for atom in mol.GetAtoms()
+        ],
+        "bonds": [
+            bond_json(bond, record["bond_stereo"].get(bond.GetIdx()))
+            for bond in mol.GetBonds()
+        ],
+        "properties": molecule_properties(mol),
+    }
+
+
+def sdf_record_basic(record: dict[str, Any]) -> dict[str, Any]:
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atom_count": mol.GetNumAtoms(),
+        "bond_count": mol.GetNumBonds(),
+        "atoms": [basic_atom_json(atom) for atom in mol.GetAtoms()],
+        "bonds": [basic_bond_json(bond) for bond in mol.GetBonds()],
         "properties": molecule_properties(mol),
     }
 
@@ -304,8 +423,14 @@ def mol_record(record: dict[str, Any]) -> dict[str, Any]:
         "title": record["title"],
         "atom_count": mol.GetNumAtoms(),
         "bond_count": mol.GetNumBonds(),
-        "atoms": [atom_json(atom) for atom in mol.GetAtoms()],
-        "bonds": [bond_json(bond) for bond in mol.GetBonds()],
+        "atoms": [
+            atom_json(atom, record["radicals"].get(atom.GetIdx()))
+            for atom in mol.GetAtoms()
+        ],
+        "bonds": [
+            bond_json(bond, record["bond_stereo"].get(bond.GetIdx()))
+            for bond in mol.GetBonds()
+        ],
     }
 
 
@@ -373,7 +498,62 @@ def conformer_record(record: dict[str, Any]) -> dict[str, Any]:
         "title": record["title"],
         "atom_count": mol.GetNumAtoms(),
         "conformers": conformers,
-        "atoms": [atom_json(atom) for atom in mol.GetAtoms()],
+        "atoms": [conformer_atom_json(atom) for atom in mol.GetAtoms()],
+    }
+
+
+def mol_parse_record(record: dict[str, Any]) -> dict[str, Any]:
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+        }
+    conformers = conformers_json(mol)
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atom_count": mol.GetNumAtoms(),
+        "conformers": conformers,
+        "atoms": [
+            atom_json(atom, record["radicals"].get(atom.GetIdx()))
+            for atom in mol.GetAtoms()
+        ],
+    }
+
+
+def conformers_json(mol: Any) -> list[list[dict[str, Any]]]:
+    conformers = []
+    for conformer in mol.GetConformers():
+        conformers.append(
+            [
+                {
+                    "atom_index": index,
+                    "x": conformer.GetAtomPosition(index).x,
+                    "y": conformer.GetAtomPosition(index).y,
+                    "z": conformer.GetAtomPosition(index).z,
+                }
+                for index in range(mol.GetNumAtoms())
+            ]
+        )
+    return conformers
+
+
+def conformer_atom_json(atom: Any) -> dict[str, Any]:
+    return basic_atom_json(atom)
+
+
+def basic_atom_json(atom: Any) -> dict[str, Any]:
+    return {
+        "index": atom.GetIdx(),
+        "atomic_number": atom.GetAtomicNum(),
+        "symbol": atom.GetSymbol(),
+        "formal_charge": atom.GetFormalCharge(),
+        "isotope": atom.GetIsotope() or None,
+        "explicit_hydrogens": atom.GetNumExplicitHs(),
+        "atom_map": atom.GetAtomMapNum() or None,
+        "aromatic": atom.GetIsAromatic(),
     }
 
 
@@ -389,7 +569,7 @@ def sanitized_atom_record(record: dict[str, Any]) -> dict[str, Any]:
         "record_index": record["record_index"],
         "status": "ok",
         "title": record["title"],
-        "atoms": [atom_json(atom) for atom in sanitized.GetAtoms()],
+        "atoms": [basic_atom_json(atom) for atom in sanitized.GetAtoms()],
     }
 
 
@@ -472,7 +652,8 @@ def clone_and_sanitize(mol: Any) -> Any | None:
     return cloned
 
 
-def atom_json(atom: Any) -> dict[str, Any]:
+def atom_json(atom: Any, radical_override: str | None = None) -> dict[str, Any]:
+    radical, unpaired_electrons = radical_json(atom, radical_override)
     return {
         "index": atom.GetIdx(),
         "atomic_number": atom.GetAtomicNum(),
@@ -481,8 +662,23 @@ def atom_json(atom: Any) -> dict[str, Any]:
         "isotope": atom.GetIsotope() or None,
         "explicit_hydrogens": atom.GetNumExplicitHs(),
         "atom_map": atom.GetAtomMapNum() or None,
+        "radical": radical,
+        "unpaired_electrons": unpaired_electrons,
         "aromatic": atom.GetIsAromatic(),
     }
+
+
+def radical_json(atom: Any, radical_override: str | None) -> tuple[str | None, int]:
+    if radical_override is not None:
+        return radical_override, {"SINGLET": 0, "DOUBLET": 1, "TRIPLET": 2}[radical_override]
+    unpaired_electrons = atom.GetNumRadicalElectrons()
+    if unpaired_electrons == 0:
+        return None, 0
+    if unpaired_electrons == 1:
+        return "DOUBLET", 1
+    if unpaired_electrons == 2:
+        return "TRIPLET", 2
+    return None, unpaired_electrons
 
 
 def valence_atom_json(atom: Any) -> dict[str, Any]:
@@ -499,7 +695,25 @@ def valence_atom_json(atom: Any) -> dict[str, Any]:
     }
 
 
-def bond_json(bond: Any) -> dict[str, Any]:
+def bond_json(bond: Any, stereo_override: dict[str, str] | None = None) -> dict[str, Any]:
+    stereo = stereo_override["stereo"] if stereo_override else str(bond.GetStereo())
+    direction = (
+        stereo_override["bond_direction"] if stereo_override else str(bond.GetBondDir())
+    )
+    if direction == "EITHERDOUBLE":
+        direction = "NONE"
+    return {
+        "index": bond.GetIdx(),
+        "begin_atom_index": bond.GetBeginAtomIdx(),
+        "end_atom_index": bond.GetEndAtomIdx(),
+        "bond_type": str(bond.GetBondType()),
+        "is_aromatic": bond.GetIsAromatic(),
+        "stereo": stereo,
+        "bond_direction": direction,
+    }
+
+
+def basic_bond_json(bond: Any) -> dict[str, Any]:
     return {
         "index": bond.GetIdx(),
         "begin_atom_index": bond.GetBeginAtomIdx(),

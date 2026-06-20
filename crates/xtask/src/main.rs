@@ -11,9 +11,10 @@ use flate2::read::GzDecoder;
 use molecules::prelude::{
     perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
     read_mmcif_str, read_mol_v2000_str, read_smiles_str, sanitize_small_molecule, write_mol_v2000,
-    write_sdf_v2000, write_smiles, AromaticityModel, Atom, AtomId, Bond, BondOrder, BondStereo,
-    MacroMolecule, MmcifParseOptions, Molecule, PropValue, SanitizeOptions, SdfParseOptions,
-    SdfRecord, SmallMolecule, SmilesParseOptions, SmilesWriteOptions, ValenceModel,
+    write_sdf_v2000, write_smiles, AromaticityModel, Atom, AtomId, AtomRadical, Bond, BondOrder,
+    BondStereo, MacroMolecule, MmcifParseOptions, Molecule, PropValue, SanitizeOptions,
+    SdfParseOptions, SdfRecord, SmallMolecule, SmilesParseOptions, SmilesWriteOptions,
+    ValenceModel,
 };
 use molecules::read_sdf_v2000_records;
 use serde::{Deserialize, Serialize};
@@ -1308,7 +1309,11 @@ fn implementation_expected(feature: &str, fixture_path: &Path) -> Result<Value, 
                 .collect::<Vec<_>>();
             Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
         }
-        "io.mol.v2000.parse" | "core.conformers" => {
+        "io.mol.v2000.parse" => {
+            let records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({ "records": records.iter().map(mol_parse_record_json).collect::<Vec<_>>() }))
+        }
+        "core.conformers" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(conformer_record_json).collect::<Vec<_>>() }))
         }
@@ -1463,6 +1468,20 @@ fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
     })
 }
 
+fn sdf_record_basic_json(record: &IndexedSmallRecord) -> Value {
+    let mol = &record.molecule.mol;
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "atoms": basic_atoms_json(mol),
+        "bonds": basic_bonds_json(mol),
+        "properties": sdf_properties_json(mol),
+    })
+}
+
 fn mol_record_json(record: &IndexedSmallRecord) -> Value {
     let mol = &record.molecule.mol;
     json!({
@@ -1495,7 +1514,51 @@ fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
                 })
                 .collect::<Vec<_>>()
         }).collect::<Vec<_>>(),
+        "atoms": mol.atoms().map(|(id, atom)| conformer_atom_json(id, atom)).collect::<Vec<_>>(),
+    })
+}
+
+fn mol_parse_record_json(record: &IndexedSmallRecord) -> Value {
+    let mol = &record.molecule.mol;
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": mol.atom_count(),
+        "conformers": conformers_json(mol),
         "atoms": atoms_json(mol),
+    })
+}
+
+fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {
+    mol.conformers()
+        .map(|(_, conformer)| {
+            mol.atom_ids()
+                .filter_map(|atom_id| {
+                    conformer.position(atom_id).map(|point| {
+                        json!({
+                            "atom_index": atom_id.raw(),
+                            "x": point.x,
+                            "y": point.y,
+                            "z": point.z,
+                        })
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+}
+
+fn conformer_atom_json(id: AtomId, atom: &Atom) -> Value {
+    json!({
+        "index": id.raw(),
+        "atomic_number": atom.element.atomic_number(),
+        "symbol": atom.element.symbol(),
+        "formal_charge": atom.formal_charge,
+        "isotope": atom.isotope,
+        "explicit_hydrogens": atom.explicit_hydrogens,
+        "atom_map": atom.atom_map,
+        "aromatic": atom.aromatic,
     })
 }
 
@@ -1531,7 +1594,7 @@ fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Value {
             "record_index": record.record_index,
             "status": "ok",
             "title": record.title,
-            "atoms": atoms_json(&record.molecule.mol),
+            "atoms": basic_atoms_json(&record.molecule.mol),
         }),
         Err(_) => json!({
             "record_index": record.record_index,
@@ -1604,7 +1667,7 @@ fn smiles_write_record_json(record: &IndexedSmilesRecord) -> Result<Value, Box<d
 }
 
 fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
-    sdf_record_json(&IndexedSmallRecord {
+    sdf_record_basic_json(&IndexedSmallRecord {
         record_index: record.record_index,
         title: record.title.clone(),
         molecule: record.molecule.clone(),
@@ -1618,6 +1681,27 @@ fn atoms_json(mol: &Molecule) -> Vec<Value> {
 }
 
 fn atom_json(id: AtomId, atom: &Atom) -> Value {
+    json!({
+        "index": id.raw(),
+        "atomic_number": atom.element.atomic_number(),
+        "symbol": atom.element.symbol(),
+        "formal_charge": atom.formal_charge,
+        "isotope": atom.isotope,
+        "explicit_hydrogens": atom.explicit_hydrogens,
+        "atom_map": atom.atom_map,
+        "radical": atom.radical.map(radical_json),
+        "unpaired_electrons": atom.radical.map(AtomRadical::unpaired_electron_count).unwrap_or(0),
+        "aromatic": atom.aromatic,
+    })
+}
+
+fn basic_atoms_json(mol: &Molecule) -> Vec<Value> {
+    mol.atoms()
+        .map(|(id, atom)| basic_atom_json(id, atom))
+        .collect::<Vec<_>>()
+}
+
+fn basic_atom_json(id: AtomId, atom: &Atom) -> Value {
     json!({
         "index": id.raw(),
         "atomic_number": atom.element.atomic_number(),
@@ -1670,8 +1754,43 @@ fn bond_json(index: u32, bond: &Bond) -> Value {
         "end_atom_index": bond.b().raw(),
         "bond_type": bond_order_json(bond.order),
         "is_aromatic": bond.aromatic,
-        "stereo": bond_stereo_json(bond.stereo),
+        "stereo": bond_stereo_json(bond.order, bond.stereo),
+        "bond_direction": bond_direction_json(bond.order, bond.stereo),
     })
+}
+
+fn basic_bonds_json(mol: &Molecule) -> Vec<Value> {
+    mol.bonds()
+        .map(|(id, bond)| basic_bond_json(id.raw(), bond))
+        .collect::<Vec<_>>()
+}
+
+fn basic_bond_json(index: u32, bond: &Bond) -> Value {
+    json!({
+        "index": index,
+        "begin_atom_index": bond.a().raw(),
+        "end_atom_index": bond.b().raw(),
+        "bond_type": bond_order_json(bond.order),
+        "is_aromatic": bond.aromatic,
+        "stereo": legacy_bond_stereo_json(bond.stereo),
+    })
+}
+
+fn legacy_bond_stereo_json(stereo: Option<BondStereo>) -> &'static str {
+    match stereo {
+        None | Some(BondStereo::Unspecified) => "STEREONONE",
+        Some(BondStereo::E) => "STEREOE",
+        Some(BondStereo::Z) => "STEREOZ",
+        Some(BondStereo::Up) | Some(BondStereo::Down) | Some(BondStereo::Any) => "STEREOANY",
+    }
+}
+
+fn radical_json(radical: AtomRadical) -> &'static str {
+    match radical {
+        AtomRadical::Singlet => "SINGLET",
+        AtomRadical::Doublet => "DOUBLET",
+        AtomRadical::Triplet => "TRIPLET",
+    }
 }
 
 fn bond_order_json(order: BondOrder) -> &'static str {
@@ -1686,14 +1805,22 @@ fn bond_order_json(order: BondOrder) -> &'static str {
     }
 }
 
-fn bond_stereo_json(stereo: Option<BondStereo>) -> &'static str {
-    match stereo {
-        None | Some(BondStereo::Unspecified) => "STEREONONE",
-        Some(BondStereo::E) => "STEREOE",
-        Some(BondStereo::Z) => "STEREOZ",
-        Some(BondStereo::Up) => "STEREOANY",
-        Some(BondStereo::Down) => "STEREOANY",
-        Some(BondStereo::Any) => "STEREOANY",
+fn bond_stereo_json(order: BondOrder, stereo: Option<BondStereo>) -> &'static str {
+    match (order, stereo) {
+        (_, None | Some(BondStereo::Unspecified)) => "STEREONONE",
+        (_, Some(BondStereo::E)) => "STEREOE",
+        (_, Some(BondStereo::Z)) => "STEREOZ",
+        (BondOrder::Double, Some(BondStereo::Any)) => "STEREOANY",
+        _ => "STEREONONE",
+    }
+}
+
+fn bond_direction_json(order: BondOrder, stereo: Option<BondStereo>) -> &'static str {
+    match (order, stereo) {
+        (BondOrder::Single, Some(BondStereo::Up)) => "BEGINWEDGE",
+        (BondOrder::Single, Some(BondStereo::Down)) => "BEGINDASH",
+        (BondOrder::Single, Some(BondStereo::Any)) => "UNKNOWN",
+        _ => "NONE",
     }
 }
 

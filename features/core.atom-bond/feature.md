@@ -6,7 +6,8 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 
 ## Behavior/API
 
-- Provides `Atom`, `Bond`, `Element`, `BondOrder`, `BondStereo`, property maps, and simple chemistry annotations.
+- Provides `Atom`, `AtomRadical`, `Bond`, `Element`, `BondOrder`, `BondStereo`, property maps, and simple chemistry annotations.
+- Stores radicals as one authoritative multiplicity (`Singlet`, `Doublet`, or `Triplet`) with a helper for unpaired-electron count.
 - Atom and bond endpoint mutation stays controlled by `Molecule` topology operations.
 - Mutable chemistry-relevant payload access conservatively invalidates perception state.
 
@@ -30,3 +31,4 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 
 - v1: Chemically general atom and bond payload model.
 - v2: Add an explicit `BondStereo::Any` value for raw file formats that preserve unspecified double-bond stereochemistry.
+- v3: Replace lossy radical electron counts with authoritative radical multiplicity and re-export `AtomRadical`.
