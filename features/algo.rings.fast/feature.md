@@ -15,6 +15,7 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 ## Implementation Notes
 
 - Uses bridge detection on the undirected molecular graph.
+- Uses an explicit DFS frame stack, so graph depth does not consume the Rust call stack.
 - A bond is a ring bond exactly when it is not a bridge.
 - Ring atoms are atoms incident to at least one ring bond.
 - Handles disconnected components.
@@ -34,3 +35,4 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 
 - v1: Graph-cycle membership perception.
 - v2: Hide and clear cached membership after invalidating mutations.
+- v3: Replace recursive bridge traversal with an explicit stack for very large graphs.

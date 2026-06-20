@@ -6,9 +6,10 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 
 ## Behavior/API
 
-- Exposes `SanitizeOptions`, `SanitizeReport`, `SanitizeError`, and `sanitize_small_molecule`.
+- Exposes `SanitizeOptions`, `SanitizeReport`, `SanitizeError`, `sanitize_small_molecule`, and `sanitize_small_molecule_with_ring_options`.
 - Runs valence, ring set, and aromaticity perception according to options.
 - Commits changes only after every requested pass succeeds; any error leaves the input exactly unchanged.
+- Propagates ring resource limits through `SanitizeError::Rings` or `SanitizeError::Aromaticity` without committing staged mutations.
 - Marks requested successful passes fresh and ensures skipped passes are not fresh. Aromaticity may compute rings internally, but an unrequested ring result is not retained or exposed.
 - Does not run automatically from file parsers.
 
@@ -38,3 +39,4 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v4: Incorporate broader PubChem-1000-driven valence and aromaticity behavior; PubChem-1000 remains pending on fused aromatic bond selection and remaining valence-table coverage.
 - v5: Make sanitization transactional and define fresh/stale state outcomes for every option combination.
 - v6: Sanitize imported aromatic SMILES with corrected aromatic valence and atom-contribution aromaticity behavior.
+- v7: Accept explicit ring-work limits and preserve transactional rollback on ring resource errors.

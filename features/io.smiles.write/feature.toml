@@ -1,7 +1,7 @@
 id = "io.smiles.write"
 title = "Noncanonical SMILES writer"
 area = "io"
-version = 3
+version = 4
 implemented = true
 validated = false
 description = "Write deterministic noncanonical SMILES that reparse locally or reject unsupported chemistry explicitly."

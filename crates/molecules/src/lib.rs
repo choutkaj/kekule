@@ -6,17 +6,19 @@ use std::ops::{Deref, DerefMut};
 
 pub mod prelude {
     pub use crate::{
-        perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
-        read_mmcif_str, read_mol_v2000_str, read_sdf_v2000_str, read_smiles_str,
-        sanitize_small_molecule, write_mol_v2000, write_sdf_v2000, write_smiles, AromaticityError,
-        AromaticityModel, Atom, AtomId, AtomMut, AtomRadical, AtomSite, AtomSiteId,
-        AtomSiteMetadata, AtomStereo, BioHierarchy, BioHierarchyError, Bond, BondId, BondMut,
-        BondOrder, BondStereo, Chain, ChainId, ComputedState, Conformer, ConformerId, Element,
-        MacroMolecule, MmcifParseError, MmcifParseOptions, Model, ModelId, MolWriteError, Molecule,
-        MoleculeError, Point3, PropMap, PropValue, Residue, ResidueId, Result, Ring,
-        RingMembership, RingSet, SanitizeError, SanitizeOptions, SanitizeReport, SdfParseError,
-        SdfParseOptions, SdfRecord, SmallMolecule, SmilesParseError, SmilesParseOptions,
-        SmilesWriteOptions, ValenceIssue, ValenceModel, ValenceReport,
+        perceive_aromaticity, perceive_aromaticity_with_ring_options, perceive_ring_membership,
+        perceive_ring_set, perceive_ring_set_with_options, perceive_valence, read_mmcif_str,
+        read_mol_v2000_str, read_sdf_v2000_str, read_smiles_str, sanitize_small_molecule,
+        sanitize_small_molecule_with_ring_options, write_mol_v2000, write_sdf_v2000, write_smiles,
+        AromaticityError, AromaticityModel, Atom, AtomId, AtomMut, AtomRadical, AtomSite,
+        AtomSiteId, AtomSiteMetadata, AtomStereo, BioHierarchy, BioHierarchyError, Bond, BondId,
+        BondMut, BondOrder, BondStereo, Chain, ChainId, ComputedState, Conformer, ConformerId,
+        Element, MacroMolecule, MmcifParseError, MmcifParseOptions, Model, ModelId, MolWriteError,
+        Molecule, MoleculeError, Point3, PropMap, PropValue, Residue, ResidueId, Result, Ring,
+        RingMembership, RingPerceptionError, RingPerceptionOptions, RingSet, RingWork,
+        SanitizeError, SanitizeOptions, SanitizeReport, SdfParseError, SdfParseOptions, SdfRecord,
+        SmallMolecule, SmilesParseError, SmilesParseOptions, SmilesWriteOptions, ValenceIssue,
+        ValenceModel, ValenceReport,
     };
 }
 
@@ -752,7 +754,7 @@ impl RingMembership {
 }
 
 pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
-    let membership = compute_ring_membership(mol);
+    let (membership, _) = compute_ring_membership(mol);
     mol.ring_membership = Some(membership.clone());
     mol.perception.rings = ComputedState::Fresh;
     membership
@@ -767,6 +769,7 @@ pub enum AromaticityModel {
 pub enum AromaticityError {
     UnsupportedElement(AtomId),
     InvalidAromaticRepresentation(AtomId),
+    RingPerception(RingPerceptionError),
 }
 
 impl fmt::Display for AromaticityError {
@@ -778,6 +781,7 @@ impl fmt::Display for AromaticityError {
             Self::InvalidAromaticRepresentation(id) => {
                 write!(f, "invalid aromatic representation at atom {id}")
             }
+            Self::RingPerception(error) => write!(f, "{error}"),
         }
     }
 }
@@ -788,13 +792,22 @@ pub fn perceive_aromaticity(
     mol: &mut Molecule,
     model: AromaticityModel,
 ) -> std::result::Result<(), AromaticityError> {
+    perceive_aromaticity_with_ring_options(mol, model, RingPerceptionOptions::default())
+}
+
+pub fn perceive_aromaticity_with_ring_options(
+    mol: &mut Molecule,
+    model: AromaticityModel,
+    ring_options: RingPerceptionOptions,
+) -> std::result::Result<(), AromaticityError> {
     match model {
-        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(mol),
+        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(mol, ring_options),
     }
 }
 
 fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
+    ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
     mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
     mol.perception.stereo = invalidate(mol.perception.stereo);
@@ -808,6 +821,8 @@ fn perceive_rdkit_like_aromaticity(
             .then_some(bond_id)
         })
         .collect::<BTreeSet<_>>();
+    let ring_set = perceive_ring_set_with_options(mol, ring_options)
+        .map_err(AromaticityError::RingPerception)?;
     for atom in mol.atoms.iter_mut().flatten() {
         atom.aromatic = false;
     }
@@ -815,7 +830,6 @@ fn perceive_rdkit_like_aromaticity(
         bond.aromatic = false;
     }
 
-    let ring_set = perceive_ring_set(mol);
     let ring_aromatic = ring_set
         .rings()
         .iter()
@@ -1645,7 +1659,7 @@ fn atom_has_terminal_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: Ato
         })
 }
 
-fn compute_ring_membership(mol: &Molecule) -> RingMembership {
+fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize) {
     let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.atoms.len()];
     let mut live_bonds = Vec::new();
     for (bond_id, bond) in mol.bonds() {
@@ -1658,18 +1672,18 @@ fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     let mut low = vec![0usize; mol.atoms.len()];
     let mut bridge = vec![false; mol.bonds.len()];
     let mut time = 0usize;
+    let mut stack_peak = 0usize;
 
     for atom_id in mol.atom_ids().collect::<Vec<_>>() {
         if discovery[atom_id.index()].is_none() {
-            ring_dfs(
+            stack_peak = stack_peak.max(ring_dfs_iterative(
                 atom_id,
-                None,
                 &graph,
                 &mut discovery,
                 &mut low,
                 &mut bridge,
                 &mut time,
-            );
+            ));
         }
     }
 
@@ -1685,45 +1699,70 @@ fn compute_ring_membership(mol: &Molecule) -> RingMembership {
             membership.atom_flags[bond.b.index()] = true;
         }
     }
-    membership
+    (membership, stack_peak)
 }
 
-fn ring_dfs(
-    atom: AtomId,
-    parent_bond: Option<BondId>,
+fn ring_dfs_iterative(
+    start: AtomId,
     graph: &[Vec<(AtomId, BondId)>],
     discovery: &mut [Option<usize>],
     low: &mut [usize],
     bridge: &mut [bool],
     time: &mut usize,
-) {
-    discovery[atom.index()] = Some(*time);
-    low[atom.index()] = *time;
-    *time += 1;
+) -> usize {
+    struct Frame {
+        atom: AtomId,
+        parent_bond: Option<BondId>,
+        next_edge: usize,
+    }
 
-    for (neighbor, bond_id) in &graph[atom.index()] {
-        if Some(*bond_id) == parent_bond {
+    discovery[start.index()] = Some(*time);
+    low[start.index()] = *time;
+    *time += 1;
+    let mut stack = vec![Frame {
+        atom: start,
+        parent_bond: None,
+        next_edge: 0,
+    }];
+    let mut stack_peak = stack.len();
+
+    while let Some(frame) = stack.last_mut() {
+        if frame.next_edge >= graph[frame.atom.index()].len() {
+            let finished = stack.pop().expect("bridge DFS frame should exist");
+            if let (Some(parent), Some(parent_bond)) = (stack.last(), finished.parent_bond) {
+                low[parent.atom.index()] = low[parent.atom.index()].min(low[finished.atom.index()]);
+                if low[finished.atom.index()]
+                    > discovery[parent.atom.index()].expect("parent atom is discovered")
+                {
+                    bridge[parent_bond.index()] = true;
+                }
+            }
+            continue;
+        }
+
+        let atom = frame.atom;
+        let parent_bond = frame.parent_bond;
+        let (neighbor, bond_id) = graph[atom.index()][frame.next_edge];
+        frame.next_edge += 1;
+        if Some(bond_id) == parent_bond {
             continue;
         }
         if discovery[neighbor.index()].is_none() {
-            ring_dfs(
-                *neighbor,
-                Some(*bond_id),
-                graph,
-                discovery,
-                low,
-                bridge,
-                time,
-            );
-            low[atom.index()] = low[atom.index()].min(low[neighbor.index()]);
-            if low[neighbor.index()] > discovery[atom.index()].expect("atom is discovered") {
-                bridge[bond_id.index()] = true;
-            }
+            discovery[neighbor.index()] = Some(*time);
+            low[neighbor.index()] = *time;
+            *time += 1;
+            stack.push(Frame {
+                atom: neighbor,
+                parent_bond: Some(bond_id),
+                next_edge: 0,
+            });
+            stack_peak = stack_peak.max(stack.len());
         } else {
             low[atom.index()] =
                 low[atom.index()].min(discovery[neighbor.index()].expect("neighbor discovered"));
         }
     }
+    stack_peak
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1732,9 +1771,67 @@ pub struct Ring {
     pub bonds: Vec<BondId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RingPerceptionOptions {
+    pub max_atoms: usize,
+    pub max_bonds: usize,
+    pub max_candidates: usize,
+    pub max_path_expansions: usize,
+    pub max_equivalent_shortest_paths: usize,
+    pub max_cycle_size: usize,
+    pub max_total_work: usize,
+}
+
+impl Default for RingPerceptionOptions {
+    fn default() -> Self {
+        Self {
+            max_atoms: 1_000_000,
+            max_bonds: 2_000_000,
+            max_candidates: 100_000,
+            max_path_expansions: 2_000_000,
+            max_equivalent_shortest_paths: 100_000,
+            max_cycle_size: 4_096,
+            max_total_work: 5_000_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RingWork {
+    pub atom_count: usize,
+    pub bond_count: usize,
+    pub candidate_cycles: usize,
+    pub equivalent_shortest_paths: usize,
+    pub path_expansions: usize,
+    pub queue_peak: usize,
+    pub stack_peak: usize,
+    pub total_work: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingPerceptionError {
+    pub resource: &'static str,
+    pub observed: usize,
+    pub limit: usize,
+    pub work: RingWork,
+}
+
+impl fmt::Display for RingPerceptionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ring perception {} limit exceeded: observed {}, limit {}",
+            self.resource, self.observed, self.limit
+        )
+    }
+}
+
+impl std::error::Error for RingPerceptionError {}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RingSet {
     rings: Vec<Ring>,
+    work: RingWork,
 }
 
 impl RingSet {
@@ -1749,10 +1846,23 @@ impl RingSet {
     pub fn is_empty(&self) -> bool {
         self.rings.is_empty()
     }
+
+    pub fn work(&self) -> RingWork {
+        self.work
+    }
 }
 
-pub fn perceive_ring_set(mol: &mut Molecule) -> RingSet {
-    let membership = perceive_ring_membership(mol);
+pub fn perceive_ring_set(mol: &mut Molecule) -> std::result::Result<RingSet, RingPerceptionError> {
+    perceive_ring_set_with_options(mol, RingPerceptionOptions::default())
+}
+
+pub fn perceive_ring_set_with_options(
+    mol: &mut Molecule,
+    options: RingPerceptionOptions,
+) -> std::result::Result<RingSet, RingPerceptionError> {
+    let mut tracker = RingWorkTracker::new(options, mol.atom_count(), mol.bond_count())?;
+    let (membership, bridge_stack_peak) = compute_ring_membership(mol);
+    tracker.observe_stack(bridge_stack_peak);
     let mut graph = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
     let mut ring_bonds = Vec::new();
     for (bond_id, bond) in mol.bonds() {
@@ -1769,13 +1879,14 @@ pub fn perceive_ring_set(mol: &mut Molecule) -> RingSet {
     let mut candidates = Vec::<Ring>::new();
     let mut seen_candidate_bonds = BTreeSet::<Vec<BondId>>::new();
     for (closing_bond, a, b) in ring_bonds {
-        for mut ring in shortest_cycles_excluding(&graph, a, b, closing_bond) {
+        for mut ring in shortest_cycles_excluding(&graph, a, b, closing_bond, &mut tracker)? {
             ring.bonds.push(closing_bond);
             let mut bond_key = ring.bonds.clone();
             bond_key.sort();
             bond_key.dedup();
             ring.bonds = bond_key.clone();
             if seen_candidate_bonds.insert(bond_key) {
+                tracker.record_candidate()?;
                 candidates.push(ring);
             }
         }
@@ -1805,9 +1916,104 @@ pub fn perceive_ring_set(mol: &mut Molecule) -> RingSet {
             }
         }
     }
-    let ring_set = RingSet { rings };
+    let ring_set = RingSet {
+        rings,
+        work: tracker.work,
+    };
+    mol.ring_membership = Some(membership);
     mol.ring_set = Some(ring_set.clone());
-    ring_set
+    mol.perception.rings = ComputedState::Fresh;
+    Ok(ring_set)
+}
+
+struct RingWorkTracker {
+    options: RingPerceptionOptions,
+    work: RingWork,
+}
+
+impl RingWorkTracker {
+    fn new(
+        options: RingPerceptionOptions,
+        atom_count: usize,
+        bond_count: usize,
+    ) -> std::result::Result<Self, RingPerceptionError> {
+        let work = RingWork {
+            atom_count,
+            bond_count,
+            total_work: atom_count.saturating_add(bond_count),
+            ..RingWork::default()
+        };
+        let tracker = Self { options, work };
+        tracker.check("atoms", atom_count, options.max_atoms)?;
+        tracker.check("bonds", bond_count, options.max_bonds)?;
+        tracker.check("total work", work.total_work, options.max_total_work)?;
+        Ok(tracker)
+    }
+
+    fn check(
+        &self,
+        resource: &'static str,
+        observed: usize,
+        limit: usize,
+    ) -> std::result::Result<(), RingPerceptionError> {
+        if observed > limit {
+            Err(RingPerceptionError {
+                resource,
+                observed,
+                limit,
+                work: self.work,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn add_work(&mut self, amount: usize) -> std::result::Result<(), RingPerceptionError> {
+        self.work.total_work = self.work.total_work.saturating_add(amount);
+        self.check(
+            "total work",
+            self.work.total_work,
+            self.options.max_total_work,
+        )
+    }
+
+    fn record_path_expansion(&mut self) -> std::result::Result<(), RingPerceptionError> {
+        self.work.path_expansions = self.work.path_expansions.saturating_add(1);
+        self.check(
+            "path expansions",
+            self.work.path_expansions,
+            self.options.max_path_expansions,
+        )?;
+        self.add_work(1)
+    }
+
+    fn record_shortest_path(&mut self) -> std::result::Result<(), RingPerceptionError> {
+        self.work.equivalent_shortest_paths = self.work.equivalent_shortest_paths.saturating_add(1);
+        self.check(
+            "equivalent shortest paths",
+            self.work.equivalent_shortest_paths,
+            self.options.max_equivalent_shortest_paths,
+        )?;
+        self.add_work(1)
+    }
+
+    fn record_candidate(&mut self) -> std::result::Result<(), RingPerceptionError> {
+        self.work.candidate_cycles = self.work.candidate_cycles.saturating_add(1);
+        self.check(
+            "candidate cycles",
+            self.work.candidate_cycles,
+            self.options.max_candidates,
+        )?;
+        self.add_work(1)
+    }
+
+    fn observe_queue(&mut self, size: usize) {
+        self.work.queue_peak = self.work.queue_peak.max(size);
+    }
+
+    fn observe_stack(&mut self, size: usize) {
+        self.work.stack_peak = self.work.stack_peak.max(size);
+    }
 }
 
 fn symmetric_extra_candidates(candidates: &[Ring]) -> Vec<bool> {
@@ -1857,10 +2063,17 @@ fn union_components(components: &mut [usize], left: usize, right: usize) {
 }
 
 fn find_component(components: &mut [usize], index: usize) -> usize {
-    if components[index] != index {
-        components[index] = find_component(components, components[index]);
+    let mut root = index;
+    while components[root] != root {
+        root = components[root];
     }
-    components[index]
+    let mut current = index;
+    while components[current] != current {
+        let parent = components[current];
+        components[current] = root;
+        current = parent;
+    }
+    root
 }
 
 fn shortest_cycles_excluding(
@@ -1868,79 +2081,85 @@ fn shortest_cycles_excluding(
     start: AtomId,
     goal: AtomId,
     excluded_bond: BondId,
-) -> Vec<Ring> {
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
     let mut queue = VecDeque::new();
     let mut distances = BTreeMap::<AtomId, usize>::new();
     distances.insert(start, 0);
     queue.push_back(start);
+    tracker.observe_queue(queue.len());
 
     while let Some(atom) = queue.pop_front() {
         let distance = distances[&atom];
         for (neighbor, bond_id) in graph.get(&atom).into_iter().flatten().copied() {
+            tracker.record_path_expansion()?;
             if bond_id == excluded_bond || distances.contains_key(&neighbor) {
                 continue;
             }
             distances.insert(neighbor, distance + 1);
             queue.push_back(neighbor);
+            tracker.observe_queue(queue.len());
         }
     }
 
-    if !distances.contains_key(&goal) {
-        return Vec::new();
+    let Some(goal_distance) = distances.get(&goal).copied() else {
+        return Ok(Vec::new());
+    };
+    let cycle_size = goal_distance.saturating_add(1);
+    tracker.check("cycle size", cycle_size, tracker.options.max_cycle_size)?;
+
+    #[derive(Clone)]
+    struct PathState {
+        current: AtomId,
+        atoms: Vec<AtomId>,
+        bonds: Vec<BondId>,
     }
 
     let mut rings = Vec::new();
-    let mut atoms = vec![goal];
-    let mut bonds = Vec::new();
-    let search = ShortestPathSearch {
-        graph,
-        start,
-        excluded_bond,
-        distances: &distances,
-    };
-    search.collect(goal, &mut atoms, &mut bonds, &mut rings);
-    rings
-}
-
-struct ShortestPathSearch<'a> {
-    graph: &'a BTreeMap<AtomId, Vec<(AtomId, BondId)>>,
-    start: AtomId,
-    excluded_bond: BondId,
-    distances: &'a BTreeMap<AtomId, usize>,
-}
-
-impl ShortestPathSearch<'_> {
-    fn collect(
-        &self,
-        current: AtomId,
-        atoms: &mut Vec<AtomId>,
-        bonds: &mut Vec<BondId>,
-        rings: &mut Vec<Ring>,
-    ) {
-        if current == self.start {
+    let mut stack = vec![PathState {
+        current: goal,
+        atoms: vec![goal],
+        bonds: Vec::new(),
+    }];
+    tracker.observe_stack(stack.len());
+    while let Some(state) = stack.pop() {
+        if state.current == start {
+            tracker.record_shortest_path()?;
             rings.push(Ring {
-                atoms: atoms.clone(),
-                bonds: bonds.clone(),
+                atoms: state.atoms,
+                bonds: state.bonds,
             });
-            return;
+            continue;
         }
 
-        let Some(distance) = self.distances.get(&current).copied() else {
-            return;
+        let Some(distance) = distances.get(&state.current).copied() else {
+            continue;
         };
-        for (neighbor, bond_id) in self.graph.get(&current).into_iter().flatten().copied() {
-            if bond_id == self.excluded_bond
-                || self.distances.get(&neighbor).copied() != distance.checked_sub(1)
-            {
+        let mut predecessors = graph
+            .get(&state.current)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|(neighbor, bond_id)| {
+                *bond_id != excluded_bond
+                    && distances.get(neighbor).copied() == distance.checked_sub(1)
+            })
+            .collect::<Vec<_>>();
+        predecessors.sort_by_key(|(neighbor, bond_id)| (*neighbor, *bond_id));
+        for (neighbor, bond_id) in predecessors.into_iter().rev() {
+            tracker.record_path_expansion()?;
+            if state.atoms.len() >= tracker.options.max_cycle_size {
                 continue;
             }
-            atoms.push(neighbor);
-            bonds.push(bond_id);
-            self.collect(neighbor, atoms, bonds, rings);
-            bonds.pop();
-            atoms.pop();
+            let mut next = state.clone();
+            next.current = neighbor;
+            next.atoms.push(neighbor);
+            next.bonds.push(bond_id);
+            stack.push(next);
+            tracker.observe_stack(stack.len());
         }
     }
+    Ok(rings)
 }
 
 fn cycle_bond_bits(bonds: &[BondId], bit_len: usize) -> Vec<u64> {
@@ -2199,6 +2418,7 @@ pub struct SanitizeReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SanitizeError {
     Valence(ValenceReport),
+    Rings(RingPerceptionError),
     Aromaticity(AromaticityError),
 }
 
@@ -2210,6 +2430,7 @@ impl fmt::Display for SanitizeError {
                 "valence perception reported {} issue(s)",
                 report.issues.len()
             ),
+            Self::Rings(error) => write!(f, "{error}"),
             Self::Aromaticity(error) => write!(f, "{error}"),
         }
     }
@@ -2220,6 +2441,14 @@ impl std::error::Error for SanitizeError {}
 pub fn sanitize_small_molecule(
     molecule: &mut SmallMolecule,
     options: SanitizeOptions,
+) -> std::result::Result<SanitizeReport, SanitizeError> {
+    sanitize_small_molecule_with_ring_options(molecule, options, RingPerceptionOptions::default())
+}
+
+pub fn sanitize_small_molecule_with_ring_options(
+    molecule: &mut SmallMolecule,
+    options: SanitizeOptions,
+    ring_options: RingPerceptionOptions,
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
     let mut staged = molecule.clone();
     normalize_sanitize_charges(&mut staged.mol);
@@ -2236,13 +2465,21 @@ pub fn sanitize_small_molecule(
         None
     };
     let ring_count = if options.perceive_rings {
-        Some(perceive_ring_set(&mut staged.mol).len())
+        Some(
+            perceive_ring_set_with_options(&mut staged.mol, ring_options)
+                .map_err(SanitizeError::Rings)?
+                .len(),
+        )
     } else {
         None
     };
     if options.perceive_aromaticity {
-        perceive_aromaticity(&mut staged.mol, AromaticityModel::RdkitLike)
-            .map_err(SanitizeError::Aromaticity)?;
+        perceive_aromaticity_with_ring_options(
+            &mut staged.mol,
+            AromaticityModel::RdkitLike,
+            ring_options,
+        )
+        .map_err(SanitizeError::Aromaticity)?;
         if let Some(state) = skipped_ring_state {
             staged.mol.perception.rings = state;
             staged.mol.ring_membership = None;
@@ -3745,12 +3982,26 @@ fn collect_smiles_tree(
     tree_bonds: &mut BTreeSet<BondId>,
     ring_bonds: &mut BTreeMap<BondId, (AtomId, AtomId, BondOrder)>,
 ) -> std::result::Result<(), MolWriteError> {
-    visited.insert(atom_id);
-    let mut incident = smiles_incident_bonds(mol, atom_id)?;
-    incident.sort_by_key(|(_, _, neighbor)| *neighbor);
+    struct Frame {
+        parent_bond: Option<BondId>,
+        incident: Vec<(BondId, BondOrder, AtomId)>,
+        next_edge: usize,
+    }
 
-    for (bond_id, order, neighbor) in incident {
-        if Some(bond_id) == parent_bond {
+    visited.insert(atom_id);
+    let mut stack = vec![Frame {
+        parent_bond,
+        incident: smiles_incident_bonds(mol, atom_id)?,
+        next_edge: 0,
+    }];
+    while let Some(frame) = stack.last_mut() {
+        if frame.next_edge >= frame.incident.len() {
+            stack.pop();
+            continue;
+        }
+        let (bond_id, order, neighbor) = frame.incident[frame.next_edge];
+        frame.next_edge += 1;
+        if Some(bond_id) == frame.parent_bond {
             continue;
         }
         if visited.contains(&neighbor) {
@@ -3765,14 +4016,12 @@ fn collect_smiles_tree(
             continue;
         }
         tree_bonds.insert(bond_id);
-        collect_smiles_tree(
-            mol,
-            neighbor,
-            Some(bond_id),
-            visited,
-            tree_bonds,
-            ring_bonds,
-        )?;
+        visited.insert(neighbor);
+        stack.push(Frame {
+            parent_bond: Some(bond_id),
+            incident: smiles_incident_bonds(mol, neighbor)?,
+            next_edge: 0,
+        });
     }
     Ok(())
 }
@@ -3784,20 +4033,33 @@ fn compute_smiles_subtree_sizes(
     tree_bonds: &BTreeSet<BondId>,
     subtree_sizes: &mut BTreeMap<AtomId, usize>,
 ) -> std::result::Result<usize, MolWriteError> {
-    let mut size = 1usize;
-    for (bond_id, _, neighbor) in smiles_incident_bonds(mol, atom_id)? {
-        if tree_bonds.contains(&bond_id) && Some(neighbor) != parent {
-            size += compute_smiles_subtree_sizes(
-                mol,
-                neighbor,
-                Some(atom_id),
-                tree_bonds,
-                subtree_sizes,
-            )?;
+    let mut stack = vec![(atom_id, parent, false)];
+    while let Some((current, parent, expanded)) = stack.pop() {
+        if expanded {
+            let mut size = 1usize;
+            for (bond_id, _, neighbor) in smiles_incident_bonds(mol, current)? {
+                if tree_bonds.contains(&bond_id) && Some(neighbor) != parent {
+                    size = size
+                        .saturating_add(subtree_sizes.get(&neighbor).copied().unwrap_or_default());
+                }
+            }
+            subtree_sizes.insert(current, size);
+            continue;
+        }
+        stack.push((current, parent, true));
+        let mut children = smiles_incident_bonds(mol, current)?
+            .into_iter()
+            .filter(|(bond_id, _, neighbor)| {
+                tree_bonds.contains(bond_id) && Some(*neighbor) != parent
+            })
+            .map(|(_, _, neighbor)| neighbor)
+            .collect::<Vec<_>>();
+        children.sort();
+        for child in children.into_iter().rev() {
+            stack.push((child, Some(current), false));
         }
     }
-    subtree_sizes.insert(atom_id, size);
-    Ok(size)
+    Ok(subtree_sizes.get(&atom_id).copied().unwrap_or_default())
 }
 
 fn write_smiles_component(
@@ -3806,56 +4068,95 @@ fn write_smiles_component(
     parent: Option<AtomId>,
     plan: &SmilesWritePlan,
 ) -> std::result::Result<String, MolWriteError> {
-    let atom = mol
-        .atom(atom_id)
-        .map_err(|error| MolWriteError::new(error.to_string()))?;
-    let mut out = smiles_atom(atom);
-    if let Some(closures) = plan.closures.get(&atom_id) {
-        for closure in closures {
-            out.push_str(smiles_bond_between(
-                mol,
-                closure.order,
-                atom_id,
-                closure.other,
-            )?);
-            out.push_str(&smiles_ring_number(closure.number));
-        }
+    enum Action {
+        Node {
+            atom: AtomId,
+            parent: Option<AtomId>,
+        },
+        Bond {
+            order: BondOrder,
+            left: AtomId,
+            right: AtomId,
+        },
+        OpenBranch,
+        CloseBranch,
     }
 
-    let mut children = smiles_incident_bonds(mol, atom_id)?
-        .into_iter()
-        .filter(|(bond_id, _, neighbor)| {
-            plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
-        })
-        .collect::<Vec<_>>();
-    children.sort_by_key(|(bond_id, _, atom)| (*atom, *bond_id));
-    let main_child_index = children
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, child_entry)| {
-            let child = child_entry.2;
-            (plan.subtree_sizes.get(&child).copied().unwrap_or(0), child)
-        })
-        .map(|(index, _)| index);
+    let mut out = String::new();
+    let mut actions = vec![Action::Node {
+        atom: atom_id,
+        parent,
+    }];
+    while let Some(action) = actions.pop() {
+        match action {
+            Action::OpenBranch => out.push('('),
+            Action::CloseBranch => out.push(')'),
+            Action::Bond { order, left, right } => {
+                out.push_str(smiles_bond_between(mol, order, left, right)?);
+            }
+            Action::Node { atom, parent } => {
+                let atom_record = mol
+                    .atom(atom)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+                out.push_str(&smiles_atom(atom_record));
+                if let Some(closures) = plan.closures.get(&atom) {
+                    for closure in closures {
+                        out.push_str(smiles_bond_between(
+                            mol,
+                            closure.order,
+                            atom,
+                            closure.other,
+                        )?);
+                        out.push_str(&smiles_ring_number(closure.number));
+                    }
+                }
 
-    for (index, (_, order, child)) in children.iter().copied().enumerate() {
-        if Some(index) == main_child_index {
-            continue;
+                let mut children = smiles_incident_bonds(mol, atom)?
+                    .into_iter()
+                    .filter(|(bond_id, _, neighbor)| {
+                        plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
+                    })
+                    .collect::<Vec<_>>();
+                children.sort_by_key(|(bond_id, _, child)| (*child, *bond_id));
+                let main_child_index = children
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, child_entry)| {
+                        let child = child_entry.2;
+                        (plan.subtree_sizes.get(&child).copied().unwrap_or(0), child)
+                    })
+                    .map(|(index, _)| index);
+
+                if let Some(index) = main_child_index {
+                    let (_, order, child) = children[index];
+                    actions.push(Action::Node {
+                        atom: child,
+                        parent: Some(atom),
+                    });
+                    actions.push(Action::Bond {
+                        order,
+                        left: atom,
+                        right: child,
+                    });
+                }
+                for (index, (_, order, child)) in children.into_iter().enumerate().rev() {
+                    if Some(index) == main_child_index {
+                        continue;
+                    }
+                    actions.push(Action::CloseBranch);
+                    actions.push(Action::Node {
+                        atom: child,
+                        parent: Some(atom),
+                    });
+                    actions.push(Action::Bond {
+                        order,
+                        left: atom,
+                        right: child,
+                    });
+                    actions.push(Action::OpenBranch);
+                }
+            }
         }
-        let child_text = format!(
-            "{}{}",
-            smiles_bond_between(mol, order, atom_id, child)?,
-            write_smiles_component(mol, child, Some(atom_id), plan)?
-        );
-        out.push('(');
-        out.push_str(&child_text);
-        out.push(')');
-    }
-
-    if let Some(index) = main_child_index {
-        let (_, order, child) = children[index];
-        out.push_str(smiles_bond_between(mol, order, atom_id, child)?);
-        out.push_str(&write_smiles_component(mol, child, Some(atom_id), plan)?);
     }
     Ok(out)
 }
@@ -5795,7 +6096,7 @@ $$$$
             mol.add_bond(carbon, hydrogen, BondOrder::Single)
                 .expect("bond");
         }
-        perceive_ring_set(&mut mol);
+        perceive_ring_set(&mut mol).expect("ring perception should succeed");
         let mut molecule = SmallMolecule { mol };
         let before = molecule.clone();
 
@@ -5902,10 +6203,173 @@ $$$$
         mol.add_bond(b, AtomId::new(3), BondOrder::Single)
             .expect("bond");
 
-        let ring_set = perceive_ring_set(&mut mol);
+        let ring_set = perceive_ring_set(&mut mol).expect("ring perception should succeed");
 
         assert_eq!(ring_set.len(), 3);
         assert!(ring_set.rings().iter().all(|ring| ring.atoms.len() >= 4));
+    }
+
+    #[test]
+    fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
+        let mut molecule = SmallMolecule::default();
+        let mut previous = molecule.mol.add_atom(carbon());
+        for _ in 1..20_000 {
+            let atom = molecule.mol.add_atom(carbon());
+            molecule
+                .mol
+                .add_bond(previous, atom, BondOrder::Single)
+                .expect("chain bond should be valid");
+            previous = atom;
+        }
+
+        let ring_set =
+            perceive_ring_set(&mut molecule.mol).expect("long chain should perceive rings");
+        assert!(ring_set.is_empty());
+        assert_eq!(ring_set.work().atom_count, 20_000);
+        assert!(ring_set.work().stack_peak >= 20_000);
+
+        let written = write_smiles(&molecule, SmilesWriteOptions).expect("long chain should write");
+        assert_eq!(written.matches('C').count(), 20_000);
+    }
+
+    #[test]
+    fn ladder_ring_work_is_instrumented() {
+        let mut mol = Molecule::new();
+        let top = (0..12).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+        let bottom = (0..12).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+        for index in 0..11 {
+            mol.add_bond(top[index], top[index + 1], BondOrder::Single)
+                .expect("top rail");
+            mol.add_bond(bottom[index], bottom[index + 1], BondOrder::Single)
+                .expect("bottom rail");
+        }
+        for index in 0..12 {
+            mol.add_bond(top[index], bottom[index], BondOrder::Single)
+                .expect("rung");
+        }
+
+        let ring_set = perceive_ring_set(&mut mol).expect("ladder should perceive rings");
+        let work = ring_set.work();
+        assert_eq!(ring_set.len(), 11);
+        assert!(work.candidate_cycles >= ring_set.len());
+        assert!(work.equivalent_shortest_paths >= work.candidate_cycles);
+        assert!(work.path_expansions > 0);
+        assert!(work.queue_peak > 0);
+        assert!(work.stack_peak > 0);
+        assert!(work.total_work >= work.atom_count + work.bond_count);
+    }
+
+    #[test]
+    fn symmetric_cage_returns_named_candidate_limit_error() {
+        let mut mol = Molecule::new();
+        let left = (0..4).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+        let right = (0..4).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+        for a in &left {
+            for b in &right {
+                mol.add_bond(*a, *b, BondOrder::Single)
+                    .expect("cage bond should be valid");
+            }
+        }
+        let error = perceive_ring_set_with_options(
+            &mut mol,
+            RingPerceptionOptions {
+                max_candidates: 2,
+                ..RingPerceptionOptions::default()
+            },
+        )
+        .expect_err("symmetric cage should hit candidate limit");
+        assert_eq!(error.resource, "candidate cycles");
+        assert!(error.observed > error.limit);
+        assert!(mol.ring_set().is_none());
+    }
+
+    #[test]
+    fn theta_graph_and_disconnected_mixture_are_deterministic() {
+        let mut mol = Molecule::new();
+        let left = mol.add_atom(carbon());
+        let right = mol.add_atom(carbon());
+        for _ in 0..3 {
+            let middle = mol.add_atom(carbon());
+            mol.add_bond(left, middle, BondOrder::Single)
+                .expect("theta edge");
+            mol.add_bond(middle, right, BondOrder::Single)
+                .expect("theta edge");
+        }
+        let tail_a = mol.add_atom(carbon());
+        let tail_b = mol.add_atom(carbon());
+        mol.add_bond(tail_a, tail_b, BondOrder::Single)
+            .expect("disconnected tail");
+
+        let first = perceive_ring_set(&mut mol).expect("theta graph should perceive rings");
+        let first_rings = first.rings().to_vec();
+        assert_eq!(first.len(), 3);
+        assert!(first.rings().iter().all(|ring| ring.atoms.len() == 4));
+
+        let second = perceive_ring_set(&mut mol).expect("repeat should perceive rings");
+        assert_eq!(second.rings(), first_rings);
+    }
+
+    #[test]
+    fn cycle_size_limit_returns_structured_error() {
+        let (mut mol, _, _) = ring_molecule(
+            &["C", "C", "C", "C", "C", "C", "C", "C", "C", "C"],
+            &[BondOrder::Single; 10],
+        );
+        let error = perceive_ring_set_with_options(
+            &mut mol,
+            RingPerceptionOptions {
+                max_cycle_size: 5,
+                ..RingPerceptionOptions::default()
+            },
+        )
+        .expect_err("large cycle should hit cycle-size limit");
+        assert_eq!(error.resource, "cycle size");
+        assert_eq!(error.observed, 10);
+        assert_eq!(error.limit, 5);
+    }
+
+    #[test]
+    fn ring_resource_errors_propagate_transactionally() {
+        let mut molecule = SmallMolecule::default();
+        let atoms = (0..3)
+            .map(|_| molecule.mol.add_atom(carbon()))
+            .collect::<Vec<_>>();
+        for (left, right) in [(0, 1), (1, 2), (2, 0)] {
+            molecule
+                .mol
+                .add_bond(atoms[left], atoms[right], BondOrder::Single)
+                .expect("triangle bond should be valid");
+        }
+        let original = molecule.clone();
+        let ring_options = RingPerceptionOptions {
+            max_path_expansions: 0,
+            ..RingPerceptionOptions::default()
+        };
+        let error = sanitize_small_molecule_with_ring_options(
+            &mut molecule,
+            SanitizeOptions {
+                perceive_valence: false,
+                perceive_rings: true,
+                perceive_aromaticity: false,
+            },
+            ring_options,
+        )
+        .expect_err("ring limit should fail sanitization");
+        assert!(matches!(error, SanitizeError::Rings(_)));
+        assert_eq!(molecule, original);
+
+        let mut aromatic =
+            read_smiles_str("c1ccccc1", SmilesParseOptions).expect("benzene should parse");
+        let error = perceive_aromaticity_with_ring_options(
+            &mut aromatic.mol,
+            AromaticityModel::RdkitLike,
+            RingPerceptionOptions {
+                max_atoms: 0,
+                ..RingPerceptionOptions::default()
+            },
+        )
+        .expect_err("aromaticity should propagate ring limit");
+        assert!(matches!(error, AromaticityError::RingPerception(_)));
     }
 
     #[test]
@@ -7474,7 +7938,7 @@ $$$$
             &["C", "C", "C"],
             &[BondOrder::Single, BondOrder::Single, BondOrder::Single],
         );
-        perceive_ring_set(&mut mol);
+        perceive_ring_set(&mut mol).expect("ring perception should succeed");
         mol.perception.valence = ComputedState::Fresh;
         mol.perception.aromaticity = ComputedState::Fresh;
         mol.perception.stereo = ComputedState::Fresh;
