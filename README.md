@@ -1,6 +1,14 @@
 <img src="./assets/molecules-character-waves-v3.svg" alt="Molecules banner." width="100%">
 
 
+<div style="text-align: center;">
+    <img src="./assets/molecules-logo.svg" alt="Molecules banner." width="25%" margin="auto">
+</div>
+
+
+
+
+
 <pre style="line-height: 1; font-family: monospace;">
 ╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮
 ││││ ││  ├╴ │  │ ││  ├╴ ╰─╮
