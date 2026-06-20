@@ -17,7 +17,9 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - Preserves insertion order for hierarchy iteration.
 - Tracks label and author identifiers separately.
 - Supports alternate locations, occupancy, B-factor, insertion code, and model identifiers.
+- Stores label and author component IDs separately on residues.
 - mmCIF residue grouping uses label sequence identity when available, author sequence identity otherwise, and strict mode rejects ambiguous sequence-less residues.
+- Lenient sequence-less grouping is occurrence-based and keeps alternate locations together without merging repeated waters or ligands.
 
 ## Validation
 
@@ -33,3 +35,4 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 
 - v1: SMCRA sidecar hierarchy for macromolecular parsing.
 - v2: Preserve atom-site row metadata and distinguish author-keyed residues when label sequence IDs are absent.
+- v3: Preserve label/auth component IDs separately and support conservative lenient occurrence grouping.
