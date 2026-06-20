@@ -1400,9 +1400,10 @@ struct IndexedSmallRecord {
 #[derive(Debug, Clone)]
 struct IndexedSmilesRecord {
     record_index: usize,
+    status: String,
     title: String,
     input_smiles: String,
-    molecule: SmallMolecule,
+    molecule: Option<SmallMolecule>,
 }
 
 fn read_small_records_by_suffix(path: &Path) -> Result<Vec<IndexedSmallRecord>, Box<dyn Error>> {
@@ -1443,15 +1444,36 @@ fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord>, Box<dyn 
         let mut parts = line.splitn(2, char::is_whitespace);
         let smiles = parts.next().unwrap_or_default().to_owned();
         let title = parts.next().unwrap_or_default().trim().to_owned();
-        let molecule = read_smiles_str(&smiles, SmilesParseOptions)?;
+        if smiles_unsupported_subset_reason(&smiles).is_some() {
+            records.push(IndexedSmilesRecord {
+                record_index: index,
+                status: "unsupported".to_owned(),
+                title,
+                input_smiles: smiles,
+                molecule: None,
+            });
+            continue;
+        }
+        let (status, molecule) = match read_smiles_str(&smiles, SmilesParseOptions) {
+            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+            Err(_) => ("parse_error".to_owned(), None),
+        };
         records.push(IndexedSmilesRecord {
             record_index: index,
+            status,
             title,
             input_smiles: smiles,
             molecule,
         });
     }
     Ok(records)
+}
+
+fn smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static str> {
+    smiles
+        .chars()
+        .any(|ch| matches!(ch, '@' | '/' | '\\' | '*'))
+        .then_some("unsupported")
 }
 
 fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
@@ -1464,20 +1486,6 @@ fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
         "bond_count": mol.bond_count(),
         "atoms": atoms_json(mol),
         "bonds": bonds_json(mol),
-        "properties": sdf_properties_json(mol),
-    })
-}
-
-fn sdf_record_basic_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule.mol;
-    json!({
-        "record_index": record.record_index,
-        "status": "ok",
-        "title": record.title,
-        "atom_count": mol.atom_count(),
-        "bond_count": mol.bond_count(),
-        "atoms": basic_atoms_json(mol),
-        "bonds": basic_bonds_json(mol),
         "properties": sdf_properties_json(mol),
     })
 }
@@ -1657,21 +1665,196 @@ fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value {
 }
 
 fn smiles_write_record_json(record: &IndexedSmilesRecord) -> Result<Value, Box<dyn Error>> {
+    let Some(molecule) = &record.molecule else {
+        return Ok(smiles_error_record_json(record));
+    };
+    let written = write_smiles(molecule, SmilesWriteOptions)?;
+    let reparsed = match read_smiles_str(&written, SmilesParseOptions) {
+        Ok(reparsed) => reparsed,
+        Err(_) => {
+            return Ok(json!({
+                "record_index": record.record_index,
+                "status": "write_reparse_error",
+                "title": record.title,
+                "input_smiles": record.input_smiles,
+            }));
+        }
+    };
     Ok(json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
-        "output_smiles": write_smiles(&record.molecule, SmilesWriteOptions)?,
+        "sanitized": smiles_sanitized_semantic_json(reparsed),
     }))
 }
 
 fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
-    sdf_record_basic_json(&IndexedSmallRecord {
-        record_index: record.record_index,
-        title: record.title.clone(),
-        molecule: record.molecule.clone(),
+    let Some(molecule) = &record.molecule else {
+        return smiles_error_record_json(record);
+    };
+    let written = write_smiles(molecule, SmilesWriteOptions);
+    let round_trip = match written
+        .as_ref()
+        .map_err(|_| ())
+        .and_then(|text| read_smiles_str(text, SmilesParseOptions).map_err(|_| ()))
+    {
+        Ok(reparsed) => smiles_sanitized_semantic_json(reparsed),
+        Err(_) => json!({ "status": "write_reparse_error" }),
+    };
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "input_smiles": record.input_smiles,
+        "raw": smiles_raw_semantic_json(molecule),
+        "sanitized": smiles_sanitized_semantic_json(molecule.clone()),
+        "write_round_trip": round_trip,
     })
+}
+
+fn smiles_error_record_json(record: &IndexedSmilesRecord) -> Value {
+    json!({
+        "record_index": record.record_index,
+        "status": record.status,
+        "title": record.title,
+        "input_smiles": record.input_smiles,
+    })
+}
+
+fn smiles_raw_semantic_json(molecule: &SmallMolecule) -> Value {
+    let mol = &molecule.mol;
+    json!({
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "atoms": basic_atoms_json(mol),
+        "bonds": basic_bonds_json(mol),
+    })
+}
+
+fn smiles_sanitized_semantic_json(mut molecule: SmallMolecule) -> Value {
+    match sanitize_small_molecule(&mut molecule, SanitizeOptions::default()) {
+        Ok(_) => {
+            let mol = &molecule.mol;
+            json!({
+                "status": "ok",
+                "atom_count": mol.atom_count(),
+                "bond_count": mol.bond_count(),
+                "atoms": smiles_sanitized_atoms_json(mol),
+                "bonds": smiles_sanitized_bonds_json(mol),
+            })
+        }
+        Err(_) => json!({ "status": "sanitize_error" }),
+    }
+}
+
+fn smiles_sanitized_bonds_json(mol: &Molecule) -> Vec<Value> {
+    let mut bonds = mol
+        .bonds()
+        .map(|(_, bond)| {
+            let left = mol.atom(bond.a()).expect("bond endpoint should exist");
+            let right = mol.atom(bond.b()).expect("bond endpoint should exist");
+            let mut endpoints = [
+                smiles_sanitized_atom_key(mol, bond.a(), left),
+                smiles_sanitized_atom_key(mol, bond.b(), right),
+            ];
+            endpoints.sort();
+            json!({
+                "endpoint_atoms": endpoints,
+                "bond_type": smiles_semantic_bond_type(bond),
+                "is_aromatic": bond.aromatic,
+            })
+        })
+        .collect::<Vec<_>>();
+    bonds.sort_by_key(|value| value.to_string());
+    bonds
+}
+
+fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
+    let mut atoms = mol
+        .atoms()
+        .map(|(id, atom)| {
+            let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
+            let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
+            let mut neighbors = mol
+                .incident_bonds(id)
+                .expect("atom should exist")
+                .map(|(_, bond)| {
+                    let neighbor_id = if bond.a() == id { bond.b() } else { bond.a() };
+                    let neighbor = mol.atom(neighbor_id).expect("bond endpoint should exist");
+                    json!({
+                        "atom": smiles_sanitized_atom_key(mol, neighbor_id, neighbor),
+                        "bond_type": smiles_semantic_bond_type(bond),
+                        "is_aromatic": bond.aromatic,
+                    })
+                })
+                .collect::<Vec<_>>();
+            neighbors.sort_by_key(|value| value.to_string());
+            (
+                smiles_sanitized_atom_key(mol, id, atom),
+                json!({
+                    "atomic_number": atom.element.atomic_number(),
+                    "symbol": atom.element.symbol(),
+                    "formal_charge": atom.formal_charge,
+                    "isotope": atom.isotope,
+                    "explicit_hydrogens": explicit_hydrogens,
+                    "implicit_hydrogens": implicit_hydrogens,
+                    "no_implicit_hydrogens": atom.no_implicit_hydrogens,
+                    "explicit_valence": explicit_valence,
+                    "atom_map": atom.atom_map,
+                    "aromatic": atom.aromatic,
+                    "neighbors": neighbors,
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    atoms.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.to_string().cmp(&right.1.to_string()))
+    });
+    atoms.into_iter().map(|(_, value)| value).collect()
+}
+
+fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom) -> String {
+    let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
+    let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
+    format!(
+        "{:03}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        atom.element.atomic_number(),
+        atom.element.symbol(),
+        atom.formal_charge,
+        atom.isotope.unwrap_or(0),
+        explicit_hydrogens,
+        implicit_hydrogens,
+        atom.no_implicit_hydrogens,
+        explicit_valence,
+        atom.atom_map.unwrap_or(0),
+        atom.aromatic
+    )
+}
+
+fn smiles_semantic_bond_type(bond: &Bond) -> &'static str {
+    if bond.aromatic {
+        "AROMATIC"
+    } else {
+        bond_order_json(bond.order)
+    }
+}
+
+fn smiles_effective_hydrogens(atom: &Atom) -> (u8, u8) {
+    if atom.element.symbol() == "N"
+        && atom.aromatic
+        && atom.explicit_hydrogens == 0
+        && atom.implicit_hydrogens == Some(1)
+    {
+        (1, 0)
+    } else {
+        (
+            atom.explicit_hydrogens,
+            atom.implicit_hydrogens.unwrap_or(0),
+        )
+    }
 }
 
 fn atoms_json(mol: &Molecule) -> Vec<Value> {
@@ -3252,6 +3435,30 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
             normalize_for_comparison(&expected),
             normalize_for_comparison(&actual)
         );
+    }
+
+    #[test]
+    fn smiles_semantic_records_assert_topology_and_atom_identity() {
+        let single = read_smiles_str("CC", SmilesParseOptions).expect("single bond should parse");
+        let double = read_smiles_str("C=C", SmilesParseOptions).expect("double bond should parse");
+        assert_ne!(
+            smiles_sanitized_bonds_json(&single.mol),
+            smiles_sanitized_bonds_json(&double.mol)
+        );
+
+        let aromatic =
+            read_smiles_str("c1ccccc1", SmilesParseOptions).expect("benzene should parse");
+        assert!(smiles_sanitized_bonds_json(&aromatic.mol)
+            .iter()
+            .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
+
+        let labeled =
+            read_smiles_str("[13CH3:7]C", SmilesParseOptions).expect("labeled carbon should parse");
+        let atoms = smiles_sanitized_atoms_json(&labeled.mol);
+        assert!(atoms
+            .iter()
+            .any(|atom| atom["isotope"] == 13 && atom["atom_map"] == 7));
+        assert!(atoms.iter().all(|atom| atom["neighbors"].is_array()));
     }
 
     fn temp_feature_root(label: &str) -> PathBuf {

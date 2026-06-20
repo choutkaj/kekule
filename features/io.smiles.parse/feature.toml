@@ -1,9 +1,9 @@
 id = "io.smiles.parse"
 title = "SMILES parser"
 area = "io"
-version = 2
+version = 3
 implemented = true
 validated = false
-description = "Parse a practical subset of SMILES into small molecules without implicit sanitization."
+description = "Parse a practical subset of SMILES, including omitted aromatic bonds, without implicit sanitization."
 depends_on = ["core.graph", "core.atom-bond"]
 validation_required = ["tiny", "pubchem-100", "pubchem-1000", "enamine-diversity"]

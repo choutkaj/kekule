@@ -1,9 +1,9 @@
 id = "io.smiles.write"
 title = "Noncanonical SMILES writer"
 area = "io"
-version = 2
+version = 3
 implemented = true
 validated = false
-description = "Write small molecules as deterministic noncanonical SMILES using current graph order."
+description = "Write deterministic noncanonical SMILES that reparse locally or reject unsupported chemistry explicitly."
 depends_on = ["io.smiles.parse"]
 validation_required = ["tiny", "pubchem-100", "pubchem-1000", "enamine-diversity"]

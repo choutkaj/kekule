@@ -9,11 +9,12 @@ Provide conservative valence perception for common organic molecules.
 - Exposes `ValenceModel`, `ValenceReport`, `ValenceIssue`, and `perceive_valence`.
 - Computes explicit valence from bond order and explicit hydrogens.
 - Assigns implicit hydrogens when a common allowed valence can be selected.
+- Handles imported aromatic atoms without counting each aromatic bond as a localized double bond.
 - Reports unsupported elements or valence excesses instead of silently accepting them.
 
 ## Implementation Notes
 
-- The current model covers common organic elements plus selected charged salts, boranes, group-14/group-15 main-group compounds, hypervalent halogens, flexible transition-metal coordination centers, and radical implicit-hydrogen suppression exposed by external PubChem validation.
+- The current model covers common organic elements plus selected charged salts, boranes, group-14/group-15 main-group compounds, hypervalent halogens, flexible transition-metal coordination centers, radicals, and aromatic donor/acceptor cases exposed by external PubChem validation.
 - Perception state is marked fresh only after the pass completes.
 
 ## Validation
@@ -32,3 +33,4 @@ Provide conservative valence perception for common organic molecules.
 - v3: Add corpus-driven RDKit-compatible valence cases for charged halides, boron anions, alkali counterions, hypervalent halogens, and simple mercury salts.
 - v4: Expand corpus-driven RDKit-compatible valence cases for PubChem-100 salts, silicon, phosphonium, and selected metal centers.
 - v5: Generalize PubChem-1000-driven valence handling for transition-metal coordination, group-14/group-15 heavy elements, oxonium centers, chalcogens, and radicals; PubChem-1000 still requires further table coverage.
+- v6: Add aromatic imported-SMILES valence targets so lowercase aromatic systems sanitize with RDKit-like hydrogen counts.

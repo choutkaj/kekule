@@ -12,6 +12,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Clears prior aromatic flags deterministically before assignment.
 - Can be run directly or through the explicit sanitization pipeline.
 - Returns `UnsupportedElement` for an explicitly aromatic ring containing an unsupported element instead of silently accepting that representation.
+- Returns `InvalidAromaticRepresentation` when imported aromatic bonds cannot be perceived back onto every participating atom.
 
 ## Implementation Notes
 
@@ -19,7 +20,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses per-ring cycle data from `algo.rings.sssr`.
 - Integrates with the first-wave valence and ring-set perception stack.
 - Applies a 4n+2 electron-count model for common C, N, O, S, Se, Te, and P rings and small fused ring components.
-- Computes pi-electron counts from bond order rather than from aromatic flags assigned earlier in the same perception pass.
+- Computes pi-electron counts from bond order, and uses an atom-contribution path for explicitly imported aromatic-bond rings.
 - Uses conservative guards for small rings, hetero fused donors, lactone-like rings, and large macrocycles exposed by external PubChem validation.
 - Treats unsupported ring elements as non-aromatic for the current model rather than failing the whole perception pass.
 - Leaves unsupported or ambiguous systems non-aromatic rather than claiming full RDKit parity.
@@ -45,3 +46,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v5: Refine fused heteroaromatic handling and conservative ring-size/electron-count guards to pass PubChem-100.
 - v6: Add chalcogen heteroaromatic support and refine fused donor eligibility; PubChem-1000 still exposes fused aromatic bond-selection gaps.
 - v7: Reject unsupported elements in explicitly aromatic ring representations and preserve caller state when sanitization propagates the error.
+- v8: Count explicitly imported aromatic-bond rings with atom contributions so lowercase aromatic SMILES sanitize without treating every aromatic bond as a localized double bond.
