@@ -4121,11 +4121,14 @@ impl BioHierarchy {
         insertion_code: Option<String>,
     ) -> std::result::Result<ResidueId, BioHierarchyError> {
         self.chain(chain)?;
+        let name = name.into();
         let id = ResidueId::new(self.residues.len() as u32);
         self.residues.push(Residue {
             id,
             chain,
-            name: name.into(),
+            name: name.clone(),
+            label_comp_id: Some(name),
+            author_comp_id: None,
             label_seq_id,
             author_seq_id,
             insertion_code,
@@ -4229,6 +4232,8 @@ pub struct Residue {
     pub id: ResidueId,
     pub chain: ChainId,
     pub name: String,
+    pub label_comp_id: Option<String>,
+    pub author_comp_id: Option<String>,
     pub label_seq_id: Option<i32>,
     pub author_seq_id: Option<String>,
     pub insertion_code: Option<String>,
@@ -4536,6 +4541,8 @@ fn build_macro_molecule_from_atom_site_loop(
     let mut models = BTreeMap::<String, ModelId>::new();
     let mut chains = BTreeMap::<(String, String), ChainId>::new();
     let mut residues = BTreeMap::<MmcifResidueKey, ResidueId>::new();
+    let mut ambiguous_residue = None::<MmcifAmbiguousResidueState>;
+    let mut next_ambiguous_occurrence = 0usize;
     let mut conformer = Conformer::new();
     let mut saw_coordinates = false;
 
@@ -4606,6 +4613,21 @@ fn build_macro_molecule_from_atom_site_loop(
             chains.insert(chain_key, chain);
             chain
         };
+        let ambiguous_occurrence = if label_seq_id.is_none() && auth_seq_id.is_none() {
+            Some(next_mmcif_ambiguous_occurrence(
+                &mut ambiguous_residue,
+                &mut next_ambiguous_occurrence,
+                model_key.as_str(),
+                chain_label,
+                residue_name,
+                insertion_code,
+                label_atom_id.or(auth_atom_id),
+                label_alt_id,
+            ))
+        } else {
+            ambiguous_residue = None;
+            None
+        };
         let residue_key = MmcifResidueKey::from_row(
             line,
             options.strict,
@@ -4617,7 +4639,7 @@ fn build_macro_molecule_from_atom_site_loop(
             label_seq_id,
             auth_seq_id,
             insertion_code,
-            row_index,
+            ambiguous_occurrence.unwrap_or(row_index),
         )?;
         let residue = if let Some(residue) = residues.get(&residue_key) {
             *residue
@@ -4632,6 +4654,9 @@ fn build_macro_molecule_from_atom_site_loop(
                     insertion_code.map(str::to_owned),
                 )
                 .map_err(|error| MmcifParseError::new(line, error.to_string()))?;
+            let residue_record = &mut macro_mol.hierarchy.residues[residue.index()];
+            residue_record.label_comp_id = label_comp_id.map(str::to_owned);
+            residue_record.author_comp_id = auth_comp_id.map(str::to_owned);
             residues.insert(residue_key, residue);
             residue
         };
@@ -4672,6 +4697,74 @@ fn build_macro_molecule_from_atom_site_loop(
     Ok(macro_mol)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MmcifAmbiguousResidueState {
+    model_id: String,
+    chain_id: String,
+    component_id: String,
+    insertion_code: Option<String>,
+    occurrence: usize,
+    atom_sites: BTreeSet<(String, Option<String>)>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn next_mmcif_ambiguous_occurrence(
+    current: &mut Option<MmcifAmbiguousResidueState>,
+    next_occurrence: &mut usize,
+    model_id: &str,
+    chain_id: &str,
+    component_id: &str,
+    insertion_code: Option<&str>,
+    atom_id: Option<&str>,
+    alt_id: Option<&str>,
+) -> usize {
+    let insertion_code = insertion_code.map(str::to_owned);
+    let atom_site = atom_id.map(|atom_id| (atom_id.to_owned(), alt_id.map(str::to_owned)));
+    let same_context = current.as_ref().is_some_and(|state| {
+        state.model_id == model_id
+            && state.chain_id == chain_id
+            && state.component_id == component_id
+            && state.insertion_code == insertion_code
+    });
+    let repeats_atom_site = match (current.as_ref(), atom_site.as_ref()) {
+        (_, None) => true,
+        (Some(state), Some((atom_id, alt_id))) => {
+            let prior_alt_ids = state
+                .atom_sites
+                .iter()
+                .filter_map(|(prior_atom_id, prior_alt_id)| {
+                    (prior_atom_id == atom_id).then_some(prior_alt_id)
+                })
+                .collect::<Vec<_>>();
+            !prior_alt_ids.is_empty()
+                && (alt_id.is_none()
+                    || prior_alt_ids
+                        .iter()
+                        .any(|prior_alt_id| prior_alt_id.is_none() || *prior_alt_id == alt_id))
+        }
+        (None, Some(_)) => false,
+    };
+    if !same_context || repeats_atom_site {
+        let occurrence = *next_occurrence;
+        *next_occurrence = next_occurrence.saturating_add(1);
+        *current = Some(MmcifAmbiguousResidueState {
+            model_id: model_id.to_owned(),
+            chain_id: chain_id.to_owned(),
+            component_id: component_id.to_owned(),
+            insertion_code,
+            occurrence,
+            atom_sites: BTreeSet::new(),
+        });
+    }
+    if let (Some(state), Some(atom_site)) = (current.as_mut(), atom_site) {
+        state.atom_sites.insert(atom_site);
+    }
+    current
+        .as_ref()
+        .map(|state| state.occurrence)
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum MmcifResidueKey {
     Label {
@@ -4693,7 +4786,7 @@ enum MmcifResidueKey {
         chain_id: String,
         component_id: String,
         insertion_code: Option<String>,
-        row_index: usize,
+        occurrence: usize,
     },
 }
 
@@ -4710,7 +4803,7 @@ impl MmcifResidueKey {
         label_seq_id: Option<i32>,
         auth_seq_id: Option<&str>,
         insertion_code: Option<&str>,
-        row_index: usize,
+        occurrence: usize,
     ) -> std::result::Result<Self, MmcifParseError> {
         let insertion_code = insertion_code.map(str::to_owned);
         if let Some(label_seq_id) = label_seq_id {
@@ -4742,7 +4835,7 @@ impl MmcifResidueKey {
             chain_id: chain_label.to_owned(),
             component_id: residue_name.to_owned(),
             insertion_code,
-            row_index,
+            occurrence,
         })
     }
 }
@@ -7624,6 +7717,8 @@ ATOM 2 O O O . GLY GLY A X 10 42 A 1.00 10.00 4.25 5.50 6.75 1
             .next()
             .expect("residue exists");
         assert_eq!(residue.name, "GLY");
+        assert_eq!(residue.label_comp_id, Some("GLY".to_owned()));
+        assert_eq!(residue.author_comp_id, Some("GLY".to_owned()));
         assert_eq!(residue.label_seq_id, Some(10));
         assert_eq!(residue.author_seq_id, Some("42".to_owned()));
         assert_eq!(residue.insertion_code, Some("A".to_owned()));
@@ -7680,6 +7775,7 @@ C "C A" ? "LIG" "AA" . 7 ? ? ? . 2
         assert_eq!(site.metadata.label_alt_id, None);
         assert_eq!(site.metadata.occupancy, None);
         assert_eq!(site.metadata.b_factor, None);
+        assert!(macro_mol.mol.first_conformer().is_none());
     }
 
     #[test]
@@ -7709,6 +7805,119 @@ O O HOH HOH A W . 11
             .map(|(_, residue)| residue.author_seq_id.clone())
             .collect::<Vec<_>>();
         assert_eq!(seq_ids, vec![Some("10".to_owned()), Some("11".to_owned())]);
+    }
+
+    #[test]
+    fn mmcif_lenient_occurrences_group_atoms_and_keep_altlocs_together() {
+        let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.auth_atom_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.label_alt_id
+C C1 AC1 LBL AUT A X . . ? A
+C C1 AC1 LBL AUT A X . . ? B
+O O1 AO1 LBL AUT A X . . ? .
+C C1 AC1 LBL AUT A X . . ? .
+O O1 AO1 LBL AUT A X . . ? .
+"#;
+
+        let macro_mol = read_mmcif_str(
+            input,
+            MmcifParseOptions {
+                strict: false,
+                ..MmcifParseOptions::default()
+            },
+        )
+        .expect("lenient ambiguous residues should parse");
+
+        let residues = macro_mol
+            .hierarchy
+            .residues()
+            .map(|(_, residue)| residue)
+            .collect::<Vec<_>>();
+        assert_eq!(residues.len(), 2);
+        assert_eq!(residues[0].atom_sites.len(), 3);
+        assert_eq!(residues[1].atom_sites.len(), 2);
+        assert_eq!(residues[0].label_comp_id, Some("LBL".to_owned()));
+        assert_eq!(residues[0].author_comp_id, Some("AUT".to_owned()));
+        let first_altlocs = residues[0]
+            .atom_sites
+            .iter()
+            .filter_map(|site_id| {
+                macro_mol
+                    .hierarchy
+                    .atom_site(*site_id)
+                    .ok()
+                    .and_then(|site| site.metadata.label_alt_id.clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(first_altlocs, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn mmcif_insertion_codes_and_models_keep_distinct_residues_and_coordinates() {
+        let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+C C1 LIG LG1 A X 7 70 A 1.0 2.0 3.0 1
+O O1 LIG LG1 A X 7 70 B 4.0 5.0 6.0 1
+N N1 LIG LG1 A X 7 70 A 7.0 8.0 9.0 2
+"#;
+
+        let macro_mol =
+            read_mmcif_str(input, MmcifParseOptions::default()).expect("mmCIF should parse");
+
+        assert_eq!(macro_mol.hierarchy.models().count(), 2);
+        assert_eq!(macro_mol.hierarchy.residues().count(), 3);
+        assert_eq!(
+            macro_mol
+                .hierarchy
+                .residues()
+                .map(|(_, residue)| residue.insertion_code.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                Some("A".to_owned()),
+                Some("B".to_owned()),
+                Some("A".to_owned())
+            ]
+        );
+        let (_, conformer) = macro_mol.mol.first_conformer().expect("conformer exists");
+        assert_eq!(
+            macro_mol
+                .mol
+                .atom_ids()
+                .filter_map(|atom_id| conformer.position(atom_id))
+                .collect::<Vec<_>>(),
+            vec![
+                Point3::new(1.0, 2.0, 3.0),
+                Point3::new(4.0, 5.0, 6.0),
+                Point3::new(7.0, 8.0, 9.0)
+            ]
+        );
+        assert_eq!(macro_mol.mol.bond_count(), 0);
+        assert_eq!(macro_mol.mol.perception().rings, ComputedState::Absent);
     }
 
     #[test]

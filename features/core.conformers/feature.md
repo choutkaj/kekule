@@ -15,6 +15,7 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 - Coordinates are chemically general and live in core, not the small-molecule wrapper.
 - Stable conformer IDs use slot storage, matching atom and bond ID behavior.
 - Parsers may attach a conformer without running sanitization or perception.
+- The mmCIF parser stores coordinates from all models in one conformer because each atom-site row is a distinct graph atom; model identity remains in `BioHierarchy`.
 
 ## Validation
 
