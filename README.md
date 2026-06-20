@@ -1,6 +1,5 @@
 <img src="./assets/molecules-character-waves-v3.svg" alt="Molecules banner." width="100%">
 
-
 <div style="text-align: center;">
     <img src="./assets/molecules-logo.svg" alt="Molecules banner." width="25%" margin="auto">
 </div>
@@ -9,8 +8,6 @@
   <img src="./assets/molecules-logo.svg" alt="Molecules banner." width="25%" margin="auto" />
 </p>
 
-
-
 <pre style="line-height: 1; font-family: monospace;">
 ╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮
 ││││ ││  ├╴ │  │ ││  ├╴ ╰─╮
@@ -18,7 +15,7 @@
   cheminformatics in Rust
 </pre>
 
-`molecules` is an AI-coded cheminformatics backend for small molecules and macromolecules written in pure Rust. The repo is organized around feature-scoped development: every meaningful capability is treated as a feature and is validated against established codebases (RDKit and Biopython). 
+`molecules` is an AI-coded cheminformatics backend for small molecules and macromolecules written in pure Rust. The repo is organized around feature-scoped development: every meaningful capability is treated as a feature and is validated against established codebases (RDKit and Biopython).
 
 ## Current scaffold
 
