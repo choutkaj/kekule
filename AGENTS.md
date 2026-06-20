@@ -25,3 +25,15 @@ These rules apply to AI agents working in this repository.
 10. The dashboard is generated from feature metadata; do not hand-edit `features/DASHBOARD.md`.
 11. Every tracked feature must have schema-v2 `feature.toml` and canonical `feature.md`; do not recreate split feature docs.
 12. Molecular validation fixtures must be externally supplied and provenance-pinned; do not invent toy molecules for golden validation.
+
+
+
+
+- Allow work to begin from either a feature ID or a numbered stage in fixes.md. Several remediation stages intentionally span multiple features, so the current “start from a feature ID” and single-feature scoping rules are too restrictive.
+Require one remediation stage per branch/PR, with all affected feature IDs listed.
+Require a regression test for the audited defect before closing a stage.
+Prohibit weakening comparisons, deleting assertions, or regenerating goldens merely to obtain a pass.
+Require reporting every command not run.
+Correct features/DASHBOARD.md to features/DASHBOARD.html; the existing rule names the obsolete path.
+Align the attribution trailer with Codex’s current official default:
+Co-authored-by: Codex <noreply@openai.com>
