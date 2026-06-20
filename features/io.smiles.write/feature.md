@@ -17,6 +17,7 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 
 - The writer targets readability and deterministic output, not canonical ranking.
 - A deterministic DFS tree is rendered with preassigned ring closures at both endpoints and branch children before the selected continuation path.
+- Tree collection, subtree sizing, and component emission use explicit stacks so graph depth does not consume the Rust call stack.
 - Unsupported advanced stereo/query details return structured write errors until later feature work can encode them faithfully.
 
 ## Validation
@@ -33,3 +34,4 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - v1: Noncanonical writer.
 - v2: Deterministic ring-closure and branch emission passes the RDKit-backed `tiny` corpus.
 - v3: Make writer output self-readable for aromatic SMILES, preserve aromatic donor `[nH]`, and reject unencoded lossy bond/stereo representations.
+- v4: Make graph-size-dependent writer traversals iterative while preserving deterministic output.

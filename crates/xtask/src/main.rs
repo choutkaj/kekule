@@ -1583,17 +1583,23 @@ fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {
 }
 
 fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let ring_set = perceive_ring_set(&mut record.molecule.mol);
-    json!({
-        "record_index": record.record_index,
-        "status": "ok",
-        "title": record.title,
-        "rings": ring_set
-            .rings()
-            .iter()
-            .map(|ring| ring.atoms.iter().map(|atom| atom.raw()).collect::<Vec<_>>())
-            .collect::<Vec<_>>(),
-    })
+    match perceive_ring_set(&mut record.molecule.mol) {
+        Ok(ring_set) => json!({
+            "record_index": record.record_index,
+            "status": "ok",
+            "title": record.title,
+            "rings": ring_set
+                .rings()
+                .iter()
+                .map(|ring| ring.atoms.iter().map(|atom| atom.raw()).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+        }),
+        Err(_) => json!({
+            "record_index": record.record_index,
+            "status": "resource_error",
+            "title": record.title,
+        }),
+    }
 }
 
 fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Value {

@@ -6,13 +6,14 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 
 ## Behavior/API
 
-- Exposes `AromaticityModel::RdkitLike` and `perceive_aromaticity`.
+- Exposes `AromaticityModel::RdkitLike`, `perceive_aromaticity`, and `perceive_aromaticity_with_ring_options`.
 - Requires or computes ring perception before assigning aromaticity.
 - Marks supported aromatic atoms and bonds and sets aromaticity perception state to fresh.
 - Clears prior aromatic flags deterministically before assignment.
 - Can be run directly or through the explicit sanitization pipeline.
 - Returns `UnsupportedElement` for an explicitly aromatic ring containing an unsupported element instead of silently accepting that representation.
 - Returns `InvalidAromaticRepresentation` when imported aromatic bonds cannot be perceived back onto every participating atom.
+- Propagates bounded ring-perception failures as `AromaticityError::RingPerception`.
 
 ## Implementation Notes
 
@@ -47,3 +48,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v6: Add chalcogen heteroaromatic support and refine fused donor eligibility; PubChem-1000 still exposes fused aromatic bond-selection gaps.
 - v7: Reject unsupported elements in explicitly aromatic ring representations and preserve caller state when sanitization propagates the error.
 - v8: Count explicitly imported aromatic-bond rings with atom contributions so lowercase aromatic SMILES sanitize without treating every aromatic bond as a localized double bond.
+- v9: Propagate configurable structured ring resource limits before mutating aromatic flags.
