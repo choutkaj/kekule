@@ -30,6 +30,9 @@ const VALIDATION_CORPORA: &[(&str, &str)] = &[
     ("pdb-100", "PDB 100"),
 ];
 const DASHBOARD_PATH: &str = "features/DASHBOARD.html";
+const VALIDATION_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+const GOLDEN_SCHEMA_VERSION: u32 = 1;
+const COMPARISON_MODE_IMPLEMENTATION_GOLDEN: &str = "implementation-golden";
 
 fn main() {
     if let Err(error) = run() {
@@ -75,7 +78,7 @@ fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             ));
         }
     } else {
-        fs::write(path, rendered)?;
+        write_atomic_text(path, &rendered)?;
     }
     Ok(())
 }
@@ -109,8 +112,12 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let mut statuses = read_validation_statuses(&features)?;
     let mut failures = Vec::new();
     let mut passed = 0;
+    let mut update_corpora = BTreeSet::new();
     for (feature, corpus) in targets {
         println!("validating `{}` against `{corpus}`", feature.id);
+        if update {
+            update_corpora.insert(corpus.clone());
+        }
         let manifest_path = validation_manifest_path(&feature.id, &corpus);
         if !manifest_path.exists() {
             failures.push(format!(
@@ -119,6 +126,13 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 manifest_path.display()
             ));
             continue;
+        }
+        if update {
+            statuses
+                .entry(feature.id.clone())
+                .or_insert_with(|| ValidationStatus::new(&feature.id))
+                .corpora
+                .remove(&corpus);
         }
         let result = (|| -> Result<ValidationRun, Box<dyn Error>> {
             let manifest = read_validation_manifest(&manifest_path)?;
@@ -141,6 +155,13 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 "validation manifest uses {} {}",
                 manifest.reference_tool, manifest.reference_version
             );
+            validate_comparison_mode(&manifest_path, &manifest)?;
+            if manifest.fixtures.is_empty() {
+                return Err(boxed_error(format!(
+                    "{} must list at least one fixture for required validation",
+                    manifest_path.display()
+                )));
+            }
             validate_manifest_paths(&manifest_path, &manifest)?;
             println!(
                 "validation manifest lists {} fixture(s)",
@@ -150,12 +171,21 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             if compared > 0 {
                 println!("validation compared {compared} golden file(s)");
             }
+            if compared != manifest.fixtures.len() {
+                return Err(boxed_error(format!(
+                    "{} compared {compared} fixture(s), expected {}",
+                    manifest_path.display(),
+                    manifest.fixtures.len()
+                )));
+            }
+            let evidence = build_validation_evidence(Path::new("."), &manifest_path, &manifest)?;
             Ok(ValidationRun {
                 fixture_count: manifest.fixtures.len(),
                 compared_count: compared,
                 reference_tool: manifest.reference_tool,
                 reference_version: manifest.reference_version,
                 manifest_hash: hash_file(&manifest_path)?,
+                evidence,
             })
         })();
 
@@ -163,11 +193,15 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             Ok(run) => {
                 passed += 1;
                 if update {
+                    let existing = statuses
+                        .get(&feature.id)
+                        .and_then(|status| status.corpora.get(&corpus));
+                    let updated = CorpusStatus::from_run(run, existing)?;
                     statuses
                         .entry(feature.id.clone())
                         .or_insert_with(|| ValidationStatus::new(&feature.id))
                         .corpora
-                        .insert(corpus, CorpusStatus::from_run(run)?);
+                        .insert(corpus, updated);
                 }
             }
             Err(error) => failures.push(format!("{} [{corpus}]: {error}", feature.id)),
@@ -175,11 +209,11 @@ fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     if update {
-        write_validation_statuses(&statuses)?;
+        write_validation_statuses(&statuses, &update_corpora)?;
         sync_feature_validation_flags(&features, &statuses)?;
         let refreshed_features = read_features()?;
         let rendered = render_dashboard(&refreshed_features, &statuses);
-        fs::write(DASHBOARD_PATH, rendered)?;
+        write_atomic_text(Path::new(DASHBOARD_PATH), &rendered)?;
         println!("updated validation status and dashboard");
     }
 
@@ -760,8 +794,7 @@ struct ValidationManifest {
     corpus_id: String,
     reference_tool: String,
     reference_version: String,
-    #[serde(default, rename = "comparison_mode")]
-    _comparison_mode: String,
+    comparison_mode: String,
     #[serde(default)]
     fixtures: Vec<String>,
     #[serde(default, rename = "notes")]
@@ -775,6 +808,23 @@ struct ValidationRun {
     reference_tool: String,
     reference_version: String,
     manifest_hash: String,
+    evidence: ValidationEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ValidationEvidence {
+    schema_version: u32,
+    comparison_mode: String,
+    inputs: Vec<EvidenceInput>,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EvidenceInput {
+    path: String,
+    sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -786,11 +836,29 @@ struct CorpusStatus {
     reference_tool: String,
     reference_version: String,
     manifest_hash: String,
+    #[serde(default)]
+    evidence_schema_version: Option<u32>,
+    #[serde(default)]
+    evidence_hash: Option<String>,
+    #[serde(default)]
+    evidence_inputs: Vec<EvidenceInput>,
     validated_at_unix: u64,
 }
 
 impl CorpusStatus {
-    fn from_run(run: ValidationRun) -> Result<Self, Box<dyn Error>> {
+    fn from_run(
+        run: ValidationRun,
+        existing: Option<&CorpusStatus>,
+    ) -> Result<Self, Box<dyn Error>> {
+        let unchanged_evidence = existing.and_then(|status| status.evidence_hash.as_deref())
+            == Some(run.evidence.sha256.as_str());
+        let validated_at_unix = if unchanged_evidence {
+            existing
+                .map(|status| status.validated_at_unix)
+                .unwrap_or(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+        } else {
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
+        };
         Ok(Self {
             passed: true,
             fixture_count: run.fixture_count,
@@ -798,7 +866,10 @@ impl CorpusStatus {
             reference_tool: run.reference_tool,
             reference_version: run.reference_version,
             manifest_hash: run.manifest_hash,
-            validated_at_unix: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            evidence_schema_version: Some(run.evidence.schema_version),
+            evidence_hash: Some(run.evidence.sha256),
+            evidence_inputs: run.evidence.inputs,
+            validated_at_unix,
         })
     }
 }
@@ -837,6 +908,20 @@ fn read_validation_manifest(path: &Path) -> Result<ValidationManifest, Box<dyn E
     toml::from_str(&text).map_err(|error| boxed_error(format!("{}: {error}", path.display())))
 }
 
+fn validate_comparison_mode(
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+) -> Result<(), Box<dyn Error>> {
+    if manifest.comparison_mode != COMPARISON_MODE_IMPLEMENTATION_GOLDEN {
+        return Err(boxed_error(format!(
+            "{} uses unsupported comparison_mode `{}`",
+            manifest_path.display(),
+            manifest.comparison_mode
+        )));
+    }
+    Ok(())
+}
+
 fn validation_targets<'a>(
     features: &'a [Feature],
     feature_selector: &str,
@@ -860,6 +945,154 @@ fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
     let mut hasher = Sha256::new();
     hasher.update(fs::read(path)?);
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn build_validation_evidence(
+    repo_root: &Path,
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+) -> Result<ValidationEvidence, Box<dyn Error>> {
+    let corpus_root = manifest_path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| boxed_error(format!("{} has no corpus root", manifest_path.display())))?;
+    let mut paths = BTreeSet::<PathBuf>::new();
+    paths.insert(manifest_path.to_path_buf());
+    paths.insert(corpus_root.join("corpus.toml"));
+    paths.insert(corpus_root.join("sources.lock.json"));
+    paths.insert(
+        repo_root
+            .join("features")
+            .join(&manifest.feature_id)
+            .join("feature.toml"),
+    );
+    paths.insert(
+        repo_root
+            .join("features")
+            .join(&manifest.feature_id)
+            .join("feature.md"),
+    );
+    paths.insert(repo_root.join("Cargo.toml"));
+    paths.insert(repo_root.join("Cargo.lock"));
+    paths.insert(repo_root.join("crates/molecules/Cargo.toml"));
+    paths.insert(repo_root.join("crates/xtask/Cargo.toml"));
+
+    collect_files(&repo_root.join("crates/molecules/src"), &mut paths)?;
+    collect_files(&repo_root.join("crates/xtask/src"), &mut paths)?;
+
+    let reference_root = match manifest.reference_tool.as_str() {
+        "rdkit" => repo_root.join("validation/reference/rdkit"),
+        "biopython" => repo_root.join("validation/reference/biopython"),
+        value => {
+            return Err(boxed_error(format!(
+                "{} uses unsupported reference_tool `{value}`",
+                manifest_path.display()
+            )))
+        }
+    };
+    paths.insert(reference_root.join("run_feature.py"));
+    paths.insert(reference_root.join("environment.yml"));
+
+    for fixture in &manifest.fixtures {
+        paths.insert(corpus_root.join(fixture));
+        paths.insert(
+            corpus_root
+                .join("golden")
+                .join(&manifest.feature_id)
+                .join(format!("{}.json.gz", slugify_fixture(fixture))),
+        );
+    }
+
+    let mut inputs = Vec::new();
+    for path in paths {
+        if !path.exists() {
+            return Err(boxed_error(format!(
+                "validation evidence input is missing: {}",
+                path.display()
+            )));
+        }
+        if !path.is_file() {
+            continue;
+        }
+        inputs.push(EvidenceInput {
+            path: relative_path(repo_root, &path)?,
+            sha256: hash_evidence_file(&path)?,
+        });
+    }
+    inputs.sort_by(|left, right| left.path.cmp(&right.path));
+    let evidence_document = json!({
+        "schema_version": VALIDATION_EVIDENCE_SCHEMA_VERSION,
+        "comparison_mode": manifest.comparison_mode,
+        "inputs": inputs,
+    });
+    let mut hasher = Sha256::new();
+    hasher.update(serde_json::to_vec(&evidence_document)?);
+    let sha256 = format!("{:x}", hasher.finalize());
+    let inputs = serde_json::from_value(
+        evidence_document
+            .get("inputs")
+            .cloned()
+            .ok_or_else(|| boxed_error("evidence document has no inputs"))?,
+    )?;
+    Ok(ValidationEvidence {
+        schema_version: VALIDATION_EVIDENCE_SCHEMA_VERSION,
+        comparison_mode: manifest.comparison_mode.clone(),
+        inputs,
+        sha256,
+    })
+}
+
+fn collect_files(root: &Path, paths: &mut BTreeSet<PathBuf>) -> Result<(), Box<dyn Error>> {
+    if !root.exists() {
+        return Err(boxed_error(format!("{} does not exist", root.display())));
+    }
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_files(&path, paths)?;
+        } else {
+            paths.insert(path);
+        }
+    }
+    Ok(())
+}
+
+fn hash_evidence_file(path: &Path) -> Result<String, Box<dyn Error>> {
+    let bytes = if path.file_name().and_then(|name| name.to_str()) == Some("feature.toml")
+        && path
+            .components()
+            .any(|component| component.as_os_str() == "features")
+    {
+        fs::read_to_string(path)?
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("validated =") {
+                    "validated = <generated>"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes()
+    } else {
+        fs::read(path)?
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn relative_path(repo_root: &Path, path: &Path) -> Result<String, Box<dyn Error>> {
+    let relative = if path.is_absolute() {
+        path.strip_prefix(repo_root).unwrap_or(path)
+    } else {
+        path
+    };
+    relative
+        .to_str()
+        .map(|value| value.replace('\\', "/").trim_start_matches("./").to_owned())
+        .ok_or_else(|| boxed_error(format!("{} is not valid UTF-8", path.display())))
 }
 
 fn read_gzip_string(path: &Path) -> Result<String, Box<dyn Error>> {
@@ -940,7 +1173,7 @@ fn validate_golden_outputs(
             )));
         }
         let golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
-        validate_golden_metadata(&golden_path, &golden, manifest, fixture)?;
+        validate_golden_metadata(&golden_path, &golden, manifest, fixture, &fixture_path)?;
         let expected = golden.get("expected").ok_or_else(|| {
             boxed_error(format!("{} is missing `expected`", golden_path.display()))
         })?;
@@ -963,8 +1196,9 @@ fn validate_golden_metadata(
     golden: &Value,
     manifest: &ValidationManifest,
     fixture: &str,
+    fixture_path: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    if golden.get("schema_version") != Some(&json!(1)) {
+    if golden.get("schema_version") != Some(&json!(GOLDEN_SCHEMA_VERSION)) {
         return Err(boxed_error(format!(
             "{} has unsupported schema_version",
             golden_path.display()
@@ -976,13 +1210,11 @@ fn validate_golden_metadata(
             golden_path.display()
         )));
     }
-    if let Some(corpus_id) = golden.get("corpus_id").and_then(Value::as_str) {
-        if corpus_id != manifest.corpus_id {
-            return Err(boxed_error(format!(
-                "{} corpus_id does not match manifest",
-                golden_path.display()
-            )));
-        }
+    if golden.get("corpus_id").and_then(Value::as_str) != Some(manifest.corpus_id.as_str()) {
+        return Err(boxed_error(format!(
+            "{} corpus_id does not match manifest",
+            golden_path.display()
+        )));
     }
     if golden.get("fixture_path").and_then(Value::as_str) != Some(fixture) {
         return Err(boxed_error(format!(
@@ -990,7 +1222,59 @@ fn validate_golden_metadata(
             golden_path.display()
         )));
     }
+    let input_sha256 = golden
+        .get("input_sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| boxed_error(format!("{} is missing input_sha256", golden_path.display())))?;
+    let fixture_hash = hash_file(fixture_path)?;
+    if input_sha256 != fixture_hash {
+        return Err(boxed_error(format!(
+            "{} input_sha256 does not match current fixture `{fixture}`",
+            golden_path.display()
+        )));
+    }
+    let reference = golden
+        .get("reference")
+        .and_then(Value::as_object)
+        .ok_or_else(|| boxed_error(format!("{} is missing reference", golden_path.display())))?;
+    if reference.get("tool").and_then(Value::as_str) != Some(manifest.reference_tool.as_str()) {
+        return Err(boxed_error(format!(
+            "{} reference.tool does not match manifest",
+            golden_path.display()
+        )));
+    }
+    let golden_version = reference
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            boxed_error(format!(
+                "{} reference.version is missing",
+                golden_path.display()
+            ))
+        })?;
+    if reference_version_label(&manifest.reference_tool, golden_version)
+        != manifest.reference_version
+    {
+        return Err(boxed_error(format!(
+            "{} reference.version does not match manifest",
+            golden_path.display()
+        )));
+    }
+    if reference.get("runtime_dependency").and_then(Value::as_bool) != Some(false) {
+        return Err(boxed_error(format!(
+            "{} must record reference.runtime_dependency=false",
+            golden_path.display()
+        )));
+    }
     Ok(())
+}
+
+fn reference_version_label(tool: &str, version: &str) -> String {
+    match tool {
+        "rdkit" if !version.starts_with("RDKit ") => format!("RDKit {version}"),
+        "biopython" if !version.starts_with("Biopython ") => format!("Biopython {version}"),
+        _ => version.to_owned(),
+    }
 }
 
 fn implementation_expected(feature: &str, fixture_path: &Path) -> Result<Value, Box<dyn Error>> {
@@ -1448,25 +1732,26 @@ fn atom_site_rows_json(molecule: &MacroMolecule) -> Value {
                 .expect("chain exists");
             let model = molecule.hierarchy.model(chain.model).expect("model exists");
             let atom = molecule.mol.atom(site.atom).expect("atom exists");
+            let point = first_conformer_point(molecule, site.atom);
             json!({
-                "group_PDB": Value::Null,
-                "id": (site_id.raw() + 1).to_string(),
-                "type_symbol": atom.element.symbol(),
+                "group_PDB": site.metadata.group_pdb.clone(),
+                "id": site.metadata.atom_site_id.clone().unwrap_or_else(|| (site_id.raw() + 1).to_string()),
+                "type_symbol": site.metadata.type_symbol.clone().unwrap_or_else(|| atom.element.symbol().to_owned()),
                 "label_atom_id": site.metadata.label_atom_id,
                 "auth_atom_id": site.metadata.auth_atom_id,
                 "label_alt_id": site.metadata.label_alt_id,
                 "label_comp_id": residue.name,
                 "auth_comp_id": residue.name,
-                "label_asym_id": chain.label_id,
-                "auth_asym_id": chain.author_id,
+                "label_asym_id": site.metadata.label_asym_id.clone().unwrap_or_else(|| chain.label_id.clone()),
+                "auth_asym_id": site.metadata.auth_asym_id.clone().or_else(|| chain.author_id.clone()),
                 "label_seq_id": residue.label_seq_id.map(|value| value.to_string()),
                 "auth_seq_id": residue.author_seq_id,
                 "pdbx_PDB_ins_code": residue.insertion_code,
-                "occupancy": site.metadata.occupancy.map(|value| format!("{value:.2}")),
-                "B_iso_or_equiv": site.metadata.b_factor.map(|value| format!("{value:.2}")),
-                "Cartn_x": Value::Null,
-                "Cartn_y": Value::Null,
-                "Cartn_z": Value::Null,
+                "occupancy": site.metadata.occupancy_raw.clone().or_else(|| site.metadata.occupancy.map(|value| format!("{value:.2}"))),
+                "B_iso_or_equiv": site.metadata.b_factor_raw.clone().or_else(|| site.metadata.b_factor.map(|value| format!("{value:.2}"))),
+                "Cartn_x": site.metadata.cartn_x_raw.clone().or_else(|| point.map(|point| format!("{:.3}", point.x))),
+                "Cartn_y": site.metadata.cartn_y_raw.clone().or_else(|| point.map(|point| format!("{:.3}", point.y))),
+                "Cartn_z": site.metadata.cartn_z_raw.clone().or_else(|| point.map(|point| format!("{:.3}", point.z))),
                 "pdbx_PDB_model_num": model.model_id,
             })
         })
@@ -1487,13 +1772,13 @@ fn structure_json(molecule: &MacroMolecule) -> Value {
                 "chains": model.chains.iter().map(|chain_id| {
                     let chain = molecule.hierarchy.chain(*chain_id).expect("chain exists");
                     json!({
-                        "id": chain.label_id,
+                        "id": chain.author_id.clone().unwrap_or_else(|| chain.label_id.clone()),
                         "residues": chain.residues.iter().map(|residue_id| {
                             let residue = molecule.hierarchy.residue(*residue_id).expect("residue exists");
                             json!({
                                 "name": residue.name,
-                                "hetflag": Value::Null,
-                                "sequence_id": residue.label_seq_id,
+                                "hetflag": residue_hetflag_json(molecule, residue),
+                                "sequence_id": residue_sequence_json(residue),
                                 "insertion_code": residue.insertion_code,
                                 "atoms": residue.atom_sites.iter().map(|site_id| {
                                     let site = molecule.hierarchy.atom_site(*site_id).expect("site exists");
@@ -1503,14 +1788,17 @@ fn structure_json(molecule: &MacroMolecule) -> Value {
                                         .label_atom_id
                                         .clone()
                                         .unwrap_or_else(|| atom.element.symbol().to_owned());
+                                    let coord = first_conformer_point(molecule, site.atom)
+                                        .map(|point| json!([point.x, point.y, point.z]))
+                                        .unwrap_or(Value::Null);
                                     json!({
                                         "name": name,
                                         "full_name": name,
                                         "altloc": site.metadata.label_alt_id,
-                                        "element": atom.element.symbol(),
+                                        "element": site.metadata.type_symbol.clone().unwrap_or_else(|| atom.element.symbol().to_owned()),
                                         "occupancy": site.metadata.occupancy,
                                         "bfactor": site.metadata.b_factor,
-                                        "coord": Value::Null,
+                                        "coord": coord,
                                     })
                                 }).collect::<Vec<_>>(),
                             })
@@ -1520,6 +1808,46 @@ fn structure_json(molecule: &MacroMolecule) -> Value {
             })
         }).collect::<Vec<_>>(),
     })
+}
+
+fn first_conformer_point(
+    molecule: &MacroMolecule,
+    atom: AtomId,
+) -> Option<molecules::prelude::Point3> {
+    molecule
+        .mol
+        .first_conformer()
+        .and_then(|(_, conformer)| conformer.position(atom))
+}
+
+fn residue_sequence_json(residue: &molecules::prelude::Residue) -> Value {
+    if let Some(author_seq_id) = &residue.author_seq_id {
+        return author_seq_id
+            .parse::<i32>()
+            .map(Value::from)
+            .unwrap_or_else(|_| json!(author_seq_id));
+    }
+    residue.label_seq_id.map(Value::from).unwrap_or(Value::Null)
+}
+
+fn residue_hetflag_json(molecule: &MacroMolecule, residue: &molecules::prelude::Residue) -> Value {
+    let is_hetatm = residue.atom_sites.iter().any(|site_id| {
+        molecule
+            .hierarchy
+            .atom_site(*site_id)
+            .ok()
+            .and_then(|site| site.metadata.group_pdb.as_deref())
+            == Some("HETATM")
+    });
+    if is_hetatm {
+        if residue.name == "HOH" {
+            json!("W")
+        } else {
+            json!(format!("H_{}", residue.name))
+        }
+    } else {
+        Value::Null
+    }
 }
 
 fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> Option<String> {
@@ -1558,6 +1886,16 @@ fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> Option<Strin
             }
             None
         }
+        (Value::Number(expected), Value::Number(actual))
+            if path.contains(".coord[")
+                && expected
+                    .as_f64()
+                    .zip(actual.as_f64())
+                    .map(|(expected, actual)| (expected - actual).abs() <= 0.0015)
+                    .unwrap_or(false) =>
+        {
+            None
+        }
         _ if expected == actual => None,
         _ => Some(format!(
             "{path} differs: expected {}, actual {}",
@@ -1582,9 +1920,21 @@ fn normalize_for_comparison(value: &Value) -> Value {
             normalize_undirected_bond_object(&mut normalized);
             normalize_bond_array_object(&mut normalized);
             normalize_ring_set_object(&mut normalized);
+            normalize_coord_object(&mut normalized);
             Value::Object(normalized)
         }
         _ => value.clone(),
+    }
+}
+
+fn normalize_coord_object(object: &mut serde_json::Map<String, Value>) {
+    let Some(Value::Array(coord)) = object.get_mut("coord") else {
+        return;
+    };
+    for value in coord.iter_mut() {
+        if let Some(number) = value.as_f64() {
+            *value = json!((number * 1000.0).round() / 1000.0);
+        }
     }
 }
 
@@ -1741,8 +2091,12 @@ fn read_corpus_status(path: &Path) -> Result<CorpusStatusFile, Box<dyn Error>> {
 
 fn write_validation_statuses(
     statuses: &BTreeMap<String, ValidationStatus>,
+    selected_corpora: &BTreeSet<String>,
 ) -> Result<(), Box<dyn Error>> {
     for (corpus, _) in VALIDATION_CORPORA {
+        if !selected_corpora.contains(*corpus) {
+            continue;
+        }
         let mut corpus_status = CorpusStatusFile {
             corpus_id: (*corpus).to_owned(),
             features: BTreeMap::new(),
@@ -1763,9 +2117,9 @@ fn write_validation_statuses(
                 .ok_or_else(|| boxed_error("status path has no parent"))?,
         )?;
         let text = toml::to_string_pretty(&corpus_status)?;
-        fs::write(
-            path,
-            format!("# Generated by `cargo xtask validate --update`. Do not hand-edit.\n{text}"),
+        write_atomic_text(
+            &path,
+            &format!("# Generated by `cargo xtask validate --update`. Do not hand-edit.\n{text}"),
         )?;
     }
     Ok(())
@@ -1794,15 +2148,38 @@ fn corpus_passed_at(
     if !corpus_status.passed {
         return false;
     }
+    if corpus_status.fixture_count == 0
+        || corpus_status.compared_count != corpus_status.fixture_count
+    {
+        return false;
+    }
+    if corpus_status.evidence_schema_version != Some(VALIDATION_EVIDENCE_SCHEMA_VERSION) {
+        return false;
+    }
+    let Some(recorded_evidence_hash) = corpus_status.evidence_hash.as_deref() else {
+        return false;
+    };
     let manifest_path = validation_root
         .join("corpora")
         .join(corpus)
         .join("features")
         .join(format!("{}.toml", feature.id));
-    manifest_path.exists()
-        && hash_file(&manifest_path)
-            .map(|hash| hash == corpus_status.manifest_hash)
-            .unwrap_or(false)
+    if !manifest_path.exists()
+        || hash_file(&manifest_path)
+            .map(|hash| hash != corpus_status.manifest_hash)
+            .unwrap_or(true)
+    {
+        return false;
+    }
+    let repo_root = validation_root.parent().unwrap_or_else(|| Path::new("."));
+    read_validation_manifest(&manifest_path)
+        .and_then(|manifest| build_validation_evidence(repo_root, &manifest_path, &manifest))
+        .map(|evidence| {
+            evidence.schema_version == VALIDATION_EVIDENCE_SCHEMA_VERSION
+                && evidence.sha256 == recorded_evidence_hash
+                && !evidence.inputs.is_empty()
+        })
+        .unwrap_or(false)
 }
 
 fn overall_validated(feature: &Feature, status: Option<&ValidationStatus>) -> bool {
@@ -1867,9 +2244,39 @@ fn sync_feature_validation_flags_at(
                 path.display()
             )));
         }
-        fs::write(path, format!("{rewritten}\n"))?;
+        write_atomic_text(&path, &format!("{rewritten}\n"))?;
     }
     Ok(())
+}
+
+fn write_atomic_text(path: &Path, text: &str) -> Result<(), Box<dyn Error>> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| boxed_error(format!("{} has no parent", path.display())))?;
+    fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| boxed_error(format!("{} has no file name", path.display())))?;
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let tmp = parent.join(format!(".{file_name}.{nonce}.tmp"));
+    fs::write(&tmp, text)?;
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(error) if path.exists() => {
+            fs::remove_file(path)?;
+            fs::rename(&tmp, path).map_err(|rename_error| {
+                boxed_error(format!(
+                    "failed to replace {} after initial rename error {error}: {rename_error}",
+                    path.display()
+                ))
+            })
+        }
+        Err(error) => Err(boxed_error(format!(
+            "failed to replace {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 fn ensure_validation_flags_synced(
@@ -2501,24 +2908,8 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
     #[test]
     fn current_status_drives_overall_validation_and_metadata_sync() {
         let root = temp_feature_root("status-sync");
-        let features_root = root.join("features");
-        let validation_root = root.join("validation");
-        let feature_dir = features_root.join("example");
-        let manifest_dir = validation_root
-            .join("corpora")
-            .join("tiny")
-            .join("features");
-        fs::create_dir_all(&feature_dir).expect("feature dir should create");
-        fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
-        let metadata_path = feature_dir.join("feature.toml");
-        fs::write(&metadata_path, "id = \"example\"\nvalidated = false\n")
-            .expect("metadata should write");
-        let manifest_path = manifest_dir.join("example.toml");
-        fs::write(
-            &manifest_path,
-            "feature_id = \"example\"\ncorpus_id = \"tiny\"\n",
-        )
-        .expect("manifest should write");
+        let (features_root, validation_root, manifest_path) = write_evidence_test_repo(&root);
+        let metadata_path = features_root.join("example").join("feature.toml");
 
         let feature = Feature {
             id: "example".to_owned(),
@@ -2531,13 +2922,19 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
             depends_on: Vec::new(),
             validation_required: vec!["tiny".to_owned()],
         };
+        let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
+        let evidence = build_validation_evidence(&root, &manifest_path, &manifest)
+            .expect("evidence should build");
         let corpus_status = CorpusStatus {
             passed: true,
-            fixture_count: 2,
-            compared_count: 2,
+            fixture_count: 1,
+            compared_count: 1,
             reference_tool: "rdkit".to_owned(),
-            reference_version: "test".to_owned(),
+            reference_version: "RDKit test".to_owned(),
             manifest_hash: hash_file(&manifest_path).expect("manifest should hash"),
+            evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
+            evidence_hash: Some(evidence.sha256),
+            evidence_inputs: evidence.inputs,
             validated_at_unix: 1,
         };
         let status = ValidationStatus {
@@ -2569,6 +2966,119 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
             &validation_root
         ));
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn evidence_changes_after_material_input_changes() {
+        let root = temp_feature_root("evidence-change");
+        let (_, _, manifest_path) = write_evidence_test_repo(&root);
+        let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
+        let original = build_validation_evidence(&root, &manifest_path, &manifest)
+            .expect("evidence should build");
+
+        fs::write(root.join("crates/molecules/src/lib.rs"), "changed source\n")
+            .expect("source should mutate");
+        let source_changed = build_validation_evidence(&root, &manifest_path, &manifest)
+            .expect("evidence should build");
+        assert_ne!(original.sha256, source_changed.sha256);
+
+        fs::write(
+            root.join("validation/corpora/tiny/data/example.sdf"),
+            "changed fixture\n",
+        )
+        .expect("fixture should mutate");
+        let fixture_changed = build_validation_evidence(&root, &manifest_path, &manifest)
+            .expect("evidence should build");
+        assert_ne!(source_changed.sha256, fixture_changed.sha256);
+
+        fs::write(
+            root.join("validation/corpora/tiny/golden/example/data_example.sdf.json.gz"),
+            "changed golden\n",
+        )
+        .expect("golden should mutate");
+        let golden_changed = build_validation_evidence(&root, &manifest_path, &manifest)
+            .expect("evidence should build");
+        assert_ne!(fixture_changed.sha256, golden_changed.sha256);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn current_status_requires_known_nonempty_evidence() {
+        let root = temp_feature_root("status-rejects-stale");
+        let (_, validation_root, manifest_path) = write_evidence_test_repo(&root);
+        let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
+        let evidence = build_validation_evidence(&root, &manifest_path, &manifest)
+            .expect("evidence should build");
+        let feature = Feature {
+            id: "example".to_owned(),
+            title: "Example".to_owned(),
+            area: "io".to_owned(),
+            version: 1,
+            implemented: true,
+            validated: false,
+            description: "Example feature.".to_owned(),
+            depends_on: Vec::new(),
+            validation_required: vec!["tiny".to_owned()],
+        };
+        let mut corpus_status = CorpusStatus {
+            passed: true,
+            fixture_count: 1,
+            compared_count: 1,
+            reference_tool: "rdkit".to_owned(),
+            reference_version: "RDKit test".to_owned(),
+            manifest_hash: hash_file(&manifest_path).expect("manifest should hash"),
+            evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
+            evidence_hash: Some(evidence.sha256),
+            evidence_inputs: evidence.inputs,
+            validated_at_unix: 1,
+        };
+        let status = ValidationStatus {
+            feature_id: feature.id.clone(),
+            corpora: BTreeMap::from([("tiny".to_owned(), corpus_status.clone())]),
+        };
+        assert!(overall_validated_at(
+            &feature,
+            Some(&status),
+            &validation_root
+        ));
+
+        corpus_status.evidence_schema_version = Some(999);
+        let status = ValidationStatus {
+            feature_id: feature.id.clone(),
+            corpora: BTreeMap::from([("tiny".to_owned(), corpus_status.clone())]),
+        };
+        assert!(!overall_validated_at(
+            &feature,
+            Some(&status),
+            &validation_root
+        ));
+
+        corpus_status.evidence_schema_version = Some(VALIDATION_EVIDENCE_SCHEMA_VERSION);
+        corpus_status.compared_count = 0;
+        let status = ValidationStatus {
+            feature_id: feature.id.clone(),
+            corpora: BTreeMap::from([("tiny".to_owned(), corpus_status)]),
+        };
+        assert!(!overall_validated_at(
+            &feature,
+            Some(&status),
+            &validation_root
+        ));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn unsupported_comparison_mode_is_rejected() {
+        let manifest = ValidationManifest {
+            feature_id: "example".to_owned(),
+            corpus_id: "tiny".to_owned(),
+            reference_tool: "rdkit".to_owned(),
+            reference_version: "RDKit test".to_owned(),
+            comparison_mode: "planned".to_owned(),
+            fixtures: vec!["data/example.sdf".to_owned()],
+            _notes: Vec::new(),
+        };
+        assert!(validate_comparison_mode(Path::new("example.toml"), &manifest).is_err());
     }
 
     #[test]
@@ -2605,6 +3115,60 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
             env::temp_dir().join(format!("molecules-xtask-{label}-{}-{nonce}", process::id()));
         fs::create_dir_all(&root).expect("temp feature root should create");
         root
+    }
+
+    fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let features_root = root.join("features");
+        let validation_root = root.join("validation");
+        let feature_dir = features_root.join("example");
+        let corpus_root = validation_root.join("corpora").join("tiny");
+        let manifest_dir = corpus_root.join("features");
+        fs::create_dir_all(&feature_dir).expect("feature dir should create");
+        fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
+        fs::write(
+            feature_dir.join("feature.toml"),
+            "id = \"example\"\nvalidated = false\n",
+        )
+        .expect("metadata should write");
+        fs::write(feature_dir.join("feature.md"), "# Example\n").expect("feature doc should write");
+        let manifest_path = manifest_dir.join("example.toml");
+        fs::write(
+            &manifest_path,
+            "feature_id = \"example\"\ncorpus_id = \"tiny\"\nreference_tool = \"rdkit\"\nreference_version = \"RDKit test\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
+        )
+        .expect("manifest should write");
+        fs::create_dir_all(corpus_root.join("data")).expect("data dir should create");
+        fs::create_dir_all(corpus_root.join("golden").join("example"))
+            .expect("golden dir should create");
+        fs::write(corpus_root.join("corpus.toml"), "id = \"tiny\"\n")
+            .expect("corpus descriptor should write");
+        fs::write(corpus_root.join("sources.lock.json"), "{}\n").expect("source lock should write");
+        fs::write(corpus_root.join("data").join("example.sdf"), "fixture\n")
+            .expect("fixture should write");
+        fs::write(
+            corpus_root
+                .join("golden")
+                .join("example")
+                .join("data_example.sdf.json.gz"),
+            "golden\n",
+        )
+        .expect("golden should write");
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml should write");
+        fs::write(root.join("Cargo.lock"), "# lock\n").expect("cargo lock should write");
+        for path in [
+            "crates/molecules/Cargo.toml",
+            "crates/xtask/Cargo.toml",
+            "crates/molecules/src/lib.rs",
+            "crates/xtask/src/main.rs",
+            "validation/reference/rdkit/run_feature.py",
+            "validation/reference/rdkit/environment.yml",
+        ] {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().expect("test path should have parent"))
+                .expect("test parent should create");
+            fs::write(path, "test\n").expect("test evidence file should write");
+        }
+        (features_root, validation_root, manifest_path)
     }
 
     fn write_feature(root: &Path, id: &str, metadata: &str) {

@@ -3011,11 +3011,21 @@ pub struct AtomSite {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AtomSiteMetadata {
+    pub group_pdb: Option<String>,
+    pub atom_site_id: Option<String>,
+    pub type_symbol: Option<String>,
+    pub label_asym_id: Option<String>,
+    pub auth_asym_id: Option<String>,
     pub label_atom_id: Option<String>,
     pub auth_atom_id: Option<String>,
     pub label_alt_id: Option<String>,
     pub occupancy: Option<f64>,
+    pub occupancy_raw: Option<String>,
     pub b_factor: Option<f64>,
+    pub b_factor_raw: Option<String>,
+    pub cartn_x_raw: Option<String>,
+    pub cartn_y_raw: Option<String>,
+    pub cartn_z_raw: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3236,14 +3246,19 @@ fn build_macro_molecule_from_atom_site_loop(
     let mut macro_mol = MacroMolecule::default();
     let mut models = BTreeMap::<String, ModelId>::new();
     let mut chains = BTreeMap::<(String, String), ChainId>::new();
-    let mut residues = BTreeMap::<(ChainId, String, Option<i32>, Option<String>), ResidueId>::new();
+    let mut residues = BTreeMap::<MmcifResidueKey, ResidueId>::new();
+    let mut conformer = Conformer::new();
+    let mut saw_coordinates = false;
 
-    for row in atom_loop.values.chunks(width) {
+    for (row_index, row) in atom_loop.values.chunks(width).enumerate() {
         let line = row.first().map(|token| token.line).unwrap_or(1);
         let type_symbol = required_mmcif_value(row, &tag_index, "_atom_site.type_symbol", line)?;
-        let element = Element::from_symbol(type_symbol).ok_or_else(|| {
+        let element_symbol = canonical_mmcif_element_symbol(type_symbol);
+        let element = Element::from_symbol(&element_symbol).ok_or_else(|| {
             MmcifParseError::new(line, format!("unknown atom-site element `{type_symbol}`"))
         })?;
+        let group_pdb = optional_mmcif_value(row, &tag_index, "_atom_site.group_PDB");
+        let atom_site_id = optional_mmcif_value(row, &tag_index, "_atom_site.id");
         let label_atom_id = optional_mmcif_value(row, &tag_index, "_atom_site.label_atom_id");
         let auth_atom_id = optional_mmcif_value(row, &tag_index, "_atom_site.auth_atom_id");
         let label_asym_id = optional_mmcif_value(row, &tag_index, "_atom_site.label_asym_id");
@@ -3258,12 +3273,21 @@ fn build_macro_molecule_from_atom_site_loop(
             .unwrap_or("1")
             .to_owned();
         let label_alt_id = optional_mmcif_value(row, &tag_index, "_atom_site.label_alt_id");
+        let occupancy_raw = optional_mmcif_value(row, &tag_index, "_atom_site.occupancy");
+        let b_factor_raw = optional_mmcif_value(row, &tag_index, "_atom_site.B_iso_or_equiv");
+        let cartn_x_raw = optional_mmcif_value(row, &tag_index, "_atom_site.Cartn_x");
+        let cartn_y_raw = optional_mmcif_value(row, &tag_index, "_atom_site.Cartn_y");
+        let cartn_z_raw = optional_mmcif_value(row, &tag_index, "_atom_site.Cartn_z");
         let occupancy = optional_f64_mmcif_value(row, &tag_index, "_atom_site.occupancy", line)?;
         let b_factor =
             optional_f64_mmcif_value(row, &tag_index, "_atom_site.B_iso_or_equiv", line)?;
+        let coordinates = optional_mmcif_point(row, &tag_index, line, options.strict)?;
 
         let chain_label = label_asym_id
             .or(auth_asym_id)
+            .ok_or_else(|| MmcifParseError::new(line, "missing atom-site chain identifier"))?;
+        let hierarchy_chain_id = auth_asym_id
+            .or(label_asym_id)
             .ok_or_else(|| MmcifParseError::new(line, "missing atom-site chain identifier"))?;
         let residue_name = label_comp_id
             .or(auth_comp_id)
@@ -3278,7 +3302,7 @@ fn build_macro_molecule_from_atom_site_loop(
         let model = *models
             .entry(model_key.clone())
             .or_insert_with(|| macro_mol.hierarchy.add_model(model_key.clone()));
-        let chain_key = (model_key.clone(), chain_label.to_owned());
+        let chain_key = (model_key.clone(), hierarchy_chain_id.to_owned());
         let chain = if let Some(chain) = chains.get(&chain_key) {
             *chain
         } else {
@@ -3293,12 +3317,19 @@ fn build_macro_molecule_from_atom_site_loop(
             chains.insert(chain_key, chain);
             chain
         };
-        let residue_key = (
-            chain,
-            residue_name.to_owned(),
+        let residue_key = MmcifResidueKey::from_row(
+            line,
+            options.strict,
+            model_key.as_str(),
+            chain_label,
+            auth_asym_id,
+            residue_name,
+            auth_comp_id,
             label_seq_id,
-            insertion_code.map(str::to_owned),
-        );
+            auth_seq_id,
+            insertion_code,
+            row_index,
+        )?;
         let residue = if let Some(residue) = residues.get(&residue_key) {
             *residue
         } else {
@@ -3317,22 +3348,114 @@ fn build_macro_molecule_from_atom_site_loop(
         };
 
         let atom = macro_mol.mol.add_atom(Atom::new(element));
+        if let Some(point) = coordinates {
+            conformer.set_position(atom, point);
+            saw_coordinates = true;
+        }
         macro_mol
             .add_atom_site(
                 residue,
                 atom,
                 AtomSiteMetadata {
+                    group_pdb: group_pdb.map(str::to_owned),
+                    atom_site_id: atom_site_id.map(str::to_owned),
+                    type_symbol: Some(type_symbol.to_owned()),
+                    label_asym_id: label_asym_id.map(str::to_owned),
+                    auth_asym_id: auth_asym_id.map(str::to_owned),
                     label_atom_id: label_atom_id.map(str::to_owned),
                     auth_atom_id: auth_atom_id.map(str::to_owned),
                     label_alt_id: label_alt_id.map(str::to_owned),
                     occupancy,
+                    occupancy_raw: occupancy_raw.map(str::to_owned),
                     b_factor,
+                    b_factor_raw: b_factor_raw.map(str::to_owned),
+                    cartn_x_raw: cartn_x_raw.map(str::to_owned),
+                    cartn_y_raw: cartn_y_raw.map(str::to_owned),
+                    cartn_z_raw: cartn_z_raw.map(str::to_owned),
                 },
             )
             .map_err(|error| MmcifParseError::new(line, error.to_string()))?;
     }
+    if saw_coordinates {
+        macro_mol.mol.add_conformer(conformer);
+    }
 
     Ok(macro_mol)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum MmcifResidueKey {
+    Label {
+        model_id: String,
+        label_chain_id: String,
+        component_id: String,
+        label_seq_id: i32,
+        insertion_code: Option<String>,
+    },
+    Author {
+        model_id: String,
+        chain_id: String,
+        component_id: String,
+        auth_seq_id: String,
+        insertion_code: Option<String>,
+    },
+    Occurrence {
+        model_id: String,
+        chain_id: String,
+        component_id: String,
+        insertion_code: Option<String>,
+        row_index: usize,
+    },
+}
+
+impl MmcifResidueKey {
+    #[allow(clippy::too_many_arguments)]
+    fn from_row(
+        line: usize,
+        strict: bool,
+        model_id: &str,
+        chain_label: &str,
+        auth_asym_id: Option<&str>,
+        residue_name: &str,
+        auth_comp_id: Option<&str>,
+        label_seq_id: Option<i32>,
+        auth_seq_id: Option<&str>,
+        insertion_code: Option<&str>,
+        row_index: usize,
+    ) -> std::result::Result<Self, MmcifParseError> {
+        let insertion_code = insertion_code.map(str::to_owned);
+        if let Some(label_seq_id) = label_seq_id {
+            return Ok(Self::Label {
+                model_id: model_id.to_owned(),
+                label_chain_id: chain_label.to_owned(),
+                component_id: residue_name.to_owned(),
+                label_seq_id,
+                insertion_code,
+            });
+        }
+        if let Some(auth_seq_id) = auth_seq_id {
+            return Ok(Self::Author {
+                model_id: model_id.to_owned(),
+                chain_id: auth_asym_id.unwrap_or(chain_label).to_owned(),
+                component_id: auth_comp_id.unwrap_or(residue_name).to_owned(),
+                auth_seq_id: auth_seq_id.to_owned(),
+                insertion_code,
+            });
+        }
+        if strict {
+            return Err(MmcifParseError::new(
+                line,
+                "missing residue sequence identifier",
+            ));
+        }
+        Ok(Self::Occurrence {
+            model_id: model_id.to_owned(),
+            chain_id: chain_label.to_owned(),
+            component_id: residue_name.to_owned(),
+            insertion_code,
+            row_index,
+        })
+    }
 }
 
 fn required_mmcif_value<'a>(
@@ -3352,6 +3475,16 @@ fn optional_mmcif_value<'a>(
 ) -> Option<&'a str> {
     let value = row.get(*tag_index.get(tag)?)?.text.as_str();
     (!matches!(value, "." | "?")).then_some(value)
+}
+
+fn canonical_mmcif_element_symbol(symbol: &str) -> String {
+    let mut chars = symbol.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut canonical = first.to_ascii_uppercase().to_string();
+    canonical.extend(chars.flat_map(char::to_lowercase));
+    canonical
 }
 
 fn optional_i32_mmcif_value(
@@ -3382,6 +3515,26 @@ fn optional_f64_mmcif_value(
                 .map_err(|_| MmcifParseError::new(line, format!("invalid float {tag}")))
         })
         .transpose()
+}
+
+fn optional_mmcif_point(
+    row: &[&MmcifToken],
+    tag_index: &BTreeMap<&str, usize>,
+    line: usize,
+    strict: bool,
+) -> std::result::Result<Option<Point3>, MmcifParseError> {
+    let x = optional_f64_mmcif_value(row, tag_index, "_atom_site.Cartn_x", line)?;
+    let y = optional_f64_mmcif_value(row, tag_index, "_atom_site.Cartn_y", line)?;
+    let z = optional_f64_mmcif_value(row, tag_index, "_atom_site.Cartn_z", line)?;
+    match (x, y, z) {
+        (Some(x), Some(y), Some(z)) => Ok(Some(Point3::new(x, y, z))),
+        (None, None, None) => Ok(None),
+        _ if strict => Err(MmcifParseError::new(
+            line,
+            "partial atom-site coordinate triplet",
+        )),
+        _ => Ok(None),
+    }
 }
 
 pub type Result<T> = std::result::Result<T, MoleculeError>;
@@ -4605,11 +4758,21 @@ $$$$
             )
             .expect("residue should be valid");
         let metadata = AtomSiteMetadata {
+            group_pdb: Some("ATOM".to_owned()),
+            atom_site_id: Some("1".to_owned()),
+            type_symbol: Some("C".to_owned()),
+            label_asym_id: Some("A".to_owned()),
+            auth_asym_id: Some("authA".to_owned()),
             label_atom_id: Some("CA".to_owned()),
             auth_atom_id: Some("CAY".to_owned()),
             label_alt_id: Some("B".to_owned()),
             occupancy: Some(0.5),
+            occupancy_raw: Some("0.50".to_owned()),
             b_factor: Some(12.25),
+            b_factor_raw: Some("12.25".to_owned()),
+            cartn_x_raw: None,
+            cartn_y_raw: None,
+            cartn_z_raw: None,
         };
         let site = hierarchy
             .add_atom_site(residue, AtomId::new(7), metadata.clone())
@@ -4713,11 +4876,21 @@ $$$$
                 residue,
                 atom,
                 AtomSiteMetadata {
+                    group_pdb: Some("ATOM".to_owned()),
+                    atom_site_id: Some("1".to_owned()),
+                    type_symbol: Some("C".to_owned()),
+                    label_asym_id: Some("A".to_owned()),
+                    auth_asym_id: Some("authA".to_owned()),
                     label_atom_id: Some("CA".to_owned()),
                     auth_atom_id: Some("CA".to_owned()),
                     label_alt_id: None,
                     occupancy: Some(1.0),
+                    occupancy_raw: Some("1.0".to_owned()),
                     b_factor: Some(10.0),
+                    b_factor_raw: Some("10.0".to_owned()),
+                    cartn_x_raw: None,
+                    cartn_y_raw: None,
+                    cartn_z_raw: None,
                 },
             )
             .expect("valid atom should attach");
@@ -4757,9 +4930,12 @@ _atom_site.auth_seq_id
 _atom_site.pdbx_PDB_ins_code
 _atom_site.occupancy
 _atom_site.B_iso_or_equiv
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
 _atom_site.pdbx_PDB_model_num
-ATOM 1 C CA CAY . GLY GLY A X 10 42 A 0.50 12.25 1
-ATOM 2 O O O . GLY GLY A X 10 42 A 1.00 10.00 1
+ATOM 1 C CA CAY . GLY GLY A X 10 42 A 0.50 12.25 1.25 2.50 3.75 1
+ATOM 2 O O O . GLY GLY A X 10 42 A 1.00 10.00 4.25 5.50 6.75 1
 "#;
 
         let macro_mol =
@@ -4791,6 +4967,15 @@ ATOM 2 O O O . GLY GLY A X 10 42 A 1.00 10.00 1
         assert_eq!(site.metadata.auth_atom_id, Some("CAY".to_owned()));
         assert_eq!(site.metadata.occupancy, Some(0.5));
         assert_eq!(site.metadata.b_factor, Some(12.25));
+        let (_, conformer) = macro_mol.mol.first_conformer().expect("conformer exists");
+        assert_eq!(
+            conformer.position(AtomId::new(0)),
+            Some(Point3::new(1.25, 2.50, 3.75))
+        );
+        assert_eq!(
+            conformer.position(AtomId::new(1)),
+            Some(Point3::new(4.25, 5.50, 6.75))
+        );
     }
 
     #[test]
@@ -4810,7 +4995,7 @@ _atom_site.label_alt_id
 _atom_site.occupancy
 _atom_site.B_iso_or_equiv
 _atom_site.pdbx_PDB_model_num
-C "C A" ? "LIG" "AA" . ? ? ? ? . 2
+C "C A" ? "LIG" "AA" . 7 ? ? ? . 2
 "#;
 
         let macro_mol =
@@ -4827,6 +5012,55 @@ C "C A" ? "LIG" "AA" . ? ? ? ? . 2
         assert_eq!(site.metadata.label_alt_id, None);
         assert_eq!(site.metadata.occupancy, None);
         assert_eq!(site.metadata.b_factor, None);
+    }
+
+    #[test]
+    fn mmcif_auth_sequence_distinguishes_label_sequence_less_residues() {
+        let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+O O HOH HOH A W . 10
+O O HOH HOH A W . 11
+"#;
+
+        let macro_mol =
+            read_mmcif_str(input, MmcifParseOptions::default()).expect("mmCIF should parse");
+
+        assert_eq!(macro_mol.hierarchy.residues().count(), 2);
+        let seq_ids = macro_mol
+            .hierarchy
+            .residues()
+            .map(|(_, residue)| residue.author_seq_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(seq_ids, vec![Some("10".to_owned()), Some("11".to_owned())]);
+    }
+
+    #[test]
+    fn mmcif_strict_mode_rejects_partial_coordinates() {
+        let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+C C1 BEN A 1 1.0 2.0
+"#;
+
+        let err = read_mmcif_str(input, MmcifParseOptions::default())
+            .expect_err("partial coordinates should fail");
+        assert!(err.message.contains("partial atom-site coordinate"));
     }
 
     #[test]
@@ -4866,8 +5100,9 @@ _atom_site.type_symbol
 _atom_site.label_atom_id
 _atom_site.label_comp_id
 _atom_site.label_asym_id
-C C1 BEN A
-C C2 BEN A
+_atom_site.auth_seq_id
+C C1 BEN A 1
+C C2 BEN A 1
 "#;
 
         let macro_mol =

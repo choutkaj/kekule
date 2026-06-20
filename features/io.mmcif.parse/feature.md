@@ -9,6 +9,9 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 - Exposes `MmcifParseOptions`, `MmcifParseError`, and `read_mmcif_str`.
 - Parses `_atom_site` loops into core atoms plus SMCRA hierarchy records.
 - Preserves model, chain, residue, atom-site labels, alternate locations, occupancy, B-factor, and insertion code where present.
+- Preserves `_atom_site.group_PDB`, `_atom_site.id`, label and author identifiers, and complete Cartesian coordinate triplets.
+- Stores parsed coordinates in the first conformer; each atom-site row maps to the corresponding atom position in that conformer.
+- In strict mode, rejects rows with partial coordinate triplets and residues lacking both label and author sequence identifiers.
 - Does not infer bonds or run chemical perception.
 
 ## Implementation Notes
@@ -19,8 +22,7 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 
 ## Validation
 
-- Current coverage is unit-test based.
-- Biopython golden validation is planned through `validation.harness`.
+- Current coverage combines unit tests with Biopython golden validation through `validation.harness`.
 - Fixtures, goldens, and evidence live under each applicable corpus directory.
 
 ## Out Of Scope
@@ -31,3 +33,4 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 ## Revision Notes
 
 - v1: Raw `_atom_site` parser into `MacroMolecule`.
+- v2: Preserve atom-site row metadata, author-keyed residues without label sequence IDs, and Cartesian coordinates.

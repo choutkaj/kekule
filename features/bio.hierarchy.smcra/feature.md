@@ -10,17 +10,18 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - Stores biomolecular labels and atom-site metadata in `BioHierarchy`, not core `Atom`.
 - `MacroMolecule` owns one core `Molecule` plus one `BioHierarchy`.
 - Atom-site insertion validates that referenced core atoms exist.
+- Atom-site metadata preserves `_atom_site.group_PDB`, `_atom_site.id`, label/auth atom IDs, alternate location, occupancy, and B-factor.
 
 ## Implementation Notes
 
 - Preserves insertion order for hierarchy iteration.
 - Tracks label and author identifiers separately.
 - Supports alternate locations, occupancy, B-factor, insertion code, and model identifiers.
+- mmCIF residue grouping uses label sequence identity when available, author sequence identity otherwise, and strict mode rejects ambiguous sequence-less residues.
 
 ## Validation
 
-- Current coverage is unit-test based.
-- Biopython golden validation is planned through `validation.harness`.
+- Current coverage combines unit tests with Biopython golden validation through `validation.harness`.
 - Fixtures, goldens, and evidence live under each applicable corpus directory.
 
 ## Out Of Scope
@@ -31,3 +32,4 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 ## Revision Notes
 
 - v1: SMCRA sidecar hierarchy for macromolecular parsing.
+- v2: Preserve atom-site row metadata and distinguish author-keyed residues when label sequence IDs are absent.
