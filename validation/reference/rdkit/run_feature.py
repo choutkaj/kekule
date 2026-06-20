@@ -166,10 +166,10 @@ def generate_document(
         expected = {"records": [conformer_record(record) for record in records]}
     elif feature_id == "io.smiles.parse":
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
-        expected = {"records": [sdf_record_basic(record) for record in records]}
+        expected = {"records": [smiles_parse_record(record) for record in records]}
     elif feature_id == "io.smiles.write":
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
-        expected = {"records": [smiles_record(record, canonical=False) for record in records]}
+        expected = {"records": [smiles_write_record(record) for record in records]}
     elif feature_id == "algo.rings.fast":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_record(record) for record in records]}
@@ -271,6 +271,20 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
         parts = line.split(maxsplit=1)
         smiles = parts[0]
         title = parts[1] if len(parts) > 1 else ""
+        unsupported = smiles_unsupported_subset_reason(smiles)
+        if unsupported is not None:
+            records.append(
+                {
+                    "record_index": index,
+                    "status": "unsupported",
+                    "title": title,
+                    "smiles": smiles,
+                    "mol": None,
+                    "radicals": {},
+                    "bond_stereo": {},
+                }
+            )
+            continue
         mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
         records.append(
             {
@@ -284,6 +298,12 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
             }
         )
     return records
+
+
+def smiles_unsupported_subset_reason(smiles: str) -> str | None:
+    if any(ch in smiles for ch in ("@", "/", "\\", "*")):
+        return "unsupported"
+    return None
 
 
 def read_sdf_blocks(fixture_path: Path) -> list[str]:
@@ -599,14 +619,13 @@ def valence_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def smiles_record(record: dict[str, Any], canonical: bool) -> dict[str, Any]:
-    from rdkit import Chem
-
+def smiles_parse_record(record: dict[str, Any]) -> dict[str, Any]:
     mol = record["mol"]
     if mol is None:
         return {
             "record_index": record["record_index"],
             "status": record["status"],
+            "title": record["title"],
             "input_smiles": record["smiles"],
         }
     return {
@@ -614,8 +633,122 @@ def smiles_record(record: dict[str, Any], canonical: bool) -> dict[str, Any]:
         "status": "ok",
         "title": record["title"],
         "input_smiles": record["smiles"],
-        "output_smiles": Chem.MolToSmiles(mol, canonical=canonical),
+        "raw": smiles_raw_semantic_record(mol),
+        "sanitized": smiles_sanitized_semantic_record(mol),
+        "write_round_trip": smiles_sanitized_semantic_record(mol),
     }
+
+
+def smiles_write_record(record: dict[str, Any]) -> dict[str, Any]:
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+            "title": record["title"],
+            "input_smiles": record["smiles"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "input_smiles": record["smiles"],
+        "sanitized": smiles_sanitized_semantic_record(mol),
+    }
+
+
+def smiles_raw_semantic_record(mol: Any) -> dict[str, Any]:
+    return {
+        "atom_count": mol.GetNumAtoms(),
+        "bond_count": mol.GetNumBonds(),
+        "atoms": [basic_atom_json(atom) for atom in mol.GetAtoms()],
+        "bonds": [basic_bond_json(bond) for bond in mol.GetBonds()],
+    }
+
+
+def smiles_sanitized_semantic_record(mol: Any) -> dict[str, Any]:
+    sanitized = clone_and_sanitize(mol)
+    if sanitized is None:
+        return {"status": "sanitize_error"}
+    return {
+        "status": "ok",
+        "atom_count": sanitized.GetNumAtoms(),
+        "bond_count": sanitized.GetNumBonds(),
+        "atoms": smiles_sanitized_atoms_json(sanitized),
+        "bonds": smiles_sanitized_bonds_json(sanitized),
+    }
+
+
+def smiles_sanitized_atoms_json(mol: Any) -> list[dict[str, Any]]:
+    atoms = []
+    for atom in mol.GetAtoms():
+        item = valence_atom_json(atom)
+        item.pop("index", None)
+        item["isotope"] = atom.GetIsotope() or None
+        item["atom_map"] = atom.GetAtomMapNum() or None
+        item["aromatic"] = atom.GetIsAromatic()
+        item["no_implicit_hydrogens"] = atom.GetNoImplicit()
+        neighbors = []
+        for bond in atom.GetBonds():
+            neighbor = bond.GetOtherAtom(atom)
+            neighbors.append(
+                {
+                    "atom": smiles_sanitized_atom_key(neighbor),
+                    "bond_type": smiles_semantic_bond_type(bond),
+                    "is_aromatic": bond.GetIsAromatic(),
+                }
+            )
+        neighbors.sort(key=lambda neighbor: json.dumps(neighbor, sort_keys=True))
+        item["neighbors"] = neighbors
+        atoms.append((smiles_sanitized_atom_sort_key(item), item))
+    atoms.sort(key=lambda item: (item[0], json.dumps(item[1], sort_keys=True)))
+    return [item for _, item in atoms]
+
+
+def smiles_sanitized_atom_sort_key(atom: dict[str, Any]) -> str:
+    no_implicit = str(atom["no_implicit_hydrogens"]).lower()
+    aromatic = str(atom["aromatic"]).lower()
+    return (
+        f"{atom['atomic_number']:03}|{atom['symbol']}|{atom['formal_charge']}|"
+        f"{atom['isotope'] or 0}|"
+        f"{atom['explicit_hydrogens']}|{atom['implicit_hydrogens']}|"
+        f"{no_implicit}|{atom['explicit_valence']}|{atom['atom_map'] or 0}|{aromatic}"
+    )
+
+
+def smiles_sanitized_atom_key(atom: Any) -> str:
+    item = valence_atom_json(atom)
+    item["isotope"] = atom.GetIsotope() or None
+    item["atom_map"] = atom.GetAtomMapNum() or None
+    item["aromatic"] = atom.GetIsAromatic()
+    item["no_implicit_hydrogens"] = atom.GetNoImplicit()
+    return smiles_sanitized_atom_sort_key(item)
+
+
+def smiles_sanitized_bonds_json(mol: Any) -> list[dict[str, Any]]:
+    bonds = [smiles_sanitized_bond_json(bond) for bond in mol.GetBonds()]
+    bonds.sort(key=lambda item: json.dumps(item, sort_keys=True))
+    return bonds
+
+
+def smiles_sanitized_bond_json(bond: Any) -> dict[str, Any]:
+    endpoints = sorted(
+        [
+            smiles_sanitized_atom_key(bond.GetBeginAtom()),
+            smiles_sanitized_atom_key(bond.GetEndAtom()),
+        ]
+    )
+    return {
+        "endpoint_atoms": endpoints,
+        "bond_type": smiles_semantic_bond_type(bond),
+        "is_aromatic": bond.GetIsAromatic(),
+    }
+
+
+def smiles_semantic_bond_type(bond: Any) -> str:
+    if bond.GetIsAromatic():
+        return "AROMATIC"
+    return str(bond.GetBondType())
 
 
 def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:

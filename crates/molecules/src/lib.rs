@@ -216,6 +216,7 @@ pub struct Atom {
     pub radical: Option<AtomRadical>,
     pub explicit_hydrogens: u8,
     pub implicit_hydrogens: Option<u8>,
+    pub no_implicit_hydrogens: bool,
     pub aromatic: bool,
     pub chiral: Option<AtomStereo>,
     pub atom_map: Option<u32>,
@@ -231,6 +232,7 @@ impl Atom {
             radical: None,
             explicit_hydrogens: 0,
             implicit_hydrogens: None,
+            no_implicit_hydrogens: false,
             aromatic: false,
             chiral: None,
             atom_map: None,
@@ -435,6 +437,7 @@ struct AtomChemistry {
     radical: Option<AtomRadical>,
     explicit_hydrogens: u8,
     implicit_hydrogens: Option<u8>,
+    no_implicit_hydrogens: bool,
     aromatic: bool,
     chiral: Option<AtomStereo>,
 }
@@ -448,6 +451,7 @@ impl From<&Atom> for AtomChemistry {
             radical: atom.radical,
             explicit_hydrogens: atom.explicit_hydrogens,
             implicit_hydrogens: atom.implicit_hydrogens,
+            no_implicit_hydrogens: atom.no_implicit_hydrogens,
             aromatic: atom.aromatic,
             chiral: atom.chiral,
         }
@@ -762,6 +766,7 @@ pub enum AromaticityModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AromaticityError {
     UnsupportedElement(AtomId),
+    InvalidAromaticRepresentation(AtomId),
 }
 
 impl fmt::Display for AromaticityError {
@@ -769,6 +774,9 @@ impl fmt::Display for AromaticityError {
         match self {
             Self::UnsupportedElement(id) => {
                 write!(f, "unsupported aromaticity element at atom {id}")
+            }
+            Self::InvalidAromaticRepresentation(id) => {
+                write!(f, "invalid aromatic representation at atom {id}")
             }
         }
     }
@@ -790,6 +798,16 @@ fn perceive_rdkit_like_aromaticity(
 ) -> std::result::Result<(), AromaticityError> {
     mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
     mol.perception.stereo = invalidate(mol.perception.stereo);
+    let imported_aromatic_components = imported_aromatic_bond_components(mol);
+    let imported_explicit_aromatic_singles = mol
+        .bonds()
+        .filter_map(|(bond_id, bond)| {
+            (matches!(bond.order, BondOrder::Single)
+                && mol.atom(bond.a()).is_ok_and(|atom| atom.aromatic)
+                && mol.atom(bond.b()).is_ok_and(|atom| atom.aromatic))
+            .then_some(bond_id)
+        })
+        .collect::<BTreeSet<_>>();
     for atom in mol.atoms.iter_mut().flatten() {
         atom.aromatic = false;
     }
@@ -798,12 +816,69 @@ fn perceive_rdkit_like_aromaticity(
     }
 
     let ring_set = perceive_ring_set(mol);
-    for ring in ring_set.rings() {
-        if ring.atoms.len() > 7 {
-            continue;
-        }
-        let electrons = aromatic_ring_pi_electrons(mol, ring)?;
-        if electrons >= 6 && (electrons - 2) % 4 == 0 {
+    let ring_aromatic = ring_set
+        .rings()
+        .iter()
+        .map(|ring| {
+            if ring.atoms.len() > 7 {
+                return Ok(false);
+            }
+            let electrons = aromatic_ring_pi_electrons(mol, ring)?;
+            Ok(electrons >= 6 && (electrons - 2) % 4 == 0)
+        })
+        .collect::<std::result::Result<Vec<_>, AromaticityError>>()?;
+    let non_aromatic_fusion_singles = ring_set
+        .rings()
+        .iter()
+        .flat_map(|ring| ring.bonds.iter().copied())
+        .filter(|bond_id| {
+            mol.bond(*bond_id).is_ok_and(|bond| {
+                matches!(bond.order, BondOrder::Single)
+                    && mol
+                        .atom(bond.a())
+                        .is_ok_and(|atom| atom.element.symbol() == "C")
+                    && mol
+                        .atom(bond.b())
+                        .is_ok_and(|atom| atom.element.symbol() == "C")
+            })
+        })
+        .filter(|bond_id| {
+            let containing_rings = ring_set
+                .rings()
+                .iter()
+                .enumerate()
+                .filter(|(_, ring)| ring.bonds.contains(bond_id))
+                .collect::<Vec<_>>();
+            if containing_rings
+                .iter()
+                .any(|(_, ring)| fused_component_is_all_carbon(mol, ring))
+            {
+                return false;
+            }
+            containing_rings.iter().any(|(index, ring)| {
+                if ring_aromatic[*index] {
+                    return false;
+                }
+                let non_donor_five_ring = ring.atoms.len() == 5
+                    && !fused_component_is_all_carbon(mol, ring)
+                    && !ring_has_chalcogen_donor(mol, ring)
+                    && ring_hetero_donor_count(mol, ring) < 2
+                    && !ring_has_nitrogen_lone_pair_donor(mol, ring);
+                let multi_hetero_dione_ring = ring.atoms.len() == 6
+                    && containing_rings.len() > 1
+                    && ring_hetero_donor_count(mol, ring) >= 2
+                    && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2;
+                non_donor_five_ring || multi_hetero_dione_ring
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    let protected_non_aromatic_bonds = imported_explicit_aromatic_singles
+        .union(&non_aromatic_fusion_singles)
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    for (ring, aromatic) in ring_set.rings().iter().zip(ring_aromatic) {
+        if aromatic {
             for atom_id in &ring.atoms {
                 if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
                     atom.aromatic = true;
@@ -811,20 +886,186 @@ fn perceive_rdkit_like_aromaticity(
             }
             for bond_id in &ring.bonds {
                 if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                    bond.aromatic = true;
+                    bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
                 }
             }
         }
     }
-    perceive_fused_aromatic_components(mol, ring_set.rings())?;
+    perceive_fused_aromatic_components(mol, ring_set.rings(), &protected_non_aromatic_bonds)?;
+    perceive_fused_single_exocyclic_carbon_rings(
+        mol,
+        ring_set.rings(),
+        &protected_non_aromatic_bonds,
+    );
+    clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings());
+    clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
+    for component in imported_aromatic_components {
+        if !component.iter().any(|atom_id| {
+            mol.atom(*atom_id)
+                .map(|atom| atom.aromatic)
+                .unwrap_or(false)
+        }) {
+            return Err(AromaticityError::InvalidAromaticRepresentation(
+                component[0],
+            ));
+        }
+    }
 
     mol.perception.aromaticity = ComputedState::Fresh;
     Ok(())
 }
 
+fn imported_aromatic_bond_components(mol: &Molecule) -> Vec<Vec<AtomId>> {
+    let mut adjacency = BTreeMap::<AtomId, Vec<AtomId>>::new();
+    for (_, bond) in mol
+        .bonds()
+        .filter(|(_, bond)| matches!(bond.order, BondOrder::Aromatic))
+    {
+        adjacency.entry(bond.a()).or_default().push(bond.b());
+        adjacency.entry(bond.b()).or_default().push(bond.a());
+    }
+
+    let mut components = Vec::new();
+    let mut visited = BTreeSet::new();
+    for start in adjacency.keys().copied() {
+        if !visited.insert(start) {
+            continue;
+        }
+        let mut component = Vec::new();
+        let mut stack = vec![start];
+        while let Some(atom_id) = stack.pop() {
+            component.push(atom_id);
+            if let Some(neighbors) = adjacency.get(&atom_id) {
+                for neighbor in neighbors.iter().rev().copied() {
+                    if visited.insert(neighbor) {
+                        stack.push(neighbor);
+                    }
+                }
+            }
+        }
+        component.sort();
+        components.push(component);
+    }
+    components
+}
+
+fn clear_terminal_chalcogen_oxo_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        if ring.atoms.len() != 5
+            || !ring_contains_element(mol, ring, "N")
+            || !ring_has_terminal_chalcogen_exocyclic_pi_bond(mol, ring)
+        {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            let retained_by_other_ring = rings.iter().enumerate().any(|(other_index, other)| {
+                other_index != index
+                    && other.atoms.contains(atom_id)
+                    && !ring_has_terminal_chalcogen_exocyclic_pi_bond(mol, other)
+            });
+            if !retained_by_other_ring {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn clear_fused_lactam_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        if ring.atoms.len() < 6
+            || !ring_contains_element(mol, ring, "N")
+            || !ring_contains_element(mol, ring, "O")
+            || ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
+        {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            let retained_by_other_ring = rings.iter().enumerate().any(|(other_index, other)| {
+                other_index != index
+                    && other.atoms.contains(atom_id)
+                    && ring_terminal_exocyclic_pi_bond_count(mol, other) == 0
+            });
+            if !retained_by_other_ring {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn perceive_fused_single_exocyclic_carbon_rings(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+) {
+    let selected = rings
+        .iter()
+        .enumerate()
+        .filter(|(index, ring)| {
+            let fused = rings
+                .iter()
+                .enumerate()
+                .any(|(other_index, other)| other_index != *index && rings_share_bond(ring, other));
+            fused
+                && ring_has_conjugated_atom_path(mol, ring)
+                && ((ring.atoms.len() == 6
+                    && fused_component_is_all_carbon(mol, ring)
+                    && ring_exocyclic_pi_bond_count(mol, ring) > 0
+                    && ring_terminal_exocyclic_pi_bond_count(mol, ring) <= 1
+                    && ring_pi_bond_count(mol, ring) >= 1)
+                    || (ring.atoms.len() == 4
+                        && fused_component_is_all_carbon(mol, ring)
+                        && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
+                    || (ring.atoms.len() == 5
+                        && ring_contains_element(mol, ring, "N")
+                        && ring_has_chalcogen_donor(mol, ring)
+                        && ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)
+                        && ring_exocyclic_pi_bond_count(mol, ring) > 0))
+        })
+        .map(|(_, ring)| ring.clone())
+        .collect::<Vec<_>>();
+
+    for ring in selected {
+        for atom_id in &ring.atoms {
+            if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+                atom.aromatic = true;
+            }
+        }
+        for bond_id in &ring.bonds {
+            if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
+            }
+        }
+    }
+}
+
 fn perceive_fused_aromatic_components(
     mol: &mut Molecule,
     rings: &[Ring],
+    protected_non_aromatic_bonds: &BTreeSet<BondId>,
 ) -> std::result::Result<(), AromaticityError> {
     let candidates = rings
         .iter()
@@ -851,11 +1092,15 @@ fn perceive_fused_aromatic_components(
             continue;
         }
         let component = fused_component_ring(rings, indexes);
-        if component.atoms.len() > 24 {
+        if component.atoms.len() > 48 {
             continue;
         }
         let electrons = aromatic_fused_component_pi_electrons(mol, &component)?;
-        if electrons >= 6 && (electrons - 2) % 4 == 0 {
+        let all_carbon_component = fused_component_is_all_carbon(mol, &component);
+        let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
+        if electrons >= 6
+            && ((electrons - 2) % 4 == 0 || all_carbon_component && !component_has_exocyclic_pi)
+        {
             for atom_id in &component.atoms {
                 if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
                     atom.aromatic = true;
@@ -863,12 +1108,141 @@ fn perceive_fused_aromatic_components(
             }
             for bond_id in &component.bonds {
                 if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                    bond.aromatic = true;
+                    bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
+                }
+            }
+        } else if all_carbon_component && component_has_exocyclic_pi {
+            let aromatic_atoms =
+                atoms_in_limited_terminal_exocyclic_pi_rings(mol, rings, indexes, 1);
+            if aromatic_atoms.len() >= 6 {
+                for atom_id in &aromatic_atoms {
+                    if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+                        atom.aromatic = true;
+                    }
+                }
+                for bond_id in &component.bonds {
+                    if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                        bond.aromatic = aromatic_atoms.contains(&bond.a())
+                            && aromatic_atoms.contains(&bond.b())
+                            && !protected_non_aromatic_bonds.contains(bond_id);
+                    }
+                }
+            }
+        } else if fused_component_is_carbon_nitrogen(mol, &component) {
+            let terminal_atoms_retained =
+                terminal_exocyclic_atoms_in_nitrogen_rings(mol, rings, indexes);
+            let atoms_retained_by_ring_context =
+                atoms_in_nitrogen_or_terminal_pi_free_rings(mol, rings, indexes);
+            let aromatic_atoms = component
+                .atoms
+                .iter()
+                .copied()
+                .filter(|atom_id| {
+                    atoms_retained_by_ring_context.contains(atom_id)
+                        && (!atom_has_terminal_exocyclic_pi_bond(mol, &component, *atom_id)
+                            || terminal_atoms_retained.contains(atom_id))
+                })
+                .collect::<BTreeSet<_>>();
+            if aromatic_atoms.len() >= 6 {
+                for atom_id in &aromatic_atoms {
+                    if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+                        atom.aromatic = true;
+                    }
+                }
+                for bond_id in &component.bonds {
+                    if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                        bond.aromatic = aromatic_atoms.contains(&bond.a())
+                            && aromatic_atoms.contains(&bond.b())
+                            && !protected_non_aromatic_bonds.contains(bond_id);
+                    }
                 }
             }
         }
     }
     Ok(())
+}
+
+fn fused_component_is_all_carbon(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().all(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| atom.element.symbol() == "C")
+            .unwrap_or(false)
+    })
+}
+
+fn fused_component_is_carbon_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().all(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| matches!(atom.element.symbol(), "C" | "N"))
+            .unwrap_or(false)
+    })
+}
+
+fn terminal_exocyclic_atoms_in_nitrogen_rings(
+    mol: &Molecule,
+    rings: &[Ring],
+    indexes: &[usize],
+) -> BTreeSet<AtomId> {
+    let mut atoms = BTreeSet::new();
+    for index in indexes {
+        let ring = &rings[*index];
+        if !ring_contains_element(mol, ring, "N") {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            if atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id) {
+                atoms.insert(*atom_id);
+            }
+        }
+    }
+    atoms
+}
+
+fn atoms_in_limited_terminal_exocyclic_pi_rings(
+    mol: &Molecule,
+    rings: &[Ring],
+    indexes: &[usize],
+    max_terminal_exocyclic_pi: usize,
+) -> BTreeSet<AtomId> {
+    let mut atoms = BTreeSet::new();
+    for index in indexes {
+        let ring = &rings[*index];
+        if ring_terminal_exocyclic_pi_bond_count(mol, ring) <= max_terminal_exocyclic_pi {
+            atoms.extend(ring.atoms.iter().copied());
+        }
+    }
+    atoms
+}
+
+fn atoms_in_nitrogen_or_terminal_pi_free_rings(
+    mol: &Molecule,
+    rings: &[Ring],
+    indexes: &[usize],
+) -> BTreeSet<AtomId> {
+    let has_exocyclic_pi_ring = indexes
+        .iter()
+        .any(|index| ring_exocyclic_pi_bond_count(mol, &rings[*index]) > 0);
+    if !has_exocyclic_pi_ring {
+        return indexes
+            .iter()
+            .flat_map(|index| rings[*index].atoms.iter().copied())
+            .collect();
+    }
+
+    let mut atoms = BTreeSet::new();
+    for index in indexes {
+        let ring = &rings[*index];
+        let exocyclic_pi_count = ring_exocyclic_pi_bond_count(mol, ring);
+        let contains_nitrogen = ring_contains_element(mol, ring, "N");
+        if exocyclic_pi_count == 0
+            || !contains_nitrogen && exocyclic_pi_count <= 1
+            || contains_nitrogen && ring_hetero_donor_count(mol, ring) >= 2
+            || ring.atoms.len() >= 6 && contains_nitrogen
+        {
+            atoms.extend(ring.atoms.iter().copied());
+        }
+    }
+    atoms
 }
 
 fn aromatic_fused_component_pi_electrons(
@@ -910,6 +1284,14 @@ fn aromatic_fused_component_pi_electrons(
         }
     }
 
+    if ring.atoms.len() == 6
+        && fused_component_is_all_carbon(mol, ring)
+        && ring_exocyclic_pi_bond_count(mol, ring) == 1
+        && ring_pi_bond_count(mol, ring) >= 1
+    {
+        return Ok(6);
+    }
+
     if has_pi_bond {
         Ok(electrons)
     } else {
@@ -929,15 +1311,23 @@ fn ring_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
 }
 
 fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
-    if ring.atoms.len() > 7 {
+    if ring.atoms.len() == 7 && ring_has_chalcogen_donor(mol, ring) {
         return false;
+    }
+    if ring.atoms.len() > 7 {
+        return ring.atoms.len() <= 18
+            && fused_component_is_carbon_nitrogen(mol, ring)
+            && ring_has_anionic_nitrogen(mol, ring)
+            && ring_has_conjugated_atom_path(mol, ring)
+            && ring_pi_bond_count(mol, ring) >= 4;
     }
     let pi_bonds = ring_pi_bond_count(mol, ring);
     ring_has_conjugated_atom_path(mol, ring)
         && (pi_bonds >= 2
             || ring_hetero_donor_count(mol, ring) > 0
-                && !ring_has_low_unsaturation_chalcogen_bridge(mol, ring)
-            || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N"))
+                && !ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol, ring)
+            || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N")
+            || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring))
 }
 
 fn ring_has_conjugated_atom_path(mol: &Molecule, ring: &Ring) -> bool {
@@ -967,6 +1357,34 @@ fn ring_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
         .count()
 }
 
+fn ring_has_anionic_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| atom.element.symbol() == "N" && atom.formal_charge < 0)
+            .unwrap_or(false)
+    })
+}
+
+fn ring_has_nitrogen_lone_pair_donor(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| {
+                atom.element.symbol() == "N"
+                    && (atom.explicit_hydrogens > 0
+                        || atom.formal_charge < 0
+                        || atom.formal_charge == 0 && !ring_atom_has_pi_bond(mol, ring, *atom_id)
+                        || mol.neighbors(*atom_id).is_ok_and(|mut neighbors| {
+                            neighbors.any(|neighbor| {
+                                mol.atom(neighbor).is_ok_and(|neighbor_atom| {
+                                    neighbor_atom.element.symbol() == "H"
+                                })
+                            })
+                        }))
+            })
+            .unwrap_or(false)
+    })
+}
+
 fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
     ring.atoms.iter().any(|atom_id| {
         mol.atom(*atom_id)
@@ -976,9 +1394,62 @@ fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
 }
 
 fn ring_has_low_unsaturation_chalcogen_bridge(mol: &Molecule, ring: &Ring) -> bool {
+    ring_pi_bond_count(mol, ring) + ring_terminal_exocyclic_pi_bond_count(mol, ring) < 2
+        && ring_hetero_donor_count(mol, ring) > 1
+        && ring_has_chalcogen_donor(mol, ring)
+}
+
+fn ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol: &Molecule, ring: &Ring) -> bool {
     ring_pi_bond_count(mol, ring) < 2
         && ring_hetero_donor_count(mol, ring) > 1
         && ring_has_chalcogen_donor(mol, ring)
+}
+
+fn ring_exocyclic_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
+    ring.atoms
+        .iter()
+        .filter(|atom_id| atom_has_exocyclic_pi_bond(mol, ring, **atom_id))
+        .count()
+}
+
+fn ring_has_carbon_hetero_exocyclic_pi_bond(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| atom.element.symbol() == "C")
+            .unwrap_or(false)
+            && mol
+                .incident_bonds(*atom_id)
+                .ok()
+                .into_iter()
+                .flatten()
+                .any(|(bond_id, bond)| {
+                    if ring.bonds.contains(&bond_id)
+                        || ring.atoms.contains(&bond.other_atom(*atom_id))
+                        || !matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+                    {
+                        return false;
+                    }
+                    mol.atom(bond.other_atom(*atom_id))
+                        .map(|atom| atom.element.symbol() != "C")
+                        .unwrap_or(false)
+                })
+    })
+}
+
+fn ring_has_terminal_chalcogen_exocyclic_pi_bond(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .map(|atom| matches!(atom.element.symbol(), "S" | "Se" | "Te"))
+            .unwrap_or(false)
+            && atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id)
+    })
+}
+
+fn ring_terminal_exocyclic_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
+    ring.atoms
+        .iter()
+        .filter(|atom_id| atom_has_terminal_exocyclic_pi_bond(mol, ring, **atom_id))
+        .count()
 }
 
 fn rings_share_bond(left: &Ring, right: &Ring) -> bool {
@@ -1002,13 +1473,42 @@ fn aromatic_ring_pi_electrons(
     mol: &Molecule,
     ring: &Ring,
 ) -> std::result::Result<u8, AromaticityError> {
+    if ring_has_aromatic_order(mol, ring) {
+        return aromatic_order_ring_pi_electrons(mol, ring);
+    }
+    if ring.atoms.len() == 7 && ring_has_chalcogen_donor(mol, ring) {
+        return Ok(0);
+    }
     if ring.atoms.len() == 5
         && ring_pi_bond_count(mol, ring) < 2
         && !ring_contains_element(mol, ring, "N")
     {
         return Ok(0);
     }
+    if ring.atoms.len() == 5
+        && ring_contains_element(mol, ring, "N")
+        && ring_exocyclic_pi_bond_count(mol, ring) > 0
+        && ((ring_hetero_donor_count(mol, ring) < 2 && !ring_has_chalcogen_donor(mol, ring))
+            || (ring_has_chalcogen_donor(mol, ring)
+                && !ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)))
+    {
+        return Ok(0);
+    }
+    if ring.atoms.len() == 5
+        && ring_contains_element(mol, ring, "N")
+        && ring_has_terminal_chalcogen_exocyclic_pi_bond(mol, ring)
+    {
+        return Ok(0);
+    }
     if ring.atoms.len() > 5 && ring_has_low_unsaturation_chalcogen_bridge(mol, ring) {
+        return Ok(0);
+    }
+    if ring.atoms.len() > 5
+        && ring_exocyclic_pi_bond_count(mol, ring) == 0
+        && ring_has_chalcogen_donor(mol, ring)
+        && ring_contains_element(mol, ring, "N")
+        && ring_hetero_donor_count(mol, ring) > 1
+    {
         return Ok(0);
     }
 
@@ -1029,7 +1529,11 @@ fn aromatic_ring_pi_electrons(
                 if !ring_atom_has_pi_bond(mol, ring, *atom_id)
                     && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
                 {
-                    return Ok(0);
+                    if atom.formal_charge < 0 {
+                        electrons += 2;
+                    } else {
+                        return Ok(0);
+                    }
                 }
             }
             "N" => {
@@ -1058,6 +1562,29 @@ fn aromatic_ring_pi_electrons(
     } else {
         Ok(0)
     }
+}
+
+fn aromatic_order_ring_pi_electrons(
+    mol: &Molecule,
+    ring: &Ring,
+) -> std::result::Result<u8, AromaticityError> {
+    let mut electrons = 0u8;
+    for atom_id in &ring.atoms {
+        let atom = mol.atom(*atom_id).expect("ring atom should be live");
+        electrons += match atom.element.symbol() {
+            "B" | "C" => 1,
+            "N" => {
+                if atom.explicit_hydrogens > 0 || atom.formal_charge > 0 {
+                    2
+                } else {
+                    1
+                }
+            }
+            "O" | "S" | "Se" | "Te" | "P" => 2,
+            _ => return Err(AromaticityError::UnsupportedElement(*atom_id)),
+        };
+    }
+    Ok(electrons)
 }
 
 fn ring_contains_element(mol: &Molecule, ring: &Ring, symbol: &str) -> bool {
@@ -1094,7 +1621,27 @@ fn atom_has_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> b
         .flatten()
         .any(|(bond_id, bond)| {
             !ring.bonds.contains(&bond_id)
+                && !ring.atoms.contains(&bond.other_atom(atom_id))
                 && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+        })
+}
+
+fn atom_has_terminal_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|(bond_id, bond)| {
+            if ring.bonds.contains(&bond_id) || !matches!(bond.order, BondOrder::Double) {
+                return false;
+            }
+            let other = bond.other_atom(atom_id);
+            if ring.atoms.contains(&other) {
+                return false;
+            }
+            mol.incident_bonds(bond.other_atom(atom_id))
+                .map(|bonds| bonds.count() == 1)
+                .unwrap_or(false)
         })
 }
 
@@ -1508,7 +2055,11 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule) -> ValenceReport {
                         });
                         assignments.push((atom_id, 0));
                     } else {
-                        let target = if atom.radical.is_some() {
+                        let target = if atom.no_implicit_hydrogens {
+                            explicit
+                        } else if let Some(target) = aromatic_valence_target(atom, explicit) {
+                            target
+                        } else if atom.radical.is_some() {
                             explicit
                         } else {
                             allowed
@@ -1537,6 +2088,25 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule) -> ValenceReport {
     }
     mol.perception.valence = ComputedState::Fresh;
     ValenceReport { issues }
+}
+
+fn aromatic_valence_target(atom: &Atom, explicit: u8) -> Option<u8> {
+    if !atom.aromatic {
+        return None;
+    }
+    let target = match atom.element.symbol() {
+        "B" | "C" => 3,
+        "N" | "O" | "S" | "Se" | "Te" => {
+            if atom.explicit_hydrogens > 0 || atom.formal_charge > 0 {
+                3
+            } else {
+                2
+            }
+        }
+        "P" => 3,
+        _ => return None,
+    };
+    Some(target.max(explicit))
 }
 
 fn explicit_valence(mol: &Molecule, atom: AtomId) -> u8 {
@@ -1570,9 +2140,11 @@ fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
         ("N", 0) => Some(&[3, 5]),
         ("O", 0) => Some(&[2]),
         ("O", -1) => Some(&[1]),
+        ("O", -2) => Some(&[0]),
         ("O", 1) => Some(&[1, 3]),
         ("Li" | "Na" | "K", 1) => Some(&[0]),
         ("Mg" | "Ca" | "Sr" | "Ba", 1..=3) => Some(&[0]),
+        ("Nb", 5) => Some(&[0]),
         (
             "Sc" | "Ti" | "V" | "Cr" | "Mn" | "Fe" | "Co" | "Ni" | "Cu" | "Zn" | "Y" | "Zr" | "Nb"
             | "Mo" | "Tc" | "Ru" | "Rh" | "Pd" | "Ag" | "Cd" | "La" | "Ce" | "Pr" | "Nd" | "Sm"
@@ -1582,14 +2154,18 @@ fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
         ) => Some(&[0, 1, 2, 3, 4, 5, 6]),
         ("F" | "Cl" | "Br" | "I", -1) => Some(&[0]),
         ("F", 0) => Some(&[1]),
-        ("Cl" | "Br" | "I", 1) => Some(&[4]),
+        ("Cl" | "Br" | "I", 1) => Some(&[2, 4]),
+        ("Cl" | "Br" | "I", 3) => Some(&[4]),
         ("Cl" | "Br" | "I", 0) => Some(&[1, 3, 5, 7]),
         ("P" | "As" | "Sb" | "Bi", 0) => Some(&[3, 5]),
+        ("Bi", 3) => Some(&[0]),
+        ("In", 3) => Some(&[0]),
         ("P", 1) => Some(&[4]),
         ("Si", 0) => Some(&[4]),
         ("Ge", 0) => Some(&[0, 4]),
         ("Sn", 0) => Some(&[0, 2, 4]),
         ("Sn", 4) => Some(&[0]),
+        ("U", 2) => Some(&[4]),
         ("S" | "Se" | "Te", 0) => Some(&[2, 4, 6]),
         ("S" | "Se" | "Te", -1 | 1) => Some(&[1, 3, 5]),
         ("Tl", 0) => Some(&[3]),
@@ -1711,21 +2287,26 @@ fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {
 
     let mut changed = false;
     for atom_id in halogens {
-        let Some((oxygen_id, bond_id)) = oxo_bond_to_neutral_oxygen(mol, atom_id) else {
+        let oxo_bonds = oxo_bonds_to_neutral_oxygen(mol, atom_id);
+        if oxo_bonds.is_empty() {
             continue;
         };
         if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            atom.formal_charge = 1;
+            atom.formal_charge = atom
+                .formal_charge
+                .saturating_add(i8::try_from(oxo_bonds.len()).unwrap_or(i8::MAX));
             changed = true;
         }
-        if let Some(atom) = mol.atoms[oxygen_id.index()].as_mut() {
-            atom.formal_charge = -1;
-            changed = true;
-        }
-        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-            bond.order = BondOrder::Single;
-            bond.aromatic = false;
-            changed = true;
+        for (oxygen_id, bond_id) in oxo_bonds {
+            if let Some(atom) = mol.atoms[oxygen_id.index()].as_mut() {
+                atom.formal_charge = -1;
+                changed = true;
+            }
+            if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                bond.order = BondOrder::Single;
+                bond.aromatic = false;
+                changed = true;
+            }
         }
     }
     if changed {
@@ -1733,9 +2314,11 @@ fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {
     }
 }
 
-fn oxo_bond_to_neutral_oxygen(mol: &Molecule, atom_id: AtomId) -> Option<(AtomId, BondId)> {
+fn oxo_bonds_to_neutral_oxygen(mol: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {
     mol.incident_bonds(atom_id)
-        .ok()?
+        .ok()
+        .into_iter()
+        .flatten()
         .filter_map(|(bond_id, bond)| {
             if !matches!(bond.order, BondOrder::Double) {
                 return None;
@@ -1745,7 +2328,7 @@ fn oxo_bond_to_neutral_oxygen(mol: &Molecule, atom_id: AtomId) -> Option<(AtomId
             (oxygen.element.symbol() == "O" && oxygen.formal_charge == 0)
                 .then_some((oxygen_id, bond_id))
         })
-        .next()
+        .collect()
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -2682,7 +3265,10 @@ pub fn read_smiles_str(
                             "conflicting ring bond symbols",
                         ));
                     }
-                    let order = close_order.or(open_order).unwrap_or(BondOrder::Single);
+                    let order = match close_order.or(open_order) {
+                        Some(order) => order,
+                        None => default_smiles_bond_order(&mol, other, atom, offset)?,
+                    };
                     mol.add_bond(other, atom, order)
                         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
                 } else {
@@ -2695,10 +3281,10 @@ pub fn read_smiles_str(
                 let (atom, next_cursor) = parse_bracket_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
                 if let Some(previous) = current {
-                    let order = pending_bond
-                        .take()
-                        .map(|(order, _)| order)
-                        .unwrap_or(BondOrder::Single);
+                    let order = match pending_bond.take().map(|(order, _)| order) {
+                        Some(order) => order,
+                        None => default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                    };
                     mol.add_bond(previous, atom_id, order)
                         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
                 } else if pending_bond.is_some() {
@@ -2718,10 +3304,10 @@ pub fn read_smiles_str(
                 let (atom, next_cursor) = parse_organic_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
                 if let Some(previous) = current {
-                    let order = pending_bond
-                        .take()
-                        .map(|(order, _)| order)
-                        .unwrap_or(BondOrder::Single);
+                    let order = match pending_bond.take().map(|(order, _)| order) {
+                        Some(order) => order,
+                        None => default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                    };
                     mol.add_bond(previous, atom_id, order)
                         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
                 } else if pending_bond.is_some() {
@@ -2746,6 +3332,25 @@ pub fn read_smiles_str(
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
     Ok(SmallMolecule { mol })
+}
+
+fn default_smiles_bond_order(
+    mol: &Molecule,
+    left: AtomId,
+    right: AtomId,
+    offset: usize,
+) -> std::result::Result<BondOrder, SmilesParseError> {
+    let left = mol
+        .atom(left)
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+    let right = mol
+        .atom(right)
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+    if left.aromatic && right.aromatic {
+        Ok(BondOrder::Aromatic)
+    } else {
+        Ok(BondOrder::Single)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2897,6 +3502,7 @@ fn parse_bracket_atom(
     let mut atom = Atom::new(element);
     atom.aromatic = aromatic;
     atom.isotope = isotope;
+    atom.no_implicit_hydrogens = true;
     let mut saw_hydrogen = false;
     let mut saw_charge = false;
     let mut saw_map = false;
@@ -3025,11 +3631,19 @@ pub fn write_smiles(
 struct SmilesWritePlan {
     roots: Vec<AtomId>,
     tree_bonds: BTreeSet<BondId>,
-    closures: BTreeMap<AtomId, Vec<(usize, BondOrder)>>,
+    closures: BTreeMap<AtomId, Vec<SmilesRingClosure>>,
     subtree_sizes: BTreeMap<AtomId, usize>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SmilesRingClosure {
+    number: usize,
+    order: BondOrder,
+    other: AtomId,
+}
+
 fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, MolWriteError> {
+    validate_smiles_writeable(mol)?;
     let mut roots = Vec::new();
     let mut visited = BTreeSet::<AtomId>::new();
     let mut tree_bonds = BTreeSet::<BondId>::new();
@@ -3058,12 +3672,25 @@ fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, Mol
         })
         .collect::<Vec<_>>();
     ring_bonds.sort_by_key(|(bond_id, first, second, _)| (*first, *second, *bond_id));
+    if ring_bonds.len() > 99 {
+        return Err(MolWriteError::new(
+            "SMILES writer supports at most 99 simultaneous ring closures",
+        ));
+    }
 
-    let mut closures = BTreeMap::<AtomId, Vec<(usize, BondOrder)>>::new();
+    let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
     for (index, (_, first, second, order)) in ring_bonds.into_iter().enumerate() {
         let number = index + 1;
-        closures.entry(first).or_default().push((number, order));
-        closures.entry(second).or_default().push((number, order));
+        closures.entry(first).or_default().push(SmilesRingClosure {
+            number,
+            order,
+            other: second,
+        });
+        closures.entry(second).or_default().push(SmilesRingClosure {
+            number,
+            order,
+            other: first,
+        });
     }
 
     let mut subtree_sizes = BTreeMap::new();
@@ -3077,6 +3704,37 @@ fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, Mol
         closures,
         subtree_sizes,
     })
+}
+
+fn validate_smiles_writeable(mol: &Molecule) -> std::result::Result<(), MolWriteError> {
+    for (_, atom) in mol.atoms() {
+        if atom.chiral.is_some() {
+            return Err(MolWriteError::new(
+                "SMILES writer cannot encode atom stereochemistry",
+            ));
+        }
+        if atom.radical.is_some() {
+            return Err(MolWriteError::new(
+                "SMILES writer cannot encode atom radicals",
+            ));
+        }
+    }
+    for (_, bond) in mol.bonds() {
+        match bond.order {
+            BondOrder::Single | BondOrder::Double | BondOrder::Triple | BondOrder::Aromatic => {}
+            BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => {
+                return Err(MolWriteError::new(
+                    "SMILES writer cannot encode zero, dative, or quadruple bonds",
+                ));
+            }
+        }
+        if !matches!(bond.stereo, None | Some(BondStereo::Unspecified)) {
+            return Err(MolWriteError::new(
+                "SMILES writer cannot encode bond stereochemistry",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn collect_smiles_tree(
@@ -3153,9 +3811,14 @@ fn write_smiles_component(
         .map_err(|error| MolWriteError::new(error.to_string()))?;
     let mut out = smiles_atom(atom);
     if let Some(closures) = plan.closures.get(&atom_id) {
-        for (number, order) in closures {
-            out.push_str(smiles_bond(*order));
-            out.push_str(&smiles_ring_number(*number));
+        for closure in closures {
+            out.push_str(smiles_bond_between(
+                mol,
+                closure.order,
+                atom_id,
+                closure.other,
+            )?);
+            out.push_str(&smiles_ring_number(closure.number));
         }
     }
 
@@ -3181,7 +3844,7 @@ fn write_smiles_component(
         }
         let child_text = format!(
             "{}{}",
-            smiles_bond(order),
+            smiles_bond_between(mol, order, atom_id, child)?,
             write_smiles_component(mol, child, Some(atom_id), plan)?
         );
         out.push('(');
@@ -3191,7 +3854,7 @@ fn write_smiles_component(
 
     if let Some(index) = main_child_index {
         let (_, order, child) = children[index];
-        out.push_str(smiles_bond(order));
+        out.push_str(smiles_bond_between(mol, order, atom_id, child)?);
         out.push_str(&write_smiles_component(mol, child, Some(atom_id), plan)?);
     }
     Ok(out)
@@ -3230,10 +3893,32 @@ fn smiles_bond(order: BondOrder) -> &'static str {
     }
 }
 
+fn smiles_bond_between(
+    mol: &Molecule,
+    order: BondOrder,
+    left: AtomId,
+    right: AtomId,
+) -> std::result::Result<&'static str, MolWriteError> {
+    if matches!(order, BondOrder::Single | BondOrder::Aromatic) {
+        let left = mol
+            .atom(left)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        let right = mol
+            .atom(right)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        if left.aromatic && right.aromatic {
+            return Ok(if order == BondOrder::Single { "-" } else { "" });
+        }
+    }
+    Ok(smiles_bond(order))
+}
+
 fn smiles_atom(atom: &Atom) -> String {
+    let explicit_hydrogens = smiles_atom_explicit_hydrogens(atom);
     let organic = atom.isotope.is_none()
         && atom.formal_charge == 0
-        && atom.explicit_hydrogens == 0
+        && explicit_hydrogens == 0
+        && !atom.no_implicit_hydrogens
         && atom.atom_map.is_none()
         && matches!(
             atom.element.symbol(),
@@ -3255,10 +3940,10 @@ fn smiles_atom(atom: &Atom) -> String {
         } else {
             out.push_str(atom.element.symbol());
         }
-        if atom.explicit_hydrogens > 0 {
+        if explicit_hydrogens > 0 {
             out.push('H');
-            if atom.explicit_hydrogens > 1 {
-                out.push_str(&atom.explicit_hydrogens.to_string());
+            if explicit_hydrogens > 1 {
+                out.push_str(&explicit_hydrogens.to_string());
             }
         }
         if atom.formal_charge > 0 {
@@ -3278,6 +3963,18 @@ fn smiles_atom(atom: &Atom) -> String {
         }
         out.push(']');
         out
+    }
+}
+
+fn smiles_atom_explicit_hydrogens(atom: &Atom) -> u8 {
+    if atom.element.symbol() == "N"
+        && atom.aromatic
+        && atom.explicit_hydrogens == 0
+        && atom.implicit_hydrogens == Some(1)
+    {
+        1
+    } else {
+        atom.explicit_hydrogens
     }
 }
 
@@ -4312,6 +5009,7 @@ mod tests {
         assert_eq!(atom.radical, None);
         assert_eq!(atom.explicit_hydrogens, 0);
         assert_eq!(atom.implicit_hydrogens, None);
+        assert!(!atom.no_implicit_hydrogens);
         assert!(!atom.aromatic);
         assert_eq!(atom.chiral, None);
         assert_eq!(atom.atom_map, None);
@@ -4326,6 +5024,7 @@ mod tests {
         atom.radical = Some(AtomRadical::Doublet);
         atom.explicit_hydrogens = 3;
         atom.implicit_hydrogens = Some(1);
+        atom.no_implicit_hydrogens = true;
         atom.aromatic = true;
         atom.chiral = Some(AtomStereo::TetrahedralClockwise);
         atom.atom_map = Some(7);
@@ -4337,6 +5036,7 @@ mod tests {
         assert_eq!(atom.radical, Some(AtomRadical::Doublet));
         assert_eq!(atom.explicit_hydrogens, 3);
         assert_eq!(atom.implicit_hydrogens, Some(1));
+        assert!(atom.no_implicit_hydrogens);
         assert!(atom.aromatic);
         assert_eq!(atom.chiral, Some(AtomStereo::TetrahedralClockwise));
         assert_eq!(atom.atom_map, Some(7));
@@ -5126,6 +5826,7 @@ $$$$
         let bracket_atom = small.mol.atom(AtomId::new(9)).expect("bracket atom");
         assert_eq!(bracket_atom.isotope, Some(13));
         assert_eq!(bracket_atom.explicit_hydrogens, 4);
+        assert!(bracket_atom.no_implicit_hydrogens);
         assert_eq!(bracket_atom.formal_charge, 1);
         assert_eq!(bracket_atom.atom_map, Some(7));
     }
@@ -5133,8 +5834,27 @@ $$$$
     #[test]
     fn malformed_smiles_returns_errors_without_panicking() {
         let cases = [
-            "C(", "C1", "C%1", "C%a1", "C=", "=C", "C..C", "C1.C1", "[]", "[13]", "[é]", "[C@H]",
-            "[C/]", "[C+999]", "[C:]", "[Clx]", "Cé",
+            "C(",
+            "C1",
+            "C%1",
+            "C%a1",
+            "C=",
+            "=C",
+            "C..C",
+            "C1.C1",
+            "C=1CCCCC-1",
+            "C/C=C\\C",
+            "[]",
+            "[13]",
+            "[é]",
+            "[C@H]",
+            "[C/]",
+            "[*]",
+            "[C+999]",
+            "[C:]",
+            "[Clx]",
+            "[si]1ccccc1",
+            "Cé",
         ];
 
         for input in cases {
@@ -5155,6 +5875,869 @@ $$$$
 
         assert_eq!(reparsed.mol.atom_count(), small.mol.atom_count());
         assert_eq!(reparsed.mol.bond_count(), small.mol.bond_count());
+    }
+
+    #[test]
+    fn aromatic_smiles_omitted_bonds_sanitize_with_expected_hydrogens() {
+        let mut benzene =
+            read_smiles_str("c1ccccc1", SmilesParseOptions).expect("benzene should parse");
+        assert!(benzene
+            .mol
+            .bonds()
+            .all(|(_, bond)| bond.order == BondOrder::Aromatic));
+        sanitize_small_molecule(&mut benzene, SanitizeOptions::default())
+            .expect("benzene should sanitize");
+        for (_, atom) in benzene.mol.atoms() {
+            assert_eq!(atom.implicit_hydrogens, Some(1));
+            assert!(atom.aromatic);
+        }
+
+        let mut pyridine =
+            read_smiles_str("n1ccccc1", SmilesParseOptions).expect("pyridine should parse");
+        sanitize_small_molecule(&mut pyridine, SanitizeOptions::default())
+            .expect("pyridine should sanitize");
+        let nitrogen = pyridine.mol.atom(AtomId::new(0)).expect("nitrogen");
+        assert_eq!(nitrogen.implicit_hydrogens, Some(0));
+        for atom_id in 1..6 {
+            let atom = pyridine.mol.atom(AtomId::new(atom_id)).expect("carbon");
+            assert_eq!(atom.implicit_hydrogens, Some(1));
+        }
+
+        for smiles in [
+            "[nH]1cccc1",
+            "c1ccoc1",
+            "c1ccsc1",
+            "c1ccc2ccccc2c1",
+            "Cc1ccccc1",
+            "c1ccccc1.CC",
+            "C%10CCCCC%10",
+        ] {
+            let mut molecule = read_smiles_str(smiles, SmilesParseOptions)
+                .unwrap_or_else(|_| panic!("supported aromatic SMILES should parse: {smiles}"));
+            sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+                .unwrap_or_else(|_| panic!("supported aromatic SMILES should sanitize: {smiles}"));
+            let written = write_smiles(&molecule, SmilesWriteOptions)
+                .unwrap_or_else(|_| panic!("supported aromatic SMILES should write: {smiles}"));
+            read_smiles_str(&written, SmilesParseOptions)
+                .unwrap_or_else(|_| panic!("writer output should parse: {written}"));
+        }
+    }
+
+    #[test]
+    fn invalid_lowercase_aromatic_ring_returns_structured_error() {
+        for smiles in ["c1cccc1", "c1ccccc1.c1cccc1"] {
+            let mut molecule =
+                read_smiles_str(smiles, SmilesParseOptions).expect("raw syntax should parse");
+            let error = sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+                .expect_err("invalid aromatic ring should fail sanitization");
+            assert!(matches!(
+                error,
+                SanitizeError::Aromaticity(AromaticityError::InvalidAromaticRepresentation(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn thiocarbonyl_chalcogen_ring_sanitizes_aromatic_like_rdkit() {
+        let mut molecule =
+            read_smiles_str("CCN(CC)C1=NC(=S)N(C(=S)S1)C(=S)N(CC)CC", SmilesParseOptions)
+                .expect("thiocarbonyl heterocycle should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("thiocarbonyl heterocycle should sanitize");
+
+        let aromatic_atoms = molecule
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count();
+        let aromatic_bonds = molecule
+            .mol
+            .bonds()
+            .filter(|(_, bond)| bond.aromatic)
+            .count();
+        assert_eq!(aromatic_atoms, 6);
+        assert_eq!(aromatic_bonds, 6);
+
+        let written = write_smiles(&molecule, SmilesWriteOptions)
+            .expect("sanitized thiocarbonyl heterocycle should write");
+        let reparsed =
+            read_smiles_str(&written, SmilesParseOptions).expect("writer output should parse");
+        assert_eq!(reparsed.mol.atom_count(), molecule.mol.atom_count());
+        assert_eq!(reparsed.mol.bond_count(), molecule.mol.bond_count());
+    }
+
+    #[test]
+    fn fused_chalcogen_bridge_does_not_over_aromatize_hetero_bridge() {
+        let mut molecule = read_smiles_str("CSC1=CC2=C(C=C1)SC3=CC=CC=C3N2", SmilesParseOptions)
+            .expect("phenothiazine-like heterocycle should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("phenothiazine-like heterocycle should sanitize");
+
+        let sulfur_bridge = molecule.mol.atom(AtomId::new(8)).expect("bridge sulfur");
+        let nitrogen_bridge = molecule.mol.atom(AtomId::new(15)).expect("bridge nitrogen");
+        assert!(!sulfur_bridge.aromatic);
+        assert!(!nitrogen_bridge.aromatic);
+
+        let aromatic_atoms = molecule
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count();
+        assert_eq!(aromatic_atoms, 12);
+    }
+
+    #[test]
+    fn bracket_carbon_suppresses_implicit_hydrogens() {
+        let mut molecule = read_smiles_str("C1=CC=C2C(=C1)[CH]C3=CC=CC=C32", SmilesParseOptions)
+            .expect("bracket carbon fused aromatic should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("bracket carbon fused aromatic should sanitize");
+
+        let bracket_carbon = molecule.mol.atom(AtomId::new(6)).expect("bracket carbon");
+        assert!(bracket_carbon.no_implicit_hydrogens);
+        assert_eq!(bracket_carbon.explicit_hydrogens, 1);
+        assert_eq!(bracket_carbon.implicit_hydrogens, Some(0));
+    }
+
+    #[test]
+    fn fused_polycycle_aromatic_core_extends_to_fused_edge() {
+        let mut molecule = read_smiles_str(
+            "C1CCC2=C(C1)C3=C(C=CC4=C3C5=C(C=C4)C=CC(=C25)[N+](=O)[O-])[N+](=O)[O-]",
+            SmilesParseOptions,
+        )
+        .expect("fused polycycle should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused polycycle should sanitize");
+
+        for atom_id in 0..3 {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("saturated atom")
+                    .aromatic,
+                "saturated ring atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("fused core atom")
+                    .aromatic,
+                "fused core atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_aromatic_component_preserves_explicit_single_bond() {
+        let mut molecule = read_smiles_str(
+            "[H]c1c([H])c([H])c2c3c([H])c([H])n(C([H])([H])[H])c(C([H])([H])[H])c-3nc2c1[H]",
+            SmilesParseOptions,
+        )
+        .expect("fused aromatic system should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused aromatic system should sanitize");
+
+        let explicit_single_between_aromatic_atoms = molecule
+            .mol
+            .bonds()
+            .filter(|(_, bond)| {
+                matches!(bond.order, BondOrder::Single)
+                    && molecule.mol.atom(bond.a()).is_ok_and(|atom| atom.aromatic)
+                    && molecule.mol.atom(bond.b()).is_ok_and(|atom| atom.aromatic)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(explicit_single_between_aromatic_atoms.len(), 1);
+        assert!(!explicit_single_between_aromatic_atoms[0].1.aromatic);
+
+        let written = write_smiles(&molecule, SmilesWriteOptions)
+            .expect("fused aromatic system should write");
+        assert!(written.contains('-'));
+        let reparsed =
+            read_smiles_str(&written, SmilesParseOptions).expect("writer output should parse");
+        assert_eq!(
+            reparsed
+                .mol
+                .bonds()
+                .filter(|(_, bond)| {
+                    matches!(bond.order, BondOrder::Single)
+                        && reparsed.mol.atom(bond.a()).is_ok_and(|atom| atom.aromatic)
+                        && reparsed.mol.atom(bond.b()).is_ok_and(|atom| atom.aromatic)
+                })
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn fused_quinone_cn_core_excludes_carbonyl_centers() {
+        let mut molecule = read_smiles_str(
+            "C1=CC=C2C(=C1)C(=O)C3=C(C2=O)C4=C(C=C3)C(=O)C5=CC=CC=C5N4",
+            SmilesParseOptions,
+        )
+        .expect("fused quinone should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused quinone should sanitize");
+
+        for atom_id in [6, 10] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("carbonyl center")
+                    .aromatic,
+                "carbonyl center {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [
+            0, 1, 2, 3, 4, 5, 8, 9, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24,
+        ] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("fused aromatic atom")
+                    .aromatic,
+                "fused aromatic atom {atom_id} should be aromatic"
+            );
+        }
+        assert_eq!(
+            molecule
+                .mol
+                .atoms()
+                .filter(|(_, atom)| atom.aromatic)
+                .count(),
+            20
+        );
+    }
+
+    #[test]
+    fn indole_quinone_keeps_carbonyl_ring_atoms_aliphatic() {
+        let mut molecule =
+            read_smiles_str("C1=CC=C(C=C1)C2=CC3=C(N2)C(=O)C=CC3=O", SmilesParseOptions)
+                .expect("indole quinone should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("indole quinone should sanitize");
+
+        for atom_id in [11, 13, 14, 15] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("quinone ring atom")
+                    .aromatic,
+                "quinone ring atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("fused aromatic atom")
+                    .aromatic,
+                "fused aromatic atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_imine_and_pyrimidinedione_aromaticity_matches_reference_shape() {
+        let mut molecule =
+            read_smiles_str("CC1=NC2=CC=CC=C2C1=CC3=C(NC(=O)NC3=O)O", SmilesParseOptions)
+                .expect("fused imine and pyrimidinedione should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused imine and pyrimidinedione should sanitize");
+
+        for atom_id in [1, 2, 9] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("imine-ring atom")
+                    .aromatic,
+                "imine-ring atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [3, 4, 5, 6, 7, 8, 11, 12, 13, 14, 16, 17] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("aromatic fused atom")
+                    .aromatic,
+                "fused aromatic atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn exocyclic_iminium_sulfur_ring_remains_aromatic() {
+        let mut molecule = read_smiles_str("CN(C1=NC(=[N+](C)C)SS1)C(=S)SC", SmilesParseOptions)
+            .expect("exocyclic iminium sulfur ring should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("exocyclic iminium sulfur ring should sanitize");
+
+        for atom_id in [2, 3, 4, 8, 9] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("heteroaromatic ring atom")
+                    .aromatic,
+                "heteroaromatic ring atom {atom_id} should be aromatic"
+            );
+        }
+        let exocyclic_iminium = molecule.mol.atom(AtomId::new(5)).expect("iminium N");
+        assert!(!exocyclic_iminium.aromatic);
+        assert_eq!(exocyclic_iminium.formal_charge, 1);
+    }
+
+    #[test]
+    fn fused_exocyclic_imine_sulfur_ring_remains_aromatic() {
+        let mut molecule = read_smiles_str(
+            "CCCCCCCCCCCCCCCCS(=O)(=O)N(C(=O)OCC)N=C1N(C2=CC=CC=C2S1)C",
+            SmilesParseOptions,
+        )
+        .expect("fused exocyclic imine sulfur ring should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused exocyclic imine sulfur ring should sanitize");
+
+        for atom_id in [26, 27, 28, 29, 30, 31, 32, 33, 34] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("fused benzothiazine atom")
+                    .aromatic,
+                "fused benzothiazine atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_sulfoxide_ring_does_not_follow_benzene_aromaticity() {
+        let mut molecule = read_smiles_str("CCCCCN1SC2=CC=CC=C2S1=O", SmilesParseOptions)
+            .expect("fused sulfoxide ring should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused sulfoxide ring should sanitize");
+
+        for atom_id in [5, 6, 13] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("sulfoxide ring atom")
+                    .aromatic,
+                "sulfoxide ring atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [7, 8, 9, 10, 11, 12] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("benzene ring atom")
+                    .aromatic,
+                "benzene ring atom {atom_id} should stay aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
+        let mut molecule = read_smiles_str(
+            "C1=CC=C2C(=C1)C=CC3=C2[N+](=C(S3)C=C4N(C5=CC=CC=C5S4)CCCS(=O)(=O)O)CCCS(=O)(=O)O",
+            SmilesParseOptions,
+        )
+        .expect("mixed sulfur fused system should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("mixed sulfur fused system should sanitize");
+
+        for atom_id in [14, 15, 22] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("neutral sulfur ring atom")
+                    .aromatic,
+                "neutral sulfur ring atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [10, 11, 12] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("cationic sulfur ring atom")
+                    .aromatic,
+                "cationic sulfur ring atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_seven_membered_ether_ring_stays_aliphatic() {
+        let mut molecule = read_smiles_str(
+            "CN1CCC23C4C1CC5=C2C(=C(C=C5)OC)OC3C6(C4)C(=O)C7=C8N6CCC9=C8C(=C(C=C9)OC)OC1=C7C=CC(=C1O)OC",
+            SmilesParseOptions,
+        )
+        .expect("fused ether polycycle should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused ether polycycle should sanitize");
+
+        assert!(molecule
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.element.symbol() == "O")
+            .all(|(_, atom)| !atom.aromatic));
+    }
+
+    #[test]
+    fn charged_bracket_halogen_and_bismuth_salt_sanitizes() {
+        let mut molecule = read_smiles_str(
+            "C1CC2CCC[N-]C2C(C1)[OH2+].C1C=CC2=CC=CC(C2=N1)[OH2+].[ClH2+].Cl.[Bi+3]",
+            SmilesParseOptions,
+        )
+        .expect("charged bracket salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("charged bracket salt should sanitize");
+
+        let protonated_chlorine = molecule.mol.atom(AtomId::new(22)).expect("chlorine");
+        assert_eq!(protonated_chlorine.element.symbol(), "Cl");
+        assert_eq!(protonated_chlorine.formal_charge, 1);
+        assert_eq!(protonated_chlorine.explicit_hydrogens, 2);
+        assert_eq!(protonated_chlorine.implicit_hydrogens, Some(0));
+
+        let bismuth = molecule.mol.atom(AtomId::new(24)).expect("bismuth");
+        assert_eq!(bismuth.element.symbol(), "Bi");
+        assert_eq!(bismuth.formal_charge, 3);
+        assert_eq!(bismuth.implicit_hydrogens, Some(0));
+    }
+
+    #[test]
+    fn oxide_dianion_transition_metal_salt_sanitizes() {
+        let mut molecule = read_smiles_str("[O-2].[O-2].[O-2].[Cr+3].[Fe+3]", SmilesParseOptions)
+            .expect("oxide transition-metal salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("oxide transition-metal salt should sanitize");
+
+        for atom_id in [0, 1, 2] {
+            let oxygen = molecule.mol.atom(AtomId::new(atom_id)).expect("oxide");
+            assert_eq!(oxygen.element.symbol(), "O");
+            assert_eq!(oxygen.formal_charge, -2);
+            assert_eq!(oxygen.implicit_hydrogens, Some(0));
+        }
+    }
+
+    #[test]
+    fn hydroxide_niobium_v_salt_sanitizes() {
+        let mut molecule = read_smiles_str("[OH-].[Nb+5]", SmilesParseOptions)
+            .expect("niobium hydroxide salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("niobium hydroxide salt should sanitize");
+
+        let niobium = molecule.mol.atom(AtomId::new(1)).expect("niobium");
+        assert_eq!(niobium.element.symbol(), "Nb");
+        assert_eq!(niobium.formal_charge, 5);
+        assert_eq!(niobium.implicit_hydrogens, Some(0));
+    }
+
+    #[test]
+    fn formate_indium_salt_sanitizes() {
+        let mut molecule =
+            read_smiles_str("C(=O)[O-].C(=O)[O-].C(=O)[O-].[In+3]", SmilesParseOptions)
+                .expect("indium formate salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("indium formate salt should sanitize");
+
+        let indium = molecule.mol.atom(AtomId::new(9)).expect("indium");
+        assert_eq!(indium.element.symbol(), "In");
+        assert_eq!(indium.formal_charge, 3);
+        assert_eq!(indium.implicit_hydrogens, Some(0));
+    }
+
+    #[test]
+    fn periodate_cleanup_sanitizes_iodine_plus_three() {
+        let mut molecule =
+            read_smiles_str("[O-]I(=O)(=O)=O", SmilesParseOptions).expect("periodate should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("periodate should sanitize");
+
+        let iodine = molecule.mol.atom(AtomId::new(1)).expect("iodine");
+        assert_eq!(iodine.element.symbol(), "I");
+        assert_eq!(iodine.formal_charge, 3);
+        assert_eq!(iodine.implicit_hydrogens, Some(0));
+    }
+
+    #[test]
+    fn uranyl_beta_diketonate_salt_sanitizes() {
+        let mut molecule = read_smiles_str(
+            "C1=CC=C(C=C1)C(=O)[CH-]C(=O)C2=CC=CC=C2.C1=CC=C(C=C1)C(=O)[CH-]C(=O)C2=CC=CC=C2.O=[U+2]=O",
+            SmilesParseOptions,
+        )
+        .expect("uranyl salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("uranyl salt should sanitize");
+
+        let uranium = molecule.mol.atom(AtomId::new(35)).expect("uranium");
+        assert_eq!(uranium.element.symbol(), "U");
+        assert_eq!(uranium.formal_charge, 2);
+        assert_eq!(uranium.implicit_hydrogens, Some(0));
+    }
+
+    #[test]
+    fn cyclopentadienyl_anion_sanitizes_aromatic() {
+        let mut molecule = read_smiles_str(
+            "C1CCOC1.[CH-]1[C-]=[C-][C-]=[C-]1.Cl[Cr]Cl",
+            SmilesParseOptions,
+        )
+        .expect("cyclopentadienyl chromium salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("cyclopentadienyl chromium salt should sanitize");
+
+        for atom_id in 5..=9 {
+            let atom = molecule
+                .mol
+                .atom(AtomId::new(atom_id))
+                .expect("cyclopentadienyl atom");
+            assert_eq!(atom.element.symbol(), "C");
+            assert_eq!(atom.formal_charge, -1);
+            assert!(
+                atom.aromatic,
+                "anion ring atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_quinone_ring_does_not_follow_benzene_aromaticity() {
+        let mut molecule = read_smiles_str(
+            "CC(C)(C)NN=C(C1C=CCS1(=O)=O)C(=O)NC2=C(C(=O)C3=CC=CC=C3C2=O)Cl",
+            SmilesParseOptions,
+        )
+        .expect("fused quinone sulfone should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused quinone sulfone should sanitize");
+
+        for atom_id in [17, 18, 19, 27] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("quinone ring atom")
+                    .aromatic,
+                "quinone ring atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [21, 22, 23, 24, 25, 26] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("benzene ring atom")
+                    .aromatic,
+                "benzene ring atom {atom_id} should stay aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn singly_carbonylated_fused_ring_stays_aromatic() {
+        let mut molecule = read_smiles_str(
+            "CNCCN=C1C=CC2=C3C1=C(C4=C(C=CC(=O)C4=C3NN2CCNCCO)O)O.O.Cl.Cl",
+            SmilesParseOptions,
+        )
+        .expect("singly carbonylated fused ring should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("singly carbonylated fused ring should sanitize");
+
+        for atom_id in [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("aromatic fused atom")
+                    .aromatic,
+                "fused atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn saturated_fused_ring_does_not_follow_aromatic_core() {
+        let mut molecule = read_smiles_str(
+            "C1CCC2=NC3=CC=CC=C3C(=C2C1)[NH2+]CCSCCCl.[Cl-]",
+            SmilesParseOptions,
+        )
+        .expect("saturated fused ring salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("saturated fused ring salt should sanitize");
+
+        for atom_id in [0, 1, 2, 13] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("saturated fused atom")
+                    .aromatic,
+                "saturated fused atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("aromatic core atom")
+                    .aromatic,
+                "aromatic core atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn partially_saturated_carbonyl_fused_rings_stay_aliphatic() {
+        let mut molecule = read_smiles_str(
+            "CC1(CC2=C(C(=O)C1)OC3=C(C2C4=CC=CC=C4[N+](=O)[O-])C(=O)CC(C3)(C)C)C",
+            SmilesParseOptions,
+        )
+        .expect("partially saturated fused carbonyl system should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("partially saturated fused carbonyl system should sanitize");
+
+        for atom_id in [1, 2, 3, 4, 5, 7, 9, 10, 21, 23, 24, 25] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("partially saturated ring atom")
+                    .aromatic,
+                "partially saturated ring atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [12, 13, 14, 15, 16, 17] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("phenyl atom")
+                    .aromatic,
+                "phenyl atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_lactam_bridge_ring_stays_aliphatic() {
+        let mut molecule = read_smiles_str(
+            "CCN1C2=C(C=C(C=C2OC3=C(C1=O)C=CC=N3)C)[N+](=O)[O-]",
+            SmilesParseOptions,
+        )
+        .expect("fused lactam bridge should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused lactam bridge should sanitize");
+
+        for atom_id in [2, 9, 12] {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("lactam bridge atom")
+                    .aromatic,
+                "lactam bridge atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [3, 4, 5, 6, 7, 8, 10, 11, 14, 15, 16, 17] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("aromatic fused atom")
+                    .aromatic,
+                "aromatic fused atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_four_member_diketone_ring_can_be_aromatic() {
+        let mut molecule = read_smiles_str(
+            "C1CSC2(C3=C(C=CC(=C3)Cl)OC4=C2C(=O)C4=O)SC1",
+            SmilesParseOptions,
+        )
+        .expect("fused four-member diketone should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("fused four-member diketone should sanitize");
+
+        for atom_id in [12, 13, 14, 16] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("four-member diketone atom")
+                    .aromatic,
+                "four-member diketone atom {atom_id} should be aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn large_conjugated_macrocycle_aromatic_core_is_not_size_skipped() {
+        let mut molecule = read_smiles_str(
+            "CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]",
+            SmilesParseOptions,
+        )
+        .expect("macrocycle salt should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("macrocycle salt should sanitize");
+
+        let aromatic_atoms = molecule
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count();
+        assert_eq!(aromatic_atoms, 40);
+
+        let copper = molecule.mol.atom(AtomId::new(46)).expect("copper atom");
+        assert!(!copper.aromatic);
+        assert_eq!(copper.formal_charge, 2);
+    }
+
+    #[test]
+    fn neutral_aza_macrocycle_core_stays_aliphatic() {
+        let mut molecule = read_smiles_str(
+            "C1=CC=C2C(=C1)C3=NC4=NC(=NC5=NC(=NC6=NC(=NC2=N3)C7=CC=CC=C76)C8=CC=CC=C85)C9=CC=CC=C94",
+            SmilesParseOptions,
+        )
+        .expect("neutral aza macrocycle should parse");
+
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .expect("neutral aza macrocycle should sanitize");
+
+        for atom_id in 6..=21 {
+            assert!(
+                !molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("neutral aza macrocycle atom")
+                    .aromatic,
+                "neutral aza macrocycle atom {atom_id} should stay aliphatic"
+            );
+        }
+        for atom_id in [0, 1, 2, 3, 4, 5, 22, 23, 24, 25, 26, 27] {
+            assert!(
+                molecule
+                    .mol
+                    .atom(AtomId::new(atom_id))
+                    .expect("benzene atom")
+                    .aromatic,
+                "benzene atom {atom_id} should stay aromatic"
+            );
+        }
+    }
+
+    #[test]
+    fn smiles_writer_rejects_lossy_bonds_and_stereo() {
+        let mut molecule = SmallMolecule::default();
+        let a = molecule.mol.add_atom(carbon());
+        let b = molecule.mol.add_atom(carbon());
+        let bond = molecule
+            .mol
+            .add_bond(a, b, BondOrder::Dative)
+            .expect("bond");
+        assert!(write_smiles(&molecule, SmilesWriteOptions)
+            .expect_err("dative bond should be rejected")
+            .message
+            .contains("cannot encode"));
+
+        molecule.mol.bond_mut(bond).expect("bond").order = BondOrder::Single;
+        molecule.mol.bond_mut(bond).expect("bond").stereo = Some(BondStereo::Up);
+        assert!(write_smiles(&molecule, SmilesWriteOptions)
+            .expect_err("stereo should be rejected")
+            .message
+            .contains("stereochemistry"));
+
+        molecule.mol.bond_mut(bond).expect("bond").stereo = None;
+        molecule.mol.atom_mut(a).expect("atom").chiral = Some(AtomStereo::TetrahedralClockwise);
+        assert!(write_smiles(&molecule, SmilesWriteOptions)
+            .expect_err("atom chirality should be rejected")
+            .message
+            .contains("atom stereochemistry"));
+
+        molecule.mol.atom_mut(a).expect("atom").chiral = None;
+        molecule.mol.atom_mut(a).expect("atom").radical = Some(AtomRadical::Doublet);
+        assert!(write_smiles(&molecule, SmilesWriteOptions)
+            .expect_err("radical should be rejected")
+            .message
+            .contains("radicals"));
+
+        molecule.mol.atom_mut(a).expect("atom").radical = None;
+        molecule
+            .mol
+            .atom_mut(a)
+            .expect("atom")
+            .no_implicit_hydrogens = true;
+        let written = write_smiles(&molecule, SmilesWriteOptions)
+            .expect("no-implicit-hydrogen atom should write");
+        assert!(written.contains("[C]"));
+        let reparsed =
+            read_smiles_str(&written, SmilesParseOptions).expect("writer output should parse");
+        assert!(reparsed
+            .mol
+            .atoms()
+            .any(|(_, atom)| atom.no_implicit_hydrogens));
+    }
+
+    #[test]
+    fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
+        let mut molecule = SmallMolecule::default();
+        let atoms = (0..16)
+            .map(|_| molecule.mol.add_atom(carbon()))
+            .collect::<Vec<_>>();
+        for left in 0..atoms.len() {
+            for right in (left + 1)..atoms.len() {
+                molecule
+                    .mol
+                    .add_bond(atoms[left], atoms[right], BondOrder::Single)
+                    .expect("complete graph bond should be valid");
+            }
+        }
+
+        assert!(write_smiles(&molecule, SmilesWriteOptions)
+            .expect_err("more than 99 ring closures should be rejected")
+            .message
+            .contains("at most 99"));
     }
 
     #[test]
