@@ -30,7 +30,7 @@ const VALIDATION_CORPORA: &[(&str, &str)] = &[
     ("pdb-100", "PDB 100"),
 ];
 const DASHBOARD_PATH: &str = "features/DASHBOARD.html";
-const VALIDATION_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+const VALIDATION_EVIDENCE_SCHEMA_VERSION: u32 = 2;
 const GOLDEN_SCHEMA_VERSION: u32 = 1;
 const COMPARISON_MODE_IMPLEMENTATION_GOLDEN: &str = "implementation-golden";
 
@@ -1058,12 +1058,17 @@ fn collect_files(root: &Path, paths: &mut BTreeSet<PathBuf>) -> Result<(), Box<d
 }
 
 fn hash_evidence_file(path: &Path) -> Result<String, Box<dyn Error>> {
+    let raw = fs::read(path)?;
+    let normalized_text = String::from_utf8(raw.clone())
+        .ok()
+        .map(|text| text.replace("\r\n", "\n").replace('\r', "\n"));
     let bytes = if path.file_name().and_then(|name| name.to_str()) == Some("feature.toml")
         && path
             .components()
             .any(|component| component.as_os_str() == "features")
     {
-        fs::read_to_string(path)?
+        normalized_text
+            .ok_or_else(|| boxed_error(format!("{} is not UTF-8", path.display())))?
             .lines()
             .map(|line| {
                 if line.trim_start().starts_with("validated =") {
@@ -1075,8 +1080,10 @@ fn hash_evidence_file(path: &Path) -> Result<String, Box<dyn Error>> {
             .collect::<Vec<_>>()
             .join("\n")
             .into_bytes()
+    } else if let Some(text) = normalized_text {
+        text.into_bytes()
     } else {
-        fs::read(path)?
+        raw
     };
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -2999,6 +3006,20 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
         let golden_changed = build_validation_evidence(&root, &manifest_path, &manifest)
             .expect("evidence should build");
         assert_ne!(fixture_changed.sha256, golden_changed.sha256);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn evidence_hash_normalizes_text_line_endings() {
+        let root = temp_feature_root("evidence-line-endings");
+        let path = root.join("source.rs");
+        fs::write(&path, "first\nsecond\n").expect("LF source should write");
+        let lf_hash = hash_evidence_file(&path).expect("LF evidence should hash");
+
+        fs::write(&path, "first\r\nsecond\r\n").expect("CRLF source should write");
+        let crlf_hash = hash_evidence_file(&path).expect("CRLF evidence should hash");
+
+        assert_eq!(lf_hash, crlf_hash);
         fs::remove_dir_all(root).ok();
     }
 
