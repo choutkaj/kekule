@@ -1,0 +1,8 @@
+# These paths affect generated evidence, trusted inputs, or repository policy.
+# Enforcement requires branch protection or a repository ruleset.
+/.github/ @choutkaj
+/validation/reference/ @choutkaj
+/validation/corpora/**/sources.lock.json @choutkaj
+/validation/corpora/**/golden/ @choutkaj
+/validation/corpora/**/corpus.toml @choutkaj
+/features/ @choutkaj

@@ -13,3 +13,14 @@ cargo +nightly fuzz run mmcif -- -runs=256 -max_len=4096 -seed=4
 ```
 
 Longer manual campaigns can omit `-runs` and raise `-max_len`. Seed inputs are committed under `fuzz/corpus/<target>/`. Crashing inputs are written under ignored `fuzz/artifacts/`; preserve and add any reproducer as a focused regression test before fixing it.
+
+The `Scheduled parser fuzzing` workflow runs each target for up to 30 minutes
+every Monday and uploads crash artifacts on failure. Download an artifact
+before the workflow retention period expires, reproduce it locally with
+`cargo +nightly fuzz run <target> <artifact>`, and commit a minimized input only
+when its redistribution terms permit it. Never commit inputs containing
+secrets, private structures, or unreviewed third-party data.
+
+Fuzzing demonstrates the explored executions, not parser correctness or
+unbounded-input safety. The targets cap generated input length; mmCIF and ring
+algorithms also enforce their documented runtime limits.

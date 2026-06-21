@@ -89,12 +89,41 @@ pub(crate) fn write_validation_statuses(
     Ok(())
 }
 
-pub(crate) fn corpus_passed(
+pub(crate) fn recorded_corpus_passed(
     feature: &Feature,
     status: Option<&ValidationStatus>,
     corpus: &str,
 ) -> bool {
-    corpus_passed_at(feature, status, corpus, Path::new("validation"))
+    if !feature
+        .validation_required
+        .iter()
+        .any(|item| item == corpus)
+    {
+        return false;
+    }
+    let Some(corpus_status) = status.and_then(|status| status.corpora.get(corpus)) else {
+        return false;
+    };
+    corpus_status.passed
+        && corpus_status.fixture_count > 0
+        && corpus_status.compared_count == corpus_status.fixture_count
+        && corpus_status.evidence_schema_version == Some(VALIDATION_EVIDENCE_SCHEMA_VERSION)
+        && corpus_status
+            .evidence_hash
+            .as_deref()
+            .is_some_and(is_sha256)
+        && !corpus_status.evidence_inputs.is_empty()
+}
+pub(crate) fn recorded_overall_validated(
+    feature: &Feature,
+    status: Option<&ValidationStatus>,
+) -> bool {
+    feature.implemented
+        && !feature.validation_required.is_empty()
+        && feature
+            .validation_required
+            .iter()
+            .all(|corpus| recorded_corpus_passed(feature, status, corpus))
 }
 
 pub(crate) fn corpus_passed_at(
@@ -245,20 +274,4 @@ pub(crate) fn write_atomic_text(path: &Path, text: &str) -> Result<(), Box<dyn E
             path.display()
         ))),
     }
-}
-
-pub(crate) fn ensure_validation_flags_synced(
-    features: &[Feature],
-    statuses: &BTreeMap<String, ValidationStatus>,
-) -> Result<(), Box<dyn Error>> {
-    for feature in features {
-        let derived = overall_validated(feature, statuses.get(&feature.id));
-        if feature.validated != derived {
-            return Err(boxed_error(format!(
-                "feature `{}` has validated={}, but corpus evidence derives validated={derived}; run validation with --update",
-                feature.id, feature.validated
-            )));
-        }
-    }
-    Ok(())
 }

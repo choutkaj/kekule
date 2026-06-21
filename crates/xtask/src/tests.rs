@@ -499,6 +499,57 @@ fn current_status_requires_known_nonempty_evidence() {
 }
 
 #[test]
+fn dashboard_text_comparison_ignores_platform_line_endings() {
+    assert_eq!(
+        normalize_text_line_endings("one\r\ntwo\rthree\n"),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[test]
+fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed() {
+    let feature = Feature {
+        id: "portable.feature".to_owned(),
+        title: "Portable".to_owned(),
+        area: "infrastructure".to_owned(),
+        version: 1,
+        implemented: true,
+        validated: true,
+        description: "Portable dashboard evidence.".to_owned(),
+        depends_on: Vec::new(),
+        validation_required: vec!["tiny".to_owned()],
+    };
+    let status = ValidationStatus {
+        feature_id: feature.id.clone(),
+        corpora: BTreeMap::from([(
+            "tiny".to_owned(),
+            CorpusStatus {
+                passed: true,
+                fixture_count: 1,
+                compared_count: 1,
+                reference_tool: "rdkit".to_owned(),
+                reference_version: "test".to_owned(),
+                manifest_hash: "0".repeat(64),
+                evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
+                evidence_hash: Some("1".repeat(64)),
+                evidence_inputs: vec![EvidenceInput {
+                    path: "missing.fixture".to_owned(),
+                    sha256: "2".repeat(64),
+                }],
+                validated_at_unix: 1,
+            },
+        )]),
+    };
+
+    assert!(recorded_overall_validated(&feature, Some(&status)));
+    assert!(!overall_validated_at(
+        &feature,
+        Some(&status),
+        Path::new("definitely-missing-validation-root")
+    ));
+}
+
+#[test]
 fn unsupported_comparison_mode_is_rejected() {
     let manifest = ValidationManifest {
         feature_id: "example".to_owned(),
