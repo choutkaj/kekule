@@ -3,7 +3,8 @@
 This file converts the project audit into staged Codex `/goal` work.
 
 - **Audit baseline:** `main` at `323ee995d8b2feb7a5422808e4ad2d4c30d8a5b3`
-- **Status:** not started
+- **Status:** implementation complete; public release remains blocked by owner
+  decisions and large-corpus distribution tracked in issues #13, #14, and #15
 - **Execution model:** one numbered stage per branch and pull request
 - **Ordering rule:** complete every prerequisite stage before beginning the next
 
@@ -74,15 +75,29 @@ cargo xtask validate --feature all --corpus all
 
 ## Stage checklist
 
-- [ ] Stage 1 — Validation evidence and reproducible CI
-- [ ] Stage 2 — Mutation, cache invalidation, and transactional sanitization
-- [ ] Stage 3 — Panic-free parsers and fuzzing
-- [ ] Stage 4 — V2000/SDF semantic round-trip fidelity
-- [ ] Stage 5 — Aromatic SMILES and honest SMILES output
-- [ ] Stage 6 — mmCIF residue identity and coordinates
-- [ ] Stage 7 — Bounded ring perception and stack-safe traversal
-- [ ] Stage 8 — Behavior-preserving modularization
-- [ ] Stage 9 — Final audit closure and release readiness
+- [x] Stage 1 — Validation evidence and reproducible CI
+- [x] Stage 2 — Mutation, cache invalidation, and transactional sanitization
+- [x] Stage 3 — Panic-free parsers and fuzzing
+- [x] Stage 4 — V2000/SDF semantic round-trip fidelity
+- [x] Stage 5 — Aromatic SMILES and honest SMILES output
+- [x] Stage 6 — mmCIF residue identity and coordinates
+- [x] Stage 7 — Bounded ring perception and stack-safe traversal
+- [x] Stage 8 — Behavior-preserving modularization
+- [x] Stage 9 — Final audit closure and release readiness
+
+Completion references:
+
+- Stages 1-4: commits `9fb5b4f`, `6a643e9`, `0fbef4b`, and `a33269f`.
+- Stage 5: pull request #9.
+- Stage 6: pull request #10.
+- Stage 7: pull request #11.
+- Stage 8: pull request #12.
+- Stage 9: pull request #16.
+
+Stage 9 completed every code and documentation requirement that does not
+require an owner decision. Issue #13 tracks enforceable repository policy,
+issue #14 tracks clean-runner large-corpus distribution, and issue #15 tracks
+license selection and redistribution review.
 
 ---
 
