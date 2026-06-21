@@ -17,7 +17,8 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - Deprecated metadata keys `priority`, `status`, and `last_ai_review` are rejected.
 - Each tracked feature directory must include `feature.md`.
 - The dashboard renders a generated HTML table with feature metadata and one column per known corpus.
-- Overall validation is true only when every corpus in `validation_required` has current passing evidence.
+- Dashboard cells and the cached overall `validated` flag report structurally valid recorded pass evidence so generation is deterministic on clean checkouts without ignored large-corpus fixtures.
+- `cargo xtask validate` and `cargo xtask features` remain the authority for whether recorded evidence is current for the files available in the checkout.
 - Per-feature evidence is read from each corpus-owned `status.toml`.
 - Dashboard generation rejects drift between generated evidence and the cached overall `validated` field.
 - Boolean dashboard values render as check and cross marks.
@@ -41,3 +42,4 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - v2: Corpus requirements, generated validation evidence, and corpus dashboard columns.
 - v3: Corpus-owned evidence and validation layout.
 - v4: Switch generated dashboard from Markdown to sortable HTML with compact rotated headers.
+- v5: Make dashboard generation portable across clean checkouts while preserving content-addressed freshness checks in validation and feature listing.

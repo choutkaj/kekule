@@ -4,13 +4,13 @@ pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let check = args.iter().any(|arg| arg == "--check");
     let features = read_features()?;
     let statuses = read_validation_statuses(&features)?;
-    ensure_validation_flags_synced(&features, &statuses)?;
+    ensure_recorded_validation_flags_synced(&features, &statuses)?;
     let rendered = render_dashboard(&features, &statuses);
     let path = Path::new(DASHBOARD_PATH);
 
     if check {
         let existing = fs::read_to_string(path)?;
-        if existing != rendered {
+        if normalize_text_line_endings(&existing) != normalize_text_line_endings(&rendered) {
             return Err(boxed_error(
                 "features/DASHBOARD.html is out of date; run `cargo xtask dashboard`",
             ));
@@ -68,7 +68,7 @@ pub(crate) fn render_dashboard(
     out.push_str("</head>\n");
     out.push_str("<body>\n");
     out.push_str("<h1>Feature Dashboard</h1>\n");
-    out.push_str("<p>Generated from feature metadata and validation status. Do not hand-edit this file.</p>\n");
+    out.push_str("<p>Generated from feature metadata and recorded validation status. Run cargo xtask validate to verify evidence against the current checkout. Do not hand-edit this file.</p>\n");
     out.push_str("<div class=\"dashboard-wrap\">\n");
     out.push_str("<table id=\"feature-dashboard\">\n");
     out.push_str("<thead>\n<tr>");
@@ -115,7 +115,7 @@ pub(crate) fn render_dashboard(
                 .iter()
                 .any(|required| required == corpus)
             {
-                Some(corpus_passed(feature, status, corpus))
+                Some(recorded_corpus_passed(feature, status, corpus))
             } else {
                 None
             };
@@ -193,4 +193,24 @@ pub(crate) fn escape_html(text: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+pub(crate) fn normalize_text_line_endings(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+pub(crate) fn ensure_recorded_validation_flags_synced(
+    features: &[Feature],
+    statuses: &BTreeMap<String, ValidationStatus>,
+) -> Result<(), Box<dyn Error>> {
+    for feature in features {
+        let derived = recorded_overall_validated(feature, statuses.get(&feature.id));
+        if feature.validated != derived {
+            return Err(boxed_error(format!(
+                "feature `{}` has validated={}, but recorded corpus evidence derives validated={derived}; run validation with --update",
+                feature.id, feature.validated
+            )));
+        }
+    }
+    Ok(())
 }
