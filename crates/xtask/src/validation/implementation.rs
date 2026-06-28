@@ -2,6 +2,7 @@ use crate::*;
 
 pub(crate) fn implementation_expected(
     feature: &str,
+    corpus: &str,
     fixture_path: &Path,
 ) -> Result<Value, Box<dyn Error>> {
     match feature {
@@ -102,11 +103,12 @@ pub(crate) fn implementation_expected(
             }))
         }
         "io.smiles.canonical" => {
-            let records = read_smiles_records(fixture_path)?;
+            let records = read_canonical_smiles_records(fixture_path)?;
+            let exact_smiles = corpus == "tiny";
             Ok(json!({
                 "records": records
                     .iter()
-                    .map(canonical_smiles_record_json)
+                    .map(|record| canonical_smiles_record_json(record, exact_smiles))
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }
@@ -232,11 +234,61 @@ pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord
     Ok(records)
 }
 
+pub(crate) fn read_canonical_smiles_records(
+    path: &Path,
+) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
+    let mut records = Vec::new();
+    for (index, raw_line) in fs::read_to_string(path)?.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let smiles = parts.next().unwrap_or_default().to_owned();
+        let title = parts.next().unwrap_or_default().trim().to_owned();
+        if smiles_unsupported_subset_reason(&smiles).is_some()
+            || canonical_smiles_unsupported_subset_reason(&smiles).is_some()
+        {
+            records.push(IndexedSmilesRecord {
+                record_index: index,
+                status: "unsupported".to_owned(),
+                title,
+                input_smiles: smiles,
+                molecule: None,
+            });
+            continue;
+        }
+        let (status, molecule) = match read_smiles_str(&smiles, SmilesParseOptions) {
+            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+            Err(_) => ("parse_error".to_owned(), None),
+        };
+        records.push(IndexedSmilesRecord {
+            record_index: index,
+            status,
+            title,
+            input_smiles: smiles,
+            molecule,
+        });
+    }
+    Ok(records)
+}
+
 pub(crate) fn smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static str> {
     smiles
         .chars()
         .any(|ch| matches!(ch, '@' | '/' | '\\' | '*'))
         .then_some("unsupported")
+}
+
+pub(crate) fn canonical_smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static str> {
+    (smiles.contains('.') || smiles.contains('[') || smiles.contains(']'))
+        .then_some("unsupported")
+        .or_else(|| {
+            smiles
+                .chars()
+                .any(|ch| matches!(ch, 'b' | 'n' | 'o' | 'p' | 's'))
+                .then_some("unsupported")
+        })
 }
 
 pub(crate) fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
@@ -462,6 +514,7 @@ pub(crate) fn smiles_write_record_json(
 
 pub(crate) fn canonical_smiles_record_json(
     record: &IndexedSmilesRecord,
+    exact_smiles: bool,
 ) -> Result<Value, Box<dyn Error>> {
     let Some(molecule) = &record.molecule else {
         return Ok(smiles_error_record_json(record));
@@ -479,14 +532,17 @@ pub(crate) fn canonical_smiles_record_json(
             }));
         }
     };
-    Ok(json!({
+    let mut item = json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
-        "canonical_smiles": written,
         "sanitized": smiles_sanitized_semantic_json(reparsed),
-    }))
+    });
+    if exact_smiles {
+        item["canonical_smiles"] = json!(written);
+    }
+    Ok(item)
 }
 
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {

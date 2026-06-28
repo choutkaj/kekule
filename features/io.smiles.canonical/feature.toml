@@ -1,9 +1,9 @@
 id = "io.smiles.canonical"
 title = "Canonical SMILES writer"
 area = "io"
-version = 3
+version = 4
 implemented = true
 validated = true
 description = "Write deterministic non-stereo canonical SMILES using canonical atom ranking and conservative traversal tie-breaking."
 depends_on = ["io.smiles.write", "algo.canonical-ranking"]
-validation_required = ["tiny"]
+validation_required = ["tiny", "pubchem-100", "pubchem-1000"]

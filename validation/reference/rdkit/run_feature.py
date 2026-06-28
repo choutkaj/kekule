@@ -180,8 +180,13 @@ def generate_document(
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
         expected = {"records": [smiles_write_record(record) for record in records]}
     elif feature_id == "io.smiles.canonical":
-        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
-        expected = {"records": [canonical_smiles_record(record) for record in records]}
+        records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
+        expected = {
+            "records": [
+                canonical_smiles_record(record, exact_smiles=corpus_id == "tiny")
+                for record in records
+            ]
+        }
     elif feature_id == "algo.rings.fast":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_record(record) for record in records]}
@@ -312,8 +317,58 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
     return records
 
 
+def read_canonical_smiles_records(
+    fixture_path: Path, Chem: Any, sanitize: bool
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=1)
+        smiles = parts[0]
+        title = parts[1].strip() if len(parts) > 1 else ""
+        if (
+            smiles_unsupported_subset_reason(smiles)
+            or canonical_smiles_unsupported_subset_reason(smiles)
+        ):
+            records.append(
+                {
+                    "record_index": index,
+                    "status": "unsupported",
+                    "title": title,
+                    "smiles": smiles,
+                    "mol": None,
+                    "radicals": {},
+                    "bond_stereo": {},
+                }
+            )
+            continue
+        mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
+        records.append(
+            {
+                "record_index": index,
+                "status": "ok" if mol is not None else "parse_error",
+                "title": title,
+                "smiles": smiles,
+                "mol": mol,
+                "radicals": {},
+                "bond_stereo": {},
+            }
+        )
+    return records
+
+
 def smiles_unsupported_subset_reason(smiles: str) -> str | None:
     if any(ch in smiles for ch in ("@", "/", "\\", "*")):
+        return "unsupported"
+    return None
+
+
+def canonical_smiles_unsupported_subset_reason(smiles: str) -> str | None:
+    if any(ch in smiles for ch in (".", "[", "]")):
+        return "unsupported"
+    if any(ch in smiles for ch in ("b", "n", "o", "p", "s")):
         return "unsupported"
     return None
 
@@ -669,7 +724,7 @@ def smiles_write_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def canonical_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
+def canonical_smiles_record(record: dict[str, Any], exact_smiles: bool) -> dict[str, Any]:
     from rdkit import Chem
 
     mol = record["mol"]
@@ -686,14 +741,16 @@ def canonical_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
         isomericSmiles=False,
     )
     canonical_mol = Chem.MolFromSmiles(canonical, sanitize=False)
-    return {
+    item = {
         "record_index": record["record_index"],
         "status": "ok",
         "title": record["title"],
         "input_smiles": record["smiles"],
-        "canonical_smiles": canonical,
         "sanitized": smiles_sanitized_semantic_record(canonical_mol),
     }
+    if exact_smiles:
+        item["canonical_smiles"] = canonical
+    return item
 
 
 def smiles_raw_semantic_record(mol: Any) -> dict[str, Any]:

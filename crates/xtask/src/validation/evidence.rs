@@ -246,7 +246,8 @@ pub(crate) fn validate_golden_outputs(
         let expected = golden.get("expected").ok_or_else(|| {
             boxed_error(format!("{} is missing `expected`", golden_path.display()))
         })?;
-        let actual = implementation_expected(&manifest.feature_id, &fixture_path)?;
+        let actual =
+            implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path)?;
         let expected = normalize_for_comparison(expected);
         let actual = normalize_for_comparison(&actual);
         if let Some(diff) = first_json_diff("$", &expected, &actual) {
