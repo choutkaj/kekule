@@ -156,8 +156,10 @@ fn perceive_rdkit_like_aromaticity(
         &protected_non_aromatic_bonds,
     );
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings());
+    clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
+    clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
     for component in imported_aromatic_components {
         if !component.iter().any(|atom_id| {
             mol.atom(*atom_id)
@@ -168,10 +170,28 @@ fn perceive_rdkit_like_aromaticity(
                 component[0],
             ));
         }
+        restore_imported_aromatic_component(mol, &component);
     }
 
     mol.perception.aromaticity = ComputedState::Fresh;
     Ok(())
+}
+
+fn restore_imported_aromatic_component(mol: &mut Molecule, component: &[AtomId]) {
+    let atoms = component.iter().copied().collect::<BTreeSet<_>>();
+    for atom_id in component {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = true;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if matches!(bond.order, BondOrder::Aromatic)
+            && atoms.contains(&bond.a())
+            && atoms.contains(&bond.b())
+        {
+            bond.aromatic = true;
+        }
+    }
 }
 
 fn imported_aromatic_bond_components(mol: &Molecule) -> Vec<Vec<AtomId>> {
@@ -206,6 +226,59 @@ fn imported_aromatic_bond_components(mol: &Molecule) -> Vec<Vec<AtomId>> {
         components.push(component);
     }
     components
+}
+
+fn clear_saturated_chalcogen_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let atoms_to_clear = rings
+        .iter()
+        .enumerate()
+        .filter(|(index, ring)| {
+            ring.atoms.len() >= 6
+                && rings.iter().enumerate().any(|(other_index, other)| {
+                    other_index != *index && rings_share_bond(ring, other)
+                })
+        })
+        .flat_map(|(_, ring)| {
+            ring.atoms
+                .iter()
+                .copied()
+                .filter(|atom_id| is_saturated_chalcogen_bridge(mol, ring, *atom_id))
+        })
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn clear_ring_oxo_chalcogen_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let atoms_to_clear = rings
+        .iter()
+        .flat_map(|ring| {
+            ring.atoms
+                .iter()
+                .copied()
+                .filter(|atom_id| is_ring_oxo_chalcogen(mol, ring, *atom_id))
+        })
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
 }
 
 fn clear_terminal_chalcogen_oxo_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
@@ -546,6 +619,7 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
 
 fn ring_has_saturated_tertiary_amine_without_chalcogen(mol: &Molecule, ring: &Ring) -> bool {
     !ring_has_chalcogen_donor(mol, ring)
+        && !ring_has_conjugated_atom_path(mol, ring)
         && ring_hetero_donor_count(mol, ring) == 1
         && ring
             .atoms
@@ -684,6 +758,40 @@ fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> 
                 degree >= 3
             })
             .unwrap_or(false)
+}
+
+fn is_saturated_chalcogen_bridge(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    let Ok(atom) = mol.atom(atom_id) else {
+        return false;
+    };
+    matches!(atom.element.symbol(), "S" | "Se" | "Te")
+        && atom.formal_charge == 0
+        && atom.explicit_hydrogens == 0
+        && !ring_atom_has_pi_bond(mol, ring, atom_id)
+        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+        && mol
+            .incident_bonds(atom_id)
+            .map(|bonds| {
+                let mut degree = 0usize;
+                for (_, bond) in bonds {
+                    degree += 1;
+                    if !matches!(bond.order, BondOrder::Single) {
+                        return false;
+                    }
+                }
+                degree == 2
+            })
+            .unwrap_or(false)
+}
+
+fn is_ring_oxo_chalcogen(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    let Ok(atom) = mol.atom(atom_id) else {
+        return false;
+    };
+    matches!(atom.element.symbol(), "S" | "Se" | "Te")
+        && atom.formal_charge == 0
+        && ring.atoms.contains(&atom_id)
+        && atom_has_terminal_exocyclic_pi_bond(mol, ring, atom_id)
 }
 
 fn ring_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {

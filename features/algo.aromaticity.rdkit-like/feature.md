@@ -50,3 +50,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v8: Count explicitly imported aromatic-bond rings with atom contributions so lowercase aromatic SMILES sanitize without treating every aromatic bond as a localized double bond.
 - v9: Propagate configurable structured ring resource limits before mutating aromatic flags.
 - v10: Narrow saturated tertiary amine fused-ring clearing to carbon-substituted amines, preserving N-O substituted lactam aromaticity.
+- v11: Preserve valid imported aromatic SMILES components while clearing saturated fused thioether and ring-oxo chalcogen bridges.

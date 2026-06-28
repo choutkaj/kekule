@@ -656,6 +656,69 @@ fn canonical_smiles_validation_sanitizes_before_writing() {
     assert_eq!(item["canonical_smiles"], "c1ccccc1");
 }
 
+#[test]
+fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
+    let molecule = read_smiles_str("CCCCCCCc1cc2c(=O)ccn(O)c2cc1", SmilesParseOptions)
+        .expect("aromatic carbonyl SMILES should parse");
+
+    let item = smiles_sanitized_semantic_json(molecule);
+    let atoms = item["atoms"]
+        .as_array()
+        .expect("sanitized atoms should be an array");
+
+    assert!(atoms.iter().any(|atom| {
+        atom["symbol"] == "C"
+            && atom["aromatic"] == true
+            && atom["explicit_valence"] == 4
+            && atom["neighbors"].as_array().is_some_and(|neighbors| {
+                neighbors.iter().any(|neighbor| {
+                    neighbor["bond_type"] == "DOUBLE"
+                        && neighbor["atom"]
+                            .as_str()
+                            .is_some_and(|key| key.starts_with("008|O|0|0|0|0|false|2|"))
+                })
+            })
+    }));
+    assert!(!atoms.iter().any(|atom| {
+        atom["symbol"] == "C" && atom["aromatic"] == true && atom["explicit_valence"] == 5
+    }));
+    assert!(atoms.iter().any(|atom| {
+        atom["symbol"] == "N"
+            && atom["aromatic"] == true
+            && atom["explicit_valence"] == 3
+            && atom["neighbors"].as_array().is_some_and(|neighbors| {
+                neighbors.iter().any(|neighbor| {
+                    neighbor["bond_type"] == "SINGLE"
+                        && neighbor["atom"]
+                            .as_str()
+                            .is_some_and(|key| key.starts_with("008|O|0|0|0|1|false|1|"))
+                })
+            })
+    }));
+    assert!(!atoms.iter().any(|atom| {
+        atom["symbol"] == "N" && atom["aromatic"] == true && atom["explicit_valence"] == 4
+    }));
+}
+
+#[test]
+fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
+    let molecule =
+        read_smiles_str("[nH]1cccc1", SmilesParseOptions).expect("aromatic nH SMILES should parse");
+
+    let item = smiles_sanitized_semantic_json(molecule);
+    let atoms = item["atoms"]
+        .as_array()
+        .expect("sanitized atoms should be an array");
+
+    assert!(atoms.iter().any(|atom| {
+        atom["symbol"] == "N"
+            && atom["aromatic"] == true
+            && atom["explicit_hydrogens"] == 1
+            && atom["implicit_hydrogens"] == 0
+            && atom["no_implicit_hydrogens"] == false
+    }));
+}
+
 fn temp_feature_root(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

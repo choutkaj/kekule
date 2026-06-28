@@ -1069,6 +1069,78 @@ fn fused_n_hydroxy_lactam_ring_stays_aromatic() {
 }
 
 #[test]
+fn n_aryl_fused_pyrrole_ring_stays_aromatic() {
+    let mut molecule = read_smiles_str(
+        "CCOC(=O)C1=C(N(C2=C1C=C(C=C2)OCC(C[NH2+]CC3=CC=CC=C3)O)C4=CC=CC=C4)C.[Cl-]",
+        SmilesParseOptions,
+    )
+    .expect("N-aryl fused pyrrole salt should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("N-aryl fused pyrrole salt should sanitize");
+
+    let aromatic_neutral_nitrogens = molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| {
+            atom.element.symbol() == "N" && atom.formal_charge == 0 && atom.aromatic
+        })
+        .count();
+    assert_eq!(aromatic_neutral_nitrogens, 1);
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+    let reparsed_aromatic_neutral_nitrogens = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| {
+            atom.element.symbol() == "N" && atom.formal_charge == 0 && atom.aromatic
+        })
+        .count();
+    assert_eq!(reparsed_aromatic_neutral_nitrogens, 1, "{written}");
+}
+
+#[test]
+fn fused_saturated_thioether_bridge_stays_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "C1=CC=C(C=C1)C2=C(C(=O)C3=CC=CC=C3O2)OC(=O)C4=CC5=C(C=C4Cl)SC6=NC=CN6S5(=O)=O",
+        SmilesParseOptions,
+    )
+    .expect("fused thioether bridge should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused thioether bridge should sanitize");
+
+    let neutral_sulfur_aromatic_count = molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| {
+            atom.element.symbol() == "S" && atom.formal_charge == 0 && atom.aromatic
+        })
+        .count();
+    assert_eq!(neutral_sulfur_aromatic_count, 0);
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+    let reparsed_neutral_sulfur_aromatic_count = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| {
+            atom.element.symbol() == "S" && atom.formal_charge == 0 && atom.aromatic
+        })
+        .count();
+    assert_eq!(reparsed_neutral_sulfur_aromatic_count, 0, "{written}");
+}
+
+#[test]
 fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
     let mut molecule =
         read_smiles_str("CC[Hg+]", SmilesParseOptions).expect("organomercury SMILES parses");

@@ -995,6 +995,7 @@ fn write_canonical_smiles_component_with_plan(
                     .collect::<Vec<_>>();
                 children.sort_by_key(|(bond_id, order, child)| {
                     (
+                        !canonical_smiles_aromatic_continuation(mol, atom, *child, *order),
                         canonical_rank(ranking, *child),
                         canonical_smiles_atom_for_sort(mol, *child),
                         preference.order_key(*order),
@@ -1034,6 +1035,17 @@ fn write_canonical_smiles_component_with_plan(
         }
     }
     Ok(out)
+}
+
+fn canonical_smiles_aromatic_continuation(
+    mol: &Molecule,
+    left: AtomId,
+    right: AtomId,
+    order: BondOrder,
+) -> bool {
+    matches!(order, BondOrder::Aromatic)
+        && mol.atom(left).is_ok_and(|atom| atom.aromatic)
+        && mol.atom(right).is_ok_and(|atom| atom.aromatic)
 }
 
 fn compute_smiles_subtree_sizes(

@@ -53,3 +53,4 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - v4: Corpus-owned layout, typed TOML, compressed goldens, source locks, and corpus integrity checks.
 - v5: Content-addressed validation evidence, strict golden metadata checks, non-empty comparison enforcement, and failure-safe selected status updates.
 - v6: Make evidence hashes portable across LF and CRLF working trees.
+- v7: Align SMILES semantic comparison with RDKit aromatic carbonyl valence and aromatic nH no-implicit handling.

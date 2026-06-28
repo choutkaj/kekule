@@ -617,6 +617,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
         .atoms()
         .map(|(id, atom)| {
             let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
+            let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(atom);
             let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
             let mut neighbors = mol
                 .incident_bonds(id)
@@ -641,7 +642,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
                     "isotope": atom.isotope,
                     "explicit_hydrogens": explicit_hydrogens,
                     "implicit_hydrogens": implicit_hydrogens,
-                    "no_implicit_hydrogens": atom.no_implicit_hydrogens,
+                    "no_implicit_hydrogens": no_implicit_hydrogens,
                     "explicit_valence": explicit_valence,
                     "atom_map": atom.atom_map,
                     "aromatic": atom.aromatic,
@@ -660,6 +661,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
 
 pub(crate) fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom) -> String {
     let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
+    let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(atom);
     let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
     format!(
         "{:03}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
@@ -669,7 +671,7 @@ pub(crate) fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom)
         atom.isotope.unwrap_or(0),
         explicit_hydrogens,
         implicit_hydrogens,
-        atom.no_implicit_hydrogens,
+        no_implicit_hydrogens,
         explicit_valence,
         atom.atom_map.unwrap_or(0),
         atom.aromatic
@@ -696,6 +698,18 @@ pub(crate) fn smiles_effective_hydrogens(atom: &Atom) -> (u8, u8) {
             atom.explicit_hydrogens,
             atom.implicit_hydrogens.unwrap_or(0),
         )
+    }
+}
+
+pub(crate) fn smiles_effective_no_implicit_hydrogens(atom: &Atom) -> bool {
+    if atom.element.symbol() == "N"
+        && atom.aromatic
+        && atom.formal_charge == 0
+        && (atom.explicit_hydrogens > 0 || atom.implicit_hydrogens == Some(1))
+    {
+        false
+    } else {
+        atom.no_implicit_hydrogens
     }
 }
 
@@ -753,14 +767,30 @@ pub(crate) fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Valu
 
 pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
     let atom_record = mol.atom(atom).ok();
-    let doubled: u8 = mol
+    let bonds = mol
         .incident_bonds(atom)
         .ok()
         .into_iter()
         .flatten()
-        .map(|(_, bond)| {
+        .map(|(_, bond)| bond)
+        .collect::<Vec<_>>();
+    let has_non_aromatic_bond = bonds.iter().any(|bond| !bond.aromatic);
+    let has_non_aromatic_multiple_bond = bonds.iter().any(|bond| {
+        !bond.aromatic
+            && matches!(
+                bond.order,
+                BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
+            )
+    });
+    let doubled: u8 = bonds
+        .into_iter()
+        .map(|bond| {
             if bond.aromatic {
-                return aromatic_bond_valence_twice(atom_record);
+                return aromatic_bond_valence_twice(
+                    atom_record,
+                    has_non_aromatic_bond,
+                    has_non_aromatic_multiple_bond,
+                );
             }
             match bond.order {
                 BondOrder::Zero | BondOrder::Dative => 0,
@@ -774,13 +804,21 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
     doubled / 2
 }
 
-fn aromatic_bond_valence_twice(atom: Option<&Atom>) -> u8 {
+fn aromatic_bond_valence_twice(
+    atom: Option<&Atom>,
+    has_non_aromatic_bond: bool,
+    has_non_aromatic_multiple_bond: bool,
+) -> u8 {
     let Some(atom) = atom else {
         return 2;
     };
+    if atom.aromatic && has_non_aromatic_multiple_bond {
+        return 2;
+    }
     match atom.element.symbol() {
         "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
         "N" if atom.formal_charge == 0 && atom.explicit_hydrogens > 0 => 2,
+        "N" if atom.formal_charge == 0 && has_non_aromatic_bond => 2,
         _ => 3,
     }
 }
