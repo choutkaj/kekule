@@ -138,6 +138,16 @@ fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
 }
 
 #[test]
+fn canonical_smiles_prefers_clean_simple_ring_closure() {
+    let molecule = read_smiles_str("C1=CC=CC=C1", SmilesParseOptions).expect("benzene parses");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+
+    assert_eq!(written, "C1=CC=CC=C1");
+}
+
+#[test]
 fn aromatic_smiles_omitted_bonds_sanitize_with_expected_hydrogens() {
     let mut benzene =
         read_smiles_str("c1ccccc1", SmilesParseOptions).expect("benzene should parse");

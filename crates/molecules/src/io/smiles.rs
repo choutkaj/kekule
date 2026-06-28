@@ -519,11 +519,20 @@ pub fn write_canonical_smiles(
     let ranking = canonical_atom_ranking(mol);
     let mut components = Vec::new();
     for component in smiles_connected_components(mol)? {
-        let mut candidates = component
-            .iter()
-            .map(|root| write_canonical_smiles_component(mol, *root, &ranking))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut candidates = Vec::new();
+        for preference in [
+            CanonicalBondTraversal::HighOrderFirst,
+            CanonicalBondTraversal::LowOrderFirst,
+        ] {
+            candidates.extend(
+                component
+                    .iter()
+                    .map(|root| write_canonical_smiles_component(mol, *root, &ranking, preference))
+                    .collect::<std::result::Result<Vec<_>, _>>()?,
+            );
+        }
         candidates.sort_by_key(|candidate| canonical_smiles_candidate_key(candidate));
+        candidates.dedup();
         if let Some(candidate) = candidates.into_iter().next() {
             components.push(candidate);
         }
@@ -532,12 +541,62 @@ pub fn write_canonical_smiles(
     Ok(components.join("."))
 }
 
-fn canonical_smiles_candidate_key(candidate: &str) -> (usize, usize, String) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanonicalBondTraversal {
+    HighOrderFirst,
+    LowOrderFirst,
+}
+
+impl CanonicalBondTraversal {
+    fn order_key(self, order: BondOrder) -> u8 {
+        match self {
+            Self::HighOrderFirst => reverse_bond_order_code(order),
+            Self::LowOrderFirst => bond_order_code(order),
+        }
+    }
+}
+
+fn canonical_smiles_candidate_key(candidate: &str) -> (usize, usize, usize, String) {
     (
         candidate.matches('(').count(),
         explicit_ring_bond_marker_count(candidate),
+        leading_ring_label_count(candidate),
         candidate.to_owned(),
     )
+}
+
+fn leading_ring_label_count(candidate: &str) -> usize {
+    let bytes = candidate.as_bytes();
+    let mut index = smiles_atom_token_end(candidate);
+    let mut count = 0usize;
+    while let Some(byte) = bytes.get(index) {
+        if byte.is_ascii_digit() {
+            count += 1;
+            index += 1;
+        } else if *byte == b'%' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit) {
+            count += 1;
+            index += 3;
+        } else {
+            break;
+        }
+    }
+    count
+}
+
+fn smiles_atom_token_end(candidate: &str) -> usize {
+    let bytes = candidate.as_bytes();
+    if bytes.first() == Some(&b'[') {
+        return bytes
+            .iter()
+            .position(|byte| *byte == b']')
+            .map(|index| index + 1)
+            .unwrap_or(candidate.len());
+    }
+    if matches!(bytes.first(), Some(b'B' | b'C')) && matches!(bytes.get(1), Some(b'l' | b'r')) {
+        2
+    } else {
+        bytes.first().map(|_| 1).unwrap_or(0)
+    }
 }
 
 fn explicit_ring_bond_marker_count(candidate: &str) -> usize {
@@ -743,15 +802,17 @@ fn write_canonical_smiles_component(
     mol: &Molecule,
     root: AtomId,
     ranking: &CanonicalAtomRanking,
+    preference: CanonicalBondTraversal,
 ) -> std::result::Result<String, MolWriteError> {
-    let plan = plan_canonical_smiles_component(mol, root, ranking)?;
-    write_canonical_smiles_component_with_plan(mol, root, &plan, ranking)
+    let plan = plan_canonical_smiles_component(mol, root, ranking, preference)?;
+    write_canonical_smiles_component_with_plan(mol, root, &plan, ranking, preference)
 }
 
 fn plan_canonical_smiles_component(
     mol: &Molecule,
     root: AtomId,
     ranking: &CanonicalAtomRanking,
+    preference: CanonicalBondTraversal,
 ) -> std::result::Result<SmilesWritePlan, MolWriteError> {
     struct Frame {
         parent_bond: Option<BondId>,
@@ -765,7 +826,7 @@ fn plan_canonical_smiles_component(
     visited.insert(root);
     let mut stack = vec![Frame {
         parent_bond: None,
-        incident: canonical_smiles_incident_bonds(mol, root, ranking)?,
+        incident: canonical_smiles_incident_bonds(mol, root, ranking, preference)?,
         next_edge: 0,
     }];
     while let Some(frame) = stack.last_mut() {
@@ -793,7 +854,7 @@ fn plan_canonical_smiles_component(
         visited.insert(neighbor);
         stack.push(Frame {
             parent_bond: Some(bond_id),
-            incident: canonical_smiles_incident_bonds(mol, neighbor, ranking)?,
+            incident: canonical_smiles_incident_bonds(mol, neighbor, ranking, preference)?,
             next_edge: 0,
         });
     }
@@ -859,6 +920,7 @@ fn write_canonical_smiles_component_with_plan(
     root: AtomId,
     plan: &SmilesWritePlan,
     ranking: &CanonicalAtomRanking,
+    preference: CanonicalBondTraversal,
 ) -> std::result::Result<String, MolWriteError> {
     enum Action {
         Node {
@@ -903,7 +965,7 @@ fn write_canonical_smiles_component_with_plan(
                     }
                 }
 
-                let mut children = canonical_smiles_incident_bonds(mol, atom, ranking)?
+                let mut children = canonical_smiles_incident_bonds(mol, atom, ranking, preference)?
                     .into_iter()
                     .filter(|(bond_id, _, neighbor)| {
                         plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
@@ -916,7 +978,7 @@ fn write_canonical_smiles_component_with_plan(
                             mol.atom(*child)
                                 .expect("canonical tree child should remain live"),
                         ),
-                        reverse_bond_order_code(*order),
+                        preference.order_key(*order),
                         *child,
                         *bond_id,
                     )
@@ -1109,6 +1171,7 @@ fn canonical_smiles_incident_bonds(
     mol: &Molecule,
     atom_id: AtomId,
     ranking: &CanonicalAtomRanking,
+    preference: CanonicalBondTraversal,
 ) -> std::result::Result<Vec<(BondId, BondOrder, AtomId)>, MolWriteError> {
     let mut incident = smiles_incident_bonds(mol, atom_id)?;
     incident.sort_by_key(|(bond_id, order, atom)| {
@@ -1118,7 +1181,7 @@ fn canonical_smiles_incident_bonds(
                 mol.atom(*atom)
                     .expect("incident atom from live bond should remain live"),
             ),
-            reverse_bond_order_code(*order),
+            preference.order_key(*order),
             *atom,
             *bond_id,
         )
