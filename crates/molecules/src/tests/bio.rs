@@ -477,6 +477,11 @@ fn malformed_mmcif_returns_located_errors_without_panicking() {
                 5,
             ),
             (
+                "duplicate atom-site tag",
+                "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.type_symbol\n_atom_site.label_atom_id\nC C C1\n",
+                4,
+            ),
+            (
                 "integer overflow",
                 "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\nC C1 BEN A 999999999999999999999\n",
                 8,
