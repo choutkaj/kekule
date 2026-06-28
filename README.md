@@ -5,46 +5,12 @@
   </picture>
 </p>
 
-`molecules` is an experimental pure-Rust backend for small-molecule and
-macromolecular structure work, written in pure Rust. This project is human-architected and AI-coded.
-The cheminformatic capabilities are bundled into features, which are validated by comparison with existing codes - DRkit for small molecules, and Biopython for macromolecules.
+`molecules` is an experimental pure-Rust backend for both small-molecule and macromolecular structure work. This project is human-architected and AI-coded. The cheminformatic capabilities are bundled into features, which are validated by comparison with established codebases - RDkit for small molecules and Biopython for macromolecules.
 
-It has no RDKit or Biopython runtime dependency;
-those projects are used only to generate external validation references.
-
-The crate is version `0.0.0`, is not published, and makes no API stability or
-chemistry-completeness promise. Successful validation covers only the named
-features, fixtures, fields, and reference versions recorded in the generated
-[feature dashboard](features/DASHBOARD.html).
+For already-implemented features, see the [feature dashboard](features/DASHBOARD.html).
 
 > [!NOTE]
 > It is early. API may break without warning.
-
-
-
-## Validation
-
-`implemented` and `validated` are different states. The dashboard records
-successful comparisons, while `cargo xtask validate` recomputes content
-addresses and is the authority for whether evidence is current in a checkout.
-As of June 21, 2026, tiny, PubChem 100/1000, and PDB 10/100 comparisons are
-built and passing locally. PL-REX and Enamine are declared but are not built
-validation corpora.
-
-```bash
-cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo xtask dashboard --check
-cargo xtask skills --check
-cargo xtask corpus check --corpus tiny --require-data
-cargo xtask validate --feature all --corpus tiny
-```
-
-Large corpus data is intentionally not committed. See
-[RELEASE_READINESS.md](RELEASE_READINESS.md) for the clean-runner and release
-blockers, and [FUZZING.md](FUZZING.md) for parser robustness campaigns.
 
 
 ## Basic Usage
@@ -76,3 +42,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 ## License
+
+MIT
