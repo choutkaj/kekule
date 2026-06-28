@@ -21,6 +21,8 @@ SUPPORTED_FEATURES = {
     "core.conformers",
     "io.mol.v2000.parse",
     "io.mol.v2000.write",
+    "io.mol.v3000.parse",
+    "io.mol.v3000.write",
     "io.sdf.v2000.parse",
     "io.sdf.v2000.write",
     "io.smiles.parse",
@@ -159,6 +161,12 @@ def generate_document(
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [mol_record(record) for record in records]}
     elif feature_id == "io.mol.v2000.parse":
+        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
+        expected = {"records": [mol_parse_record(record) for record in records]}
+    elif feature_id == "io.mol.v3000.write":
+        records = read_records_by_suffix(fixture_path, rdkit["Chem"])
+        expected = {"records": [mol_record(record) for record in records]}
+    elif feature_id == "io.mol.v3000.parse":
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [mol_parse_record(record) for record in records]}
     elif feature_id == "core.conformers":

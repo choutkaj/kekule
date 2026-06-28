@@ -22,7 +22,7 @@ Parse a single Molfile V3000 CTAB into `SmallMolecule` using raw parsing semanti
 ## Validation
 
 - Unit tests cover successful raw parsing, line continuations, metadata fields, no-perception behavior, malformed counts, count mismatches, non-finite coordinates, bad endpoints, unsupported atom stereo, and unsupported bond types.
-- Future golden validation should use compact RDKit-readable V3000 fixtures.
+- RDKit-generated goldens compare Molfile-preserved atom, bond, metadata, and coordinate records for the same external PubChem fixtures used by the V2000 parser tier.
 
 ## Out Of Scope
 
@@ -32,3 +32,4 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 
 - v1: Feature contract reserved.
 - v2: Raw Molfile V3000 parser for CTAB atoms, bonds, coordinates, common atom metadata, and supported bond stereo.
+- v3: Declare the same required small-molecule validation corpora as V2000 Molfile parsing.

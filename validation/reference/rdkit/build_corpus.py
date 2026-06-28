@@ -43,6 +43,8 @@ SDF_FEATURES = (
     "core.conformers",
     "io.mol.v2000.parse",
     "io.mol.v2000.write",
+    "io.mol.v3000.parse",
+    "io.mol.v3000.write",
     "io.sdf.v2000.parse",
     "io.sdf.v2000.write",
 )
