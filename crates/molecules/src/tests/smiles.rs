@@ -62,6 +62,81 @@ fn smiles_writer_round_trips_graph_shape() {
 }
 
 #[test]
+fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
+    let mut first = SmallMolecule {
+        mol: Molecule::new(),
+    };
+    let first_terminal_a = first.mol.add_atom(carbon());
+    let first_center = first.mol.add_atom(carbon());
+    let first_terminal_b = first.mol.add_atom(carbon());
+    first
+        .mol
+        .add_bond(first_terminal_a, first_center, BondOrder::Single)
+        .expect("bond should be valid");
+    first
+        .mol
+        .add_bond(first_center, first_terminal_b, BondOrder::Single)
+        .expect("bond should be valid");
+    sanitize_small_molecule(&mut first, SanitizeOptions::default()).expect("propane sanitizes");
+
+    let mut second = SmallMolecule {
+        mol: Molecule::new(),
+    };
+    let second_center = second.mol.add_atom(carbon());
+    let second_terminal_a = second.mol.add_atom(carbon());
+    let second_terminal_b = second.mol.add_atom(carbon());
+    second
+        .mol
+        .add_bond(second_center, second_terminal_a, BondOrder::Single)
+        .expect("bond should be valid");
+    second
+        .mol
+        .add_bond(second_center, second_terminal_b, BondOrder::Single)
+        .expect("bond should be valid");
+    sanitize_small_molecule(&mut second, SanitizeOptions::default()).expect("propane sanitizes");
+
+    let first_written = write_canonical_smiles(&first, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let second_written = write_canonical_smiles(&second, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+
+    assert_eq!(first_written, second_written);
+    read_smiles_str(&first_written, SmilesParseOptions).expect("canonical output should parse");
+}
+
+#[test]
+fn canonical_smiles_sorts_disconnected_components() {
+    let mut first = read_smiles_str("O.C", SmilesParseOptions).expect("SMILES parses");
+    let mut second = read_smiles_str("C.O", SmilesParseOptions).expect("SMILES parses");
+    sanitize_small_molecule(&mut first, SanitizeOptions::default()).expect("first sanitizes");
+    sanitize_small_molecule(&mut second, SanitizeOptions::default()).expect("second sanitizes");
+
+    assert_eq!(
+        write_canonical_smiles(&first, CanonicalSmilesWriteOptions)
+            .expect("canonical SMILES should write"),
+        write_canonical_smiles(&second, CanonicalSmilesWriteOptions)
+            .expect("canonical SMILES should write")
+    );
+}
+
+#[test]
+fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
+    for input in ["CC(=O)O", "C1CCCCC1", "c1ccccc1"] {
+        let mut molecule = read_smiles_str(input, SmilesParseOptions)
+            .unwrap_or_else(|_| panic!("SMILES should parse: {input}"));
+        sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+            .unwrap_or_else(|_| panic!("SMILES should sanitize: {input}"));
+        let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+            .unwrap_or_else(|_| panic!("canonical SMILES should write: {input}"));
+        let reparsed = read_smiles_str(&written, SmilesParseOptions)
+            .unwrap_or_else(|_| panic!("canonical output should parse: {written}"));
+
+        assert_eq!(reparsed.mol.atom_count(), molecule.mol.atom_count());
+        assert_eq!(reparsed.mol.bond_count(), molecule.mol.bond_count());
+    }
+}
+
+#[test]
 fn aromatic_smiles_omitted_bonds_sanitize_with_expected_hydrogens() {
     let mut benzene =
         read_smiles_str("c1ccccc1", SmilesParseOptions).expect("benzene should parse");

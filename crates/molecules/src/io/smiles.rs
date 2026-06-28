@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::algorithms::ordered_atom_pair;
+use crate::algorithms::{canonical_atom_ranking, ordered_atom_pair, CanonicalAtomRanking};
 use crate::core::*;
 use crate::io::MolWriteError;
 
@@ -10,6 +10,9 @@ pub struct SmilesParseOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SmilesWriteOptions;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CanonicalSmilesWriteOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesParseError {
@@ -507,6 +510,28 @@ pub fn write_smiles(
     Ok(parts.join("."))
 }
 
+pub fn write_canonical_smiles(
+    molecule: &SmallMolecule,
+    _options: CanonicalSmilesWriteOptions,
+) -> std::result::Result<String, MolWriteError> {
+    let mol = &molecule.mol;
+    validate_smiles_writeable(mol)?;
+    let ranking = canonical_atom_ranking(mol);
+    let mut components = Vec::new();
+    for component in smiles_connected_components(mol)? {
+        let mut candidates = component
+            .iter()
+            .map(|root| write_canonical_smiles_component(mol, *root, &ranking))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        candidates.sort();
+        if let Some(candidate) = candidates.into_iter().next() {
+            components.push(candidate);
+        }
+    }
+    components.sort();
+    Ok(components.join("."))
+}
+
 #[derive(Debug, Clone)]
 struct SmilesWritePlan {
     roots: Vec<AtomId>,
@@ -617,6 +642,31 @@ fn validate_smiles_writeable(mol: &Molecule) -> std::result::Result<(), MolWrite
     Ok(())
 }
 
+fn smiles_connected_components(
+    mol: &Molecule,
+) -> std::result::Result<Vec<Vec<AtomId>>, MolWriteError> {
+    let mut components = Vec::new();
+    let mut visited = BTreeSet::new();
+    for start in mol.atom_ids() {
+        if !visited.insert(start) {
+            continue;
+        }
+        let mut component = Vec::new();
+        let mut stack = vec![start];
+        while let Some(atom) = stack.pop() {
+            component.push(atom);
+            for (_, _, neighbor) in smiles_incident_bonds(mol, atom)? {
+                if visited.insert(neighbor) {
+                    stack.push(neighbor);
+                }
+            }
+        }
+        component.sort();
+        components.push(component);
+    }
+    Ok(components)
+}
+
 fn collect_smiles_tree(
     mol: &Molecule,
     atom_id: AtomId,
@@ -667,6 +717,207 @@ fn collect_smiles_tree(
         });
     }
     Ok(())
+}
+
+fn write_canonical_smiles_component(
+    mol: &Molecule,
+    root: AtomId,
+    ranking: &CanonicalAtomRanking,
+) -> std::result::Result<String, MolWriteError> {
+    let plan = plan_canonical_smiles_component(mol, root, ranking)?;
+    write_canonical_smiles_component_with_plan(mol, root, &plan, ranking)
+}
+
+fn plan_canonical_smiles_component(
+    mol: &Molecule,
+    root: AtomId,
+    ranking: &CanonicalAtomRanking,
+) -> std::result::Result<SmilesWritePlan, MolWriteError> {
+    struct Frame {
+        parent_bond: Option<BondId>,
+        incident: Vec<(BondId, BondOrder, AtomId)>,
+        next_edge: usize,
+    }
+
+    let mut visited = BTreeSet::<AtomId>::new();
+    let mut tree_bonds = BTreeSet::<BondId>::new();
+    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, BondOrder)>::new();
+    visited.insert(root);
+    let mut stack = vec![Frame {
+        parent_bond: None,
+        incident: canonical_smiles_incident_bonds(mol, root, ranking)?,
+        next_edge: 0,
+    }];
+    while let Some(frame) = stack.last_mut() {
+        if frame.next_edge >= frame.incident.len() {
+            stack.pop();
+            continue;
+        }
+        let (bond_id, order, neighbor) = frame.incident[frame.next_edge];
+        frame.next_edge += 1;
+        if Some(bond_id) == frame.parent_bond {
+            continue;
+        }
+        if visited.contains(&neighbor) {
+            if !tree_bonds.contains(&bond_id) {
+                let bond = mol
+                    .bond(bond_id)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+                ring_bonds
+                    .entry(bond_id)
+                    .or_insert((bond.a(), bond.b(), order));
+            }
+            continue;
+        }
+        tree_bonds.insert(bond_id);
+        visited.insert(neighbor);
+        stack.push(Frame {
+            parent_bond: Some(bond_id),
+            incident: canonical_smiles_incident_bonds(mol, neighbor, ranking)?,
+            next_edge: 0,
+        });
+    }
+
+    let mut ring_bonds = ring_bonds
+        .into_iter()
+        .map(|(bond_id, (a, b, order))| {
+            let (first, second) = ordered_atom_pair(a, b);
+            (bond_id, first, second, order)
+        })
+        .collect::<Vec<_>>();
+    ring_bonds.sort_by_key(|(bond_id, first, second, order)| {
+        (
+            canonical_rank(ranking, *first),
+            canonical_rank(ranking, *second),
+            bond_order_code(*order),
+            *first,
+            *second,
+            *bond_id,
+        )
+    });
+    if ring_bonds.len() > 99 {
+        return Err(MolWriteError::new(
+            "SMILES writer supports at most 99 simultaneous ring closures",
+        ));
+    }
+
+    let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
+    for (index, (_, first, second, order)) in ring_bonds.into_iter().enumerate() {
+        let number = index + 1;
+        closures.entry(first).or_default().push(SmilesRingClosure {
+            number,
+            order,
+            other: second,
+        });
+        closures.entry(second).or_default().push(SmilesRingClosure {
+            number,
+            order,
+            other: first,
+        });
+    }
+    for (atom, closures) in &mut closures {
+        closures.sort_by_key(|closure| {
+            (
+                canonical_rank(ranking, closure.other),
+                bond_order_code(closure.order),
+                closure.other,
+                *atom,
+            )
+        });
+    }
+
+    Ok(SmilesWritePlan {
+        roots: vec![root],
+        tree_bonds,
+        closures,
+        subtree_sizes: BTreeMap::new(),
+    })
+}
+
+fn write_canonical_smiles_component_with_plan(
+    mol: &Molecule,
+    root: AtomId,
+    plan: &SmilesWritePlan,
+    ranking: &CanonicalAtomRanking,
+) -> std::result::Result<String, MolWriteError> {
+    enum Action {
+        Node {
+            atom: AtomId,
+            parent: Option<AtomId>,
+        },
+        Bond {
+            order: BondOrder,
+            left: AtomId,
+            right: AtomId,
+        },
+        OpenBranch,
+        CloseBranch,
+    }
+
+    let mut out = String::new();
+    let mut actions = vec![Action::Node {
+        atom: root,
+        parent: None,
+    }];
+    while let Some(action) = actions.pop() {
+        match action {
+            Action::OpenBranch => out.push('('),
+            Action::CloseBranch => out.push(')'),
+            Action::Bond { order, left, right } => {
+                out.push_str(smiles_bond_between(mol, order, left, right)?);
+            }
+            Action::Node { atom, parent } => {
+                let atom_record = mol
+                    .atom(atom)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+                out.push_str(&smiles_atom(atom_record));
+                if let Some(closures) = plan.closures.get(&atom) {
+                    for closure in closures {
+                        out.push_str(smiles_bond_between(
+                            mol,
+                            closure.order,
+                            atom,
+                            closure.other,
+                        )?);
+                        out.push_str(&smiles_ring_number(closure.number));
+                    }
+                }
+
+                let mut children = canonical_smiles_incident_bonds(mol, atom, ranking)?
+                    .into_iter()
+                    .filter(|(bond_id, _, neighbor)| {
+                        plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
+                    })
+                    .collect::<Vec<_>>();
+                children.sort_by_key(|(bond_id, order, child)| {
+                    (
+                        canonical_rank(ranking, *child),
+                        smiles_atom(
+                            mol.atom(*child)
+                                .expect("canonical tree child should remain live"),
+                        ),
+                        bond_order_code(*order),
+                        *child,
+                        *bond_id,
+                    )
+                });
+                for (_, order, child) in children.into_iter().rev() {
+                    actions.push(Action::CloseBranch);
+                    actions.push(Action::Node {
+                        atom: child,
+                        parent: Some(atom),
+                    });
+                    actions.push(Action::Bond {
+                        order,
+                        left: atom,
+                        right: child,
+                    });
+                    actions.push(Action::OpenBranch);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn compute_smiles_subtree_sizes(
@@ -817,6 +1068,45 @@ fn smiles_incident_bonds(
     }
     incident.sort_by_key(|(bond_id, _, atom)| (*atom, *bond_id));
     Ok(incident)
+}
+
+fn canonical_smiles_incident_bonds(
+    mol: &Molecule,
+    atom_id: AtomId,
+    ranking: &CanonicalAtomRanking,
+) -> std::result::Result<Vec<(BondId, BondOrder, AtomId)>, MolWriteError> {
+    let mut incident = smiles_incident_bonds(mol, atom_id)?;
+    incident.sort_by_key(|(bond_id, order, atom)| {
+        (
+            canonical_rank(ranking, *atom),
+            smiles_atom(
+                mol.atom(*atom)
+                    .expect("incident atom from live bond should remain live"),
+            ),
+            bond_order_code(*order),
+            *atom,
+            *bond_id,
+        )
+    });
+    Ok(incident)
+}
+
+fn canonical_rank(ranking: &CanonicalAtomRanking, atom: AtomId) -> u32 {
+    ranking
+        .rank_of(atom)
+        .expect("canonical ranking should cover every live atom")
+}
+
+fn bond_order_code(order: BondOrder) -> u8 {
+    match order {
+        BondOrder::Zero => 0,
+        BondOrder::Single => 1,
+        BondOrder::Double => 2,
+        BondOrder::Triple => 3,
+        BondOrder::Quadruple => 4,
+        BondOrder::Aromatic => 5,
+        BondOrder::Dative => 6,
+    }
 }
 
 fn smiles_ring_number(number: usize) -> String {
