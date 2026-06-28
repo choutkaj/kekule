@@ -60,3 +60,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v14: Add RDKit-like aromatic-order electron ranges plus final aromatic consistency cleanup for terminal imine and orphan aromatic fragments.
 - v15: Generalize imide carbonyl cleanup from cationic systems to neutral five-member imides with saturated nitrogen between two ring carbonyls.
 - v16: Refine fused saturated carbon and cyclic amidine cleanup so sp3/enone fused atoms do not remain aromatic while valid aromatic iminium and carbonyl systems are preserved.
+- v17: Refine saturated tertiary amine cleanup to treat oxidized chalcogen substituents as non-donor sulfone-like groups, preserving aliphatic sulfonamide ring nitrogens.

@@ -252,30 +252,69 @@ fn add_smiles_bond(
             .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
             .stereo = Some(stereo);
     }
-    preserve_metal_bound_halogen_no_implicit(mol, left, right);
+    preserve_metal_bound_organic_no_implicit(mol, left, right);
     Ok(())
 }
 
-fn preserve_metal_bound_halogen_no_implicit(mol: &mut Molecule, left: AtomId, right: AtomId) {
-    let Ok(left_atom) = mol.atom(left) else {
-        return;
-    };
-    let Ok(right_atom) = mol.atom(right) else {
-        return;
-    };
-    let left_halogen = matches!(left_atom.element.symbol(), "F" | "Cl" | "Br" | "I");
-    let right_halogen = matches!(right_atom.element.symbol(), "F" | "Cl" | "Br" | "I");
-    let left_metal = is_smiles_metal_like(left_atom.element.symbol());
-    let right_metal = is_smiles_metal_like(right_atom.element.symbol());
-    if left_halogen && right_metal {
+fn preserve_metal_bound_organic_no_implicit(mol: &mut Molecule, left: AtomId, right: AtomId) {
+    let left_no_implicit = metal_bound_organic_atom_has_full_valence(mol, left, right);
+    let right_no_implicit = metal_bound_organic_atom_has_full_valence(mol, right, left);
+    if left_no_implicit {
         if let Some(atom) = mol.atoms[left.index()].as_mut() {
             atom.no_implicit_hydrogens = true;
         }
     }
-    if right_halogen && left_metal {
+    if right_no_implicit {
         if let Some(atom) = mol.atoms[right.index()].as_mut() {
             atom.no_implicit_hydrogens = true;
         }
+    }
+}
+
+fn metal_bound_organic_atom_has_full_valence(
+    mol: &Molecule,
+    atom_id: AtomId,
+    neighbor_id: AtomId,
+) -> bool {
+    let Ok(atom) = mol.atom(atom_id) else {
+        return false;
+    };
+    let Ok(neighbor) = mol.atom(neighbor_id) else {
+        return false;
+    };
+    if !is_smiles_metal_like(neighbor.element.symbol()) {
+        return false;
+    }
+    let Some(target) = smiles_parse_organic_valence_target(atom) else {
+        return false;
+    };
+    let explicit = mol
+        .incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .map(|(_, bond)| match bond.order {
+            BondOrder::Zero | BondOrder::Dative => 0,
+            BondOrder::Single | BondOrder::Aromatic => 1,
+            BondOrder::Double => 2,
+            BondOrder::Triple => 3,
+            BondOrder::Quadruple => 4,
+        })
+        .sum::<u8>()
+        .saturating_add(atom.explicit_hydrogens);
+    explicit >= target
+}
+
+fn smiles_parse_organic_valence_target(atom: &Atom) -> Option<u8> {
+    match (atom.element.symbol(), atom.aromatic) {
+        ("B", false) => Some(3),
+        ("C", false) => Some(4),
+        ("N", false) | ("P", false) => Some(3),
+        ("O", false) | ("S", false) => Some(2),
+        ("F" | "Cl" | "Br" | "I", false) => Some(1),
+        ("B" | "C", true) => Some(3),
+        ("N" | "O" | "S" | "P", true) => Some(2),
+        _ => None,
     }
 }
 
@@ -413,21 +452,11 @@ fn parse_bracket_atom(
         .ok_or_else(|| SmilesParseError::new(start, "bracket atom missing element"))?;
     let aromatic = first.is_ascii_lowercase();
     let canonical_symbol = if aromatic {
-        let symbol = match first {
-            b'b' => "B",
-            b'c' => "C",
-            b'n' => "N",
-            b'o' => "O",
-            b'p' => "P",
-            b's' => "S",
-            _ => {
-                return Err(SmilesParseError::new(
-                    start + 1 + index,
-                    "unsupported aromatic bracket element",
-                ))
-            }
-        };
-        index += 1;
+        let (symbol, symbol_len) =
+            parse_aromatic_bracket_element(bytes, index).ok_or_else(|| {
+                SmilesParseError::new(start + 1 + index, "unsupported aromatic bracket element")
+            })?;
+        index += symbol_len;
         symbol.to_owned()
     } else if first.is_ascii_uppercase() {
         index += 1;
@@ -561,6 +590,20 @@ fn parse_bracket_atom(
         }
     }
     Ok((atom, end + 1))
+}
+
+fn parse_aromatic_bracket_element(bytes: &[u8], index: usize) -> Option<(&'static str, usize)> {
+    match bytes.get(index)? {
+        b'b' => Some(("B", 1)),
+        b'c' => Some(("C", 1)),
+        b'n' => Some(("N", 1)),
+        b'o' => Some(("O", 1)),
+        b'p' => Some(("P", 1)),
+        b's' if bytes.get(index + 1) == Some(&b'e') => Some(("Se", 2)),
+        b's' => Some(("S", 1)),
+        b't' if bytes.get(index + 1) == Some(&b'e') => Some(("Te", 2)),
+        _ => None,
+    }
 }
 
 fn ascii_digits_end(bytes: &[u8], mut index: usize) -> usize {

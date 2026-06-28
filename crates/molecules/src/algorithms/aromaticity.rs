@@ -657,14 +657,14 @@ fn is_chalcogen_bridge_without_pi(mol: &Molecule, ring: &Ring, atom_id: AtomId) 
 fn clear_saturated_tertiary_amine_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
-        if !ring_has_saturated_tertiary_amine_without_chalcogen(mol, ring) {
+        if !ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, ring) {
             continue;
         }
         for atom_id in &ring.atoms {
             let retained_by_other_ring = rings.iter().enumerate().any(|(other_index, other)| {
                 other_index != index
                     && other.atoms.contains(atom_id)
-                    && !ring_has_saturated_tertiary_amine_without_chalcogen(mol, other)
+                    && !ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, other)
                     && other
                         .atoms
                         .iter()
@@ -993,7 +993,7 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
         return indexes
             .iter()
             .filter(|index| {
-                !ring_has_saturated_tertiary_amine_without_chalcogen(mol, &rings[**index])
+                !ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, &rings[**index])
             })
             .flat_map(|index| rings[*index].atoms.iter().copied())
             .collect();
@@ -1002,7 +1002,7 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
     let mut atoms = BTreeSet::new();
     for index in indexes {
         let ring = &rings[*index];
-        if ring_has_saturated_tertiary_amine_without_chalcogen(mol, ring) {
+        if ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, ring) {
             continue;
         }
         let exocyclic_pi_count = ring_exocyclic_pi_bond_count(mol, ring);
@@ -1020,14 +1020,39 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
     atoms
 }
 
-fn ring_has_saturated_tertiary_amine_without_chalcogen(mol: &Molecule, ring: &Ring) -> bool {
-    !ring_has_chalcogen_donor(mol, ring)
+fn ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol: &Molecule, ring: &Ring) -> bool {
+    !ring_has_saturated_chalcogen_donor(mol, ring)
         && !ring_has_conjugated_atom_path(mol, ring)
-        && ring_hetero_donor_count(mol, ring) == 1
+        && ring_active_hetero_donor_count(mol, ring) == 1
         && ring
             .atoms
             .iter()
             .any(|atom_id| is_saturated_tertiary_amine(mol, ring, *atom_id))
+}
+
+fn ring_has_saturated_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
+            && !ring_atom_has_pi_bond(mol, ring, *atom_id)
+            && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
+    })
+}
+
+fn ring_active_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
+    ring.atoms
+        .iter()
+        .filter(|atom_id| {
+            let Ok(atom) = mol.atom(**atom_id) else {
+                return false;
+            };
+            match atom.element.symbol() {
+                "N" | "P" => true,
+                "O" | "S" | "Se" | "Te" => !atom_has_exocyclic_pi_bond(mol, ring, **atom_id),
+                _ => false,
+            }
+        })
+        .count()
 }
 
 fn aromatic_fused_component_pi_electrons(
@@ -1148,9 +1173,7 @@ fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> 
                     degree += 1;
                     let other = bond.other_atom(atom_id);
                     if !ring.atoms.contains(&other)
-                        && mol
-                            .atom(other)
-                            .is_ok_and(|atom| atom.element.symbol() != "C")
+                        && !is_saturated_tertiary_amine_substituent(mol, ring, other)
                     {
                         return false;
                     }
@@ -1161,6 +1184,15 @@ fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> 
                 degree >= 3
             })
             .unwrap_or(false)
+}
+
+fn is_saturated_tertiary_amine_substituent(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    let Ok(atom) = mol.atom(atom_id) else {
+        return false;
+    };
+    atom.element.symbol() == "C"
+        || matches!(atom.element.symbol(), "S" | "Se" | "Te")
+            && atom_has_terminal_exocyclic_pi_bond(mol, ring, atom_id)
 }
 
 fn is_saturated_chalcogen_bridge(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {

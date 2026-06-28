@@ -82,6 +82,66 @@ fn metal_bound_organic_subset_halogen_parse_disables_implicit_hydrogens() {
 }
 
 #[test]
+fn metal_bound_organic_subset_atoms_disable_implicit_only_when_valence_is_full() {
+    let mut aryl_mercury =
+        read_smiles_str("c1ccccc1[Hg]", SmilesParseOptions).expect("aryl mercury should parse");
+    sanitize_small_molecule(&mut aryl_mercury, SanitizeOptions::default())
+        .expect("aryl mercury should sanitize");
+    let aryl_mercury_carbon = aryl_mercury
+        .mol
+        .atoms()
+        .find_map(|(id, atom)| {
+            (atom.element.symbol() == "C"
+                && aryl_mercury.mol.incident_bonds(id).is_ok_and(|bonds| {
+                    bonds.into_iter().any(|(_, bond)| {
+                        aryl_mercury
+                            .mol
+                            .atom(bond.other_atom(id))
+                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
+                    })
+                }))
+            .then_some(atom)
+        })
+        .expect("aryl carbon bound to mercury");
+    assert!(aryl_mercury_carbon.no_implicit_hydrogens);
+    assert_eq!(aryl_mercury_carbon.implicit_hydrogens, Some(0));
+
+    let methyl_sodium =
+        read_smiles_str("C[Na]", SmilesParseOptions).expect("methyl sodium should parse");
+    let carbon = methyl_sodium
+        .mol
+        .atoms()
+        .find_map(|(_, atom)| (atom.element.symbol() == "C").then_some(atom))
+        .expect("carbon atom");
+    assert!(!carbon.no_implicit_hydrogens);
+    assert_eq!(carbon.implicit_hydrogens, None);
+}
+
+#[test]
+fn aromatic_chalcogen_bracket_atoms_parse_without_sanitizing() {
+    let small = read_smiles_str("[se]1cccc1.[te]1cccc1", SmilesParseOptions)
+        .expect("aromatic selenium and tellurium bracket atoms should parse");
+
+    let chalcogens = small
+        .mol
+        .atoms()
+        .filter(|(_, atom)| matches!(atom.element.symbol(), "Se" | "Te"))
+        .map(|(_, atom)| {
+            (
+                atom.element.symbol().to_owned(),
+                atom.aromatic,
+                atom.no_implicit_hydrogens,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        chalcogens,
+        vec![("Se".to_owned(), true, true), ("Te".to_owned(), true, true)]
+    );
+    assert_eq!(small.mol.perception().aromaticity, ComputedState::Absent);
+}
+
+#[test]
 fn malformed_smiles_returns_errors_without_panicking() {
     let cases = [
         "C(",
@@ -1099,6 +1159,109 @@ fn fused_multi_quinone_bridge_round_trip_clears_all_carbon_carbonyls() {
         })
         .count();
     assert_eq!(aliphatic_carbonyl_bridge_atoms, 2, "{written}");
+}
+
+#[test]
+fn canonical_tellurophene_round_trip_preserves_aromatic_chalcogen() {
+    let mut molecule =
+        read_smiles_str("C1=C[Te]C=C1", SmilesParseOptions).expect("tellurophene should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("tellurophene should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("tellurophene should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let aromatic_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(aromatic_atoms, 5, "{written}");
+    let tellurium = reparsed
+        .mol
+        .atoms()
+        .find_map(|(_, atom)| (atom.element.symbol() == "Te").then_some(atom))
+        .expect("tellurium atom");
+    assert!(tellurium.aromatic, "{written}");
+    assert!(tellurium.no_implicit_hydrogens, "{written}");
+}
+
+#[test]
+fn canonical_aryl_mercury_round_trip_preserves_no_implicit_aromatic_carbon() {
+    let mut molecule = read_smiles_str("C1=CC=C(C(=C1)[N+](=O)[O-])[Hg]", SmilesParseOptions)
+        .expect("aryl mercury should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("aryl mercury should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("aryl mercury should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let mercury_bound_carbon = reparsed
+        .mol
+        .atoms()
+        .find_map(|(id, atom)| {
+            (atom.element.symbol() == "C"
+                && reparsed.mol.incident_bonds(id).is_ok_and(|bonds| {
+                    bonds.into_iter().any(|(_, bond)| {
+                        reparsed
+                            .mol
+                            .atom(bond.other_atom(id))
+                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
+                    })
+                }))
+            .then_some(atom)
+        })
+        .expect("aromatic carbon bound to mercury");
+    assert!(mercury_bound_carbon.aromatic, "{written}");
+    assert!(mercury_bound_carbon.no_implicit_hydrogens, "{written}");
+    assert_eq!(
+        mercury_bound_carbon.implicit_hydrogens,
+        Some(0),
+        "{written}"
+    );
+}
+
+#[test]
+fn fused_sulfonamide_tertiary_amine_round_trip_keeps_ring_nitrogen_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "COC1=CC2=C(C=C1)OC(=C2)S(=O)(=O)N3CC(C4=C3C=C(C=C4)N)CCl",
+        SmilesParseOptions,
+    )
+    .expect("fused sulfonamide tertiary amine should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused sulfonamide tertiary amine should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused sulfonamide tertiary amine should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let aliphatic_ring_nitrogens = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "N"
+                && !atom.aromatic
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    let bonds = bonds.collect::<Vec<_>>();
+                    bonds.len() == 3
+                        && bonds.iter().any(|(_, bond)| {
+                            reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|neighbor| neighbor.element.symbol() == "S")
+                        })
+                })
+        })
+        .count();
+    assert_eq!(aliphatic_ring_nitrogens, 1, "{written}");
 }
 
 #[test]

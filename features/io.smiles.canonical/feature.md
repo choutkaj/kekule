@@ -44,3 +44,5 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v11: Broaden metal-like neighbor detection for bracketed organic hydrogens, preserving organothallium and related main-group/actinide valence semantics.
 - v12: Incorporate directional-bond parse support, metal-bound halogen reparse semantics, and neutral imide aromaticity cleanup exposed by PubChem-1000 canonical validation.
 - v13: Advance PubChem-1000 semantic validation through additional fused saturated-ring and cyclic amidine aromaticity cases.
+- v14: Advance PubChem-1000 validation through aromatic Se/Te bracket reparse support and valence-filled metal-bound organic no-implicit preservation shared with the SMILES parser.
+- v15: Advance PubChem-1000 validation through saturated sulfonamide fused-ring aromaticity cleanup.
