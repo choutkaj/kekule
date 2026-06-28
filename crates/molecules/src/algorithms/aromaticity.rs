@@ -158,6 +158,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings());
     clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
+    clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings());
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
@@ -351,6 +352,58 @@ fn clear_fused_lactam_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     }
 }
 
+fn clear_imide_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let atoms_to_clear = rings
+        .iter()
+        .enumerate()
+        .filter(|(index, ring)| {
+            ring_contains_element(mol, ring, "N")
+                && ring_has_or_is_fused_to_cationic_nitrogen(mol, rings, *index)
+                && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2
+        })
+        .flat_map(|(_, ring)| {
+            ring.atoms.iter().copied().filter(|atom_id| {
+                atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id)
+                    || is_saturated_ring_carbon(mol, ring, *atom_id)
+            })
+        })
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn is_saturated_ring_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    mol.atom(atom_id)
+        .is_ok_and(|atom| atom.element.symbol() == "C")
+        && !ring_atom_has_pi_bond(mol, ring, atom_id)
+        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+}
+
+fn ring_has_or_is_fused_to_cationic_nitrogen(mol: &Molecule, rings: &[Ring], index: usize) -> bool {
+    ring_has_cationic_nitrogen(mol, &rings[index])
+        || rings.iter().enumerate().any(|(other_index, other)| {
+            other_index != index
+                && rings_share_bond(&rings[index], other)
+                && ring_has_cationic_nitrogen(mol, other)
+        })
+}
+
+fn ring_has_cationic_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .is_ok_and(|atom| atom.element.symbol() == "N" && atom.formal_charge > 0)
+    })
+}
+
 fn clear_fused_lactone_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
@@ -482,14 +535,17 @@ fn clear_fused_carbonyl_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
             .filter(|(index, ring)| {
                 rings.iter().enumerate().any(|(other_index, other)| {
                     other_index != *index && rings_share_bond(ring, other)
-                }) && ring.atoms.len() == 5
-                    && fused_component_is_all_carbon(mol, ring)
+                }) && fused_component_is_all_carbon(mol, ring)
+                    && (ring.atoms.len() == 5
+                        || ring_has_saturated_carbon_atom(mol, ring)
+                        || ring.atoms.len() > 4
+                            && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
             })
             .flat_map(|(_, ring)| {
-                ring.atoms.iter().copied().filter(|atom_id| {
-                    atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id)
-                        && !ring_atom_has_pi_bond(mol, ring, *atom_id)
-                })
+                ring.atoms
+                    .iter()
+                    .copied()
+                    .filter(|atom_id| atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id))
             })
             .collect::<BTreeSet<_>>();
 
@@ -503,6 +559,15 @@ fn clear_fused_carbonyl_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn ring_has_saturated_carbon_atom(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.atom(*atom_id)
+            .is_ok_and(|atom| atom.element.symbol() == "C")
+            && !ring_atom_has_pi_bond(mol, ring, *atom_id)
+            && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
+    })
 }
 
 fn perceive_fused_single_exocyclic_carbon_rings(

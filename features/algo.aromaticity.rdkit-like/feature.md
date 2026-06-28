@@ -52,3 +52,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v10: Narrow saturated tertiary amine fused-ring clearing to carbon-substituted amines, preserving N-O substituted lactam aromaticity.
 - v11: Preserve valid imported aromatic SMILES components while clearing saturated fused thioether and ring-oxo chalcogen bridges.
 - v12: Refine imported aromatic nitrogen, pyrone, fused lactone, saturated fused carbon, and fluorenone-like carbonyl bridge handling exposed by canonical SMILES PubChem validation.
+- v13: Broaden fused carbonyl bridge and cationic imide cleanup using exocyclic-pi and saturated-bridge criteria; PubChem-1000 still exposes fused subsystem selection gaps.
