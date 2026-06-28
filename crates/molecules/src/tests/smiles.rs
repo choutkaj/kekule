@@ -1293,6 +1293,119 @@ fn fused_naphthalimide_canonical_round_trip_keeps_imide_carbonyl_atoms_aliphatic
 }
 
 #[test]
+fn partially_saturated_fused_amide_enone_ring_stays_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "CC1=CC=C(C=C1)C2=CC3=C(CCC(=C3)C(=O)NC4=CC=C(C=C4)C[N+]5(CCCCC5)C)C=C2",
+        SmilesParseOptions,
+    )
+    .expect("partially saturated fused amide enone should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("partially saturated fused amide enone should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("partially saturated fused amide enone should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    let aliphatic_enone_ring_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && !atom.aromatic
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    let bonds = bonds.collect::<Vec<_>>();
+                    bonds
+                        .iter()
+                        .any(|(_, bond)| matches!(bond.order, BondOrder::Double))
+                        && bonds.iter().any(|(_, bond)| {
+                            reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "C" && !other.aromatic)
+                        })
+                })
+        })
+        .count();
+    assert!(
+        aliphatic_enone_ring_atoms >= 2,
+        "canonical output should keep the fused enone ring aliphatic: {written}"
+    );
+}
+
+#[test]
+fn spiro_saturated_fused_hydrocarbon_bridge_stays_aliphatic() {
+    let mut molecule = read_smiles_str("CC1=C2C=CC3=C(C2=CC=C1)CCC4(C3CCCC4)C", SmilesParseOptions)
+        .expect("spiro saturated fused hydrocarbon should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("spiro saturated fused hydrocarbon should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("spiro saturated fused hydrocarbon should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    let saturated_aromatic_carbons = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && atom.aromatic
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    let bonds = bonds.collect::<Vec<_>>();
+                    bonds
+                        .iter()
+                        .all(|(_, bond)| matches!(bond.order, BondOrder::Single))
+                        && bonds.iter().any(|(_, bond)| !bond.aromatic)
+                })
+        })
+        .count();
+    assert_eq!(saturated_aromatic_carbons, 0, "{written}");
+}
+
+#[test]
+fn fused_cyclic_imine_round_trip_keeps_imine_carbon_aliphatic() {
+    let mut molecule = read_smiles_str("C1CN2CC3=CC=CC=C3N=C2[C@@H]1O", SmilesParseOptions)
+        .expect("fused cyclic imine should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused cyclic imine should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused cyclic imine should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    let aromatic_imine_carbons = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && atom.aromatic
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    let bonds = bonds.collect::<Vec<_>>();
+                    bonds.iter().any(|(_, bond)| {
+                        matches!(bond.order, BondOrder::Double)
+                            && reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "N")
+                    }) && bonds.iter().any(|(_, bond)| {
+                        matches!(bond.order, BondOrder::Single)
+                            && reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "N")
+                    })
+                })
+        })
+        .count();
+    assert_eq!(aromatic_imine_carbons, 0, "{written}");
+}
+
+#[test]
 fn partially_saturated_carbonyl_fused_rings_stay_aliphatic() {
     let mut molecule = read_smiles_str(
         "CC1(CC2=C(C(=O)C1)OC3=C(C2C4=CC=CC=C4[N+](=O)[O-])C(=O)CC(C3)(C)C)C",

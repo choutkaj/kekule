@@ -165,6 +165,8 @@ fn perceive_rdkit_like_aromaticity(
     clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
     clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings());
     clear_terminal_aromatic_imine_fragments(mol);
+    clear_aromatic_amidine_carbon_atoms(mol, ring_set.rings());
+    clear_saturated_aromatic_carbon_atoms(mol);
     clear_orphan_aromatic_atoms(mol);
     for component in imported_aromatic_components {
         if !component.iter().any(|atom_id| {
@@ -315,6 +317,110 @@ fn clear_terminal_aromatic_imine_fragments(mol: &mut Molecule) {
             bond.aromatic = false;
         }
     }
+}
+
+fn clear_saturated_aromatic_carbon_atoms(mol: &mut Molecule) {
+    let atoms_to_clear = mol
+        .atoms()
+        .filter_map(|(atom_id, atom)| {
+            if atom.element.symbol() != "C" || !atom.aromatic {
+                return None;
+            }
+            let bonds = mol
+                .incident_bonds(atom_id)
+                .ok()?
+                .map(|(_, bond)| bond)
+                .collect::<Vec<_>>();
+            (!bonds.is_empty()
+                && bonds
+                    .iter()
+                    .all(|bond| matches!(bond.order, BondOrder::Single))
+                && bonds.iter().any(|bond| !bond.aromatic))
+            .then_some(atom_id)
+        })
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn clear_aromatic_amidine_carbon_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let amidine_carbons = mol
+        .atoms()
+        .filter_map(|(atom_id, atom)| {
+            if atom.element.symbol() != "C" || !atom.aromatic {
+                return None;
+            }
+            let bonds = mol
+                .incident_bonds(atom_id)
+                .ok()?
+                .map(|(_, bond)| bond)
+                .collect::<Vec<_>>();
+            let has_imine_nitrogen = bonds.iter().any(|bond| {
+                matches!(bond.order, BondOrder::Double)
+                    && mol
+                        .atom(bond.other_atom(atom_id))
+                        .is_ok_and(|other| other.element.symbol() == "N")
+            });
+            let has_single_nitrogen = bonds.iter().any(|bond| {
+                matches!(bond.order, BondOrder::Single)
+                    && mol
+                        .atom(bond.other_atom(atom_id))
+                        .is_ok_and(|other| other.element.symbol() == "N")
+            });
+            let has_saturated_carbon_neighbor = bonds.iter().any(|bond| {
+                let neighbor_id = bond.other_atom(atom_id);
+                matches!(bond.order, BondOrder::Single)
+                    && !bond.aromatic
+                    && atoms_share_ring(rings, atom_id, neighbor_id)
+                    && mol
+                        .atom(neighbor_id)
+                        .is_ok_and(|other| other.element.symbol() == "C" && !other.aromatic)
+            });
+            (has_imine_nitrogen && has_single_nitrogen && has_saturated_carbon_neighbor)
+                .then_some(atom_id)
+        })
+        .collect::<BTreeSet<_>>();
+    let mut atoms_to_clear = amidine_carbons.clone();
+    for carbon_id in &amidine_carbons {
+        atoms_to_clear.extend(
+            mol.incident_bonds(*carbon_id)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(|(_, bond)| {
+                    let neighbor_id = bond.other_atom(*carbon_id);
+                    mol.atom(neighbor_id)
+                        .is_ok_and(|atom| atom.element.symbol() == "N")
+                        .then_some(neighbor_id)
+                }),
+        );
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn atoms_share_ring(rings: &[Ring], left: AtomId, right: AtomId) -> bool {
+    rings
+        .iter()
+        .any(|ring| ring.atoms.contains(&left) && ring.atoms.contains(&right))
 }
 
 fn aromatic_incident_bond_count(mol: &Molecule, atom_id: AtomId) -> usize {
@@ -589,17 +695,14 @@ fn clear_saturated_fused_carbon_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
             .iter()
             .enumerate()
             .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
-        if !fused || !fused_component_is_all_carbon(mol, ring) || ring_pi_bond_count(mol, ring) > 1
+        if !fused
+            || !fused_component_is_all_carbon(mol, ring)
+            || !ring_has_saturated_carbon_atom(mol, ring)
         {
             continue;
         }
         for atom_id in &ring.atoms {
-            if mol
-                .atom(*atom_id)
-                .is_ok_and(|atom| atom.element.symbol() == "C")
-                && !ring_atom_has_pi_bond(mol, ring, *atom_id)
-                && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
-            {
+            if !atom_is_retained_by_other_aromatic_ring(mol, rings, index, *atom_id) {
                 atoms_to_clear.insert(*atom_id);
             }
         }
