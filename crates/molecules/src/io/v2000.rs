@@ -28,7 +28,7 @@ pub struct SdfParseError {
 }
 
 impl SdfParseError {
-    fn new(record: usize, line: usize, message: impl Into<String>) -> Self {
+    pub(crate) fn new(record: usize, line: usize, message: impl Into<String>) -> Self {
         Self {
             record,
             line,
