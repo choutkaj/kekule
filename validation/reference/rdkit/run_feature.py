@@ -328,22 +328,6 @@ def read_canonical_smiles_records(
         parts = line.split(maxsplit=1)
         smiles = parts[0]
         title = parts[1].strip() if len(parts) > 1 else ""
-        if (
-            smiles_unsupported_subset_reason(smiles)
-            or canonical_smiles_unsupported_subset_reason(smiles)
-        ):
-            records.append(
-                {
-                    "record_index": index,
-                    "status": "unsupported",
-                    "title": title,
-                    "smiles": smiles,
-                    "mol": None,
-                    "radicals": {},
-                    "bond_stereo": {},
-                }
-            )
-            continue
         mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
         records.append(
             {
@@ -361,14 +345,6 @@ def read_canonical_smiles_records(
 
 def smiles_unsupported_subset_reason(smiles: str) -> str | None:
     if any(ch in smiles for ch in ("@", "/", "\\", "*")):
-        return "unsupported"
-    return None
-
-
-def canonical_smiles_unsupported_subset_reason(smiles: str) -> str | None:
-    if any(ch in smiles for ch in (".", "[", "]")):
-        return "unsupported"
-    if any(ch in smiles for ch in ("b", "n", "o", "p", "s")):
         return "unsupported"
     return None
 

@@ -611,6 +611,21 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     assert!(atoms.iter().all(|atom| atom["neighbors"].is_array()));
 }
 
+#[test]
+fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
+    let root = temp_feature_root("canonical-no-prefilter");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "C[C@H](O)N CID:example\n").expect("fixture should write");
+
+    let records = read_canonical_smiles_records(&fixture).expect("records should load");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].record_index, 0);
+    assert_eq!(records[0].status, "parse_error");
+    assert_eq!(records[0].input_smiles, "C[C@H](O)N");
+    assert!(records[0].molecule.is_none());
+}
+
 fn temp_feature_root(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

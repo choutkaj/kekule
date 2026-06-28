@@ -246,18 +246,6 @@ pub(crate) fn read_canonical_smiles_records(
         let mut parts = line.splitn(2, char::is_whitespace);
         let smiles = parts.next().unwrap_or_default().to_owned();
         let title = parts.next().unwrap_or_default().trim().to_owned();
-        if smiles_unsupported_subset_reason(&smiles).is_some()
-            || canonical_smiles_unsupported_subset_reason(&smiles).is_some()
-        {
-            records.push(IndexedSmilesRecord {
-                record_index: index,
-                status: "unsupported".to_owned(),
-                title,
-                input_smiles: smiles,
-                molecule: None,
-            });
-            continue;
-        }
         let (status, molecule) = match read_smiles_str(&smiles, SmilesParseOptions) {
             Ok(molecule) => ("ok".to_owned(), Some(molecule)),
             Err(_) => ("parse_error".to_owned(), None),
@@ -278,17 +266,6 @@ pub(crate) fn smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static 
         .chars()
         .any(|ch| matches!(ch, '@' | '/' | '\\' | '*'))
         .then_some("unsupported")
-}
-
-pub(crate) fn canonical_smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static str> {
-    (smiles.contains('.') || smiles.contains('[') || smiles.contains(']'))
-        .then_some("unsupported")
-        .or_else(|| {
-            smiles
-                .chars()
-                .any(|ch| matches!(ch, 'b' | 'n' | 'o' | 'p' | 's'))
-                .then_some("unsupported")
-        })
 }
 
 pub(crate) fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
