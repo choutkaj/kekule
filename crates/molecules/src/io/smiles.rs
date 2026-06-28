@@ -46,8 +46,9 @@ pub fn read_smiles_str(
     let mut mol = Molecule::new();
     let mut current: Option<AtomId> = None;
     let mut stack = Vec::<AtomId>::new();
-    let mut pending_bond = None::<(BondOrder, usize)>;
-    let mut rings = BTreeMap::<usize, (AtomId, Option<BondOrder>, usize)>::new();
+    let mut pending_bond = None::<(BondOrder, Option<BondStereo>, usize)>;
+    let mut rings =
+        BTreeMap::<usize, (AtomId, Option<(BondOrder, Option<BondStereo>)>, usize)>::new();
     let mut component = 0usize;
     let mut previous = SmilesTokenKind::Start;
     let mut cursor = 0;
@@ -107,7 +108,7 @@ pub fn read_smiles_str(
                 previous = SmilesTokenKind::Dot;
                 cursor += 1;
             }
-            '-' | '=' | '#' | ':' => {
+            '-' | '=' | '#' | ':' | '/' | '\\' => {
                 if current.is_none()
                     || pending_bond.is_some()
                     || !matches!(
@@ -125,9 +126,15 @@ pub fn read_smiles_str(
                     '=' => BondOrder::Double,
                     '#' => BondOrder::Triple,
                     ':' => BondOrder::Aromatic,
+                    '/' | '\\' => BondOrder::Single,
                     _ => unreachable!(),
                 };
-                pending_bond = Some((order, offset));
+                let stereo = match ch {
+                    '/' => Some(BondStereo::Up),
+                    '\\' => Some(BondStereo::Down),
+                    _ => None,
+                };
+                pending_bond = Some((order, stereo, offset));
                 previous = SmilesTokenKind::Bond;
                 cursor += 1;
             }
@@ -135,28 +142,29 @@ pub fn read_smiles_str(
                 let atom = current
                     .ok_or_else(|| SmilesParseError::new(offset, "ring closure without atom"))?;
                 let (label, next_cursor) = parse_smiles_ring_label(&chars, cursor)?;
-                let close_order = pending_bond.take().map(|(order, _)| order);
-                if let Some((other, open_order, open_component)) = rings.remove(&label) {
+                let close_bond = pending_bond
+                    .take()
+                    .map(|(order, stereo, _)| (order, stereo));
+                if let Some((other, open_bond, open_component)) = rings.remove(&label) {
                     if open_component != component {
                         return Err(SmilesParseError::new(
                             offset,
                             "ring closure crosses a component separator",
                         ));
                     }
-                    if open_order.is_some() && close_order.is_some() && open_order != close_order {
+                    if open_bond.is_some() && close_bond.is_some() && open_bond != close_bond {
                         return Err(SmilesParseError::new(
                             offset,
                             "conflicting ring bond symbols",
                         ));
                     }
-                    let order = match close_order.or(open_order) {
-                        Some(order) => order,
-                        None => default_smiles_bond_order(&mol, other, atom, offset)?,
+                    let (order, stereo) = match close_bond.or(open_bond) {
+                        Some((order, stereo)) => (order, stereo),
+                        None => (default_smiles_bond_order(&mol, other, atom, offset)?, None),
                     };
-                    mol.add_bond(other, atom, order)
-                        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                    add_smiles_bond(&mut mol, other, atom, order, stereo, offset)?;
                 } else {
-                    rings.insert(label, (atom, close_order, component));
+                    rings.insert(label, (atom, close_bond, component));
                 }
                 previous = SmilesTokenKind::Ring;
                 cursor = next_cursor;
@@ -165,12 +173,17 @@ pub fn read_smiles_str(
                 let (atom, next_cursor) = parse_bracket_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
                 if let Some(previous) = current {
-                    let order = match pending_bond.take().map(|(order, _)| order) {
-                        Some(order) => order,
-                        None => default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                    let (order, stereo) = match pending_bond
+                        .take()
+                        .map(|(order, stereo, _)| (order, stereo))
+                    {
+                        Some((order, stereo)) => (order, stereo),
+                        None => (
+                            default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                            None,
+                        ),
                     };
-                    mol.add_bond(previous, atom_id, order)
-                        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                    add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
@@ -178,7 +191,7 @@ pub fn read_smiles_str(
                 previous = SmilesTokenKind::Atom;
                 cursor = next_cursor;
             }
-            '@' | '/' | '\\' | '*' => {
+            '@' | '*' => {
                 return Err(SmilesParseError::new(
                     offset,
                     "unsupported stereochemistry or query syntax",
@@ -188,12 +201,17 @@ pub fn read_smiles_str(
                 let (atom, next_cursor) = parse_organic_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
                 if let Some(previous) = current {
-                    let order = match pending_bond.take().map(|(order, _)| order) {
-                        Some(order) => order,
-                        None => default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                    let (order, stereo) = match pending_bond
+                        .take()
+                        .map(|(order, stereo, _)| (order, stereo))
+                    {
+                        Some((order, stereo)) => (order, stereo),
+                        None => (
+                            default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                            None,
+                        ),
                     };
-                    mol.add_bond(previous, atom_id, order)
-                        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+                    add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
@@ -209,13 +227,56 @@ pub fn read_smiles_str(
     if !rings.is_empty() {
         return Err(SmilesParseError::new(input.len(), "unclosed ring closure"));
     }
-    if let Some((_, offset)) = pending_bond {
+    if let Some((_, _, offset)) = pending_bond {
         return Err(SmilesParseError::new(offset, "bond without right endpoint"));
     }
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
     Ok(SmallMolecule { mol })
+}
+
+fn add_smiles_bond(
+    mol: &mut Molecule,
+    left: AtomId,
+    right: AtomId,
+    order: BondOrder,
+    stereo: Option<BondStereo>,
+    offset: usize,
+) -> std::result::Result<(), SmilesParseError> {
+    let bond_id = mol
+        .add_bond(left, right, order)
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+    if let Some(stereo) = stereo {
+        mol.bond_mut(bond_id)
+            .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
+            .stereo = Some(stereo);
+    }
+    preserve_metal_bound_halogen_no_implicit(mol, left, right);
+    Ok(())
+}
+
+fn preserve_metal_bound_halogen_no_implicit(mol: &mut Molecule, left: AtomId, right: AtomId) {
+    let Ok(left_atom) = mol.atom(left) else {
+        return;
+    };
+    let Ok(right_atom) = mol.atom(right) else {
+        return;
+    };
+    let left_halogen = matches!(left_atom.element.symbol(), "F" | "Cl" | "Br" | "I");
+    let right_halogen = matches!(right_atom.element.symbol(), "F" | "Cl" | "Br" | "I");
+    let left_metal = is_smiles_metal_like(left_atom.element.symbol());
+    let right_metal = is_smiles_metal_like(right_atom.element.symbol());
+    if left_halogen && right_metal {
+        if let Some(atom) = mol.atoms[left.index()].as_mut() {
+            atom.no_implicit_hydrogens = true;
+        }
+    }
+    if right_halogen && left_metal {
+        if let Some(atom) = mol.atoms[right.index()].as_mut() {
+            atom.no_implicit_hydrogens = true;
+        }
+    }
 }
 
 fn default_smiles_bond_order(

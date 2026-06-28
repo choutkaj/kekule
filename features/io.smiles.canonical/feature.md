@@ -42,3 +42,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v9: Prefer aromatic continuations as canonical main paths so fused heteroaromatic branches reparse with stable aromaticity.
 - v10: Rank canonical candidates by sanitized semantic preservation before string shape, improving lactone, fused aromatic, and topology-sensitive round trips.
 - v11: Broaden metal-like neighbor detection for bracketed organic hydrogens, preserving organothallium and related main-group/actinide valence semantics.
+- v12: Incorporate directional-bond parse support, metal-bound halogen reparse semantics, and neutral imide aromaticity cleanup exposed by PubChem-1000 canonical validation.

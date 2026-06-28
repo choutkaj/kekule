@@ -24,6 +24,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Computes pi-electron counts from bond order, and uses an atom-contribution path for explicitly imported aromatic-bond rings.
 - Accepts imported aromatic-bond rings when RDKit-like variable atom-contribution ranges contain a valid 4n+2 count.
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
+- Clears five-member neutral imide carbonyl ring atoms when a saturated ring nitrogen is flanked by two terminal ring carbonyls.
 - Uses conservative guards for small rings, hetero fused donors, lactone-like rings, and large macrocycles exposed by external PubChem validation.
 - Treats unsupported ring elements as non-aromatic for the current model rather than failing the whole perception pass.
 - Leaves unsupported or ambiguous systems non-aromatic rather than claiming full RDKit parity.
@@ -56,3 +57,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v12: Refine imported aromatic nitrogen, pyrone, fused lactone, saturated fused carbon, and fluorenone-like carbonyl bridge handling exposed by canonical SMILES PubChem validation.
 - v13: Broaden fused carbonyl bridge and cationic imide cleanup using exocyclic-pi and saturated-bridge criteria; PubChem-1000 still exposes fused subsystem selection gaps.
 - v14: Add RDKit-like aromatic-order electron ranges plus final aromatic consistency cleanup for terminal imine and orphan aromatic fragments.
+- v15: Generalize imide carbonyl cleanup from cationic systems to neutral five-member imides with saturated nitrogen between two ring carbonyls.

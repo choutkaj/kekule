@@ -422,7 +422,8 @@ fn clear_imide_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
         .enumerate()
         .filter(|(index, ring)| {
             ring_contains_element(mol, ring, "N")
-                && ring_has_or_is_fused_to_cationic_nitrogen(mol, rings, *index)
+                && (ring_has_or_is_fused_to_cationic_nitrogen(mol, rings, *index)
+                    || ring.atoms.len() == 5 && ring_has_imide_nitrogen(mol, ring))
                 && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2
         })
         .flat_map(|(_, ring)| {
@@ -450,6 +451,31 @@ fn is_saturated_ring_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> boo
         .is_ok_and(|atom| atom.element.symbol() == "C")
         && !ring_atom_has_pi_bond(mol, ring, atom_id)
         && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+}
+
+fn ring_has_imide_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        let Ok(atom) = mol.atom(*atom_id) else {
+            return false;
+        };
+        atom.element.symbol() == "N"
+            && atom.formal_charge == 0
+            && !ring_atom_has_pi_bond(mol, ring, *atom_id)
+            && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
+            && ring_carbonyl_neighbor_count(mol, ring, *atom_id) >= 2
+    })
+}
+
+fn ring_carbonyl_neighbor_count(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> usize {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|(_, bond)| ring.atoms.contains(&bond.other_atom(atom_id)))
+        .filter(|(_, bond)| {
+            atom_has_terminal_exocyclic_pi_bond(mol, ring, bond.other_atom(atom_id))
+        })
+        .count()
 }
 
 fn ring_has_or_is_fused_to_cationic_nitrogen(mol: &Molecule, rings: &[Ring], index: usize) -> bool {

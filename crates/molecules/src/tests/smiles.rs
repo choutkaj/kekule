@@ -29,6 +29,59 @@ fn smiles_parses_branches_rings_brackets_and_fragments_without_sanitizing() {
 }
 
 #[test]
+fn smiles_parses_directional_bond_markers_without_sanitizing_stereo() {
+    let small = read_smiles_str("C/C=C\\C", SmilesParseOptions)
+        .expect("directional bond markers should parse");
+
+    assert_eq!(small.mol.atom_count(), 4);
+    assert_eq!(small.mol.bond_count(), 3);
+    let stereos = small
+        .mol
+        .bonds()
+        .filter_map(|(_, bond)| bond.stereo)
+        .collect::<Vec<_>>();
+    assert_eq!(stereos, vec![BondStereo::Up, BondStereo::Down]);
+    let canonical = write_canonical_smiles(&small, CanonicalSmilesWriteOptions)
+        .expect("non-isomeric canonical SMILES should ignore directional bond markers");
+    let mut reparsed =
+        read_smiles_str(&canonical, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .expect("canonical output should sanitize");
+}
+
+#[test]
+fn metal_bound_organic_subset_halogen_parse_disables_implicit_hydrogens() {
+    let mut small =
+        read_smiles_str("Br[Pt+2]Br", SmilesParseOptions).expect("platinum bromide salt parses");
+    sanitize_small_molecule(&mut small, SanitizeOptions::default())
+        .expect("platinum bromide salt sanitizes");
+
+    let bromines = small
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "Br")
+        .map(|(_, atom)| {
+            (
+                atom.no_implicit_hydrogens,
+                atom.implicit_hydrogens.unwrap_or(0),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bromines, vec![(true, 0), (true, 0)]);
+
+    let mut aryl_bromide =
+        read_smiles_str("c1ccccc1Br", SmilesParseOptions).expect("aryl bromide should parse");
+    sanitize_small_molecule(&mut aryl_bromide, SanitizeOptions::default())
+        .expect("aryl bromide should sanitize");
+    let bromine = aryl_bromide
+        .mol
+        .atoms()
+        .find_map(|(_, atom)| (atom.element.symbol() == "Br").then_some(atom))
+        .expect("bromine atom");
+    assert!(!bromine.no_implicit_hydrogens);
+}
+
+#[test]
 fn malformed_smiles_returns_errors_without_panicking() {
     let cases = [
         "C(",
@@ -40,7 +93,6 @@ fn malformed_smiles_returns_errors_without_panicking() {
         "C..C",
         "C1.C1",
         "C=1CCCCC-1",
-        "C/C=C\\C",
         "[]",
         "[13]",
         "[é]",
@@ -1202,6 +1254,42 @@ fn imine_fused_benzene_with_exocyclic_pyrimidinedione_keeps_imine_ring_aliphatic
         })
         .count();
     assert_eq!(aliphatic_imine_nitrogens, 1, "{written}");
+}
+
+#[test]
+fn fused_naphthalimide_canonical_round_trip_keeps_imide_carbonyl_atoms_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "C1=CC(=CN=C1)CN2C(=O)C3=C(C2=O)C=C(C=C3)N(C4=CC=C(C=C4)Cl)C5=CC=C(C=C5)Cl",
+        SmilesParseOptions,
+    )
+    .expect("fused naphthalimide should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused naphthalimide should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused naphthalimide should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    let aliphatic_imide_carbonyl_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && !atom.aromatic
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|mut bonds| {
+                    bonds.any(|(_, bond)| {
+                        matches!(bond.order, BondOrder::Double)
+                            && reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "O")
+                    })
+                })
+        })
+        .count();
+    assert_eq!(aliphatic_imide_carbonyl_atoms, 2, "{written}");
 }
 
 #[test]
