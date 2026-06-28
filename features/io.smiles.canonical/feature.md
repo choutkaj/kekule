@@ -21,13 +21,14 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 ## Validation
 
 - Unit tests cover atom-order-independent tree output, component sorting, branch/ring round trips, and inherited unsupported-chemistry errors through the noncanonical writer contract.
-- Future golden validation should compare compact RDKit canonical SMILES fixtures for the supported non-stereo subset.
+- RDKit-generated tiny goldens compare exact non-isomeric canonical SMILES plus sanitized reparse semantics for external PubChem SMILES fixtures in the current non-fused-ring subset.
 
 ## Out Of Scope
 
-Isomeric SMILES, SMARTS, reactions, query atoms/bonds, radicals, unsupported bond orders, and full RDKit canonicalization parity for every symmetry edge case.
+Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query atoms/bonds, radicals, unsupported bond orders, and full RDKit canonicalization parity for every symmetry edge case.
 
 ## Revision Notes
 
 - v1: Feature contract reserved.
 - v2: Implement deterministic non-stereo canonical SMILES for the existing writer subset.
+- v3: Declare tiny RDKit canonical SMILES validation.

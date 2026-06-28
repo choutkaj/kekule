@@ -101,6 +101,7 @@ fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
         .expect("canonical SMILES should write");
 
     assert_eq!(first_written, second_written);
+    assert_eq!(first_written, "CCC");
     read_smiles_str(&first_written, SmilesParseOptions).expect("canonical output should parse");
 }
 

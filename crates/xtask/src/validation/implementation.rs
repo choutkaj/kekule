@@ -101,6 +101,15 @@ pub(crate) fn implementation_expected(
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }
+        "io.smiles.canonical" => {
+            let records = read_smiles_records(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter()
+                    .map(canonical_smiles_record_json)
+                    .collect::<Result<Vec<_>, Box<dyn Error>>>()?
+            }))
+        }
         "algo.rings.fast" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(
@@ -447,6 +456,35 @@ pub(crate) fn smiles_write_record_json(
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
+        "sanitized": smiles_sanitized_semantic_json(reparsed),
+    }))
+}
+
+pub(crate) fn canonical_smiles_record_json(
+    record: &IndexedSmilesRecord,
+) -> Result<Value, Box<dyn Error>> {
+    let Some(molecule) = &record.molecule else {
+        return Ok(smiles_error_record_json(record));
+    };
+    let written = write_canonical_smiles(molecule, CanonicalSmilesWriteOptions)?;
+    let reparsed = match read_smiles_str(&written, SmilesParseOptions) {
+        Ok(reparsed) => reparsed,
+        Err(_) => {
+            return Ok(json!({
+                "record_index": record.record_index,
+                "status": "write_reparse_error",
+                "title": record.title,
+                "input_smiles": record.input_smiles,
+                "canonical_smiles": written,
+            }));
+        }
+    };
+    Ok(json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "input_smiles": record.input_smiles,
+        "canonical_smiles": written,
         "sanitized": smiles_sanitized_semantic_json(reparsed),
     }))
 }

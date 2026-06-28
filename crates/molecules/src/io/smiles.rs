@@ -523,13 +523,33 @@ pub fn write_canonical_smiles(
             .iter()
             .map(|root| write_canonical_smiles_component(mol, *root, &ranking))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        candidates.sort();
+        candidates.sort_by_key(|candidate| canonical_smiles_candidate_key(candidate));
         if let Some(candidate) = candidates.into_iter().next() {
             components.push(candidate);
         }
     }
     components.sort();
     Ok(components.join("."))
+}
+
+fn canonical_smiles_candidate_key(candidate: &str) -> (usize, usize, String) {
+    (
+        candidate.matches('(').count(),
+        explicit_ring_bond_marker_count(candidate),
+        candidate.to_owned(),
+    )
+}
+
+fn explicit_ring_bond_marker_count(candidate: &str) -> usize {
+    let bytes = candidate.as_bytes();
+    bytes
+        .windows(2)
+        .filter(|pair| matches!(pair[0], b'-' | b'=' | b'#' | b':') && pair[1].is_ascii_digit())
+        .count()
+        + bytes
+            .windows(2)
+            .filter(|pair| matches!(pair[0], b'-' | b'=' | b'#' | b':') && pair[1] == b'%')
+            .count()
 }
 
 #[derive(Debug, Clone)]
@@ -896,12 +916,27 @@ fn write_canonical_smiles_component_with_plan(
                             mol.atom(*child)
                                 .expect("canonical tree child should remain live"),
                         ),
-                        bond_order_code(*order),
+                        reverse_bond_order_code(*order),
                         *child,
                         *bond_id,
                     )
                 });
-                for (_, order, child) in children.into_iter().rev() {
+                let main_child = children.first().copied();
+                if let Some((_, order, child)) = main_child {
+                    actions.push(Action::Node {
+                        atom: child,
+                        parent: Some(atom),
+                    });
+                    actions.push(Action::Bond {
+                        order,
+                        left: atom,
+                        right: child,
+                    });
+                }
+                for (index, (_, order, child)) in children.into_iter().enumerate().rev() {
+                    if index == 0 {
+                        continue;
+                    }
                     actions.push(Action::CloseBranch);
                     actions.push(Action::Node {
                         atom: child,
@@ -1083,7 +1118,7 @@ fn canonical_smiles_incident_bonds(
                 mol.atom(*atom)
                     .expect("incident atom from live bond should remain live"),
             ),
-            bond_order_code(*order),
+            reverse_bond_order_code(*order),
             *atom,
             *bond_id,
         )
@@ -1107,6 +1142,10 @@ fn bond_order_code(order: BondOrder) -> u8 {
         BondOrder::Aromatic => 5,
         BondOrder::Dative => 6,
     }
+}
+
+fn reverse_bond_order_code(order: BondOrder) -> u8 {
+    u8::MAX - bond_order_code(order)
 }
 
 fn smiles_ring_number(number: usize) -> String {

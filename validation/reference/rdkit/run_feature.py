@@ -27,6 +27,7 @@ SUPPORTED_FEATURES = {
     "io.sdf.v2000.write",
     "io.smiles.parse",
     "io.smiles.write",
+    "io.smiles.canonical",
 }
 
 
@@ -178,6 +179,9 @@ def generate_document(
     elif feature_id == "io.smiles.write":
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
         expected = {"records": [smiles_write_record(record) for record in records]}
+    elif feature_id == "io.smiles.canonical":
+        records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
+        expected = {"records": [canonical_smiles_record(record) for record in records]}
     elif feature_id == "algo.rings.fast":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_record(record) for record in records]}
@@ -662,6 +666,33 @@ def smiles_write_record(record: dict[str, Any]) -> dict[str, Any]:
         "title": record["title"],
         "input_smiles": record["smiles"],
         "sanitized": smiles_sanitized_semantic_record(mol),
+    }
+
+
+def canonical_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+            "title": record["title"],
+            "input_smiles": record["smiles"],
+        }
+    canonical = Chem.MolToSmiles(
+        mol,
+        canonical=True,
+        isomericSmiles=False,
+    )
+    canonical_mol = Chem.MolFromSmiles(canonical, sanitize=False)
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "input_smiles": record["smiles"],
+        "canonical_smiles": canonical,
+        "sanitized": smiles_sanitized_semantic_record(canonical_mol),
     }
 
 
