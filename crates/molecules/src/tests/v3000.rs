@@ -125,3 +125,130 @@ fn malformed_mol_v3000_returns_errors_without_panicking() {
         assert!(!error.message.is_empty(), "message for {name}");
     }
 }
+
+#[test]
+fn mol_v3000_writer_round_trips_supported_metadata() {
+    let mut molecule = SmallMolecule::default();
+    molecule.mol.props_mut().insert(
+        "sdf.title".to_owned(),
+        PropValue::String("metadata title".to_owned()),
+    );
+    molecule.mol.props_mut().insert(
+        "sdf.program".to_owned(),
+        PropValue::String("metadata program".to_owned()),
+    );
+    molecule.mol.props_mut().insert(
+        "sdf.comment".to_owned(),
+        PropValue::String("metadata comment".to_owned()),
+    );
+
+    let mut nitrogen = Atom::new(Element::from_symbol("N").expect("N"));
+    nitrogen.formal_charge = 1;
+    nitrogen.radical = Some(AtomRadical::Doublet);
+    nitrogen.atom_map = Some(42);
+    let n = molecule.mol.add_atom(nitrogen);
+
+    let mut carbon = carbon();
+    carbon.isotope = Some(13);
+    let c = molecule.mol.add_atom(carbon);
+
+    let mut oxygen = oxygen();
+    oxygen.formal_charge = -1;
+    let o = molecule.mol.add_atom(oxygen);
+
+    let wedge = molecule
+        .mol
+        .add_bond(n, c, BondOrder::Single)
+        .expect("single bond");
+    molecule.mol.bond_mut(wedge).expect("bond").stereo = Some(BondStereo::Up);
+    molecule
+        .mol
+        .add_bond(c, o, BondOrder::Double)
+        .expect("double bond");
+
+    let mut conformer = Conformer::new();
+    conformer.set_position(n, Point3::new(0.1, 0.2, 0.3));
+    conformer.set_position(c, Point3::new(1.4, 0.0, 0.0));
+    conformer.set_position(o, Point3::new(2.5, 0.0, 0.0));
+    molecule.mol.add_conformer(conformer);
+
+    let written = write_mol_v3000(&molecule).expect("V3000 should write");
+    assert!(written.contains("V3000"));
+    assert!(written.contains("CHG=1"));
+    assert!(written.contains("MASS=13"));
+    assert!(written.contains("RAD=2"));
+    assert!(written.contains("CFG=1"));
+
+    let reparsed = read_mol_v3000_str(&written).expect("written V3000 should parse");
+    assert_eq!(
+        reparsed.mol.props().get("sdf.title"),
+        Some(&PropValue::String("metadata title".to_owned()))
+    );
+    assert_eq!(
+        reparsed
+            .mol
+            .atom(AtomId::new(0))
+            .expect("atom")
+            .formal_charge,
+        1
+    );
+    assert_eq!(
+        reparsed.mol.atom(AtomId::new(0)).expect("atom").radical,
+        Some(AtomRadical::Doublet)
+    );
+    assert_eq!(
+        reparsed.mol.atom(AtomId::new(0)).expect("atom").atom_map,
+        Some(42)
+    );
+    assert_eq!(
+        reparsed.mol.atom(AtomId::new(1)).expect("atom").isotope,
+        Some(13)
+    );
+    assert_eq!(
+        reparsed.mol.bond(BondId::new(0)).expect("bond").stereo,
+        Some(BondStereo::Up)
+    );
+    let (_, conformer) = reparsed.mol.first_conformer().expect("conformer");
+    assert_eq!(
+        conformer.position(AtomId::new(2)),
+        Some(Point3::new(2.5, 0.0, 0.0))
+    );
+}
+
+#[test]
+fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
+    let mut molecule = SmallMolecule::default();
+    let mut chiral = carbon();
+    chiral.chiral = Some(AtomStereo::TetrahedralClockwise);
+    molecule.mol.add_atom(chiral);
+    assert!(write_mol_v3000(&molecule)
+        .expect_err("atom stereo should be rejected")
+        .message
+        .contains("atom stereochemistry"));
+
+    let mut molecule = SmallMolecule::default();
+    let a = molecule.mol.add_atom(carbon());
+    let b = molecule.mol.add_atom(carbon());
+    let bond = molecule
+        .mol
+        .add_bond(a, b, BondOrder::Double)
+        .expect("bond");
+    molecule.mol.bond_mut(bond).expect("bond").stereo = Some(BondStereo::E);
+    assert!(write_mol_v3000(&molecule)
+        .expect_err("E/Z should be rejected")
+        .message
+        .contains("E/Z"));
+
+    molecule.mol.bond_mut(bond).expect("bond").stereo = Some(BondStereo::Up);
+    assert!(write_mol_v3000(&molecule)
+        .expect_err("double wedge should be rejected")
+        .message
+        .contains("incompatible"));
+
+    molecule.mol.bond_mut(bond).expect("bond").stereo = None;
+    molecule.mol.bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
+    assert!(write_mol_v3000(&molecule)
+        .expect_err("quadruple should be rejected")
+        .message
+        .contains("quadruple"));
+}

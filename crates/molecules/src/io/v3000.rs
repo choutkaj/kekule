@@ -1,12 +1,95 @@
 use std::collections::BTreeMap;
 
 use crate::core::*;
-use crate::io::SdfParseError;
+use crate::io::{MolWriteError, SdfParseError};
 
 pub fn read_mol_v3000_str(input: &str) -> std::result::Result<SmallMolecule, SdfParseError> {
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
     let lines = normalized.lines().collect::<Vec<_>>();
     parse_mol_v3000_lines(1, 1, &lines)
+}
+
+pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
+    let mol = &molecule.mol;
+    let atoms = mol.atom_ids().collect::<Vec<_>>();
+    let bonds = mol.bond_ids().collect::<Vec<_>>();
+    let mut atom_index = BTreeMap::new();
+    for (index, atom_id) in atoms.iter().enumerate() {
+        atom_index.insert(*atom_id, index + 1);
+    }
+
+    let title = prop_string(mol, "sdf.title").unwrap_or_default();
+    let program = prop_string(mol, "sdf.program").unwrap_or_else(|| "molecules".to_owned());
+    let comment = prop_string(mol, "sdf.comment").unwrap_or_default();
+    let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
+
+    let mut out = String::new();
+    out.push_str(&format!("{title}\n{program}\n{comment}\n"));
+    out.push_str("  0  0  0  0  0  0            999 V3000\n");
+    out.push_str("M  V30 BEGIN CTAB\n");
+    out.push_str(&format!(
+        "M  V30 COUNTS {} {} 0 0 0\n",
+        atoms.len(),
+        bonds.len()
+    ));
+    out.push_str("M  V30 BEGIN ATOM\n");
+    for atom_id in &atoms {
+        let atom = mol
+            .atom(*atom_id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        if atom.chiral.is_some() {
+            return Err(MolWriteError::new(
+                "V3000 writer does not support atom stereochemistry",
+            ));
+        }
+        let point = conformer
+            .and_then(|conformer| conformer.position(*atom_id))
+            .unwrap_or_default();
+        let index = atom_index
+            .get(atom_id)
+            .ok_or_else(|| MolWriteError::new("atom missing from V3000 atom table"))?;
+        out.push_str(&format!(
+            "M  V30 {index} {} {:.4} {:.4} {:.4} {}",
+            atom.element.symbol(),
+            point.x,
+            point.y,
+            point.z,
+            atom.atom_map.unwrap_or(0)
+        ));
+        if atom.formal_charge != 0 {
+            out.push_str(&format!(" CHG={}", atom.formal_charge));
+        }
+        if let Some(isotope) = atom.isotope {
+            out.push_str(&format!(" MASS={isotope}"));
+        }
+        if let Some(radical) = atom.radical {
+            out.push_str(&format!(" RAD={}", v3000_radical_code(radical)));
+        }
+        out.push('\n');
+    }
+    out.push_str("M  V30 END ATOM\n");
+    out.push_str("M  V30 BEGIN BOND\n");
+    for (index, bond_id) in bonds.iter().enumerate() {
+        let bond = mol
+            .bond(*bond_id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        let a = atom_index
+            .get(&bond.a())
+            .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
+        let b = atom_index
+            .get(&bond.b())
+            .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
+        let order_code = v3000_bond_code(bond.order)?;
+        out.push_str(&format!("M  V30 {} {order_code} {a} {b}", index + 1));
+        if let Some(cfg) = v3000_bond_cfg(bond.order, bond.stereo)? {
+            out.push_str(&format!(" CFG={cfg}"));
+        }
+        out.push('\n');
+    }
+    out.push_str("M  V30 END BOND\n");
+    out.push_str("M  V30 END CTAB\n");
+    out.push_str("M  END\n");
+    Ok(out)
 }
 
 fn parse_mol_v3000_lines(
@@ -363,6 +446,54 @@ fn v3000_bond_stereo(order: BondOrder, value: &str) -> Option<BondStereo> {
         (BondOrder::Single, "3") => Some(BondStereo::Down),
         (BondOrder::Double, "2") => Some(BondStereo::Any),
         _ => None,
+    }
+}
+
+fn prop_string(mol: &Molecule, key: &str) -> Option<String> {
+    match mol.props().get(key) {
+        Some(PropValue::String(value)) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
+    match order {
+        BondOrder::Zero => Ok(0),
+        BondOrder::Single => Ok(1),
+        BondOrder::Double => Ok(2),
+        BondOrder::Triple => Ok(3),
+        BondOrder::Aromatic => Ok(4),
+        BondOrder::Dative => Ok(9),
+        BondOrder::Quadruple => Err(MolWriteError::new(
+            "V3000 writer does not support quadruple bonds",
+        )),
+    }
+}
+
+fn v3000_bond_cfg(
+    order: BondOrder,
+    stereo: Option<BondStereo>,
+) -> std::result::Result<Option<u8>, MolWriteError> {
+    match (order, stereo) {
+        (_, None | Some(BondStereo::Unspecified)) => Ok(None),
+        (BondOrder::Single, Some(BondStereo::Up)) => Ok(Some(1)),
+        (BondOrder::Single, Some(BondStereo::Any)) => Ok(Some(2)),
+        (BondOrder::Single, Some(BondStereo::Down)) => Ok(Some(3)),
+        (BondOrder::Double, Some(BondStereo::Any)) => Ok(Some(2)),
+        (_, Some(BondStereo::E | BondStereo::Z)) => Err(MolWriteError::new(
+            "V3000 writer does not support perceived E/Z bond stereo",
+        )),
+        _ => Err(MolWriteError::new(
+            "V3000 bond CFG is incompatible with the bond order",
+        )),
+    }
+}
+
+fn v3000_radical_code(radical: AtomRadical) -> u8 {
+    match radical {
+        AtomRadical::Singlet => 1,
+        AtomRadical::Doublet => 2,
+        AtomRadical::Triplet => 3,
     }
 }
 
