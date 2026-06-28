@@ -1328,6 +1328,15 @@ fn canonical_smiles_atom(
     atom_id: AtomId,
     atom: &Atom,
 ) -> std::result::Result<String, MolWriteError> {
+    if canonical_smiles_should_bracket_metal_bound_hydrogens(mol, atom_id, atom)? {
+        let mut normalized = atom.clone();
+        normalized.isotope = None;
+        normalized.explicit_hydrogens = atom.implicit_hydrogens.unwrap_or(0);
+        normalized.implicit_hydrogens = Some(0);
+        normalized.no_implicit_hydrogens = true;
+        normalized.chiral = None;
+        return Ok(smiles_atom(&normalized));
+    }
     if canonical_smiles_can_use_organic_form(mol, atom_id, atom)? {
         let mut normalized = atom.clone();
         normalized.isotope = None;
@@ -1340,6 +1349,22 @@ fn canonical_smiles_atom(
     normalized.isotope = None;
     normalized.chiral = None;
     Ok(smiles_atom(&normalized))
+}
+
+fn canonical_smiles_should_bracket_metal_bound_hydrogens(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> std::result::Result<bool, MolWriteError> {
+    Ok(atom.formal_charge == 0
+        && atom.radical.is_none()
+        && atom.atom_map.is_none()
+        && !atom.aromatic
+        && !atom.no_implicit_hydrogens
+        && atom.explicit_hydrogens == 0
+        && atom.implicit_hydrogens.unwrap_or(0) > 0
+        && matches!(atom.element.symbol(), "B" | "C" | "N" | "O" | "P" | "S")
+        && atom_has_metal_neighbor(mol, atom_id)?)
 }
 
 fn canonical_smiles_atom_for_sort(mol: &Molecule, atom_id: AtomId) -> String {
@@ -1370,8 +1395,88 @@ fn canonical_smiles_can_use_organic_form(
     let Some(target) = canonical_organic_valence_target(atom) else {
         return Ok(false);
     };
+    if atom.no_implicit_hydrogens
+        && atom.explicit_hydrogens > 0
+        && atom_has_metal_neighbor(mol, atom_id)?
+    {
+        return Ok(false);
+    }
     let bond_valence = smiles_bond_valence_sum(mol, atom_id)?;
     Ok(bond_valence.saturating_add(atom.explicit_hydrogens) == target)
+}
+
+fn atom_has_metal_neighbor(
+    mol: &Molecule,
+    atom_id: AtomId,
+) -> std::result::Result<bool, MolWriteError> {
+    for (_, bond) in mol
+        .incident_bonds(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+    {
+        let neighbor_id = bond.other_atom(atom_id);
+        let neighbor = mol
+            .atom(neighbor_id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        if is_smiles_metal_like(neighbor.element.symbol()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_smiles_metal_like(symbol: &str) -> bool {
+    matches!(
+        symbol,
+        "Li" | "Na"
+            | "K"
+            | "Mg"
+            | "Ca"
+            | "Sc"
+            | "Ti"
+            | "V"
+            | "Cr"
+            | "Mn"
+            | "Fe"
+            | "Co"
+            | "Ni"
+            | "Cu"
+            | "Zn"
+            | "Y"
+            | "Zr"
+            | "Nb"
+            | "Mo"
+            | "Tc"
+            | "Ru"
+            | "Rh"
+            | "Pd"
+            | "Ag"
+            | "Cd"
+            | "La"
+            | "Ce"
+            | "Pr"
+            | "Nd"
+            | "Sm"
+            | "Eu"
+            | "Gd"
+            | "Tb"
+            | "Dy"
+            | "Ho"
+            | "Er"
+            | "Tm"
+            | "Yb"
+            | "Lu"
+            | "Hf"
+            | "Ta"
+            | "W"
+            | "Re"
+            | "Os"
+            | "Ir"
+            | "Pt"
+            | "Au"
+            | "Hg"
+            | "Sr"
+            | "Ba"
+    )
 }
 
 fn canonical_organic_valence_target(atom: &Atom) -> Option<u8> {

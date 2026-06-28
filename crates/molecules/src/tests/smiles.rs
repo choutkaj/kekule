@@ -987,6 +987,127 @@ fn neutral_aza_macrocycle_core_stays_aliphatic() {
 }
 
 #[test]
+fn fused_tertiary_amine_ring_does_not_extend_aromatic_core() {
+    let mut molecule = read_smiles_str(
+        "CC(C)C[C@@H]1CN2CCC3=CC(=C(C=C3C2CC1=O)OC)O[11CH3]",
+        SmilesParseOptions,
+    )
+    .expect("fused tertiary amine record should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused tertiary amine record should sanitize");
+
+    assert_eq!(
+        molecule
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count(),
+        6
+    );
+    assert!(molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "N")
+        .all(|(_, atom)| !atom.aromatic));
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+    assert_eq!(
+        reparsed
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count(),
+        6,
+        "{written}"
+    );
+}
+
+#[test]
+fn fused_n_hydroxy_lactam_ring_stays_aromatic() {
+    let mut molecule = read_smiles_str("CCCCCCCC1=CC2=C(C=C1)N(C=CC2=O)O", SmilesParseOptions)
+        .expect("fused N-hydroxy lactam should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused N-hydroxy lactam should sanitize");
+
+    let aromatic_atoms = molecule
+        .mol
+        .atoms()
+        .filter_map(|(atom_id, atom)| {
+            atom.aromatic
+                .then_some((atom_id.index(), atom.element.symbol()))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(aromatic_atoms.len(), 10, "{aromatic_atoms:?}");
+    assert!(molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "N")
+        .all(|(_, atom)| atom.aromatic));
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+    assert_eq!(
+        reparsed
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count(),
+        10,
+        "{written}"
+    );
+}
+
+#[test]
+fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
+    let mut molecule =
+        read_smiles_str("CC[Hg+]", SmilesParseOptions).expect("organomercury SMILES parses");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("organomercury SMILES sanitizes");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+
+    assert!(written.contains("[CH2][Hg+]"), "{written}");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .expect("canonical output should sanitize");
+    let metal_bound_carbon = reparsed
+        .mol
+        .atoms()
+        .find(|(atom_id, atom)| {
+            atom.element.symbol() == "C"
+                && reparsed
+                    .mol
+                    .incident_bonds(*atom_id)
+                    .expect("atom should be live")
+                    .any(|(_, bond)| {
+                        let neighbor_id = bond.other_atom(*atom_id);
+                        reparsed
+                            .mol
+                            .atom(neighbor_id)
+                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
+                    })
+        })
+        .expect("canonical output should retain a carbon-mercury bond")
+        .1;
+    assert_eq!(metal_bound_carbon.explicit_hydrogens, 2);
+    assert!(metal_bound_carbon.no_implicit_hydrogens);
+    assert_eq!(metal_bound_carbon.implicit_hydrogens, Some(0));
+}
+
+#[test]
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let mut molecule = SmallMolecule::default();
     let a = molecule.mol.add_atom(carbon());

@@ -157,6 +157,7 @@ fn perceive_rdkit_like_aromaticity(
     );
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
+    clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
     for component in imported_aromatic_components {
         if !component.iter().any(|atom_id| {
             mol.atom(*atom_id)
@@ -255,6 +256,40 @@ fn clear_fused_lactam_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
                 other_index != index
                     && other.atoms.contains(atom_id)
                     && ring_terminal_exocyclic_pi_bond_count(mol, other) == 0
+            });
+            if !retained_by_other_ring {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn clear_saturated_tertiary_amine_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        if !ring_has_saturated_tertiary_amine_without_chalcogen(mol, ring) {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            let retained_by_other_ring = rings.iter().enumerate().any(|(other_index, other)| {
+                other_index != index
+                    && other.atoms.contains(atom_id)
+                    && !ring_has_saturated_tertiary_amine_without_chalcogen(mol, other)
+                    && other
+                        .atoms
+                        .iter()
+                        .any(|other_atom| mol.atom(*other_atom).is_ok_and(|atom| atom.aromatic))
             });
             if !retained_by_other_ring {
                 atoms_to_clear.insert(*atom_id);
@@ -483,6 +518,9 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
     if !has_exocyclic_pi_ring {
         return indexes
             .iter()
+            .filter(|index| {
+                !ring_has_saturated_tertiary_amine_without_chalcogen(mol, &rings[**index])
+            })
             .flat_map(|index| rings[*index].atoms.iter().copied())
             .collect();
     }
@@ -490,6 +528,9 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
     let mut atoms = BTreeSet::new();
     for index in indexes {
         let ring = &rings[*index];
+        if ring_has_saturated_tertiary_amine_without_chalcogen(mol, ring) {
+            continue;
+        }
         let exocyclic_pi_count = ring_exocyclic_pi_bond_count(mol, ring);
         let contains_nitrogen = ring_contains_element(mol, ring, "N");
         if exocyclic_pi_count == 0
@@ -501,6 +542,15 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
         }
     }
     atoms
+}
+
+fn ring_has_saturated_tertiary_amine_without_chalcogen(mol: &Molecule, ring: &Ring) -> bool {
+    !ring_has_chalcogen_donor(mol, ring)
+        && ring_hetero_donor_count(mol, ring) == 1
+        && ring
+            .atoms
+            .iter()
+            .any(|atom_id| is_saturated_tertiary_amine(mol, ring, *atom_id))
 }
 
 fn aromatic_fused_component_pi_electrons(
@@ -602,6 +652,38 @@ fn ring_has_conjugated_atom_path(mol: &Molecule, ring: &Ring) -> bool {
             _ => false,
         }
     })
+}
+
+fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    let Ok(atom) = mol.atom(atom_id) else {
+        return false;
+    };
+    atom.element.symbol() == "N"
+        && atom.formal_charge == 0
+        && atom.explicit_hydrogens == 0
+        && !ring_atom_has_pi_bond(mol, ring, atom_id)
+        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+        && mol
+            .incident_bonds(atom_id)
+            .map(|bonds| {
+                let mut degree = 0usize;
+                for (_, bond) in bonds {
+                    degree += 1;
+                    let other = bond.other_atom(atom_id);
+                    if !ring.atoms.contains(&other)
+                        && mol
+                            .atom(other)
+                            .is_ok_and(|atom| atom.element.symbol() != "C")
+                    {
+                        return false;
+                    }
+                    if !matches!(bond.order, BondOrder::Single) {
+                        return false;
+                    }
+                }
+                degree >= 3
+            })
+            .unwrap_or(false)
 }
 
 fn ring_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {

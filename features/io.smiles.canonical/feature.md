@@ -37,3 +37,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v5: Remove canonical-specific unsupported filtering so broad-corpus gaps are reported as validation failures.
 - v6: Allow non-isomeric canonical output from stereo-bearing graphs by ignoring stored stereo metadata.
 - v7: Sanitize canonical validation fixtures before writing so Kekule/aromatic normalization matches RDKit.
+- v8: Preserve bracket hydrogens on metal-bound organic atoms so canonical output reparses with RDKit-like valence semantics.
