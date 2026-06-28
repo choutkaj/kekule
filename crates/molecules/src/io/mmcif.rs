@@ -241,12 +241,18 @@ fn build_macro_molecule_from_atom_site_loop(
         ));
     }
 
-    let tag_index = atom_loop
-        .tags
-        .iter()
-        .enumerate()
-        .map(|(index, token)| (token.text.as_str(), index))
-        .collect::<BTreeMap<_, _>>();
+    let tag_index = atom_loop.tags.iter().enumerate().try_fold(
+        BTreeMap::new(),
+        |mut tags, (index, token)| {
+            if tags.insert(token.text.as_str(), index).is_some() {
+                return Err(MmcifParseError::new(
+                    token.line,
+                    format!("duplicate atom-site loop tag {}", token.text),
+                ));
+            }
+            Ok(tags)
+        },
+    )?;
     let mut macro_mol = MacroMolecule::default();
     let mut models = BTreeMap::<String, ModelId>::new();
     let mut chains = BTreeMap::<(String, String), ChainId>::new();

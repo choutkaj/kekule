@@ -1,7 +1,7 @@
 id = "io.mmcif.parse"
 title = "mmCIF parser"
 area = "io"
-version = 4
+version = 5
 implemented = true
 validated = true
 description = "Parse mmCIF atom-site data into MacroMolecule while preserving label and author identifiers plus Cartesian coordinates."
