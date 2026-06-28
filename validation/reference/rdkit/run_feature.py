@@ -180,7 +180,7 @@ def generate_document(
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
         expected = {"records": [smiles_write_record(record) for record in records]}
     elif feature_id == "io.smiles.canonical":
-        records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
+        records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
         expected = {
             "records": [
                 canonical_smiles_record(record, exact_smiles=corpus_id == "tiny")

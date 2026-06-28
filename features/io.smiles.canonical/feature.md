@@ -16,13 +16,13 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 
 - Builds on `canonical_atom_ranking` for atom symmetry classes.
 - Symmetric ties are handled by candidate string selection, with `AtomId` only as a final deterministic fallback inside rank-equivalent traversal choices.
-- The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available.
+- The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; stored atom and bond stereo metadata is ignored when writing canonical output.
 
 ## Validation
 
 - Unit tests cover atom-order-independent tree output, component sorting, branch/ring round trips, and inherited unsupported-chemistry errors through the noncanonical writer contract.
 - RDKit-generated tiny goldens compare exact non-isomeric canonical SMILES plus sanitized reparse semantics for external PubChem SMILES fixtures in the current non-fused-ring subset.
-- RDKit-generated PubChem-100 and PubChem-1000 goldens compare sanitized reparse semantics for canonical output across all declared records. Canonical validation does not apply a feature-specific unsupported-chemistry filter; parser or writer gaps surface as validation failures.
+- RDKit-generated PubChem-100 and PubChem-1000 goldens compare sanitized reparse semantics for canonical output across all declared records. Validation sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model. It does not apply a feature-specific unsupported-chemistry filter; parser, sanitizer, or writer gaps surface as validation failures.
 
 ## Out Of Scope
 
@@ -35,3 +35,5 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v3: Declare tiny RDKit canonical SMILES validation.
 - v4: Declare PubChem-100 and PubChem-1000 semantic canonical-output validation.
 - v5: Remove canonical-specific unsupported filtering so broad-corpus gaps are reported as validation failures.
+- v6: Allow non-isomeric canonical output from stereo-bearing graphs by ignoring stored stereo metadata.
+- v7: Sanitize canonical validation fixtures before writing so Kekule/aromatic normalization matches RDKit.

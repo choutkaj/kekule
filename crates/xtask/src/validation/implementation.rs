@@ -496,7 +496,16 @@ pub(crate) fn canonical_smiles_record_json(
     let Some(molecule) = &record.molecule else {
         return Ok(smiles_error_record_json(record));
     };
-    let written = write_canonical_smiles(molecule, CanonicalSmilesWriteOptions)?;
+    let mut molecule = molecule.clone();
+    if sanitize_small_molecule(&mut molecule, SanitizeOptions::default()).is_err() {
+        return Ok(json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "input_smiles": record.input_smiles,
+        }));
+    }
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)?;
     let reparsed = match read_smiles_str(&written, SmilesParseOptions) {
         Ok(reparsed) => reparsed,
         Err(_) => {
@@ -743,18 +752,37 @@ pub(crate) fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Valu
 }
 
 pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
-    mol.incident_bonds(atom)
+    let atom_record = mol.atom(atom).ok();
+    let doubled: u8 = mol
+        .incident_bonds(atom)
         .ok()
         .into_iter()
         .flatten()
-        .map(|(_, bond)| match bond.order {
-            BondOrder::Zero | BondOrder::Dative => 0,
-            BondOrder::Single | BondOrder::Aromatic => 1,
-            BondOrder::Double => 2,
-            BondOrder::Triple => 3,
-            BondOrder::Quadruple => 4,
+        .map(|(_, bond)| {
+            if bond.aromatic {
+                return aromatic_bond_valence_twice(atom_record);
+            }
+            match bond.order {
+                BondOrder::Zero | BondOrder::Dative => 0,
+                BondOrder::Single | BondOrder::Aromatic => 2,
+                BondOrder::Double => 4,
+                BondOrder::Triple => 6,
+                BondOrder::Quadruple => 8,
+            }
         })
-        .sum()
+        .sum();
+    doubled / 2
+}
+
+fn aromatic_bond_valence_twice(atom: Option<&Atom>) -> u8 {
+    let Some(atom) = atom else {
+        return 2;
+    };
+    match atom.element.symbol() {
+        "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
+        "N" if atom.formal_charge == 0 && atom.explicit_hydrogens > 0 => 2,
+        _ => 3,
+    }
 }
 
 pub(crate) fn bonds_json(mol: &Molecule) -> Vec<Value> {

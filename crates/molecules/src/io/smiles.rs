@@ -386,11 +386,22 @@ fn parse_bracket_atom(
     atom.aromatic = aromatic;
     atom.isotope = isotope;
     atom.no_implicit_hydrogens = true;
+    let mut saw_chirality = false;
     let mut saw_hydrogen = false;
     let mut saw_charge = false;
     let mut saw_map = false;
     while index < text.len() {
         match bytes[index] {
+            b'@' if !saw_chirality && !saw_hydrogen && !saw_charge && !saw_map => {
+                saw_chirality = true;
+                index += 1;
+                atom.chiral = if bytes.get(index) == Some(&b'@') {
+                    index += 1;
+                    Some(AtomStereo::TetrahedralCounterClockwise)
+                } else {
+                    Some(AtomStereo::TetrahedralClockwise)
+                };
+            }
             b'H' if !saw_hydrogen && !saw_charge && !saw_map => {
                 saw_hydrogen = true;
                 index += 1;
@@ -473,7 +484,7 @@ fn parse_bracket_atom(
                 atom.atom_map = Some(map);
                 index = digit_end;
             }
-            b'@' | b'/' | b'\\' | b'*' => {
+            b'/' | b'\\' | b'*' => {
                 return Err(SmilesParseError::new(
                     start + 1 + index,
                     "unsupported stereochemistry or query syntax",
@@ -515,7 +526,7 @@ pub fn write_canonical_smiles(
     _options: CanonicalSmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
     let mol = &molecule.mol;
-    validate_smiles_writeable(mol)?;
+    validate_smiles_writeable(mol, StereoWriteMode::Ignore)?;
     let ranking = canonical_atom_ranking(mol);
     let mut components = Vec::new();
     for component in smiles_connected_components(mol)? {
@@ -627,7 +638,7 @@ struct SmilesRingClosure {
 }
 
 fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, MolWriteError> {
-    validate_smiles_writeable(mol)?;
+    validate_smiles_writeable(mol, StereoWriteMode::Reject)?;
     let mut roots = Vec::new();
     let mut visited = BTreeSet::<AtomId>::new();
     let mut tree_bonds = BTreeSet::<BondId>::new();
@@ -690,9 +701,18 @@ fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, Mol
     })
 }
 
-fn validate_smiles_writeable(mol: &Molecule) -> std::result::Result<(), MolWriteError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StereoWriteMode {
+    Reject,
+    Ignore,
+}
+
+fn validate_smiles_writeable(
+    mol: &Molecule,
+    stereo: StereoWriteMode,
+) -> std::result::Result<(), MolWriteError> {
     for (_, atom) in mol.atoms() {
-        if atom.chiral.is_some() {
+        if stereo == StereoWriteMode::Reject && atom.chiral.is_some() {
             return Err(MolWriteError::new(
                 "SMILES writer cannot encode atom stereochemistry",
             ));
@@ -712,7 +732,9 @@ fn validate_smiles_writeable(mol: &Molecule) -> std::result::Result<(), MolWrite
                 ));
             }
         }
-        if !matches!(bond.stereo, None | Some(BondStereo::Unspecified)) {
+        if stereo == StereoWriteMode::Reject
+            && !matches!(bond.stereo, None | Some(BondStereo::Unspecified))
+        {
             return Err(MolWriteError::new(
                 "SMILES writer cannot encode bond stereochemistry",
             ));
@@ -952,7 +974,7 @@ fn write_canonical_smiles_component_with_plan(
                 let atom_record = mol
                     .atom(atom)
                     .map_err(|error| MolWriteError::new(error.to_string()))?;
-                out.push_str(&smiles_atom(atom_record));
+                out.push_str(&canonical_smiles_atom(mol, atom, atom_record)?);
                 if let Some(closures) = plan.closures.get(&atom) {
                     for closure in closures {
                         out.push_str(smiles_bond_between(
@@ -974,10 +996,7 @@ fn write_canonical_smiles_component_with_plan(
                 children.sort_by_key(|(bond_id, order, child)| {
                     (
                         canonical_rank(ranking, *child),
-                        smiles_atom(
-                            mol.atom(*child)
-                                .expect("canonical tree child should remain live"),
-                        ),
+                        canonical_smiles_atom_for_sort(mol, *child),
                         preference.order_key(*order),
                         *child,
                         *bond_id,
@@ -1161,7 +1180,12 @@ fn smiles_incident_bonds(
         .incident_bonds(atom_id)
         .map_err(|error| MolWriteError::new(error.to_string()))?
     {
-        incident.push((bond_id, bond.order, bond.other_atom(atom_id)));
+        let order = if bond.aromatic {
+            BondOrder::Aromatic
+        } else {
+            bond.order
+        };
+        incident.push((bond_id, order, bond.other_atom(atom_id)));
     }
     incident.sort_by_key(|(bond_id, _, atom)| (*atom, *bond_id));
     Ok(incident)
@@ -1177,10 +1201,7 @@ fn canonical_smiles_incident_bonds(
     incident.sort_by_key(|(bond_id, order, atom)| {
         (
             canonical_rank(ranking, *atom),
-            smiles_atom(
-                mol.atom(*atom)
-                    .expect("incident atom from live bond should remain live"),
-            ),
+            canonical_smiles_atom_for_sort(mol, *atom),
             preference.order_key(*order),
             *atom,
             *bond_id,
@@ -1300,6 +1321,90 @@ fn smiles_atom(atom: &Atom) -> String {
         out.push(']');
         out
     }
+}
+
+fn canonical_smiles_atom(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> std::result::Result<String, MolWriteError> {
+    if canonical_smiles_can_use_organic_form(mol, atom_id, atom)? {
+        let mut normalized = atom.clone();
+        normalized.isotope = None;
+        normalized.explicit_hydrogens = 0;
+        normalized.no_implicit_hydrogens = false;
+        normalized.chiral = None;
+        return Ok(smiles_atom(&normalized));
+    }
+    let mut normalized = atom.clone();
+    normalized.isotope = None;
+    normalized.chiral = None;
+    Ok(smiles_atom(&normalized))
+}
+
+fn canonical_smiles_atom_for_sort(mol: &Molecule, atom_id: AtomId) -> String {
+    let atom = mol
+        .atom(atom_id)
+        .expect("canonical atom sort should only use live atoms");
+    canonical_smiles_atom(mol, atom_id, atom).expect("canonical atom sort should be encodable")
+}
+
+fn canonical_smiles_can_use_organic_form(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> std::result::Result<bool, MolWriteError> {
+    if atom.formal_charge != 0
+        || atom.radical.is_some()
+        || atom.atom_map.is_some()
+        || (atom.aromatic && atom.explicit_hydrogens > 0)
+    {
+        return Ok(false);
+    }
+    if !matches!(
+        atom.element.symbol(),
+        "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
+    ) {
+        return Ok(false);
+    }
+    let Some(target) = canonical_organic_valence_target(atom) else {
+        return Ok(false);
+    };
+    let bond_valence = smiles_bond_valence_sum(mol, atom_id)?;
+    Ok(bond_valence.saturating_add(atom.explicit_hydrogens) == target)
+}
+
+fn canonical_organic_valence_target(atom: &Atom) -> Option<u8> {
+    match (atom.element.symbol(), atom.aromatic) {
+        ("B", false) => Some(3),
+        ("C", false) => Some(4),
+        ("N", false) | ("P", false) => Some(3),
+        ("O", false) | ("S", false) => Some(2),
+        ("F" | "Cl" | "Br" | "I", false) => Some(1),
+        ("B" | "C", true) => Some(3),
+        ("N" | "O" | "S" | "P", true) => Some(3),
+        _ => None,
+    }
+}
+
+fn smiles_bond_valence_sum(
+    mol: &Molecule,
+    atom_id: AtomId,
+) -> std::result::Result<u8, MolWriteError> {
+    mol.incident_bonds(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+        .map(|(_, bond)| {
+            Ok(match bond.order {
+                BondOrder::Zero | BondOrder::Dative => 0,
+                BondOrder::Single | BondOrder::Aromatic => 1,
+                BondOrder::Double => 2,
+                BondOrder::Triple => 3,
+                BondOrder::Quadruple => 4,
+            })
+        })
+        .try_fold(0u8, |sum, value: std::result::Result<u8, MolWriteError>| {
+            Ok(sum.saturating_add(value?))
+        })
 }
 
 fn smiles_atom_explicit_hydrogens(atom: &Atom) -> u8 {

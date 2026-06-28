@@ -832,7 +832,7 @@ fn aromatic_order_ring_pi_electrons(
         electrons += match atom.element.symbol() {
             "B" | "C" => 1,
             "N" => {
-                if atom.explicit_hydrogens > 0 || atom.formal_charge > 0 {
+                if atom.explicit_hydrogens > 0 {
                     2
                 } else {
                     1

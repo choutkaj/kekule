@@ -598,6 +598,22 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
 
     let aromatic = read_smiles_str("c1ccccc1", SmilesParseOptions).expect("benzene should parse");
+    let mut sanitized_aromatic = aromatic.clone();
+    sanitize_small_molecule(&mut sanitized_aromatic, SanitizeOptions::default())
+        .expect("benzene should sanitize");
+    assert_eq!(
+        explicit_valence_json(&sanitized_aromatic.mol, AtomId::new(0)),
+        3
+    );
+    let mut thiophene = read_smiles_str("c1ccsc1", SmilesParseOptions).expect("thiophene parses");
+    sanitize_small_molecule(&mut thiophene, SanitizeOptions::default())
+        .expect("thiophene should sanitize");
+    let sulfur_id = thiophene
+        .mol
+        .atoms()
+        .find_map(|(id, atom)| (atom.element.symbol() == "S").then_some(id))
+        .expect("sulfur atom");
+    assert_eq!(explicit_valence_json(&thiophene.mol, sulfur_id), 2);
     assert!(smiles_sanitized_bonds_json(&aromatic.mol)
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
@@ -615,15 +631,29 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
 fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
     let root = temp_feature_root("canonical-no-prefilter");
     let fixture = root.join("fixture.smi");
-    fs::write(&fixture, "C[C@H](O)N CID:example\n").expect("fixture should write");
+    fs::write(&fixture, "C/C=C\\C CID:example\n").expect("fixture should write");
 
     let records = read_canonical_smiles_records(&fixture).expect("records should load");
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].record_index, 0);
     assert_eq!(records[0].status, "parse_error");
-    assert_eq!(records[0].input_smiles, "C[C@H](O)N");
+    assert_eq!(records[0].input_smiles, "C/C=C\\C");
     assert!(records[0].molecule.is_none());
+}
+
+#[test]
+fn canonical_smiles_validation_sanitizes_before_writing() {
+    let root = temp_feature_root("canonical-sanitize-before-write");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "C1=CC=CC=C1 CID:benzene\n").expect("fixture should write");
+
+    let records = read_canonical_smiles_records(&fixture).expect("records should load");
+    let item =
+        canonical_smiles_record_json(&records[0], true).expect("canonical record should render");
+
+    assert_eq!(item["status"], "ok");
+    assert_eq!(item["canonical_smiles"], "c1ccccc1");
 }
 
 fn temp_feature_root(label: &str) -> PathBuf {

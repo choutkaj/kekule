@@ -2,11 +2,14 @@ use super::*;
 
 #[test]
 fn smiles_parses_branches_rings_brackets_and_fragments_without_sanitizing() {
-    let small = read_smiles_str("C(C)O.C1=CC=CC=C1.[13NH4+:7]", SmilesParseOptions)
-        .expect("smiles should parse");
+    let small = read_smiles_str(
+        "C(C)O.C1=CC=CC=C1.[13NH4+:7].[C@@H](N)O",
+        SmilesParseOptions,
+    )
+    .expect("smiles should parse");
 
-    assert_eq!(small.mol.atom_count(), 10);
-    assert_eq!(small.mol.bond_count(), 8);
+    assert_eq!(small.mol.atom_count(), 13);
+    assert_eq!(small.mol.bond_count(), 10);
     assert_eq!(small.mol.perception().valence, ComputedState::Absent);
     let bracket_atom = small.mol.atom(AtomId::new(9)).expect("bracket atom");
     assert_eq!(bracket_atom.isotope, Some(13));
@@ -14,6 +17,15 @@ fn smiles_parses_branches_rings_brackets_and_fragments_without_sanitizing() {
     assert!(bracket_atom.no_implicit_hydrogens);
     assert_eq!(bracket_atom.formal_charge, 1);
     assert_eq!(bracket_atom.atom_map, Some(7));
+    let chiral_atom = small
+        .mol
+        .atom(AtomId::new(10))
+        .expect("chiral bracket atom");
+    assert_eq!(
+        chiral_atom.chiral,
+        Some(AtomStereo::TetrahedralCounterClockwise)
+    );
+    assert_eq!(chiral_atom.explicit_hydrogens, 1);
 }
 
 #[test]
@@ -32,7 +44,7 @@ fn malformed_smiles_returns_errors_without_panicking() {
         "[]",
         "[13]",
         "[é]",
-        "[C@H]",
+        "[C@@@H]",
         "[C/]",
         "[*]",
         "[C+999]",
@@ -121,6 +133,36 @@ fn canonical_smiles_sorts_disconnected_components() {
 }
 
 #[test]
+fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
+    let mut molecule =
+        read_smiles_str("N[C@H](O)C", SmilesParseOptions).expect("chiral SMILES parses");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("chiral molecule sanitizes");
+
+    assert!(write_smiles(&molecule, SmilesWriteOptions)
+        .expect_err("ordinary writer should reject lossy atom stereo")
+        .message
+        .contains("atom stereochemistry"));
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("non-isomeric canonical SMILES should ignore atom stereo");
+    let reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+
+    assert!(!written.contains('['), "{written}");
+    assert!(reparsed.mol.atoms().all(|(_, atom)| atom.chiral.is_none()));
+    assert_eq!(reparsed.mol.atom_count(), molecule.mol.atom_count());
+    assert_eq!(reparsed.mol.bond_count(), molecule.mol.bond_count());
+
+    let isotope = read_smiles_str("[11CH3]OC", SmilesParseOptions).expect("isotope parses");
+    assert_eq!(
+        write_canonical_smiles(&isotope, CanonicalSmilesWriteOptions)
+            .expect("non-isomeric canonical SMILES should ignore isotope labels"),
+        "COC"
+    );
+}
+
+#[test]
 fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
     for input in ["CC(=O)O", "C1CCCCC1", "c1ccccc1"] {
         let mut molecule = read_smiles_str(input, SmilesParseOptions)
@@ -172,6 +214,15 @@ fn aromatic_smiles_omitted_bonds_sanitize_with_expected_hydrogens() {
         let atom = pyridine.mol.atom(AtomId::new(atom_id)).expect("carbon");
         assert_eq!(atom.implicit_hydrogens, Some(1));
     }
+
+    let mut pyridinium =
+        read_smiles_str("[n+]1ccccc1", SmilesParseOptions).expect("pyridinium should parse");
+    sanitize_small_molecule(&mut pyridinium, SanitizeOptions::default())
+        .expect("pyridinium should sanitize");
+    let nitrogen = pyridinium.mol.atom(AtomId::new(0)).expect("nitrogen");
+    assert!(nitrogen.aromatic);
+    assert_eq!(nitrogen.formal_charge, 1);
+    assert_eq!(nitrogen.implicit_hydrogens, Some(0));
 
     for smiles in [
         "[nH]1cccc1",
