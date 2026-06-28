@@ -782,6 +782,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
                 BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
             )
     });
+    let aromatic_bond_count = bonds.iter().filter(|bond| bond.aromatic).count();
     let doubled: u8 = bonds
         .into_iter()
         .map(|bond| {
@@ -790,6 +791,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
                     atom_record,
                     has_non_aromatic_bond,
                     has_non_aromatic_multiple_bond,
+                    aromatic_bond_count,
                 );
             }
             match bond.order {
@@ -808,6 +810,7 @@ fn aromatic_bond_valence_twice(
     atom: Option<&Atom>,
     has_non_aromatic_bond: bool,
     has_non_aromatic_multiple_bond: bool,
+    aromatic_bond_count: usize,
 ) -> u8 {
     let Some(atom) = atom else {
         return 2;
@@ -819,6 +822,7 @@ fn aromatic_bond_valence_twice(
         "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
         "N" if atom.formal_charge == 0 && atom.explicit_hydrogens > 0 => 2,
         "N" if atom.formal_charge == 0 && has_non_aromatic_bond => 2,
+        "N" if atom.formal_charge == 0 && aromatic_bond_count >= 3 => 2,
         _ => 3,
     }
 }

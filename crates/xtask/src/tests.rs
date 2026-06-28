@@ -614,6 +614,30 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .find_map(|(id, atom)| (atom.element.symbol() == "S").then_some(id))
         .expect("sulfur atom");
     assert_eq!(explicit_valence_json(&thiophene.mol, sulfur_id), 2);
+    let mut fused_triazine = read_smiles_str(
+        "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
+        SmilesParseOptions,
+    )
+    .expect("fused triazine should parse");
+    sanitize_small_molecule(&mut fused_triazine, SanitizeOptions::default())
+        .expect("fused triazine should sanitize");
+    let tricoordinate_aromatic_nitrogen = fused_triazine
+        .mol
+        .atoms()
+        .find_map(|(id, atom)| {
+            let aromatic_degree = fused_triazine
+                .mol
+                .incident_bonds(id)
+                .ok()?
+                .filter(|(_, bond)| bond.aromatic)
+                .count();
+            (atom.element.symbol() == "N" && atom.aromatic && aromatic_degree >= 3).then_some(id)
+        })
+        .expect("tri-coordinate aromatic nitrogen");
+    assert_eq!(
+        explicit_valence_json(&fused_triazine.mol, tricoordinate_aromatic_nitrogen),
+        3
+    );
     assert!(smiles_sanitized_bonds_json(&aromatic.mol)
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));

@@ -1095,6 +1095,116 @@ fn cationic_fused_imide_round_trip_clears_carbonyl_ring_atoms() {
 }
 
 #[test]
+fn fused_quinone_ring_round_trip_excludes_nonshared_diene_dione_atoms() {
+    let mut molecule = read_smiles_str("C1=CC=C(C=C1)C2=CC3=C(N2)C(=O)C=CC3=O", SmilesParseOptions)
+        .expect("fused quinone should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused quinone should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused quinone should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let aromatic_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(aromatic_atoms, 11, "{written}");
+    let aliphatic_diene_dione_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && !atom.aromatic
+                && atom.implicit_hydrogens.unwrap_or_default() <= 1
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|mut bonds| {
+                    bonds.any(|(_, bond)| {
+                        matches!(bond.order, BondOrder::Double)
+                            || reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "O")
+                    })
+                })
+        })
+        .count();
+    assert!(
+        aliphatic_diene_dione_atoms >= 4,
+        "canonical output should keep the quinone subsystem aliphatic: {written}"
+    );
+}
+
+#[test]
+fn thiofuran_pyrimidinedione_canonical_round_trip_sanitizes() {
+    let mut molecule = read_smiles_str("CC1=CN(C(=O)NC1=O)[C@H]2C=C(CS2)CO", SmilesParseOptions)
+        .expect("thiofuran pyrimidinedione should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("thiofuran pyrimidinedione should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("thiofuran pyrimidinedione should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+}
+
+#[test]
+fn fused_thiadiazolopyrimidinone_canonical_round_trip_preserves_aromatic_nitrogen_valence() {
+    let mut molecule = read_smiles_str(
+        "C1=CC=C2C(=C1)C=CC(=C2C=CC3=NN=C4N(C3=O)N=C(S4)C5=CC(=CC=C5)[N+](=O)[O-])O",
+        SmilesParseOptions,
+    )
+    .expect("fused thiadiazolopyrimidinone should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused thiadiazolopyrimidinone should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused thiadiazolopyrimidinone should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+}
+
+#[test]
+fn imine_fused_benzene_with_exocyclic_pyrimidinedione_keeps_imine_ring_aliphatic() {
+    let mut molecule =
+        read_smiles_str("CC1=NC2=CC=CC=C2C1=CC3=C(NC(=O)NC3=O)O", SmilesParseOptions)
+            .expect("imine fused benzene should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("imine fused benzene should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("imine fused benzene should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    let aromatic_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(aromatic_atoms, 12, "{written}");
+    let aliphatic_imine_nitrogens = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "N"
+                && !atom.aromatic
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    bonds
+                        .into_iter()
+                        .any(|(_, bond)| matches!(bond.order, BondOrder::Double))
+                })
+        })
+        .count();
+    assert_eq!(aliphatic_imine_nitrogens, 1, "{written}");
+}
+
+#[test]
 fn partially_saturated_carbonyl_fused_rings_stay_aliphatic() {
     let mut molecule = read_smiles_str(
         "CC1(CC2=C(C(=O)C1)OC3=C(C2C4=CC=CC=C4[N+](=O)[O-])C(=O)CC(C3)(C)C)C",
@@ -1477,6 +1587,18 @@ fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
     assert_eq!(metal_bound_carbon.explicit_hydrogens, 2);
     assert!(metal_bound_carbon.no_implicit_hydrogens);
     assert_eq!(metal_bound_carbon.implicit_hydrogens, Some(0));
+
+    let mut thallium =
+        read_smiles_str("C[Tl](C)C", SmilesParseOptions).expect("organothallium SMILES parses");
+    sanitize_small_molecule(&mut thallium, SanitizeOptions::default())
+        .expect("organothallium SMILES sanitizes");
+    let thallium_written = write_canonical_smiles(&thallium, CanonicalSmilesWriteOptions)
+        .expect("organothallium canonical SMILES should write");
+    assert_eq!(
+        thallium_written.matches("[CH3]").count(),
+        3,
+        "{thallium_written}"
+    );
 }
 
 #[test]

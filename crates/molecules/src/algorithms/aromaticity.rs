@@ -164,6 +164,8 @@ fn perceive_rdkit_like_aromaticity(
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
     clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
     clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings());
+    clear_terminal_aromatic_imine_fragments(mol);
+    clear_orphan_aromatic_atoms(mol);
     for component in imported_aromatic_components {
         if !component.iter().any(|atom_id| {
             mol.atom(*atom_id)
@@ -260,6 +262,68 @@ fn clear_saturated_chalcogen_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn clear_orphan_aromatic_atoms(mol: &mut Molecule) {
+    let atoms_to_clear = mol
+        .atoms()
+        .filter_map(|(atom_id, atom)| {
+            (atom.aromatic
+                && mol
+                    .incident_bonds(atom_id)
+                    .map_or(true, |mut bonds| !bonds.any(|(_, bond)| bond.aromatic)))
+            .then_some(atom_id)
+        })
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+}
+
+fn clear_terminal_aromatic_imine_fragments(mol: &mut Molecule) {
+    let atoms_to_clear = mol
+        .bonds()
+        .filter_map(|(_, bond)| {
+            if !bond.aromatic || !matches!(bond.order, BondOrder::Double) {
+                return None;
+            }
+            let left = mol.atom(bond.a()).ok()?;
+            let right = mol.atom(bond.b()).ok()?;
+            let (nitrogen_id, carbon_id) = match (left.element.symbol(), right.element.symbol()) {
+                ("N", "C") => (bond.a(), bond.b()),
+                ("C", "N") => (bond.b(), bond.a()),
+                _ => return None,
+            };
+            let carbon_aromatic_bonds = aromatic_incident_bond_count(mol, carbon_id);
+            let nitrogen_aromatic_bonds = aromatic_incident_bond_count(mol, nitrogen_id);
+            (carbon_aromatic_bonds <= 1 && nitrogen_aromatic_bonds <= 2)
+                .then_some([nitrogen_id, carbon_id])
+        })
+        .flatten()
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn aromatic_incident_bond_count(mol: &Molecule, atom_id: AtomId) -> usize {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|(_, bond)| bond.aromatic)
+        .count()
 }
 
 fn clear_ring_oxo_chalcogen_atoms(mol: &mut Molecule, rings: &[Ring]) {
@@ -528,26 +592,30 @@ fn clear_saturated_fused_carbon_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
 }
 
 fn clear_fused_carbonyl_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
-    let atoms_to_clear =
-        rings
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        let fused = rings
             .iter()
             .enumerate()
-            .filter(|(index, ring)| {
-                rings.iter().enumerate().any(|(other_index, other)| {
-                    other_index != *index && rings_share_bond(ring, other)
-                }) && fused_component_is_all_carbon(mol, ring)
-                    && (ring.atoms.len() == 5
-                        || ring_has_saturated_carbon_atom(mol, ring)
-                        || ring.atoms.len() > 4
-                            && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
-            })
-            .flat_map(|(_, ring)| {
+            .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
+        if !fused || !fused_component_is_all_carbon(mol, ring) {
+            continue;
+        }
+        if ring.atoms.len() > 4 && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2 {
+            atoms_to_clear.extend(ring.atoms.iter().copied().filter(|atom_id| {
+                !atom_is_retained_by_other_aromatic_ring(mol, rings, index, *atom_id)
+            }));
+            continue;
+        }
+        if ring.atoms.len() == 5 || ring_has_saturated_carbon_atom(mol, ring) {
+            atoms_to_clear.extend(
                 ring.atoms
                     .iter()
                     .copied()
-                    .filter(|atom_id| atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id))
-            })
-            .collect::<BTreeSet<_>>();
+                    .filter(|atom_id| atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id)),
+            );
+        }
+    }
 
     for atom_id in &atoms_to_clear {
         if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
@@ -559,6 +627,22 @@ fn clear_fused_carbonyl_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn atom_is_retained_by_other_aromatic_ring(
+    mol: &Molecule,
+    rings: &[Ring],
+    ring_index: usize,
+    atom_id: AtomId,
+) -> bool {
+    rings.iter().enumerate().any(|(other_index, other)| {
+        other_index != ring_index
+            && other.atoms.contains(&atom_id)
+            && other.bonds.iter().any(|bond_id| {
+                mol.bond(*bond_id)
+                    .is_ok_and(|bond| bond.aromatic && (bond.a() == atom_id || bond.b() == atom_id))
+            })
+    })
 }
 
 fn ring_has_saturated_carbon_atom(mol: &Molecule, ring: &Ring) -> bool {
@@ -797,7 +881,9 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
         if exocyclic_pi_count == 0
             || !contains_nitrogen && exocyclic_pi_count <= 1
             || contains_nitrogen && ring_hetero_donor_count(mol, ring) >= 2
-            || ring.atoms.len() >= 6 && contains_nitrogen
+            || ring.atoms.len() >= 6
+                && contains_nitrogen
+                && !ring_has_saturated_carbon_atom(mol, ring)
         {
             atoms.extend(ring.atoms.iter().copied());
         }
@@ -1213,26 +1299,43 @@ fn aromatic_order_ring_pi_electrons(
         return Ok(6);
     }
 
-    let mut electrons = 0u8;
+    let mut min_electrons = 0u8;
+    let mut max_electrons = 0u8;
     for atom_id in &ring.atoms {
         let atom = mol.atom(*atom_id).expect("ring atom should be live");
-        electrons += match atom.element.symbol() {
-            "B" | "C" => 1,
+        let (min_contribution, max_contribution) = match atom.element.symbol() {
+            "B" | "C" => (1, 1),
             "N" => {
                 if atom.explicit_hydrogens > 0
                     || atom.formal_charge == 0
                         && aromatic_order_nitrogen_is_pyrrole_like(mol, *atom_id)
                 {
-                    2
+                    (1, 2)
                 } else {
-                    1
+                    (1, 1)
                 }
             }
-            "O" | "S" | "Se" | "Te" | "P" => 2,
+            "O" | "S" | "Se" | "Te" | "P" => (2, 2),
             _ => return Err(AromaticityError::UnsupportedElement(*atom_id)),
         };
+        min_electrons += min_contribution;
+        max_electrons += max_contribution;
     }
-    Ok(electrons)
+    if let Some(electrons) = huckel_electron_count_in_range(min_electrons, max_electrons) {
+        Ok(electrons)
+    } else {
+        Ok(max_electrons)
+    }
+}
+
+fn huckel_electron_count_in_range(min_electrons: u8, max_electrons: u8) -> Option<u8> {
+    if max_electrons == 2 {
+        return Some(2);
+    }
+    if max_electrons < 6 {
+        return None;
+    }
+    (min_electrons..=max_electrons).find(|electrons| (electrons - 2) % 4 == 0)
 }
 
 fn aromatic_order_nitrogen_is_pyrrole_like(mol: &Molecule, atom_id: AtomId) -> bool {

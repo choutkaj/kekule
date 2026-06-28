@@ -16,6 +16,7 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 
 - Builds on `canonical_atom_ranking` for atom symmetry classes.
 - Symmetric ties are handled by candidate string selection, with `AtomId` only as a final deterministic fallback inside rank-equivalent traversal choices.
+- Preserves explicit hydrogens on organic atoms bound to a broad metal-like element set when organic shorthand would alter sanitized valence semantics after reparse.
 - The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; stored atom and bond stereo metadata is ignored when writing canonical output.
 
 ## Validation
@@ -40,3 +41,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v8: Preserve bracket hydrogens on metal-bound organic atoms so canonical output reparses with RDKit-like valence semantics.
 - v9: Prefer aromatic continuations as canonical main paths so fused heteroaromatic branches reparse with stable aromaticity.
 - v10: Rank canonical candidates by sanitized semantic preservation before string shape, improving lactone, fused aromatic, and topology-sensitive round trips.
+- v11: Broaden metal-like neighbor detection for bracketed organic hydrogens, preserving organothallium and related main-group/actinide valence semantics.
