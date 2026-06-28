@@ -31,6 +31,23 @@ pub(crate) fn implementation_expected(
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(mol_parse_record_json).collect::<Vec<_>>() }))
         }
+        "io.mol.v3000.parse" => {
+            let records = read_small_records_by_suffix(fixture_path)?;
+            let records = records
+                .into_iter()
+                .enumerate()
+                .map(|(index, record)| {
+                    let written = write_mol_v3000(&record.molecule)?;
+                    let molecule = read_mol_v3000_str(&written)?;
+                    Ok(IndexedSmallRecord {
+                        record_index: index,
+                        title: molecule_title(&molecule.mol),
+                        molecule,
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            Ok(json!({ "records": records.iter().map(mol_parse_record_json).collect::<Vec<_>>() }))
+        }
         "core.conformers" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(conformer_record_json).collect::<Vec<_>>() }))
@@ -43,6 +60,23 @@ pub(crate) fn implementation_expected(
                 .map(|(index, record)| {
                     let written = write_mol_v2000(&record.molecule)?;
                     let molecule = read_mol_v2000_str(&written)?;
+                    Ok(IndexedSmallRecord {
+                        record_index: index,
+                        title: molecule_title(&molecule.mol),
+                        molecule,
+                    })
+                })
+                .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+            Ok(json!({ "records": records.iter().map(mol_record_json).collect::<Vec<_>>() }))
+        }
+        "io.mol.v3000.write" => {
+            let records = read_small_records_by_suffix(fixture_path)?;
+            let records = records
+                .into_iter()
+                .enumerate()
+                .map(|(index, record)| {
+                    let written = write_mol_v3000(&record.molecule)?;
+                    let molecule = read_mol_v3000_str(&written)?;
                     Ok(IndexedSmallRecord {
                         record_index: index,
                         title: molecule_title(&molecule.mol),

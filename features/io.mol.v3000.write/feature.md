@@ -23,7 +23,7 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 ## Validation
 
 - Unit tests cover writer parse-back preservation for metadata, coordinates, atom maps, charges, isotopes, radicals, and supported bond stereo.
-- Future golden validation should add RDKit-compatible V3000 fixtures.
+- RDKit-generated goldens compare Molfile-preservable content for the same external PubChem fixtures used by the V2000 writer tier.
 
 ## Out Of Scope
 
@@ -33,3 +33,4 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
 
 - v1: Feature contract reserved.
 - v2: Molfile V3000 writer for the parser-supported raw graph subset.
+- v3: Declare the same required small-molecule validation corpora as V2000 Molfile writing.

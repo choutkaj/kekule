@@ -1,9 +1,9 @@
 id = "io.mol.v3000.write"
 title = "Molfile V3000 writer"
 area = "io"
-version = 2
+version = 3
 implemented = true
 validated = false
 description = "Write deterministic Molfile V3000 CTAB output for the supported raw graph subset."
 depends_on = ["io.mol.v3000.parse"]
-validation_required = []
+validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pl-rex", "enamine-diversity"]
