@@ -81,6 +81,7 @@ pub(super) fn assert_all_stale(mol: &Molecule) {
 }
 
 mod bio;
+mod canonical;
 mod chemistry;
 mod core_payload;
 mod graph;

@@ -2,6 +2,7 @@ use crate::*;
 
 pub(crate) fn implementation_expected(
     feature: &str,
+    corpus: &str,
     fixture_path: &Path,
 ) -> Result<Value, Box<dyn Error>> {
     match feature {
@@ -98,6 +99,16 @@ pub(crate) fn implementation_expected(
                 "records": records
                     .iter()
                     .map(smiles_write_record_json)
+                    .collect::<Result<Vec<_>, Box<dyn Error>>>()?
+            }))
+        }
+        "io.smiles.canonical" => {
+            let records = read_canonical_smiles_records(fixture_path)?;
+            let exact_smiles = corpus == "tiny";
+            Ok(json!({
+                "records": records
+                    .iter()
+                    .map(|record| canonical_smiles_record_json(record, exact_smiles))
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }
@@ -208,6 +219,33 @@ pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord
             });
             continue;
         }
+        let (status, molecule) = match read_smiles_str(&smiles, SmilesParseOptions) {
+            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+            Err(_) => ("parse_error".to_owned(), None),
+        };
+        records.push(IndexedSmilesRecord {
+            record_index: index,
+            status,
+            title,
+            input_smiles: smiles,
+            molecule,
+        });
+    }
+    Ok(records)
+}
+
+pub(crate) fn read_canonical_smiles_records(
+    path: &Path,
+) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
+    let mut records = Vec::new();
+    for (index, raw_line) in fs::read_to_string(path)?.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let smiles = parts.next().unwrap_or_default().to_owned();
+        let title = parts.next().unwrap_or_default().trim().to_owned();
         let (status, molecule) = match read_smiles_str(&smiles, SmilesParseOptions) {
             Ok(molecule) => ("ok".to_owned(), Some(molecule)),
             Err(_) => ("parse_error".to_owned(), None),
@@ -451,6 +489,48 @@ pub(crate) fn smiles_write_record_json(
     }))
 }
 
+pub(crate) fn canonical_smiles_record_json(
+    record: &IndexedSmilesRecord,
+    exact_smiles: bool,
+) -> Result<Value, Box<dyn Error>> {
+    let Some(molecule) = &record.molecule else {
+        return Ok(smiles_error_record_json(record));
+    };
+    let mut molecule = molecule.clone();
+    if sanitize_small_molecule(&mut molecule, SanitizeOptions::default()).is_err() {
+        return Ok(json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "input_smiles": record.input_smiles,
+        }));
+    }
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)?;
+    let reparsed = match read_smiles_str(&written, SmilesParseOptions) {
+        Ok(reparsed) => reparsed,
+        Err(_) => {
+            return Ok(json!({
+                "record_index": record.record_index,
+                "status": "write_reparse_error",
+                "title": record.title,
+                "input_smiles": record.input_smiles,
+                "canonical_smiles": written,
+            }));
+        }
+    };
+    let mut item = json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "input_smiles": record.input_smiles,
+        "sanitized": smiles_sanitized_semantic_json(reparsed),
+    });
+    if exact_smiles {
+        item["canonical_smiles"] = json!(written);
+    }
+    Ok(item)
+}
+
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
     let Some(molecule) = &record.molecule else {
         return smiles_error_record_json(record);
@@ -537,6 +617,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
         .atoms()
         .map(|(id, atom)| {
             let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
+            let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(atom);
             let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
             let mut neighbors = mol
                 .incident_bonds(id)
@@ -561,7 +642,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
                     "isotope": atom.isotope,
                     "explicit_hydrogens": explicit_hydrogens,
                     "implicit_hydrogens": implicit_hydrogens,
-                    "no_implicit_hydrogens": atom.no_implicit_hydrogens,
+                    "no_implicit_hydrogens": no_implicit_hydrogens,
                     "explicit_valence": explicit_valence,
                     "atom_map": atom.atom_map,
                     "aromatic": atom.aromatic,
@@ -580,6 +661,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
 
 pub(crate) fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom) -> String {
     let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
+    let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(atom);
     let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
     format!(
         "{:03}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
@@ -589,7 +671,7 @@ pub(crate) fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom)
         atom.isotope.unwrap_or(0),
         explicit_hydrogens,
         implicit_hydrogens,
-        atom.no_implicit_hydrogens,
+        no_implicit_hydrogens,
         explicit_valence,
         atom.atom_map.unwrap_or(0),
         atom.aromatic
@@ -616,6 +698,18 @@ pub(crate) fn smiles_effective_hydrogens(atom: &Atom) -> (u8, u8) {
             atom.explicit_hydrogens,
             atom.implicit_hydrogens.unwrap_or(0),
         )
+    }
+}
+
+pub(crate) fn smiles_effective_no_implicit_hydrogens(atom: &Atom) -> bool {
+    if atom.element.symbol() == "N"
+        && atom.aromatic
+        && atom.formal_charge == 0
+        && (atom.explicit_hydrogens > 0 || atom.implicit_hydrogens == Some(1))
+    {
+        false
+    } else {
+        atom.no_implicit_hydrogens
     }
 }
 
@@ -672,18 +766,65 @@ pub(crate) fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Valu
 }
 
 pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
-    mol.incident_bonds(atom)
+    let atom_record = mol.atom(atom).ok();
+    let bonds = mol
+        .incident_bonds(atom)
         .ok()
         .into_iter()
         .flatten()
-        .map(|(_, bond)| match bond.order {
-            BondOrder::Zero | BondOrder::Dative => 0,
-            BondOrder::Single | BondOrder::Aromatic => 1,
-            BondOrder::Double => 2,
-            BondOrder::Triple => 3,
-            BondOrder::Quadruple => 4,
+        .map(|(_, bond)| bond)
+        .collect::<Vec<_>>();
+    let has_non_aromatic_bond = bonds.iter().any(|bond| !bond.aromatic);
+    let has_non_aromatic_multiple_bond = bonds.iter().any(|bond| {
+        !bond.aromatic
+            && matches!(
+                bond.order,
+                BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
+            )
+    });
+    let aromatic_bond_count = bonds.iter().filter(|bond| bond.aromatic).count();
+    let doubled: u8 = bonds
+        .into_iter()
+        .map(|bond| {
+            if bond.aromatic {
+                return aromatic_bond_valence_twice(
+                    atom_record,
+                    has_non_aromatic_bond,
+                    has_non_aromatic_multiple_bond,
+                    aromatic_bond_count,
+                );
+            }
+            match bond.order {
+                BondOrder::Zero | BondOrder::Dative => 0,
+                BondOrder::Single | BondOrder::Aromatic => 2,
+                BondOrder::Double => 4,
+                BondOrder::Triple => 6,
+                BondOrder::Quadruple => 8,
+            }
         })
-        .sum()
+        .sum();
+    doubled / 2
+}
+
+fn aromatic_bond_valence_twice(
+    atom: Option<&Atom>,
+    has_non_aromatic_bond: bool,
+    has_non_aromatic_multiple_bond: bool,
+    aromatic_bond_count: usize,
+) -> u8 {
+    let Some(atom) = atom else {
+        return 2;
+    };
+    if atom.aromatic && has_non_aromatic_multiple_bond {
+        return 2;
+    }
+    match atom.element.symbol() {
+        "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
+        "N" if atom.formal_charge == 0 && atom.explicit_hydrogens > 0 => 2,
+        "N" if atom.formal_charge == 0 && has_non_aromatic_bond => 2,
+        "N" if atom.formal_charge == 0 && aromatic_bond_count >= 3 => 2,
+        _ => 3,
+    }
 }
 
 pub(crate) fn bonds_json(mol: &Molecule) -> Vec<Value> {

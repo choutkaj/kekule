@@ -22,6 +22,10 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Integrates with the first-wave valence and ring-set perception stack.
 - Applies a 4n+2 electron-count model for common C, N, O, S, Se, Te, and P rings and small fused ring components.
 - Computes pi-electron counts from bond order, and uses an atom-contribution path for explicitly imported aromatic-bond rings.
+- Accepts imported aromatic-bond rings when RDKit-like variable atom-contribution ranges contain a valid 4n+2 count.
+- Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
+- Clears five-member neutral imide carbonyl ring atoms when a saturated ring nitrogen is flanked by two terminal ring carbonyls.
+- Clears saturated fused all-carbon ring atoms that are not retained by neighboring aromatic rings, saturated aromatic carbon centers, and localized cyclic amidine centers.
 - Uses conservative guards for small rings, hetero fused donors, lactone-like rings, and large macrocycles exposed by external PubChem validation.
 - Treats unsupported ring elements as non-aromatic for the current model rather than failing the whole perception pass.
 - Leaves unsupported or ambiguous systems non-aromatic rather than claiming full RDKit parity.
@@ -49,3 +53,11 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v7: Reject unsupported elements in explicitly aromatic ring representations and preserve caller state when sanitization propagates the error.
 - v8: Count explicitly imported aromatic-bond rings with atom contributions so lowercase aromatic SMILES sanitize without treating every aromatic bond as a localized double bond.
 - v9: Propagate configurable structured ring resource limits before mutating aromatic flags.
+- v10: Narrow saturated tertiary amine fused-ring clearing to carbon-substituted amines, preserving N-O substituted lactam aromaticity.
+- v11: Preserve valid imported aromatic SMILES components while clearing saturated fused thioether and ring-oxo chalcogen bridges.
+- v12: Refine imported aromatic nitrogen, pyrone, fused lactone, saturated fused carbon, and fluorenone-like carbonyl bridge handling exposed by canonical SMILES PubChem validation.
+- v13: Broaden fused carbonyl bridge and cationic imide cleanup using exocyclic-pi and saturated-bridge criteria; PubChem-1000 still exposes fused subsystem selection gaps.
+- v14: Add RDKit-like aromatic-order electron ranges plus final aromatic consistency cleanup for terminal imine and orphan aromatic fragments.
+- v15: Generalize imide carbonyl cleanup from cationic systems to neutral five-member imides with saturated nitrogen between two ring carbonyls.
+- v16: Refine fused saturated carbon and cyclic amidine cleanup so sp3/enone fused atoms do not remain aromatic while valid aromatic iminium and carbonyl systems are preserved.
+- v17: Refine saturated tertiary amine cleanup to treat oxidized chalcogen substituents as non-donor sulfone-like groups, preserving aliphatic sulfonamide ring nitrogens.

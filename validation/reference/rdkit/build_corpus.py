@@ -48,7 +48,7 @@ SDF_FEATURES = (
     "io.sdf.v2000.parse",
     "io.sdf.v2000.write",
 )
-SMILES_FEATURES = ("io.smiles.parse", "io.smiles.write")
+SMILES_FEATURES = ("io.smiles.parse", "io.smiles.write", "io.smiles.canonical")
 
 
 def main() -> int:

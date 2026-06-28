@@ -27,6 +27,7 @@ SUPPORTED_FEATURES = {
     "io.sdf.v2000.write",
     "io.smiles.parse",
     "io.smiles.write",
+    "io.smiles.canonical",
 }
 
 
@@ -178,6 +179,14 @@ def generate_document(
     elif feature_id == "io.smiles.write":
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
         expected = {"records": [smiles_write_record(record) for record in records]}
+    elif feature_id == "io.smiles.canonical":
+        records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
+        expected = {
+            "records": [
+                canonical_smiles_record(record, exact_smiles=corpus_id == "tiny")
+                for record in records
+            ]
+        }
     elif feature_id == "algo.rings.fast":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_record(record) for record in records]}
@@ -293,6 +302,32 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
                 }
             )
             continue
+        mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
+        records.append(
+            {
+                "record_index": index,
+                "status": "ok" if mol is not None else "parse_error",
+                "title": title,
+                "smiles": smiles,
+                "mol": mol,
+                "radicals": {},
+                "bond_stereo": {},
+            }
+        )
+    return records
+
+
+def read_canonical_smiles_records(
+    fixture_path: Path, Chem: Any, sanitize: bool
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=1)
+        smiles = parts[0]
+        title = parts[1].strip() if len(parts) > 1 else ""
         mol = Chem.MolFromSmiles(smiles, sanitize=sanitize)
         records.append(
             {
@@ -663,6 +698,35 @@ def smiles_write_record(record: dict[str, Any]) -> dict[str, Any]:
         "input_smiles": record["smiles"],
         "sanitized": smiles_sanitized_semantic_record(mol),
     }
+
+
+def canonical_smiles_record(record: dict[str, Any], exact_smiles: bool) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+            "title": record["title"],
+            "input_smiles": record["smiles"],
+        }
+    canonical = Chem.MolToSmiles(
+        mol,
+        canonical=True,
+        isomericSmiles=False,
+    )
+    canonical_mol = Chem.MolFromSmiles(canonical, sanitize=False)
+    item = {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "input_smiles": record["smiles"],
+        "sanitized": smiles_sanitized_semantic_record(canonical_mol),
+    }
+    if exact_smiles:
+        item["canonical_smiles"] = canonical
+    return item
 
 
 def smiles_raw_semantic_record(mol: Any) -> dict[str, Any]:

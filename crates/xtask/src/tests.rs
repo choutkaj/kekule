@@ -598,6 +598,46 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
 
     let aromatic = read_smiles_str("c1ccccc1", SmilesParseOptions).expect("benzene should parse");
+    let mut sanitized_aromatic = aromatic.clone();
+    sanitize_small_molecule(&mut sanitized_aromatic, SanitizeOptions::default())
+        .expect("benzene should sanitize");
+    assert_eq!(
+        explicit_valence_json(&sanitized_aromatic.mol, AtomId::new(0)),
+        3
+    );
+    let mut thiophene = read_smiles_str("c1ccsc1", SmilesParseOptions).expect("thiophene parses");
+    sanitize_small_molecule(&mut thiophene, SanitizeOptions::default())
+        .expect("thiophene should sanitize");
+    let sulfur_id = thiophene
+        .mol
+        .atoms()
+        .find_map(|(id, atom)| (atom.element.symbol() == "S").then_some(id))
+        .expect("sulfur atom");
+    assert_eq!(explicit_valence_json(&thiophene.mol, sulfur_id), 2);
+    let mut fused_triazine = read_smiles_str(
+        "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
+        SmilesParseOptions,
+    )
+    .expect("fused triazine should parse");
+    sanitize_small_molecule(&mut fused_triazine, SanitizeOptions::default())
+        .expect("fused triazine should sanitize");
+    let tricoordinate_aromatic_nitrogen = fused_triazine
+        .mol
+        .atoms()
+        .find_map(|(id, atom)| {
+            let aromatic_degree = fused_triazine
+                .mol
+                .incident_bonds(id)
+                .ok()?
+                .filter(|(_, bond)| bond.aromatic)
+                .count();
+            (atom.element.symbol() == "N" && atom.aromatic && aromatic_degree >= 3).then_some(id)
+        })
+        .expect("tri-coordinate aromatic nitrogen");
+    assert_eq!(
+        explicit_valence_json(&fused_triazine.mol, tricoordinate_aromatic_nitrogen),
+        3
+    );
     assert!(smiles_sanitized_bonds_json(&aromatic.mol)
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
@@ -609,6 +649,98 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .iter()
         .any(|atom| atom["isotope"] == 13 && atom["atom_map"] == 7));
     assert!(atoms.iter().all(|atom| atom["neighbors"].is_array()));
+}
+
+#[test]
+fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
+    let root = temp_feature_root("canonical-no-prefilter");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "C/C=C\\C CID:example\n").expect("fixture should write");
+
+    let records = read_canonical_smiles_records(&fixture).expect("records should load");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].record_index, 0);
+    assert_eq!(records[0].status, "parse_error");
+    assert_eq!(records[0].input_smiles, "C/C=C\\C");
+    assert!(records[0].molecule.is_none());
+}
+
+#[test]
+fn canonical_smiles_validation_sanitizes_before_writing() {
+    let root = temp_feature_root("canonical-sanitize-before-write");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "C1=CC=CC=C1 CID:benzene\n").expect("fixture should write");
+
+    let records = read_canonical_smiles_records(&fixture).expect("records should load");
+    let item =
+        canonical_smiles_record_json(&records[0], true).expect("canonical record should render");
+
+    assert_eq!(item["status"], "ok");
+    assert_eq!(item["canonical_smiles"], "c1ccccc1");
+}
+
+#[test]
+fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
+    let molecule = read_smiles_str("CCCCCCCc1cc2c(=O)ccn(O)c2cc1", SmilesParseOptions)
+        .expect("aromatic carbonyl SMILES should parse");
+
+    let item = smiles_sanitized_semantic_json(molecule);
+    let atoms = item["atoms"]
+        .as_array()
+        .expect("sanitized atoms should be an array");
+
+    assert!(atoms.iter().any(|atom| {
+        atom["symbol"] == "C"
+            && atom["aromatic"] == true
+            && atom["explicit_valence"] == 4
+            && atom["neighbors"].as_array().is_some_and(|neighbors| {
+                neighbors.iter().any(|neighbor| {
+                    neighbor["bond_type"] == "DOUBLE"
+                        && neighbor["atom"]
+                            .as_str()
+                            .is_some_and(|key| key.starts_with("008|O|0|0|0|0|false|2|"))
+                })
+            })
+    }));
+    assert!(!atoms.iter().any(|atom| {
+        atom["symbol"] == "C" && atom["aromatic"] == true && atom["explicit_valence"] == 5
+    }));
+    assert!(atoms.iter().any(|atom| {
+        atom["symbol"] == "N"
+            && atom["aromatic"] == true
+            && atom["explicit_valence"] == 3
+            && atom["neighbors"].as_array().is_some_and(|neighbors| {
+                neighbors.iter().any(|neighbor| {
+                    neighbor["bond_type"] == "SINGLE"
+                        && neighbor["atom"]
+                            .as_str()
+                            .is_some_and(|key| key.starts_with("008|O|0|0|0|1|false|1|"))
+                })
+            })
+    }));
+    assert!(!atoms.iter().any(|atom| {
+        atom["symbol"] == "N" && atom["aromatic"] == true && atom["explicit_valence"] == 4
+    }));
+}
+
+#[test]
+fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
+    let molecule =
+        read_smiles_str("[nH]1cccc1", SmilesParseOptions).expect("aromatic nH SMILES should parse");
+
+    let item = smiles_sanitized_semantic_json(molecule);
+    let atoms = item["atoms"]
+        .as_array()
+        .expect("sanitized atoms should be an array");
+
+    assert!(atoms.iter().any(|atom| {
+        atom["symbol"] == "N"
+            && atom["aromatic"] == true
+            && atom["explicit_hydrogens"] == 1
+            && atom["implicit_hydrogens"] == 0
+            && atom["no_implicit_hydrogens"] == false
+    }));
 }
 
 fn temp_feature_root(label: &str) -> PathBuf {
