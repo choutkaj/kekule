@@ -842,6 +842,123 @@ fn saturated_fused_ring_does_not_follow_aromatic_core() {
 }
 
 #[test]
+fn canonical_saturated_fused_ring_round_trip_stays_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "C1CCC2=NC3=CC=CC=C3C(=C2C1)[NH2+]CCSCCCl.[Cl-]",
+        SmilesParseOptions,
+    )
+    .expect("saturated fused ring salt should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("saturated fused ring salt should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("saturated fused ring salt should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let saturated_carbons = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && atom.implicit_hydrogens == Some(2)
+                && reparsed
+                    .mol
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| bonds.count() == 2)
+        })
+        .filter(|(_, atom)| !atom.aromatic)
+        .count();
+    assert!(
+        saturated_carbons >= 4,
+        "canonical output should keep saturated fused carbons aliphatic: {written}"
+    );
+}
+
+#[test]
+fn canonical_fused_chromanone_round_trip_keeps_lactone_ring_aliphatic() {
+    let mut molecule = read_smiles_str("C1C(C(=O)C2=CC=CC=C2O1)C3=CC=CC=C3", SmilesParseOptions)
+        .expect("fused chromanone should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused chromanone should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused chromanone should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let aromatic_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(
+        aromatic_atoms, 12,
+        "canonical output should keep only the phenyl and fused benzene rings aromatic: {written}"
+    );
+}
+
+#[test]
+fn conjugated_fused_benzopyrone_round_trip_keeps_lactone_ring_aromatic() {
+    let mut molecule = read_smiles_str(
+        "C1=CC=C(C=C1)C2=C(C(=O)C3=CC=CC=C3O2)OC(=O)C4=CC5=C(C=C4Cl)SC6=NC=CN6S5(=O)=O",
+        SmilesParseOptions,
+    )
+    .expect("conjugated benzopyrone should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("conjugated benzopyrone should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("conjugated benzopyrone should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let aromatic_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(
+        aromatic_atoms, 27,
+        "canonical output should preserve the conjugated benzopyrone aromatic system: {written}"
+    );
+}
+
+#[test]
+fn fused_fluorenone_round_trip_keeps_carbonyl_bridge_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "C1=CC=C2C(=C1)C3=C(C2=O)C=C(C=C3)[N+]#N.C(=O)(C(F)(F)F)O",
+        SmilesParseOptions,
+    )
+    .expect("fused fluorenone salt should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused fluorenone salt should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused fluorenone salt should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let aromatic_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(
+        aromatic_atoms, 12,
+        "canonical output should keep the fluorenone carbonyl bridge aliphatic: {written}"
+    );
+}
+
+#[test]
 fn partially_saturated_carbonyl_fused_rings_stay_aliphatic() {
     let mut molecule = read_smiles_str(
         "CC1(CC2=C(C(=O)C1)OC3=C(C2C4=CC=CC=C4[N+](=O)[O-])C(=O)CC(C3)(C)C)C",
@@ -1138,6 +1255,53 @@ fn fused_saturated_thioether_bridge_stays_aliphatic() {
         })
         .count();
     assert_eq!(reparsed_neutral_sulfur_aromatic_count, 0, "{written}");
+}
+
+#[test]
+fn canonical_smiles_prefers_sanitizable_lactone_candidate() {
+    let mut molecule = read_smiles_str(
+        "CC[C@H]1[C@H](COC1=O)CC2=CN=CN2C.C=CC(=O)O",
+        SmilesParseOptions,
+    )
+    .expect("lactone imidazole mixture should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("lactone imidazole mixture should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    assert_eq!(reparsed.mol.atom_count(), molecule.mol.atom_count());
+    assert_eq!(reparsed.mol.bond_count(), molecule.mol.bond_count());
+}
+
+#[test]
+fn aromatic_pyridinium_smiles_sanitizes() {
+    let mut molecule = read_smiles_str("CCCCCC(=O)C[n+]1ccccc1", SmilesParseOptions)
+        .expect("aromatic pyridinium should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("aromatic pyridinium should sanitize");
+
+    let cationic_nitrogen = molecule
+        .mol
+        .atoms()
+        .find(|(_, atom)| atom.element.symbol() == "N" && atom.formal_charge > 0)
+        .expect("pyridinium nitrogen should exist")
+        .1;
+    assert!(cationic_nitrogen.aromatic);
+}
+
+#[test]
+fn aromatic_pyrone_canonical_smiles_sanitizes() {
+    let mut molecule = read_smiles_str("CC#CC#Cc1cccc(=O)o1", SmilesParseOptions)
+        .expect("aromatic pyrone should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("aromatic pyrone should sanitize");
 }
 
 #[test]

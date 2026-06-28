@@ -8,7 +8,7 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 
 - Exposes `CanonicalSmilesWriteOptions` and `write_canonical_smiles`.
 - Reuses the noncanonical writer's supported chemistry subset and structured write errors.
-- Chooses a deterministic representation by ranking atoms, trying every atom in each connected component as a root, rendering rank-ordered branches and ring closures, and selecting the lexicographically smallest component string.
+- Chooses a deterministic representation by ranking atoms, trying every atom in each connected component as a root, rendering rank-ordered branches and ring closures, and selecting the smallest component string that preserves sanitized atom-state and degree semantics when one is available.
 - Sorts disconnected component strings before joining with `.`.
 - Does not sanitize or perceive chemistry before writing.
 
@@ -39,3 +39,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v7: Sanitize canonical validation fixtures before writing so Kekule/aromatic normalization matches RDKit.
 - v8: Preserve bracket hydrogens on metal-bound organic atoms so canonical output reparses with RDKit-like valence semantics.
 - v9: Prefer aromatic continuations as canonical main paths so fused heteroaromatic branches reparse with stable aromaticity.
+- v10: Rank canonical candidates by sanitized semantic preservation before string shape, improving lactone, fused aromatic, and topology-sensitive round trips.

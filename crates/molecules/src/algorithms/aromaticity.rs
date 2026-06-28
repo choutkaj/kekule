@@ -158,8 +158,11 @@ fn perceive_rdkit_like_aromaticity(
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings());
     clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
+    clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings());
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
+    clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
+    clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings());
     for component in imported_aromatic_components {
         if !component.iter().any(|atom_id| {
             mol.atom(*atom_id)
@@ -348,6 +351,60 @@ fn clear_fused_lactam_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     }
 }
 
+fn clear_fused_lactone_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        let fused = rings
+            .iter()
+            .enumerate()
+            .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
+        if !fused
+            || ring.atoms.len() < 6
+            || !ring_has_chalcogen_donor(mol, ring)
+            || ring_has_conjugated_atom_path(mol, ring)
+            || !ring
+                .atoms
+                .iter()
+                .any(|atom_id| is_chalcogen_bridge_without_pi(mol, ring, *atom_id))
+            || ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
+        {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            let retained_by_other_ring = rings.iter().enumerate().any(|(other_index, other)| {
+                other_index != index
+                    && other.atoms.contains(atom_id)
+                    && ring_terminal_exocyclic_pi_bond_count(mol, other) == 0
+                    && other
+                        .atoms
+                        .iter()
+                        .any(|other_atom| mol.atom(*other_atom).is_ok_and(|atom| atom.aromatic))
+            });
+            if !retained_by_other_ring {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn is_chalcogen_bridge_without_pi(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    mol.atom(atom_id)
+        .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
+        && !ring_atom_has_pi_bond(mol, ring, atom_id)
+        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+}
+
 fn clear_saturated_tertiary_amine_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
@@ -369,6 +426,72 @@ fn clear_saturated_tertiary_amine_ring_atoms(mol: &mut Molecule, rings: &[Ring])
             }
         }
     }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn clear_saturated_fused_carbon_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        let fused = rings
+            .iter()
+            .enumerate()
+            .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
+        if !fused || !fused_component_is_all_carbon(mol, ring) || ring_pi_bond_count(mol, ring) > 1
+        {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            if mol
+                .atom(*atom_id)
+                .is_ok_and(|atom| atom.element.symbol() == "C")
+                && !ring_atom_has_pi_bond(mol, ring, *atom_id)
+                && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
+            {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn clear_fused_carbonyl_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let atoms_to_clear =
+        rings
+            .iter()
+            .enumerate()
+            .filter(|(index, ring)| {
+                rings.iter().enumerate().any(|(other_index, other)| {
+                    other_index != *index && rings_share_bond(ring, other)
+                }) && ring.atoms.len() == 5
+                    && fused_component_is_all_carbon(mol, ring)
+            })
+            .flat_map(|(_, ring)| {
+                ring.atoms.iter().copied().filter(|atom_id| {
+                    atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id)
+                        && !ring_atom_has_pi_bond(mol, ring, *atom_id)
+                })
+            })
+            .collect::<BTreeSet<_>>();
 
     for atom_id in &atoms_to_clear {
         if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
@@ -1016,13 +1139,25 @@ fn aromatic_order_ring_pi_electrons(
     mol: &Molecule,
     ring: &Ring,
 ) -> std::result::Result<u8, AromaticityError> {
+    if ring.atoms.len() == 6
+        && ring_has_chalcogen_donor(mol, ring)
+        && ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) == 1
+        && !ring_has_external_aromatic_bond(mol, ring)
+    {
+        return Ok(6);
+    }
+
     let mut electrons = 0u8;
     for atom_id in &ring.atoms {
         let atom = mol.atom(*atom_id).expect("ring atom should be live");
         electrons += match atom.element.symbol() {
             "B" | "C" => 1,
             "N" => {
-                if atom.explicit_hydrogens > 0 {
+                if atom.explicit_hydrogens > 0
+                    || atom.formal_charge == 0
+                        && aromatic_order_nitrogen_is_pyrrole_like(mol, *atom_id)
+                {
                     2
                 } else {
                     1
@@ -1033,6 +1168,12 @@ fn aromatic_order_ring_pi_electrons(
         };
     }
     Ok(electrons)
+}
+
+fn aromatic_order_nitrogen_is_pyrrole_like(mol: &Molecule, atom_id: AtomId) -> bool {
+    mol.incident_bonds(atom_id)
+        .map(|bonds| bonds.count() >= 3)
+        .unwrap_or(false)
 }
 
 fn ring_contains_element(mol: &Molecule, ring: &Ring, symbol: &str) -> bool {
@@ -1048,6 +1189,22 @@ fn ring_has_aromatic_order(mol: &Molecule, ring: &Ring) -> bool {
         mol.bond(*bond_id)
             .map(|bond| bond.order == BondOrder::Aromatic)
             .unwrap_or(false)
+    })
+}
+
+fn ring_has_external_aromatic_bond(mol: &Molecule, ring: &Ring) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        mol.incident_bonds(*atom_id)
+            .ok()
+            .into_iter()
+            .flatten()
+            .any(|(bond_id, bond)| {
+                !ring.bonds.contains(&bond_id)
+                    && matches!(bond.order, BondOrder::Aromatic)
+                    && mol
+                        .atom(bond.other_atom(*atom_id))
+                        .is_ok_and(|atom| atom.aromatic)
+            })
     })
 }
 

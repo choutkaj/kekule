@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::algorithms::{canonical_atom_ranking, ordered_atom_pair, CanonicalAtomRanking};
+use crate::chemistry::{sanitize_small_molecule, SanitizeOptions};
 use crate::core::*;
 use crate::io::MolWriteError;
 
@@ -542,7 +543,7 @@ pub fn write_canonical_smiles(
                     .collect::<std::result::Result<Vec<_>, _>>()?,
             );
         }
-        candidates.sort_by_key(|candidate| canonical_smiles_candidate_key(candidate));
+        candidates.sort_by_key(|candidate| canonical_smiles_candidate_key(mol, candidate));
         candidates.dedup();
         if let Some(candidate) = candidates.into_iter().next() {
             components.push(candidate);
@@ -567,13 +568,69 @@ impl CanonicalBondTraversal {
     }
 }
 
-fn canonical_smiles_candidate_key(candidate: &str) -> (usize, usize, usize, String) {
+fn canonical_smiles_candidate_key(
+    mol: &Molecule,
+    candidate: &str,
+) -> (usize, usize, usize, usize, String) {
     (
+        canonical_smiles_candidate_sanitize_rank(mol, candidate),
         candidate.matches('(').count(),
         explicit_ring_bond_marker_count(candidate),
         leading_ring_label_count(candidate),
         candidate.to_owned(),
     )
+}
+
+fn canonical_smiles_candidate_sanitize_rank(mol: &Molecule, candidate: &str) -> usize {
+    let Ok(mut molecule) = read_smiles_str(candidate, SmilesParseOptions) else {
+        return 2;
+    };
+    if sanitize_small_molecule(&mut molecule, SanitizeOptions::default()).is_err() {
+        return 2;
+    }
+    if canonical_smiles_semantic_signature(&molecule.mol)
+        == canonical_smiles_semantic_signature(mol)
+    {
+        0
+    } else {
+        1
+    }
+}
+
+fn canonical_smiles_semantic_signature(
+    mol: &Molecule,
+) -> Vec<(u8, i8, u16, u8, u8, bool, usize, usize)> {
+    let mut atoms = mol
+        .atoms()
+        .map(|(id, atom)| {
+            let degree = mol
+                .incident_bonds(id)
+                .map(|bonds| bonds.count())
+                .unwrap_or_default();
+            let aromatic_degree = mol
+                .incident_bonds(id)
+                .map(|bonds| {
+                    bonds
+                        .filter(|(_, bond)| {
+                            bond.aromatic || matches!(bond.order, BondOrder::Aromatic)
+                        })
+                        .count()
+                })
+                .unwrap_or_default();
+            (
+                atom.element.atomic_number(),
+                atom.formal_charge,
+                atom.isotope.unwrap_or_default(),
+                atom.explicit_hydrogens,
+                atom.implicit_hydrogens.unwrap_or_default(),
+                atom.aromatic,
+                degree,
+                aromatic_degree,
+            )
+        })
+        .collect::<Vec<_>>();
+    atoms.sort_unstable();
+    atoms
 }
 
 fn leading_ring_label_count(candidate: &str) -> usize {
