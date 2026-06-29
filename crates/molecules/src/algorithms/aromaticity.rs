@@ -104,7 +104,7 @@ fn perceive_rdkit_like_aromaticity(
                 return Ok(false);
             }
             let electrons = aromatic_ring_pi_electrons(mol, ring)?;
-            Ok(electrons >= 6 && (electrons - 2) % 4 == 0)
+            Ok(electrons >= 2 && (electrons - 2) % 4 == 0)
         })
         .collect::<std::result::Result<Vec<_>, AromaticityError>>()?;
     let non_aromatic_fusion_singles = ring_set
@@ -1793,27 +1793,7 @@ fn localized_ring_atom_donor_type(
         return Ok(AromaticElectronDonorType::One);
     }
 
-    match atom.element.symbol() {
-        "C" => {
-            if atom.formal_charge < 0 && !atom_has_exocyclic_pi_bond(mol, ring, atom_id) {
-                Ok(AromaticElectronDonorType::Two)
-            } else if atom_has_exocyclic_pi_bond(mol, ring, atom_id) {
-                Ok(AromaticElectronDonorType::Vacant)
-            } else {
-                Ok(AromaticElectronDonorType::None)
-            }
-        }
-        "N" => {
-            if atom.formal_charge > 0 && atom_has_exocyclic_pi_bond(mol, ring, atom_id) {
-                Ok(AromaticElectronDonorType::Vacant)
-            } else {
-                Ok(AromaticElectronDonorType::Two)
-            }
-        }
-        "O" | "S" | "Se" | "Te" | "P" => Ok(AromaticElectronDonorType::Two),
-        "B" => Ok(AromaticElectronDonorType::Vacant),
-        _ => Ok(AromaticElectronDonorType::None),
-    }
+    Ok(rdkit_like_atom_donor_type(mol, ring, atom_id, atom, true))
 }
 
 fn ring_atom_is_aromatic_candidate(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -1864,7 +1844,56 @@ fn atom_aromatic_candidate_degree(mol: &Molecule, atom_id: AtomId, atom: &Atom) 
         .min(u8::MAX as usize) as u8;
     bonded_degree
         .saturating_add(atom.explicit_hydrogens)
-        .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+        .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
+}
+
+fn aromaticity_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
+    if atom.no_implicit_hydrogens {
+        return atom.implicit_hydrogens.unwrap_or(0);
+    }
+    if let Some(hydrogens) = atom.implicit_hydrogens {
+        return hydrogens;
+    }
+    let Some(target) = aromaticity_valence_target(atom) else {
+        return 0;
+    };
+    target.saturating_sub(explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens))
+}
+
+fn aromaticity_valence_target(atom: &Atom) -> Option<u8> {
+    if atom.aromatic {
+        return match atom.element.symbol() {
+            "B" | "C" => Some(3),
+            "N" => {
+                if atom.explicit_hydrogens > 0 {
+                    Some(3)
+                } else {
+                    Some(2)
+                }
+            }
+            "O" | "S" | "Se" | "Te" => Some(2),
+            "P" => Some(3),
+            _ => None,
+        };
+    }
+
+    match (atom.element.symbol(), atom.formal_charge) {
+        ("B", -1) => Some(4),
+        ("B", _) => Some(3),
+        ("C", 1 | -1) => Some(3),
+        ("C", _) => Some(4),
+        ("N", 1) => Some(4),
+        ("N", -1) => Some(2),
+        ("N", _) => Some(3),
+        ("O", -1) => Some(1),
+        ("O", 1) => Some(3),
+        ("O", _) => Some(2),
+        ("P", 1) => Some(4),
+        ("P", _) => Some(3),
+        ("S" | "Se" | "Te", -1 | 1) => Some(1),
+        ("S" | "Se" | "Te", _) => Some(2),
+        _ => None,
+    }
 }
 
 fn aromatic_order_ring_pi_electrons(
@@ -1940,6 +1969,105 @@ fn aromatic_order_atom_donor_type(
         }
         "O" | "S" | "Se" | "Te" | "P" => Ok(AromaticElectronDonorType::Two),
         _ => Err(AromaticityError::UnsupportedElement(atom_id)),
+    }
+}
+
+fn rdkit_like_atom_donor_type(
+    mol: &Molecule,
+    ring: &Ring,
+    atom_id: AtomId,
+    atom: &Atom,
+    exocyclic_bonds_steal_electrons: bool,
+) -> AromaticElectronDonorType {
+    let Some(mut electrons) = count_rdkit_like_atom_pi_electrons(mol, atom_id, atom) else {
+        return AromaticElectronDonorType::None;
+    };
+    let exocyclic_pi_neighbor = atom_exocyclic_pi_neighbor(mol, ring, atom_id);
+    let has_exocyclic_pi = exocyclic_pi_neighbor.is_some();
+    let has_incident_pi_bond = atom_explicit_pi_bond_count(mol, atom_id) > 0
+        || mol
+            .incident_bonds(atom_id)
+            .ok()
+            .into_iter()
+            .flatten()
+            .any(|(_, bond)| matches!(bond.order, BondOrder::Aromatic));
+
+    if electrons == 0 {
+        if has_exocyclic_pi {
+            AromaticElectronDonorType::Vacant
+        } else if ring_atom_has_pi_bond(mol, ring, atom_id) {
+            AromaticElectronDonorType::One
+        } else {
+            AromaticElectronDonorType::None
+        }
+    } else if electrons == 1 {
+        if exocyclic_pi_neighbor.is_some_and(|neighbor| {
+            exocyclic_bonds_steal_electrons
+                && atom_is_more_electronegative_than(mol, neighbor, atom)
+        }) {
+            AromaticElectronDonorType::Vacant
+        } else if has_exocyclic_pi || has_incident_pi_bond {
+            AromaticElectronDonorType::One
+        } else if atom.formal_charge == 1 {
+            AromaticElectronDonorType::Vacant
+        } else {
+            AromaticElectronDonorType::None
+        }
+    } else {
+        if exocyclic_pi_neighbor.is_some_and(|neighbor| {
+            exocyclic_bonds_steal_electrons
+                && atom_is_more_electronegative_than(mol, neighbor, atom)
+        }) {
+            electrons -= 1;
+        }
+        if electrons % 2 == 1 {
+            AromaticElectronDonorType::One
+        } else {
+            AromaticElectronDonorType::Two
+        }
+    }
+}
+
+fn count_rdkit_like_atom_pi_electrons(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> Option<u8> {
+    let default_valence = rdkit_default_valence(atom)?;
+    let degree = atom_aromatic_candidate_degree(mol, atom_id, atom);
+    if default_valence <= 1 || degree > 3 {
+        return None;
+    }
+
+    let lone_pair_electrons = (i16::from(rdkit_outer_electrons(atom)?)
+        - i16::from(default_valence)
+        - i16::from(atom.formal_charge))
+    .max(0);
+    let radical_electrons = i16::from(atom.radical.map_or(0, AtomRadical::unpaired_electron_count));
+    let mut electrons =
+        i16::from(default_valence) - i16::from(degree) + lone_pair_electrons - radical_electrons;
+    if electrons < 0 {
+        return None;
+    }
+    if electrons > 1 && atom_explicit_unsaturation(mol, atom_id) > 1 {
+        electrons = 1;
+    }
+    u8::try_from(electrons).ok()
+}
+
+fn rdkit_default_valence(atom: &Atom) -> Option<u8> {
+    match atom.element.symbol() {
+        "B" => Some(3),
+        "C" => Some(4),
+        "N" | "P" => Some(3),
+        "O" | "S" | "Se" | "Te" => Some(2),
+        _ => None,
+    }
+}
+
+fn rdkit_outer_electrons(atom: &Atom) -> Option<u8> {
+    match atom.element.symbol() {
+        "B" => Some(3),
+        "C" => Some(4),
+        "N" | "P" => Some(5),
+        "O" | "S" | "Se" | "Te" => Some(6),
+        _ => None,
     }
 }
 
@@ -2071,6 +2199,55 @@ fn atom_explicit_pi_bond_count(mol: &Molecule, atom_id: AtomId) -> usize {
         .flatten()
         .filter(|(_, bond)| matches!(bond.order, BondOrder::Double | BondOrder::Triple))
         .count()
+}
+
+fn atom_explicit_unsaturation(mol: &Molecule, atom_id: AtomId) -> u8 {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .map(|(_, bond)| match bond.order {
+            BondOrder::Double => 1,
+            BondOrder::Triple => 2,
+            BondOrder::Quadruple => 3,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn atom_exocyclic_pi_neighbor(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> Option<AtomId> {
+    mol.incident_bonds(atom_id)
+        .ok()?
+        .filter_map(|(bond_id, bond)| {
+            if ring.bonds.contains(&bond_id)
+                || ring.atoms.contains(&bond.other_atom(atom_id))
+                || !matches!(bond.order, BondOrder::Double | BondOrder::Triple)
+            {
+                return None;
+            }
+            Some(bond.other_atom(atom_id))
+        })
+        .next()
+}
+
+fn atom_is_more_electronegative_than(mol: &Molecule, left: AtomId, right: &Atom) -> bool {
+    mol.atom(left).is_ok_and(|left| {
+        atom_electronegativity(left)
+            .zip(atom_electronegativity(right))
+            .is_some_and(|(left, right)| left > right)
+    })
+}
+
+fn atom_electronegativity(atom: &Atom) -> Option<u16> {
+    match atom.element.symbol() {
+        "B" => Some(204),
+        "C" | "Se" => Some(255),
+        "N" => Some(304),
+        "O" => Some(344),
+        "P" | "Te" => Some(219),
+        "S" => Some(258),
+        _ => None,
+    }
 }
 
 fn atom_has_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {

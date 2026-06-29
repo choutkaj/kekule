@@ -337,6 +337,62 @@ fn aromaticity_rejects_tetracoordinate_ring_atom_candidate() {
 }
 
 #[test]
+fn aromaticity_rejects_protonated_saturated_ring_nitrogen_donor() {
+    let (mut mol, atoms, bonds) = ring_molecule(
+        &["N", "C", "C", "C", "C"],
+        &[
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    {
+        let mut nitrogen = mol.atom_mut(atoms[0]).expect("ring atom exists");
+        nitrogen.formal_charge = 1;
+        nitrogen.explicit_hydrogens = 1;
+        nitrogen.implicit_hydrogens = Some(0);
+        nitrogen.no_implicit_hydrogens = true;
+    }
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("protonated saturated ring nitrogen should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
+fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
+    let (mut mol, atoms, bonds) = ring_molecule(
+        &["C", "C", "C"],
+        &[BondOrder::Single, BondOrder::Double, BondOrder::Single],
+    );
+    {
+        let mut cation = mol.atom_mut(atoms[0]).expect("ring atom exists");
+        cation.formal_charge = 1;
+        cation.explicit_hydrogens = 1;
+        cation.implicit_hydrogens = Some(0);
+        cation.no_implicit_hydrogens = true;
+    }
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("cyclopropenyl cation should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| mol.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
 fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
     let (mut mol, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C"],
