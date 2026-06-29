@@ -887,18 +887,13 @@ fn clear_saturated_fused_ether_bridge_atoms(
         .iter()
         .enumerate()
         .filter(|(index, ring)| {
-            ring.atoms.len() >= 5
-                && ring_has_chalcogen_donor(mol, ring)
-                && ring_hetero_donor_count(mol, ring) == 1
-                && ring_contains_element(mol, ring, "O")
-                && !ring_contains_element(mol, ring, "S")
-                && !ring_contains_element(mol, ring, "Se")
-                && !ring_contains_element(mol, ring, "Te")
-                && !ring_analyses[*index].localized_all_atoms_are_candidates()
-                && ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
-                && rings.iter().enumerate().any(|(other_index, other)| {
-                    other_index != *index && rings_share_bond(ring, other)
-                })
+            ring_is_saturated_fused_ether_bridge_cleanup_candidate(
+                mol,
+                rings,
+                *index,
+                ring,
+                &ring_analyses[*index],
+            )
         })
         .flat_map(|(_, ring)| {
             ring.atoms.iter().copied().filter(|atom_id| {
@@ -919,6 +914,24 @@ fn clear_saturated_fused_ether_bridge_atoms(
             bond.aromatic = false;
         }
     }
+}
+
+fn ring_is_saturated_fused_ether_bridge_cleanup_candidate(
+    mol: &Molecule,
+    rings: &[Ring],
+    index: usize,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    ring.atoms.len() >= 5
+        && analysis.localized_has_active_element_donor(mol, "O")
+        && analysis.localized_active_hetero_donor_count(mol) == 1
+        && !analysis.localized_all_atoms_are_candidates()
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
+        && rings
+            .iter()
+            .enumerate()
+            .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other))
 }
 
 fn molecule_contains_heavier_chalcogen(mol: &Molecule) -> bool {
@@ -1663,6 +1676,7 @@ fn is_ring_oxo_chalcogen(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
         && atom_has_terminal_exocyclic_pi_bond(mol, ring, atom_id)
 }
 
+#[cfg(test)]
 fn ring_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
     ring.atoms
         .iter()
@@ -2651,6 +2665,68 @@ mod tests {
         assert!(
             atoms_in_nitrogen_or_terminal_pi_free_rings(&mol, &rings, &analyses, &[0]).is_empty()
         );
+    }
+
+    #[test]
+    fn saturated_fused_ether_cleanup_uses_active_oxygen_donor_state() {
+        let mut mol = Molecule::new();
+        let mut oxygen = Atom::new(Element::from_symbol("O").expect("test element"));
+        oxygen.explicit_hydrogens = 2;
+        oxygen.no_implicit_hydrogens = true;
+        oxygen.aromatic = true;
+        let oxygen = mol.add_atom(oxygen);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(oxygen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_f = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_g = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_f = mol
+            .add_bond(carbon_a, carbon_e, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_g = mol
+            .add_bond(carbon_e, carbon_f, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_h = mol
+            .add_bond(carbon_f, carbon_g, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_i = mol
+            .add_bond(carbon_g, carbon_b, BondOrder::Single)
+            .expect("fused ring bond");
+        let ring = Ring {
+            atoms: vec![oxygen, carbon_a, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let fused_neighbor = Ring {
+            atoms: vec![carbon_a, carbon_e, carbon_f, carbon_g, carbon_b],
+            bonds: vec![bond_f, bond_g, bond_h, bond_i, bond_b],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        let rings = vec![ring.clone(), fused_neighbor];
+
+        assert_eq!(ring_hetero_donor_count(&mol, &ring), 1);
+        assert!(ring_has_chalcogen_donor(&mol, &ring));
+        assert!(!analysis.localized_has_active_element_donor(&mol, "O"));
+        assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 0);
+        assert!(!ring_is_saturated_fused_ether_bridge_cleanup_candidate(
+            &mol, &rings, 0, &ring, &analysis
+        ));
     }
 
     #[test]
