@@ -4,6 +4,9 @@ use std::fmt;
 use super::*;
 use crate::core::*;
 
+const MAX_FUSED_AROMATIC_COMBINATION_RINGS: usize = 6;
+const LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT: usize = 300;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AromaticityModel {
     RdkitLike,
@@ -248,27 +251,33 @@ fn mark_aromatic_fused_ring_system(
     indexes: &[usize],
     protected_non_aromatic_bonds: &BTreeSet<BondId>,
 ) {
-    let mut atoms = BTreeSet::new();
+    for bond_id in fused_perimeter_bonds(rings, indexes) {
+        let Ok(bond) = mol.bond(bond_id) else {
+            continue;
+        };
+        let [left, right] = [bond.a(), bond.b()];
+        for atom_id in [left, right] {
+            if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+                atom.aromatic = true;
+            }
+        }
+        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+            bond.aromatic = !protected_non_aromatic_bonds.contains(&bond_id);
+        }
+    }
+}
+
+fn fused_perimeter_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> {
     let mut bond_counts = BTreeMap::<BondId, usize>::new();
     for index in indexes {
-        atoms.extend(rings[*index].atoms.iter().copied());
         for bond_id in &rings[*index].bonds {
             *bond_counts.entry(*bond_id).or_default() += 1;
         }
     }
-
-    for atom_id in atoms {
-        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            atom.aromatic = true;
-        }
-    }
-    for (bond_id, count) in bond_counts {
-        if count == 1 {
-            if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                bond.aromatic = !protected_non_aromatic_bonds.contains(&bond_id);
-            }
-        }
-    }
+    bond_counts
+        .into_iter()
+        .filter_map(|(bond_id, count)| (count == 1).then_some(bond_id))
+        .collect()
 }
 
 fn restore_imported_aromatic_component(mol: &mut Molecule, component: &[AtomId]) {
@@ -1249,7 +1258,7 @@ fn aromatic_fused_ring_subsets(
     rings: &[Ring],
     indexes: &[usize],
 ) -> std::result::Result<Vec<Vec<usize>>, AromaticityError> {
-    if indexes.len() < 3 || indexes.len() > 12 {
+    if indexes.len() < 3 {
         return Ok(Vec::new());
     }
     let mut accepted = Vec::new();
@@ -1258,7 +1267,14 @@ fn aromatic_fused_ring_subsets(
         .iter()
         .flat_map(|index| rings[*index].bonds.iter().copied())
         .collect::<BTreeSet<_>>();
-    for subset_size in 2..indexes.len() {
+    let max_subset_size = indexes.len().min(MAX_FUSED_AROMATIC_COMBINATION_RINGS);
+    for subset_size in 2..=max_subset_size {
+        if subset_size == indexes.len() {
+            continue;
+        }
+        if subset_size > 2 && indexes.len() > LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT {
+            break;
+        }
         for subset in connected_ring_subsets(rings, indexes, subset_size) {
             let ring = fused_component_ring(rings, &subset);
             if ring.atoms.len() > 48 {
@@ -1267,7 +1283,7 @@ fn aromatic_fused_ring_subsets(
             let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
             let electrons = aromatic_fused_component_pi_electrons(mol, &aromaticity_ring)?;
             if electrons >= 6 && (electrons - 2) % 4 == 0 {
-                done_bonds.extend(ring.bonds.iter().copied());
+                done_bonds.extend(fused_perimeter_bonds(rings, &subset));
                 accepted.push(subset);
                 if done_bonds.len() >= all_bonds.len() {
                     return Ok(accepted);
