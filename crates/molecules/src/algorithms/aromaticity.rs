@@ -160,6 +160,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactam_enone_atoms(mol, ring_set.rings());
+    clear_saturated_fused_lactam_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings());
     clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings());
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
@@ -617,6 +618,39 @@ fn is_aromatic_lactam_enone_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId)
                         other.element.symbol() == "N" && other.formal_charge == 0
                     })
             })
+}
+
+fn clear_saturated_fused_lactam_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        let fused = rings
+            .iter()
+            .enumerate()
+            .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
+        if !fused
+            || !ring_contains_element(mol, ring, "N")
+            || ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
+            || !ring_has_saturated_carbon_atom(mol, ring)
+        {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            if !atom_is_retained_by_other_aromatic_ring(mol, rings, index, *atom_id) {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
 }
 
 fn is_saturated_ring_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {

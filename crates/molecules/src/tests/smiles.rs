@@ -2019,6 +2019,40 @@ fn canonical_smiles_prefers_sanitizable_lactone_candidate() {
 }
 
 #[test]
+fn saturated_fused_benzodiazepinone_lactam_round_trip_stays_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "CN(C)CCN1C(NC(=O)C2=C1C=C(C=C2)Cl)C3=CC=C(C=C3)Cl.Cl",
+        SmilesParseOptions,
+    )
+    .expect("benzodiazepinone should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("benzodiazepinone should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|_| panic!("canonical output should sanitize: {written}"));
+
+    let aromatic_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(
+        aromatic_atoms, 12,
+        "canonical output should keep only the two benzene rings aromatic: {written}"
+    );
+    let aromatic_nitrogens = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "N" && atom.aromatic)
+        .count();
+    assert_eq!(aromatic_nitrogens, 0, "{written}");
+}
+
+#[test]
 fn aromatic_pyridinium_smiles_sanitizes() {
     let mut molecule = read_smiles_str("CCCCCC(=O)C[n+]1ccccc1", SmilesParseOptions)
         .expect("aromatic pyridinium should parse");
