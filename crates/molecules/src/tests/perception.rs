@@ -393,6 +393,54 @@ fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
 }
 
 #[test]
+fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
+    let mut mol = Molecule::new();
+    let atoms = (0..10).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    let orders = [
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+    ];
+    let mut perimeter_bonds = Vec::new();
+    for index in 0..7 {
+        perimeter_bonds.push(
+            mol.add_bond(atoms[index], atoms[index + 1], orders[index])
+                .expect("perimeter bond"),
+        );
+    }
+    let shared = mol
+        .add_bond(atoms[7], atoms[3], BondOrder::Single)
+        .expect("fused shared bond");
+    perimeter_bonds.push(
+        mol.add_bond(atoms[7], atoms[8], BondOrder::Single)
+            .expect("perimeter bond"),
+    );
+    perimeter_bonds.push(
+        mol.add_bond(atoms[8], atoms[9], BondOrder::Double)
+            .expect("perimeter bond"),
+    );
+    perimeter_bonds.push(
+        mol.add_bond(atoms[9], atoms[0], BondOrder::Single)
+            .expect("perimeter bond"),
+    );
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("azulene-like fused system should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(perimeter_bonds
+        .iter()
+        .all(|bond| mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(!mol.bond(shared).expect("shared bond exists").aromatic);
+}
+
+#[test]
 fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
     let (mut mol, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C"],

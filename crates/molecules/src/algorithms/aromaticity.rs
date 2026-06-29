@@ -245,6 +245,35 @@ fn mark_aromatic_atom_set_with_internal_bonds(
     }
 }
 
+fn mark_aromatic_fused_ring_system(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    indexes: &[usize],
+    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+) {
+    let mut atoms = BTreeSet::new();
+    let mut bond_counts = BTreeMap::<BondId, usize>::new();
+    for index in indexes {
+        atoms.extend(rings[*index].atoms.iter().copied());
+        for bond_id in &rings[*index].bonds {
+            *bond_counts.entry(*bond_id).or_default() += 1;
+        }
+    }
+
+    for atom_id in atoms {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = true;
+        }
+    }
+    for (bond_id, count) in bond_counts {
+        if count == 1 {
+            if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                bond.aromatic = !protected_non_aromatic_bonds.contains(&bond_id);
+            }
+        }
+    }
+}
+
 fn restore_imported_aromatic_component(mol: &mut Molecule, component: &[AtomId]) {
     let atoms = component.iter().copied().collect::<BTreeSet<_>>();
     for atom_id in component {
@@ -1154,21 +1183,30 @@ fn perceive_fused_aromatic_components(
         let all_carbon_component = fused_component_is_all_carbon(mol, &component);
         let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
         if electrons >= 6 && (electrons - 2) % 4 == 0 {
-            mark_aromatic_atoms_and_bonds(
-                mol,
-                component.atoms.iter().copied(),
-                component.bonds.iter().copied(),
-                protected_non_aromatic_bonds,
-            );
+            if all_carbon_component {
+                mark_aromatic_fused_ring_system(mol, rings, indexes, protected_non_aromatic_bonds);
+            } else {
+                mark_aromatic_atoms_and_bonds(
+                    mol,
+                    component.atoms.iter().copied(),
+                    component.bonds.iter().copied(),
+                    protected_non_aromatic_bonds,
+                );
+            }
             continue;
         }
         if let Some(subset) = aromatic_fused_ring_subset(mol, rings, indexes)? {
-            mark_aromatic_atoms_and_bonds(
-                mol,
-                subset.atoms.iter().copied(),
-                subset.bonds.iter().copied(),
-                protected_non_aromatic_bonds,
-            );
+            let subset_ring = fused_component_ring(rings, &subset);
+            if fused_component_is_all_carbon(mol, &subset_ring) {
+                mark_aromatic_fused_ring_system(mol, rings, &subset, protected_non_aromatic_bonds);
+            } else {
+                mark_aromatic_atoms_and_bonds(
+                    mol,
+                    subset_ring.atoms.iter().copied(),
+                    subset_ring.bonds.iter().copied(),
+                    protected_non_aromatic_bonds,
+                );
+            }
         }
         if all_carbon_component && component_has_exocyclic_pi {
             let aromatic_atoms =
@@ -1213,7 +1251,7 @@ fn aromatic_fused_ring_subset(
     mol: &Molecule,
     rings: &[Ring],
     indexes: &[usize],
-) -> std::result::Result<Option<Ring>, AromaticityError> {
+) -> std::result::Result<Option<Vec<usize>>, AromaticityError> {
     if indexes.len() < 3 || indexes.len() > 12 {
         return Ok(None);
     }
@@ -1226,7 +1264,7 @@ fn aromatic_fused_ring_subset(
             let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
             let electrons = aromatic_fused_component_pi_electrons(mol, &aromaticity_ring)?;
             if electrons >= 6 && (electrons - 2) % 4 == 0 {
-                return Ok(Some(ring));
+                return Ok(Some(subset));
             }
         }
     }

@@ -28,6 +28,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses the same donor classifier for aromatic candidate-path and active hetero-donor checks instead of duplicating separate symbol-based rules.
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Counts fused-system Huckel donor atoms using RDKit-style fused-subsystem atom multiplicity, excluding atoms buried in more than two selected rings.
+- Marks accepted all-carbon fused Huckel systems with RDKit-style selected-subsystem perimeter bonds, preserving non-aromatic shared bonds for azulene-like systems.
 - Rejects aromatic candidate atoms with more than one explicit double/triple bond through the shared donor classifier.
 - Applies RDKit-like radical candidate eligibility in the shared donor classifier: radical heteroatoms and charged radical carbons are non-candidates, while neutral carbon radicals remain eligible.
 - Applies RDKit-like candidate coordination eligibility, rejecting atoms whose bond plus hydrogen degree exceeds three before donor typing.
@@ -88,3 +89,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v28: Add RDKit-like radical candidate eligibility to the shared donor classifier, preserving neutral carbon radicals while rejecting radical heteroatoms and charged radical carbons.
 - v29: Add RDKit-like candidate coordination eligibility, rejecting over-coordinated ring atoms before aromatic donor typing.
 - v30: Count localized saturated and vacant donors through an RDKit-style atom-electron helper and accept localized two-electron Huckel rings.
+- v31: Mark accepted all-carbon fused Huckel systems with RDKit-style perimeter-bond selection, keeping azulene-like shared bonds non-aromatic.
