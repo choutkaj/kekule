@@ -1305,41 +1305,6 @@ fn aromatic_fused_component_pi_electrons(
     mol: &Molecule,
     ring: &Ring,
 ) -> std::result::Result<u8, AromaticityError> {
-    let mut electrons = 0u8;
-    let mut has_pi_bond = false;
-    for bond_id in &ring.bonds {
-        let bond = mol.bond(*bond_id).expect("ring bond should be live");
-        if matches!(bond.order, BondOrder::Double | BondOrder::Aromatic) {
-            has_pi_bond = true;
-            electrons += 2;
-        }
-    }
-
-    for atom_id in &ring.atoms {
-        let atom = mol.atom(*atom_id).expect("ring atom should be live");
-        match atom.element.symbol() {
-            "C" => {}
-            "N" => {
-                if !(ring_atom_has_pi_bond(mol, ring, *atom_id)
-                    || atom.formal_charge > 0 && atom_has_exocyclic_pi_bond(mol, ring, *atom_id))
-                {
-                    electrons += 2;
-                }
-            }
-            "O" | "S" | "Se" | "Te" | "P" => {
-                if !ring_atom_has_pi_bond(mol, ring, *atom_id) {
-                    electrons += 2;
-                }
-            }
-            _ => {
-                if ring_has_aromatic_order(mol, ring) {
-                    return Err(AromaticityError::UnsupportedElement(*atom_id));
-                }
-                return Ok(0);
-            }
-        }
-    }
-
     if ring.atoms.len() == 6
         && fused_component_is_all_carbon(mol, ring)
         && ring_exocyclic_pi_bond_count(mol, ring) == 1
@@ -1348,11 +1313,7 @@ fn aromatic_fused_component_pi_electrons(
         return Ok(6);
     }
 
-    if has_pi_bond {
-        Ok(electrons)
-    } else {
-        Ok(0)
-    }
+    localized_ring_pi_electrons(mol, ring)
 }
 
 fn ring_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
@@ -1641,56 +1602,83 @@ fn aromatic_ring_pi_electrons(
         return Ok(0);
     }
 
-    let mut electrons = 0u8;
-    let mut has_pi_bond = false;
-    for bond_id in &ring.bonds {
-        let bond = mol.bond(*bond_id).expect("ring bond should be live");
-        if matches!(bond.order, BondOrder::Double | BondOrder::Aromatic) {
-            has_pi_bond = true;
-            electrons += 2;
-        }
+    localized_ring_pi_electrons(mol, ring)
+}
+
+fn localized_ring_pi_electrons(
+    mol: &Molecule,
+    ring: &Ring,
+) -> std::result::Result<u8, AromaticityError> {
+    if ring_pi_bond_count(mol, ring) == 0 {
+        return Ok(0);
     }
 
-    for atom_id in &ring.atoms {
-        let atom = mol.atom(*atom_id).expect("ring atom should be live");
-        match atom.element.symbol() {
-            "C" => {
-                if !ring_atom_has_pi_bond(mol, ring, *atom_id)
-                    && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
-                {
-                    if atom.formal_charge < 0 {
-                        electrons += 2;
-                    } else {
-                        return Ok(0);
-                    }
-                }
-            }
-            "N" => {
-                if !(ring_atom_has_pi_bond(mol, ring, *atom_id)
-                    || atom.formal_charge > 0 && atom_has_exocyclic_pi_bond(mol, ring, *atom_id))
-                {
-                    electrons += 2;
-                }
-            }
-            "O" | "S" | "Se" | "Te" | "P" => {
-                if !ring_atom_has_pi_bond(mol, ring, *atom_id) {
-                    electrons += 2;
-                }
-            }
-            _ => {
-                if ring_has_aromatic_order(mol, ring) {
-                    return Err(AromaticityError::UnsupportedElement(*atom_id));
-                }
-                return Ok(0);
-            }
-        }
+    let donors = ring
+        .atoms
+        .iter()
+        .map(|atom_id| localized_ring_atom_donor_type(mol, ring, *atom_id))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if donors
+        .iter()
+        .any(|donor| matches!(donor, AromaticElectronDonorType::None))
+    {
+        return Ok(0);
     }
-
-    if has_pi_bond {
+    if let Some(electrons) = huckel_electron_count_for_donors(&donors) {
         Ok(electrons)
     } else {
-        Ok(0)
+        Ok(donors
+            .iter()
+            .map(|donor| aromatic_donor_electron_range(*donor).1)
+            .sum())
     }
+}
+
+fn localized_ring_atom_donor_type(
+    mol: &Molecule,
+    ring: &Ring,
+    atom_id: AtomId,
+) -> std::result::Result<AromaticElectronDonorType, AromaticityError> {
+    let atom = mol.atom(atom_id).expect("ring atom should be live");
+    if !aromaticity_supported_element(atom) {
+        return if ring_has_aromatic_order(mol, ring) {
+            Err(AromaticityError::UnsupportedElement(atom_id))
+        } else {
+            Ok(AromaticElectronDonorType::None)
+        };
+    }
+    if ring_atom_has_pi_bond(mol, ring, atom_id) {
+        return Ok(AromaticElectronDonorType::One);
+    }
+
+    match atom.element.symbol() {
+        "C" => {
+            if atom.formal_charge < 0 && !atom_has_exocyclic_pi_bond(mol, ring, atom_id) {
+                Ok(AromaticElectronDonorType::Two)
+            } else if atom_has_exocyclic_pi_bond(mol, ring, atom_id) {
+                Ok(AromaticElectronDonorType::Vacant)
+            } else {
+                Ok(AromaticElectronDonorType::None)
+            }
+        }
+        "N" => {
+            if atom.formal_charge > 0 && atom_has_exocyclic_pi_bond(mol, ring, atom_id) {
+                Ok(AromaticElectronDonorType::Vacant)
+            } else {
+                Ok(AromaticElectronDonorType::Two)
+            }
+        }
+        "O" | "S" | "Se" | "Te" | "P" => Ok(AromaticElectronDonorType::Two),
+        "B" => Ok(AromaticElectronDonorType::Vacant),
+        _ => Ok(AromaticElectronDonorType::None),
+    }
+}
+
+fn aromaticity_supported_element(atom: &Atom) -> bool {
+    matches!(
+        atom.element.symbol(),
+        "B" | "C" | "N" | "O" | "P" | "S" | "Se" | "Te"
+    )
 }
 
 fn aromatic_order_ring_pi_electrons(

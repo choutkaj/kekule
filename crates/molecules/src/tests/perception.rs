@@ -236,6 +236,30 @@ fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
 }
 
 #[test]
+fn aromaticity_rejects_neutral_saturated_carbon_in_conjugated_ring() {
+    let (mut mol, atoms, bonds) = ring_molecule(
+        &["C", "C", "C", "C", "C"],
+        &[
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("cyclopentadiene should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
 fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
     let mut mol = Molecule::new();
     let a = mol.add_atom(carbon());
