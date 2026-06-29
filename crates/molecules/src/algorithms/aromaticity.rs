@@ -100,9 +100,6 @@ fn perceive_rdkit_like_aromaticity(
         .rings()
         .iter()
         .map(|ring| {
-            if ring.atoms.len() > 7 {
-                return Ok(false);
-            }
             let electrons = aromatic_ring_pi_electrons(mol, ring)?;
             Ok(electrons >= 2 && (electrons - 2) % 4 == 0)
         })

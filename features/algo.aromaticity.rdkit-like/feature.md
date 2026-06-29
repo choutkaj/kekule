@@ -35,6 +35,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Applies RDKit-like candidate coordination eligibility, rejecting atoms whose bond plus hydrogen degree exceeds three before donor typing.
 - Counts localized saturated, vacant, and lone-pair atom donors with an RDKit `countAtomElec`-style helper using default valence, outer-shell electrons, charge, radical electrons, effective hydrogens, and exocyclic electronegativity.
 - Allows localized two-electron Huckel rings, preserving RDKit-like cyclopropenyl cation aromaticity.
+- Evaluates localized simple rings of arbitrary size through the shared Hückel donor-count path instead of applying a small-ring-only cutoff.
 - Treats terminal hetero exocyclic pi carbons as non-donating in imported six-member nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds.
 - Treats exocyclic hetero pi carbons as non-donating in imported five-member nitrogen/chalcogen aromatic-order rings when needed for RDKit-like Huckel counts.
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
@@ -92,3 +93,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v30: Count localized saturated and vacant donors through an RDKit-style atom-electron helper and accept localized two-electron Huckel rings.
 - v31: Mark accepted all-carbon fused Huckel systems with RDKit-style perimeter-bond selection, keeping azulene-like shared bonds non-aromatic.
 - v32: Iterate accepted fused ring subsets additively with a done-bond stop condition, moving the fused search closer to RDKit's combination loop.
+- v33: Remove the seven-atom simple-ring cutoff so localized larger rings are evaluated by the RDKit-like Hückel donor-count path.

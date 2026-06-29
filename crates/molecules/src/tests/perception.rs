@@ -148,6 +148,60 @@ fn aromaticity_marks_benzene_like_ring() {
 }
 
 #[test]
+fn aromaticity_evaluates_larger_simple_rings_like_rdkit() {
+    let alternating_ten = [
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+    ];
+    let (mut ten_member, ten_atoms, ten_bonds) = ring_molecule(&["C"; 10], &alternating_ten);
+
+    perceive_aromaticity(&mut ten_member, AromaticityModel::RdkitLike)
+        .expect("10 pi-electron annulene-like ring should be supported");
+
+    assert!(ten_atoms
+        .iter()
+        .all(|atom| ten_member.atom(*atom).expect("atom exists").aromatic));
+    assert!(ten_bonds
+        .iter()
+        .all(|bond| ten_member.bond(*bond).expect("bond exists").aromatic));
+
+    let alternating_twelve = [
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Single,
+    ];
+    let (mut twelve_member, twelve_atoms, twelve_bonds) =
+        ring_molecule(&["C"; 12], &alternating_twelve);
+
+    perceive_aromaticity(&mut twelve_member, AromaticityModel::RdkitLike)
+        .expect("12 pi-electron annulene-like ring should be supported");
+
+    assert!(twelve_atoms
+        .iter()
+        .all(|atom| !twelve_member.atom(*atom).expect("atom exists").aromatic));
+    assert!(twelve_bonds
+        .iter()
+        .all(|bond| !twelve_member.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
 fn aromaticity_leaves_cyclohexane_and_cyclobutadiene_non_aromatic() {
     let (mut cyclohexane, atoms, bonds) =
         ring_molecule(&["C", "C", "C", "C", "C", "C"], &[BondOrder::Single; 6]);
