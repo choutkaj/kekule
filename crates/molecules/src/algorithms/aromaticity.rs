@@ -101,14 +101,20 @@ fn perceive_rdkit_like_aromaticity(
         bond.aromatic = false;
     }
 
-    let ring_aromatic = ring_set
+    let ring_analyses = ring_set
         .rings()
         .iter()
-        .map(|ring| {
-            let analysis = aromatic_ring_donor_analysis(mol, ring)?;
-            Ok(analysis.is_huckel_aromatic())
-        })
+        .map(|ring| aromatic_ring_donor_analysis(mol, ring))
         .collect::<std::result::Result<Vec<_>, AromaticityError>>()?;
+    let localized_ring_analyses = ring_set
+        .rings()
+        .iter()
+        .map(|ring| localized_ring_donor_analysis(mol, ring).ok())
+        .collect::<Vec<_>>();
+    let ring_aromatic = ring_analyses
+        .iter()
+        .map(AromaticRingDonorAnalysis::is_huckel_aromatic)
+        .collect::<Vec<_>>();
     let non_aromatic_fusion_singles = ring_set
         .rings()
         .iter()
@@ -145,7 +151,9 @@ fn perceive_rdkit_like_aromaticity(
                     && !fused_component_is_all_carbon(mol, ring)
                     && !ring_has_chalcogen_donor(mol, ring)
                     && ring_hetero_donor_count(mol, ring) < 2
-                    && !ring_has_nitrogen_lone_pair_donor(mol, ring);
+                    && !localized_ring_analyses[*index]
+                        .as_ref()
+                        .is_some_and(|analysis| analysis.has_nitrogen_lone_pair_donor(mol));
                 let multi_hetero_dione_ring = ring.atoms.len() == 6
                     && containing_rings.len() > 1
                     && ring_hetero_donor_count(mol, ring) >= 2
@@ -1605,12 +1613,6 @@ fn ring_has_anionic_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
             .map(|atom| atom.element.symbol() == "N" && atom.formal_charge < 0)
             .unwrap_or(false)
     })
-}
-
-fn ring_has_nitrogen_lone_pair_donor(mol: &Molecule, ring: &Ring) -> bool {
-    localized_ring_donor_analysis(mol, ring)
-        .map(|analysis| analysis.has_nitrogen_lone_pair_donor(mol))
-        .unwrap_or(false)
 }
 
 fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
