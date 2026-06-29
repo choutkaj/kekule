@@ -188,8 +188,8 @@ fn perceive_rdkit_like_aromaticity(
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactam_enone_atoms(mol, ring_set.rings());
     clear_saturated_fused_lactam_carbonyl_ring_atoms(mol, ring_set.rings());
-    clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings());
-    clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings());
+    clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
+    clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
     clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings());
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
@@ -824,7 +824,11 @@ fn ring_has_cationic_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
     })
 }
 
-fn clear_fused_lactone_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_fused_lactone_bridge_ring_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
         let fused = rings
@@ -834,7 +838,7 @@ fn clear_fused_lactone_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
         if !fused
             || ring.atoms.len() < 6
             || !ring_has_chalcogen_donor(mol, ring)
-            || ring_has_conjugated_atom_path(mol, ring)
+            || ring_analyses[index].localized_all_atoms_are_candidates()
             || !ring
                 .atoms
                 .iter()
@@ -871,7 +875,11 @@ fn clear_fused_lactone_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     }
 }
 
-fn clear_saturated_fused_ether_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_saturated_fused_ether_bridge_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     if molecule_contains_heavier_chalcogen(mol) {
         return;
     }
@@ -886,7 +894,7 @@ fn clear_saturated_fused_ether_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) 
                 && !ring_contains_element(mol, ring, "S")
                 && !ring_contains_element(mol, ring, "Se")
                 && !ring_contains_element(mol, ring, "Te")
-                && !ring_has_conjugated_atom_path(mol, ring)
+                && !ring_analyses[*index].localized_all_atoms_are_candidates()
                 && ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
                 && rings.iter().enumerate().any(|(other_index, other)| {
                     other_index != *index && rings_share_bond(ring, other)
@@ -1543,11 +1551,6 @@ fn aromatic_fused_candidate_from_analysis(
             && !ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol, ring)
         || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N")
         || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring)
-}
-
-fn ring_has_conjugated_atom_path(mol: &Molecule, ring: &Ring) -> bool {
-    localized_ring_donor_analysis(mol, ring)
-        .is_ok_and(|analysis| analysis.all_atoms_are_candidates())
 }
 
 fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -2465,9 +2468,9 @@ mod tests {
             bonds: vec![bond_a, bond_b, bond_c],
         };
 
-        assert!(ring_has_conjugated_atom_path(&mol, &ring));
         assert_eq!(ring_hetero_donor_count(&mol, &ring), 1);
         let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("donor analysis");
+        assert!(analysis.localized_all_atoms_are_candidates());
         assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 0);
         assert!(!aromatic_fused_candidate_from_analysis(
             &mol, &ring, &analysis
