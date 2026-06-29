@@ -43,6 +43,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses cached active nitrogen donor state for terminal chalcogen-oxo cleanup rather than raw nitrogen presence.
 - Uses cached active nitrogen donor state for saturated fused lactam-carbonyl cleanup rather than raw nitrogen presence.
 - Uses cached active chalcogen donor state for the saturated tertiary amine guard rather than raw saturated chalcogen presence.
+- Uses cached candidate nitrogen state when admitting carbon/nitrogen fused fallback components rather than raw nitrogen presence.
 - Reuses localized active donor state for imported aromatic-order exocyclic-carbon electron stealing instead of raw nitrogen/chalcogen presence.
 - Uses cached localized donor state, rather than raw hetero-element presence, when deciding which non-aromatic fused single bonds should remain protected.
 - Reuses one localized donor analysis inside saturated tertiary amine fused cleanup instead of recalculating candidate-path and active-donor facts separately.
@@ -137,3 +138,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v48: Use active nitrogen donor state for saturated fused lactam-carbonyl cleanup instead of raw nitrogen presence.
 - v49: Use active nitrogen and oxygen donor state for fused lactam-bridge cleanup instead of raw hetero-atom presence.
 - v50: Use candidate nitrogen state for imide carbonyl cleanup instead of raw nitrogen presence.
+- v51: Use candidate nitrogen state for carbon/nitrogen fused fallback admission instead of raw nitrogen presence.

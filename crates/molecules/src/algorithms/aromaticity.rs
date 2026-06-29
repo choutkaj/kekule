@@ -1403,7 +1403,13 @@ fn perceive_fused_aromatic_components(
                     protected_non_aromatic_bonds,
                 );
             }
-        } else if fused_component_is_carbon_nitrogen(mol, &component) {
+        } else if fused_component_is_carbon_with_candidate_nitrogen(
+            mol,
+            &component,
+            rings,
+            ring_analyses,
+            indexes,
+        ) {
             let terminal_atoms_retained =
                 terminal_exocyclic_atoms_in_nitrogen_rings(mol, rings, ring_analyses, indexes);
             let atoms_retained_by_ring_context =
@@ -1533,6 +1539,28 @@ fn fused_component_is_carbon_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
         mol.atom(*atom_id)
             .map(|atom| matches!(atom.element.symbol(), "C" | "N"))
             .unwrap_or(false)
+    })
+}
+
+fn fused_component_is_carbon_with_candidate_nitrogen(
+    mol: &Molecule,
+    component: &Ring,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+    indexes: &[usize],
+) -> bool {
+    component.atoms.iter().all(|atom_id| {
+        let Ok(atom) = mol.atom(*atom_id) else {
+            return false;
+        };
+        match atom.element.symbol() {
+            "C" => true,
+            "N" => indexes.iter().any(|index| {
+                rings[*index].atoms.contains(atom_id)
+                    && ring_analyses[*index].localized_atom_is_element_candidate(mol, *atom_id, "N")
+            }),
+            _ => false,
+        }
     })
 }
 
@@ -2807,6 +2835,55 @@ mod tests {
         assert!(
             atoms_in_nitrogen_or_terminal_pi_free_rings(&mol, &rings, &analyses, &[0]).is_empty()
         );
+    }
+
+    #[test]
+    fn fused_carbon_nitrogen_fallback_requires_candidate_nitrogen_state() {
+        let mut mol = Molecule::new();
+        let mut nitrogen_atom = Atom::new(Element::from_symbol("N").expect("test element"));
+        nitrogen_atom.explicit_hydrogens = 2;
+        nitrogen_atom.no_implicit_hydrogens = true;
+        let nitrogen = mol.add_atom(nitrogen_atom);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_e, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, carbon_b, carbon_c, carbon_d, carbon_e],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        let rings = vec![ring.clone()];
+        let analyses = vec![analysis];
+
+        assert!(fused_component_is_carbon_nitrogen(&mol, &ring));
+        assert!(!analyses[0].localized_atom_is_element_candidate(&mol, nitrogen, "N"));
+        assert!(!fused_component_is_carbon_with_candidate_nitrogen(
+            &mol,
+            &ring,
+            &rings,
+            &analyses,
+            &[0]
+        ));
     }
 
     #[test]
