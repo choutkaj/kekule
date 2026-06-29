@@ -35,6 +35,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Feeds initial ring aromaticity gates from the same localized donor table used for Huckel counting, reducing raw hetero-atom presence checks.
 - Uses cached active donor state for fused fallback admission and terminal-exocyclic atom retention instead of raw nitrogen/chalcogen presence.
 - Uses cached active neighbor donor state for exocyclic alkene chalcogen cleanup rather than raw nitrogen/chalcogen adjacency.
+- Clears only cached active ring hetero-donor neighbors during exocyclic alkene chalcogen cleanup, avoiding raw hetero-atom adjacency outside the ring context.
 - Uses cached active oxygen donor state for saturated fused ether cleanup rather than raw hetero-atom presence.
 - Uses cached active chalcogen donor state for fused lactone bridge cleanup rather than raw chalcogen presence.
 - Uses cached active nitrogen and oxygen donor state for fused lactam-bridge cleanup rather than raw hetero-atom presence.
@@ -139,3 +140,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v49: Use active nitrogen and oxygen donor state for fused lactam-bridge cleanup instead of raw hetero-atom presence.
 - v50: Use candidate nitrogen state for imide carbonyl cleanup instead of raw nitrogen presence.
 - v51: Use candidate nitrogen state for carbon/nitrogen fused fallback admission instead of raw nitrogen presence.
+- v52: Clear only active ring hetero-donor neighbors during exocyclic alkene chalcogen cleanup instead of raw hetero-atom neighbors.
