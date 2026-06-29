@@ -1,7 +1,7 @@
 id = "io.smiles.canonical"
 title = "Canonical SMILES writer"
 area = "io"
-version = 15
+version = 16
 implemented = true
 validated = false
 description = "Write deterministic non-stereo canonical SMILES using canonical atom ranking and semantic-preserving traversal tie-breaking."

@@ -161,6 +161,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings());
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
+    clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings());
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
     clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
     clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings());
@@ -686,6 +687,93 @@ fn clear_saturated_tertiary_amine_ring_atoms(mol: &mut Molecule, rings: &[Ring])
             bond.aromatic = false;
         }
     }
+}
+
+fn clear_exocyclic_alkene_chalcogen_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    let seed_atoms = rings
+        .iter()
+        .filter(|ring| ring_contains_element(mol, ring, "N") && ring_has_chalcogen_donor(mol, ring))
+        .flat_map(|ring| {
+            ring.atoms.iter().copied().filter(|atom_id| {
+                is_aromatic_ring_carbon_with_exocyclic_carbon_pi_bond(mol, ring, *atom_id)
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    let mut atoms_to_clear = seed_atoms.clone();
+    for atom_id in &seed_atoms {
+        atoms_to_clear.extend(
+            mol.incident_bonds(*atom_id)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(|(_, bond)| {
+                    let neighbor_id = bond.other_atom(*atom_id);
+                    mol.atom(neighbor_id)
+                        .is_ok_and(|neighbor| {
+                            neighbor.formal_charge == 0
+                                && matches!(
+                                    neighbor.element.symbol(),
+                                    "N" | "O" | "S" | "Se" | "Te"
+                                )
+                        })
+                        .then_some(neighbor_id)
+                }),
+        );
+    }
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn is_aromatic_ring_carbon_with_exocyclic_carbon_pi_bond(
+    mol: &Molecule,
+    ring: &Ring,
+    atom_id: AtomId,
+) -> bool {
+    mol.atom(atom_id)
+        .is_ok_and(|atom| atom.element.symbol() == "C" && atom.aromatic)
+        && ring_atom_has_nitrogen_and_chalcogen_neighbors(mol, ring, atom_id)
+        && mol
+            .incident_bonds(atom_id)
+            .ok()
+            .into_iter()
+            .flatten()
+            .any(|(bond_id, bond)| {
+                !ring.bonds.contains(&bond_id)
+                    && !ring.atoms.contains(&bond.other_atom(atom_id))
+                    && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+                    && mol
+                        .atom(bond.other_atom(atom_id))
+                        .is_ok_and(|other| other.element.symbol() == "C" && !other.aromatic)
+            })
+}
+
+fn ring_atom_has_nitrogen_and_chalcogen_neighbors(
+    mol: &Molecule,
+    ring: &Ring,
+    atom_id: AtomId,
+) -> bool {
+    let ring_neighbors = mol
+        .incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|(bond_id, bond)| ring.bonds.contains(&bond_id).then_some(bond))
+        .filter_map(|bond| mol.atom(bond.other_atom(atom_id)).ok())
+        .map(|atom| atom.element.symbol())
+        .collect::<Vec<_>>();
+    ring_neighbors.contains(&"N")
+        && ring_neighbors
+            .iter()
+            .any(|symbol| matches!(*symbol, "O" | "S" | "Se" | "Te"))
 }
 
 fn clear_saturated_fused_carbon_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {

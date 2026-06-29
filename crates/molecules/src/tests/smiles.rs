@@ -711,7 +711,7 @@ fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
             "neutral sulfur ring atom {atom_id} should stay aliphatic"
         );
     }
-    for atom_id in [10, 11, 12] {
+    for atom_id in [10, 12] {
         assert!(
             molecule
                 .mol
@@ -721,6 +721,68 @@ fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
             "cationic sulfur ring atom {atom_id} should be aromatic"
         );
     }
+    let exocyclic_alkene_ring_carbons = molecule
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && !atom.aromatic
+                && molecule.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    let bonds = bonds.collect::<Vec<_>>();
+                    bonds.len() == 3
+                        && bonds.iter().any(|(_, bond)| {
+                            matches!(bond.order, BondOrder::Double)
+                                && molecule
+                                    .mol
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|other| other.element.symbol() == "C")
+                        })
+                        && bonds.iter().any(|(_, bond)| {
+                            molecule
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "N")
+                        })
+                        && bonds.iter().any(|(_, bond)| {
+                            molecule
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "S")
+                        })
+                })
+        })
+        .count();
+    assert_eq!(exocyclic_alkene_ring_carbons, 1);
+    let aliphatic_neutral_ring_nitrogens = molecule
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "N"
+                && atom.formal_charge == 0
+                && !atom.aromatic
+                && molecule.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    bonds.into_iter().any(|(_, bond)| {
+                        molecule.mol.atom(bond.other_atom(*id)).is_ok_and(|other| {
+                            other.element.symbol() == "C"
+                                && !other.aromatic
+                                && molecule.mol.incident_bonds(bond.other_atom(*id)).is_ok_and(
+                                    |carbon_bonds| {
+                                        carbon_bonds.into_iter().any(|(_, carbon_bond)| {
+                                            molecule
+                                                .mol
+                                                .atom(carbon_bond.other_atom(bond.other_atom(*id)))
+                                                .is_ok_and(|neighbor| {
+                                                    neighbor.element.symbol() == "S"
+                                                })
+                                        })
+                                    },
+                                )
+                        })
+                    })
+                })
+        })
+        .count();
+    assert_eq!(aliphatic_neutral_ring_nitrogens, 1);
 }
 
 #[test]
