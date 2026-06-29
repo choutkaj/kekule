@@ -2130,6 +2130,45 @@ fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
 }
 
 #[test]
+fn canonical_aryl_germanium_round_trip_preserves_no_implicit_aromatic_carbon() {
+    let mut molecule = read_smiles_str("C1=CC=C(C=C1)[Ge](Cl)(Cl)Cl", SmilesParseOptions)
+        .expect("aryl germanium SMILES parses");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("aryl germanium SMILES sanitizes");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("aryl germanium canonical SMILES should write");
+    assert!(written.contains("[c]"), "{written}");
+
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .expect("canonical output should sanitize");
+
+    let germanium_bound_carbon = reparsed
+        .mol
+        .atoms()
+        .find(|(atom_id, atom)| {
+            atom.element.symbol() == "C"
+                && atom.aromatic
+                && reparsed
+                    .mol
+                    .incident_bonds(*atom_id)
+                    .expect("atom should be live")
+                    .any(|(_, bond)| {
+                        let neighbor_id = bond.other_atom(*atom_id);
+                        reparsed
+                            .mol
+                            .atom(neighbor_id)
+                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Ge")
+                    })
+        })
+        .expect("canonical output should retain an aryl germanium bond")
+        .1;
+    assert!(germanium_bound_carbon.no_implicit_hydrogens, "{written}");
+}
+
+#[test]
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let mut molecule = SmallMolecule::default();
     let a = molecule.mol.add_atom(carbon());

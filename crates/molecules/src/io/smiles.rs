@@ -701,7 +701,7 @@ fn canonical_smiles_candidate_sanitize_rank(mol: &Molecule, candidate: &str) -> 
     }
 }
 
-type CanonicalAtomSemanticSignature = (u8, i8, u16, u8, u8, bool, usize, usize);
+type CanonicalAtomSemanticSignature = (u8, i8, u16, u8, u8, bool, bool, usize, usize);
 
 fn canonical_smiles_semantic_signature(mol: &Molecule) -> Vec<CanonicalAtomSemanticSignature> {
     let mut atoms = mol
@@ -727,6 +727,7 @@ fn canonical_smiles_semantic_signature(mol: &Molecule) -> Vec<CanonicalAtomSeman
                 atom.isotope.unwrap_or_default(),
                 atom.explicit_hydrogens,
                 atom.implicit_hydrogens.unwrap_or_default(),
+                atom.no_implicit_hydrogens,
                 atom.aromatic,
                 degree,
                 aromatic_degree,
@@ -1568,10 +1569,7 @@ fn canonical_smiles_can_use_organic_form(
     let Some(target) = canonical_organic_valence_target(atom) else {
         return Ok(false);
     };
-    if atom.no_implicit_hydrogens
-        && atom.explicit_hydrogens > 0
-        && atom_has_metal_neighbor(mol, atom_id)?
-    {
+    if atom.no_implicit_hydrogens && atom_has_metal_neighbor(mol, atom_id)? {
         return Ok(false);
     }
     let bond_valence = smiles_bond_valence_sum(mol, atom_id)?;
@@ -1612,6 +1610,7 @@ fn is_smiles_metal_like(symbol: &str) -> bool {
             | "Ba"
             | "Ra"
             | "Al"
+            | "Ge"
             | "Ga"
             | "In"
             | "Tl"

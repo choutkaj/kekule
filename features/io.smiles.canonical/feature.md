@@ -17,6 +17,7 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 - Builds on `canonical_atom_ranking` for atom symmetry classes.
 - Symmetric ties are handled by candidate string selection, with `AtomId` only as a final deterministic fallback inside rank-equivalent traversal choices.
 - Preserves explicit hydrogens on organic atoms bound to a broad metal-like element set when organic shorthand would alter sanitized valence semantics after reparse.
+- Preserves no-implicit organic atoms bound to broad metal-like/main-group neighbors when organic shorthand would alter sanitized atom semantics after reparse.
 - The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; stored atom and bond stereo metadata is ignored when writing canonical output.
 
 ## Validation
@@ -50,3 +51,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v17: Advance PubChem-1000 validation through canonical reparse support for thione-rich imported nitrogen/chalcogen aromatic-order rings.
 - v18: Advance PubChem-1000 validation through RDKit-like fused lactam/enone and saturated oxygen bridge aromaticity cleanup for canonical reparse semantics.
 - v19: Advance PubChem-1000 validation through RDKit-like saturated fused nitrogen carbonyl aromaticity cleanup for benzodiazepinone lactam canonical reparse semantics.
+- v20: Preserve no-implicit aromatic organic atoms bound to germanium-like main-group centers in canonical output, advancing PubChem-1000 validation past aryl germanium trichloride.
