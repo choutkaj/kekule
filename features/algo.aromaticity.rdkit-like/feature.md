@@ -26,6 +26,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Routes imported aromatic-order atom contributions through a shared RDKit-style donor classifier with vacant, one-electron, two-electron, and variable donor ranges.
 - Routes localized monocyclic and fused-component pi-electron counts through the same donor classifier, so ring-pi atoms, lone-pair donors, anionic carbon donors, vacant exocyclic centers, and non-donors are handled by one path.
 - Uses the same donor classifier for aromatic candidate-path and active hetero-donor checks instead of duplicating separate symbol-based rules.
+- Reuses one localized per-ring donor analysis for candidate-path and active hetero-donor predicates, mirroring RDKit's table-driven ring candidate flow.
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Iterates accepted fused ring subsets additively with an RDKit-like done-bond stop condition instead of returning only the first accepted subset.
 - Uses RDKit's 24-atom fused-ring candidate size limit for large carbon/nitrogen fused candidates instead of an older smaller local cap.

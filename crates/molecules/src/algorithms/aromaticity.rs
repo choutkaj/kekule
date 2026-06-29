@@ -1454,10 +1454,9 @@ fn ring_has_saturated_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
 }
 
 fn ring_active_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
-    ring.atoms
-        .iter()
-        .filter(|atom_id| ring_atom_is_active_hetero_donor(mol, ring, **atom_id))
-        .count()
+    localized_ring_donor_analysis(mol, ring)
+        .map(|analysis| analysis.active_hetero_donor_count(mol))
+        .unwrap_or(0)
 }
 
 fn aromatic_fused_component_pi_electrons(
@@ -1507,9 +1506,8 @@ fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
 }
 
 fn ring_has_conjugated_atom_path(mol: &Molecule, ring: &Ring) -> bool {
-    ring.atoms
-        .iter()
-        .all(|atom_id| ring_atom_is_aromatic_candidate(mol, ring, *atom_id))
+    localized_ring_donor_analysis(mol, ring)
+        .is_ok_and(|analysis| analysis.all_atoms_are_candidates())
 }
 
 fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -1827,11 +1825,15 @@ impl AromaticRingDonorAnalysis {
             .sum()
     }
 
-    fn donor_for(&self, atom_id: AtomId) -> Option<AromaticElectronDonorType> {
+    fn active_hetero_donor_count(&self, mol: &Molecule) -> usize {
         self.atoms
             .iter()
-            .find(|atom| atom.atom == atom_id)
-            .map(|atom| atom.donor)
+            .filter(|atom_donor| {
+                mol.atom(atom_donor.atom).is_ok_and(|atom| {
+                    matches!(atom.element.symbol(), "N" | "O" | "P" | "S" | "Se" | "Te")
+                }) && aromatic_donor_electron_range(atom_donor.donor).1 > 0
+            })
+            .count()
     }
 }
 
@@ -1856,25 +1858,6 @@ fn localized_ring_atom_donor_type(
     }
 
     Ok(rdkit_like_atom_donor_type(mol, ring, atom_id, atom, true))
-}
-
-fn ring_atom_is_aromatic_candidate(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    localized_ring_donor_analysis(mol, ring).is_ok_and(|analysis| {
-        analysis
-            .donor_for(atom_id)
-            .is_some_and(|donor| !matches!(donor, AromaticElectronDonorType::None))
-    })
-}
-
-fn ring_atom_is_active_hetero_donor(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    mol.atom(atom_id)
-        .is_ok_and(|atom| matches!(atom.element.symbol(), "N" | "O" | "P" | "S" | "Se" | "Te"))
-        && localized_ring_donor_analysis(mol, ring).is_ok_and(|analysis| {
-            analysis.donor_for(atom_id).is_some_and(|donor| {
-                let (_, max_electrons) = aromatic_donor_electron_range(donor);
-                max_electrons > 0
-            })
-        })
 }
 
 fn aromaticity_supported_element(atom: &Atom) -> bool {
