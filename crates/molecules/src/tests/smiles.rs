@@ -1829,8 +1829,11 @@ fn fused_pubchem_subset_aromaticity_remains_additive() {
         .bonds()
         .filter(|(_, bond)| bond.aromatic)
         .count();
-    assert_eq!(aromatic_atoms, 18);
-    assert_eq!(aromatic_bonds, 20);
+    assert_eq!(
+        (aromatic_atoms, aromatic_bonds),
+        (18, 20),
+        "accepted fused subsystems should be marked additively"
+    );
 }
 
 #[test]

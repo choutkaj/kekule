@@ -1195,7 +1195,7 @@ fn perceive_fused_aromatic_components(
             }
             continue;
         }
-        if let Some(subset) = aromatic_fused_ring_subset(mol, rings, indexes)? {
+        for subset in aromatic_fused_ring_subsets(mol, rings, indexes)? {
             let subset_ring = fused_component_ring(rings, &subset);
             if fused_component_is_all_carbon(mol, &subset_ring) {
                 mark_aromatic_fused_ring_system(mol, rings, &subset, protected_non_aromatic_bonds);
@@ -1247,15 +1247,21 @@ fn perceive_fused_aromatic_components(
     Ok(())
 }
 
-fn aromatic_fused_ring_subset(
+fn aromatic_fused_ring_subsets(
     mol: &Molecule,
     rings: &[Ring],
     indexes: &[usize],
-) -> std::result::Result<Option<Vec<usize>>, AromaticityError> {
+) -> std::result::Result<Vec<Vec<usize>>, AromaticityError> {
     if indexes.len() < 3 || indexes.len() > 12 {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    for subset_size in (2..indexes.len()).rev() {
+    let mut accepted = Vec::new();
+    let mut done_bonds = BTreeSet::new();
+    let all_bonds = indexes
+        .iter()
+        .flat_map(|index| rings[*index].bonds.iter().copied())
+        .collect::<BTreeSet<_>>();
+    for subset_size in 2..indexes.len() {
         for subset in connected_ring_subsets(rings, indexes, subset_size) {
             let ring = fused_component_ring(rings, &subset);
             if ring.atoms.len() > 48 {
@@ -1264,11 +1270,15 @@ fn aromatic_fused_ring_subset(
             let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
             let electrons = aromatic_fused_component_pi_electrons(mol, &aromaticity_ring)?;
             if electrons >= 6 && (electrons - 2) % 4 == 0 {
-                return Ok(Some(subset));
+                done_bonds.extend(ring.bonds.iter().copied());
+                accepted.push(subset);
+                if done_bonds.len() >= all_bonds.len() {
+                    return Ok(accepted);
+                }
             }
         }
     }
-    Ok(None)
+    Ok(accepted)
 }
 
 fn connected_ring_subsets(
