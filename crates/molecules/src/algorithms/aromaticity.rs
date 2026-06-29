@@ -721,9 +721,6 @@ fn clear_fused_lactam_enone_atoms(
     rings: &[Ring],
     ring_analyses: &[RingAromaticityAnalysis],
 ) {
-    if molecule_contains_heavier_chalcogen(mol) {
-        return;
-    }
     let atoms_to_clear = rings
         .iter()
         .enumerate()
@@ -978,9 +975,6 @@ fn clear_saturated_fused_ether_bridge_atoms(
     rings: &[Ring],
     ring_analyses: &[RingAromaticityAnalysis],
 ) {
-    if molecule_contains_heavier_chalcogen(mol) {
-        return;
-    }
     let atoms_to_clear = rings
         .iter()
         .enumerate()
@@ -1030,11 +1024,6 @@ fn ring_is_saturated_fused_ether_bridge_cleanup_candidate(
             .iter()
             .enumerate()
             .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other))
-}
-
-fn molecule_contains_heavier_chalcogen(mol: &Molecule) -> bool {
-    mol.atoms()
-        .any(|(_, atom)| matches!(atom.element.symbol(), "S" | "Se" | "Te"))
 }
 
 fn is_chalcogen_bridge_without_pi(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -2950,6 +2939,91 @@ mod tests {
         assert!(!ring_is_saturated_fused_ether_bridge_cleanup_candidate(
             &mol, &rings, 0, &ring, &analysis
         ));
+    }
+
+    #[test]
+    fn saturated_fused_ether_cleanup_is_not_blocked_by_unrelated_heavy_chalcogen() {
+        let mut mol = Molecule::new();
+        let mut oxygen = Atom::new(Element::from_symbol("O").expect("test element"));
+        oxygen.aromatic = true;
+        let oxygen = mol.add_atom(oxygen);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(oxygen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let fused_carbon_a =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let fused_carbon_b =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let fused_carbon_c =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_f = mol
+            .add_bond(carbon_a, fused_carbon_a, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_g = mol
+            .add_bond(fused_carbon_a, fused_carbon_b, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_h = mol
+            .add_bond(fused_carbon_b, fused_carbon_c, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_i = mol
+            .add_bond(fused_carbon_c, carbon_b, BondOrder::Single)
+            .expect("fused ring bond");
+        let sulfur = mol.add_atom(Atom::new(Element::from_symbol("S").expect("test element")));
+        let ring = Ring {
+            atoms: vec![oxygen, carbon_a, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let fused_neighbor = Ring {
+            atoms: vec![
+                carbon_a,
+                fused_carbon_a,
+                fused_carbon_b,
+                fused_carbon_c,
+                carbon_b,
+            ],
+            bonds: vec![bond_f, bond_g, bond_h, bond_i, bond_b],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        let rings = vec![ring.clone(), fused_neighbor];
+        let analyses = vec![
+            analysis,
+            RingAromaticityAnalysis::new(&mol, &rings[1]).expect("fused analysis"),
+        ];
+
+        assert!(mol
+            .atom(sulfur)
+            .is_ok_and(|atom| atom.element.symbol() == "S"));
+        assert!(analyses[0].localized_has_active_element_donor(&mol, "O"));
+        assert_eq!(analyses[0].localized_active_hetero_donor_count(&mol), 1);
+        assert!(!analyses[0].localized_all_atoms_are_candidates());
+        assert!(ring_is_saturated_fused_ether_bridge_cleanup_candidate(
+            &mol,
+            &rings,
+            0,
+            &ring,
+            &analyses[0]
+        ));
+
+        clear_saturated_fused_ether_bridge_atoms(&mut mol, &rings, &analyses);
+
+        assert!(!mol.atom(oxygen).expect("ring oxygen").aromatic);
+        assert!(mol.atom(sulfur).is_ok());
     }
 
     #[test]
