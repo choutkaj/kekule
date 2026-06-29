@@ -1786,7 +1786,7 @@ fn localized_ring_atom_donor_type(
             Ok(AromaticElectronDonorType::None)
         };
     }
-    if atom_explicit_pi_bond_count(mol, atom_id) > 1 {
+    if !atom_is_rdkit_aromatic_candidate(mol, atom_id, atom) {
         return Ok(AromaticElectronDonorType::None);
     }
     if ring_atom_has_pi_bond(mol, ring, atom_id) {
@@ -1842,6 +1842,14 @@ fn aromaticity_supported_element(atom: &Atom) -> bool {
     )
 }
 
+fn atom_is_rdkit_aromatic_candidate(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> bool {
+    if atom_explicit_pi_bond_count(mol, atom_id) > 1 {
+        return false;
+    }
+    let radical_electrons = atom.radical.map_or(0, AtomRadical::unpaired_electron_count);
+    radical_electrons == 0 || atom.element.symbol() == "C" && atom.formal_charge == 0
+}
+
 fn aromatic_order_ring_pi_electrons(
     mol: &Molecule,
     ring: &Ring,
@@ -1892,6 +1900,12 @@ fn aromatic_order_atom_donor_type(
     atom: &Atom,
     exocyclic_pi_steals_electrons: bool,
 ) -> std::result::Result<AromaticElectronDonorType, AromaticityError> {
+    if !aromaticity_supported_element(atom) {
+        return Err(AromaticityError::UnsupportedElement(atom_id));
+    }
+    if !atom_is_rdkit_aromatic_candidate(mol, atom_id, atom) {
+        return Ok(AromaticElectronDonorType::None);
+    }
     if exocyclic_pi_steals_electrons && atom_has_hetero_exocyclic_pi_bond(mol, ring, atom_id) {
         return Ok(AromaticElectronDonorType::Vacant);
     }

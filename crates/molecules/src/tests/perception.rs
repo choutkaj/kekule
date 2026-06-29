@@ -228,6 +228,82 @@ fn aromaticity_supports_phosphorus_lone_pair_donor_ring() {
 }
 
 #[test]
+fn aromaticity_applies_rdkit_radical_candidate_rules() {
+    let (mut neutral_carbon_radical, atoms, _) = ring_molecule(
+        &["C", "C", "C", "C", "C", "C"],
+        &[
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    neutral_carbon_radical
+        .atom_mut(atoms[0])
+        .expect("ring atom exists")
+        .radical = Some(AtomRadical::Doublet);
+
+    perceive_aromaticity(&mut neutral_carbon_radical, AromaticityModel::RdkitLike)
+        .expect("neutral carbon radical ring should be supported");
+
+    assert!(atoms.iter().all(|atom| neutral_carbon_radical
+        .atom(*atom)
+        .expect("atom exists")
+        .aromatic));
+
+    let (mut oxygen_radical, atoms, _) = ring_molecule(
+        &["O", "C", "C", "C", "C"],
+        &[
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    oxygen_radical
+        .atom_mut(atoms[0])
+        .expect("ring atom exists")
+        .radical = Some(AtomRadical::Doublet);
+
+    perceive_aromaticity(&mut oxygen_radical, AromaticityModel::RdkitLike)
+        .expect("heteroatom radical ring should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| !oxygen_radical.atom(*atom).expect("atom exists").aromatic));
+
+    let (mut charged_carbon_radical, atoms, _) = ring_molecule(
+        &["C", "C", "C", "C", "C", "C"],
+        &[
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    {
+        let mut atom = charged_carbon_radical
+            .atom_mut(atoms[0])
+            .expect("ring atom exists");
+        atom.formal_charge = 1;
+        atom.radical = Some(AtomRadical::Doublet);
+    }
+
+    perceive_aromaticity(&mut charged_carbon_radical, AromaticityModel::RdkitLike)
+        .expect("charged carbon radical ring should be supported");
+
+    assert!(atoms.iter().all(|atom| !charged_carbon_radical
+        .atom(*atom)
+        .expect("atom exists")
+        .aromatic));
+}
+
+#[test]
 fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
     let (mut mol, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C"],
