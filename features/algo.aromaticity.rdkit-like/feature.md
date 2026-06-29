@@ -33,6 +33,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Reuses cached per-ring donor analysis in fused lactone and saturated ether cleanup decisions.
 - Reuses cached per-ring donor analysis in saturated tertiary amine cleanup and fused carbon/nitrogen fallback decisions.
 - Feeds initial ring aromaticity gates from the same localized donor table used for Huckel counting, reducing raw hetero-atom presence checks.
+- Uses cached active donor state for fused fallback admission and terminal-exocyclic atom retention instead of raw nitrogen/chalcogen presence.
 - Uses cached localized donor state, rather than raw hetero-element presence, when deciding which non-aromatic fused single bonds should remain protected.
 - Reuses one localized donor analysis inside saturated tertiary amine fused cleanup instead of recalculating candidate-path and active-donor facts separately.
 - Routes nitrogen lone-pair donor checks through the same per-ring donor analysis instead of separate hydrogen/charge symbol logic.
@@ -115,3 +116,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v37: Use active donor analysis, not hetero atom presence alone, for low-unsaturation hetero fused candidate admission.
 - v38: Protect non-aromatic fused single bonds using cached localized active-donor state instead of raw hetero-element counts.
 - v39: Reuse localized donor analysis as the input to initial ring aromaticity gates and the simple Huckel fallback.
+- v40: Use active donor state for fused fallback admission and fused-context terminal-exocyclic atom retention.

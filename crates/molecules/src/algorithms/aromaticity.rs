@@ -1186,8 +1186,8 @@ fn perceive_fused_single_exocyclic_carbon_rings(
                         && fused_component_is_all_carbon(mol, ring)
                         && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
                     || (ring.atoms.len() == 5
-                        && ring_contains_element(mol, ring, "N")
-                        && ring_has_chalcogen_donor(mol, ring)
+                        && ring_analyses[*index].localized_has_active_element_donor(mol, "N")
+                        && ring_analyses[*index].localized_has_active_chalcogen_donor(mol)
                         && ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)
                         && ring_exocyclic_pi_bond_count(mol, ring) > 0))
         })
@@ -1284,7 +1284,7 @@ fn perceive_fused_aromatic_components(
             }
         } else if fused_component_is_carbon_nitrogen(mol, &component) {
             let terminal_atoms_retained =
-                terminal_exocyclic_atoms_in_nitrogen_rings(mol, rings, indexes);
+                terminal_exocyclic_atoms_in_nitrogen_rings(mol, rings, ring_analyses, indexes);
             let atoms_retained_by_ring_context =
                 atoms_in_nitrogen_or_terminal_pi_free_rings(mol, rings, ring_analyses, indexes);
             let aromatic_atoms = component
@@ -1418,12 +1418,13 @@ fn fused_component_is_carbon_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
 fn terminal_exocyclic_atoms_in_nitrogen_rings(
     mol: &Molecule,
     rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
     indexes: &[usize],
 ) -> BTreeSet<AtomId> {
     let mut atoms = BTreeSet::new();
     for index in indexes {
         let ring = &rings[*index];
-        if !ring_contains_element(mol, ring, "N") {
+        if !ring_analyses[*index].localized_has_active_element_donor(mol, "N") {
             continue;
         }
         for atom_id in &ring.atoms {
@@ -1485,12 +1486,14 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
             continue;
         }
         let exocyclic_pi_count = ring_exocyclic_pi_bond_count(mol, ring);
-        let contains_nitrogen = ring_contains_element(mol, ring, "N");
+        let has_active_nitrogen_donor =
+            ring_analyses[*index].localized_has_active_element_donor(mol, "N");
+        let active_hetero_donors = ring_analyses[*index].localized_active_hetero_donor_count(mol);
         if exocyclic_pi_count == 0
-            || !contains_nitrogen && exocyclic_pi_count <= 1
-            || contains_nitrogen && ring_hetero_donor_count(mol, ring) >= 2
+            || !has_active_nitrogen_donor && exocyclic_pi_count <= 1
+            || has_active_nitrogen_donor && active_hetero_donors >= 2
             || ring.atoms.len() >= 6
-                && contains_nitrogen
+                && has_active_nitrogen_donor
                 && !ring_has_saturated_carbon_atom(mol, ring)
         {
             atoms.extend(ring.atoms.iter().copied());
@@ -1555,7 +1558,7 @@ fn aromatic_fused_candidate_from_analysis(
     ring: &Ring,
     analysis: &RingAromaticityAnalysis,
 ) -> bool {
-    if ring.atoms.len() == 7 && ring_has_chalcogen_donor(mol, ring) {
+    if ring.atoms.len() == 7 && analysis.localized_has_active_chalcogen_donor(mol) {
         return false;
     }
     if !analysis.localized_all_atoms_are_candidates() {
@@ -1564,14 +1567,16 @@ fn aromatic_fused_candidate_from_analysis(
     if ring.atoms.len() > 7 {
         return ring.atoms.len() <= MAX_FUSED_AROMATIC_RING_SIZE
             && fused_component_is_carbon_nitrogen(mol, ring)
-            && ring_has_anionic_nitrogen(mol, ring)
+            && analysis.localized_has_active_anionic_nitrogen_donor(mol)
             && ring_pi_bond_count(mol, ring) >= 4;
     }
     let pi_bonds = ring_pi_bond_count(mol, ring);
     pi_bonds >= 2
         || analysis.localized_active_hetero_donor_count(mol) > 0
-            && !ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol, ring)
-        || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N")
+            && !ring_has_low_unsaturation_active_chalcogen_bridge_for_fused(mol, ring, analysis)
+        || ring.atoms.len() == 5
+            && pi_bonds >= 1
+            && analysis.localized_has_active_element_donor(mol, "N")
         || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring)
 }
 
@@ -1659,14 +1664,6 @@ fn ring_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
         .count()
 }
 
-fn ring_has_anionic_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
-    ring.atoms.iter().any(|atom_id| {
-        mol.atom(*atom_id)
-            .map(|atom| atom.element.symbol() == "N" && atom.formal_charge < 0)
-            .unwrap_or(false)
-    })
-}
-
 fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
     ring.atoms.iter().any(|atom_id| {
         mol.atom(*atom_id)
@@ -1675,10 +1672,14 @@ fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
     })
 }
 
-fn ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol: &Molecule, ring: &Ring) -> bool {
+fn ring_has_low_unsaturation_active_chalcogen_bridge_for_fused(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
     ring_pi_bond_count(mol, ring) < 2
-        && ring_hetero_donor_count(mol, ring) > 1
-        && ring_has_chalcogen_donor(mol, ring)
+        && analysis.localized_active_hetero_donor_count(mol) > 1
+        && analysis.localized_has_active_chalcogen_donor(mol)
 }
 
 fn ring_exocyclic_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
@@ -1874,6 +1875,18 @@ impl RingAromaticityAnalysis {
             .as_ref()
             .is_some_and(|analysis| analysis.has_active_chalcogen_donor(mol))
     }
+
+    fn localized_has_active_element_donor(&self, mol: &Molecule, symbol: &str) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.has_active_element_donor(mol, symbol))
+    }
+
+    fn localized_has_active_anionic_nitrogen_donor(&self, mol: &Molecule) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.has_active_anionic_nitrogen_donor(mol))
+    }
 }
 
 impl AromaticRingDonorAnalysis {
@@ -1956,6 +1969,14 @@ impl AromaticRingDonorAnalysis {
         self.atoms.iter().any(|atom_donor| {
             mol.atom(atom_donor.atom)
                 .is_ok_and(|atom| atom.element.symbol() == symbol)
+                && aromatic_donor_electron_range(atom_donor.donor).1 > 0
+        })
+    }
+
+    fn has_active_anionic_nitrogen_donor(&self, mol: &Molecule) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            mol.atom(atom_donor.atom)
+                .is_ok_and(|atom| atom.element.symbol() == "N" && atom.formal_charge < 0)
                 && aromatic_donor_electron_range(atom_donor.donor).1 > 0
         })
     }
@@ -2578,6 +2599,11 @@ mod tests {
         assert!(!ring_protects_non_aromatic_fusion_single(
             &mol, &ring, &analysis, false, 2
         ));
+        let rings = vec![ring];
+        let analyses = vec![analysis];
+        assert!(
+            atoms_in_nitrogen_or_terminal_pi_free_rings(&mol, &rings, &analyses, &[0]).is_empty()
+        );
     }
 
     fn cation_with_one_implicit_hydrogen(symbol: &str) -> Atom {
