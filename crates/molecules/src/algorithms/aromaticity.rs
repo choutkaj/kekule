@@ -191,7 +191,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings(), &ring_analyses);
-    clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings());
+    clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
     clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
     clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings());
@@ -979,16 +979,23 @@ fn clear_saturated_tertiary_amine_ring_atoms(
     }
 }
 
-fn clear_exocyclic_alkene_chalcogen_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
-    let seed_atoms = rings
-        .iter()
-        .filter(|ring| ring_contains_element(mol, ring, "N") && ring_has_chalcogen_donor(mol, ring))
-        .flat_map(|ring| {
-            ring.atoms.iter().copied().filter(|atom_id| {
-                is_aromatic_ring_carbon_with_exocyclic_carbon_pi_bond(mol, ring, *atom_id)
-            })
-        })
-        .collect::<BTreeSet<_>>();
+fn clear_exocyclic_alkene_chalcogen_ring_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
+    let mut seed_atoms = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        let analysis = &ring_analyses[index];
+        if !analysis.localized_has_active_element_donor(mol, "N")
+            || !analysis.localized_has_active_chalcogen_donor(mol)
+        {
+            continue;
+        }
+        seed_atoms.extend(ring.atoms.iter().copied().filter(|atom_id| {
+            is_aromatic_ring_carbon_with_exocyclic_carbon_pi_bond(mol, ring, analysis, *atom_id)
+        }));
+    }
     let mut atoms_to_clear = seed_atoms.clone();
     for atom_id in &seed_atoms {
         atoms_to_clear.extend(
@@ -1026,11 +1033,12 @@ fn clear_exocyclic_alkene_chalcogen_ring_atoms(mol: &mut Molecule, rings: &[Ring
 fn is_aromatic_ring_carbon_with_exocyclic_carbon_pi_bond(
     mol: &Molecule,
     ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
     atom_id: AtomId,
 ) -> bool {
     mol.atom(atom_id)
         .is_ok_and(|atom| atom.element.symbol() == "C" && atom.aromatic)
-        && ring_atom_has_nitrogen_and_chalcogen_neighbors(mol, ring, atom_id)
+        && ring_atom_has_active_nitrogen_and_chalcogen_neighbors(mol, ring, analysis, atom_id)
         && mol
             .incident_bonds(atom_id)
             .ok()
@@ -1046,9 +1054,10 @@ fn is_aromatic_ring_carbon_with_exocyclic_carbon_pi_bond(
             })
 }
 
-fn ring_atom_has_nitrogen_and_chalcogen_neighbors(
+fn ring_atom_has_active_nitrogen_and_chalcogen_neighbors(
     mol: &Molecule,
     ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
     atom_id: AtomId,
 ) -> bool {
     let ring_neighbors = mol
@@ -1057,13 +1066,14 @@ fn ring_atom_has_nitrogen_and_chalcogen_neighbors(
         .into_iter()
         .flatten()
         .filter_map(|(bond_id, bond)| ring.bonds.contains(&bond_id).then_some(bond))
-        .filter_map(|bond| mol.atom(bond.other_atom(atom_id)).ok())
-        .map(|atom| atom.element.symbol())
+        .map(|bond| bond.other_atom(atom_id))
         .collect::<Vec<_>>();
-    ring_neighbors.contains(&"N")
+    ring_neighbors
+        .iter()
+        .any(|neighbor| analysis.localized_atom_has_active_element_donor(mol, *neighbor, "N"))
         && ring_neighbors
             .iter()
-            .any(|symbol| matches!(*symbol, "O" | "S" | "Se" | "Te"))
+            .any(|neighbor| analysis.localized_atom_has_active_chalcogen_donor(mol, *neighbor))
 }
 
 fn clear_saturated_fused_carbon_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
@@ -1887,6 +1897,23 @@ impl RingAromaticityAnalysis {
             .as_ref()
             .is_some_and(|analysis| analysis.has_active_anionic_nitrogen_donor(mol))
     }
+
+    fn localized_atom_has_active_element_donor(
+        &self,
+        mol: &Molecule,
+        atom_id: AtomId,
+        symbol: &str,
+    ) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.atom_has_active_element_donor(mol, atom_id, symbol))
+    }
+
+    fn localized_atom_has_active_chalcogen_donor(&self, mol: &Molecule, atom_id: AtomId) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.atom_has_active_chalcogen_donor(mol, atom_id))
+    }
 }
 
 impl AromaticRingDonorAnalysis {
@@ -1977,6 +2004,26 @@ impl AromaticRingDonorAnalysis {
         self.atoms.iter().any(|atom_donor| {
             mol.atom(atom_donor.atom)
                 .is_ok_and(|atom| atom.element.symbol() == "N" && atom.formal_charge < 0)
+                && aromatic_donor_electron_range(atom_donor.donor).1 > 0
+        })
+    }
+
+    fn atom_has_active_element_donor(&self, mol: &Molecule, atom_id: AtomId, symbol: &str) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            atom_donor.atom == atom_id
+                && mol
+                    .atom(atom_id)
+                    .is_ok_and(|atom| atom.element.symbol() == symbol)
+                && aromatic_donor_electron_range(atom_donor.donor).1 > 0
+        })
+    }
+
+    fn atom_has_active_chalcogen_donor(&self, mol: &Molecule, atom_id: AtomId) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            atom_donor.atom == atom_id
+                && mol
+                    .atom(atom_id)
+                    .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
                 && aromatic_donor_electron_range(atom_donor.donor).1 > 0
         })
     }
@@ -2604,6 +2651,43 @@ mod tests {
         assert!(
             atoms_in_nitrogen_or_terminal_pi_free_rings(&mol, &rings, &analyses, &[0]).is_empty()
         );
+    }
+
+    #[test]
+    fn exocyclic_alkene_chalcogen_cleanup_uses_active_neighbor_donors() {
+        let mut mol = Molecule::new();
+        let nitrogen = mol.add_atom(cation_with_one_implicit_hydrogen("N"));
+        let mut carbon = Atom::new(Element::from_symbol("C").expect("test element"));
+        carbon.aromatic = true;
+        let carbon = mol.add_atom(carbon);
+        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let exocyclic_carbon =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(oxygen, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(carbon, exocyclic_carbon, BondOrder::Double)
+            .expect("exocyclic alkene");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon, oxygen],
+            bonds: vec![bond_a, bond_b, bond_c],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+
+        assert!(analysis.localized_has_active_chalcogen_donor(&mol));
+        assert!(!analysis.localized_has_active_element_donor(&mol, "N"));
+        assert!(!ring_atom_has_active_nitrogen_and_chalcogen_neighbors(
+            &mol, &ring, &analysis, carbon
+        ));
+        assert!(!is_aromatic_ring_carbon_with_exocyclic_carbon_pi_bond(
+            &mol, &ring, &analysis, carbon
+        ));
     }
 
     fn cation_with_one_implicit_hydrogen(symbol: &str) -> Atom {
