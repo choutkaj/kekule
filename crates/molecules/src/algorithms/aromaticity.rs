@@ -192,7 +192,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings(), &ring_analyses);
-    clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
+    clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
     clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings());
     clear_terminal_aromatic_imine_fragments(mol);
@@ -363,23 +363,32 @@ fn imported_aromatic_bond_components(mol: &Molecule) -> Vec<Vec<AtomId>> {
     components
 }
 
-fn clear_saturated_chalcogen_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
-    let atoms_to_clear = rings
-        .iter()
-        .enumerate()
-        .filter(|(index, ring)| {
-            ring.atoms.len() >= 6
-                && rings.iter().enumerate().any(|(other_index, other)| {
-                    other_index != *index && rings_share_bond(ring, other)
-                })
-        })
-        .flat_map(|(_, ring)| {
-            ring.atoms
+fn clear_saturated_chalcogen_bridge_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        if ring.atoms.len() < 6
+            || !rings
                 .iter()
-                .copied()
-                .filter(|atom_id| is_saturated_chalcogen_bridge(mol, ring, *atom_id))
-        })
-        .collect::<BTreeSet<_>>();
+                .enumerate()
+                .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other))
+        {
+            continue;
+        }
+        for atom_id in &ring.atoms {
+            if is_saturated_chalcogen_bridge_cleanup_candidate(
+                mol,
+                ring,
+                &ring_analyses[index],
+                *atom_id,
+            ) {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
 
     for atom_id in &atoms_to_clear {
         if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
@@ -1811,6 +1820,16 @@ fn is_saturated_chalcogen_bridge(mol: &Molecule, ring: &Ring, atom_id: AtomId) -
             .unwrap_or(false)
 }
 
+fn is_saturated_chalcogen_bridge_cleanup_candidate(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    atom_id: AtomId,
+) -> bool {
+    is_saturated_chalcogen_bridge(mol, ring, atom_id)
+        && analysis.localized_atom_is_chalcogen_candidate(mol, atom_id)
+}
+
 fn is_ring_oxo_chalcogen(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
     let Ok(atom) = mol.atom(atom_id) else {
         return false;
@@ -2095,6 +2114,12 @@ impl RingAromaticityAnalysis {
             .is_some_and(|analysis| analysis.atom_has_active_chalcogen_donor(mol, atom_id))
     }
 
+    fn localized_atom_is_chalcogen_candidate(&self, mol: &Molecule, atom_id: AtomId) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.atom_is_chalcogen_candidate(mol, atom_id))
+    }
+
     fn localized_atom_is_element_candidate(
         &self,
         mol: &Molecule,
@@ -2224,6 +2249,16 @@ impl AromaticRingDonorAnalysis {
                     .atom(atom_id)
                     .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
                 && aromatic_donor_electron_range(atom_donor.donor).1 > 0
+        })
+    }
+
+    fn atom_is_chalcogen_candidate(&self, mol: &Molecule, atom_id: AtomId) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            atom_donor.atom == atom_id
+                && mol
+                    .atom(atom_id)
+                    .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
+                && !matches!(atom_donor.donor, AromaticElectronDonorType::None)
         })
     }
 
@@ -3115,6 +3150,79 @@ mod tests {
 
         assert!(!mol.atom(sulfur).expect("ring sulfur").aromatic);
         assert!(!mol.bond(bond_a).expect("ring bond").aromatic);
+    }
+
+    #[test]
+    fn saturated_chalcogen_bridge_cleanup_requires_candidate_state() {
+        let mut mol = Molecule::new();
+        let mut sulfur = aromatic_atom("S");
+        sulfur.radical = Some(AtomRadical::Doublet);
+        let sulfur = mol.add_atom(sulfur);
+        let carbon_a = mol.add_atom(aromatic_carbon());
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let carbon_c = mol.add_atom(aromatic_carbon());
+        let carbon_d = mol.add_atom(aromatic_carbon());
+        let carbon_e = mol.add_atom(aromatic_carbon());
+        let bond_a = mol
+            .add_bond(sulfur, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_e, sulfur, BondOrder::Single)
+            .expect("ring bond");
+        for bond_id in [bond_a, bond_b, bond_c, bond_d, bond_e, bond_f] {
+            mol.bonds[bond_id.index()]
+                .as_mut()
+                .expect("live bond")
+                .aromatic = true;
+        }
+
+        let fused_carbon = mol.add_atom(aromatic_carbon());
+        let bond_g = mol
+            .add_bond(carbon_a, fused_carbon, BondOrder::Single)
+            .expect("fused bond");
+        let bond_h = mol
+            .add_bond(fused_carbon, carbon_b, BondOrder::Single)
+            .expect("fused bond");
+        let ring = Ring {
+            atoms: vec![sulfur, carbon_a, carbon_b, carbon_c, carbon_d, carbon_e],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let fused_neighbor = Ring {
+            atoms: vec![carbon_a, fused_carbon, carbon_b],
+            bonds: vec![bond_g, bond_h, bond_b],
+        };
+        let rings = vec![ring.clone(), fused_neighbor];
+        let analyses = rings
+            .iter()
+            .map(|ring| RingAromaticityAnalysis::new(&mol, ring).expect("ring analysis"))
+            .collect::<Vec<_>>();
+
+        assert!(is_saturated_chalcogen_bridge(&mol, &ring, sulfur));
+        assert!(!analyses[0].localized_atom_is_chalcogen_candidate(&mol, sulfur));
+        assert!(!is_saturated_chalcogen_bridge_cleanup_candidate(
+            &mol,
+            &ring,
+            &analyses[0],
+            sulfur
+        ));
+
+        clear_saturated_chalcogen_bridge_atoms(&mut mol, &rings, &analyses);
+
+        assert!(mol.atom(sulfur).expect("ring sulfur").aromatic);
+        assert!(mol.bond(bond_a).expect("ring bond").aromatic);
+        assert!(mol.bond(bond_f).expect("ring bond").aromatic);
     }
 
     #[test]
