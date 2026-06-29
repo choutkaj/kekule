@@ -1564,7 +1564,7 @@ fn ring_has_saturated_tertiary_amine_without_donor_chalcogen(
     ring: &Ring,
     analysis: &RingAromaticityAnalysis,
 ) -> bool {
-    if ring_has_saturated_chalcogen_donor(mol, ring) {
+    if ring_has_saturated_active_chalcogen_donor(mol, ring, analysis) {
         return false;
     }
     !analysis.localized_all_atoms_are_candidates()
@@ -1575,12 +1575,17 @@ fn ring_has_saturated_tertiary_amine_without_donor_chalcogen(
             .any(|atom_id| is_saturated_tertiary_amine(mol, ring, *atom_id))
 }
 
-fn ring_has_saturated_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
+fn ring_has_saturated_active_chalcogen_donor(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
     ring.atoms.iter().any(|atom_id| {
         mol.atom(*atom_id)
             .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
             && !ring_atom_has_pi_bond(mol, ring, *atom_id)
             && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
+            && analysis.localized_atom_has_active_chalcogen_donor(mol, *atom_id)
     })
 }
 
@@ -3001,6 +3006,53 @@ mod tests {
         assert!(
             !aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(&mol, &ring, &localized)
         );
+    }
+
+    #[test]
+    fn saturated_tertiary_amine_guard_uses_active_chalcogen_donor_state() {
+        let mut mol = Molecule::new();
+        let nitrogen = mol.add_atom(Atom::new(Element::from_symbol("N").expect("test element")));
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let mut oxygen = Atom::new(Element::from_symbol("O").expect("test element"));
+        oxygen.explicit_hydrogens = 2;
+        oxygen.no_implicit_hydrogens = true;
+        let oxygen = mol.add_atom(oxygen);
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let methyl = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(oxygen, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_d, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(nitrogen, methyl, BondOrder::Single)
+            .expect("tertiary amine substituent");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, oxygen, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+
+        assert!(ring_has_chalcogen_donor(&mol, &ring));
+        assert!(!analysis.localized_atom_has_active_chalcogen_donor(&mol, oxygen));
+        assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 1);
+        assert!(ring_has_saturated_tertiary_amine_without_donor_chalcogen(
+            &mol, &ring, &analysis
+        ));
     }
 
     #[test]
