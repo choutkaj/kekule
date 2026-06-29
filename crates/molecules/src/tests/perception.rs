@@ -204,6 +204,30 @@ fn aromaticity_supports_heteroaromatic_ring() {
 }
 
 #[test]
+fn aromaticity_supports_phosphorus_lone_pair_donor_ring() {
+    let (mut phosphole_like, atoms, bonds) = ring_molecule(
+        &["P", "C", "C", "C", "C"],
+        &[
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+
+    perceive_aromaticity(&mut phosphole_like, AromaticityModel::RdkitLike)
+        .expect("phosphole-like ring should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| phosphole_like.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| phosphole_like.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
 fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
     let (mut mol, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C"],
