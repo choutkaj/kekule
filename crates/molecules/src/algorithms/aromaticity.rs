@@ -185,7 +185,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
-    clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
+    clear_imide_carbonyl_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_fused_lactam_enone_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_fused_lactam_carbonyl_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
@@ -664,15 +664,23 @@ fn ring_is_fused_lactam_bridge_cleanup_candidate(
         && ring_terminal_exocyclic_pi_bond_count(mol, ring) > 0
 }
 
-fn clear_imide_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_imide_carbonyl_ring_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     let atoms_to_clear = rings
         .iter()
         .enumerate()
         .filter(|(index, ring)| {
-            ring_contains_element(mol, ring, "N")
-                && (ring_has_or_is_fused_to_cationic_nitrogen(mol, rings, *index)
-                    || ring.atoms.len() == 5 && ring_has_imide_nitrogen(mol, ring))
-                && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2
+            ring_is_imide_carbonyl_cleanup_candidate(
+                mol,
+                rings,
+                *index,
+                ring,
+                &ring_analyses[*index],
+                ring_analyses,
+            )
         })
         .flat_map(|(_, ring)| {
             ring.atoms.iter().copied().filter(|atom_id| {
@@ -692,6 +700,20 @@ fn clear_imide_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn ring_is_imide_carbonyl_cleanup_candidate(
+    mol: &Molecule,
+    rings: &[Ring],
+    index: usize,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    ring_analyses: &[RingAromaticityAnalysis],
+) -> bool {
+    analysis.localized_has_element_candidate(mol, "N")
+        && (ring_has_or_is_fused_to_cationic_nitrogen(mol, rings, index, ring_analyses)
+            || ring.atoms.len() == 5 && ring_has_imide_nitrogen(mol, ring, analysis))
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2
 }
 
 fn clear_fused_lactam_enone_atoms(
@@ -837,12 +859,16 @@ fn is_saturated_ring_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> boo
         && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
 }
 
-fn ring_has_imide_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
+fn ring_has_imide_nitrogen(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
     ring.atoms.iter().any(|atom_id| {
         let Ok(atom) = mol.atom(*atom_id) else {
             return false;
         };
-        atom.element.symbol() == "N"
+        analysis.localized_atom_is_element_candidate(mol, *atom_id, "N")
             && atom.formal_charge == 0
             && !ring_atom_has_pi_bond(mol, ring, *atom_id)
             && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
@@ -862,19 +888,28 @@ fn ring_carbonyl_neighbor_count(mol: &Molecule, ring: &Ring, atom_id: AtomId) ->
         .count()
 }
 
-fn ring_has_or_is_fused_to_cationic_nitrogen(mol: &Molecule, rings: &[Ring], index: usize) -> bool {
-    ring_has_cationic_nitrogen(mol, &rings[index])
+fn ring_has_or_is_fused_to_cationic_nitrogen(
+    mol: &Molecule,
+    rings: &[Ring],
+    index: usize,
+    ring_analyses: &[RingAromaticityAnalysis],
+) -> bool {
+    ring_has_cationic_nitrogen(mol, &rings[index], &ring_analyses[index])
         || rings.iter().enumerate().any(|(other_index, other)| {
             other_index != index
                 && rings_share_bond(&rings[index], other)
-                && ring_has_cationic_nitrogen(mol, other)
+                && ring_has_cationic_nitrogen(mol, other, &ring_analyses[other_index])
         })
 }
 
-fn ring_has_cationic_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
+fn ring_has_cationic_nitrogen(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
     ring.atoms.iter().any(|atom_id| {
-        mol.atom(*atom_id)
-            .is_ok_and(|atom| atom.element.symbol() == "N" && atom.formal_charge > 0)
+        mol.atom(*atom_id).is_ok_and(|atom| atom.formal_charge > 0)
+            && analysis.localized_atom_is_element_candidate(mol, *atom_id, "N")
     })
 }
 
@@ -1975,6 +2010,12 @@ impl RingAromaticityAnalysis {
             .is_some_and(|analysis| analysis.has_active_element_donor(mol, symbol))
     }
 
+    fn localized_has_element_candidate(&self, mol: &Molecule, symbol: &str) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.has_element_candidate(mol, symbol))
+    }
+
     fn localized_has_active_anionic_nitrogen_donor(&self, mol: &Molecule) -> bool {
         self.localized
             .as_ref()
@@ -1996,6 +2037,17 @@ impl RingAromaticityAnalysis {
         self.localized
             .as_ref()
             .is_some_and(|analysis| analysis.atom_has_active_chalcogen_donor(mol, atom_id))
+    }
+
+    fn localized_atom_is_element_candidate(
+        &self,
+        mol: &Molecule,
+        atom_id: AtomId,
+        symbol: &str,
+    ) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.atom_is_element_candidate(mol, atom_id, symbol))
     }
 }
 
@@ -2083,6 +2135,14 @@ impl AromaticRingDonorAnalysis {
         })
     }
 
+    fn has_element_candidate(&self, mol: &Molecule, symbol: &str) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            mol.atom(atom_donor.atom)
+                .is_ok_and(|atom| atom.element.symbol() == symbol)
+                && !matches!(atom_donor.donor, AromaticElectronDonorType::None)
+        })
+    }
+
     fn has_active_anionic_nitrogen_donor(&self, mol: &Molecule) -> bool {
         self.atoms.iter().any(|atom_donor| {
             mol.atom(atom_donor.atom)
@@ -2108,6 +2168,16 @@ impl AromaticRingDonorAnalysis {
                     .atom(atom_id)
                     .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
                 && aromatic_donor_electron_range(atom_donor.donor).1 > 0
+        })
+    }
+
+    fn atom_is_element_candidate(&self, mol: &Molecule, atom_id: AtomId, symbol: &str) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            atom_donor.atom == atom_id
+                && mol
+                    .atom(atom_id)
+                    .is_ok_and(|atom| atom.element.symbol() == symbol)
+                && !matches!(atom_donor.donor, AromaticElectronDonorType::None)
         })
     }
 }
@@ -2494,6 +2564,7 @@ fn aromatic_order_nitrogen_is_pyrrole_like(mol: &Molecule, atom_id: AtomId) -> b
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 fn ring_contains_element(mol: &Molecule, ring: &Ring, symbol: &str) -> bool {
     ring.atoms.iter().any(|atom_id| {
         mol.atom(*atom_id)
@@ -3052,6 +3123,63 @@ mod tests {
         assert!(!analysis.localized_has_active_element_donor(&mol, "N"));
         assert!(!ring_is_saturated_fused_lactam_carbonyl_cleanup_candidate(
             &mol, &rings, 0, &ring, &analysis
+        ));
+    }
+
+    #[test]
+    fn imide_carbonyl_cleanup_uses_candidate_nitrogen_state() {
+        let mut mol = Molecule::new();
+        let mut nitrogen_atom = Atom::new(Element::from_symbol("N").expect("test element"));
+        nitrogen_atom.explicit_hydrogens = 2;
+        nitrogen_atom.no_implicit_hydrogens = true;
+        let nitrogen = mol.add_atom(nitrogen_atom);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let carbonyl_oxygen_a =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_a, carbonyl_oxygen_a, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let carbonyl_oxygen_b =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_d, carbonyl_oxygen_b, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        let rings = vec![ring.clone()];
+        let analyses = vec![analysis];
+
+        assert!(ring_contains_element(&mol, &ring, "N"));
+        assert_eq!(ring_terminal_exocyclic_pi_bond_count(&mol, &ring), 2);
+        assert_eq!(ring_carbonyl_neighbor_count(&mol, &ring, nitrogen), 2);
+        assert!(!analyses[0].localized_has_element_candidate(&mol, "N"));
+        assert!(!ring_has_imide_nitrogen(&mol, &ring, &analyses[0]));
+        assert!(!ring_is_imide_carbonyl_cleanup_candidate(
+            &mol,
+            &rings,
+            0,
+            &ring,
+            &analyses[0],
+            &analyses
         ));
     }
 
