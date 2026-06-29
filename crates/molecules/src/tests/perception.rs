@@ -204,6 +204,38 @@ fn aromaticity_supports_heteroaromatic_ring() {
 }
 
 #[test]
+fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
+    let (mut mol, atoms, _) = ring_molecule(
+        &["C", "C", "C", "C", "C"],
+        &[
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    for atom_id in &atoms {
+        mol.atom_mut(*atom_id)
+            .expect("ring atom exists")
+            .formal_charge = -1;
+    }
+    let hydrogen = mol.add_atom(Atom::new(
+        Element::from_symbol("H").expect("hydrogen should be available"),
+    ));
+    mol.add_bond(atoms[0], hydrogen, BondOrder::Single)
+        .expect("explicit hydrogen bond should be valid");
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("cyclopentadienyl anion should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(!mol.atom(hydrogen).expect("hydrogen exists").aromatic);
+}
+
+#[test]
 fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
     let mut mol = Molecule::new();
     let a = mol.add_atom(carbon());

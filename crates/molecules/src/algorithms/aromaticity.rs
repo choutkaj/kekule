@@ -16,6 +16,17 @@ pub enum AromaticityError {
     RingPerception(RingPerceptionError),
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AromaticElectronDonorType {
+    Vacant,
+    One,
+    Two,
+    OneOrTwo,
+    Any,
+    None,
+}
+
 impl fmt::Display for AromaticityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -327,7 +338,7 @@ fn clear_saturated_aromatic_carbon_atoms(mol: &mut Molecule) {
     let atoms_to_clear = mol
         .atoms()
         .filter_map(|(atom_id, atom)| {
-            if atom.element.symbol() != "C" || !atom.aromatic {
+            if atom.element.symbol() != "C" || !atom.aromatic || atom.formal_charge < 0 {
                 return None;
             }
             let bonds = mol
@@ -1695,39 +1706,92 @@ fn aromatic_order_ring_pi_electrons(
         return Ok(6);
     }
 
-    let mut min_electrons = 0u8;
-    let mut max_electrons = 0u8;
+    let exocyclic_pi_steals_electrons =
+        aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(mol, ring);
+    let mut donors = Vec::with_capacity(ring.atoms.len());
     for atom_id in &ring.atoms {
         let atom = mol.atom(*atom_id).expect("ring atom should be live");
-        let (min_contribution, max_contribution) = match atom.element.symbol() {
-            "B" => (1, 1),
-            "C" if aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(mol, ring)
-                && atom_has_hetero_exocyclic_pi_bond(mol, ring, *atom_id) =>
-            {
-                (0, 0)
-            }
-            "C" => (1, 1),
-            "N" => {
-                if atom.explicit_hydrogens > 0
-                    || atom.formal_charge == 0
-                        && aromatic_order_nitrogen_is_pyrrole_like(mol, *atom_id)
-                {
-                    (1, 2)
-                } else {
-                    (1, 1)
-                }
-            }
-            "O" | "S" | "Se" | "Te" | "P" => (2, 2),
-            _ => return Err(AromaticityError::UnsupportedElement(*atom_id)),
-        };
-        min_electrons += min_contribution;
-        max_electrons += max_contribution;
+        let donor = aromatic_order_atom_donor_type(
+            mol,
+            ring,
+            *atom_id,
+            atom,
+            exocyclic_pi_steals_electrons,
+        )?;
+        donors.push(donor);
     }
-    if let Some(electrons) = huckel_electron_count_in_range(min_electrons, max_electrons) {
+    if donors
+        .iter()
+        .any(|donor| matches!(donor, AromaticElectronDonorType::None))
+    {
+        return Ok(0);
+    }
+    if let Some(electrons) = huckel_electron_count_for_donors(&donors) {
         Ok(electrons)
     } else {
-        Ok(max_electrons)
+        Ok(donors
+            .iter()
+            .map(|donor| aromatic_donor_electron_range(*donor).1)
+            .sum())
     }
+}
+
+fn aromatic_order_atom_donor_type(
+    mol: &Molecule,
+    ring: &Ring,
+    atom_id: AtomId,
+    atom: &Atom,
+    exocyclic_pi_steals_electrons: bool,
+) -> std::result::Result<AromaticElectronDonorType, AromaticityError> {
+    if exocyclic_pi_steals_electrons && atom_has_hetero_exocyclic_pi_bond(mol, ring, atom_id) {
+        return Ok(AromaticElectronDonorType::Vacant);
+    }
+
+    match atom.element.symbol() {
+        "B" | "C" => Ok(AromaticElectronDonorType::One),
+        "N" => {
+            if atom.explicit_hydrogens > 0
+                || atom.formal_charge == 0 && aromatic_order_nitrogen_is_pyrrole_like(mol, atom_id)
+            {
+                Ok(AromaticElectronDonorType::OneOrTwo)
+            } else {
+                Ok(AromaticElectronDonorType::One)
+            }
+        }
+        "O" | "S" | "Se" | "Te" | "P" => Ok(AromaticElectronDonorType::Two),
+        _ => Err(AromaticityError::UnsupportedElement(atom_id)),
+    }
+}
+
+fn aromatic_donor_electron_range(donor: AromaticElectronDonorType) -> (u8, u8) {
+    match donor {
+        AromaticElectronDonorType::Vacant | AromaticElectronDonorType::None => (0, 0),
+        AromaticElectronDonorType::One => (1, 1),
+        AromaticElectronDonorType::Two => (2, 2),
+        AromaticElectronDonorType::OneOrTwo => (1, 2),
+        AromaticElectronDonorType::Any => (0, 2),
+    }
+}
+
+fn huckel_electron_count_for_donors(donors: &[AromaticElectronDonorType]) -> Option<u8> {
+    if donors
+        .iter()
+        .filter(|donor| matches!(donor, AromaticElectronDonorType::Any))
+        .count()
+        > 1
+    {
+        return None;
+    }
+
+    let min_electrons = donors
+        .iter()
+        .map(|donor| aromatic_donor_electron_range(*donor).0)
+        .sum();
+    let max_electrons = donors
+        .iter()
+        .map(|donor| aromatic_donor_electron_range(*donor).1)
+        .sum();
+    huckel_electron_count_in_range(min_electrons, max_electrons)
 }
 
 fn aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(
@@ -1766,7 +1830,9 @@ fn huckel_electron_count_in_range(min_electrons: u8, max_electrons: u8) -> Optio
     if max_electrons < 6 {
         return None;
     }
-    (min_electrons..=max_electrons).find(|electrons| (electrons - 2) % 4 == 0)
+    (min_electrons..=max_electrons)
+        .filter(|electrons| *electrons >= 6)
+        .find(|electrons| (electrons - 2) % 4 == 0)
 }
 
 fn aromatic_order_nitrogen_is_pyrrole_like(mol: &Molecule, atom_id: AtomId) -> bool {

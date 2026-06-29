@@ -23,6 +23,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Applies a 4n+2 electron-count model for common C, N, O, S, Se, Te, and P rings and small fused ring components.
 - Computes pi-electron counts from bond order, and uses an atom-contribution path for explicitly imported aromatic-bond rings.
 - Accepts imported aromatic-bond rings when RDKit-like variable atom-contribution ranges contain a valid 4n+2 count.
+- Routes imported aromatic-order atom contributions through a shared RDKit-style donor classifier with vacant, one-electron, two-electron, and variable donor ranges.
 - Treats terminal hetero exocyclic pi carbons as non-donating in imported six-member nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds.
 - Treats exocyclic hetero pi carbons as non-donating in imported five-member nitrogen/chalcogen aromatic-order rings when needed for RDKit-like Huckel counts.
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
@@ -70,3 +71,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v20: Clear localized fused lactam/enone bridge carbons and saturated fused oxygen bridge atoms, preserving RDKit-like canonical reparse semantics for oxygen/nitrogen polycyclic lactam systems while leaving heavier-chalcogen fused aromaticity on its existing path.
 - v21: Clear saturated fused nitrogen carbonyl ring atoms outside neighboring aromatic rings, preserving RDKit-like benzodiazepinone lactam canonical reparse semantics.
 - v22: Count exocyclic hetero pi carbons as non-donating in imported five-member nitrogen/chalcogen aromatic-order rings, preserving cationic imine thiadiazolium canonical reparse semantics.
+- v23: Centralize imported aromatic-order atom contributions behind a RDKit-style donor classifier and cover a PubChem macrocycle anionic-nitrogen canonical round trip.

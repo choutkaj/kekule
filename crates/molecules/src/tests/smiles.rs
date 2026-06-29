@@ -2215,6 +2215,30 @@ fn canonical_multicomponent_oxygen_neighbors_match_after_round_trip() {
 }
 
 #[test]
+fn canonical_pubchem_macrocycle_anionic_nitrogen_round_trip_matches_neighbors() {
+    let mut molecule = read_smiles_str(
+        "CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]",
+        SmilesParseOptions,
+    )
+    .expect("PubChem macrocycle mixture should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("PubChem macrocycle mixture should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    assert_eq!(
+        local_atom_neighbor_signatures(&molecule.mol),
+        local_atom_neighbor_signatures(&reparsed.mol),
+        "{written}"
+    );
+}
+
+#[test]
 fn canonical_substituted_pyrrole_uses_aromatic_nitrogen_form() {
     let mut molecule = read_smiles_str(
         "CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C",
