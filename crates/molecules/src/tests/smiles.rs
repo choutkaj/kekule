@@ -1893,6 +1893,13 @@ fn neutral_aza_macrocycle_core_stays_aliphatic() {
     sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
         .expect("neutral aza macrocycle should sanitize");
 
+    let aromatic_atoms = molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    assert_eq!(aromatic_atoms, 24);
+
     for atom_id in 6..=21 {
         assert!(
             !molecule
@@ -1913,6 +1920,25 @@ fn neutral_aza_macrocycle_core_stays_aliphatic() {
             "benzene atom {atom_id} should stay aromatic"
         );
     }
+}
+
+#[test]
+fn fused_azo_indole_ring_keeps_explicit_hydrogen_nitrogen_aromatic() {
+    let mut molecule = read_smiles_str(
+        "CN1C=NN(C)C1N=NC1=C(C2=CC=CC=C2)NC2=CC=CC=C12.[Cl-]",
+        SmilesParseOptions,
+    )
+    .expect("fused azo indole salt should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused azo indole salt should sanitize");
+
+    let aromatic_atom_ids = molecule
+        .mol
+        .atoms()
+        .filter_map(|(atom_id, atom)| atom.aromatic.then_some(atom_id.index()))
+        .collect::<Vec<_>>();
+    assert_eq!(aromatic_atom_ids.len(), 15, "{aromatic_atom_ids:?}");
 }
 
 #[test]
