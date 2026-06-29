@@ -1576,6 +1576,58 @@ fn partially_saturated_fused_amide_enone_ring_stays_aliphatic() {
 }
 
 #[test]
+fn fused_lactam_enone_canonical_round_trip_keeps_bridge_carbon_aliphatic() {
+    let mut molecule = read_smiles_str(
+        "CN1CC[C@@]23[C@H]4[C@H]1CC5=C2C(=C(C=C5)OC)O[C@@H]3[C@]6(C4)C(=O)C7=C8N6CCC9=C8C(=C(C=C9)OC)OC1=C7C=CC(=C1O)OC",
+        SmilesParseOptions,
+    )
+    .expect("fused lactam enone should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("fused lactam enone should sanitize");
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("fused lactam enone should canonicalize");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    let aliphatic_lactam_enone_carbons = reparsed
+        .mol
+        .atoms()
+        .filter(|(id, atom)| {
+            atom.element.symbol() == "C"
+                && !atom.aromatic
+                && reparsed.mol.incident_bonds(*id).is_ok_and(|bonds| {
+                    let bonds = bonds.collect::<Vec<_>>();
+                    bonds.iter().any(|(_, bond)| {
+                        matches!(bond.order, BondOrder::Double)
+                            && reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "C" && !other.aromatic)
+                    }) && bonds.iter().any(|(_, bond)| {
+                        matches!(bond.order, BondOrder::Single)
+                            && reparsed
+                                .mol
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| other.element.symbol() == "N")
+                    })
+                })
+        })
+        .count();
+    assert!(
+        aliphatic_lactam_enone_carbons >= 1,
+        "canonical output should keep the lactam enone bridge aliphatic: {written}"
+    );
+    let aromatic_oxygens = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "O" && atom.aromatic)
+        .count();
+    assert_eq!(aromatic_oxygens, 0, "{written}");
+}
+
+#[test]
 fn spiro_saturated_fused_hydrocarbon_bridge_stays_aliphatic() {
     let mut molecule = read_smiles_str("CC1=C2C=CC3=C(C2=CC=C1)CCC4(C3CCCC4)C", SmilesParseOptions)
         .expect("spiro saturated fused hydrocarbon should parse");

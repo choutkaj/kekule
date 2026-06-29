@@ -48,3 +48,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v15: Advance PubChem-1000 validation through saturated sulfonamide fused-ring aromaticity cleanup.
 - v16: Advance PubChem-1000 validation through exocyclic alkene deactivation in fused nitrogen/chalcogen aromatic systems.
 - v17: Advance PubChem-1000 validation through canonical reparse support for thione-rich imported nitrogen/chalcogen aromatic-order rings.
+- v18: Advance PubChem-1000 validation through RDKit-like fused lactam/enone and saturated oxygen bridge aromaticity cleanup for canonical reparse semantics.

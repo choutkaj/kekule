@@ -159,7 +159,9 @@ fn perceive_rdkit_like_aromaticity(
     clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
+    clear_fused_lactam_enone_atoms(mol, ring_set.rings());
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings());
+    clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings());
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
     clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings());
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
@@ -553,6 +555,70 @@ fn clear_imide_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     }
 }
 
+fn clear_fused_lactam_enone_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    if molecule_contains_heavier_chalcogen(mol) {
+        return;
+    }
+    let atoms_to_clear = rings
+        .iter()
+        .enumerate()
+        .filter(|(index, ring)| {
+            ring_contains_element(mol, ring, "N")
+                && !ring_has_chalcogen_donor(mol, ring)
+                && ring_terminal_exocyclic_pi_bond_count(mol, ring) > 0
+                && rings.iter().enumerate().any(|(other_index, other)| {
+                    other_index != *index && rings_share_bond(ring, other)
+                })
+        })
+        .flat_map(|(_, ring)| {
+            ring.atoms
+                .iter()
+                .copied()
+                .filter(|atom_id| is_aromatic_lactam_enone_carbon(mol, ring, *atom_id))
+        })
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn is_aromatic_lactam_enone_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+    mol.atom(atom_id)
+        .is_ok_and(|atom| atom.element.symbol() == "C" && atom.aromatic)
+        && mol
+            .incident_bonds(atom_id)
+            .ok()
+            .into_iter()
+            .flatten()
+            .any(|(bond_id, bond)| {
+                ring.bonds.contains(&bond_id)
+                    && matches!(bond.order, BondOrder::Double)
+                    && mol
+                        .atom(bond.other_atom(atom_id))
+                        .is_ok_and(|other| other.element.symbol() == "C" && !other.aromatic)
+            })
+        && mol
+            .incident_bonds(atom_id)
+            .ok()
+            .into_iter()
+            .flatten()
+            .any(|(bond_id, bond)| {
+                ring.bonds.contains(&bond_id)
+                    && matches!(bond.order, BondOrder::Single)
+                    && mol.atom(bond.other_atom(atom_id)).is_ok_and(|other| {
+                        other.element.symbol() == "N" && other.formal_charge == 0
+                    })
+            })
+}
+
 fn is_saturated_ring_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
     mol.atom(atom_id)
         .is_ok_and(|atom| atom.element.symbol() == "C")
@@ -646,6 +712,53 @@ fn clear_fused_lactone_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn clear_saturated_fused_ether_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
+    if molecule_contains_heavier_chalcogen(mol) {
+        return;
+    }
+    let atoms_to_clear = rings
+        .iter()
+        .enumerate()
+        .filter(|(index, ring)| {
+            ring.atoms.len() >= 5
+                && ring_has_chalcogen_donor(mol, ring)
+                && ring_hetero_donor_count(mol, ring) == 1
+                && ring_contains_element(mol, ring, "O")
+                && !ring_contains_element(mol, ring, "S")
+                && !ring_contains_element(mol, ring, "Se")
+                && !ring_contains_element(mol, ring, "Te")
+                && !ring_has_conjugated_atom_path(mol, ring)
+                && ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
+                && rings.iter().enumerate().any(|(other_index, other)| {
+                    other_index != *index && rings_share_bond(ring, other)
+                })
+        })
+        .flat_map(|(_, ring)| {
+            ring.atoms.iter().copied().filter(|atom_id| {
+                mol.atom(*atom_id)
+                    .is_ok_and(|atom| atom.element.symbol() == "O" && atom.aromatic)
+                    && is_chalcogen_bridge_without_pi(mol, ring, *atom_id)
+            })
+        })
+        .collect::<BTreeSet<_>>();
+
+    for atom_id in &atoms_to_clear {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        if atoms_to_clear.contains(&bond.a()) || atoms_to_clear.contains(&bond.b()) {
+            bond.aromatic = false;
+        }
+    }
+}
+
+fn molecule_contains_heavier_chalcogen(mol: &Molecule) -> bool {
+    mol.atoms()
+        .any(|(_, atom)| matches!(atom.element.symbol(), "S" | "Se" | "Te"))
 }
 
 fn is_chalcogen_bridge_without_pi(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {

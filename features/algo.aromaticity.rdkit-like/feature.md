@@ -27,6 +27,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
 - Clears five-member neutral imide carbonyl ring atoms when a saturated ring nitrogen is flanked by two terminal ring carbonyls.
 - Clears saturated fused all-carbon ring atoms that are not retained by neighboring aromatic rings, saturated aromatic carbon centers, and localized cyclic amidine centers.
+- Clears localized fused lactam/enone bridge carbons and saturated fused oxygen bridge atoms when they are not part of a conjugated RDKit-like aromatic path.
 - Uses conservative guards for small rings, hetero fused donors, lactone-like rings, and large macrocycles exposed by external PubChem validation.
 - Treats unsupported ring elements as non-aromatic for the current model rather than failing the whole perception pass.
 - Leaves unsupported or ambiguous systems non-aromatic rather than claiming full RDKit parity.
@@ -64,3 +65,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v17: Refine saturated tertiary amine cleanup to treat oxidized chalcogen substituents as non-donor sulfone-like groups, preserving aliphatic sulfonamide ring nitrogens.
 - v18: Clear RDKit-like exocyclic alkene ring carbons between nitrogen and chalcogen donors so fused thiazine/thiazolium systems do not over-aromatize deactivated atoms.
 - v19: Count terminal hetero exocyclic pi carbons as non-donating in imported nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds, preserving RDKit-like thione-rich heterocycles without over-aromatizing singly carbonylated fused systems.
+- v20: Clear localized fused lactam/enone bridge carbons and saturated fused oxygen bridge atoms, preserving RDKit-like canonical reparse semantics for oxygen/nitrogen polycyclic lactam systems while leaving heavier-chalcogen fused aromaticity on its existing path.
