@@ -182,7 +182,7 @@ fn perceive_rdkit_like_aromaticity(
         &ring_analyses,
         &protected_non_aromatic_bonds,
     );
-    clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings());
+    clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
@@ -582,11 +582,15 @@ fn clear_ring_oxo_chalcogen_atoms(mol: &mut Molecule, rings: &[Ring]) {
     }
 }
 
-fn clear_terminal_chalcogen_oxo_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_terminal_chalcogen_oxo_ring_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
         if ring.atoms.len() != 5
-            || !ring_contains_element(mol, ring, "N")
+            || !ring_analyses[index].localized_has_active_element_donor(mol, "N")
             || !ring_has_terminal_chalcogen_exocyclic_pi_bond(mol, ring)
         {
             continue;
@@ -2886,6 +2890,63 @@ mod tests {
     }
 
     #[test]
+    fn terminal_chalcogen_oxo_cleanup_uses_active_nitrogen_donor_state() {
+        let mut mol = Molecule::new();
+        let mut nitrogen_atom = cation_with_one_implicit_hydrogen("N");
+        nitrogen_atom.aromatic = true;
+        let nitrogen = mol.add_atom(nitrogen_atom);
+        let carbon_a = mol.add_atom(aromatic_carbon());
+        let sulfur = mol.add_atom(aromatic_atom("S"));
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let carbon_c = mol.add_atom(aromatic_carbon());
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, sulfur, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(sulfur, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_c, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let exocyclic_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(sulfur, exocyclic_oxygen, BondOrder::Double)
+            .expect("terminal sulfoxide");
+        for bond_id in [bond_a, bond_b, bond_c, bond_d, bond_e] {
+            mol.bonds[bond_id.index()]
+                .as_mut()
+                .expect("live bond")
+                .aromatic = true;
+        }
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, sulfur, carbon_b, carbon_c],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        let rings = vec![ring.clone()];
+        let analyses = vec![analysis];
+
+        assert!(ring_contains_element(&mol, &ring, "N"));
+        assert!(ring_has_terminal_chalcogen_exocyclic_pi_bond(&mol, &ring));
+        assert!(!analyses[0].localized_has_active_element_donor(&mol, "N"));
+        clear_terminal_chalcogen_oxo_ring_atoms(&mut mol, &rings, &analyses);
+        assert!(ring
+            .atoms
+            .iter()
+            .all(|atom_id| mol.atom(*atom_id).is_ok_and(|atom| atom.aromatic)));
+        assert!(ring
+            .bonds
+            .iter()
+            .all(|bond_id| mol.bond(*bond_id).is_ok_and(|bond| bond.aromatic)));
+    }
+
+    #[test]
     fn aromatic_order_exocyclic_carbon_uses_active_donor_state() {
         let mut mol = Molecule::new();
         let mut nitrogen = Atom::new(Element::from_symbol("N").expect("test element"));
@@ -2985,5 +3046,15 @@ mod tests {
         atom.implicit_hydrogens = Some(1);
         atom.no_implicit_hydrogens = true;
         atom
+    }
+
+    fn aromatic_atom(symbol: &str) -> Atom {
+        let mut atom = Atom::new(Element::from_symbol(symbol).expect("test element"));
+        atom.aromatic = true;
+        atom
+    }
+
+    fn aromatic_carbon() -> Atom {
+        aromatic_atom("C")
     }
 }
