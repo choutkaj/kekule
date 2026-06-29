@@ -501,16 +501,14 @@ fn clear_aromatic_amidine_carbon_atoms(mol: &mut Molecule, rings: &[Ring]) {
                 .map(|(_, bond)| bond)
                 .collect::<Vec<_>>();
             let has_imine_nitrogen = bonds.iter().any(|bond| {
+                let neighbor_id = bond.other_atom(atom_id);
                 matches!(bond.order, BondOrder::Double)
-                    && mol
-                        .atom(bond.other_atom(atom_id))
-                        .is_ok_and(|other| other.element.symbol() == "N")
+                    && atom_is_rdkit_aromatic_element_candidate(mol, neighbor_id, "N")
             });
             let has_single_nitrogen = bonds.iter().any(|bond| {
+                let neighbor_id = bond.other_atom(atom_id);
                 matches!(bond.order, BondOrder::Single)
-                    && mol
-                        .atom(bond.other_atom(atom_id))
-                        .is_ok_and(|other| other.element.symbol() == "N")
+                    && atom_is_rdkit_aromatic_element_candidate(mol, neighbor_id, "N")
             });
             let has_saturated_carbon_neighbor = bonds.iter().any(|bond| {
                 let neighbor_id = bond.other_atom(atom_id);
@@ -534,8 +532,7 @@ fn clear_aromatic_amidine_carbon_atoms(mol: &mut Molecule, rings: &[Ring]) {
                 .flatten()
                 .filter_map(|(_, bond)| {
                     let neighbor_id = bond.other_atom(*carbon_id);
-                    mol.atom(neighbor_id)
-                        .is_ok_and(|atom| atom.element.symbol() == "N")
+                    atom_is_rdkit_aromatic_element_candidate(mol, neighbor_id, "N")
                         .then_some(neighbor_id)
                 }),
         );
@@ -2325,6 +2322,12 @@ fn atom_is_rdkit_aromatic_candidate(mol: &Molecule, atom_id: AtomId, atom: &Atom
     radical_electrons == 0 || atom.element.symbol() == "C" && atom.formal_charge == 0
 }
 
+fn atom_is_rdkit_aromatic_element_candidate(mol: &Molecule, atom_id: AtomId, symbol: &str) -> bool {
+    mol.atom(atom_id).is_ok_and(|atom| {
+        atom.element.symbol() == symbol && atom_is_rdkit_aromatic_candidate(mol, atom_id, atom)
+    })
+}
+
 fn atom_aromatic_candidate_degree(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
     let bonded_degree = mol
         .incident_bonds(atom_id)
@@ -3223,6 +3226,72 @@ mod tests {
         assert!(mol.atom(sulfur).expect("ring sulfur").aromatic);
         assert!(mol.bond(bond_a).expect("ring bond").aromatic);
         assert!(mol.bond(bond_f).expect("ring bond").aromatic);
+    }
+
+    #[test]
+    fn aromatic_amidine_cleanup_requires_candidate_nitrogen_state() {
+        let mut mol = Molecule::new();
+        let mut carbon_atom = aromatic_carbon();
+        carbon_atom.formal_charge = 1;
+        let carbon = mol.add_atom(carbon_atom);
+        let mut imine_nitrogen_atom = aromatic_atom("N");
+        imine_nitrogen_atom.radical = Some(AtomRadical::Doublet);
+        let imine_nitrogen = mol.add_atom(imine_nitrogen_atom);
+        let single_nitrogen = mol.add_atom(aromatic_atom("N"));
+        let saturated_carbon =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(carbon, imine_nitrogen, BondOrder::Double)
+            .expect("imine bond");
+        let bond_b = mol
+            .add_bond(carbon, single_nitrogen, BondOrder::Single)
+            .expect("single nitrogen bond");
+        let bond_c = mol
+            .add_bond(carbon, saturated_carbon, BondOrder::Single)
+            .expect("saturated carbon bond");
+        let bond_d = mol
+            .add_bond(saturated_carbon, single_nitrogen, BondOrder::Single)
+            .expect("ring closure bond");
+        for bond_id in [bond_a, bond_b, bond_d] {
+            mol.bonds[bond_id.index()]
+                .as_mut()
+                .expect("live bond")
+                .aromatic = true;
+        }
+        let ring = Ring {
+            atoms: vec![carbon, saturated_carbon, single_nitrogen],
+            bonds: vec![bond_b, bond_c, bond_d],
+        };
+
+        assert!(mol.atom(carbon).expect("amidine carbon").aromatic);
+        assert!(
+            mol.atom(imine_nitrogen)
+                .expect("imine nitrogen")
+                .element
+                .symbol()
+                == "N"
+        );
+        assert!(!atom_is_rdkit_aromatic_element_candidate(
+            &mol,
+            imine_nitrogen,
+            "N"
+        ));
+        assert!(atom_is_rdkit_aromatic_element_candidate(
+            &mol,
+            single_nitrogen,
+            "N"
+        ));
+
+        clear_aromatic_amidine_carbon_atoms(&mut mol, &[ring]);
+
+        assert!(mol.atom(carbon).expect("amidine carbon").aromatic);
+        assert!(
+            mol.atom(imine_nitrogen)
+                .expect("radical imine nitrogen")
+                .aromatic
+        );
+        assert!(mol.atom(single_nitrogen).expect("single nitrogen").aromatic);
+        assert!(mol.bond(bond_a).expect("imine bond").aromatic);
     }
 
     #[test]
