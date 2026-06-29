@@ -145,19 +145,13 @@ fn perceive_rdkit_like_aromaticity(
                 return false;
             }
             containing_rings.iter().any(|(index, ring)| {
-                if ring_aromatic[*index] {
-                    return false;
-                }
-                let non_donor_five_ring = ring.atoms.len() == 5
-                    && !fused_component_is_all_carbon(mol, ring)
-                    && !ring_has_chalcogen_donor(mol, ring)
-                    && ring_hetero_donor_count(mol, ring) < 2
-                    && !ring_analyses[*index].has_nitrogen_lone_pair_donor(mol);
-                let multi_hetero_dione_ring = ring.atoms.len() == 6
-                    && containing_rings.len() > 1
-                    && ring_hetero_donor_count(mol, ring) >= 2
-                    && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2;
-                non_donor_five_ring || multi_hetero_dione_ring
+                ring_protects_non_aromatic_fusion_single(
+                    mol,
+                    ring,
+                    &ring_analyses[*index],
+                    ring_aromatic[*index],
+                    containing_rings.len(),
+                )
             })
         })
         .collect::<BTreeSet<_>>();
@@ -304,6 +298,29 @@ fn restore_imported_aromatic_component(mol: &mut Molecule, component: &[AtomId])
             bond.aromatic = true;
         }
     }
+}
+
+fn ring_protects_non_aromatic_fusion_single(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    ring_is_aromatic: bool,
+    containing_ring_count: usize,
+) -> bool {
+    if ring_is_aromatic {
+        return false;
+    }
+    let active_hetero_donors = analysis.localized_active_hetero_donor_count(mol);
+    let non_donor_five_ring = ring.atoms.len() == 5
+        && !fused_component_is_all_carbon(mol, ring)
+        && !analysis.localized_has_active_chalcogen_donor(mol)
+        && active_hetero_donors < 2
+        && !analysis.has_nitrogen_lone_pair_donor(mol);
+    let multi_hetero_dione_ring = ring.atoms.len() == 6
+        && containing_ring_count > 1
+        && active_hetero_donors >= 2
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2;
+    non_donor_five_ring || multi_hetero_dione_ring
 }
 
 fn imported_aromatic_bond_components(mol: &Molecule) -> Vec<Vec<AtomId>> {
@@ -1802,6 +1819,19 @@ impl RingAromaticityAnalysis {
             .as_ref()
             .is_some_and(|analysis| analysis.has_nitrogen_lone_pair_donor(mol))
     }
+
+    fn localized_active_hetero_donor_count(&self, mol: &Molecule) -> usize {
+        self.localized
+            .as_ref()
+            .map(|analysis| analysis.active_hetero_donor_count(mol))
+            .unwrap_or(0)
+    }
+
+    fn localized_has_active_chalcogen_donor(&self, mol: &Molecule) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(|analysis| analysis.has_active_chalcogen_donor(mol))
+    }
 }
 
 impl AromaticRingDonorAnalysis {
@@ -1869,6 +1899,14 @@ impl AromaticRingDonorAnalysis {
             mol.atom(atom_donor.atom)
                 .is_ok_and(|atom| atom.element.symbol() == "N")
                 && aromatic_donor_electron_range(atom_donor.donor).1 >= 2
+        })
+    }
+
+    fn has_active_chalcogen_donor(&self, mol: &Molecule) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            mol.atom(atom_donor.atom)
+                .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
+                && aromatic_donor_electron_range(atom_donor.donor).1 > 0
         })
     }
 }
@@ -2414,6 +2452,55 @@ mod tests {
         let analysis = localized_ring_donor_analysis(&mol, &ring).expect("donor analysis");
         assert_eq!(analysis.active_hetero_donor_count(&mol), 0);
         assert!(!aromatic_fused_candidate(&mol, &ring));
+    }
+
+    #[test]
+    fn non_aromatic_fusion_protection_uses_active_donor_state() {
+        let mut mol = Molecule::new();
+        let nitrogen_a = mol.add_atom(cation_with_one_implicit_hydrogen("N"));
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let nitrogen_b = mol.add_atom(cation_with_one_implicit_hydrogen("N"));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen_a, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, nitrogen_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(nitrogen_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_d, nitrogen_a, BondOrder::Single)
+            .expect("ring bond");
+        let oxygen_a = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let oxygen_b = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_a, oxygen_a, BondOrder::Double)
+            .expect("terminal carbonyl");
+        mol.add_bond(carbon_c, oxygen_b, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![
+                nitrogen_a, carbon_a, carbon_b, nitrogen_b, carbon_c, carbon_d,
+            ],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+
+        assert_eq!(ring_hetero_donor_count(&mol, &ring), 2);
+        assert_eq!(ring_terminal_exocyclic_pi_bond_count(&mol, &ring), 2);
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 0);
+        assert!(!ring_protects_non_aromatic_fusion_single(
+            &mol, &ring, &analysis, false, 2
+        ));
     }
 
     fn cation_with_one_implicit_hydrogen(symbol: &str) -> Atom {
