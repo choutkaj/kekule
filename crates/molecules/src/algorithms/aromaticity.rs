@@ -190,7 +190,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_saturated_fused_lactam_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
-    clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings());
+    clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings());
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings());
     clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
@@ -933,17 +933,29 @@ fn is_chalcogen_bridge_without_pi(mol: &Molecule, ring: &Ring, atom_id: AtomId) 
         && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
 }
 
-fn clear_saturated_tertiary_amine_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_saturated_tertiary_amine_ring_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
-        if !ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, ring) {
+        if !ring_has_saturated_tertiary_amine_without_donor_chalcogen(
+            mol,
+            ring,
+            &ring_analyses[index],
+        ) {
             continue;
         }
         for atom_id in &ring.atoms {
             let retained_by_other_ring = rings.iter().enumerate().any(|(other_index, other)| {
                 other_index != index
                     && other.atoms.contains(atom_id)
-                    && !ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, other)
+                    && !ring_has_saturated_tertiary_amine_without_donor_chalcogen(
+                        mol,
+                        other,
+                        &ring_analyses[other_index],
+                    )
                     && other
                         .atoms
                         .iter()
@@ -1274,7 +1286,7 @@ fn perceive_fused_aromatic_components(
             let terminal_atoms_retained =
                 terminal_exocyclic_atoms_in_nitrogen_rings(mol, rings, indexes);
             let atoms_retained_by_ring_context =
-                atoms_in_nitrogen_or_terminal_pi_free_rings(mol, rings, indexes);
+                atoms_in_nitrogen_or_terminal_pi_free_rings(mol, rings, ring_analyses, indexes);
             let aromatic_atoms = component
                 .atoms
                 .iter()
@@ -1442,6 +1454,7 @@ fn atoms_in_limited_terminal_exocyclic_pi_rings(
 fn atoms_in_nitrogen_or_terminal_pi_free_rings(
     mol: &Molecule,
     rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
     indexes: &[usize],
 ) -> BTreeSet<AtomId> {
     let has_exocyclic_pi_ring = indexes
@@ -1451,7 +1464,11 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
         return indexes
             .iter()
             .filter(|index| {
-                !ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, &rings[**index])
+                !ring_has_saturated_tertiary_amine_without_donor_chalcogen(
+                    mol,
+                    &rings[**index],
+                    &ring_analyses[**index],
+                )
             })
             .flat_map(|index| rings[*index].atoms.iter().copied())
             .collect();
@@ -1460,7 +1477,11 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
     let mut atoms = BTreeSet::new();
     for index in indexes {
         let ring = &rings[*index];
-        if ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol, ring) {
+        if ring_has_saturated_tertiary_amine_without_donor_chalcogen(
+            mol,
+            ring,
+            &ring_analyses[*index],
+        ) {
             continue;
         }
         let exocyclic_pi_count = ring_exocyclic_pi_bond_count(mol, ring);
@@ -1478,15 +1499,16 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
     atoms
 }
 
-fn ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol: &Molecule, ring: &Ring) -> bool {
+fn ring_has_saturated_tertiary_amine_without_donor_chalcogen(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
     if ring_has_saturated_chalcogen_donor(mol, ring) {
         return false;
     }
-    let Ok(analysis) = localized_ring_donor_analysis(mol, ring) else {
-        return false;
-    };
-    !analysis.all_atoms_are_candidates()
-        && analysis.active_hetero_donor_count(mol) == 1
+    !analysis.localized_all_atoms_are_candidates()
+        && analysis.localized_active_hetero_donor_count(mol) == 1
         && ring
             .atoms
             .iter()
