@@ -30,6 +30,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Counts fused-system Huckel donor atoms using RDKit-style fused-subsystem atom multiplicity, excluding atoms buried in more than two selected rings.
 - Rejects aromatic candidate atoms with more than one explicit double/triple bond through the shared donor classifier.
 - Applies RDKit-like radical candidate eligibility in the shared donor classifier: radical heteroatoms and charged radical carbons are non-candidates, while neutral carbon radicals remain eligible.
+- Applies RDKit-like candidate coordination eligibility, rejecting atoms whose bond plus hydrogen degree exceeds three before donor typing.
 - Treats terminal hetero exocyclic pi carbons as non-donating in imported six-member nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds.
 - Treats exocyclic hetero pi carbons as non-donating in imported five-member nitrogen/chalcogen aromatic-order rings when needed for RDKit-like Huckel counts.
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
@@ -83,3 +84,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v26: Add bounded connected fused-subset Huckel search ahead of legacy fused fallback marking, preserving additive subsystem aromaticity exposed by PubChem.
 - v27: Count fused-system donor atoms with RDKit-style atom multiplicity and reject candidate atoms with more than one explicit pi bond.
 - v28: Add RDKit-like radical candidate eligibility to the shared donor classifier, preserving neutral carbon radicals while rejecting radical heteroatoms and charged radical carbons.
+- v29: Add RDKit-like candidate coordination eligibility, rejecting over-coordinated ring atoms before aromatic donor typing.

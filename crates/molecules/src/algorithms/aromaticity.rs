@@ -1843,11 +1843,28 @@ fn aromaticity_supported_element(atom: &Atom) -> bool {
 }
 
 fn atom_is_rdkit_aromatic_candidate(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> bool {
+    if atom_aromatic_candidate_degree(mol, atom_id, atom) > 3 {
+        return false;
+    }
     if atom_explicit_pi_bond_count(mol, atom_id) > 1 {
         return false;
     }
     let radical_electrons = atom.radical.map_or(0, AtomRadical::unpaired_electron_count);
     radical_electrons == 0 || atom.element.symbol() == "C" && atom.formal_charge == 0
+}
+
+fn atom_aromatic_candidate_degree(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
+    let bonded_degree = mol
+        .incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|(_, bond)| !matches!(bond.order, BondOrder::Zero | BondOrder::Dative))
+        .count()
+        .min(u8::MAX as usize) as u8;
+    bonded_degree
+        .saturating_add(atom.explicit_hydrogens)
+        .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
 }
 
 fn aromatic_order_ring_pi_electrons(

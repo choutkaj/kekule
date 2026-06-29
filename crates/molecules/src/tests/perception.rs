@@ -304,6 +304,39 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
 }
 
 #[test]
+fn aromaticity_rejects_tetracoordinate_ring_atom_candidate() {
+    let (mut mol, atoms, bonds) = ring_molecule(
+        &["N", "C", "C", "C", "C"],
+        &[
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    mol.atom_mut(atoms[0])
+        .expect("ring atom exists")
+        .formal_charge = 1;
+    let methyl_a = mol.add_atom(carbon());
+    let methyl_b = mol.add_atom(carbon());
+    mol.add_bond(atoms[0], methyl_a, BondOrder::Single)
+        .expect("first substituent bond");
+    mol.add_bond(atoms[0], methyl_b, BondOrder::Single)
+        .expect("second substituent bond");
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("tetracoordinate ring atom should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
 fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
     let (mut mol, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C"],
