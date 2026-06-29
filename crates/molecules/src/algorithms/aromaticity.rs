@@ -1871,6 +1871,17 @@ fn atom_is_rdkit_aromatic_candidate(mol: &Molecule, atom_id: AtomId, atom: &Atom
     if atom_aromatic_candidate_degree(mol, atom_id, atom) > 3 {
         return false;
     }
+    let Some(default_valence) = rdkit_default_valence(atom) else {
+        return false;
+    };
+    let Some(charge_adjusted_default_valence) = rdkit_charge_adjusted_default_valence(atom) else {
+        return false;
+    };
+    if default_valence > 0
+        && atom_rdkit_aromatic_total_valence(mol, atom_id, atom) > charge_adjusted_default_valence
+    {
+        return false;
+    }
     if atom_explicit_pi_bond_count(mol, atom_id) > 1 {
         return false;
     }
@@ -1903,6 +1914,12 @@ fn aromaticity_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &A
         return 0;
     };
     target.saturating_sub(explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens))
+}
+
+fn atom_rdkit_aromatic_total_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
+    explicit_valence(mol, atom_id)
+        .saturating_add(atom.explicit_hydrogens)
+        .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
 }
 
 fn aromaticity_valence_target(atom: &Atom) -> Option<u8> {
@@ -2097,7 +2114,17 @@ fn count_rdkit_like_atom_pi_electrons(mol: &Molecule, atom_id: AtomId, atom: &At
 }
 
 fn rdkit_default_valence(atom: &Atom) -> Option<u8> {
-    match atom.element.symbol() {
+    rdkit_default_valence_for_element(atom.element)
+}
+
+fn rdkit_charge_adjusted_default_valence(atom: &Atom) -> Option<u8> {
+    let atomic_number = i16::from(atom.element.atomic_number()) - i16::from(atom.formal_charge);
+    let atomic_number = u8::try_from(atomic_number).ok()?;
+    rdkit_default_valence_for_element(Element::from_atomic_number(atomic_number)?)
+}
+
+fn rdkit_default_valence_for_element(element: Element) -> Option<u8> {
+    match element.symbol() {
         "B" => Some(3),
         "C" => Some(4),
         "N" | "P" => Some(3),

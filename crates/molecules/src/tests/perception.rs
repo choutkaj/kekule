@@ -282,6 +282,35 @@ fn aromaticity_supports_phosphorus_lone_pair_donor_ring() {
 }
 
 #[test]
+fn aromaticity_rejects_ring_atom_above_rdkit_default_valence() {
+    let (mut mol, atoms, bonds) = ring_molecule(
+        &["P", "C", "C", "C", "C", "C"],
+        &[
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    let methyl = mol.add_atom(carbon());
+    mol.add_bond(atoms[0], methyl, BondOrder::Single)
+        .expect("phosphorus substituent bond");
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("hypervalent phosphorus ring should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(!mol.atom(methyl).expect("substituent exists").aromatic);
+}
+
+#[test]
 fn aromaticity_applies_rdkit_radical_candidate_rules() {
     let (mut neutral_carbon_radical, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C", "C"],
