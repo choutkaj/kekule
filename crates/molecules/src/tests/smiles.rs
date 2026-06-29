@@ -1875,6 +1875,10 @@ fn large_conjugated_macrocycle_aromatic_core_is_not_size_skipped() {
         .atoms()
         .filter(|(_, atom)| atom.aromatic)
         .count();
+    assert!(
+        aromatic_atoms > 24,
+        "large fused systems should not be constrained by a pre-RDKit-size cap"
+    );
     assert_eq!(aromatic_atoms, 40);
 
     let copper = molecule.mol.atom(AtomId::new(46)).expect("copper atom");

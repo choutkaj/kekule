@@ -5,6 +5,7 @@ use super::*;
 use crate::core::*;
 
 const MAX_FUSED_AROMATIC_COMBINATION_RINGS: usize = 6;
+const MAX_FUSED_AROMATIC_RING_SIZE: usize = 24;
 const LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT: usize = 300;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1490,7 +1491,7 @@ fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
         return false;
     }
     if ring.atoms.len() > 7 {
-        return ring.atoms.len() <= 18
+        return ring.atoms.len() <= MAX_FUSED_AROMATIC_RING_SIZE
             && fused_component_is_carbon_nitrogen(mol, ring)
             && ring_has_anionic_nitrogen(mol, ring)
             && ring_has_conjugated_atom_path(mol, ring)
