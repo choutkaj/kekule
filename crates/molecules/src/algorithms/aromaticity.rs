@@ -159,16 +159,12 @@ fn perceive_rdkit_like_aromaticity(
 
     for (ring, aromatic) in ring_set.rings().iter().zip(ring_aromatic) {
         if aromatic {
-            for atom_id in &ring.atoms {
-                if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-                    atom.aromatic = true;
-                }
-            }
-            for bond_id in &ring.bonds {
-                if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                    bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
-                }
-            }
+            mark_aromatic_atoms_and_bonds(
+                mol,
+                ring.atoms.iter().copied(),
+                ring.bonds.iter().copied(),
+                &protected_non_aromatic_bonds,
+            );
         }
     }
     perceive_fused_aromatic_components(mol, ring_set.rings(), &protected_non_aromatic_bonds)?;
@@ -209,6 +205,44 @@ fn perceive_rdkit_like_aromaticity(
 
     mol.perception.aromaticity = ComputedState::Fresh;
     Ok(())
+}
+
+fn mark_aromatic_atoms_and_bonds(
+    mol: &mut Molecule,
+    atoms: impl IntoIterator<Item = AtomId>,
+    bonds: impl IntoIterator<Item = BondId>,
+    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+) {
+    for atom_id in atoms {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = true;
+        }
+    }
+    for bond_id in bonds {
+        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+            bond.aromatic = !protected_non_aromatic_bonds.contains(&bond_id);
+        }
+    }
+}
+
+fn mark_aromatic_atom_set_with_internal_bonds(
+    mol: &mut Molecule,
+    atoms: &BTreeSet<AtomId>,
+    bonds: impl IntoIterator<Item = BondId>,
+    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+) {
+    for atom_id in atoms {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = true;
+        }
+    }
+    for bond_id in bonds {
+        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+            bond.aromatic = atoms.contains(&bond.a())
+                && atoms.contains(&bond.b())
+                && !protected_non_aromatic_bonds.contains(&bond_id);
+        }
+    }
 }
 
 fn restore_imported_aromatic_component(mol: &mut Molecule, component: &[AtomId]) {
@@ -1073,16 +1107,12 @@ fn perceive_fused_single_exocyclic_carbon_rings(
         .collect::<Vec<_>>();
 
     for ring in selected {
-        for atom_id in &ring.atoms {
-            if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-                atom.aromatic = true;
-            }
-        }
-        for bond_id in &ring.bonds {
-            if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
-            }
-        }
+        mark_aromatic_atoms_and_bonds(
+            mol,
+            ring.atoms.iter().copied(),
+            ring.bonds.iter().copied(),
+            protected_non_aromatic_bonds,
+        );
     }
 }
 
@@ -1125,32 +1155,22 @@ fn perceive_fused_aromatic_components(
         if electrons >= 6
             && ((electrons - 2) % 4 == 0 || all_carbon_component && !component_has_exocyclic_pi)
         {
-            for atom_id in &component.atoms {
-                if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-                    atom.aromatic = true;
-                }
-            }
-            for bond_id in &component.bonds {
-                if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                    bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
-                }
-            }
+            mark_aromatic_atoms_and_bonds(
+                mol,
+                component.atoms.iter().copied(),
+                component.bonds.iter().copied(),
+                protected_non_aromatic_bonds,
+            );
         } else if all_carbon_component && component_has_exocyclic_pi {
             let aromatic_atoms =
                 atoms_in_limited_terminal_exocyclic_pi_rings(mol, rings, indexes, 1);
             if aromatic_atoms.len() >= 6 {
-                for atom_id in &aromatic_atoms {
-                    if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-                        atom.aromatic = true;
-                    }
-                }
-                for bond_id in &component.bonds {
-                    if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                        bond.aromatic = aromatic_atoms.contains(&bond.a())
-                            && aromatic_atoms.contains(&bond.b())
-                            && !protected_non_aromatic_bonds.contains(bond_id);
-                    }
-                }
+                mark_aromatic_atom_set_with_internal_bonds(
+                    mol,
+                    &aromatic_atoms,
+                    component.bonds.iter().copied(),
+                    protected_non_aromatic_bonds,
+                );
             }
         } else if fused_component_is_carbon_nitrogen(mol, &component) {
             let terminal_atoms_retained =
@@ -1168,18 +1188,12 @@ fn perceive_fused_aromatic_components(
                 })
                 .collect::<BTreeSet<_>>();
             if aromatic_atoms.len() >= 6 {
-                for atom_id in &aromatic_atoms {
-                    if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-                        atom.aromatic = true;
-                    }
-                }
-                for bond_id in &component.bonds {
-                    if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                        bond.aromatic = aromatic_atoms.contains(&bond.a())
-                            && aromatic_atoms.contains(&bond.b())
-                            && !protected_non_aromatic_bonds.contains(bond_id);
-                    }
-                }
+                mark_aromatic_atom_set_with_internal_bonds(
+                    mol,
+                    &aromatic_atoms,
+                    component.bonds.iter().copied(),
+                    protected_non_aromatic_bonds,
+                );
             }
         }
     }
