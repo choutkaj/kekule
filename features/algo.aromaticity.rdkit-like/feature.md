@@ -27,6 +27,8 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Routes localized monocyclic and fused-component pi-electron counts through the same donor classifier, so ring-pi atoms, lone-pair donors, anionic carbon donors, vacant exocyclic centers, and non-donors are handled by one path.
 - Uses the same donor classifier for aromatic candidate-path and active hetero-donor checks instead of duplicating separate symbol-based rules.
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
+- Counts fused-system Huckel donor atoms using RDKit-style fused-subsystem atom multiplicity, excluding atoms buried in more than two selected rings.
+- Rejects aromatic candidate atoms with more than one explicit double/triple bond through the shared donor classifier.
 - Treats terminal hetero exocyclic pi carbons as non-donating in imported six-member nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds.
 - Treats exocyclic hetero pi carbons as non-donating in imported five-member nitrogen/chalcogen aromatic-order rings when needed for RDKit-like Huckel counts.
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
@@ -78,3 +80,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v24: Use the shared donor classifier for localized monocyclic and fused-component electron counts, preserving anionic carbon donors while rejecting neutral saturated carbon non-donors.
 - v25: Route conjugated candidate-path and active hetero-donor checks through the shared donor classifier, with a phosphorus lone-pair donor regression.
 - v26: Add bounded connected fused-subset Huckel search ahead of legacy fused fallback marking, preserving additive subsystem aromaticity exposed by PubChem.
+- v27: Count fused-system donor atoms with RDKit-style atom multiplicity and reject candidate atoms with more than one explicit pi bond.

@@ -1149,12 +1149,11 @@ fn perceive_fused_aromatic_components(
         if component.atoms.len() > 48 {
             continue;
         }
-        let electrons = aromatic_fused_component_pi_electrons(mol, &component)?;
+        let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
+        let electrons = aromatic_fused_component_pi_electrons(mol, &aromaticity_ring)?;
         let all_carbon_component = fused_component_is_all_carbon(mol, &component);
         let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
-        if electrons >= 6
-            && ((electrons - 2) % 4 == 0 || all_carbon_component && !component_has_exocyclic_pi)
-        {
+        if electrons >= 6 && (electrons - 2) % 4 == 0 {
             mark_aromatic_atoms_and_bonds(
                 mol,
                 component.atoms.iter().copied(),
@@ -1224,7 +1223,8 @@ fn aromatic_fused_ring_subset(
             if ring.atoms.len() > 48 {
                 continue;
             }
-            let electrons = aromatic_fused_component_pi_electrons(mol, &ring)?;
+            let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
+            let electrons = aromatic_fused_component_pi_electrons(mol, &aromaticity_ring)?;
             if electrons >= 6 && (electrons - 2) % 4 == 0 {
                 return Ok(Some(ring));
             }
@@ -1646,6 +1646,24 @@ fn fused_component_ring(rings: &[Ring], indexes: &[usize]) -> Ring {
     }
 }
 
+fn fused_component_aromaticity_ring(rings: &[Ring], indexes: &[usize]) -> Ring {
+    let mut atom_counts = BTreeMap::<AtomId, usize>::new();
+    let mut bonds = BTreeSet::new();
+    for index in indexes {
+        for atom_id in &rings[*index].atoms {
+            *atom_counts.entry(*atom_id).or_default() += 1;
+        }
+        bonds.extend(rings[*index].bonds.iter().copied());
+    }
+    Ring {
+        atoms: atom_counts
+            .into_iter()
+            .filter_map(|(atom_id, count)| (count <= 2).then_some(atom_id))
+            .collect(),
+        bonds: bonds.into_iter().collect(),
+    }
+}
+
 fn aromatic_ring_pi_electrons(
     mol: &Molecule,
     ring: &Ring,
@@ -1767,6 +1785,9 @@ fn localized_ring_atom_donor_type(
         } else {
             Ok(AromaticElectronDonorType::None)
         };
+    }
+    if atom_explicit_pi_bond_count(mol, atom_id) > 1 {
+        return Ok(AromaticElectronDonorType::None);
     }
     if ring_atom_has_pi_bond(mol, ring, atom_id) {
         return Ok(AromaticElectronDonorType::One);
@@ -2010,6 +2031,15 @@ fn ring_atom_has_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
             })
             .unwrap_or(false)
     })
+}
+
+fn atom_explicit_pi_bond_count(mol: &Molecule, atom_id: AtomId) -> usize {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|(_, bond)| matches!(bond.order, BondOrder::Double | BondOrder::Triple))
+        .count()
 }
 
 fn atom_has_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {

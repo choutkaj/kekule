@@ -485,6 +485,50 @@ fn fused_polycycle_aromatic_core_extends_to_fused_edge() {
 }
 
 #[test]
+fn rdkit_source_comment_fused_system_matches_reference_counts() {
+    let mut molecule = read_smiles_str("O=C3C2=CC1=CC=COC1=CC2=CC=C3", SmilesParseOptions)
+        .expect("RDKit source fused example should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("RDKit source fused example should sanitize");
+
+    let aromatic_atoms = molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    let aromatic_bonds = molecule
+        .mol
+        .bonds()
+        .filter(|(_, bond)| bond.aromatic)
+        .count();
+    assert_eq!(aromatic_atoms, 14);
+    assert_eq!(aromatic_bonds, 16);
+}
+
+#[test]
+fn ring_atom_with_multiple_pi_bonds_is_not_aromatic_candidate() {
+    let mut molecule = read_smiles_str("C1=C=NC=N1", SmilesParseOptions)
+        .expect("multiple-pi-bond ring should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("multiple-pi-bond ring should sanitize");
+
+    let aromatic_atoms = molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    let aromatic_bonds = molecule
+        .mol
+        .bonds()
+        .filter(|(_, bond)| bond.aromatic)
+        .count();
+    assert_eq!(aromatic_atoms, 0);
+    assert_eq!(aromatic_bonds, 0);
+}
+
+#[test]
 fn fused_aromatic_component_preserves_explicit_single_bond() {
     let mut molecule = read_smiles_str(
         "[H]c1c([H])c([H])c2c3c([H])c([H])n(C([H])([H])[H])c(C([H])([H])[H])c-3nc2c1[H]",
