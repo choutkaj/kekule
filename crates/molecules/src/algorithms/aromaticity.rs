@@ -1603,23 +1603,9 @@ fn ring_has_anionic_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
 }
 
 fn ring_has_nitrogen_lone_pair_donor(mol: &Molecule, ring: &Ring) -> bool {
-    ring.atoms.iter().any(|atom_id| {
-        mol.atom(*atom_id)
-            .map(|atom| {
-                atom.element.symbol() == "N"
-                    && (atom.explicit_hydrogens > 0
-                        || atom.formal_charge < 0
-                        || atom.formal_charge == 0 && !ring_atom_has_pi_bond(mol, ring, *atom_id)
-                        || mol.neighbors(*atom_id).is_ok_and(|mut neighbors| {
-                            neighbors.any(|neighbor| {
-                                mol.atom(neighbor).is_ok_and(|neighbor_atom| {
-                                    neighbor_atom.element.symbol() == "H"
-                                })
-                            })
-                        }))
-            })
-            .unwrap_or(false)
-    })
+    localized_ring_donor_analysis(mol, ring)
+        .map(|analysis| analysis.has_nitrogen_lone_pair_donor(mol))
+        .unwrap_or(false)
 }
 
 fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
@@ -1834,6 +1820,14 @@ impl AromaticRingDonorAnalysis {
                 }) && aromatic_donor_electron_range(atom_donor.donor).1 > 0
             })
             .count()
+    }
+
+    fn has_nitrogen_lone_pair_donor(&self, mol: &Molecule) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            mol.atom(atom_donor.atom)
+                .is_ok_and(|atom| atom.element.symbol() == "N")
+                && aromatic_donor_electron_range(atom_donor.donor).1 >= 2
+        })
     }
 }
 

@@ -258,6 +258,38 @@ fn aromaticity_supports_heteroaromatic_ring() {
 }
 
 #[test]
+fn aromaticity_supports_explicit_nitrogen_lone_pair_donor_ring() {
+    let (mut pyrrole_like, atoms, bonds) = ring_molecule(
+        &["N", "C", "C", "C", "C"],
+        &[
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    {
+        let mut nitrogen = pyrrole_like
+            .atom_mut(atoms[0])
+            .expect("ring nitrogen should exist");
+        nitrogen.explicit_hydrogens = 1;
+        nitrogen.implicit_hydrogens = Some(0);
+        nitrogen.no_implicit_hydrogens = true;
+    }
+
+    perceive_aromaticity(&mut pyrrole_like, AromaticityModel::RdkitLike)
+        .expect("pyrrole-like ring should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| pyrrole_like.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| pyrrole_like.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
 fn aromaticity_supports_phosphorus_lone_pair_donor_ring() {
     let (mut phosphole_like, atoms, bonds) = ring_molecule(
         &["P", "C", "C", "C", "C"],
