@@ -179,6 +179,7 @@ fn perceive_rdkit_like_aromaticity(
     perceive_fused_single_exocyclic_carbon_rings(
         mol,
         ring_set.rings(),
+        &ring_analyses,
         &protected_non_aromatic_bonds,
     );
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings());
@@ -1143,6 +1144,7 @@ fn ring_has_saturated_carbon_atom(mol: &Molecule, ring: &Ring) -> bool {
 fn perceive_fused_single_exocyclic_carbon_rings(
     mol: &mut Molecule,
     rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
     protected_non_aromatic_bonds: &BTreeSet<BondId>,
 ) {
     let selected = rings
@@ -1154,7 +1156,7 @@ fn perceive_fused_single_exocyclic_carbon_rings(
                 .enumerate()
                 .any(|(other_index, other)| other_index != *index && rings_share_bond(ring, other));
             fused
-                && ring_has_conjugated_atom_path(mol, ring)
+                && ring_analyses[*index].localized_all_atoms_are_candidates()
                 && ((ring.atoms.len() == 6
                     && fused_component_is_all_carbon(mol, ring)
                     && ring_exocyclic_pi_bond_count(mol, ring) > 0
