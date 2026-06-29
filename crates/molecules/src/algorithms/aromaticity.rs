@@ -835,15 +835,7 @@ fn clear_fused_lactone_bridge_ring_atoms(
             .iter()
             .enumerate()
             .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
-        if !fused
-            || ring.atoms.len() < 6
-            || !ring_has_chalcogen_donor(mol, ring)
-            || ring_analyses[index].localized_all_atoms_are_candidates()
-            || !ring
-                .atoms
-                .iter()
-                .any(|atom_id| is_chalcogen_bridge_without_pi(mol, ring, *atom_id))
-            || ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
+        if !ring_is_fused_lactone_bridge_cleanup_candidate(mol, ring, &ring_analyses[index], fused)
         {
             continue;
         }
@@ -873,6 +865,23 @@ fn clear_fused_lactone_bridge_ring_atoms(
             bond.aromatic = false;
         }
     }
+}
+
+fn ring_is_fused_lactone_bridge_cleanup_candidate(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    fused: bool,
+) -> bool {
+    fused
+        && ring.atoms.len() >= 6
+        && analysis.localized_has_active_chalcogen_donor(mol)
+        && !analysis.localized_all_atoms_are_candidates()
+        && ring
+            .atoms
+            .iter()
+            .any(|atom_id| is_chalcogen_bridge_without_pi(mol, ring, *atom_id))
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) > 0
 }
 
 fn clear_saturated_fused_ether_bridge_atoms(
@@ -2726,6 +2735,55 @@ mod tests {
         assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 0);
         assert!(!ring_is_saturated_fused_ether_bridge_cleanup_candidate(
             &mol, &rings, 0, &ring, &analysis
+        ));
+    }
+
+    #[test]
+    fn fused_lactone_cleanup_uses_active_chalcogen_donor_state() {
+        let mut mol = Molecule::new();
+        let mut oxygen = Atom::new(Element::from_symbol("O").expect("test element"));
+        oxygen.explicit_hydrogens = 2;
+        oxygen.no_implicit_hydrogens = true;
+        let oxygen = mol.add_atom(oxygen);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(oxygen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_e, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let exocyclic_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_c, exocyclic_oxygen, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![oxygen, carbon_a, carbon_b, carbon_c, carbon_d, carbon_e],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+
+        assert!(ring_has_chalcogen_donor(&mol, &ring));
+        assert!(is_chalcogen_bridge_without_pi(&mol, &ring, oxygen));
+        assert_eq!(ring_terminal_exocyclic_pi_bond_count(&mol, &ring), 1);
+        assert!(!analysis.localized_has_active_chalcogen_donor(&mol));
+        assert!(!ring_is_fused_lactone_bridge_cleanup_candidate(
+            &mol, &ring, &analysis, true
         ));
     }
 
