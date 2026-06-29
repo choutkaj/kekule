@@ -184,7 +184,7 @@ fn perceive_rdkit_like_aromaticity(
     );
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
-    clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
+    clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactam_enone_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_fused_lactam_carbonyl_ring_atoms(mol, ring_set.rings(), &ring_analyses);
@@ -619,14 +619,14 @@ fn clear_terminal_chalcogen_oxo_ring_atoms(
     }
 }
 
-fn clear_fused_lactam_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_fused_lactam_bridge_ring_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
-        if ring.atoms.len() < 6
-            || !ring_contains_element(mol, ring, "N")
-            || !ring_contains_element(mol, ring, "O")
-            || ring_terminal_exocyclic_pi_bond_count(mol, ring) == 0
-        {
+        if !ring_is_fused_lactam_bridge_cleanup_candidate(mol, ring, &ring_analyses[index]) {
             continue;
         }
         for atom_id in &ring.atoms {
@@ -651,6 +651,17 @@ fn clear_fused_lactam_bridge_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn ring_is_fused_lactam_bridge_cleanup_candidate(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    ring.atoms.len() >= 6
+        && analysis.localized_has_active_element_donor(mol, "N")
+        && analysis.localized_has_active_element_donor(mol, "O")
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) > 0
 }
 
 fn clear_imide_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
@@ -3041,6 +3052,56 @@ mod tests {
         assert!(!analysis.localized_has_active_element_donor(&mol, "N"));
         assert!(!ring_is_saturated_fused_lactam_carbonyl_cleanup_candidate(
             &mol, &rings, 0, &ring, &analysis
+        ));
+    }
+
+    #[test]
+    fn fused_lactam_bridge_cleanup_uses_active_nitrogen_and_oxygen_donor_state() {
+        let mut mol = Molecule::new();
+        let nitrogen = mol.add_atom(cation_with_one_implicit_hydrogen("N"));
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let mut oxygen_atom = Atom::new(Element::from_symbol("O").expect("test element"));
+        oxygen_atom.explicit_hydrogens = 2;
+        oxygen_atom.no_implicit_hydrogens = true;
+        let oxygen = mol.add_atom(oxygen_atom);
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(oxygen, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_d, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let carbonyl_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_c, carbonyl_oxygen, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, oxygen, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+
+        assert!(ring_contains_element(&mol, &ring, "N"));
+        assert!(ring_contains_element(&mol, &ring, "O"));
+        assert_eq!(ring_terminal_exocyclic_pi_bond_count(&mol, &ring), 1);
+        assert!(!analysis.localized_has_active_element_donor(&mol, "N"));
+        assert!(!analysis.localized_has_active_element_donor(&mol, "O"));
+        assert!(!ring_is_fused_lactam_bridge_cleanup_candidate(
+            &mol, &ring, &analysis
         ));
     }
 
