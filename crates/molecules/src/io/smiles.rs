@@ -701,9 +701,9 @@ fn canonical_smiles_candidate_sanitize_rank(mol: &Molecule, candidate: &str) -> 
     }
 }
 
-fn canonical_smiles_semantic_signature(
-    mol: &Molecule,
-) -> Vec<(u8, i8, u16, u8, u8, bool, usize, usize)> {
+type CanonicalAtomSemanticSignature = (u8, i8, u16, u8, u8, bool, usize, usize);
+
+fn canonical_smiles_semantic_signature(mol: &Molecule) -> Vec<CanonicalAtomSemanticSignature> {
     let mut atoms = mol
         .atoms()
         .map(|(id, atom)| {

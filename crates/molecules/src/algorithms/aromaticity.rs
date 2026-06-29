@@ -1553,7 +1553,13 @@ fn aromatic_order_ring_pi_electrons(
     for atom_id in &ring.atoms {
         let atom = mol.atom(*atom_id).expect("ring atom should be live");
         let (min_contribution, max_contribution) = match atom.element.symbol() {
-            "B" | "C" => (1, 1),
+            "B" => (1, 1),
+            "C" if aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(mol, ring)
+                && atom_has_terminal_hetero_exocyclic_pi_bond(mol, ring, *atom_id) =>
+            {
+                (0, 0)
+            }
+            "C" => (1, 1),
             "N" => {
                 if atom.explicit_hydrogens > 0
                     || atom.formal_charge == 0
@@ -1575,6 +1581,42 @@ fn aromatic_order_ring_pi_electrons(
     } else {
         Ok(max_electrons)
     }
+}
+
+fn aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(
+    mol: &Molecule,
+    ring: &Ring,
+) -> bool {
+    ring.atoms.len() == 6
+        && ring_has_chalcogen_donor(mol, ring)
+        && ring_contains_element(mol, ring, "N")
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2
+}
+
+fn atom_has_terminal_hetero_exocyclic_pi_bond(
+    mol: &Molecule,
+    ring: &Ring,
+    atom_id: AtomId,
+) -> bool {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|(bond_id, bond)| {
+            if ring.bonds.contains(&bond_id) || !matches!(bond.order, BondOrder::Double) {
+                return false;
+            }
+            let other_id = bond.other_atom(atom_id);
+            if ring.atoms.contains(&other_id) {
+                return false;
+            }
+            mol.atom(other_id).is_ok_and(|atom| {
+                matches!(atom.element.symbol(), "N" | "O" | "S" | "Se" | "Te" | "P")
+            }) && mol
+                .incident_bonds(other_id)
+                .map(|bonds| bonds.count() == 1)
+                .unwrap_or(false)
+        })
 }
 
 fn huckel_electron_count_in_range(min_electrons: u8, max_electrons: u8) -> Option<u8> {

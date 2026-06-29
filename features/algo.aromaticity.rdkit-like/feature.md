@@ -23,6 +23,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Applies a 4n+2 electron-count model for common C, N, O, S, Se, Te, and P rings and small fused ring components.
 - Computes pi-electron counts from bond order, and uses an atom-contribution path for explicitly imported aromatic-bond rings.
 - Accepts imported aromatic-bond rings when RDKit-like variable atom-contribution ranges contain a valid 4n+2 count.
+- Treats terminal hetero exocyclic pi carbons as non-donating in imported six-member nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds.
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
 - Clears five-member neutral imide carbonyl ring atoms when a saturated ring nitrogen is flanked by two terminal ring carbonyls.
 - Clears saturated fused all-carbon ring atoms that are not retained by neighboring aromatic rings, saturated aromatic carbon centers, and localized cyclic amidine centers.
@@ -62,3 +63,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v16: Refine fused saturated carbon and cyclic amidine cleanup so sp3/enone fused atoms do not remain aromatic while valid aromatic iminium and carbonyl systems are preserved.
 - v17: Refine saturated tertiary amine cleanup to treat oxidized chalcogen substituents as non-donor sulfone-like groups, preserving aliphatic sulfonamide ring nitrogens.
 - v18: Clear RDKit-like exocyclic alkene ring carbons between nitrogen and chalcogen donors so fused thiazine/thiazolium systems do not over-aromatize deactivated atoms.
+- v19: Count terminal hetero exocyclic pi carbons as non-donating in imported nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds, preserving RDKit-like thione-rich heterocycles without over-aromatizing singly carbonylated fused systems.

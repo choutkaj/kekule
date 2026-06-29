@@ -398,6 +398,22 @@ fn thiocarbonyl_chalcogen_ring_sanitizes_aromatic_like_rdkit() {
         read_smiles_str(&written, SmilesParseOptions).expect("writer output should parse");
     assert_eq!(reparsed.mol.atom_count(), molecule.mol.atom_count());
     assert_eq!(reparsed.mol.bond_count(), molecule.mol.bond_count());
+
+    let canonical = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("sanitized thiocarbonyl heterocycle should canonicalize");
+    let mut canonical_reparsed =
+        read_smiles_str(&canonical, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut canonical_reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {canonical}: {error:?}"));
+    assert_eq!(
+        canonical_reparsed
+            .mol
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count(),
+        6,
+        "{canonical}"
+    );
 }
 
 #[test]
