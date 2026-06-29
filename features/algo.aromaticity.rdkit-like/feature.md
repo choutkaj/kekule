@@ -28,6 +28,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses the same donor classifier for aromatic candidate-path and active hetero-donor checks instead of duplicating separate symbol-based rules.
 - Reuses one localized per-ring donor analysis for candidate-path and active hetero-donor predicates, mirroring RDKit's table-driven ring candidate flow.
 - Caches explicit per-ring aromaticity analysis objects in the top-level perception pass so ring aromaticity and adjacent protection decisions share the same classified donor state.
+- Reuses one localized donor analysis inside saturated tertiary amine fused cleanup instead of recalculating candidate-path and active-donor facts separately.
 - Routes nitrogen lone-pair donor checks through the same per-ring donor analysis instead of separate hydrogen/charge symbol logic.
 - Evaluates simple and fused Huckel aromaticity through the shared donor-analysis object, keeping all-candidate and electron-count checks together.
 - Admits low-unsaturation hetero fused candidates from active donor analysis rather than hetero atom presence alone.

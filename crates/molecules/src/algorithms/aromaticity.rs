@@ -1443,9 +1443,14 @@ fn atoms_in_nitrogen_or_terminal_pi_free_rings(
 }
 
 fn ring_has_saturated_tertiary_amine_without_donor_chalcogen(mol: &Molecule, ring: &Ring) -> bool {
-    !ring_has_saturated_chalcogen_donor(mol, ring)
-        && !ring_has_conjugated_atom_path(mol, ring)
-        && ring_active_hetero_donor_count(mol, ring) == 1
+    if ring_has_saturated_chalcogen_donor(mol, ring) {
+        return false;
+    }
+    let Ok(analysis) = localized_ring_donor_analysis(mol, ring) else {
+        return false;
+    };
+    !analysis.all_atoms_are_candidates()
+        && analysis.active_hetero_donor_count(mol) == 1
         && ring
             .atoms
             .iter()
@@ -1459,12 +1464,6 @@ fn ring_has_saturated_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
             && !ring_atom_has_pi_bond(mol, ring, *atom_id)
             && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
     })
-}
-
-fn ring_active_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
-    localized_ring_donor_analysis(mol, ring)
-        .map(|analysis| analysis.active_hetero_donor_count(mol))
-        .unwrap_or(0)
 }
 
 fn aromatic_fused_component_donor_analysis(
@@ -2412,7 +2411,8 @@ mod tests {
 
         assert!(ring_has_conjugated_atom_path(&mol, &ring));
         assert_eq!(ring_hetero_donor_count(&mol, &ring), 1);
-        assert_eq!(ring_active_hetero_donor_count(&mol, &ring), 0);
+        let analysis = localized_ring_donor_analysis(&mol, &ring).expect("donor analysis");
+        assert_eq!(analysis.active_hetero_donor_count(&mol), 0);
         assert!(!aromatic_fused_candidate(&mol, &ring));
     }
 
