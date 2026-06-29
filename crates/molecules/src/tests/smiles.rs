@@ -2169,6 +2169,28 @@ fn canonical_aryl_germanium_round_trip_preserves_no_implicit_aromatic_carbon() {
 }
 
 #[test]
+fn cationic_thiadiazolium_imine_canonical_round_trip_sanitizes() {
+    let mut molecule = read_smiles_str("CN(C1=NC(=[N+](C)C)SS1)C(=S)SC", SmilesParseOptions)
+        .expect("cationic thiadiazolium imine should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("cationic thiadiazolium imine should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    let aromatic_ring_atoms = reparsed
+        .mol
+        .atoms()
+        .filter(|(_, atom)| matches!(atom.element.symbol(), "C" | "N" | "S") && atom.aromatic)
+        .count();
+    assert_eq!(aromatic_ring_atoms, 5, "{written}");
+}
+
+#[test]
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let mut molecule = SmallMolecule::default();
     let a = molecule.mol.add_atom(carbon());

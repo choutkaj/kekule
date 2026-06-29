@@ -52,3 +52,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v18: Advance PubChem-1000 validation through RDKit-like fused lactam/enone and saturated oxygen bridge aromaticity cleanup for canonical reparse semantics.
 - v19: Advance PubChem-1000 validation through RDKit-like saturated fused nitrogen carbonyl aromaticity cleanup for benzodiazepinone lactam canonical reparse semantics.
 - v20: Preserve no-implicit aromatic organic atoms bound to germanium-like main-group centers in canonical output, advancing PubChem-1000 validation past aryl germanium trichloride.
+- v21: Advance PubChem-1000 validation through imported aromatic-order support for five-member nitrogen/chalcogen rings with exocyclic cationic imine pi bonds.

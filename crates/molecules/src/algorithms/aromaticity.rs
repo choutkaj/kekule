@@ -1702,7 +1702,7 @@ fn aromatic_order_ring_pi_electrons(
         let (min_contribution, max_contribution) = match atom.element.symbol() {
             "B" => (1, 1),
             "C" if aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(mol, ring)
-                && atom_has_terminal_hetero_exocyclic_pi_bond(mol, ring, *atom_id) =>
+                && atom_has_hetero_exocyclic_pi_bond(mol, ring, *atom_id) =>
             {
                 (0, 0)
             }
@@ -1734,17 +1734,13 @@ fn aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(
     mol: &Molecule,
     ring: &Ring,
 ) -> bool {
-    ring.atoms.len() == 6
-        && ring_has_chalcogen_donor(mol, ring)
+    ring_has_chalcogen_donor(mol, ring)
         && ring_contains_element(mol, ring, "N")
-        && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2
+        && ((ring.atoms.len() == 6 && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
+            || (ring.atoms.len() == 5 && ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)))
 }
 
-fn atom_has_terminal_hetero_exocyclic_pi_bond(
-    mol: &Molecule,
-    ring: &Ring,
-    atom_id: AtomId,
-) -> bool {
+fn atom_has_hetero_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
     mol.incident_bonds(atom_id)
         .ok()
         .into_iter()
@@ -1759,10 +1755,7 @@ fn atom_has_terminal_hetero_exocyclic_pi_bond(
             }
             mol.atom(other_id).is_ok_and(|atom| {
                 matches!(atom.element.symbol(), "N" | "O" | "S" | "Se" | "Te" | "P")
-            }) && mol
-                .incident_bonds(other_id)
-                .map(|bonds| bonds.count() == 1)
-                .unwrap_or(false)
+            })
         })
 }
 
