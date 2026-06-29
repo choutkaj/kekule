@@ -1675,12 +1675,6 @@ fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
     })
 }
 
-fn ring_has_low_unsaturation_chalcogen_bridge(mol: &Molecule, ring: &Ring) -> bool {
-    ring_pi_bond_count(mol, ring) + ring_terminal_exocyclic_pi_bond_count(mol, ring) < 2
-        && ring_hetero_donor_count(mol, ring) > 1
-        && ring_has_chalcogen_donor(mol, ring)
-}
-
 fn ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol: &Molecule, ring: &Ring) -> bool {
     ring_pi_bond_count(mol, ring) < 2
         && ring_hetero_donor_count(mol, ring) > 1
@@ -1772,42 +1766,46 @@ fn fused_component_aromaticity_ring(rings: &[Ring], indexes: &[usize]) -> Ring {
 fn aromatic_ring_donor_analysis(
     mol: &Molecule,
     ring: &Ring,
+    localized: &AromaticRingDonorAnalysis,
 ) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
     if ring_has_aromatic_order(mol, ring) {
         return aromatic_order_ring_donor_analysis(mol, ring);
     }
-    if ring.atoms.len() == 7 && ring_has_chalcogen_donor(mol, ring) {
+    let active_hetero_donors = localized.active_hetero_donor_count(mol);
+    let has_active_chalcogen_donor = localized.has_active_chalcogen_donor(mol);
+    let has_active_nitrogen_donor = localized.has_active_element_donor(mol, "N");
+    if ring.atoms.len() == 7 && has_active_chalcogen_donor {
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
+    }
+    if ring.atoms.len() == 5 && ring_pi_bond_count(mol, ring) < 2 && !has_active_nitrogen_donor {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() == 5
-        && ring_pi_bond_count(mol, ring) < 2
-        && !ring_contains_element(mol, ring, "N")
-    {
-        return Ok(AromaticRingDonorAnalysis::non_aromatic());
-    }
-    if ring.atoms.len() == 5
-        && ring_contains_element(mol, ring, "N")
+        && has_active_nitrogen_donor
         && ring_exocyclic_pi_bond_count(mol, ring) > 0
-        && ((ring_hetero_donor_count(mol, ring) < 2 && !ring_has_chalcogen_donor(mol, ring))
-            || (ring_has_chalcogen_donor(mol, ring)
-                && !ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)))
+        && ((active_hetero_donors < 2 && !has_active_chalcogen_donor)
+            || (has_active_chalcogen_donor && !ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)))
     {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() == 5
-        && ring_contains_element(mol, ring, "N")
+        && has_active_nitrogen_donor
         && ring_has_terminal_chalcogen_exocyclic_pi_bond(mol, ring)
     {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
-    if ring.atoms.len() > 5 && ring_has_low_unsaturation_chalcogen_bridge(mol, ring) {
+    if ring.atoms.len() > 5
+        && ring_pi_bond_count(mol, ring) + ring_terminal_exocyclic_pi_bond_count(mol, ring) < 2
+        && active_hetero_donors > 1
+        && has_active_chalcogen_donor
+    {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() > 5
         && ring_exocyclic_pi_bond_count(mol, ring) == 0
-        && ring_has_chalcogen_donor(mol, ring)
-        && ring_contains_element(mol, ring, "N")
-        && ring_hetero_donor_count(mol, ring) > 1
+        && has_active_chalcogen_donor
+        && has_active_nitrogen_donor
+        && active_hetero_donors > 1
     {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
@@ -1816,7 +1814,7 @@ fn aromatic_ring_donor_analysis(
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
 
-    localized_ring_donor_analysis(mol, ring)
+    Ok(localized.clone())
 }
 
 fn localized_ring_donor_analysis(
@@ -1841,9 +1839,10 @@ fn localized_ring_donor_analysis(
 
 impl RingAromaticityAnalysis {
     fn new(mol: &Molecule, ring: &Ring) -> std::result::Result<Self, AromaticityError> {
+        let localized = localized_ring_donor_analysis(mol, ring)?;
         Ok(Self {
-            aromatic: aromatic_ring_donor_analysis(mol, ring)?,
-            localized: localized_ring_donor_analysis(mol, ring).ok(),
+            aromatic: aromatic_ring_donor_analysis(mol, ring, &localized)?,
+            localized: Some(localized),
         })
     }
 
@@ -1949,6 +1948,14 @@ impl AromaticRingDonorAnalysis {
         self.atoms.iter().any(|atom_donor| {
             mol.atom(atom_donor.atom)
                 .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
+                && aromatic_donor_electron_range(atom_donor.donor).1 > 0
+        })
+    }
+
+    fn has_active_element_donor(&self, mol: &Molecule, symbol: &str) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            mol.atom(atom_donor.atom)
+                .is_ok_and(|atom| atom.element.symbol() == symbol)
                 && aromatic_donor_electron_range(atom_donor.donor).1 > 0
         })
     }
@@ -2469,6 +2476,31 @@ fn atom_has_terminal_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: Ato
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn localized_ring_analysis_feeds_simple_huckel_path() {
+        let mut mol = Molecule::new();
+        let atoms = (0..6)
+            .map(|_| mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element"))))
+            .collect::<Vec<_>>();
+        let bonds = (0..6)
+            .map(|index| {
+                let order = if index % 2 == 0 {
+                    BondOrder::Double
+                } else {
+                    BondOrder::Single
+                };
+                mol.add_bond(atoms[index], atoms[(index + 1) % atoms.len()], order)
+                    .expect("ring bond")
+            })
+            .collect::<Vec<_>>();
+        let ring = Ring { atoms, bonds };
+
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        let localized = analysis.localized.as_ref().expect("localized analysis");
+        assert_eq!(&analysis.aromatic, localized);
+        assert!(analysis.is_huckel_aromatic());
+    }
 
     #[test]
     fn fused_candidate_requires_active_hetero_donor_not_just_hetero_atom() {
