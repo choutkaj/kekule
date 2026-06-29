@@ -183,7 +183,7 @@ fn perceive_rdkit_like_aromaticity(
         &protected_non_aromatic_bonds,
     );
     clear_terminal_chalcogen_oxo_ring_atoms(mol, ring_set.rings(), &ring_analyses);
-    clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
+    clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_fused_lactam_enone_atoms(mol, ring_set.rings(), &ring_analyses);
@@ -559,16 +559,19 @@ fn aromatic_incident_bond_count(mol: &Molecule, atom_id: AtomId) -> usize {
         .count()
 }
 
-fn clear_ring_oxo_chalcogen_atoms(mol: &mut Molecule, rings: &[Ring]) {
-    let atoms_to_clear = rings
-        .iter()
-        .flat_map(|ring| {
-            ring.atoms
-                .iter()
-                .copied()
-                .filter(|atom_id| is_ring_oxo_chalcogen(mol, ring, *atom_id))
-        })
-        .collect::<BTreeSet<_>>();
+fn clear_ring_oxo_chalcogen_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
+    let mut atoms_to_clear = BTreeSet::new();
+    for (index, ring) in rings.iter().enumerate() {
+        for atom_id in &ring.atoms {
+            if is_ring_oxo_chalcogen_cleanup_candidate(mol, ring, &ring_analyses[index], *atom_id) {
+                atoms_to_clear.insert(*atom_id);
+            }
+        }
+    }
 
     for atom_id in &atoms_to_clear {
         if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
@@ -580,6 +583,16 @@ fn clear_ring_oxo_chalcogen_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn is_ring_oxo_chalcogen_cleanup_candidate(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    atom_id: AtomId,
+) -> bool {
+    is_ring_oxo_chalcogen(mol, ring, atom_id)
+        && !analysis.localized_atom_has_active_chalcogen_donor(mol, atom_id)
 }
 
 fn clear_terminal_chalcogen_oxo_ring_atoms(
@@ -3024,6 +3037,62 @@ mod tests {
 
         assert!(!mol.atom(oxygen).expect("ring oxygen").aromatic);
         assert!(mol.atom(sulfur).is_ok());
+    }
+
+    #[test]
+    fn ring_oxo_chalcogen_cleanup_uses_inactive_donor_state() {
+        let mut mol = Molecule::new();
+        let mut sulfur = Atom::new(Element::from_symbol("S").expect("test element"));
+        sulfur.aromatic = true;
+        let sulfur = mol.add_atom(sulfur);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(sulfur, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, sulfur, BondOrder::Single)
+            .expect("ring bond");
+        let exocyclic_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(sulfur, exocyclic_oxygen, BondOrder::Double)
+            .expect("terminal sulfoxide");
+        mol.bonds[bond_a.index()]
+            .as_mut()
+            .expect("ring bond")
+            .aromatic = true;
+
+        let ring = Ring {
+            atoms: vec![sulfur, carbon_a, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let analyses = vec![RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis")];
+
+        assert!(ring_has_chalcogen_donor(&mol, &ring));
+        assert!(is_ring_oxo_chalcogen(&mol, &ring, sulfur));
+        assert!(!analyses[0].localized_atom_has_active_chalcogen_donor(&mol, sulfur));
+        assert!(is_ring_oxo_chalcogen_cleanup_candidate(
+            &mol,
+            &ring,
+            &analyses[0],
+            sulfur
+        ));
+
+        clear_ring_oxo_chalcogen_atoms(&mut mol, &[ring], &analyses);
+
+        assert!(!mol.atom(sulfur).expect("ring sulfur").aromatic);
+        assert!(!mol.bond(bond_a).expect("ring bond").aromatic);
     }
 
     #[test]
