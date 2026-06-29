@@ -508,6 +508,37 @@ fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
 }
 
 #[test]
+fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
+    let (mut mol, atoms, bonds) = ring_molecule(
+        &["C", "C", "C", "C", "C", "C"],
+        &[
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+            BondOrder::Double,
+            BondOrder::Single,
+        ],
+    );
+    {
+        let mut saturated = mol.atom_mut(atoms[0]).expect("ring atom exists");
+        saturated.explicit_hydrogens = 2;
+        saturated.implicit_hydrogens = Some(0);
+        saturated.no_implicit_hydrogens = true;
+    }
+
+    perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("over-valent candidate rejection should be supported");
+
+    assert!(atoms
+        .iter()
+        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(bonds
+        .iter()
+        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+}
+
+#[test]
 fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
     let mut mol = Molecule::new();
     let atoms = (0..10).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();

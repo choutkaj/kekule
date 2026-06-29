@@ -40,6 +40,7 @@ struct AromaticRingAtomDonor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AromaticRingDonorAnalysis {
     atoms: Vec<AromaticRingAtomDonor>,
+    fixed_electron_count: Option<u8>,
 }
 
 impl fmt::Display for AromaticityError {
@@ -104,8 +105,8 @@ fn perceive_rdkit_like_aromaticity(
         .rings()
         .iter()
         .map(|ring| {
-            let electrons = aromatic_ring_pi_electrons(mol, ring)?;
-            Ok(electrons >= 2 && (electrons - 2) % 4 == 0)
+            let analysis = aromatic_ring_donor_analysis(mol, ring)?;
+            Ok(analysis.is_huckel_aromatic())
         })
         .collect::<std::result::Result<Vec<_>, AromaticityError>>()?;
     let non_aromatic_fusion_singles = ring_set
@@ -1186,10 +1187,10 @@ fn perceive_fused_aromatic_components(
             continue;
         }
         let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
-        let electrons = aromatic_fused_component_pi_electrons(mol, &aromaticity_ring)?;
+        let analysis = aromatic_fused_component_donor_analysis(mol, &aromaticity_ring)?;
         let all_carbon_component = fused_component_is_all_carbon(mol, &component);
         let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
-        if electrons >= 6 && (electrons - 2) % 4 == 0 {
+        if analysis.is_fused_huckel_aromatic() {
             if all_carbon_component {
                 mark_aromatic_fused_ring_system(mol, rings, indexes, protected_non_aromatic_bonds);
             } else {
@@ -1277,13 +1278,13 @@ fn aromatic_fused_ring_subsets(
             break;
         }
         for subset in connected_ring_subsets(rings, indexes, subset_size) {
-            let ring = fused_component_ring(rings, &subset);
-            if ring.atoms.len() > 48 {
+            let component = fused_component_ring(rings, &subset);
+            if component.atoms.len() > 48 {
                 continue;
             }
             let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
-            let electrons = aromatic_fused_component_pi_electrons(mol, &aromaticity_ring)?;
-            if electrons >= 6 && (electrons - 2) % 4 == 0 {
+            let analysis = aromatic_fused_component_donor_analysis(mol, &aromaticity_ring)?;
+            if analysis.is_fused_huckel_aromatic() {
                 done_bonds.extend(fused_perimeter_bonds(rings, &subset));
                 accepted.push(subset);
                 if done_bonds.len() >= all_bonds.len() {
@@ -1459,19 +1460,19 @@ fn ring_active_hetero_donor_count(mol: &Molecule, ring: &Ring) -> usize {
         .unwrap_or(0)
 }
 
-fn aromatic_fused_component_pi_electrons(
+fn aromatic_fused_component_donor_analysis(
     mol: &Molecule,
     ring: &Ring,
-) -> std::result::Result<u8, AromaticityError> {
+) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
     if ring.atoms.len() == 6
         && fused_component_is_all_carbon(mol, ring)
         && ring_exocyclic_pi_bond_count(mol, ring) == 1
         && ring_pi_bond_count(mol, ring) >= 1
     {
-        return Ok(6);
+        return Ok(AromaticRingDonorAnalysis::with_electron_count(6));
     }
 
-    localized_ring_pi_electrons(mol, ring)
+    localized_ring_donor_analysis(mol, ring)
 }
 
 fn ring_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
@@ -1710,21 +1711,21 @@ fn fused_component_aromaticity_ring(rings: &[Ring], indexes: &[usize]) -> Ring {
     }
 }
 
-fn aromatic_ring_pi_electrons(
+fn aromatic_ring_donor_analysis(
     mol: &Molecule,
     ring: &Ring,
-) -> std::result::Result<u8, AromaticityError> {
+) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
     if ring_has_aromatic_order(mol, ring) {
-        return aromatic_order_ring_pi_electrons(mol, ring);
+        return aromatic_order_ring_donor_analysis(mol, ring);
     }
     if ring.atoms.len() == 7 && ring_has_chalcogen_donor(mol, ring) {
-        return Ok(0);
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() == 5
         && ring_pi_bond_count(mol, ring) < 2
         && !ring_contains_element(mol, ring, "N")
     {
-        return Ok(0);
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() == 5
         && ring_contains_element(mol, ring, "N")
@@ -1733,16 +1734,16 @@ fn aromatic_ring_pi_electrons(
             || (ring_has_chalcogen_donor(mol, ring)
                 && !ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)))
     {
-        return Ok(0);
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() == 5
         && ring_contains_element(mol, ring, "N")
         && ring_has_terminal_chalcogen_exocyclic_pi_bond(mol, ring)
     {
-        return Ok(0);
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() > 5 && ring_has_low_unsaturation_chalcogen_bridge(mol, ring) {
-        return Ok(0);
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
     if ring.atoms.len() > 5
         && ring_exocyclic_pi_bond_count(mol, ring) == 0
@@ -1750,29 +1751,14 @@ fn aromatic_ring_pi_electrons(
         && ring_contains_element(mol, ring, "N")
         && ring_hetero_donor_count(mol, ring) > 1
     {
-        return Ok(0);
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
 
-    localized_ring_pi_electrons(mol, ring)
-}
-
-fn localized_ring_pi_electrons(
-    mol: &Molecule,
-    ring: &Ring,
-) -> std::result::Result<u8, AromaticityError> {
     if ring_pi_bond_count(mol, ring) == 0 {
-        return Ok(0);
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
 
-    let analysis = localized_ring_donor_analysis(mol, ring)?;
-    if !analysis.all_atoms_are_candidates() {
-        return Ok(0);
-    }
-    if let Some(electrons) = analysis.huckel_electron_count() {
-        Ok(electrons)
-    } else {
-        Ok(analysis.max_electron_count())
-    }
+    localized_ring_donor_analysis(mol, ring)
 }
 
 fn localized_ring_donor_analysis(
@@ -1789,19 +1775,52 @@ fn localized_ring_donor_analysis(
             })
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(AromaticRingDonorAnalysis { atoms })
+    Ok(AromaticRingDonorAnalysis {
+        atoms,
+        fixed_electron_count: None,
+    })
 }
 
 impl AromaticRingDonorAnalysis {
+    fn non_aromatic() -> Self {
+        Self {
+            atoms: Vec::new(),
+            fixed_electron_count: Some(0),
+        }
+    }
+
+    fn with_electron_count(electrons: u8) -> Self {
+        Self {
+            atoms: Vec::new(),
+            fixed_electron_count: Some(electrons),
+        }
+    }
+
     fn all_atoms_are_candidates(&self) -> bool {
         self.atoms
             .iter()
             .all(|atom| !matches!(atom.donor, AromaticElectronDonorType::None))
     }
 
-    fn huckel_electron_count(&self) -> Option<u8> {
+    fn is_huckel_aromatic(&self) -> bool {
+        self.electron_count()
+            .is_some_and(|electrons| electrons >= 2 && (electrons - 2) % 4 == 0)
+    }
+
+    fn is_fused_huckel_aromatic(&self) -> bool {
+        self.electron_count()
+            .is_some_and(|electrons| electrons >= 6 && (electrons - 2) % 4 == 0)
+    }
+
+    fn electron_count(&self) -> Option<u8> {
+        if let Some(electrons) = self.fixed_electron_count {
+            return Some(electrons);
+        }
+        if !self.all_atoms_are_candidates() {
+            return None;
+        }
         let donors = self.atoms.iter().map(|atom| atom.donor).collect::<Vec<_>>();
-        huckel_electron_count_for_donors(&donors)
+        huckel_electron_count_for_donors(&donors).or_else(|| Some(self.max_electron_count()))
     }
 
     fn max_electron_count(&self) -> u8 {
@@ -1952,17 +1971,17 @@ fn aromaticity_valence_target(atom: &Atom) -> Option<u8> {
     }
 }
 
-fn aromatic_order_ring_pi_electrons(
+fn aromatic_order_ring_donor_analysis(
     mol: &Molecule,
     ring: &Ring,
-) -> std::result::Result<u8, AromaticityError> {
+) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
     if ring.atoms.len() == 6
         && ring_has_chalcogen_donor(mol, ring)
         && ring_has_carbon_hetero_exocyclic_pi_bond(mol, ring)
         && ring_terminal_exocyclic_pi_bond_count(mol, ring) == 1
         && !ring_has_external_aromatic_bond(mol, ring)
     {
-        return Ok(6);
+        return Ok(AromaticRingDonorAnalysis::with_electron_count(6));
     }
 
     let exocyclic_pi_steals_electrons =
@@ -1979,20 +1998,16 @@ fn aromatic_order_ring_pi_electrons(
         )?;
         donors.push(donor);
     }
-    if donors
-        .iter()
-        .any(|donor| matches!(donor, AromaticElectronDonorType::None))
-    {
-        return Ok(0);
-    }
-    if let Some(electrons) = huckel_electron_count_for_donors(&donors) {
-        Ok(electrons)
-    } else {
-        Ok(donors
+    Ok(AromaticRingDonorAnalysis {
+        atoms: ring
+            .atoms
             .iter()
-            .map(|donor| aromatic_donor_electron_range(*donor).1)
-            .sum())
-    }
+            .copied()
+            .zip(donors)
+            .map(|(atom, donor)| AromaticRingAtomDonor { atom, donor })
+            .collect(),
+        fixed_electron_count: None,
+    })
 }
 
 fn aromatic_order_atom_donor_type(
