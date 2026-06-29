@@ -2191,6 +2191,115 @@ fn cationic_thiadiazolium_imine_canonical_round_trip_sanitizes() {
 }
 
 #[test]
+fn canonical_multicomponent_oxygen_neighbors_match_after_round_trip() {
+    let mut molecule = read_smiles_str(
+        "CC(CO)O.CC(C)(C)CCCCC(CC1CO1)C(=O)O.C1=CC=C2C(=C1)C(=O)OC2=O.C1=CC2=C(C=C1C(=O)O)C(=O)OC2=O.C(CCC(=O)O)CC(=O)O",
+        SmilesParseOptions,
+    )
+    .expect("oxygen-rich mixture should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("oxygen-rich mixture should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    assert_eq!(
+        local_atom_neighbor_signatures(&molecule.mol),
+        local_atom_neighbor_signatures(&reparsed.mol),
+        "{written}"
+    );
+}
+
+#[test]
+fn canonical_substituted_pyrrole_uses_aromatic_nitrogen_form() {
+    let mut molecule = read_smiles_str(
+        "CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C",
+        SmilesParseOptions,
+    )
+    .expect("substituted pyrrole should parse");
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("substituted pyrrole should sanitize");
+
+    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical SMILES should write");
+    let mut reparsed =
+        read_smiles_str(&written, SmilesParseOptions).expect("canonical output should parse");
+    sanitize_small_molecule(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    assert!(written.contains("[nH]"), "{written}");
+    assert!(!written.contains("-N-"), "{written}");
+}
+
+type TestAtomStateSignature = (u8, i8, u16, u8, u8, bool, bool);
+type TestAtomNeighborSignature = (
+    TestAtomStateSignature,
+    Vec<(TestAtomStateSignature, u8, bool)>,
+);
+
+fn local_atom_neighbor_signatures(mol: &Molecule) -> Vec<TestAtomNeighborSignature> {
+    let mut atoms = mol
+        .atoms()
+        .map(|(id, atom)| {
+            let mut neighbors = mol
+                .incident_bonds(id)
+                .expect("atom should be live")
+                .map(|(_, bond)| {
+                    let neighbor = mol
+                        .atom(bond.other_atom(id))
+                        .expect("neighbor should be live");
+                    (
+                        test_atom_state_signature(neighbor),
+                        test_semantic_bond_order_code(bond),
+                        bond.aromatic,
+                    )
+                })
+                .collect::<Vec<_>>();
+            neighbors.sort_unstable();
+            (test_atom_state_signature(atom), neighbors)
+        })
+        .collect::<Vec<_>>();
+    atoms.sort_unstable();
+    atoms
+}
+
+fn test_atom_state_signature(atom: &Atom) -> TestAtomStateSignature {
+    (
+        atom.element.atomic_number(),
+        atom.formal_charge,
+        atom.isotope.unwrap_or_default(),
+        atom.explicit_hydrogens,
+        atom.implicit_hydrogens.unwrap_or_default(),
+        atom.no_implicit_hydrogens,
+        atom.aromatic,
+    )
+}
+
+fn test_semantic_bond_order_code(bond: &Bond) -> u8 {
+    if bond.aromatic {
+        test_bond_order_code(BondOrder::Aromatic)
+    } else {
+        test_bond_order_code(bond.order)
+    }
+}
+
+fn test_bond_order_code(order: BondOrder) -> u8 {
+    match order {
+        BondOrder::Zero => 0,
+        BondOrder::Single => 1,
+        BondOrder::Double => 2,
+        BondOrder::Triple => 3,
+        BondOrder::Quadruple => 4,
+        BondOrder::Aromatic => 5,
+        BondOrder::Dative => 6,
+    }
+}
+
+#[test]
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let mut molecule = SmallMolecule::default();
     let a = molecule.mol.add_atom(carbon());
