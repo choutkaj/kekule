@@ -29,6 +29,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Reuses one localized per-ring donor analysis for candidate-path and active hetero-donor predicates, mirroring RDKit's table-driven ring candidate flow.
 - Routes nitrogen lone-pair donor checks through the same per-ring donor analysis instead of separate hydrogen/charge symbol logic.
 - Evaluates simple and fused Huckel aromaticity through the shared donor-analysis object, keeping all-candidate and electron-count checks together.
+- Admits low-unsaturation hetero fused candidates from active donor analysis rather than hetero atom presence alone.
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Iterates accepted fused ring subsets additively with an RDKit-like done-bond stop condition instead of returning only the first accepted subset.
 - Uses RDKit's 24-atom fused-ring candidate size limit for large carbon/nitrogen fused candidates instead of an older smaller local cap.
@@ -103,3 +104,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v34: Reject aromatic candidate atoms whose total valence exceeds RDKit's charge-adjusted default valence, preserving substituted hypervalent phosphorus rings as non-aromatic.
 - v35: Reuse RDKit-style selected-subsystem perimeter bonds for both fused-system marking and fused-combination done-bond tracking.
 - v36: Align the large fused carbon/nitrogen candidate size limit with RDKit's 24-atom fused-ring cap.
+- v37: Use active donor analysis, not hetero atom presence alone, for low-unsaturation hetero fused candidate admission.

@@ -1500,7 +1500,7 @@ fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
     let pi_bonds = ring_pi_bond_count(mol, ring);
     ring_has_conjugated_atom_path(mol, ring)
         && (pi_bonds >= 2
-            || ring_hetero_donor_count(mol, ring) > 0
+            || ring_active_hetero_donor_count(mol, ring) > 0
                 && !ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol, ring)
             || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N")
             || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring))
@@ -2360,4 +2360,43 @@ fn atom_has_terminal_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: Ato
                 .map(|bonds| bonds.count() == 1)
                 .unwrap_or(false)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fused_candidate_requires_active_hetero_donor_not_just_hetero_atom() {
+        let mut mol = Molecule::new();
+        let nitrogen = mol.add_atom(cation_with_one_implicit_hydrogen("N"));
+        let carbon_a = mol.add_atom(cation_with_one_implicit_hydrogen("C"));
+        let carbon_b = mol.add_atom(cation_with_one_implicit_hydrogen("C"));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, carbon_b],
+            bonds: vec![bond_a, bond_b, bond_c],
+        };
+
+        assert!(ring_has_conjugated_atom_path(&mol, &ring));
+        assert_eq!(ring_hetero_donor_count(&mol, &ring), 1);
+        assert_eq!(ring_active_hetero_donor_count(&mol, &ring), 0);
+        assert!(!aromatic_fused_candidate(&mol, &ring));
+    }
+
+    fn cation_with_one_implicit_hydrogen(symbol: &str) -> Atom {
+        let mut atom = Atom::new(Element::from_symbol(symbol).expect("test element"));
+        atom.formal_charge = 1;
+        atom.implicit_hydrogens = Some(1);
+        atom.no_implicit_hydrogens = true;
+        atom
+    }
 }
