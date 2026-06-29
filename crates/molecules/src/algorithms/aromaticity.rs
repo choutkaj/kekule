@@ -170,7 +170,12 @@ fn perceive_rdkit_like_aromaticity(
             );
         }
     }
-    perceive_fused_aromatic_components(mol, ring_set.rings(), &protected_non_aromatic_bonds)?;
+    perceive_fused_aromatic_components(
+        mol,
+        ring_set.rings(),
+        &ring_analyses,
+        &protected_non_aromatic_bonds,
+    )?;
     perceive_fused_single_exocyclic_carbon_rings(
         mol,
         ring_set.rings(),
@@ -1180,12 +1185,16 @@ fn perceive_fused_single_exocyclic_carbon_rings(
 fn perceive_fused_aromatic_components(
     mol: &mut Molecule,
     rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
     protected_non_aromatic_bonds: &BTreeSet<BondId>,
 ) -> std::result::Result<(), AromaticityError> {
     let candidates = rings
         .iter()
         .enumerate()
-        .filter_map(|(index, ring)| aromatic_fused_candidate(mol, ring).then_some(index))
+        .filter_map(|(index, ring)| {
+            aromatic_fused_candidate_from_analysis(mol, ring, &ring_analyses[index])
+                .then_some(index)
+        })
         .collect::<Vec<_>>();
     let mut components = (0..candidates.len()).collect::<Vec<_>>();
     for left in 0..candidates.len() {
@@ -1509,14 +1518,15 @@ fn ring_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
         .count()
 }
 
-fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
+fn aromatic_fused_candidate_from_analysis(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
     if ring.atoms.len() == 7 && ring_has_chalcogen_donor(mol, ring) {
         return false;
     }
-    let Ok(analysis) = localized_ring_donor_analysis(mol, ring) else {
-        return false;
-    };
-    if !analysis.all_atoms_are_candidates() {
+    if !analysis.localized_all_atoms_are_candidates() {
         return false;
     }
     if ring.atoms.len() > 7 {
@@ -1527,7 +1537,7 @@ fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
     }
     let pi_bonds = ring_pi_bond_count(mol, ring);
     pi_bonds >= 2
-        || analysis.active_hetero_donor_count(mol) > 0
+        || analysis.localized_active_hetero_donor_count(mol) > 0
             && !ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol, ring)
         || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N")
         || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring)
@@ -1818,6 +1828,12 @@ impl RingAromaticityAnalysis {
         self.localized
             .as_ref()
             .is_some_and(|analysis| analysis.has_nitrogen_lone_pair_donor(mol))
+    }
+
+    fn localized_all_atoms_are_candidates(&self) -> bool {
+        self.localized
+            .as_ref()
+            .is_some_and(AromaticRingDonorAnalysis::all_atoms_are_candidates)
     }
 
     fn localized_active_hetero_donor_count(&self, mol: &Molecule) -> usize {
@@ -2449,9 +2465,11 @@ mod tests {
 
         assert!(ring_has_conjugated_atom_path(&mol, &ring));
         assert_eq!(ring_hetero_donor_count(&mol, &ring), 1);
-        let analysis = localized_ring_donor_analysis(&mol, &ring).expect("donor analysis");
-        assert_eq!(analysis.active_hetero_donor_count(&mol), 0);
-        assert!(!aromatic_fused_candidate(&mol, &ring));
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("donor analysis");
+        assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 0);
+        assert!(!aromatic_fused_candidate_from_analysis(
+            &mol, &ring, &analysis
+        ));
     }
 
     #[test]
