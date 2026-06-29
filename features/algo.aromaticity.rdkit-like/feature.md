@@ -26,6 +26,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Routes imported aromatic-order atom contributions through a shared RDKit-style donor classifier with vacant, one-electron, two-electron, and variable donor ranges.
 - Routes localized monocyclic and fused-component pi-electron counts through the same donor classifier, so ring-pi atoms, lone-pair donors, anionic carbon donors, vacant exocyclic centers, and non-donors are handled by one path.
 - Uses the same donor classifier for aromatic candidate-path and active hetero-donor checks instead of duplicating separate symbol-based rules.
+- Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Treats terminal hetero exocyclic pi carbons as non-donating in imported six-member nitrogen/chalcogen aromatic-order rings with multiple terminal exocyclic pi bonds.
 - Treats exocyclic hetero pi carbons as non-donating in imported five-member nitrogen/chalcogen aromatic-order rings when needed for RDKit-like Huckel counts.
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
@@ -76,3 +77,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v23: Centralize imported aromatic-order atom contributions behind a RDKit-style donor classifier and cover a PubChem macrocycle anionic-nitrogen canonical round trip.
 - v24: Use the shared donor classifier for localized monocyclic and fused-component electron counts, preserving anionic carbon donors while rejecting neutral saturated carbon non-donors.
 - v25: Route conjugated candidate-path and active hetero-donor checks through the shared donor classifier, with a phosphorus lone-pair donor regression.
+- v26: Add bounded connected fused-subset Huckel search ahead of legacy fused fallback marking, preserving additive subsystem aromaticity exposed by PubChem.

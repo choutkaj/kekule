@@ -1161,7 +1161,17 @@ fn perceive_fused_aromatic_components(
                 component.bonds.iter().copied(),
                 protected_non_aromatic_bonds,
             );
-        } else if all_carbon_component && component_has_exocyclic_pi {
+            continue;
+        }
+        if let Some(subset) = aromatic_fused_ring_subset(mol, rings, indexes)? {
+            mark_aromatic_atoms_and_bonds(
+                mol,
+                subset.atoms.iter().copied(),
+                subset.bonds.iter().copied(),
+                protected_non_aromatic_bonds,
+            );
+        }
+        if all_carbon_component && component_has_exocyclic_pi {
             let aromatic_atoms =
                 atoms_in_limited_terminal_exocyclic_pi_rings(mol, rings, indexes, 1);
             if aromatic_atoms.len() >= 6 {
@@ -1198,6 +1208,77 @@ fn perceive_fused_aromatic_components(
         }
     }
     Ok(())
+}
+
+fn aromatic_fused_ring_subset(
+    mol: &Molecule,
+    rings: &[Ring],
+    indexes: &[usize],
+) -> std::result::Result<Option<Ring>, AromaticityError> {
+    if indexes.len() < 3 || indexes.len() > 12 {
+        return Ok(None);
+    }
+    for subset_size in (2..indexes.len()).rev() {
+        for subset in connected_ring_subsets(rings, indexes, subset_size) {
+            let ring = fused_component_ring(rings, &subset);
+            if ring.atoms.len() > 48 {
+                continue;
+            }
+            let electrons = aromatic_fused_component_pi_electrons(mol, &ring)?;
+            if electrons >= 6 && (electrons - 2) % 4 == 0 {
+                return Ok(Some(ring));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn connected_ring_subsets(
+    rings: &[Ring],
+    indexes: &[usize],
+    subset_size: usize,
+) -> Vec<Vec<usize>> {
+    let mut subsets = Vec::new();
+    let mut current = Vec::with_capacity(subset_size);
+    collect_connected_ring_subsets(rings, indexes, subset_size, 0, &mut current, &mut subsets);
+    subsets
+}
+
+fn collect_connected_ring_subsets(
+    rings: &[Ring],
+    indexes: &[usize],
+    subset_size: usize,
+    start: usize,
+    current: &mut Vec<usize>,
+    subsets: &mut Vec<Vec<usize>>,
+) {
+    if current.len() == subset_size {
+        if ring_subset_is_connected(rings, current) {
+            subsets.push(current.clone());
+        }
+        return;
+    }
+    for position in start..indexes.len() {
+        current.push(indexes[position]);
+        collect_connected_ring_subsets(rings, indexes, subset_size, position + 1, current, subsets);
+        current.pop();
+    }
+}
+
+fn ring_subset_is_connected(rings: &[Ring], indexes: &[usize]) -> bool {
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![indexes[0]];
+    while let Some(index) = stack.pop() {
+        if !visited.insert(index) {
+            continue;
+        }
+        for other in indexes {
+            if !visited.contains(other) && rings_share_bond(&rings[index], &rings[*other]) {
+                stack.push(*other);
+            }
+        }
+    }
+    visited.len() == indexes.len()
 }
 
 fn fused_component_is_all_carbon(mol: &Molecule, ring: &Ring) -> bool {

@@ -1765,6 +1765,31 @@ fn fused_lactam_bridge_ring_stays_aliphatic() {
 }
 
 #[test]
+fn fused_pubchem_subset_aromaticity_remains_additive() {
+    let mut molecule = read_smiles_str(
+        "CN1CCN(CC1)CCC2=CC3=C4N2C=C(C(=O)C4=CC(=C3)CN5CCOCC5)C(=O)NCC6=CC=C(C=C6)Cl",
+        SmilesParseOptions,
+    )
+    .expect("PubChem fused subset boundary should parse");
+
+    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+        .expect("PubChem fused subset boundary should sanitize");
+
+    let aromatic_atoms = molecule
+        .mol
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    let aromatic_bonds = molecule
+        .mol
+        .bonds()
+        .filter(|(_, bond)| bond.aromatic)
+        .count();
+    assert_eq!(aromatic_atoms, 18);
+    assert_eq!(aromatic_bonds, 20);
+}
+
+#[test]
 fn fused_four_member_diketone_ring_can_be_aromatic() {
     let mut molecule = read_smiles_str(
         "C1CSC2(C3=C(C=CC(=C3)Cl)OC4=C2C(=O)C4=O)SC1",
