@@ -186,7 +186,7 @@ fn perceive_rdkit_like_aromaticity(
     clear_ring_oxo_chalcogen_atoms(mol, ring_set.rings());
     clear_fused_lactam_bridge_ring_atoms(mol, ring_set.rings());
     clear_imide_carbonyl_ring_atoms(mol, ring_set.rings());
-    clear_fused_lactam_enone_atoms(mol, ring_set.rings());
+    clear_fused_lactam_enone_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_fused_lactam_carbonyl_ring_atoms(mol, ring_set.rings());
     clear_fused_lactone_bridge_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_fused_ether_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
@@ -679,7 +679,11 @@ fn clear_imide_carbonyl_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     }
 }
 
-fn clear_fused_lactam_enone_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_fused_lactam_enone_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     if molecule_contains_heavier_chalcogen(mol) {
         return;
     }
@@ -687,12 +691,13 @@ fn clear_fused_lactam_enone_atoms(mol: &mut Molecule, rings: &[Ring]) {
         .iter()
         .enumerate()
         .filter(|(index, ring)| {
-            ring_contains_element(mol, ring, "N")
-                && !ring_has_chalcogen_donor(mol, ring)
-                && ring_terminal_exocyclic_pi_bond_count(mol, ring) > 0
-                && rings.iter().enumerate().any(|(other_index, other)| {
-                    other_index != *index && rings_share_bond(ring, other)
-                })
+            ring_is_fused_lactam_enone_cleanup_candidate(
+                mol,
+                rings,
+                *index,
+                ring,
+                &ring_analyses[*index],
+            )
         })
         .flat_map(|(_, ring)| {
             ring.atoms
@@ -712,6 +717,22 @@ fn clear_fused_lactam_enone_atoms(mol: &mut Molecule, rings: &[Ring]) {
             bond.aromatic = false;
         }
     }
+}
+
+fn ring_is_fused_lactam_enone_cleanup_candidate(
+    mol: &Molecule,
+    rings: &[Ring],
+    index: usize,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    analysis.localized_has_active_element_donor(mol, "N")
+        && !analysis.localized_has_active_chalcogen_donor(mol)
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) > 0
+        && rings
+            .iter()
+            .enumerate()
+            .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other))
 }
 
 fn is_aromatic_lactam_enone_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -2784,6 +2805,80 @@ mod tests {
         assert!(!analysis.localized_has_active_chalcogen_donor(&mol));
         assert!(!ring_is_fused_lactone_bridge_cleanup_candidate(
             &mol, &ring, &analysis, true
+        ));
+    }
+
+    #[test]
+    fn fused_lactam_enone_cleanup_uses_active_nitrogen_donor_state() {
+        let mut mol = Molecule::new();
+        let nitrogen = mol.add_atom(cation_with_one_implicit_hydrogen("N"));
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_e, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let carbonyl_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_c, carbonyl_oxygen, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let fused_carbon_a =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let fused_carbon_b =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let fused_carbon_c =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_g = mol
+            .add_bond(carbon_a, fused_carbon_a, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_h = mol
+            .add_bond(fused_carbon_a, fused_carbon_b, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_i = mol
+            .add_bond(fused_carbon_b, fused_carbon_c, BondOrder::Single)
+            .expect("fused ring bond");
+        let bond_j = mol
+            .add_bond(fused_carbon_c, carbon_b, BondOrder::Single)
+            .expect("fused ring bond");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, carbon_b, carbon_c, carbon_d, carbon_e],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let fused_neighbor = Ring {
+            atoms: vec![
+                carbon_a,
+                fused_carbon_a,
+                fused_carbon_b,
+                fused_carbon_c,
+                carbon_b,
+            ],
+            bonds: vec![bond_g, bond_h, bond_i, bond_j, bond_b],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        let rings = vec![ring.clone(), fused_neighbor];
+
+        assert!(ring_contains_element(&mol, &ring, "N"));
+        assert_eq!(ring_terminal_exocyclic_pi_bond_count(&mol, &ring), 1);
+        assert!(!analysis.localized_has_active_element_donor(&mol, "N"));
+        assert!(!ring_is_fused_lactam_enone_cleanup_candidate(
+            &mol, &rings, 0, &ring, &analysis
         ));
     }
 

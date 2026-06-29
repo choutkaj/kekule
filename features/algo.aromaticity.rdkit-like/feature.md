@@ -37,6 +37,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses cached active neighbor donor state for exocyclic alkene chalcogen cleanup rather than raw nitrogen/chalcogen adjacency.
 - Uses cached active oxygen donor state for saturated fused ether cleanup rather than raw hetero-atom presence.
 - Uses cached active chalcogen donor state for fused lactone bridge cleanup rather than raw chalcogen presence.
+- Uses cached active nitrogen donor state for fused lactam/enone cleanup rather than raw nitrogen presence.
 - Uses cached localized donor state, rather than raw hetero-element presence, when deciding which non-aromatic fused single bonds should remain protected.
 - Reuses one localized donor analysis inside saturated tertiary amine fused cleanup instead of recalculating candidate-path and active-donor facts separately.
 - Routes nitrogen lone-pair donor checks through the same per-ring donor analysis instead of separate hydrogen/charge symbol logic.
@@ -123,3 +124,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v41: Use active donor state for exocyclic alkene chalcogen cleanup seed and neighbor checks.
 - v42: Use active oxygen donor state for saturated fused ether cleanup instead of raw oxygen/chalcogen presence.
 - v43: Use active chalcogen donor state for fused lactone bridge cleanup instead of raw chalcogen presence.
+- v44: Use active nitrogen donor state for fused lactam/enone cleanup instead of raw nitrogen presence.
