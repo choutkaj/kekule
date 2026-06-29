@@ -27,6 +27,17 @@ enum AromaticElectronDonorType {
     None,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AromaticRingAtomDonor {
+    atom: AtomId,
+    donor: AromaticElectronDonorType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AromaticRingDonorAnalysis {
+    atoms: Vec<AromaticRingAtomDonor>,
+}
+
 impl fmt::Display for AromaticityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1594,24 +1605,58 @@ fn localized_ring_pi_electrons(
         return Ok(0);
     }
 
-    let donors = ring
-        .atoms
-        .iter()
-        .map(|atom_id| localized_ring_atom_donor_type(mol, ring, *atom_id))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    if donors
-        .iter()
-        .any(|donor| matches!(donor, AromaticElectronDonorType::None))
-    {
+    let analysis = localized_ring_donor_analysis(mol, ring)?;
+    if !analysis.all_atoms_are_candidates() {
         return Ok(0);
     }
-    if let Some(electrons) = huckel_electron_count_for_donors(&donors) {
+    if let Some(electrons) = analysis.huckel_electron_count() {
         Ok(electrons)
     } else {
-        Ok(donors
+        Ok(analysis.max_electron_count())
+    }
+}
+
+fn localized_ring_donor_analysis(
+    mol: &Molecule,
+    ring: &Ring,
+) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
+    let atoms = ring
+        .atoms
+        .iter()
+        .map(|atom_id| {
+            localized_ring_atom_donor_type(mol, ring, *atom_id).map(|donor| AromaticRingAtomDonor {
+                atom: *atom_id,
+                donor,
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(AromaticRingDonorAnalysis { atoms })
+}
+
+impl AromaticRingDonorAnalysis {
+    fn all_atoms_are_candidates(&self) -> bool {
+        self.atoms
             .iter()
-            .map(|donor| aromatic_donor_electron_range(*donor).1)
-            .sum())
+            .all(|atom| !matches!(atom.donor, AromaticElectronDonorType::None))
+    }
+
+    fn huckel_electron_count(&self) -> Option<u8> {
+        let donors = self.atoms.iter().map(|atom| atom.donor).collect::<Vec<_>>();
+        huckel_electron_count_for_donors(&donors)
+    }
+
+    fn max_electron_count(&self) -> u8 {
+        self.atoms
+            .iter()
+            .map(|atom| aromatic_donor_electron_range(atom.donor).1)
+            .sum()
+    }
+
+    fn donor_for(&self, atom_id: AtomId) -> Option<AromaticElectronDonorType> {
+        self.atoms
+            .iter()
+            .find(|atom| atom.atom == atom_id)
+            .map(|atom| atom.donor)
     }
 }
 
@@ -1656,16 +1701,21 @@ fn localized_ring_atom_donor_type(
 }
 
 fn ring_atom_is_aromatic_candidate(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    localized_ring_atom_donor_type(mol, ring, atom_id)
-        .is_ok_and(|donor| !matches!(donor, AromaticElectronDonorType::None))
+    localized_ring_donor_analysis(mol, ring).is_ok_and(|analysis| {
+        analysis
+            .donor_for(atom_id)
+            .is_some_and(|donor| !matches!(donor, AromaticElectronDonorType::None))
+    })
 }
 
 fn ring_atom_is_active_hetero_donor(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
     mol.atom(atom_id)
         .is_ok_and(|atom| matches!(atom.element.symbol(), "N" | "O" | "P" | "S" | "Se" | "Te"))
-        && localized_ring_atom_donor_type(mol, ring, atom_id).is_ok_and(|donor| {
-            let (_, max_electrons) = aromatic_donor_electron_range(donor);
-            max_electrons > 0
+        && localized_ring_donor_analysis(mol, ring).is_ok_and(|analysis| {
+            analysis.donor_for(atom_id).is_some_and(|donor| {
+                let (_, max_electrons) = aromatic_donor_electron_range(donor);
+                max_electrons > 0
+            })
         })
 }
 
