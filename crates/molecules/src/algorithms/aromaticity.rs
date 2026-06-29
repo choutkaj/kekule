@@ -1490,20 +1490,24 @@ fn aromatic_fused_candidate(mol: &Molecule, ring: &Ring) -> bool {
     if ring.atoms.len() == 7 && ring_has_chalcogen_donor(mol, ring) {
         return false;
     }
+    let Ok(analysis) = localized_ring_donor_analysis(mol, ring) else {
+        return false;
+    };
+    if !analysis.all_atoms_are_candidates() {
+        return false;
+    }
     if ring.atoms.len() > 7 {
         return ring.atoms.len() <= MAX_FUSED_AROMATIC_RING_SIZE
             && fused_component_is_carbon_nitrogen(mol, ring)
             && ring_has_anionic_nitrogen(mol, ring)
-            && ring_has_conjugated_atom_path(mol, ring)
             && ring_pi_bond_count(mol, ring) >= 4;
     }
     let pi_bonds = ring_pi_bond_count(mol, ring);
-    ring_has_conjugated_atom_path(mol, ring)
-        && (pi_bonds >= 2
-            || ring_active_hetero_donor_count(mol, ring) > 0
-                && !ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol, ring)
-            || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N")
-            || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring))
+    pi_bonds >= 2
+        || analysis.active_hetero_donor_count(mol) > 0
+            && !ring_has_low_unsaturation_chalcogen_bridge_for_fused(mol, ring)
+        || ring.atoms.len() == 5 && pi_bonds >= 1 && ring_contains_element(mol, ring, "N")
+        || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring)
 }
 
 fn ring_has_conjugated_atom_path(mol: &Molecule, ring: &Ring) -> bool {
