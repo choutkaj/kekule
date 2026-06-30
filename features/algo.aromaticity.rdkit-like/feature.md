@@ -77,6 +77,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Iterates accepted fused ring subsets additively with an RDKit-like done-bond stop condition instead of returning only the first accepted subset.
 - Uses RDKit's 24-atom fused-ring candidate size limit for large carbon/nitrogen fused candidates instead of an older smaller local cap.
+- Does not impose an additional aggregate fused-component atom cap beyond RDKit-like member-ring and fused-combination search bounds.
 - Counts fused-system Huckel donor atoms using RDKit-style fused-subsystem atom multiplicity, excluding atoms buried in more than two selected rings.
 - Marks accepted all-carbon fused Huckel systems with RDKit-style selected-subsystem perimeter bonds, preserving non-aromatic shared bonds for azulene-like systems.
 - Uses the same RDKit-style selected-subsystem perimeter-bond definition for fused-system marking and fused-combination completion tracking.
@@ -191,3 +192,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v75: Require localized carbon candidate state before treating fused single-bond protection as all-carbon.
 - v76: Require localized carbon candidate state for protected fused single-bond endpoints.
 - v77: Require localized carbon candidate state for electronegative exocyclic-pi carbon gates.
+- v78: Remove the non-RDKit aggregate fused-component atom cap while retaining member-ring and combination bounds.

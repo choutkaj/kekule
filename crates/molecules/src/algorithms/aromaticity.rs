@@ -1473,26 +1473,30 @@ fn perceive_fused_aromatic_components(
             continue;
         }
         let component = fused_component_ring(rings, indexes);
-        if component.atoms.len() > 48 {
-            continue;
-        }
-        let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
-        let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
         let all_candidate_carbon_component =
             fused_component_is_all_candidate_carbon(mol, &component, rings, ring_analyses, indexes);
         let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
-        if analysis.is_fused_huckel_aromatic() {
-            if all_candidate_carbon_component {
-                mark_aromatic_fused_ring_system(mol, rings, indexes, protected_non_aromatic_bonds);
-            } else {
-                mark_aromatic_atoms_and_bonds(
-                    mol,
-                    component.atoms.iter().copied(),
-                    component.bonds.iter().copied(),
-                    protected_non_aromatic_bonds,
-                );
+        if indexes.len() <= MAX_FUSED_AROMATIC_COMBINATION_RINGS {
+            let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
+            let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
+            if analysis.is_fused_huckel_aromatic() {
+                if all_candidate_carbon_component {
+                    mark_aromatic_fused_ring_system(
+                        mol,
+                        rings,
+                        indexes,
+                        protected_non_aromatic_bonds,
+                    );
+                } else {
+                    mark_aromatic_atoms_and_bonds(
+                        mol,
+                        component.atoms.iter().copied(),
+                        component.bonds.iter().copied(),
+                        protected_non_aromatic_bonds,
+                    );
+                }
+                continue;
             }
-            continue;
         }
         for subset in aromatic_fused_ring_subsets(mol, rings, indexes)? {
             let subset_ring = fused_component_ring(rings, &subset);
@@ -1581,10 +1585,6 @@ fn aromatic_fused_ring_subsets(
             break;
         }
         for subset in connected_ring_subsets(rings, indexes, subset_size) {
-            let component = fused_component_ring(rings, &subset);
-            if component.atoms.len() > 48 {
-                continue;
-            }
             let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
             let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
             if analysis.is_fused_huckel_aromatic() {
@@ -3449,6 +3449,60 @@ mod tests {
     }
 
     #[test]
+    fn fused_component_search_uses_member_ring_size_not_component_atom_cap() {
+        let mut mol = Molecule::new();
+        let mut rings = Vec::new();
+        let mut shared = None;
+        for _ in 0..12 {
+            let (ring, next_left, next_right, next_bond) = fused_carbon_ring(&mut mol, shared, 6);
+            rings.push(ring);
+            shared = Some((next_left, next_right, next_bond));
+        }
+        let analyses = rings
+            .iter()
+            .map(|ring| RingAromaticityAnalysis::new(&mol, ring).expect("ring analysis"))
+            .collect::<Vec<_>>();
+        let indexes = (0..rings.len()).collect::<Vec<_>>();
+        let component = fused_component_ring(&rings, &indexes);
+
+        assert!(component.atoms.len() > 48);
+        assert!(rings
+            .iter()
+            .all(|ring| ring.atoms.len() <= MAX_FUSED_AROMATIC_RING_SIZE));
+        assert!(rings.iter().enumerate().all(|(index, ring)| {
+            aromatic_fused_candidate_from_analysis(&mol, ring, &analyses[index])
+        }));
+        let subsets = aromatic_fused_ring_subsets(&mol, &rings, &indexes).expect("fused subsets");
+        assert!(!subsets.is_empty(), "expected at least one accepted subset");
+        for bond_id in &component.bonds {
+            mol.bonds[bond_id.index()]
+                .as_mut()
+                .expect("component bond")
+                .aromatic = false;
+        }
+        assert_eq!(
+            component
+                .bonds
+                .iter()
+                .filter(|bond_id| mol.bond(**bond_id).expect("component bond").aromatic)
+                .count(),
+            0
+        );
+        perceive_fused_aromatic_components(&mut mol, &rings, &analyses, &BTreeSet::new())
+            .expect("fused aromaticity");
+
+        let aromatic_bond_count = component
+            .bonds
+            .iter()
+            .filter(|bond_id| mol.bond(**bond_id).expect("component bond").aromatic)
+            .count();
+        assert!(
+            aromatic_bond_count > 0,
+            "aromatic_bond_count={aromatic_bond_count}"
+        );
+    }
+
+    #[test]
     fn all_carbon_exocyclic_fallback_requires_candidate_carbon_state() {
         let mut mol = Molecule::new();
         let mut carbon_atom = aromatic_carbon();
@@ -5221,5 +5275,53 @@ mod tests {
 
     fn aromatic_carbon() -> Atom {
         aromatic_atom("C")
+    }
+
+    fn fused_carbon_ring(
+        mol: &mut Molecule,
+        shared: Option<(AtomId, AtomId, BondId)>,
+        size: usize,
+    ) -> (Ring, AtomId, AtomId, BondId) {
+        assert!(size >= 6);
+        let mut atoms = Vec::new();
+        let mut bonds = Vec::new();
+        if let Some((left, right, bond)) = shared {
+            atoms.push(left);
+            atoms.push(right);
+            bonds.push(bond);
+        } else {
+            atoms.push(mol.add_atom(aromatic_carbon()));
+            atoms.push(mol.add_atom(aromatic_carbon()));
+            bonds.push(
+                mol.add_bond(atoms[0], atoms[1], BondOrder::Aromatic)
+                    .expect("initial fused bond"),
+            );
+        }
+
+        let first_new_index = atoms.len();
+        for _ in 0..(size - atoms.len()) {
+            atoms.push(mol.add_atom(aromatic_carbon()));
+        }
+
+        for index in 1..(atoms.len() - 1) {
+            bonds.push(
+                mol.add_bond(atoms[index], atoms[index + 1], BondOrder::Aromatic)
+                    .expect("ring bond"),
+            );
+        }
+        bonds.push(
+            mol.add_bond(
+                *atoms.last().expect("ring atom"),
+                atoms[0],
+                BondOrder::Aromatic,
+            )
+            .expect("ring closure"),
+        );
+
+        let next_left_index = first_new_index + 1;
+        let next_left = atoms[next_left_index];
+        let next_right = atoms[next_left_index + 1];
+        let next_bond = bonds[next_left_index];
+        (Ring { atoms, bonds }, next_left, next_right, next_bond)
     }
 }
