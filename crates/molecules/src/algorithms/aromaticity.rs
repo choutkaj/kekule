@@ -1078,9 +1078,10 @@ fn ring_is_saturated_fused_ether_bridge_cleanup_candidate(
 }
 
 fn is_chalcogen_bridge_without_pi(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    mol.atom(atom_id)
-        .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
-        && !ring_atom_has_pi_bond(mol, ring, atom_id)
+    mol.atom(atom_id).is_ok_and(|atom| {
+        matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te")
+            && atom_passes_rdkit_aromatic_radical_eligibility(atom)
+    }) && !ring_atom_has_pi_bond(mol, ring, atom_id)
         && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
 }
 
@@ -3585,6 +3586,46 @@ mod tests {
         assert!(!ring_is_fused_lactone_bridge_cleanup_candidate(
             &mol, &ring, &analysis, true
         ));
+    }
+
+    #[test]
+    fn chalcogen_bridge_without_pi_uses_rdkit_radical_eligibility() {
+        let mut mol = Molecule::new();
+        let mut oxygen_atom = Atom::new(Element::from_symbol("O").expect("test element"));
+        oxygen_atom.radical = Some(AtomRadical::Doublet);
+        let oxygen = mol.add_atom(oxygen_atom);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(oxygen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_e, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![oxygen, carbon_a, carbon_b, carbon_c, carbon_d, carbon_e],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+
+        assert!(!atom_passes_rdkit_aromatic_radical_eligibility(
+            mol.atom(oxygen).expect("ring oxygen")
+        ));
+        assert!(!is_chalcogen_bridge_without_pi(&mol, &ring, oxygen));
     }
 
     #[test]
