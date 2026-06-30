@@ -1034,7 +1034,7 @@ fn ring_is_fused_lactone_bridge_cleanup_candidate(
         && ring
             .atoms
             .iter()
-            .any(|atom_id| is_chalcogen_bridge_without_pi(mol, ring, *atom_id))
+            .any(|atom_id| is_active_chalcogen_bridge_without_pi(mol, ring, analysis, *atom_id))
         && ring_terminal_exocyclic_pi_bond_count(mol, ring) > 0
 }
 
@@ -1055,11 +1055,12 @@ fn clear_saturated_fused_ether_bridge_atoms(
                 &ring_analyses[*index],
             )
         })
-        .flat_map(|(_, ring)| {
+        .flat_map(|(index, ring)| {
+            let analysis = &ring_analyses[index];
             ring.atoms.iter().copied().filter(|atom_id| {
                 mol.atom(*atom_id)
                     .is_ok_and(|atom| atom.element.symbol() == "O" && atom.aromatic)
-                    && is_chalcogen_bridge_without_pi(mol, ring, *atom_id)
+                    && is_active_element_bridge_without_pi(mol, ring, analysis, *atom_id, "O")
             })
         })
         .collect::<BTreeSet<_>>();
@@ -1094,12 +1095,36 @@ fn ring_is_saturated_fused_ether_bridge_cleanup_candidate(
             .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other))
 }
 
+#[cfg(test)]
 fn is_chalcogen_bridge_without_pi(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
     mol.atom(atom_id).is_ok_and(|atom| {
         matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te")
             && atom_passes_rdkit_aromatic_radical_eligibility(atom)
     }) && !ring_atom_has_pi_bond(mol, ring, atom_id)
         && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+}
+
+fn is_active_chalcogen_bridge_without_pi(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    atom_id: AtomId,
+) -> bool {
+    !ring_atom_has_pi_bond(mol, ring, atom_id)
+        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+        && analysis.localized_atom_has_active_chalcogen_donor(mol, atom_id)
+}
+
+fn is_active_element_bridge_without_pi(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    atom_id: AtomId,
+    symbol: &str,
+) -> bool {
+    !ring_atom_has_pi_bond(mol, ring, atom_id)
+        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
+        && analysis.localized_atom_has_active_element_donor(mol, atom_id, symbol)
 }
 
 fn clear_saturated_tertiary_amine_ring_atoms(
@@ -3320,6 +3345,13 @@ mod tests {
             .atom(sulfur)
             .is_ok_and(|atom| atom.element.symbol() == "S"));
         assert!(analyses[0].localized_has_active_element_donor(&mol, "O"));
+        assert!(is_active_element_bridge_without_pi(
+            &mol,
+            &ring,
+            &analyses[0],
+            oxygen,
+            "O"
+        ));
         assert_eq!(analyses[0].localized_active_hetero_donor_count(&mol), 1);
         assert!(!analyses[0].localized_all_atoms_are_candidates());
         assert!(ring_is_saturated_fused_ether_bridge_cleanup_candidate(
@@ -3676,6 +3708,9 @@ mod tests {
         assert!(is_chalcogen_bridge_without_pi(&mol, &ring, oxygen));
         assert_eq!(ring_terminal_exocyclic_pi_bond_count(&mol, &ring), 1);
         assert!(!analysis.localized_has_active_chalcogen_donor(&mol));
+        assert!(!is_active_chalcogen_bridge_without_pi(
+            &mol, &ring, &analysis, oxygen
+        ));
         assert!(!ring_is_fused_lactone_bridge_cleanup_candidate(
             &mol, &ring, &analysis, true
         ));
@@ -3719,6 +3754,10 @@ mod tests {
             mol.atom(oxygen).expect("ring oxygen")
         ));
         assert!(!is_chalcogen_bridge_without_pi(&mol, &ring, oxygen));
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+        assert!(!is_active_chalcogen_bridge_without_pi(
+            &mol, &ring, &analysis, oxygen
+        ));
     }
 
     #[test]
