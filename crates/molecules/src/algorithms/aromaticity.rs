@@ -2158,9 +2158,6 @@ fn aromatic_ring_donor_analysis(
     let active_hetero_donors = localized.active_hetero_donor_count(mol);
     let has_active_chalcogen_donor = localized.has_active_chalcogen_donor(mol);
     let has_active_nitrogen_donor = localized.has_active_element_donor(mol, "N");
-    if ring.atoms.len() == 7 && has_active_chalcogen_donor {
-        return Ok(AromaticRingDonorAnalysis::non_aromatic());
-    }
     if ring.atoms.len() == 5 && ring_pi_bond_count(mol, ring) < 2 && !has_active_nitrogen_donor {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
@@ -3205,6 +3202,52 @@ mod tests {
         assert!(aromatic_fused_candidate_from_analysis(
             &mol, &ring, &analysis
         ));
+    }
+
+    #[test]
+    fn localized_seven_member_chalcogen_ring_uses_huckel_count_not_shape_veto() {
+        let mut mol = Molecule::new();
+        let sulfur = mol.add_atom(Atom::new(Element::from_symbol("S").expect("test element")));
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_f = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(sulfur, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Double)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Double)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_e, carbon_f, BondOrder::Double)
+            .expect("ring bond");
+        let bond_g = mol
+            .add_bond(carbon_f, sulfur, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![
+                sulfur, carbon_a, carbon_b, carbon_c, carbon_d, carbon_e, carbon_f,
+            ],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f, bond_g],
+        };
+
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("donor analysis");
+
+        assert!(analysis.localized_has_active_chalcogen_donor(&mol));
+        assert_eq!(analysis.aromatic.atoms.len(), ring.atoms.len());
+        assert_eq!(analysis.aromatic.electron_count(), Some(8));
+        assert!(!analysis.is_huckel_aromatic());
     }
 
     #[test]
