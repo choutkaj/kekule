@@ -1,6 +1,6 @@
 ---
 name: feature-work
-description: Add, research, plan, implement, maintain, and remediate molecules features through the canonical feature and audit workflow. Use for feature metadata, feature.md, implementation, validation fixtures, dashboard updates, or a numbered fixes.md stage.
+description: Add, research, plan, implement, maintain, and remediate molecules features through the canonical feature and audit workflow. Use for feature metadata, feature.md, implementation, validation fixtures, or dashboard updates.
 ---
 
 # Feature Work
@@ -17,19 +17,12 @@ add -> optional research -> plan -> implement
 
 Start from one canonical feature ID and keep the change scoped to that feature plus direct infrastructure support.
 
-### Audit remediation
-
-When the request names `fixes.md` or an audit stage, use the `audit-remediation` skill. A remediation stage may span multiple features, but only one numbered stage may be implemented per branch and pull request.
-
-Review is separate: use `feature-review` for independent audit.
-
 ## Start
 
 1. Read `ARCHITECTURE.md`, `AGENTS.md`, and the relevant feature directory.
-2. For remediation, also read `fixes.md` and the complete selected stage.
-3. Identify every affected feature ID before editing.
-4. Treat `feature.toml` as machine-readable truth and `feature.md` as human-readable truth.
-5. Add a regression test for the defect or contract change before closing the work.
+2. Identify every affected feature ID before editing.
+3. Treat `feature.toml` as machine-readable truth and `feature.md` as human-readable truth.
+4. Add a regression test for the defect or contract change before closing the work.
 
 ## Metadata
 
@@ -95,13 +88,6 @@ cargo xtask dashboard --check
 cargo xtask skills --check
 cargo xtask corpus check --corpus tiny --require-data
 cargo xtask validate --feature <feature-id> --corpus tiny
-```
-
-For remediation, run the complete stage gate in `fixes.md`. When available and required:
-
-```bash
-cargo xtask corpus check --corpus all --require-data
-cargo xtask validate --feature all --corpus all
 ```
 
 If metadata changes, run `cargo xtask dashboard` before `cargo xtask dashboard --check`.
