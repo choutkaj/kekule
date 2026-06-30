@@ -37,6 +37,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses cached active neighbor donor state for exocyclic alkene chalcogen cleanup rather than raw nitrogen/chalcogen adjacency.
 - Clears only cached active ring hetero-donor neighbors during exocyclic alkene chalcogen cleanup, avoiding raw hetero-atom adjacency outside the ring context.
 - Uses cached inactive chalcogen donor state for ring-oxo chalcogen cleanup instead of raw chalcogen/terminal-oxo matching alone.
+- Reuses RDKit-like radical eligibility when admitting inactive terminal and ring-oxo chalcogen cleanup atoms, so radical heteroatoms do not enter cleanup solely by raw element shape.
 - Uses cached active oxygen donor state for saturated fused ether cleanup rather than raw hetero-atom presence.
 - Uses ring-local donor gates for fused lactam/enone and saturated fused ether cleanup rather than global heavier-chalcogen molecule skips.
 - Uses cached active chalcogen donor state for fused lactone bridge cleanup rather than raw chalcogen presence.
@@ -154,3 +155,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v56: Route saturated fused chalcogen bridge cleanup through cached chalcogen candidate state.
 - v57: Route aromatic amidine cleanup through RDKit-like nitrogen candidate eligibility.
 - v58: Route exocyclic pi-bond electron stealing gates through electronegativity-aware checks.
+- v59: Reuse RDKit-like radical eligibility for inactive terminal and ring-oxo chalcogen cleanup, avoiding raw terminal chalcogen shape checks for radical heteroatoms.
