@@ -11,8 +11,7 @@ Use this skill for independent audit, not builder-mode implementation.
 
 1. Read `ARCHITECTURE.md`, `AGENTS.md`, and every affected `features/<feature-id>/` directory.
 2. Read `feature.toml`, `feature.md`, related validation manifests, and relevant code.
-3. When the pull request references `fixes.md`, read the complete numbered stage and verify every acceptance gate.
-4. Keep the review scoped to the feature or one remediation stage and its direct infrastructure support.
+3. Keep the review scoped to the feature or one remediation stage and its direct infrastructure support.
 
 ## Review focus
 
@@ -47,13 +46,6 @@ cargo xtask corpus check --corpus tiny --require-data
 cargo xtask validate --feature <feature-id> --corpus tiny
 ```
 
-For a remediation PR, verify the complete stage-specific gate in `fixes.md`. When available and required:
-
-```bash
-cargo xtask corpus check --corpus all --require-data
-cargo xtask validate --feature all --corpus all
-```
-
 Report every check that was not run.
 
 ## Output
@@ -61,6 +53,6 @@ Report every check that was not run.
 Use code-review style:
 
 1. Findings first, with file and line references.
-2. Acceptance-gate status for the selected feature or `fixes.md` stage.
+2. Acceptance-gate status for the selected feature.
 3. Open questions or assumptions.
 4. Short summary only after findings.

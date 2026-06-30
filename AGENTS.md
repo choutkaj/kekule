@@ -4,7 +4,7 @@ These rules apply to AI agents working in this repository.
 
 ## Mandatory workflow
 
-1. Start from either a feature ID under `features/` or one numbered remediation stage in `fixes.md`.
+1. Start from a feature ID under `features/`.
 2. Read `ARCHITECTURE.md`, this file, and the selected feature directories, before editing code.
 3. Keep ordinary work scoped to one feature. Some work may span multiple inter-dependent features, but it must remain logically scoped and feature-oriented. List every affected feature ID.
 4. Add or update a regression test that demonstrates the defect or contract being changed.
