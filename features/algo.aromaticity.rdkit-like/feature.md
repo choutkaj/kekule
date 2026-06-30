@@ -66,6 +66,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Reuses one localized donor analysis inside saturated tertiary amine fused cleanup instead of recalculating candidate-path and active-donor facts separately.
 - Routes nitrogen lone-pair donor checks through the same per-ring donor analysis instead of separate hydrogen/charge symbol logic.
 - Evaluates simple and fused Huckel aromaticity through the shared donor-analysis object, keeping all-candidate and electron-count checks together.
+- Handles fused all-carbon components with exocyclic pi bonds through classified donor state instead of a fixed six-electron override.
 - Admits low-unsaturation hetero fused candidates from active donor analysis rather than hetero atom presence alone.
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Iterates accepted fused ring subsets additively with an RDKit-like done-bond stop condition instead of returning only the first accepted subset.
@@ -176,3 +177,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v67: Use RDKit-like candidate eligibility for terminal aromatic imine cleanup.
 - v68: Use RDKit-like carbon candidate eligibility for aromatic amidine cleanup.
 - v69: Handle single electronegative exocyclic pi bonds in imported six-member chalcogen aromatic-order rings through donor classification instead of a fixed electron-count override.
+- v70: Handle fused all-carbon components with exocyclic pi bonds through donor classification instead of a fixed six-electron override.

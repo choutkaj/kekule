@@ -1751,14 +1751,6 @@ fn aromatic_fused_component_donor_analysis(
     mol: &Molecule,
     ring: &Ring,
 ) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
-    if ring.atoms.len() == 6
-        && fused_component_is_all_carbon(mol, ring)
-        && ring_exocyclic_pi_bond_count(mol, ring) == 1
-        && ring_pi_bond_count(mol, ring) >= 1
-    {
-        return Ok(AromaticRingDonorAnalysis::with_electron_count(6));
-    }
-
     localized_ring_donor_analysis(mol, ring)
 }
 
@@ -2195,13 +2187,6 @@ impl AromaticRingDonorAnalysis {
         Self {
             atoms: Vec::new(),
             fixed_electron_count: Some(0),
-        }
-    }
-
-    fn with_electron_count(electrons: u8) -> Self {
-        Self {
-            atoms: Vec::new(),
-            fixed_electron_count: Some(electrons),
         }
     }
 
@@ -3166,6 +3151,52 @@ mod tests {
             &analyses,
             &[0]
         ));
+    }
+
+    #[test]
+    fn fused_exocyclic_carbon_component_uses_donor_analysis() {
+        let mut mol = Molecule::new();
+        let carbon_a = mol.add_atom(aromatic_carbon());
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let carbon_c = mol.add_atom(aromatic_carbon());
+        let carbon_d = mol.add_atom(aromatic_carbon());
+        let carbon_e = mol.add_atom(aromatic_carbon());
+        let carbon_f = mol.add_atom(aromatic_carbon());
+        let bond_a = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_e, carbon_f, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_f, carbon_a, BondOrder::Aromatic)
+            .expect("ring bond");
+        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_c, oxygen, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![carbon_a, carbon_b, carbon_c, carbon_d, carbon_e, carbon_f],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+
+        let analysis =
+            aromatic_fused_component_donor_analysis(&mol, &ring).expect("fused component analysis");
+
+        assert!(fused_component_is_all_carbon(&mol, &ring));
+        assert_eq!(ring_exocyclic_pi_bond_count(&mol, &ring), 1);
+        assert_eq!(ring_pi_bond_count(&mol, &ring), 6);
+        assert_eq!(analysis.fixed_electron_count, None);
+        assert_eq!(analysis.atoms.len(), ring.atoms.len());
+        assert!(analysis.is_fused_huckel_aromatic());
     }
 
     #[test]
