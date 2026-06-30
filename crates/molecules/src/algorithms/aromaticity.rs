@@ -2304,14 +2304,22 @@ fn localized_ring_atom_donor_type(
             Ok(AromaticElectronDonorType::None)
         };
     }
-    if !atom_is_rdkit_aromatic_candidate(mol, atom_id, atom) {
+    let donor = if ring_atom_has_pi_bond(mol, ring, atom_id) {
+        AromaticElectronDonorType::One
+    } else {
+        rdkit_like_atom_donor_type(mol, ring, atom_id, atom, true)
+    };
+    if !atom_is_rdkit_aromatic_candidate_for_donor(
+        mol,
+        atom_id,
+        atom,
+        donor,
+        RdkitAromaticCandidateOptions::default(),
+    ) {
         return Ok(AromaticElectronDonorType::None);
     }
-    if ring_atom_has_pi_bond(mol, ring, atom_id) {
-        return Ok(AromaticElectronDonorType::One);
-    }
 
-    Ok(rdkit_like_atom_donor_type(mol, ring, atom_id, atom, true))
+    Ok(donor)
 }
 
 fn aromaticity_supported_element(atom: &Atom) -> bool {
@@ -2336,6 +2344,25 @@ fn atom_is_rdkit_aromatic_candidate_with_options(
     atom: &Atom,
     options: RdkitAromaticCandidateOptions,
 ) -> bool {
+    atom_is_rdkit_aromatic_candidate_for_donor(
+        mol,
+        atom_id,
+        atom,
+        AromaticElectronDonorType::Any,
+        options,
+    )
+}
+
+fn atom_is_rdkit_aromatic_candidate_for_donor(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+    donor: AromaticElectronDonorType,
+    options: RdkitAromaticCandidateOptions,
+) -> bool {
+    if matches!(donor, AromaticElectronDonorType::None) {
+        return false;
+    }
     let atomic_number = atom.element.atomic_number();
     if options.only_carbon_or_nitrogen && !matches!(atomic_number, 6 | 7) {
         return false;
@@ -2499,29 +2526,37 @@ fn aromatic_order_atom_donor_type(
     if !aromaticity_supported_element(atom) {
         return Err(AromaticityError::UnsupportedElement(atom_id));
     }
-    if !atom_is_rdkit_aromatic_candidate(mol, atom_id, atom) {
-        return Ok(AromaticElectronDonorType::None);
-    }
-    if exocyclic_pi_steals_electrons
+    let donor = if exocyclic_pi_steals_electrons
         && atom_has_electronegative_exocyclic_pi_bond(mol, ring, atom_id, atom)
     {
-        return Ok(AromaticElectronDonorType::Vacant);
-    }
-
-    match atom.element.symbol() {
-        "B" | "C" => Ok(AromaticElectronDonorType::One),
-        "N" => {
-            if atom.explicit_hydrogens > 0
-                || atom.formal_charge == 0 && aromatic_order_nitrogen_is_pyrrole_like(mol, atom_id)
-            {
-                Ok(AromaticElectronDonorType::OneOrTwo)
-            } else {
-                Ok(AromaticElectronDonorType::One)
+        AromaticElectronDonorType::Vacant
+    } else {
+        match atom.element.symbol() {
+            "B" | "C" => AromaticElectronDonorType::One,
+            "N" => {
+                if atom.explicit_hydrogens > 0
+                    || atom.formal_charge == 0
+                        && aromatic_order_nitrogen_is_pyrrole_like(mol, atom_id)
+                {
+                    AromaticElectronDonorType::OneOrTwo
+                } else {
+                    AromaticElectronDonorType::One
+                }
             }
+            "O" | "S" | "Se" | "Te" | "P" => AromaticElectronDonorType::Two,
+            _ => return Err(AromaticityError::UnsupportedElement(atom_id)),
         }
-        "O" | "S" | "Se" | "Te" | "P" => Ok(AromaticElectronDonorType::Two),
-        _ => Err(AromaticityError::UnsupportedElement(atom_id)),
+    };
+    if !atom_is_rdkit_aromatic_candidate_for_donor(
+        mol,
+        atom_id,
+        atom,
+        donor,
+        RdkitAromaticCandidateOptions::default(),
+    ) {
+        return Ok(AromaticElectronDonorType::None);
     }
+    Ok(donor)
 }
 
 fn rdkit_like_atom_donor_type(
@@ -2936,10 +2971,25 @@ mod tests {
             carbonyl_carbon,
             atom
         ));
-        assert!(!atom_is_rdkit_aromatic_candidate_with_options(
+        assert!(!atom_is_rdkit_aromatic_candidate_for_donor(
             &mol,
             carbonyl_carbon,
             atom,
+            AromaticElectronDonorType::None,
+            RdkitAromaticCandidateOptions::default()
+        ));
+        assert!(atom_is_rdkit_aromatic_candidate_for_donor(
+            &mol,
+            carbonyl_carbon,
+            atom,
+            AromaticElectronDonorType::One,
+            RdkitAromaticCandidateOptions::default()
+        ));
+        assert!(!atom_is_rdkit_aromatic_candidate_for_donor(
+            &mol,
+            carbonyl_carbon,
+            atom,
+            AromaticElectronDonorType::One,
             RdkitAromaticCandidateOptions {
                 allow_exocyclic_multiple_bonds: false,
                 ..RdkitAromaticCandidateOptions::default()
