@@ -50,6 +50,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses cached active nitrogen donor state for terminal chalcogen-oxo cleanup rather than raw nitrogen presence.
 - Uses cached active nitrogen donor state for saturated fused lactam-carbonyl cleanup rather than raw nitrogen presence.
 - Uses cached active chalcogen donor state for the saturated tertiary amine guard rather than raw saturated chalcogen presence.
+- Uses cached active nitrogen donor state when selecting fused lactam/enone carbon neighbors, so inactive nitrogen atoms do not satisfy the per-carbon cleanup selector by raw neutral nitrogen shape alone.
 - Reuses RDKit-like radical eligibility when classifying saturated tertiary amine guard nitrogens, so radical heteroatoms do not enter cleanup by raw saturated-amine shape alone.
 - Reuses RDKit-like radical eligibility for terminal chalcogen substituents in the saturated tertiary amine guard, so radical heteroatom substituents do not satisfy the guard by raw terminal-pi shape alone.
 - Reuses RDKit-like radical eligibility for carbon substituents in the saturated tertiary amine guard, so charged carbon radicals do not satisfy the guard by raw carbon shape alone.
@@ -168,3 +169,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v63: Reuse RDKit-like radical eligibility for carbon substituents in the saturated tertiary amine guard.
 - v64: Use localized heavy-chalcogen candidate state for the five-member terminal chalcogen exocyclic-pi gate.
 - v65: Reuse RDKit-like radical eligibility for saturated ring carbon cleanup.
+- v66: Use active neighbor nitrogen donor state when selecting fused lactam/enone cleanup carbons.

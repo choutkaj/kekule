@@ -784,11 +784,13 @@ fn clear_fused_lactam_enone_atoms(
                 &ring_analyses[*index],
             )
         })
-        .flat_map(|(_, ring)| {
+        .flat_map(|(index, ring)| {
+            let analysis = &ring_analyses[index];
             ring.atoms
                 .iter()
                 .copied()
-                .filter(|atom_id| is_aromatic_lactam_enone_carbon(mol, ring, *atom_id))
+                .filter(|atom_id| is_aromatic_lactam_enone_carbon(mol, ring, analysis, *atom_id))
+                .collect::<Vec<_>>()
         })
         .collect::<BTreeSet<_>>();
 
@@ -820,7 +822,12 @@ fn ring_is_fused_lactam_enone_cleanup_candidate(
             .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other))
 }
 
-fn is_aromatic_lactam_enone_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
+fn is_aromatic_lactam_enone_carbon(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+    atom_id: AtomId,
+) -> bool {
     mol.atom(atom_id)
         .is_ok_and(|atom| atom.element.symbol() == "C" && atom.aromatic)
         && mol
@@ -843,9 +850,11 @@ fn is_aromatic_lactam_enone_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId)
             .any(|(bond_id, bond)| {
                 ring.bonds.contains(&bond_id)
                     && matches!(bond.order, BondOrder::Single)
-                    && mol.atom(bond.other_atom(atom_id)).is_ok_and(|other| {
-                        other.element.symbol() == "N" && other.formal_charge == 0
-                    })
+                    && analysis.localized_atom_has_active_element_donor(
+                        mol,
+                        bond.other_atom(atom_id),
+                        "N",
+                    )
             })
 }
 
@@ -3719,6 +3728,55 @@ mod tests {
         assert!(!analysis.localized_has_active_element_donor(&mol, "N"));
         assert!(!ring_is_fused_lactam_enone_cleanup_candidate(
             &mol, &rings, 0, &ring, &analysis
+        ));
+    }
+
+    #[test]
+    fn lactam_enone_carbon_uses_active_neighbor_nitrogen_state() {
+        let mut mol = Molecule::new();
+        let mut inactive_nitrogen_atom =
+            Atom::new(Element::from_symbol("N").expect("test element"));
+        inactive_nitrogen_atom.radical = Some(AtomRadical::Doublet);
+        let inactive_nitrogen = mol.add_atom(inactive_nitrogen_atom);
+        let target_carbon = mol.add_atom(aromatic_carbon());
+        let saturated_carbon =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon = mol.add_atom(aromatic_carbon());
+        let active_nitrogen = mol.add_atom(aromatic_atom("N"));
+        let bond_a = mol
+            .add_bond(inactive_nitrogen, target_carbon, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(target_carbon, saturated_carbon, BondOrder::Double)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(saturated_carbon, carbon, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon, active_nitrogen, BondOrder::Double)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(active_nitrogen, inactive_nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![
+                inactive_nitrogen,
+                target_carbon,
+                saturated_carbon,
+                carbon,
+                active_nitrogen,
+            ],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+
+        assert!(analysis.localized_has_active_element_donor(&mol, "N"));
+        assert!(!analysis.localized_atom_has_active_element_donor(&mol, inactive_nitrogen, "N"));
+        assert!(!is_aromatic_lactam_enone_carbon(
+            &mol,
+            &ring,
+            &analysis,
+            target_carbon
         ));
     }
 
