@@ -142,15 +142,8 @@ fn perceive_rdkit_like_aromaticity(
         .iter()
         .flat_map(|ring| ring.bonds.iter().copied())
         .filter(|bond_id| {
-            mol.bond(*bond_id).is_ok_and(|bond| {
-                matches!(bond.order, BondOrder::Single)
-                    && mol
-                        .atom(bond.a())
-                        .is_ok_and(|atom| atom.element.symbol() == "C")
-                    && mol
-                        .atom(bond.b())
-                        .is_ok_and(|atom| atom.element.symbol() == "C")
-            })
+            mol.bond(*bond_id)
+                .is_ok_and(|bond| matches!(bond.order, BondOrder::Single))
         })
         .filter(|bond_id| {
             let containing_rings = ring_set
@@ -159,6 +152,14 @@ fn perceive_rdkit_like_aromaticity(
                 .enumerate()
                 .filter(|(_, ring)| ring.bonds.contains(bond_id))
                 .collect::<Vec<_>>();
+            if !bond_has_candidate_carbon_endpoints_in_containing_ring(
+                mol,
+                *bond_id,
+                &containing_rings,
+                &ring_analyses,
+            ) {
+                return false;
+            }
             if containing_rings.iter().any(|(index, ring)| {
                 ring_is_all_candidate_carbon(mol, ring, &ring_analyses[*index])
             }) {
@@ -324,6 +325,23 @@ fn restore_imported_aromatic_component(mol: &mut Molecule, component: &[AtomId])
             bond.aromatic = true;
         }
     }
+}
+
+fn bond_has_candidate_carbon_endpoints_in_containing_ring(
+    mol: &Molecule,
+    bond_id: BondId,
+    containing_rings: &[(usize, &Ring)],
+    ring_analyses: &[RingAromaticityAnalysis],
+) -> bool {
+    let Ok(bond) = mol.bond(bond_id) else {
+        return false;
+    };
+    containing_rings.iter().any(|(index, ring)| {
+        ring.atoms.contains(&bond.a())
+            && ring.atoms.contains(&bond.b())
+            && ring_analyses[*index].localized_atom_is_element_candidate(mol, bond.a(), "C")
+            && ring_analyses[*index].localized_atom_is_element_candidate(mol, bond.b(), "C")
+    })
 }
 
 fn ring_protects_non_aromatic_fusion_single(
@@ -3212,6 +3230,14 @@ mod tests {
 
         assert!(fused_component_is_all_carbon(&mol, &ring));
         assert!(!ring_is_all_candidate_carbon(&mol, &ring, &analysis));
+        let containing_rings = vec![(0usize, &ring)];
+        let analyses = vec![analysis.clone()];
+        assert!(!bond_has_candidate_carbon_endpoints_in_containing_ring(
+            &mol,
+            bond_a,
+            &containing_rings,
+            &analyses,
+        ));
         assert!(ring_protects_non_aromatic_fusion_single(
             &mol, &ring, &analysis, false, 2
         ));
