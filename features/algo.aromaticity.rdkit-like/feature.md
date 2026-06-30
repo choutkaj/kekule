@@ -70,6 +70,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Handles fused all-carbon components with exocyclic pi bonds through classified donor state instead of a fixed six-electron override.
 - Requires localized carbon candidate state for all-carbon fused exocyclic fallback admission, so RDKit-like radical and valence exclusions apply before fallback marking.
 - Requires localized carbon candidate state for fused carbonyl-bridge and saturated-carbon cleanup admission, so RDKit-like radical and valence exclusions apply before cleanup.
+- Uses localized carbon candidate state when deciding whether non-aromatic fused single bonds are protected, so raw all-carbon shape alone does not bypass RDKit-like radical and valence exclusions.
 - Admits low-unsaturation hetero fused candidates from active donor analysis rather than hetero atom presence alone.
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Iterates accepted fused ring subsets additively with an RDKit-like done-bond stop condition instead of returning only the first accepted subset.
@@ -185,3 +186,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v72: Use localized carbon candidate state as well as nitrogen candidate state for fused carbon/nitrogen fallback admission.
 - v73: Require localized carbon candidate state before all-carbon fused exocyclic fallback marking.
 - v74: Require localized carbon candidate state before fused carbonyl-bridge and saturated-carbon cleanup admission.
+- v75: Require localized carbon candidate state before treating fused single-bond protection as all-carbon.

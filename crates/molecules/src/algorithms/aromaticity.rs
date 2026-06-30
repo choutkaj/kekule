@@ -159,10 +159,9 @@ fn perceive_rdkit_like_aromaticity(
                 .enumerate()
                 .filter(|(_, ring)| ring.bonds.contains(bond_id))
                 .collect::<Vec<_>>();
-            if containing_rings
-                .iter()
-                .any(|(_, ring)| fused_component_is_all_carbon(mol, ring))
-            {
+            if containing_rings.iter().any(|(index, ring)| {
+                ring_is_all_candidate_carbon(mol, ring, &ring_analyses[*index])
+            }) {
                 return false;
             }
             containing_rings.iter().any(|(index, ring)| {
@@ -339,7 +338,7 @@ fn ring_protects_non_aromatic_fusion_single(
     }
     let active_hetero_donors = analysis.localized_active_hetero_donor_count(mol);
     let non_donor_five_ring = ring.atoms.len() == 5
-        && !fused_component_is_all_carbon(mol, ring)
+        && !ring_is_all_candidate_carbon(mol, ring, analysis)
         && !analysis.localized_has_active_chalcogen_donor(mol)
         && active_hetero_donors < 2
         && !analysis.has_nitrogen_lone_pair_donor(mol);
@@ -3169,6 +3168,45 @@ mod tests {
         assert!(
             atoms_in_nitrogen_or_terminal_pi_free_rings(&mol, &rings, &analyses, &[0]).is_empty()
         );
+    }
+
+    #[test]
+    fn non_aromatic_fusion_protection_requires_candidate_carbon_state() {
+        let mut mol = Molecule::new();
+        let mut disqualified_carbon = aromatic_carbon();
+        disqualified_carbon.formal_charge = 1;
+        disqualified_carbon.radical = Some(AtomRadical::Doublet);
+        let carbon_a = mol.add_atom(disqualified_carbon);
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let carbon_c = mol.add_atom(aromatic_carbon());
+        let carbon_d = mol.add_atom(aromatic_carbon());
+        let carbon_e = mol.add_atom(aromatic_carbon());
+        let bond_a = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_e, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![carbon_a, carbon_b, carbon_c, carbon_d, carbon_e],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+
+        assert!(fused_component_is_all_carbon(&mol, &ring));
+        assert!(!ring_is_all_candidate_carbon(&mol, &ring, &analysis));
+        assert!(ring_protects_non_aromatic_fusion_single(
+            &mol, &ring, &analysis, false, 2
+        ));
     }
 
     #[test]
