@@ -57,6 +57,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses cached chalcogen candidate state for saturated fused chalcogen bridge cleanup rather than raw saturated bridge shape alone.
 - Uses cached candidate nitrogen state when admitting carbon/nitrogen fused fallback components rather than raw nitrogen presence.
 - Uses RDKit-like nitrogen candidate eligibility for aromatic amidine cleanup rather than raw neighboring nitrogen presence.
+- Uses RDKit-like carbon and nitrogen candidate eligibility for terminal aromatic imine cleanup rather than raw aromatic `N=C` symbol shape.
 - Uses electronegativity-aware exocyclic pi-bond checks for aromatic-order carbon electron stealing rather than treating every hetero exocyclic atom as equivalent.
 - Reuses localized active donor state for imported aromatic-order exocyclic-carbon electron stealing instead of raw nitrogen/chalcogen presence.
 - Uses cached localized donor state, rather than raw hetero-element presence, when deciding which non-aromatic fused single bonds should remain protected.
@@ -170,3 +171,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v64: Use localized heavy-chalcogen candidate state for the five-member terminal chalcogen exocyclic-pi gate.
 - v65: Reuse RDKit-like radical eligibility for saturated ring carbon cleanup.
 - v66: Use active neighbor nitrogen donor state when selecting fused lactam/enone cleanup carbons.
+- v67: Use RDKit-like candidate eligibility for terminal aromatic imine cleanup.

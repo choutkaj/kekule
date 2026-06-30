@@ -456,6 +456,11 @@ fn clear_terminal_aromatic_imine_fragments(mol: &mut Molecule) {
                 ("C", "N") => (bond.b(), bond.a()),
                 _ => return None,
             };
+            if !atom_is_rdkit_aromatic_element_candidate(mol, nitrogen_id, "N")
+                || !atom_is_rdkit_aromatic_element_candidate(mol, carbon_id, "C")
+            {
+                return None;
+            }
             let carbon_aromatic_bonds = aromatic_incident_bond_count(mol, carbon_id);
             let nitrogen_aromatic_bonds = aromatic_incident_bond_count(mol, nitrogen_id);
             (carbon_aromatic_bonds <= 1 && nitrogen_aromatic_bonds <= 2)
@@ -3778,6 +3783,30 @@ mod tests {
             &analysis,
             target_carbon
         ));
+    }
+
+    #[test]
+    fn terminal_aromatic_imine_cleanup_uses_rdkit_candidate_state() {
+        let mut mol = Molecule::new();
+        let mut nitrogen_atom = aromatic_atom("N");
+        nitrogen_atom.radical = Some(AtomRadical::Doublet);
+        let nitrogen = mol.add_atom(nitrogen_atom);
+        let carbon = mol.add_atom(aromatic_carbon());
+        let bond = mol
+            .add_bond(nitrogen, carbon, BondOrder::Double)
+            .expect("imine bond");
+        mol.bonds[bond.index()]
+            .as_mut()
+            .expect("live bond")
+            .aromatic = true;
+
+        assert!(!atom_is_rdkit_aromatic_element_candidate(
+            &mol, nitrogen, "N"
+        ));
+        clear_terminal_aromatic_imine_fragments(&mut mol);
+        assert!(mol.atom(nitrogen).expect("nitrogen").aromatic);
+        assert!(mol.atom(carbon).expect("carbon").aromatic);
+        assert!(mol.bond(bond).expect("imine bond").aromatic);
     }
 
     #[test]
