@@ -13,7 +13,7 @@ These rules apply to AI agents working in this repository.
 7. Commit and push code in logical chunks. End every commit message with:
 
    ```text
-   Co-authored-by: Codex <noreply@openai.com>
+   Co-authored-by: codex <codex@openai.com>
    ```
 
 ## Anti-slop rules
