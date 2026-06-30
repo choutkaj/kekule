@@ -1392,12 +1392,12 @@ fn perceive_fused_single_exocyclic_carbon_rings(
             fused
                 && ring_analyses[*index].localized_all_atoms_are_candidates()
                 && ((ring.atoms.len() == 6
-                    && fused_component_is_all_carbon(mol, ring)
+                    && ring_is_all_candidate_carbon(mol, ring, &ring_analyses[*index])
                     && ring_exocyclic_pi_bond_count(mol, ring) > 0
                     && ring_terminal_exocyclic_pi_bond_count(mol, ring) <= 1
                     && ring_pi_bond_count(mol, ring) >= 1)
                     || (ring.atoms.len() == 4
-                        && fused_component_is_all_carbon(mol, ring)
+                        && ring_is_all_candidate_carbon(mol, ring, &ring_analyses[*index])
                         && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
                     || (ring.atoms.len() == 5
                         && ring_analyses[*index].localized_has_active_element_donor(mol, "N")
@@ -1457,12 +1457,11 @@ fn perceive_fused_aromatic_components(
         }
         let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
         let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
-        let all_carbon_component = fused_component_is_all_carbon(mol, &component);
         let all_candidate_carbon_component =
             fused_component_is_all_candidate_carbon(mol, &component, rings, ring_analyses, indexes);
         let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
         if analysis.is_fused_huckel_aromatic() {
-            if all_carbon_component {
+            if all_candidate_carbon_component {
                 mark_aromatic_fused_ring_system(mol, rings, indexes, protected_non_aromatic_bonds);
             } else {
                 mark_aromatic_atoms_and_bonds(
@@ -1476,7 +1475,13 @@ fn perceive_fused_aromatic_components(
         }
         for subset in aromatic_fused_ring_subsets(mol, rings, indexes)? {
             let subset_ring = fused_component_ring(rings, &subset);
-            if fused_component_is_all_carbon(mol, &subset_ring) {
+            if fused_component_is_all_candidate_carbon(
+                mol,
+                &subset_ring,
+                rings,
+                ring_analyses,
+                &subset,
+            ) {
                 mark_aromatic_fused_ring_system(mol, rings, &subset, protected_non_aromatic_bonds);
             } else {
                 mark_aromatic_atoms_and_bonds(
@@ -1621,6 +1626,7 @@ fn ring_subset_is_connected(rings: &[Ring], indexes: &[usize]) -> bool {
     visited.len() == indexes.len()
 }
 
+#[cfg(test)]
 fn fused_component_is_all_carbon(mol: &Molecule, ring: &Ring) -> bool {
     ring.atoms.iter().all(|atom_id| {
         mol.atom(*atom_id)
@@ -1859,7 +1865,9 @@ fn aromatic_fused_candidate_from_analysis(
         || ring.atoms.len() == 5
             && pi_bonds >= 1
             && analysis.localized_has_active_element_donor(mol, "N")
-        || ring.atoms.len() == 6 && pi_bonds >= 1 && fused_component_is_all_carbon(mol, ring)
+        || ring.atoms.len() == 6
+            && pi_bonds >= 1
+            && ring_is_all_candidate_carbon(mol, ring, analysis)
 }
 
 fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
