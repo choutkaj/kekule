@@ -1449,6 +1449,8 @@ fn perceive_fused_aromatic_components(
         let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
         let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
         let all_carbon_component = fused_component_is_all_carbon(mol, &component);
+        let all_candidate_carbon_component =
+            fused_component_is_all_candidate_carbon(mol, &component, rings, ring_analyses, indexes);
         let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
         if analysis.is_fused_huckel_aromatic() {
             if all_carbon_component {
@@ -1476,7 +1478,7 @@ fn perceive_fused_aromatic_components(
                 );
             }
         }
-        if all_carbon_component && component_has_exocyclic_pi {
+        if all_candidate_carbon_component && component_has_exocyclic_pi {
             let aromatic_atoms =
                 atoms_in_limited_terminal_exocyclic_pi_rings(mol, rings, indexes, 1);
             if aromatic_atoms.len() >= 6 {
@@ -1651,6 +1653,25 @@ fn fused_component_is_carbon_with_candidate_nitrogen(
             indexes,
             *atom_id,
             "N",
+        )
+    })
+}
+
+fn fused_component_is_all_candidate_carbon(
+    mol: &Molecule,
+    component: &Ring,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+    indexes: &[usize],
+) -> bool {
+    component.atoms.iter().all(|atom_id| {
+        atom_is_localized_element_candidate_in_any_ring(
+            mol,
+            rings,
+            ring_analyses,
+            indexes,
+            *atom_id,
+            "C",
         )
     })
 }
@@ -3283,6 +3304,58 @@ mod tests {
         assert_eq!(analysis.fixed_electron_count, None);
         assert_eq!(analysis.atoms.len(), ring.atoms.len());
         assert!(analysis.is_fused_huckel_aromatic());
+    }
+
+    #[test]
+    fn all_carbon_exocyclic_fallback_requires_candidate_carbon_state() {
+        let mut mol = Molecule::new();
+        let mut carbon_atom = aromatic_carbon();
+        carbon_atom.formal_charge = 1;
+        carbon_atom.radical = Some(AtomRadical::Doublet);
+        let carbon_a = mol.add_atom(carbon_atom);
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let carbon_c = mol.add_atom(aromatic_carbon());
+        let carbon_d = mol.add_atom(aromatic_carbon());
+        let carbon_e = mol.add_atom(aromatic_carbon());
+        let carbon_f = mol.add_atom(aromatic_carbon());
+        let bond_a = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_e, carbon_f, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_f, carbon_a, BondOrder::Aromatic)
+            .expect("ring bond");
+        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_c, oxygen, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![carbon_a, carbon_b, carbon_c, carbon_d, carbon_e, carbon_f],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let rings = vec![ring.clone()];
+        let analyses = vec![RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis")];
+
+        assert!(fused_component_is_all_carbon(&mol, &ring));
+        assert_eq!(ring_exocyclic_pi_bond_count(&mol, &ring), 1);
+        assert!(!analyses[0].localized_atom_is_element_candidate(&mol, carbon_a, "C"));
+        assert!(!fused_component_is_all_candidate_carbon(
+            &mol,
+            &ring,
+            &rings,
+            &analyses,
+            &[0]
+        ));
     }
 
     #[test]
