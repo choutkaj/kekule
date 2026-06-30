@@ -1575,10 +1575,17 @@ fn fused_component_is_all_carbon(mol: &Molecule, ring: &Ring) -> bool {
     })
 }
 
-fn fused_component_is_carbon_nitrogen(mol: &Molecule, ring: &Ring) -> bool {
+fn fused_component_is_carbon_or_candidate_nitrogen(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
     ring.atoms.iter().all(|atom_id| {
         mol.atom(*atom_id)
-            .map(|atom| matches!(atom.element.symbol(), "C" | "N"))
+            .map(|atom| {
+                atom.element.symbol() == "C"
+                    || analysis.localized_atom_is_element_candidate(mol, *atom_id, "N")
+            })
             .unwrap_or(false)
     })
 }
@@ -1761,7 +1768,7 @@ fn aromatic_fused_candidate_from_analysis(
     }
     if ring.atoms.len() > 7 {
         return ring.atoms.len() <= MAX_FUSED_AROMATIC_RING_SIZE
-            && fused_component_is_carbon_nitrogen(mol, ring)
+            && fused_component_is_carbon_or_candidate_nitrogen(mol, ring, analysis)
             && analysis.localized_has_active_anionic_nitrogen_donor(mol)
             && ring_pi_bond_count(mol, ring) >= 4;
     }
@@ -3118,7 +3125,11 @@ mod tests {
         let rings = vec![ring.clone()];
         let analyses = vec![analysis];
 
-        assert!(fused_component_is_carbon_nitrogen(&mol, &ring));
+        assert!(!fused_component_is_carbon_or_candidate_nitrogen(
+            &mol,
+            &ring,
+            &analyses[0]
+        ));
         assert!(!analyses[0].localized_atom_is_element_candidate(&mol, nitrogen, "N"));
         assert!(!fused_component_is_carbon_with_candidate_nitrogen(
             &mol,
