@@ -2191,10 +2191,6 @@ fn aromatic_ring_donor_analysis(
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
 
-    if ring_pi_bond_count(mol, ring) == 0 {
-        return Ok(AromaticRingDonorAnalysis::non_aromatic());
-    }
-
     Ok(localized.clone())
 }
 
@@ -3284,6 +3280,42 @@ mod tests {
         assert!(!analysis.aromatic.all_atoms_are_candidates());
         assert_eq!(analysis.aromatic.electron_count(), None);
         assert!(!analysis.is_huckel_aromatic());
+    }
+
+    #[test]
+    fn saturated_five_oxygen_ring_uses_donor_count_not_pi_bond_prefilter() {
+        let mut mol = Molecule::new();
+        let oxygen_a = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let oxygen_b = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let oxygen_c = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let oxygen_d = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let oxygen_e = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let bond_a = mol
+            .add_bond(oxygen_a, oxygen_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(oxygen_b, oxygen_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(oxygen_c, oxygen_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(oxygen_d, oxygen_e, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(oxygen_e, oxygen_a, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![oxygen_a, oxygen_b, oxygen_c, oxygen_d, oxygen_e],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("donor analysis");
+
+        assert_eq!(ring_pi_bond_count(&mol, &ring), 0);
+        assert!(analysis.aromatic.all_atoms_are_candidates());
+        assert_eq!(analysis.aromatic.electron_count(), Some(10));
+        assert!(analysis.is_huckel_aromatic());
     }
 
     #[test]

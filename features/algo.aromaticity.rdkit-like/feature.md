@@ -77,6 +77,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Allows seven-member active-chalcogen fused candidate rings to proceed through localized candidate and HĂĽckel analysis instead of rejecting them by ring-size/chalcogen shape alone.
 - Allows localized seven-member active-chalcogen rings to proceed through donor and Huckel analysis instead of rejecting them by ring-size/chalcogen shape alone.
 - Allows localized five-member low-pi chalcogen rings to proceed through donor candidate analysis instead of rejecting them through a nitrogen-specific prefilter.
+- Allows localized zero-pi rings to proceed through donor and Huckel analysis instead of rejecting them before candidate counting.
 - Applies a bounded connected fused-subset Huckel search before older fused fallback heuristics, marking accepted subsets additively.
 - Iterates accepted fused ring subsets additively with an RDKit-like done-bond stop condition instead of returning only the first accepted subset.
 - Uses RDKit's 24-atom fused-ring candidate size limit for large carbon/nitrogen fused candidates instead of an older smaller local cap.
@@ -199,3 +200,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v79: Remove the seven-member active-chalcogen fused-candidate prefilter, leaving those rings to candidate and HĂĽckel analysis.
 - v80: Remove the localized seven-member active-chalcogen shape veto, leaving those rings to donor and Huckel analysis.
 - v81: Remove the localized five-member low-pi chalcogen nitrogen prefilter, leaving those rings to donor candidate analysis.
+- v82: Remove the localized zero-pi ring prefilter, leaving those rings to donor and Huckel analysis.
