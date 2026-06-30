@@ -1739,9 +1739,7 @@ fn ring_has_saturated_active_chalcogen_donor(
     analysis: &RingAromaticityAnalysis,
 ) -> bool {
     ring.atoms.iter().any(|atom_id| {
-        mol.atom(*atom_id)
-            .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
-            && !ring_atom_has_pi_bond(mol, ring, *atom_id)
+        !ring_atom_has_pi_bond(mol, ring, *atom_id)
             && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
             && analysis.localized_atom_has_active_chalcogen_donor(mol, *atom_id)
     })
@@ -4485,6 +4483,9 @@ mod tests {
         assert!(ring_has_chalcogen_donor(&mol, &ring));
         assert!(!analysis.localized_atom_has_active_chalcogen_donor(&mol, oxygen));
         assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 1);
+        assert!(!ring_has_saturated_active_chalcogen_donor(
+            &mol, &ring, &analysis
+        ));
         assert!(ring_has_saturated_tertiary_amine_without_donor_chalcogen(
             &mol, &ring, &analysis
         ));
