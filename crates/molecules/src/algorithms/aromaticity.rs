@@ -1422,7 +1422,7 @@ fn perceive_fused_aromatic_components(
             continue;
         }
         let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
-        let analysis = aromatic_fused_component_donor_analysis(mol, &aromaticity_ring)?;
+        let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
         let all_carbon_component = fused_component_is_all_carbon(mol, &component);
         let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
         if analysis.is_fused_huckel_aromatic() {
@@ -1524,7 +1524,7 @@ fn aromatic_fused_ring_subsets(
                 continue;
             }
             let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
-            let analysis = aromatic_fused_component_donor_analysis(mol, &aromaticity_ring)?;
+            let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
             if analysis.is_fused_huckel_aromatic() {
                 done_bonds.extend(fused_perimeter_bonds(rings, &subset));
                 accepted.push(subset);
@@ -1745,13 +1745,6 @@ fn ring_has_saturated_active_chalcogen_donor(
             && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
             && analysis.localized_atom_has_active_chalcogen_donor(mol, *atom_id)
     })
-}
-
-fn aromatic_fused_component_donor_analysis(
-    mol: &Molecule,
-    ring: &Ring,
-) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
-    localized_ring_donor_analysis(mol, ring)
 }
 
 fn ring_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
@@ -3188,8 +3181,7 @@ mod tests {
             bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
         };
 
-        let analysis =
-            aromatic_fused_component_donor_analysis(&mol, &ring).expect("fused component analysis");
+        let analysis = localized_ring_donor_analysis(&mol, &ring).expect("fused donor analysis");
 
         assert!(fused_component_is_all_carbon(&mol, &ring));
         assert_eq!(ring_exocyclic_pi_bond_count(&mol, &ring), 1);
