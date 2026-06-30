@@ -108,10 +108,3 @@ If metadata changes, run `cargo xtask dashboard` before `cargo xtask dashboard -
 
 Report every command that was not run and why.
 
-## Commit attribution
-
-End every commit message with:
-
-```text
-Co-authored-by: Codex <noreply@openai.com>
-```

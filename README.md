@@ -43,4 +43,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-MIT
+`molecules` is available under the MIT license.

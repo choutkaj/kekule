@@ -655,14 +655,14 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
 fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
     let root = temp_feature_root("canonical-no-prefilter");
     let fixture = root.join("fixture.smi");
-    fs::write(&fixture, "C/C=C\\C CID:example\n").expect("fixture should write");
+    fs::write(&fixture, "* CID:example\n").expect("fixture should write");
 
     let records = read_canonical_smiles_records(&fixture).expect("records should load");
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].record_index, 0);
     assert_eq!(records[0].status, "parse_error");
-    assert_eq!(records[0].input_smiles, "C/C=C\\C");
+    assert_eq!(records[0].input_smiles, "*");
     assert!(records[0].molecule.is_none());
 }
 
