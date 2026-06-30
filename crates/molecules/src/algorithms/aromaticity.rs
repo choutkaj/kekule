@@ -49,6 +49,27 @@ struct RingAromaticityAnalysis {
     localized: Option<AromaticRingDonorAnalysis>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RdkitAromaticCandidateOptions {
+    allow_third_row: bool,
+    allow_triple_bonds: bool,
+    allow_higher_exceptions: bool,
+    only_carbon_or_nitrogen: bool,
+    allow_exocyclic_multiple_bonds: bool,
+}
+
+impl Default for RdkitAromaticCandidateOptions {
+    fn default() -> Self {
+        Self {
+            allow_third_row: true,
+            allow_triple_bonds: true,
+            allow_higher_exceptions: true,
+            only_carbon_or_nitrogen: false,
+            allow_exocyclic_multiple_bonds: true,
+        }
+    }
+}
+
 impl fmt::Display for AromaticityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -2301,6 +2322,31 @@ fn aromaticity_supported_element(atom: &Atom) -> bool {
 }
 
 fn atom_is_rdkit_aromatic_candidate(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> bool {
+    atom_is_rdkit_aromatic_candidate_with_options(
+        mol,
+        atom_id,
+        atom,
+        RdkitAromaticCandidateOptions::default(),
+    )
+}
+
+fn atom_is_rdkit_aromatic_candidate_with_options(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+    options: RdkitAromaticCandidateOptions,
+) -> bool {
+    let atomic_number = atom.element.atomic_number();
+    if options.only_carbon_or_nitrogen && !matches!(atomic_number, 6 | 7) {
+        return false;
+    }
+    if !options.allow_third_row && atomic_number > 10 {
+        return false;
+    }
+    if atomic_number > 18 && (!options.allow_higher_exceptions || !matches!(atomic_number, 34 | 52))
+    {
+        return false;
+    }
     if atom_aromatic_candidate_degree(mol, atom_id, atom) > 3 {
         return false;
     }
@@ -2316,6 +2362,12 @@ fn atom_is_rdkit_aromatic_candidate(mol: &Molecule, atom_id: AtomId, atom: &Atom
         return false;
     }
     if atom_explicit_pi_bond_count(mol, atom_id) > 1 {
+        return false;
+    }
+    if !options.allow_triple_bonds && atom_has_explicit_triple_bond(mol, atom_id) {
+        return false;
+    }
+    if !options.allow_exocyclic_multiple_bonds && atom_has_non_ring_multiple_bond(mol, atom_id) {
         return false;
     }
     let radical_electrons = atom.radical.map_or(0, AtomRadical::unpaired_electron_count);
@@ -2717,6 +2769,32 @@ fn atom_explicit_pi_bond_count(mol: &Molecule, atom_id: AtomId) -> usize {
         .count()
 }
 
+fn atom_has_explicit_triple_bond(mol: &Molecule, atom_id: AtomId) -> bool {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|(_, bond)| matches!(bond.order, BondOrder::Triple))
+}
+
+fn atom_has_non_ring_multiple_bond(mol: &Molecule, atom_id: AtomId) -> bool {
+    let computed_membership;
+    let membership = if let Some(membership) = mol.ring_membership() {
+        membership
+    } else {
+        computed_membership = super::rings::compute_ring_membership(mol).0;
+        &computed_membership
+    };
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|(bond_id, bond)| {
+            matches!(bond.order, BondOrder::Double | BondOrder::Triple)
+                && !membership.bond_in_ring(bond_id)
+        })
+}
+
 fn atom_explicit_unsaturation(mol: &Molecule, atom_id: AtomId) -> u8 {
     mol.incident_bonds(atom_id)
         .ok()
@@ -2824,6 +2902,49 @@ mod tests {
         let localized = analysis.localized.as_ref().expect("localized analysis");
         assert_eq!(&analysis.aromatic, localized);
         assert!(analysis.is_huckel_aromatic());
+    }
+
+    #[test]
+    fn candidate_options_can_disallow_exocyclic_multiple_bonds() {
+        let mut mol = Molecule::new();
+        let carbonyl_carbon =
+            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbonyl_carbon, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(carbon_d, carbon_e, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(carbon_e, carbonyl_carbon, BondOrder::Single)
+            .expect("ring bond");
+        let carbonyl_bond = mol
+            .add_bond(carbonyl_carbon, oxygen, BondOrder::Double)
+            .expect("carbonyl bond");
+        let membership = perceive_ring_membership(&mut mol);
+        let atom = mol.atom(carbonyl_carbon).expect("carbonyl carbon");
+
+        assert!(!membership.bond_in_ring(carbonyl_bond));
+        assert!(atom_is_rdkit_aromatic_candidate(
+            &mol,
+            carbonyl_carbon,
+            atom
+        ));
+        assert!(!atom_is_rdkit_aromatic_candidate_with_options(
+            &mol,
+            carbonyl_carbon,
+            atom,
+            RdkitAromaticCandidateOptions {
+                allow_exocyclic_multiple_bonds: false,
+                ..RdkitAromaticCandidateOptions::default()
+            }
+        ));
     }
 
     #[test]

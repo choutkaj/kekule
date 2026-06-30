@@ -67,6 +67,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Applies RDKit-like radical candidate eligibility in the shared donor classifier: radical heteroatoms and charged radical carbons are non-candidates, while neutral carbon radicals remain eligible.
 - Applies RDKit-like candidate coordination eligibility, rejecting atoms whose bond plus hydrogen degree exceeds three before donor typing.
 - Applies RDKit-like default-valence candidate eligibility, rejecting atoms whose total valence exceeds the charge-adjusted default valence before donor typing.
+- Separates RDKit-like candidate admission options from donor typing, including the exocyclic multiple-bond toggle used by RDKit's model helpers.
 - Counts localized saturated, vacant, and lone-pair atom donors with an RDKit `countAtomElec`-style helper using default valence, outer-shell electrons, charge, radical electrons, effective hydrogens, and exocyclic electronegativity.
 - Allows localized two-electron Huckel rings, preserving RDKit-like cyclopropenyl cation aromaticity.
 - Evaluates localized simple rings of arbitrary size through the shared Hückel donor-count path instead of applying a small-ring-only cutoff.
