@@ -2535,15 +2535,6 @@ fn aromatic_order_ring_donor_analysis(
     ring: &Ring,
     localized: &AromaticRingDonorAnalysis,
 ) -> std::result::Result<AromaticRingDonorAnalysis, AromaticityError> {
-    if ring.atoms.len() == 6
-        && localized.has_active_chalcogen_donor(mol)
-        && ring_has_carbon_electronegative_exocyclic_pi_bond(mol, ring)
-        && ring_terminal_exocyclic_pi_bond_count(mol, ring) == 1
-        && !ring_has_external_aromatic_bond(mol, ring)
-    {
-        return Ok(AromaticRingDonorAnalysis::with_electron_count(6));
-    }
-
     let exocyclic_pi_steals_electrons =
         aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(mol, ring, localized);
     let mut donors = Vec::with_capacity(ring.atoms.len());
@@ -2758,11 +2749,17 @@ fn aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(
     ring: &Ring,
     localized: &AromaticRingDonorAnalysis,
 ) -> bool {
-    localized.has_active_chalcogen_donor(mol)
-        && localized.has_active_element_donor(mol, "N")
-        && ((ring.atoms.len() == 6 && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
-            || (ring.atoms.len() == 5
-                && ring_has_carbon_electronegative_exocyclic_pi_bond(mol, ring)))
+    if !localized.has_active_chalcogen_donor(mol)
+        || !ring_has_carbon_electronegative_exocyclic_pi_bond(mol, ring)
+    {
+        return false;
+    }
+
+    let terminal_exocyclic_pi_count = ring_terminal_exocyclic_pi_bond_count(mol, ring);
+    ring.atoms.len() == 5
+        || ring.atoms.len() == 6
+            && (terminal_exocyclic_pi_count == 1
+                || localized.has_active_element_donor(mol, "N") && terminal_exocyclic_pi_count >= 2)
 }
 
 fn atom_has_electronegative_exocyclic_pi_bond(
@@ -2819,22 +2816,6 @@ fn ring_has_aromatic_order(mol: &Molecule, ring: &Ring) -> bool {
         mol.bond(*bond_id)
             .map(|bond| bond.order == BondOrder::Aromatic)
             .unwrap_or(false)
-    })
-}
-
-fn ring_has_external_aromatic_bond(mol: &Molecule, ring: &Ring) -> bool {
-    ring.atoms.iter().any(|atom_id| {
-        mol.incident_bonds(*atom_id)
-            .ok()
-            .into_iter()
-            .flatten()
-            .any(|(bond_id, bond)| {
-                !ring.bonds.contains(&bond_id)
-                    && matches!(bond.order, BondOrder::Aromatic)
-                    && mol
-                        .atom(bond.other_atom(*atom_id))
-                        .is_ok_and(|atom| atom.aromatic)
-            })
     })
 }
 
@@ -4383,6 +4364,60 @@ mod tests {
         assert!(
             !aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(&mol, &ring, &localized)
         );
+    }
+
+    #[test]
+    fn aromatic_order_single_exocyclic_pi_uses_variable_donor_analysis() {
+        let mut mol = Molecule::new();
+        let nitrogen = mol.add_atom(aromatic_atom("N"));
+        let carbon_a = mol.add_atom(aromatic_carbon());
+        let sulfur = mol.add_atom(aromatic_atom("S"));
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let carbon_c = mol.add_atom(aromatic_carbon());
+        let carbon_d = mol.add_atom(aromatic_carbon());
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, sulfur, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(sulfur, carbon_b, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_d, nitrogen, BondOrder::Aromatic)
+            .expect("ring bond");
+        let exocyclic_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_c, exocyclic_oxygen, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, sulfur, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let localized = localized_ring_donor_analysis(&mol, &ring).expect("localized analysis");
+
+        assert!(localized.has_active_element_donor(&mol, "N"));
+        assert!(localized.has_active_chalcogen_donor(&mol));
+        assert!(ring_has_carbon_electronegative_exocyclic_pi_bond(
+            &mol, &ring
+        ));
+        assert_eq!(ring_terminal_exocyclic_pi_bond_count(&mol, &ring), 1);
+        assert!(
+            aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(&mol, &ring, &localized)
+        );
+
+        let aromatic =
+            aromatic_order_ring_donor_analysis(&mol, &ring, &localized).expect("aromatic analysis");
+
+        assert_eq!(aromatic.fixed_electron_count, None);
+        assert!(aromatic.is_huckel_aromatic());
     }
 
     #[test]

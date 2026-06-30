@@ -61,6 +61,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Uses RDKit-like carbon and nitrogen candidate eligibility for terminal aromatic imine cleanup rather than raw aromatic `N=C` symbol shape.
 - Uses electronegativity-aware exocyclic pi-bond checks for aromatic-order carbon electron stealing rather than treating every hetero exocyclic atom as equivalent.
 - Reuses localized active donor state for imported aromatic-order exocyclic-carbon electron stealing instead of raw nitrogen/chalcogen presence.
+- Handles single electronegative exocyclic pi bonds in imported six-member chalcogen aromatic-order rings through the donor classifier instead of a fixed six-electron override.
 - Uses cached localized donor state, rather than raw hetero-element presence, when deciding which non-aromatic fused single bonds should remain protected.
 - Reuses one localized donor analysis inside saturated tertiary amine fused cleanup instead of recalculating candidate-path and active-donor facts separately.
 - Routes nitrogen lone-pair donor checks through the same per-ring donor analysis instead of separate hydrogen/charge symbol logic.
@@ -174,3 +175,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v66: Use active neighbor nitrogen donor state when selecting fused lactam/enone cleanup carbons.
 - v67: Use RDKit-like candidate eligibility for terminal aromatic imine cleanup.
 - v68: Use RDKit-like carbon candidate eligibility for aromatic amidine cleanup.
+- v69: Handle single electronegative exocyclic pi bonds in imported six-member chalcogen aromatic-order rings through donor classification instead of a fixed electron-count override.
