@@ -1932,12 +1932,24 @@ fn ring_has_carbon_electronegative_exocyclic_pi_bond(mol: &Molecule, ring: &Ring
     })
 }
 
+#[cfg(test)]
 fn ring_has_terminal_chalcogen_exocyclic_pi_bond(mol: &Molecule, ring: &Ring) -> bool {
     ring.atoms.iter().any(|atom_id| {
         mol.atom(*atom_id)
             .map(|atom| matches!(atom.element.symbol(), "S" | "Se" | "Te"))
             .unwrap_or(false)
             && atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id)
+    })
+}
+
+fn ring_has_terminal_candidate_chalcogen_exocyclic_pi_bond(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &AromaticRingDonorAnalysis,
+) -> bool {
+    ring.atoms.iter().any(|atom_id| {
+        atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id)
+            && analysis.atom_is_heavy_chalcogen_candidate(mol, *atom_id)
     })
 }
 
@@ -2026,7 +2038,7 @@ fn aromatic_ring_donor_analysis(
     }
     if ring.atoms.len() == 5
         && has_active_nitrogen_donor
-        && ring_has_terminal_chalcogen_exocyclic_pi_bond(mol, ring)
+        && ring_has_terminal_candidate_chalcogen_exocyclic_pi_bond(mol, ring, localized)
     {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
@@ -2290,6 +2302,16 @@ impl AromaticRingDonorAnalysis {
                 && mol
                     .atom(atom_id)
                     .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
+                && !matches!(atom_donor.donor, AromaticElectronDonorType::None)
+        })
+    }
+
+    fn atom_is_heavy_chalcogen_candidate(&self, mol: &Molecule, atom_id: AtomId) -> bool {
+        self.atoms.iter().any(|atom_donor| {
+            atom_donor.atom == atom_id
+                && mol
+                    .atom(atom_id)
+                    .is_ok_and(|atom| matches!(atom.element.symbol(), "S" | "Se" | "Te"))
                 && !matches!(atom_donor.donor, AromaticElectronDonorType::None)
         })
     }
@@ -3889,6 +3911,60 @@ mod tests {
             .bonds
             .iter()
             .all(|bond_id| mol.bond(*bond_id).is_ok_and(|bond| bond.aromatic)));
+    }
+
+    #[test]
+    fn terminal_chalcogen_gate_uses_candidate_state() {
+        let mut mol = Molecule::new();
+        let nitrogen = mol.add_atom(aromatic_atom("N"));
+        let carbon_a = mol.add_atom(aromatic_carbon());
+        let mut sulfur_atom = aromatic_atom("S");
+        sulfur_atom.radical = Some(AtomRadical::Doublet);
+        let sulfur = mol.add_atom(sulfur_atom);
+        let oxygen = mol.add_atom(aromatic_atom("O"));
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let exocyclic_sulfur_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let exocyclic_carbonyl_oxygen =
+            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Double)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, sulfur, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(sulfur, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(oxygen, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_b, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(sulfur, exocyclic_sulfur_oxygen, BondOrder::Double)
+            .expect("terminal sulfur oxo");
+        mol.add_bond(carbon_b, exocyclic_carbonyl_oxygen, BondOrder::Double)
+            .expect("terminal carbonyl");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, sulfur, oxygen, carbon_b],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+        let localized = localized_ring_donor_analysis(&mol, &ring).expect("localized analysis");
+
+        assert!(localized.has_active_element_donor(&mol, "N"));
+        assert!(localized.has_active_chalcogen_donor(&mol));
+        assert!(ring_has_terminal_chalcogen_exocyclic_pi_bond(&mol, &ring));
+        assert!(ring_has_carbon_electronegative_exocyclic_pi_bond(
+            &mol, &ring
+        ));
+        assert!(!localized.atom_is_heavy_chalcogen_candidate(&mol, sulfur));
+        assert!(!ring_has_terminal_candidate_chalcogen_exocyclic_pi_bond(
+            &mol, &ring, &localized
+        ));
+        let aromatic =
+            aromatic_ring_donor_analysis(&mol, &ring, &localized).expect("aromatic analysis");
+        assert_eq!(aromatic.fixed_electron_count, None);
     }
 
     #[test]

@@ -33,6 +33,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Reuses cached per-ring donor analysis in fused lactone and saturated ether cleanup decisions.
 - Reuses cached per-ring donor analysis in saturated tertiary amine cleanup and fused carbon/nitrogen fallback decisions.
 - Feeds initial ring aromaticity gates from the same localized donor table used for Huckel counting, reducing raw hetero-atom presence checks.
+- Uses cached heavy-chalcogen candidate state for the five-member terminal chalcogen exocyclic-pi gate rather than raw terminal chalcogen shape.
 - Uses cached active donor state for fused fallback admission and terminal-exocyclic atom retention instead of raw nitrogen/chalcogen presence.
 - Uses cached active neighbor donor state for exocyclic alkene chalcogen cleanup rather than raw nitrogen/chalcogen adjacency.
 - Clears only cached active ring hetero-donor neighbors during exocyclic alkene chalcogen cleanup, avoiding raw hetero-atom adjacency outside the ring context.
@@ -164,3 +165,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v61: Reuse RDKit-like radical eligibility for saturated chalcogen bridge recognition, avoiding raw bridge-shape checks for radical heteroatoms.
 - v62: Reuse RDKit-like radical eligibility for terminal chalcogen substituents in the saturated tertiary amine guard.
 - v63: Reuse RDKit-like radical eligibility for carbon substituents in the saturated tertiary amine guard.
+- v64: Use localized heavy-chalcogen candidate state for the five-member terminal chalcogen exocyclic-pi gate.
