@@ -1791,6 +1791,7 @@ fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> 
     };
     atom.element.symbol() == "N"
         && atom.formal_charge == 0
+        && atom_passes_rdkit_aromatic_radical_eligibility(atom)
         && atom.explicit_hydrogens == 0
         && !ring_atom_has_pi_bond(mol, ring, atom_id)
         && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
@@ -4130,6 +4131,53 @@ mod tests {
         assert!(!analysis.localized_atom_has_active_chalcogen_donor(&mol, oxygen));
         assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 1);
         assert!(ring_has_saturated_tertiary_amine_without_donor_chalcogen(
+            &mol, &ring, &analysis
+        ));
+    }
+
+    #[test]
+    fn saturated_tertiary_amine_guard_uses_rdkit_radical_eligibility() {
+        let mut mol = Molecule::new();
+        let mut nitrogen_atom = Atom::new(Element::from_symbol("N").expect("test element"));
+        nitrogen_atom.radical = Some(AtomRadical::Doublet);
+        let nitrogen = mol.add_atom(nitrogen_atom);
+        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let methyl = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
+        let bond_a = mol
+            .add_bond(nitrogen, carbon_a, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_a, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(oxygen, carbon_b, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Single)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_d, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        mol.add_bond(nitrogen, methyl, BondOrder::Single)
+            .expect("tertiary amine substituent");
+        let ring = Ring {
+            atoms: vec![nitrogen, carbon_a, oxygen, carbon_b, carbon_c, carbon_d],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
+
+        assert!(!atom_passes_rdkit_aromatic_radical_eligibility(
+            mol.atom(nitrogen).expect("ring nitrogen")
+        ));
+        assert!(!is_saturated_tertiary_amine(&mol, &ring, nitrogen));
+        assert!(!ring_has_saturated_tertiary_amine_without_donor_chalcogen(
             &mol, &ring, &analysis
         ));
     }
