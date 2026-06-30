@@ -901,9 +901,9 @@ fn ring_is_saturated_fused_lactam_carbonyl_cleanup_candidate(
 }
 
 fn is_saturated_ring_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    mol.atom(atom_id)
-        .is_ok_and(|atom| atom.element.symbol() == "C")
-        && !ring_atom_has_pi_bond(mol, ring, atom_id)
+    mol.atom(atom_id).is_ok_and(|atom| {
+        atom.element.symbol() == "C" && atom_passes_rdkit_aromatic_radical_eligibility(atom)
+    }) && !ring_atom_has_pi_bond(mol, ring, atom_id)
         && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
 }
 
@@ -1319,12 +1319,9 @@ fn atom_is_retained_by_other_aromatic_ring(
 }
 
 fn ring_has_saturated_carbon_atom(mol: &Molecule, ring: &Ring) -> bool {
-    ring.atoms.iter().any(|atom_id| {
-        mol.atom(*atom_id)
-            .is_ok_and(|atom| atom.element.symbol() == "C")
-            && !ring_atom_has_pi_bond(mol, ring, *atom_id)
-            && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
-    })
+    ring.atoms
+        .iter()
+        .any(|atom_id| is_saturated_ring_carbon(mol, ring, *atom_id))
 }
 
 fn perceive_fused_single_exocyclic_carbon_rings(
@@ -3911,6 +3908,44 @@ mod tests {
             .bonds
             .iter()
             .all(|bond_id| mol.bond(*bond_id).is_ok_and(|bond| bond.aromatic)));
+    }
+
+    #[test]
+    fn saturated_ring_carbon_uses_rdkit_radical_eligibility() {
+        let mut mol = Molecule::new();
+        let mut carbon_atom = Atom::new(Element::from_symbol("C").expect("test element"));
+        carbon_atom.formal_charge = 1;
+        carbon_atom.radical = Some(AtomRadical::Doublet);
+        let carbon = mol.add_atom(carbon_atom);
+        let nitrogen = mol.add_atom(Atom::new(Element::from_symbol("N").expect("test element")));
+        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let sulfur = mol.add_atom(Atom::new(Element::from_symbol("S").expect("test element")));
+        let phosphorus = mol.add_atom(Atom::new(Element::from_symbol("P").expect("test element")));
+        let bond_a = mol
+            .add_bond(carbon, nitrogen, BondOrder::Single)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(nitrogen, oxygen, BondOrder::Single)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(oxygen, sulfur, BondOrder::Single)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(sulfur, phosphorus, BondOrder::Single)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(phosphorus, carbon, BondOrder::Single)
+            .expect("ring bond");
+        let ring = Ring {
+            atoms: vec![carbon, nitrogen, oxygen, sulfur, phosphorus],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
+        };
+
+        assert!(!atom_passes_rdkit_aromatic_radical_eligibility(
+            mol.atom(carbon).expect("charged carbon radical")
+        ));
+        assert!(!is_saturated_ring_carbon(&mol, &ring, carbon));
+        assert!(!ring_has_saturated_carbon_atom(&mol, &ring));
     }
 
     #[test]

@@ -82,6 +82,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - Clears terminal aromatic imine fragments and orphan aromatic atoms left outside any aromatic bond path after fused-subsystem cleanup.
 - Clears five-member neutral imide carbonyl ring atoms when a saturated ring nitrogen is flanked by two terminal ring carbonyls.
 - Clears saturated fused all-carbon ring atoms that are not retained by neighboring aromatic rings, saturated aromatic carbon centers, and localized cyclic amidine centers.
+- Reuses RDKit-like radical eligibility for saturated ring carbon cleanup, so charged carbon radicals do not satisfy cleanup gates by raw saturated-carbon shape alone.
 - Clears localized fused lactam/enone bridge carbons and saturated fused oxygen bridge atoms when they are not part of a conjugated RDKit-like aromatic path.
 - Clears saturated fused nitrogen carbonyl ring atoms that are not retained by a neighboring aromatic ring.
 - Uses conservative guards for small rings, hetero fused donors, lactone-like rings, and large macrocycles exposed by external PubChem validation.
@@ -166,3 +167,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v62: Reuse RDKit-like radical eligibility for terminal chalcogen substituents in the saturated tertiary amine guard.
 - v63: Reuse RDKit-like radical eligibility for carbon substituents in the saturated tertiary amine guard.
 - v64: Use localized heavy-chalcogen candidate state for the five-member terminal chalcogen exocyclic-pi gate.
+- v65: Reuse RDKit-like radical eligibility for saturated ring carbon cleanup.
