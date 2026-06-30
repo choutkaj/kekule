@@ -214,8 +214,8 @@ fn perceive_rdkit_like_aromaticity(
     clear_saturated_tertiary_amine_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_exocyclic_alkene_chalcogen_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_saturated_chalcogen_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
-    clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings());
-    clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings());
+    clear_fused_carbonyl_bridge_atoms(mol, ring_set.rings(), &ring_analyses);
+    clear_saturated_fused_carbon_ring_atoms(mol, ring_set.rings(), &ring_analyses);
     clear_terminal_aromatic_imine_fragments(mol);
     clear_aromatic_amidine_carbon_atoms(mol, ring_set.rings());
     clear_saturated_aromatic_carbon_atoms(mol);
@@ -1274,15 +1274,20 @@ fn ring_atom_has_active_nitrogen_and_chalcogen_neighbors(
             .any(|neighbor| analysis.localized_atom_has_active_chalcogen_donor(mol, *neighbor))
 }
 
-fn clear_saturated_fused_carbon_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_saturated_fused_carbon_ring_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
+        let analysis = &ring_analyses[index];
         let fused = rings
             .iter()
             .enumerate()
             .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
         if !fused
-            || !fused_component_is_all_carbon(mol, ring)
+            || !ring_is_all_candidate_carbon(mol, ring, analysis)
             || !ring_has_saturated_carbon_atom(mol, ring)
         {
             continue;
@@ -1306,14 +1311,19 @@ fn clear_saturated_fused_carbon_ring_atoms(mol: &mut Molecule, rings: &[Ring]) {
     }
 }
 
-fn clear_fused_carbonyl_bridge_atoms(mol: &mut Molecule, rings: &[Ring]) {
+fn clear_fused_carbonyl_bridge_atoms(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+) {
     let mut atoms_to_clear = BTreeSet::new();
     for (index, ring) in rings.iter().enumerate() {
+        let analysis = &ring_analyses[index];
         let fused = rings
             .iter()
             .enumerate()
             .any(|(other_index, other)| other_index != index && rings_share_bond(ring, other));
-        if !fused || !fused_component_is_all_carbon(mol, ring) {
+        if !fused || !ring_is_all_candidate_carbon(mol, ring, analysis) {
             continue;
         }
         if ring.atoms.len() > 4 && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2 {
@@ -1618,6 +1628,16 @@ fn fused_component_is_all_carbon(mol: &Molecule, ring: &Ring) -> bool {
             .map(|atom| atom.element.symbol() == "C")
             .unwrap_or(false)
     })
+}
+
+fn ring_is_all_candidate_carbon(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    ring.atoms
+        .iter()
+        .all(|atom_id| analysis.localized_atom_is_element_candidate(mol, *atom_id, "C"))
 }
 
 fn fused_component_is_carbon_or_candidate_nitrogen(
@@ -3356,6 +3376,87 @@ mod tests {
             &analyses,
             &[0]
         ));
+    }
+
+    #[test]
+    fn fused_carbonyl_bridge_cleanup_requires_candidate_carbon_state() {
+        let mut mol = Molecule::new();
+        let mut disqualified_carbon = aromatic_carbon();
+        disqualified_carbon.formal_charge = 1;
+        disqualified_carbon.radical = Some(AtomRadical::Doublet);
+        let carbon_a = mol.add_atom(disqualified_carbon);
+        let carbon_b = mol.add_atom(aromatic_carbon());
+        let carbon_c = mol.add_atom(aromatic_carbon());
+        let carbon_d = mol.add_atom(aromatic_carbon());
+        let carbon_e = mol.add_atom(aromatic_carbon());
+        let carbon_f = mol.add_atom(aromatic_carbon());
+        let bond_a = mol
+            .add_bond(carbon_a, carbon_b, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_b = mol
+            .add_bond(carbon_b, carbon_c, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_c = mol
+            .add_bond(carbon_c, carbon_d, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_d = mol
+            .add_bond(carbon_d, carbon_e, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_e = mol
+            .add_bond(carbon_e, carbon_f, BondOrder::Aromatic)
+            .expect("ring bond");
+        let bond_f = mol
+            .add_bond(carbon_f, carbon_a, BondOrder::Aromatic)
+            .expect("ring bond");
+        let oxygen_a = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let oxygen_b = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        mol.add_bond(carbon_c, oxygen_a, BondOrder::Double)
+            .expect("terminal carbonyl");
+        mol.add_bond(carbon_e, oxygen_b, BondOrder::Double)
+            .expect("terminal carbonyl");
+
+        let carbon_g = mol.add_atom(aromatic_carbon());
+        let carbon_h = mol.add_atom(aromatic_carbon());
+        let bond_g = mol
+            .add_bond(carbon_b, carbon_g, BondOrder::Aromatic)
+            .expect("fused ring bond");
+        let bond_h = mol
+            .add_bond(carbon_g, carbon_h, BondOrder::Aromatic)
+            .expect("fused ring bond");
+        let bond_i = mol
+            .add_bond(carbon_h, carbon_a, BondOrder::Aromatic)
+            .expect("fused ring bond");
+
+        let carbonyl_ring = Ring {
+            atoms: vec![carbon_a, carbon_b, carbon_c, carbon_d, carbon_e, carbon_f],
+            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
+        };
+        let fused_ring = Ring {
+            atoms: vec![carbon_a, carbon_b, carbon_g, carbon_h],
+            bonds: vec![bond_a, bond_g, bond_h, bond_i],
+        };
+        let rings = vec![carbonyl_ring.clone(), fused_ring];
+        let analyses = rings
+            .iter()
+            .map(|ring| RingAromaticityAnalysis::new(&mol, ring).expect("ring analysis"))
+            .collect::<Vec<_>>();
+
+        assert!(fused_component_is_all_carbon(&mol, &carbonyl_ring));
+        assert!(!ring_is_all_candidate_carbon(
+            &mol,
+            &carbonyl_ring,
+            &analyses[0]
+        ));
+        assert_eq!(
+            ring_terminal_exocyclic_pi_bond_count(&mol, &carbonyl_ring),
+            2
+        );
+
+        clear_fused_carbonyl_bridge_atoms(&mut mol, &rings, &analyses);
+
+        assert!(mol.atom(carbon_c).expect("carbonyl carbon").aromatic);
+        assert!(mol.atom(carbon_d).expect("bridge carbon").aromatic);
+        assert!(mol.atom(carbon_e).expect("carbonyl carbon").aromatic);
     }
 
     #[test]
