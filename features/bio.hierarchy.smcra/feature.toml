@@ -1,7 +1,7 @@
 id = "bio.hierarchy.smcra"
 title = "SMCRA-like biomolecular hierarchy"
 area = "bio"
-version = 4
+version = 5
 implemented = true
 validated = true
 description = "Represent model, chain, residue, and atom-site hierarchy plus atom-site metadata as a sidecar over the core molecule graph."
