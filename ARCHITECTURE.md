@@ -37,6 +37,7 @@ molecules
   smiles       SMILES parsing/writing facade
   molfile      V2000/V3000 Molfile parsing/writing facade
   sdf          SDF record parsing/writing facade
+  mmcif        mmCIF parsing facade for macromolecular structures
   perception   sanitization, valence, rings, aromaticity, stereo models
   canon        canonical ranking, identity, canonical graph utilities
   prelude      small set of common user-facing imports
@@ -403,6 +404,8 @@ molecules::molfile::write_v3000(&mol)
 molecules::sdf::read_v2000_str(input)
 molecules::sdf::read_v2000_records(input)
 molecules::sdf::write_v2000(&records)
+
+molecules::mmcif::read_str(input, options)
 ```
 
 Options structs should be future-proof. Avoid public zero-sized options types becoming permanent dead ends. If an options struct is public, prefer a real `Default` implementation and consider `#[non_exhaustive]` before the crate is published.

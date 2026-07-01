@@ -102,6 +102,19 @@ pub mod sdf {
     }
 }
 
+pub mod mmcif {
+    pub use crate::io::{MmcifParseError, MmcifParseOptions};
+
+    use crate::bio::MacroMolecule;
+
+    pub fn read_str(
+        input: &str,
+        options: MmcifParseOptions,
+    ) -> Result<MacroMolecule, MmcifParseError> {
+        crate::io::read_mmcif_str(input, options)
+    }
+}
+
 pub mod perception {
     pub use crate::chemistry::{SanitizeError, SanitizeOptions, SanitizeReport};
 
