@@ -197,12 +197,6 @@ fn perceive_rdkit_like_aromaticity(
         &ring_analyses,
         &protected_non_aromatic_bonds,
     )?;
-    perceive_fused_single_exocyclic_carbon_rings(
-        mol,
-        ring_set.rings(),
-        &ring_analyses,
-        &protected_non_aromatic_bonds,
-    );
     for component in imported_aromatic_components {
         if !component.iter().any(|atom_id| {
             mol.atom(*atom_id)
@@ -238,34 +232,15 @@ fn mark_aromatic_atoms_and_bonds(
     }
 }
 
-fn mark_aromatic_atom_set_with_internal_bonds(
-    mol: &mut Molecule,
-    atoms: &BTreeSet<AtomId>,
-    bonds: impl IntoIterator<Item = BondId>,
-    protected_non_aromatic_bonds: &BTreeSet<BondId>,
-) {
-    for atom_id in atoms {
-        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            atom.aromatic = true;
-        }
-    }
-    for bond_id in bonds {
-        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-            bond.aromatic = atoms.contains(&bond.a())
-                && atoms.contains(&bond.b())
-                && !protected_non_aromatic_bonds.contains(&bond_id);
-        }
-    }
-}
-
-fn mark_aromatic_fused_ring_system(
+fn mark_aromatic_fused_subset(
     mol: &mut Molecule,
     rings: &[Ring],
     indexes: &[usize],
     protected_non_aromatic_bonds: &BTreeSet<BondId>,
-) {
-    for bond_id in fused_perimeter_bonds(rings, indexes) {
-        let Ok(bond) = mol.bond(bond_id) else {
+) -> BTreeSet<BondId> {
+    let perimeter_bonds = fused_perimeter_bonds(rings, indexes);
+    for bond_id in &perimeter_bonds {
+        let Ok(bond) = mol.bond(*bond_id) else {
             continue;
         };
         let [left, right] = [bond.a(), bond.b()];
@@ -275,9 +250,10 @@ fn mark_aromatic_fused_ring_system(
             }
         }
         if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-            bond.aromatic = !protected_non_aromatic_bonds.contains(&bond_id);
+            bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
         }
     }
+    perimeter_bonds
 }
 
 fn fused_perimeter_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> {
@@ -384,65 +360,6 @@ fn imported_aromatic_bond_components(mol: &Molecule) -> Vec<Vec<AtomId>> {
     components
 }
 
-fn is_saturated_ring_carbon(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    mol.atom(atom_id).is_ok_and(|atom| {
-        atom.element.symbol() == "C" && atom_passes_rdkit_aromatic_radical_eligibility(atom)
-    }) && !ring_atom_has_pi_bond(mol, ring, atom_id)
-        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
-}
-
-fn ring_has_saturated_carbon_atom(mol: &Molecule, ring: &Ring) -> bool {
-    ring.atoms
-        .iter()
-        .any(|atom_id| is_saturated_ring_carbon(mol, ring, *atom_id))
-}
-
-fn perceive_fused_single_exocyclic_carbon_rings(
-    mol: &mut Molecule,
-    rings: &[Ring],
-    ring_analyses: &[RingAromaticityAnalysis],
-    protected_non_aromatic_bonds: &BTreeSet<BondId>,
-) {
-    let selected = rings
-        .iter()
-        .enumerate()
-        .filter(|(index, ring)| {
-            let fused = rings
-                .iter()
-                .enumerate()
-                .any(|(other_index, other)| other_index != *index && rings_share_bond(ring, other));
-            fused
-                && ring_analyses[*index].localized_all_atoms_are_candidates()
-                && ((ring.atoms.len() == 6
-                    && ring_is_all_candidate_carbon(mol, ring, &ring_analyses[*index])
-                    && ring_exocyclic_pi_bond_count(mol, ring) > 0
-                    && ring_terminal_exocyclic_pi_bond_count(mol, ring) <= 1
-                    && ring_pi_bond_count(mol, ring) >= 1)
-                    || (ring.atoms.len() == 4
-                        && ring_is_all_candidate_carbon(mol, ring, &ring_analyses[*index])
-                        && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2)
-                    || (ring.atoms.len() == 5
-                        && ring_analyses[*index].localized_has_active_element_donor(mol, "N")
-                        && ring_analyses[*index].localized_has_active_chalcogen_donor(mol)
-                        && ring_analyses[*index]
-                            .localized_has_candidate_carbon_electronegative_exocyclic_pi_bond(
-                                mol, ring,
-                            )
-                        && ring_exocyclic_pi_bond_count(mol, ring) > 0))
-        })
-        .map(|(_, ring)| ring.clone())
-        .collect::<Vec<_>>();
-
-    for ring in selected {
-        mark_aromatic_atoms_and_bonds(
-            mol,
-            ring.atoms.iter().copied(),
-            ring.bonds.iter().copied(),
-            protected_non_aromatic_bonds,
-        );
-    }
-}
-
 fn perceive_fused_aromatic_components(
     mol: &mut Molecule,
     rings: &[Ring],
@@ -473,134 +390,63 @@ fn perceive_fused_aromatic_components(
     }
 
     for indexes in component_rings.values() {
-        if indexes.len() < 2 {
-            continue;
-        }
-        let component = fused_component_ring(rings, indexes);
-        let all_candidate_carbon_component =
-            fused_component_is_all_candidate_carbon(mol, &component, rings, ring_analyses, indexes);
-        let component_has_exocyclic_pi = ring_exocyclic_pi_bond_count(mol, &component) > 0;
-        if indexes.len() <= MAX_FUSED_AROMATIC_COMBINATION_RINGS {
-            let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
-            let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
-            if analysis.is_fused_huckel_aromatic() {
-                if all_candidate_carbon_component {
-                    mark_aromatic_fused_ring_system(
-                        mol,
-                        rings,
-                        indexes,
-                        protected_non_aromatic_bonds,
-                    );
-                } else {
-                    mark_aromatic_atoms_and_bonds(
-                        mol,
-                        component.atoms.iter().copied(),
-                        component.bonds.iter().copied(),
-                        protected_non_aromatic_bonds,
-                    );
-                }
-                continue;
-            }
-        }
-        for subset in aromatic_fused_ring_subsets(mol, rings, indexes)? {
-            let subset_ring = fused_component_ring(rings, &subset);
-            if fused_component_is_all_candidate_carbon(
-                mol,
-                &subset_ring,
-                rings,
-                ring_analyses,
-                &subset,
-            ) {
-                mark_aromatic_fused_ring_system(mol, rings, &subset, protected_non_aromatic_bonds);
-            } else {
-                mark_aromatic_atoms_and_bonds(
-                    mol,
-                    subset_ring.atoms.iter().copied(),
-                    subset_ring.bonds.iter().copied(),
-                    protected_non_aromatic_bonds,
-                );
-            }
-        }
-        if all_candidate_carbon_component && component_has_exocyclic_pi {
-            let aromatic_atoms =
-                atoms_in_limited_terminal_exocyclic_pi_rings(mol, rings, indexes, 1);
-            if aromatic_atoms.len() >= 6 {
-                mark_aromatic_atom_set_with_internal_bonds(
-                    mol,
-                    &aromatic_atoms,
-                    component.bonds.iter().copied(),
-                    protected_non_aromatic_bonds,
-                );
-            }
-        } else if fused_component_is_carbon_with_candidate_nitrogen(
+        apply_huckel_to_fused_component(
             mol,
-            &component,
             rings,
             ring_analyses,
             indexes,
-        ) {
-            let terminal_atoms_retained =
-                terminal_exocyclic_atoms_in_nitrogen_rings(mol, rings, ring_analyses, indexes);
-            let atoms_retained_by_ring_context =
-                atoms_in_nitrogen_or_terminal_pi_free_rings(mol, rings, ring_analyses, indexes);
-            let aromatic_atoms = component
-                .atoms
-                .iter()
-                .copied()
-                .filter(|atom_id| {
-                    atoms_retained_by_ring_context.contains(atom_id)
-                        && (!atom_has_terminal_exocyclic_pi_bond(mol, &component, *atom_id)
-                            || terminal_atoms_retained.contains(atom_id))
-                })
-                .collect::<BTreeSet<_>>();
-            if aromatic_atoms.len() >= 6 {
-                mark_aromatic_atom_set_with_internal_bonds(
+            protected_non_aromatic_bonds,
+        )?;
+    }
+    Ok(())
+}
+
+fn apply_huckel_to_fused_component(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+    indexes: &[usize],
+    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+) -> std::result::Result<(), AromaticityError> {
+    let all_bonds = indexes
+        .iter()
+        .flat_map(|index| rings[*index].bonds.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let mut done_bonds = BTreeSet::new();
+    let max_subset_size = indexes.len().min(MAX_FUSED_AROMATIC_COMBINATION_RINGS);
+    for subset_size in 1..=max_subset_size {
+        if subset_size > 2 && indexes.len() > LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT {
+            break;
+        }
+        for subset in connected_ring_subsets(rings, indexes, subset_size) {
+            if fused_subset_is_huckel_aromatic(mol, rings, ring_analyses, &subset)? {
+                done_bonds.extend(mark_aromatic_fused_subset(
                     mol,
-                    &aromatic_atoms,
-                    component.bonds.iter().copied(),
+                    rings,
+                    &subset,
                     protected_non_aromatic_bonds,
-                );
+                ));
+                if done_bonds.len() >= all_bonds.len() {
+                    return Ok(());
+                }
             }
         }
     }
     Ok(())
 }
 
-fn aromatic_fused_ring_subsets(
+fn fused_subset_is_huckel_aromatic(
     mol: &Molecule,
     rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
     indexes: &[usize],
-) -> std::result::Result<Vec<Vec<usize>>, AromaticityError> {
-    if indexes.len() < 3 {
-        return Ok(Vec::new());
+) -> std::result::Result<bool, AromaticityError> {
+    if indexes.len() == 1 {
+        return Ok(ring_analyses[indexes[0]].is_huckel_aromatic());
     }
-    let mut accepted = Vec::new();
-    let mut done_bonds = BTreeSet::new();
-    let all_bonds = indexes
-        .iter()
-        .flat_map(|index| rings[*index].bonds.iter().copied())
-        .collect::<BTreeSet<_>>();
-    let max_subset_size = indexes.len().min(MAX_FUSED_AROMATIC_COMBINATION_RINGS);
-    for subset_size in 2..=max_subset_size {
-        if subset_size == indexes.len() {
-            continue;
-        }
-        if subset_size > 2 && indexes.len() > LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT {
-            break;
-        }
-        for subset in connected_ring_subsets(rings, indexes, subset_size) {
-            let aromaticity_ring = fused_component_aromaticity_ring(rings, &subset);
-            let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
-            if analysis.is_fused_huckel_aromatic() {
-                done_bonds.extend(fused_perimeter_bonds(rings, &subset));
-                accepted.push(subset);
-                if done_bonds.len() >= all_bonds.len() {
-                    return Ok(accepted);
-                }
-            }
-        }
-    }
-    Ok(accepted)
+    let aromaticity_ring = fused_component_aromaticity_ring(rings, indexes);
+    let analysis = localized_ring_donor_analysis(mol, &aromaticity_ring)?;
+    Ok(analysis.is_huckel_aromatic())
 }
 
 fn connected_ring_subsets(
@@ -681,180 +527,6 @@ fn fused_component_is_carbon_or_candidate_nitrogen(
     })
 }
 
-fn fused_component_is_carbon_with_candidate_nitrogen(
-    mol: &Molecule,
-    component: &Ring,
-    rings: &[Ring],
-    ring_analyses: &[RingAromaticityAnalysis],
-    indexes: &[usize],
-) -> bool {
-    component.atoms.iter().all(|atom_id| {
-        atom_is_localized_element_candidate_in_any_ring(
-            mol,
-            rings,
-            ring_analyses,
-            indexes,
-            *atom_id,
-            "C",
-        ) || atom_is_localized_element_candidate_in_any_ring(
-            mol,
-            rings,
-            ring_analyses,
-            indexes,
-            *atom_id,
-            "N",
-        )
-    })
-}
-
-fn fused_component_is_all_candidate_carbon(
-    mol: &Molecule,
-    component: &Ring,
-    rings: &[Ring],
-    ring_analyses: &[RingAromaticityAnalysis],
-    indexes: &[usize],
-) -> bool {
-    component.atoms.iter().all(|atom_id| {
-        atom_is_localized_element_candidate_in_any_ring(
-            mol,
-            rings,
-            ring_analyses,
-            indexes,
-            *atom_id,
-            "C",
-        )
-    })
-}
-
-fn atom_is_localized_element_candidate_in_any_ring(
-    mol: &Molecule,
-    rings: &[Ring],
-    ring_analyses: &[RingAromaticityAnalysis],
-    indexes: &[usize],
-    atom_id: AtomId,
-    symbol: &str,
-) -> bool {
-    indexes.iter().any(|index| {
-        rings[*index].atoms.contains(&atom_id)
-            && ring_analyses[*index].localized_atom_is_element_candidate(mol, atom_id, symbol)
-    })
-}
-
-fn terminal_exocyclic_atoms_in_nitrogen_rings(
-    mol: &Molecule,
-    rings: &[Ring],
-    ring_analyses: &[RingAromaticityAnalysis],
-    indexes: &[usize],
-) -> BTreeSet<AtomId> {
-    let mut atoms = BTreeSet::new();
-    for index in indexes {
-        let ring = &rings[*index];
-        if !ring_analyses[*index].localized_has_active_element_donor(mol, "N") {
-            continue;
-        }
-        for atom_id in &ring.atoms {
-            if atom_has_terminal_exocyclic_pi_bond(mol, ring, *atom_id) {
-                atoms.insert(*atom_id);
-            }
-        }
-    }
-    atoms
-}
-
-fn atoms_in_limited_terminal_exocyclic_pi_rings(
-    mol: &Molecule,
-    rings: &[Ring],
-    indexes: &[usize],
-    max_terminal_exocyclic_pi: usize,
-) -> BTreeSet<AtomId> {
-    let mut atoms = BTreeSet::new();
-    for index in indexes {
-        let ring = &rings[*index];
-        if ring_terminal_exocyclic_pi_bond_count(mol, ring) <= max_terminal_exocyclic_pi {
-            atoms.extend(ring.atoms.iter().copied());
-        }
-    }
-    atoms
-}
-
-fn atoms_in_nitrogen_or_terminal_pi_free_rings(
-    mol: &Molecule,
-    rings: &[Ring],
-    ring_analyses: &[RingAromaticityAnalysis],
-    indexes: &[usize],
-) -> BTreeSet<AtomId> {
-    let has_exocyclic_pi_ring = indexes
-        .iter()
-        .any(|index| ring_exocyclic_pi_bond_count(mol, &rings[*index]) > 0);
-    if !has_exocyclic_pi_ring {
-        return indexes
-            .iter()
-            .filter(|index| {
-                !ring_has_saturated_tertiary_amine_without_donor_chalcogen(
-                    mol,
-                    &rings[**index],
-                    &ring_analyses[**index],
-                )
-            })
-            .flat_map(|index| rings[*index].atoms.iter().copied())
-            .collect();
-    }
-
-    let mut atoms = BTreeSet::new();
-    for index in indexes {
-        let ring = &rings[*index];
-        if ring_has_saturated_tertiary_amine_without_donor_chalcogen(
-            mol,
-            ring,
-            &ring_analyses[*index],
-        ) {
-            continue;
-        }
-        let exocyclic_pi_count = ring_exocyclic_pi_bond_count(mol, ring);
-        let has_active_nitrogen_donor =
-            ring_analyses[*index].localized_has_active_element_donor(mol, "N");
-        let active_hetero_donors = ring_analyses[*index].localized_active_hetero_donor_count(mol);
-        if exocyclic_pi_count == 0
-            || !has_active_nitrogen_donor && exocyclic_pi_count <= 1
-            || has_active_nitrogen_donor && active_hetero_donors >= 2
-            || ring.atoms.len() >= 6
-                && has_active_nitrogen_donor
-                && !ring_has_saturated_carbon_atom(mol, ring)
-        {
-            atoms.extend(ring.atoms.iter().copied());
-        }
-    }
-    atoms
-}
-
-fn ring_has_saturated_tertiary_amine_without_donor_chalcogen(
-    mol: &Molecule,
-    ring: &Ring,
-    analysis: &RingAromaticityAnalysis,
-) -> bool {
-    if ring_has_saturated_active_chalcogen_donor(mol, ring, analysis) {
-        return false;
-    }
-    !analysis.localized_all_atoms_are_candidates()
-        && analysis.localized_active_hetero_donor_count(mol) == 1
-        && ring
-            .atoms
-            .iter()
-            .any(|atom_id| is_saturated_tertiary_amine(mol, ring, *atom_id))
-}
-
-fn ring_has_saturated_active_chalcogen_donor(
-    mol: &Molecule,
-    ring: &Ring,
-    analysis: &RingAromaticityAnalysis,
-) -> bool {
-    ring.atoms.iter().any(|atom_id| {
-        !ring_atom_has_pi_bond(mol, ring, *atom_id)
-            && !atom_has_exocyclic_pi_bond(mol, ring, *atom_id)
-            && analysis.localized_atom_has_active_chalcogen_donor(mol, *atom_id)
-    })
-}
-
 fn ring_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
     ring.bonds
         .iter()
@@ -892,45 +564,14 @@ fn aromatic_fused_candidate_from_analysis(
             && ring_is_all_candidate_carbon(mol, ring, analysis)
 }
 
-fn is_saturated_tertiary_amine(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    let Ok(atom) = mol.atom(atom_id) else {
-        return false;
-    };
-    atom.element.symbol() == "N"
-        && atom.formal_charge == 0
-        && atom_passes_rdkit_aromatic_radical_eligibility(atom)
-        && atom.explicit_hydrogens == 0
-        && !ring_atom_has_pi_bond(mol, ring, atom_id)
-        && !atom_has_exocyclic_pi_bond(mol, ring, atom_id)
-        && mol
-            .incident_bonds(atom_id)
-            .map(|bonds| {
-                let mut degree = 0usize;
-                for (_, bond) in bonds {
-                    degree += 1;
-                    let other = bond.other_atom(atom_id);
-                    if !ring.atoms.contains(&other)
-                        && !is_saturated_tertiary_amine_substituent(mol, ring, other)
-                    {
-                        return false;
-                    }
-                    if !matches!(bond.order, BondOrder::Single) {
-                        return false;
-                    }
-                }
-                degree >= 3
-            })
-            .unwrap_or(false)
-}
-
-fn is_saturated_tertiary_amine_substituent(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
-    let Ok(atom) = mol.atom(atom_id) else {
-        return false;
-    };
-    atom.element.symbol() == "C" && atom_passes_rdkit_aromatic_radical_eligibility(atom)
-        || matches!(atom.element.symbol(), "S" | "Se" | "Te")
-            && atom_passes_rdkit_aromatic_radical_eligibility(atom)
-            && atom_has_terminal_exocyclic_pi_bond(mol, ring, atom_id)
+fn ring_has_low_unsaturation_active_chalcogen_bridge_for_fused(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    ring_pi_bond_count(mol, ring) < 2
+        && analysis.localized_active_hetero_donor_count(mol) > 1
+        && analysis.localized_has_active_chalcogen_donor(mol)
 }
 
 #[cfg(test)]
@@ -952,16 +593,6 @@ fn ring_has_chalcogen_donor(mol: &Molecule, ring: &Ring) -> bool {
             .map(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
             .unwrap_or(false)
     })
-}
-
-fn ring_has_low_unsaturation_active_chalcogen_bridge_for_fused(
-    mol: &Molecule,
-    ring: &Ring,
-    analysis: &RingAromaticityAnalysis,
-) -> bool {
-    ring_pi_bond_count(mol, ring) < 2
-        && analysis.localized_active_hetero_donor_count(mol) > 1
-        && analysis.localized_has_active_chalcogen_donor(mol)
 }
 
 fn ring_exocyclic_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
@@ -1050,6 +681,7 @@ fn rings_share_bond(left: &Ring, right: &Ring) -> bool {
     left.bonds.iter().any(|bond| right.bonds.contains(bond))
 }
 
+#[cfg(test)]
 fn fused_component_ring(rings: &[Ring], indexes: &[usize]) -> Ring {
     let mut atoms = BTreeSet::new();
     let mut bonds = BTreeSet::new();
@@ -1186,26 +818,10 @@ impl RingAromaticityAnalysis {
             .is_some_and(|analysis| analysis.has_active_element_donor(mol, symbol))
     }
 
-    fn localized_has_candidate_carbon_electronegative_exocyclic_pi_bond(
-        &self,
-        mol: &Molecule,
-        ring: &Ring,
-    ) -> bool {
-        self.localized.as_ref().is_some_and(|analysis| {
-            ring_has_candidate_carbon_electronegative_exocyclic_pi_bond(mol, ring, analysis)
-        })
-    }
-
     fn localized_has_active_anionic_nitrogen_donor(&self, mol: &Molecule) -> bool {
         self.localized
             .as_ref()
             .is_some_and(|analysis| analysis.has_active_anionic_nitrogen_donor(mol))
-    }
-
-    fn localized_atom_has_active_chalcogen_donor(&self, mol: &Molecule, atom_id: AtomId) -> bool {
-        self.localized
-            .as_ref()
-            .is_some_and(|analysis| analysis.atom_has_active_chalcogen_donor(mol, atom_id))
     }
 
     fn localized_atom_is_element_candidate(
@@ -1237,11 +853,6 @@ impl AromaticRingDonorAnalysis {
     fn is_huckel_aromatic(&self) -> bool {
         self.electron_count()
             .is_some_and(|electrons| electrons >= 2 && (electrons - 2) % 4 == 0)
-    }
-
-    fn is_fused_huckel_aromatic(&self) -> bool {
-        self.electron_count()
-            .is_some_and(|electrons| electrons >= 6 && (electrons - 2) % 4 == 0)
     }
 
     fn electron_count(&self) -> Option<u8> {
@@ -1301,16 +912,6 @@ impl AromaticRingDonorAnalysis {
         self.atoms.iter().any(|atom_donor| {
             mol.atom(atom_donor.atom)
                 .is_ok_and(|atom| atom.element.symbol() == "N" && atom.formal_charge < 0)
-                && aromatic_donor_electron_range(atom_donor.donor).1 > 0
-        })
-    }
-
-    fn atom_has_active_chalcogen_donor(&self, mol: &Molecule, atom_id: AtomId) -> bool {
-        self.atoms.iter().any(|atom_donor| {
-            atom_donor.atom == atom_id
-                && mol
-                    .atom(atom_id)
-                    .is_ok_and(|atom| matches!(atom.element.symbol(), "O" | "S" | "Se" | "Te"))
                 && aromatic_donor_electron_range(atom_donor.donor).1 > 0
         })
     }
@@ -2204,11 +1805,6 @@ mod tests {
         assert!(!ring_protects_non_aromatic_fusion_single(
             &mol, &ring, &analysis, false, 2
         ));
-        let rings = vec![ring];
-        let analyses = vec![analysis];
-        assert!(
-            atoms_in_nitrogen_or_terminal_pi_free_rings(&mol, &rings, &analyses, &[0]).is_empty()
-        );
     }
 
     #[test]
@@ -2259,7 +1855,7 @@ mod tests {
     }
 
     #[test]
-    fn fused_carbon_nitrogen_fallback_requires_candidate_nitrogen_state() {
+    fn fused_candidate_requires_candidate_nitrogen_state() {
         let mut mol = Molecule::new();
         let mut nitrogen_atom = Atom::new(Element::from_symbol("N").expect("test element"));
         nitrogen_atom.explicit_hydrogens = 2;
@@ -2293,26 +1889,14 @@ mod tests {
             bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
         };
         let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
-        let rings = vec![ring.clone()];
-        let analyses = vec![analysis];
-
-        assert!(!fused_component_is_carbon_or_candidate_nitrogen(
-            &mol,
-            &ring,
-            &analyses[0]
-        ));
-        assert!(!analyses[0].localized_atom_is_element_candidate(&mol, nitrogen, "N"));
-        assert!(!fused_component_is_carbon_with_candidate_nitrogen(
-            &mol,
-            &ring,
-            &rings,
-            &analyses,
-            &[0]
+        assert!(!analysis.localized_atom_is_element_candidate(&mol, nitrogen, "N"));
+        assert!(!aromatic_fused_candidate_from_analysis(
+            &mol, &ring, &analysis
         ));
     }
 
     #[test]
-    fn fused_carbon_nitrogen_fallback_requires_candidate_carbon_state() {
+    fn fused_candidate_requires_candidate_carbon_state() {
         let mut mol = Molecule::new();
         let mut carbon_atom = aromatic_carbon();
         carbon_atom.formal_charge = 1;
@@ -2346,25 +1930,13 @@ mod tests {
             bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
         };
         let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
-        let rings = vec![ring.clone()];
-        let analyses = vec![analysis];
-
         assert!(mol
             .atom(carbon)
             .is_ok_and(|atom| atom.element.symbol() == "C"));
-        assert!(!analyses[0].localized_atom_is_element_candidate(&mol, carbon, "C"));
-        assert!(analyses[0].localized_atom_is_element_candidate(&mol, nitrogen, "N"));
-        assert!(!fused_component_is_carbon_or_candidate_nitrogen(
-            &mol,
-            &ring,
-            &analyses[0]
-        ));
-        assert!(!fused_component_is_carbon_with_candidate_nitrogen(
-            &mol,
-            &ring,
-            &rings,
-            &analyses,
-            &[0]
+        assert!(!analysis.localized_atom_is_element_candidate(&mol, carbon, "C"));
+        assert!(analysis.localized_atom_is_element_candidate(&mol, nitrogen, "N"));
+        assert!(!aromatic_fused_candidate_from_analysis(
+            &mol, &ring, &analysis
         ));
     }
 
@@ -2410,7 +1982,7 @@ mod tests {
         assert_eq!(ring_pi_bond_count(&mol, &ring), 6);
         assert_eq!(analysis.fixed_electron_count, None);
         assert_eq!(analysis.atoms.len(), ring.atoms.len());
-        assert!(analysis.is_fused_huckel_aromatic());
+        assert!(analysis.is_huckel_aromatic());
     }
 
     #[test]
@@ -2437,8 +2009,6 @@ mod tests {
         assert!(rings.iter().enumerate().all(|(index, ring)| {
             aromatic_fused_candidate_from_analysis(&mol, ring, &analyses[index])
         }));
-        let subsets = aromatic_fused_ring_subsets(&mol, &rings, &indexes).expect("fused subsets");
-        assert!(!subsets.is_empty(), "expected at least one accepted subset");
         for bond_id in &component.bonds {
             mol.bonds[bond_id.index()]
                 .as_mut()
@@ -2468,7 +2038,7 @@ mod tests {
     }
 
     #[test]
-    fn all_carbon_exocyclic_fallback_requires_candidate_carbon_state() {
+    fn fused_exocyclic_candidate_requires_candidate_carbon_state() {
         let mut mol = Molecule::new();
         let mut carbon_atom = aromatic_carbon();
         carbon_atom.formal_charge = 1;
@@ -2504,18 +2074,13 @@ mod tests {
             atoms: vec![carbon_a, carbon_b, carbon_c, carbon_d, carbon_e, carbon_f],
             bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
         };
-        let rings = vec![ring.clone()];
-        let analyses = vec![RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis")];
+        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
 
         assert!(fused_component_is_all_carbon(&mol, &ring));
         assert_eq!(ring_exocyclic_pi_bond_count(&mol, &ring), 1);
-        assert!(!analyses[0].localized_atom_is_element_candidate(&mol, carbon_a, "C"));
-        assert!(!fused_component_is_all_candidate_carbon(
-            &mol,
-            &ring,
-            &rings,
-            &analyses,
-            &[0]
+        assert!(!analysis.localized_atom_is_element_candidate(&mol, carbon_a, "C"));
+        assert!(!aromatic_fused_candidate_from_analysis(
+            &mol, &ring, &analysis
         ));
     }
 
@@ -2615,44 +2180,6 @@ mod tests {
         let aromatic =
             aromatic_ring_donor_analysis(&mol, &ring, &localized).expect("aromatic analysis");
         assert_eq!(aromatic.fixed_electron_count, Some(0));
-    }
-
-    #[test]
-    fn saturated_ring_carbon_uses_rdkit_radical_eligibility() {
-        let mut mol = Molecule::new();
-        let mut carbon_atom = Atom::new(Element::from_symbol("C").expect("test element"));
-        carbon_atom.formal_charge = 1;
-        carbon_atom.radical = Some(AtomRadical::Doublet);
-        let carbon = mol.add_atom(carbon_atom);
-        let nitrogen = mol.add_atom(Atom::new(Element::from_symbol("N").expect("test element")));
-        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
-        let sulfur = mol.add_atom(Atom::new(Element::from_symbol("S").expect("test element")));
-        let phosphorus = mol.add_atom(Atom::new(Element::from_symbol("P").expect("test element")));
-        let bond_a = mol
-            .add_bond(carbon, nitrogen, BondOrder::Single)
-            .expect("ring bond");
-        let bond_b = mol
-            .add_bond(nitrogen, oxygen, BondOrder::Single)
-            .expect("ring bond");
-        let bond_c = mol
-            .add_bond(oxygen, sulfur, BondOrder::Single)
-            .expect("ring bond");
-        let bond_d = mol
-            .add_bond(sulfur, phosphorus, BondOrder::Single)
-            .expect("ring bond");
-        let bond_e = mol
-            .add_bond(phosphorus, carbon, BondOrder::Single)
-            .expect("ring bond");
-        let ring = Ring {
-            atoms: vec![carbon, nitrogen, oxygen, sulfur, phosphorus],
-            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e],
-        };
-
-        assert!(!atom_passes_rdkit_aromatic_radical_eligibility(
-            mol.atom(carbon).expect("charged carbon radical")
-        ));
-        assert!(!is_saturated_ring_carbon(&mol, &ring, carbon));
-        assert!(!ring_has_saturated_carbon_atom(&mol, &ring));
     }
 
     #[test]
@@ -2815,211 +2342,6 @@ mod tests {
 
         assert_eq!(aromatic.fixed_electron_count, None);
         assert!(aromatic.is_huckel_aromatic());
-    }
-
-    #[test]
-    fn saturated_tertiary_amine_guard_uses_active_chalcogen_donor_state() {
-        let mut mol = Molecule::new();
-        let nitrogen = mol.add_atom(Atom::new(Element::from_symbol("N").expect("test element")));
-        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let mut oxygen = Atom::new(Element::from_symbol("O").expect("test element"));
-        oxygen.explicit_hydrogens = 2;
-        oxygen.no_implicit_hydrogens = true;
-        let oxygen = mol.add_atom(oxygen);
-        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let methyl = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let bond_a = mol
-            .add_bond(nitrogen, carbon_a, BondOrder::Single)
-            .expect("ring bond");
-        let bond_b = mol
-            .add_bond(carbon_a, oxygen, BondOrder::Single)
-            .expect("ring bond");
-        let bond_c = mol
-            .add_bond(oxygen, carbon_b, BondOrder::Single)
-            .expect("ring bond");
-        let bond_d = mol
-            .add_bond(carbon_b, carbon_c, BondOrder::Single)
-            .expect("ring bond");
-        let bond_e = mol
-            .add_bond(carbon_c, carbon_d, BondOrder::Single)
-            .expect("ring bond");
-        let bond_f = mol
-            .add_bond(carbon_d, nitrogen, BondOrder::Single)
-            .expect("ring bond");
-        mol.add_bond(nitrogen, methyl, BondOrder::Single)
-            .expect("tertiary amine substituent");
-        let ring = Ring {
-            atoms: vec![nitrogen, carbon_a, oxygen, carbon_b, carbon_c, carbon_d],
-            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
-        };
-        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
-
-        assert!(ring_has_chalcogen_donor(&mol, &ring));
-        assert!(!analysis.localized_atom_has_active_chalcogen_donor(&mol, oxygen));
-        assert_eq!(analysis.localized_active_hetero_donor_count(&mol), 1);
-        assert!(!ring_has_saturated_active_chalcogen_donor(
-            &mol, &ring, &analysis
-        ));
-        assert!(ring_has_saturated_tertiary_amine_without_donor_chalcogen(
-            &mol, &ring, &analysis
-        ));
-    }
-
-    #[test]
-    fn saturated_tertiary_amine_guard_uses_rdkit_radical_eligibility() {
-        let mut mol = Molecule::new();
-        let mut nitrogen_atom = Atom::new(Element::from_symbol("N").expect("test element"));
-        nitrogen_atom.radical = Some(AtomRadical::Doublet);
-        let nitrogen = mol.add_atom(nitrogen_atom);
-        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
-        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let methyl = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let bond_a = mol
-            .add_bond(nitrogen, carbon_a, BondOrder::Single)
-            .expect("ring bond");
-        let bond_b = mol
-            .add_bond(carbon_a, oxygen, BondOrder::Single)
-            .expect("ring bond");
-        let bond_c = mol
-            .add_bond(oxygen, carbon_b, BondOrder::Single)
-            .expect("ring bond");
-        let bond_d = mol
-            .add_bond(carbon_b, carbon_c, BondOrder::Single)
-            .expect("ring bond");
-        let bond_e = mol
-            .add_bond(carbon_c, carbon_d, BondOrder::Single)
-            .expect("ring bond");
-        let bond_f = mol
-            .add_bond(carbon_d, nitrogen, BondOrder::Single)
-            .expect("ring bond");
-        mol.add_bond(nitrogen, methyl, BondOrder::Single)
-            .expect("tertiary amine substituent");
-        let ring = Ring {
-            atoms: vec![nitrogen, carbon_a, oxygen, carbon_b, carbon_c, carbon_d],
-            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
-        };
-        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
-
-        assert!(!atom_passes_rdkit_aromatic_radical_eligibility(
-            mol.atom(nitrogen).expect("ring nitrogen")
-        ));
-        assert!(!is_saturated_tertiary_amine(&mol, &ring, nitrogen));
-        assert!(!ring_has_saturated_tertiary_amine_without_donor_chalcogen(
-            &mol, &ring, &analysis
-        ));
-    }
-
-    #[test]
-    fn tertiary_amine_chalcogen_substituent_uses_rdkit_radical_eligibility() {
-        let mut mol = Molecule::new();
-        let nitrogen = mol.add_atom(Atom::new(Element::from_symbol("N").expect("test element")));
-        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
-        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let mut sulfur_atom = Atom::new(Element::from_symbol("S").expect("test element"));
-        sulfur_atom.radical = Some(AtomRadical::Doublet);
-        let sulfur = mol.add_atom(sulfur_atom);
-        let exocyclic_oxygen =
-            mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
-        let bond_a = mol
-            .add_bond(nitrogen, carbon_a, BondOrder::Single)
-            .expect("ring bond");
-        let bond_b = mol
-            .add_bond(carbon_a, oxygen, BondOrder::Single)
-            .expect("ring bond");
-        let bond_c = mol
-            .add_bond(oxygen, carbon_b, BondOrder::Single)
-            .expect("ring bond");
-        let bond_d = mol
-            .add_bond(carbon_b, carbon_c, BondOrder::Single)
-            .expect("ring bond");
-        let bond_e = mol
-            .add_bond(carbon_c, carbon_d, BondOrder::Single)
-            .expect("ring bond");
-        let bond_f = mol
-            .add_bond(carbon_d, nitrogen, BondOrder::Single)
-            .expect("ring bond");
-        mol.add_bond(nitrogen, sulfur, BondOrder::Single)
-            .expect("tertiary amine substituent");
-        mol.add_bond(sulfur, exocyclic_oxygen, BondOrder::Double)
-            .expect("terminal sulfoxide");
-        let ring = Ring {
-            atoms: vec![nitrogen, carbon_a, oxygen, carbon_b, carbon_c, carbon_d],
-            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
-        };
-        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
-
-        assert!(atom_has_terminal_exocyclic_pi_bond(&mol, &ring, sulfur));
-        assert!(!atom_passes_rdkit_aromatic_radical_eligibility(
-            mol.atom(sulfur).expect("sulfur substituent")
-        ));
-        assert!(!is_saturated_tertiary_amine_substituent(
-            &mol, &ring, sulfur
-        ));
-        assert!(!is_saturated_tertiary_amine(&mol, &ring, nitrogen));
-        assert!(!ring_has_saturated_tertiary_amine_without_donor_chalcogen(
-            &mol, &ring, &analysis
-        ));
-    }
-
-    #[test]
-    fn tertiary_amine_carbon_substituent_uses_rdkit_radical_eligibility() {
-        let mut mol = Molecule::new();
-        let nitrogen = mol.add_atom(Atom::new(Element::from_symbol("N").expect("test element")));
-        let carbon_a = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
-        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let mut substituent_atom = Atom::new(Element::from_symbol("C").expect("test element"));
-        substituent_atom.formal_charge = 1;
-        substituent_atom.radical = Some(AtomRadical::Doublet);
-        let substituent = mol.add_atom(substituent_atom);
-        let bond_a = mol
-            .add_bond(nitrogen, carbon_a, BondOrder::Single)
-            .expect("ring bond");
-        let bond_b = mol
-            .add_bond(carbon_a, oxygen, BondOrder::Single)
-            .expect("ring bond");
-        let bond_c = mol
-            .add_bond(oxygen, carbon_b, BondOrder::Single)
-            .expect("ring bond");
-        let bond_d = mol
-            .add_bond(carbon_b, carbon_c, BondOrder::Single)
-            .expect("ring bond");
-        let bond_e = mol
-            .add_bond(carbon_c, carbon_d, BondOrder::Single)
-            .expect("ring bond");
-        let bond_f = mol
-            .add_bond(carbon_d, nitrogen, BondOrder::Single)
-            .expect("ring bond");
-        mol.add_bond(nitrogen, substituent, BondOrder::Single)
-            .expect("tertiary amine substituent");
-        let ring = Ring {
-            atoms: vec![nitrogen, carbon_a, oxygen, carbon_b, carbon_c, carbon_d],
-            bonds: vec![bond_a, bond_b, bond_c, bond_d, bond_e, bond_f],
-        };
-        let analysis = RingAromaticityAnalysis::new(&mol, &ring).expect("ring analysis");
-
-        assert!(!atom_passes_rdkit_aromatic_radical_eligibility(
-            mol.atom(substituent).expect("carbon substituent")
-        ));
-        assert!(!is_saturated_tertiary_amine_substituent(
-            &mol,
-            &ring,
-            substituent
-        ));
-        assert!(!is_saturated_tertiary_amine(&mol, &ring, nitrogen));
-        assert!(!ring_has_saturated_tertiary_amine_without_donor_chalcogen(
-            &mol, &ring, &analysis
-        ));
     }
 
     fn cation_with_one_implicit_hydrogen(symbol: &str) -> Atom {

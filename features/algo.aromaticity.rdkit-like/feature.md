@@ -25,8 +25,8 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - Evaluates localized simple rings of arbitrary size through the same Huckel donor-count path, including two-electron rings such as cyclopropenyl cation.
 - Handles imported aromatic-bond rings with variable donor ranges and accepts them when the donor set contains a valid 4n+2 count.
 - Treats exocyclic pi bonds through electronegativity-aware donor logic rather than raw hetero-atom symbol checks.
-- Uses cached per-ring donor analysis so initial ring gates, Huckel counting, fused candidate admission, fused fallback admission, and fused single-bond protection share the same candidate state.
-- Applies bounded connected fused-subset Huckel search before fallback fused-system marking.
+- Uses cached per-ring donor analysis so initial ring gates, Huckel counting, fused candidate admission, and fused single-bond protection share the same candidate state.
+- Applies a bounded RDKit-style fused-system pass: fused candidate rings are grouped by shared bonds, connected subsets are evaluated from small to large, subset atom sets use fused-ring multiplicity, and accepted subsets mark perimeter bonds.
 - Uses RDKit-like fused-system atom multiplicity, selected-subsystem perimeter bonds, additive accepted subsets, and the 24-atom fused-ring candidate cap.
 - Does not run a post-Huckel molecule-specific cleanup pass. Carbonyl, imide, lactam, lactone, amidine, chalcogen-oxo, terminal-imine, and orphan-atom corrections are expected to emerge from the general donor/candidate/fused rules rather than separate motif clearing.
 - Keeps parsing separate from aromaticity perception. Canonical SMILES normalization issues exposed by these flags belong to `io.smiles.canonical`, not hidden aromaticity cleanup.
@@ -48,3 +48,4 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 
 - v1-v83: Built the RDKit-like donor classifier, fused-subsystem search, validation workflow, and public expert facade.
 - v84: Removed the post-Huckel motif cleanup passes and their direct tests so aromaticity perception is driven by the shared RDKit-like donor/candidate/fused rules.
+- v85: Reworked fused-system perception around a single RDKit-style connected-subset Huckel evaluator and removed the separate exocyclic fused fallback marking pass.
