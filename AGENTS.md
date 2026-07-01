@@ -15,6 +15,23 @@ These rules apply to AI agents working in this repository.
    Co-authored-by: codex <codex@openai.com>
    ```
 
+## Branching and PR strategy
+
+Use trunk-based development with short-lived feature branches.
+
+- `main` is the clean integration branch. Keep it buildable, tested, and aligned with `ARCHITECTURE.md`.
+- Do not push feature work directly to `main`.
+- Start each work branch from current `main`.
+- Use one branch per feature ID or tightly scoped set of directly dependent feature IDs.
+- Prefer branch names such as `codex/<feature-id>-<short-topic>`, `docs/<short-topic>`, or `hotfix/<short-topic>`.
+- Open a PR for every nontrivial change.
+- Use draft PRs for larger or staged work.
+- Keep PRs small enough to review. Prefer stacked or sequential PRs over one large branch.
+- Rebase or merge from `main` before review if the branch has drifted.
+- Delete branches after merge.
+- Prefer squash merge for normal feature PRs so `main` remains readable.
+- Do not introduce a long-lived `develop` branch unless the release process later requires one.
+
 ## Architecture guardrails
 
 - Treat `Molecule` as the raw graph kernel; domain meaning belongs in `SmallMolecule`, `MacroMolecule`, and focused modules.
