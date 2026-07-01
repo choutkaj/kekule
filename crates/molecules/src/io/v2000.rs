@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::core::*;
+use crate::small::SmallMolecule;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolParseOptions;
@@ -120,7 +121,7 @@ fn parse_sdf_record(
     parse_sdf_data_fields(
         record,
         checked_line_number(record, start_line, data_start)?,
-        &mut molecule.mol,
+        molecule.graph_mut_raw(),
         &lines[data_start..],
     )?;
     Ok(SdfRecord { title, molecule })
@@ -277,7 +278,7 @@ fn parse_mol_v2000_lines(
         mol.add_conformer(conformer);
     }
 
-    Ok(SmallMolecule { mol })
+    Ok(SmallMolecule::from_graph(mol))
 }
 
 fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
@@ -598,7 +599,7 @@ impl fmt::Display for MolWriteError {
 impl std::error::Error for MolWriteError {}
 
 pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = &molecule.mol;
+    let mol = molecule.graph();
     if mol.atom_count() > 999 || mol.bond_count() > 999 {
         return Err(MolWriteError::new(
             "V2000 writer supports at most 999 atoms and 999 bonds",
@@ -709,7 +710,7 @@ pub fn write_sdf_v2000(molecules: &[SmallMolecule]) -> std::result::Result<Strin
     let mut out = String::new();
     for molecule in molecules {
         out.push_str(&write_mol_v2000(molecule)?);
-        for (key, value) in molecule.mol.props() {
+        for (key, value) in molecule.graph().props() {
             if let (Some(name), PropValue::String(text)) = (key.strip_prefix("sdf.field."), value) {
                 out.push_str(&format!(">  <{name}>\n{text}\n\n"));
             }

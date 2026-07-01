@@ -173,7 +173,7 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     methane.add_atom(carbon());
     mark_all_fresh(&mut methane);
 
-    let report = perceive_valence(&mut methane, ValenceModel::RdkitLike);
+    let report = perception_api::perceive_valence(&mut methane, ValenceModel::RdkitLike);
 
     assert!(report.is_ok());
     assert_eq!(methane.perception().valence, ComputedState::Fresh);
@@ -194,7 +194,7 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     );
     mark_all_fresh(&mut benzene);
 
-    perceive_aromaticity(&mut benzene, AromaticityModel::RdkitLike)
+    perception_api::perceive_aromaticity(&mut benzene, AromaticityModel::RdkitLike)
         .expect("benzene should be supported");
 
     assert_eq!(benzene.perception().valence, ComputedState::Fresh);

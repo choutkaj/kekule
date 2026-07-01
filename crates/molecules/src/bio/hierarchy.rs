@@ -5,18 +5,47 @@ use crate::core::*;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MacroMolecule {
-    pub mol: Molecule,
-    pub hierarchy: BioHierarchy,
+    graph: Molecule,
+    hierarchy: BioHierarchy,
 }
 
 impl MacroMolecule {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_parts(graph: Molecule, hierarchy: BioHierarchy) -> Self {
+        Self { graph, hierarchy }
+    }
+
+    pub fn graph(&self) -> &Molecule {
+        &self.graph
+    }
+
+    pub fn graph_mut(&mut self) -> &mut Molecule {
+        self.graph.invalidate_topology();
+        &mut self.graph
+    }
+
+    pub(crate) fn graph_mut_raw(&mut self) -> &mut Molecule {
+        &mut self.graph
+    }
+
+    pub fn hierarchy(&self) -> &BioHierarchy {
+        &self.hierarchy
+    }
+
+    pub fn hierarchy_mut(&mut self) -> &mut BioHierarchy {
+        &mut self.hierarchy
+    }
+
     pub fn add_atom_site(
         &mut self,
         residue: ResidueId,
         atom: AtomId,
         metadata: AtomSiteMetadata,
     ) -> std::result::Result<AtomSiteId, BioHierarchyError> {
-        self.mol
+        self.graph
             .atom(atom)
             .map_err(|_| BioHierarchyError::InvalidAtomId(atom))?;
         self.hierarchy.add_atom_site(residue, atom, metadata)

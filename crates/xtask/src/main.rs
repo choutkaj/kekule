@@ -8,16 +8,15 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
-use molecules::prelude::{
-    perceive_aromaticity, perceive_ring_membership, perceive_ring_set, perceive_valence,
-    read_mmcif_str, read_mol_v2000_str, read_mol_v3000_str, read_smiles_str,
-    sanitize_small_molecule, write_canonical_smiles, write_mol_v2000, write_mol_v3000,
-    write_sdf_v2000, write_smiles, AromaticityModel, Atom, AtomId, AtomRadical, Bond, BondOrder,
-    BondStereo, CanonicalSmilesWriteOptions, MacroMolecule, MmcifParseOptions, Molecule, PropValue,
-    SanitizeOptions, SdfParseOptions, SdfRecord, SmallMolecule, SmilesParseOptions,
-    SmilesWriteOptions, ValenceModel,
+use molecules::{
+    bio::{self, MacroMolecule, MmcifParseOptions, Residue},
+    core::{Atom, AtomId, AtomRadical, Bond, BondOrder, BondStereo, Molecule, Point3, PropValue},
+    molfile,
+    perception::{self, AromaticityModel, SanitizeError, SanitizeOptions, ValenceModel},
+    sdf::{self, SdfParseOptions, SdfRecord},
+    small::SmallMolecule,
+    smiles::{self, CanonicalSmilesWriteOptions, SmilesParseOptions, SmilesWriteOptions},
 };
-use molecules::read_sdf_v2000_records;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

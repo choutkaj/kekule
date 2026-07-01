@@ -7,6 +7,8 @@ description: Add, plan, implement, or maintain molecules features through the ca
 
 Use this skill for builder-mode work in `molecules`.
 
+Canonical flow: add -> optional research -> plan -> implement.
+
 ## Start
 
 1. Read `ARCHITECTURE.md`, `AGENTS.md`, and the relevant `features/<feature-id>/` directory.

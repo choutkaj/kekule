@@ -405,11 +405,6 @@ impl Bond {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct SmallMolecule {
-    pub mol: Molecule,
-}
-
 pub type Result<T> = std::result::Result<T, MoleculeError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

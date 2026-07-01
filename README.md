@@ -24,17 +24,17 @@ use molecules::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse SMILES into a small-molecule graph. Parsing does not sanitize.
-    let mut molecule = read_smiles_str("c1ccccc1O", SmilesParseOptions)?;
+    let mut molecule = SmallMolecule::from_smiles("c1ccccc1O")?;
 
     // Run chemistry perception, including valence, rings, and aromaticity.
-    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())?;
+    molecule.sanitize()?;
 
     // Inspect the graph.
-    println!("atoms: {}", molecule.mol.atom_count());
-    println!("bonds: {}", molecule.mol.bond_count());
+    println!("atoms: {}", molecule.atom_count());
+    println!("bonds: {}", molecule.bond_count());
 
     // Write deterministic non-isomeric canonical SMILES.
-    let canonical = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)?;
+    let canonical = molecule.to_canonical_smiles()?;
     println!("canonical SMILES: {canonical}");
 
     Ok(())

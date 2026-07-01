@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::algorithms::*;
 use crate::core::*;
+use crate::small::SmallMolecule;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SanitizeOptions {
@@ -62,12 +63,12 @@ pub fn sanitize_small_molecule_with_ring_options(
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
     let mut staged = molecule.clone();
-    normalize_sanitize_charges(&mut staged.mol);
+    normalize_sanitize_charges(staged.graph_mut_raw());
     let skipped_ring_state =
-        (!options.perceive_rings).then(|| invalidate(staged.mol.perception.rings));
-    prepare_sanitize_states(&mut staged.mol, options);
+        (!options.perceive_rings).then(|| invalidate(staged.graph().perception.rings));
+    prepare_sanitize_states(staged.graph_mut_raw(), options);
     let valence = if options.perceive_valence {
-        let report = perceive_valence(&mut staged.mol, ValenceModel::RdkitLike);
+        let report = perceive_valence(staged.graph_mut_raw(), ValenceModel::RdkitLike);
         if !report.is_ok() {
             return Err(SanitizeError::Valence(report));
         }
@@ -77,7 +78,7 @@ pub fn sanitize_small_molecule_with_ring_options(
     };
     let ring_count = if options.perceive_rings {
         Some(
-            perceive_ring_set_with_options(&mut staged.mol, ring_options)
+            perceive_ring_set_with_options(staged.graph_mut_raw(), ring_options)
                 .map_err(SanitizeError::Rings)?
                 .len(),
         )
@@ -86,15 +87,15 @@ pub fn sanitize_small_molecule_with_ring_options(
     };
     if options.perceive_aromaticity {
         perceive_aromaticity_with_ring_options(
-            &mut staged.mol,
+            staged.graph_mut_raw(),
             AromaticityModel::RdkitLike,
             ring_options,
         )
         .map_err(SanitizeError::Aromaticity)?;
         if let Some(state) = skipped_ring_state {
-            staged.mol.perception.rings = state;
-            staged.mol.ring_membership = None;
-            staged.mol.ring_set = None;
+            staged.graph_mut_raw().perception.rings = state;
+            staged.graph_mut_raw().ring_membership = None;
+            staged.graph_mut_raw().ring_set = None;
         }
     }
     *molecule = staged;
