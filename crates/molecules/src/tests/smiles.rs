@@ -323,6 +323,37 @@ fn canonical_smiles_prefers_clean_simple_ring_closure() {
 }
 
 #[test]
+fn canonical_smiles_converges_after_aromaticity_perception() {
+    let mut aromatic = smiles_api::read_str_with_options("c1ccccc1", SmilesParseOptions)
+        .expect("aromatic benzene parses");
+    let mut kekule = smiles_api::read_str_with_options("C1=CC=CC=C1", SmilesParseOptions)
+        .expect("Kekule benzene parses");
+    perception_api::sanitize_with_options(&mut aromatic, SanitizeOptions::default())
+        .expect("aromatic benzene sanitizes");
+    perception_api::sanitize_with_options(&mut kekule, SanitizeOptions::default())
+        .expect("Kekule benzene sanitizes");
+
+    let aromatic_written =
+        smiles_api::write_canonical_with_options(&aromatic, CanonicalSmilesWriteOptions)
+            .expect("aromatic benzene canonicalizes");
+    let kekule_written =
+        smiles_api::write_canonical_with_options(&kekule, CanonicalSmilesWriteOptions)
+            .expect("perceived Kekule benzene canonicalizes");
+
+    assert_eq!(aromatic_written, kekule_written);
+    assert_eq!(aromatic_written, "c1ccccc1");
+}
+
+#[test]
+fn canonical_smiles_implementation_avoids_sanitizer_feedback() {
+    let source = include_str!("../io/smiles.rs");
+
+    assert!(!source.contains("canonical_smiles_candidate_sanitize_rank"));
+    assert!(!source.contains("canonical_smiles_semantic_signature"));
+    assert!(!source.contains("KekuleWhenStored"));
+}
+
+#[test]
 fn aromatic_smiles_omitted_bonds_sanitize_with_expected_hydrogens() {
     let mut benzene = smiles_api::read_str_with_options("c1ccccc1", SmilesParseOptions)
         .expect("benzene should parse");
@@ -660,6 +691,64 @@ fn fused_quinone_cn_core_excludes_carbonyl_centers() {
             .count(),
         20
     );
+}
+
+#[test]
+fn canonical_fused_quinone_cn_core_round_trip_matches_aromatic_shape() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "C1=CC=C2C(=C1)C(=O)C3=C(C2=O)C4=C(C=C3)C(=O)C5=CC=CC=C5N4",
+        SmilesParseOptions,
+    )
+    .expect("fused quinone should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused quinone should sanitize");
+
+    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical fused quinone should write");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("canonical fused quinone output should parse");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
+    assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
+    let original_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(molecule.graph());
+    let reparsed_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(reparsed.graph());
+    assert_eq!(
+        reparsed_aromatic_carbonyl_centers, original_aromatic_carbonyl_centers,
+        "{written}"
+    );
+    let aromatic_n_h_count = reparsed
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| {
+            atom.element.symbol() == "N"
+                && atom.aromatic
+                && atom
+                    .explicit_hydrogens
+                    .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+                    == 1
+        })
+        .count();
+    assert_eq!(aromatic_n_h_count, 1, "{written}");
+}
+
+fn aromatic_carbonyl_center_count(mol: &Molecule) -> usize {
+    mol.atoms()
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "C"
+                && atom.aromatic
+                && mol
+                    .incident_bonds(*atom_id)
+                    .expect("atom should be live")
+                    .any(|(_, bond)| {
+                        bond.order == BondOrder::Double
+                            && mol
+                                .atom(bond.other_atom(*atom_id))
+                                .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
+                    })
+        })
+        .count()
 }
 
 #[test]
