@@ -25,7 +25,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Validation
 
-- Unit tests compile public happy-path and namespaced API examples.
+- External integration tests compile public happy-path, namespaced, low-level graph, and macro-molecule API examples as downstream user code.
 - Workspace tests exercise the migrated validation tooling and existing chemistry/IO behavior through the new wrapper accessors.
 
 ## Out Of Scope
@@ -37,3 +37,4 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 - v1: Introduce architecture-aligned facade modules, a small prelude, and non-public wrapper graph fields.
 - v2: Move expert perception APIs under focused facade modules and add separate macro validation/sanitization surface.
+- v3: Add downstream-style integration tests for the architecture-level public API.
