@@ -161,8 +161,7 @@ fn macro_molecule_validates_atom_site_atom_ids() {
     );
 }
 
-#[test]
-fn macro_molecule_validates_and_sanitizes_separate_from_small_molecule_chemistry() {
+fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
     let mut macro_mol = MacroMolecule::default();
     let atom = macro_mol.graph_mut().add_atom(carbon());
     let mut conformer = Conformer::new();
@@ -190,6 +189,13 @@ fn macro_molecule_validates_and_sanitizes_separate_from_small_molecule_chemistry
         )
         .expect("atom site");
 
+    (macro_mol, atom)
+}
+
+#[test]
+fn macro_molecule_validates_and_sanitizes_separate_from_small_molecule_chemistry() {
+    let (mut macro_mol, atom) = macro_molecule_with_valid_atom_site();
+
     assert_eq!(macro_mol.models().count(), 1);
     assert_eq!(macro_mol.chains().count(), 1);
     assert_eq!(macro_mol.residues().count(), 1);
@@ -213,6 +219,37 @@ fn macro_molecule_validates_and_sanitizes_separate_from_small_molecule_chemistry
 }
 
 #[test]
+fn macro_molecule_default_sanitize_only_validates_current_state() {
+    let options = MacroSanitizeOptions::default();
+    assert!(options.validate_first);
+    assert!(options.validate_coordinates);
+    assert!(!options.normalize_elements);
+    assert!(!options.normalize_atom_site_metadata);
+    assert!(!options.recognize_standard_residues);
+    assert!(!options.assign_template_bonds);
+    assert!(!options.assign_polymer_bonds);
+    assert!(!options.detect_disulfides);
+    assert_eq!(options.altloc_policy, AltLocPolicy::PreserveAll);
+    assert_eq!(options.ligand_policy, LigandSanitizePolicy::LeaveRaw);
+
+    let (mut macro_mol, _) = macro_molecule_with_valid_atom_site();
+    let before = macro_mol.clone();
+    let sanitize = macro_mol.sanitize().expect("default sanitize validates");
+
+    assert_eq!(macro_mol, before);
+    assert_eq!(
+        sanitize
+            .validation
+            .expect("validation report")
+            .atom_sites_checked,
+        1
+    );
+    assert_eq!(sanitize.normalized_atom_sites, 0);
+    assert_eq!(sanitize.recognized_residues, 0);
+    assert_eq!(sanitize.assigned_bonds, 0);
+}
+
+#[test]
 fn macro_molecule_validation_rejects_cross_layer_inconsistency() {
     let graph = Molecule::new();
     let mut hierarchy = BioHierarchy::new();
@@ -232,6 +269,24 @@ fn macro_molecule_validation_rejects_cross_layer_inconsistency() {
             site,
             atom: AtomId::new(0)
         }
+    );
+}
+
+#[test]
+fn macro_molecule_sanitize_rejects_unimplemented_residue_recognition() {
+    let (mut macro_mol, _) = macro_molecule_with_valid_atom_site();
+    let options = MacroSanitizeOptions {
+        recognize_standard_residues: true,
+        ..MacroSanitizeOptions::default()
+    };
+
+    assert_eq!(
+        macro_mol
+            .sanitize_with_options(options)
+            .expect_err("unsupported residue recognition fails"),
+        MacroSanitizeError::UnsupportedOption(
+            "element normalization, atom-site metadata normalization, or residue recognition is not implemented"
+        )
     );
 }
 
