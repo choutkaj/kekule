@@ -15,27 +15,52 @@ For already-implemented features, see the [feature dashboard](features/DASHBOARD
 
 ## Basic Usage
 
+The public API is organized around a small prelude plus focused format and workflow modules. Parsing, sanitization, validation, and writing are separate steps so callers can choose when interpretation happens.
+
 ### Small molecules
 
-`molecules` uses a small-molecule workflow where parsing, sanitization/perception, and writing are explicit steps. Parse input into a molecular graph, sanitize it when you want chemistry-derived state such as valence or aromaticity, then write or inspect the result. This keeps raw file I/O separate from chemical perception.
+Use `SmallMolecule` for the common small-molecule path. Parsing a SMILES string creates the graph without running perception; `sanitize` adds chemistry-derived state such as valence, rings, and aromaticity.
 
 ```rust
 use molecules::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse SMILES into a small-molecule graph. Parsing does not sanitize.
-    let mut molecule = SmallMolecule::from_smiles("c1ccccc1O")?;
+    let mut mol = SmallMolecule::from_smiles("c1ccccc1O")?;
+    mol.sanitize()?;
 
-    // Run chemistry perception, including valence, rings, and aromaticity.
-    molecule.sanitize()?;
+    assert_eq!(mol.atom_count(), 7);
+    assert_eq!(mol.bond_count(), 7);
 
-    // Inspect the graph.
-    println!("atoms: {}", molecule.atom_count());
-    println!("bonds: {}", molecule.bond_count());
-
-    // Write deterministic non-isomeric canonical SMILES.
-    let canonical = molecule.to_canonical_smiles()?;
+    let canonical = mol.to_canonical_smiles()?;
     println!("canonical SMILES: {canonical}");
+
+    Ok(())
+}
+```
+
+### Macromolecules
+
+Use the `mmcif` facade for macromolecular file I/O. Reading mmCIF parses atom-site data into a `MacroMolecule`; validation remains an explicit follow-up step.
+
+```rust
+use molecules::mmcif::{self, MmcifParseOptions};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_seq_id
+C C1 GLY A 1
+"#;
+
+    let macro_mol = mmcif::read_str(input, MmcifParseOptions::default())?;
+    macro_mol.validate()?;
+
+    println!("atoms: {}", macro_mol.graph().atom_count());
 
     Ok(())
 }

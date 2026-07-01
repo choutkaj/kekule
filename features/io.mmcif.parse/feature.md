@@ -6,7 +6,8 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 
 ## Behavior/API
 
-- Exposes `bio::{MmcifParseOptions, MmcifParseError, read_mmcif_str}`.
+- Exposes `mmcif::{MmcifParseOptions, MmcifParseError, read_str}` as the preferred public facade.
+- Keeps `bio::read_mmcif_str` as a compatibility/convenience re-export.
 - Parses `_atom_site` loops into core atoms plus SMCRA hierarchy records.
 - Preserves model, chain, residue, atom-site labels, alternate locations, occupancy, B-factor, and insertion code where present.
 - Preserves `_atom_site.group_PDB`, `_atom_site.id`, label and author identifiers, and complete Cartesian coordinate triplets.
@@ -45,3 +46,4 @@ Parse mmCIF atom-site data into `MacroMolecule` while preserving label and autho
 - v4: Preserve label/auth component IDs separately and group ambiguous lenient residues by conservative contiguous occurrences.
 - v5: Reject duplicate `_atom_site` loop tags as malformed input.
 - v6: Clarify the public parser API under the `bio` facade.
+- v7: Add the dedicated `mmcif` public facade for macromolecular parsing.
