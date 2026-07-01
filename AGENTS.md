@@ -24,13 +24,14 @@ Use trunk-based development with short-lived feature branches.
 - Start each work branch from current `main`.
 - Use one branch per feature ID or tightly scoped set of directly dependent feature IDs.
 - Prefer branch names such as `codex/<feature-id>-<short-topic>`, `docs/<short-topic>`, or `hotfix/<short-topic>`.
+- For broad changes and/or refactors, namethe branch accordingly.
 - Open a PR for every nontrivial change.
 - Use draft PRs for larger or staged work.
 - Keep PRs small enough to review. Prefer stacked or sequential PRs over one large branch.
 - Rebase or merge from `main` before review if the branch has drifted.
 - Delete branches after merge.
 - Prefer squash merge for normal feature PRs so `main` remains readable.
-- Do not introduce a long-lived `develop` branch unless the release process later requires one.
+
 
 ## Architecture guardrails
 
