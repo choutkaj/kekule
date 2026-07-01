@@ -56,7 +56,7 @@ Equivalent explicit namespace usage:
 
 ```rust
 let mut mol = molecules::smiles::read_str("c1ccccc1O")?;
-molecules::perception::sanitize(&mut mol, SanitizeOptions::default())?;
+molecules::perception::sanitize(&mut mol)?;
 let canonical = molecules::smiles::write_canonical(&mol)?;
 ```
 
@@ -231,8 +231,155 @@ MacroMolecule
 - model, chain, residue, and atom-site iterators
 - lookup from `AtomId` to `AtomSite`
 - coordinate/conformer access through the graph
+- conservative validation of graph/hierarchy/coordinate consistency
+- conservative sanitization of structural metadata and connectivity
 
 Small-molecule algorithms should operate on `Molecule` where reasonable so extracted ligands, residues, and fragments from `MacroMolecule` can reuse them.
+
+## Macromolecule validation, sanitization, and preparation
+
+Macromolecules need their own validation and sanitization model. This model is related to, but not the same as, small-molecule sanitization.
+
+Small-molecule sanitization interprets chemistry:
+
+```text
+valence -> implicit hydrogens -> rings -> aromaticity -> stereochemistry -> consistency
+```
+
+Macromolecule validation and sanitization should focus on structure integrity:
+
+```text
+hierarchy -> atom-site metadata -> coordinates -> residue identity -> connectivity -> consistency
+```
+
+Do not blindly run full small-molecule sanitization over an entire protein, nucleic acid, or mmCIF structure.
+
+### Validation
+
+`validate` should be read-only. It checks whether the current object is internally consistent and reports problems without mutating the molecule.
+
+Recommended API:
+
+```rust
+impl MacroMolecule {
+    pub fn validate(&self) -> Result<MacroValidateReport, MacroValidateError>;
+    pub fn validate_with_options(
+        &self,
+        options: MacroValidateOptions,
+    ) -> Result<MacroValidateReport, MacroValidateError>;
+}
+```
+
+Validation should cover, at minimum:
+
+- graph/hierarchy consistency
+- valid model, chain, residue, and atom-site references
+- every `AtomSite` points to a live `AtomId`
+- atom-site uniqueness where required
+- duplicate or conflicting atom-site labels
+- coordinate/conformer consistency
+- malformed occupancy and B-factor metadata
+- missing required identifiers for the selected format/workflow
+- disconnected hierarchy entries
+- chain/residue ordering sanity where applicable
+
+Validation must not add bonds, delete atoms, select alternate locations, add hydrogens, assign charges, or alter residue identities.
+
+### Sanitization
+
+`sanitize` may mutate the macromolecule, but it should remain conservative and structural. It should normalize and perceive information that is already implied by the input, not perform invasive molecular modeling.
+
+Recommended API:
+
+```rust
+impl MacroMolecule {
+    pub fn sanitize(&mut self) -> Result<MacroSanitizeReport, MacroSanitizeError>;
+    pub fn sanitize_with_options(
+        &mut self,
+        options: MacroSanitizeOptions,
+    ) -> Result<MacroSanitizeReport, MacroSanitizeError>;
+}
+```
+
+Recommended option shape:
+
+```rust
+pub struct MacroSanitizeOptions {
+    pub validate_first: bool,
+    pub normalize_elements: bool,
+    pub normalize_atom_site_metadata: bool,
+    pub validate_coordinates: bool,
+    pub recognize_standard_residues: bool,
+    pub assign_template_bonds: bool,
+    pub assign_polymer_bonds: bool,
+    pub detect_disulfides: bool,
+    pub altloc_policy: AltLocPolicy,
+    pub ligand_policy: LigandSanitizePolicy,
+}
+
+pub enum AltLocPolicy {
+    PreserveAll,
+    SelectHighestOccupancy,
+    SelectLabel(String),
+    ErrorOnAltLoc,
+}
+
+pub enum LigandSanitizePolicy {
+    LeaveRaw,
+    SanitizeNonPolymerComponents,
+    SanitizeAllDisconnectedComponents,
+}
+```
+
+The default macro sanitization policy should be conservative:
+
+- validate graph/hierarchy consistency
+- normalize clear element/metadata quirks
+- validate coordinate/conformer consistency
+- recognize standard residues where unambiguous
+- assign standard template/polymer bonds only when the residue and atom names are clear
+- preserve alternate locations unless the user explicitly asks to select one
+- leave ligands raw unless the user explicitly asks for ligand/component sanitization
+
+By default, `MacroMolecule::sanitize()` should not:
+
+- add hydrogens
+- guess protonation states
+- assign partial charges
+- repair missing heavy atoms
+- mutate residue identities
+- choose and delete alternate locations
+- infer metal coordination as normal covalent bonds
+- run aromaticity perception over the entire protein
+- renumber chains or residues destructively
+
+### Preparation
+
+A future `prepare` layer may exist, but it is not part of the minimal core API contract.
+
+Preparation means modeling-oriented, potentially destructive or inferential work such as:
+
+- adding hydrogens
+- choosing protonation states
+- applying termini patches
+- repairing missing atoms or residues
+- selecting alternate conformations
+- assigning force-field atom types
+- assigning partial charges
+- resolving metals, cofactors, waters, ions, and covalent ligands for simulation
+- producing MD-ready or docking-ready structures
+
+This may eventually become part of `molecules`, but it may also be better outsourced to specialized crates built on top of `molecules`. The core library should not become a protein-preparation monolith unless the boundaries stay clean.
+
+If preparation is added, prefer a separate API namespace and explicit names:
+
+```rust
+macro_mol.validate()?;               // read-only consistency check
+macro_mol.sanitize()?;               // conservative structural normalization/perception
+macro_mol.prepare_with_options(...)?; // modeling preparation; possibly destructive/inferential
+```
+
+`prepare` should never be hidden inside parsing or default sanitization.
 
 ## File I/O
 
@@ -260,13 +407,13 @@ molecules::sdf::write_v2000(&records)
 
 Options structs should be future-proof. Avoid public zero-sized options types becoming permanent dead ends. If an options struct is public, prefer a real `Default` implementation and consider `#[non_exhaustive]` before the crate is published.
 
-## Perception and sanitization
+## Small-molecule perception and sanitization
 
-Chemical perception is explicit and staged.
+Small-molecule chemical perception is explicit and staged.
 
-The sanitizer is the high-level small-molecule perception pipeline. It should remain transactional: stage changes on a clone or temporary graph, return a useful error if perception fails, and only replace the original molecule after success.
+The small-molecule sanitizer is the high-level small-molecule perception pipeline. It should remain transactional: stage changes on a clone or temporary graph, return a useful error if perception fails, and only replace the original molecule after success.
 
-Sanitization stages include, at minimum:
+Small-molecule sanitization stages include, at minimum:
 
 ```text
 normalize import quirks
@@ -287,6 +434,8 @@ AromaticityModel::RdkitLike
 ```
 
 Aromaticity is a toolkit convention, not a single physical truth. The API should allow future models such as Daylight-like, MDL-like, OpenEye-like, Pauling, or custom research models without rewriting user code.
+
+Macromolecule validation/sanitization uses separate `MacroValidateOptions`, `MacroSanitizeOptions`, reports, and error types. Do not reuse small-molecule `SanitizeOptions` for macromolecules.
 
 ## Canonicalization and identity
 
@@ -323,10 +472,14 @@ Prefer domain-specific error types at module boundaries:
 - `RingPerceptionError`
 - `AromaticityError`
 - `BioHierarchyError`
+- `MacroValidateError`
+- `MacroSanitizeError`
+
+A future preparation API should use its own error type, for example `MacroPrepareError`, rather than overloading sanitization errors.
 
 A general crate-level error may be useful later for convenience workflows, but the prelude should not export a misleading `Result<T>` alias tied to only one error domain.
 
-Error messages should include enough location/context for user-facing diagnostics: character offset for SMILES, record/line for SDF/Molfile, atom/bond ID for graph/perception errors.
+Error messages should include enough location/context for user-facing diagnostics: character offset for SMILES, record/line for SDF/Molfile, atom/bond ID for graph/perception errors, and model/chain/residue/atom-site context for macromolecular errors.
 
 ## Validation
 
@@ -365,6 +518,8 @@ Before adding new features, keep the API shape disciplined:
 8. Keep caches and perception freshness mostly internal.
 9. Use explicit model enums for toolkit-convention algorithms.
 10. Add tests for public API examples, not only internal helper behavior.
+11. Keep macromolecule validation/sanitization separate from small-molecule chemical sanitization.
+12. Do not hide molecular preparation inside parsing or default sanitization.
 
 ## Feature-driven development
 
@@ -385,5 +540,6 @@ Recommended order:
 5. Keep compatibility aliases only where they are cheap and clearly marked as transitional.
 6. Update README examples to use the new happy-path API.
 7. Update tests so public examples compile and define the intended user experience.
+8. Add macromolecule validation/sanitization API design before implementing invasive preparation workflows.
 
 This migration is allowed to break the API because the crate is still pre-release. The goal is to fix the shape now, before downstream code and additional features make it expensive.
