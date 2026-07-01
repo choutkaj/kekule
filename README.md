@@ -41,6 +41,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Macromolecules
+
+Macromolecular file I/O uses its own facade. mmCIF parsing reads raw atom-site data into `MacroMolecule`; validation remains an explicit follow-up step.
+
+```rust
+use molecules::mmcif::MmcifParseOptions;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input = r#"
+data_demo
+loop_
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_seq_id
+C C1 GLY A 1
+"#;
+
+    let macro_mol = molecules::mmcif::read_str(input, MmcifParseOptions::default())?;
+    macro_mol.validate()?;
+
+    println!("atoms: {}", macro_mol.graph().atom_count());
+
+    Ok(())
+}
+```
+
 ## License
 
 `molecules` is available under the MIT license.

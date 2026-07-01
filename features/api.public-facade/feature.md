@@ -6,13 +6,13 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Behavior/API
 
-- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `perception`, and `canon`.
+- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, and `canon`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
 - `MacroMolecule` hides its raw graph and hierarchy fields behind `graph()`, `graph_mut()`, `hierarchy()`, and `hierarchy_mut()`.
 - `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and separate macro validation/sanitization APIs.
-- SMILES, Molfile, SDF, perception, and canonicalization expose namespaced functions matching the staged architecture.
+- SMILES, Molfile, SDF, mmCIF, perception, and canonicalization expose namespaced functions matching the staged architecture.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 
 ## Implementation Notes
@@ -37,3 +37,4 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 - v1: Introduce architecture-aligned facade modules, a small prelude, and non-public wrapper graph fields.
 - v2: Move expert perception APIs under focused facade modules and add separate macro validation/sanitization surface.
+- v3: Add a dedicated `mmcif` facade while keeping the `bio` mmCIF reader as a compatibility/convenience export.
