@@ -83,6 +83,14 @@ impl MacroMolecule {
                 "alternate-location selection is not implemented",
             ));
         }
+        if options.normalize_elements
+            || options.normalize_atom_site_metadata
+            || options.recognize_standard_residues
+        {
+            return Err(MacroSanitizeError::UnsupportedOption(
+                "element normalization, atom-site metadata normalization, or residue recognition is not implemented",
+            ));
+        }
         if options.assign_template_bonds
             || options.assign_polymer_bonds
             || options.detect_disulfides
@@ -247,10 +255,10 @@ impl Default for MacroSanitizeOptions {
     fn default() -> Self {
         Self {
             validate_first: true,
-            normalize_elements: true,
-            normalize_atom_site_metadata: true,
+            normalize_elements: false,
+            normalize_atom_site_metadata: false,
             validate_coordinates: true,
-            recognize_standard_residues: true,
+            recognize_standard_residues: false,
             assign_template_bonds: false,
             assign_polymer_bonds: false,
             detect_disulfides: false,
