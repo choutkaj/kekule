@@ -2,7 +2,7 @@
 
 ## Design goal
 
-`molecules` is a pure-Rust backend for small-molecule cheminformatics and macromolecular structure work. The API should feel small, predictable, and Rust-native at the surface while preserving lower-level access for algorithm development.
+`molecules` is a pure-Rust general backend for cheminformatics and molecular structure work. The scope is both small molecules and macromolecules. The API should feel small, predictable, and Rust-native at the surface while preserving lower-level access for algorithm development.
 
 The most important architectural rule is that the public API is not allowed to become a flat dump of every internal module. The crate should expose a stable, ergonomic facade first, and keep implementation details behind focused namespaces.
 
@@ -20,7 +20,7 @@ MacroMolecule   // structure-biology wrapper around Molecule plus BioHierarchy
 
 The domain wrappers provide the user-facing meaning:
 
-- `SmallMolecule` owns small-molecule convenience workflows: SMILES, SDF/Molfile, sanitization, valence, ring perception, aromaticity, stereochemistry, canonicalization, descriptors, fingerprints, and eventually substructure search.
+- `SmallMolecule` owns small-molecule convenience workflows: SMILES, SDF/Molfile, sanitization, valence, ring perception, aromaticity, stereochemistry, canonicalization, descriptors, fingerprints, and substructure search.
 - `MacroMolecule` owns macromolecular structure workflows: models, chains, residues, atom-site metadata, alternate locations, occupancy, B-factors, PDB/mmCIF identifiers, and coordinate-heavy structure operations.
 
 Biomolecular hierarchy information must stay in `BioHierarchy`, not in core `Atom`, unless the field is chemically general for both small molecules and macromolecules.
@@ -41,8 +41,6 @@ molecules
   canon        canonical ranking, identity, canonical graph utilities
   prelude      small set of common user-facing imports
 ```
-
-Implementation modules may have different internal names while the crate is evolving, but the public surface should move toward these namespaces. In particular, `lib.rs` should not use blanket root re-exports such as `pub use algorithms::*`, `pub use io::*`, or `pub use core::*` as the long-term public API.
 
 Preferred public usage:
 
@@ -155,7 +153,7 @@ The perception cache and freshness flags are implementation details. Users shoul
 
 ## SmallMolecule
 
-`SmallMolecule` should become a real public abstraction, not just a public field wrapper around `Molecule`.
+`SmallMolecule` should be a real public abstraction, not just a public field wrapper around `Molecule`.
 
 Preferred shape:
 
@@ -260,8 +258,6 @@ molecules::sdf::read_v2000_records(input)
 molecules::sdf::write_v2000(&records)
 ```
 
-Compatibility aliases may exist temporarily, but the namespaced API should be the documented target.
-
 Options structs should be future-proof. Avoid public zero-sized options types becoming permanent dead ends. If an options struct is public, prefer a real `Default` implementation and consider `#[non_exhaustive]` before the crate is published.
 
 ## Perception and sanitization
@@ -290,7 +286,7 @@ ValenceModel::RdkitLike
 AromaticityModel::RdkitLike
 ```
 
-Aromaticity is a toolkit convention, not a single physical truth. The API should allow future models such as Daylight-like, MDL-like, OpenEye-like, or custom research models without rewriting user code.
+Aromaticity is a toolkit convention, not a single physical truth. The API should allow future models such as Daylight-like, MDL-like, OpenEye-like, Pauling, or custom research models without rewriting user code.
 
 ## Canonicalization and identity
 
