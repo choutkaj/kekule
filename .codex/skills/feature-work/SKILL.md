@@ -1,30 +1,21 @@
 ---
 name: feature-work
-description: Add, research, plan, implement, maintain, and remediate molecules features through the canonical feature and audit workflow. Use for feature metadata, feature.md, implementation, validation fixtures, or dashboard updates.
+description: Add, plan, implement, or maintain molecules features through the canonical feature workflow. Use for feature metadata, feature.md, implementation, validation fixtures, or dashboard updates.
 ---
 
 # Feature Work
 
-Use this skill for builder-mode feature work in `molecules`.
-
-## Modes
-
-### Ordinary feature work
-
-```text
-add -> optional research -> plan -> implement
-```
-
-Start from one canonical feature ID and keep the change scoped to that feature plus direct infrastructure support.
+Use this skill for builder-mode work in `molecules`.
 
 ## Start
 
-1. Read `ARCHITECTURE.md`, `AGENTS.md`, and the relevant feature directory.
-2. Identify every affected feature ID before editing.
+1. Read `ARCHITECTURE.md`, `AGENTS.md`, and the relevant `features/<feature-id>/` directory.
+2. Identify the canonical feature ID and any directly affected dependent feature IDs.
 3. Treat `feature.toml` as machine-readable truth and `feature.md` as human-readable truth.
-4. Add a regression test for the defect or contract change before closing the work.
+4. Keep the implementation scoped to the feature plus direct infrastructure support.
+5. Add or update a regression test for each defect, behavior contract, or public API change.
 
-## Metadata
+## Feature metadata
 
 Feature metadata uses schema v2:
 
@@ -40,19 +31,13 @@ Feature metadata uses schema v2:
 
 Do not use `priority`, `status`, or `last_ai_review`.
 
-Increment `version` only when the feature's behavior, public API, or validation contract intentionally changes. Do not increment for typo fixes or behavior-preserving file moves.
+Increment `version` only when behavior, public API, or validation contract intentionally changes. Set `implemented = true` only when implementation is complete. Let `cargo xtask validate ... --update` record passing evidence and synchronize `validated`.
 
-Set `implemented = true` only when implementation is complete. Declare broad-validation corpora in `validation_required`. Do not hand-set corpus results: `cargo xtask validate ... --update` records passing evidence and synchronizes overall `validated`.
-
-Feature IDs and titles must describe canonical long-term capabilities, not maturity levels. Use `version`, `implemented`, `validated`, the Validation section, and Revision Notes to describe maturity, partial coverage, or missing goldens.
-
-Molecular validation fixtures must be externally supplied, not invented toy systems. Keep corpus descriptors, source locks, inputs, feature manifests, goldens, and evidence under `validation/corpora/<corpus-id>/`. Record source URLs and checksums in `sources.lock.json`, and generate molecular golden data only with the declared reference software.
-
-The `tiny` corpus is a fast wiring and regression tier, not broad validation by itself. Use declared PubChem, PDB, PL-REX, and Enamine corpora where applicable. Plain validation is read-only; use `--update` only after successful implementation-versus-golden comparison should become committed evidence.
+Feature IDs and titles describe long-term capabilities, not temporary maturity levels. Use `version`, `implemented`, `validated`, Validation, and Revision Notes to describe partial coverage or missing goldens.
 
 ## Feature docs
 
-Every feature must have `features/<feature-id>/feature.md` with:
+Every feature has `features/<feature-id>/feature.md` with:
 
 - Summary
 - Behavior/API
@@ -61,19 +46,26 @@ Every feature must have `features/<feature-id>/feature.md` with:
 - Out Of Scope
 - Revision Notes
 
-Keep the file concise and current. Do not recreate stale phase-specific planning, algorithm, specification, or validation documents.
+Keep feature docs concise and current. Do not recreate stale phase-specific planning, algorithm, specification, or validation documents.
 
-## Implementation constraints
+## Implementation guardrails
 
-- One core molecular graph is shared by `SmallMolecule` and `MacroMolecule`.
-- Biomolecular labels belong in `BioHierarchy`, not core `Atom`, unless chemically general.
-- Parsing and chemical perception remain separate.
-- Topology or chemistry-relevant mutation invalidates computed perception state.
-- Failed transactional operations leave their input unchanged.
-- Parsers return structured errors rather than panic.
-- Writers reject representations they cannot encode faithfully.
+- Follow `ARCHITECTURE.md` for API shape and module boundaries.
+- Keep `Molecule` as the raw graph kernel shared by `SmallMolecule` and `MacroMolecule`.
+- Keep parsing, sanitization, macromolecule validation, and preparation separate.
+- Keep biomolecular labels in `BioHierarchy`, not core `Atom` or `Bond`, unless chemically general.
+- Keep small-molecule and macromolecule sanitization options/reports/errors separate.
+- Mutations that affect topology or interpreted chemistry must invalidate computed state.
+- Failed transactional operations must leave inputs unchanged.
+- Parsers return structured errors rather than panics.
+- Writers reject chemistry they cannot encode faithfully.
 - RDKit and Biopython are reference tools only, not Rust runtime dependencies.
-- Do not weaken normalized comparisons, remove asserted fields, or regenerate goldens merely to obtain a pass.
+
+## Validation data
+
+Molecular validation fixtures must be externally supplied and provenance-pinned. Keep corpus descriptors, source locks, inputs, feature manifests, goldens, and evidence under `validation/corpora/<corpus-id>/`.
+
+The `tiny` corpus is a fast wiring/regression tier, not broad validation by itself. Use declared PubChem, PDB, PL-REX, and Enamine corpora where applicable. Plain validation is read-only; use `--update` only after implementation-versus-golden comparison passes and should become committed evidence.
 
 ## Checks
 
@@ -93,4 +85,3 @@ cargo xtask validate --feature <feature-id> --corpus tiny
 If metadata changes, run `cargo xtask dashboard` before `cargo xtask dashboard --check`.
 
 Report every command that was not run and why.
-
