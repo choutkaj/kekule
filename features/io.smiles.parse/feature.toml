@@ -1,7 +1,7 @@
 id = "io.smiles.parse"
 title = "SMILES parser"
 area = "io"
-version = 6
+version = 7
 implemented = true
 validated = false
 description = "Parse a practical subset of SMILES, including omitted aromatic bonds, without implicit sanitization."

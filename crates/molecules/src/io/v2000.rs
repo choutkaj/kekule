@@ -4,9 +4,6 @@ use std::fmt;
 use crate::core::*;
 use crate::small::SmallMolecule;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MolParseOptions;
-
 const V2000_MAX_ATOMS: usize = 999;
 const V2000_MAX_BONDS: usize = 999;
 

@@ -6,7 +6,7 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 
 ## Behavior/API
 
-- Exposes `AromaticityModel::RdkitLike`, `perceive_aromaticity`, and `perceive_aromaticity_with_ring_options`.
+- Exposes `perception::aromaticity::{AromaticityModel::RdkitLike, perceive_aromaticity, perceive_aromaticity_with_ring_options}`.
 - Requires or computes ring perception before assigning aromaticity.
 - Marks supported aromatic atoms and bonds and sets aromaticity perception state to fresh.
 - Clears prior aromatic flags deterministically before assignment.
@@ -200,3 +200,4 @@ Assign aromatic atom and bond flags for common organic ring systems using the RD
 - v80: Remove the localized seven-member active-chalcogen shape veto, leaving those rings to donor and Huckel analysis.
 - v81: Remove the localized five-member low-pi chalcogen nitrogen prefilter, leaving those rings to donor candidate analysis.
 - v82: Remove the localized zero-pi ring prefilter, leaving those rings to donor and Huckel analysis.
+- v83: Move the public expert API under the `perception::aromaticity` facade.

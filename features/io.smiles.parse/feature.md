@@ -6,7 +6,7 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 
 ## Behavior/API
 
-- Exposes `SmilesParseOptions`, `SmilesParseError`, and `read_smiles_str`.
+- Exposes `smiles::{SmilesParseOptions, SmilesParseError, read_str, read_str_with_options, read_sanitized_str}`.
 - Supports organic subset atoms, bracket atoms, branches, ring closures, dot fragments, common bond symbols, directional single-bond markers, charges, isotopes, explicit hydrogens, bracket tetrahedral markers, aromatic lowercase atoms including bracketed Se/Te chalcogens, and atom maps.
 - Supports one-digit ring labels and `%10` through `%99`.
 - Resolves omitted bonds between aromatic atoms, including ring closures, as aromatic bonds in the supported subset.
@@ -40,3 +40,4 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 - v4: Parse bracket tetrahedral `@`/`@@` markers as atom stereo metadata without assigning stereochemistry.
 - v5: Parse directional `/` and `\` bond markers as bond stereo metadata, and preserve no-implicit hydrogen semantics for metal-bound organic halogens.
 - v6: Parse bracketed aromatic Se/Te atoms and generalize metal-bound no-implicit preservation to valence-filled organic-subset atoms so canonical organometallic output can be reparsed and sanitized.
+- v7: Move the public parser API under the `smiles` facade and keep sanitizing reads explicit by name.

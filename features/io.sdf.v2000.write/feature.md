@@ -6,7 +6,7 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 
 ## Behavior/API
 
-- Exposes `write_sdf_v2000`.
+- Exposes `sdf::write_v2000`.
 - Writes Molfile V2000 blocks followed by `sdf.field.*` properties as SDF data fields.
 - Inherits exact radical and supported bond-stereo handling from the Molfile V2000 writer.
 - Does not run sanitization, canonicalization, or perception.
@@ -30,3 +30,4 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 
 - v1: SDF V2000 writer.
 - v2: Preserve exact Molfile radical and supported bond-stereo semantics in SDF records.
+- v3: Move the public writer API under the `sdf` facade.

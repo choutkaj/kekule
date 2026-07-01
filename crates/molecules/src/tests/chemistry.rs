@@ -83,7 +83,7 @@ fn failed_valence_sanitization_is_transactional() {
         mol.add_bond(carbon, hydrogen, BondOrder::Single)
             .expect("bond");
     }
-    perception_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
+    rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
     let mut molecule = SmallMolecule::from_graph(mol);
     let before = molecule.clone();
 
@@ -169,7 +169,7 @@ fn valence_reports_excess_common_valence() {
         mol.add_bond(c, h, BondOrder::Single).expect("bond");
     }
 
-    let report = perception_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+    let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
 
     assert_eq!(report.issues.len(), 1);
     assert!(!report.is_ok());

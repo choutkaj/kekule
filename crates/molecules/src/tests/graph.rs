@@ -377,7 +377,7 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         &["C", "C", "C"],
         &[BondOrder::Single, BondOrder::Single, BondOrder::Single],
     );
-    perception_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
+    rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
     mol.perception.valence = ComputedState::Fresh;
     mol.perception.aromaticity = ComputedState::Fresh;
     mol.perception.stereo = ComputedState::Fresh;

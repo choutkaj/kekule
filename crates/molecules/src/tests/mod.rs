@@ -1,6 +1,9 @@
 use crate::bio::*;
 use crate::core::*;
-use crate::perception::*;
+use crate::perception::{
+    aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
+    valence as valence_api, valence::*,
+};
 use crate::sdf::*;
 use crate::small::*;
 use crate::smiles::*;

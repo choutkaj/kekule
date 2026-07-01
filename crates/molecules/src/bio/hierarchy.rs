@@ -39,6 +39,77 @@ impl MacroMolecule {
         &mut self.hierarchy
     }
 
+    pub fn models(&self) -> impl Iterator<Item = (ModelId, &Model)> {
+        self.hierarchy.models()
+    }
+
+    pub fn chains(&self) -> impl Iterator<Item = (ChainId, &Chain)> {
+        self.hierarchy.chains()
+    }
+
+    pub fn residues(&self) -> impl Iterator<Item = (ResidueId, &Residue)> {
+        self.hierarchy.residues()
+    }
+
+    pub fn atom_sites(&self) -> impl Iterator<Item = (AtomSiteId, &AtomSite)> {
+        self.hierarchy.atom_sites()
+    }
+
+    pub fn atom_site_for_atom(&self, atom: AtomId) -> Option<&AtomSite> {
+        self.hierarchy.atom_site_for_atom(atom)
+    }
+
+    pub fn validate(&self) -> std::result::Result<MacroValidateReport, MacroValidateError> {
+        self.validate_with_options(MacroValidateOptions::default())
+    }
+
+    pub fn validate_with_options(
+        &self,
+        options: MacroValidateOptions,
+    ) -> std::result::Result<MacroValidateReport, MacroValidateError> {
+        validate_macro_molecule(self, options)
+    }
+
+    pub fn sanitize(&mut self) -> std::result::Result<MacroSanitizeReport, MacroSanitizeError> {
+        self.sanitize_with_options(MacroSanitizeOptions::default())
+    }
+
+    pub fn sanitize_with_options(
+        &mut self,
+        options: MacroSanitizeOptions,
+    ) -> std::result::Result<MacroSanitizeReport, MacroSanitizeError> {
+        if !matches!(options.altloc_policy, AltLocPolicy::PreserveAll) {
+            return Err(MacroSanitizeError::UnsupportedOption(
+                "alternate-location selection is not implemented",
+            ));
+        }
+        if options.assign_template_bonds
+            || options.assign_polymer_bonds
+            || options.detect_disulfides
+            || !matches!(options.ligand_policy, LigandSanitizePolicy::LeaveRaw)
+        {
+            return Err(MacroSanitizeError::UnsupportedOption(
+                "bond, disulfide, or ligand sanitization is not implemented",
+            ));
+        }
+        let validation = if options.validate_first || options.validate_coordinates {
+            Some(
+                self.validate_with_options(MacroValidateOptions {
+                    validate_coordinates: options.validate_coordinates,
+                })
+                .map_err(MacroSanitizeError::Validate)?,
+            )
+        } else {
+            None
+        };
+        Ok(MacroSanitizeReport {
+            validation,
+            normalized_atom_sites: 0,
+            recognized_residues: 0,
+            assigned_bonds: 0,
+        })
+    }
+
     pub fn add_atom_site(
         &mut self,
         residue: ResidueId,
@@ -50,6 +121,276 @@ impl MacroMolecule {
             .map_err(|_| BioHierarchyError::InvalidAtomId(atom))?;
         self.hierarchy.add_atom_site(residue, atom, metadata)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacroValidateOptions {
+    pub validate_coordinates: bool,
+}
+
+impl Default for MacroValidateOptions {
+    fn default() -> Self {
+        Self {
+            validate_coordinates: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MacroValidateReport {
+    pub models_checked: usize,
+    pub chains_checked: usize,
+    pub residues_checked: usize,
+    pub atom_sites_checked: usize,
+    pub conformers_checked: usize,
+    pub coordinates_checked: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MacroValidateError {
+    InvalidChainModel {
+        chain: ChainId,
+        model: ModelId,
+    },
+    InvalidResidueChain {
+        residue: ResidueId,
+        chain: ChainId,
+    },
+    InvalidResidueAtomSite {
+        residue: ResidueId,
+        site: AtomSiteId,
+    },
+    InvalidAtomSiteResidue {
+        site: AtomSiteId,
+        residue: ResidueId,
+    },
+    InvalidAtomSiteAtom {
+        site: AtomSiteId,
+        atom: AtomId,
+    },
+    InvalidAtomSiteOccupancy {
+        site: AtomSiteId,
+    },
+    InvalidAtomSiteBFactor {
+        site: AtomSiteId,
+    },
+    InvalidConformerAtom {
+        conformer: ConformerId,
+        atom: AtomId,
+    },
+}
+
+impl fmt::Display for MacroValidateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidChainModel { chain, model } => {
+                write!(
+                    f,
+                    "chain {} references invalid model {}",
+                    chain.raw(),
+                    model.raw()
+                )
+            }
+            Self::InvalidResidueChain { residue, chain } => write!(
+                f,
+                "residue {} references invalid chain {}",
+                residue.raw(),
+                chain.raw()
+            ),
+            Self::InvalidResidueAtomSite { residue, site } => write!(
+                f,
+                "residue {} references invalid atom-site {}",
+                residue.raw(),
+                site.raw()
+            ),
+            Self::InvalidAtomSiteResidue { site, residue } => write!(
+                f,
+                "atom-site {} references invalid residue {}",
+                site.raw(),
+                residue.raw()
+            ),
+            Self::InvalidAtomSiteAtom { site, atom } => {
+                write!(f, "atom-site {} references invalid atom {atom}", site.raw())
+            }
+            Self::InvalidAtomSiteOccupancy { site } => {
+                write!(f, "atom-site {} has non-finite occupancy", site.raw())
+            }
+            Self::InvalidAtomSiteBFactor { site } => {
+                write!(f, "atom-site {} has non-finite B-factor", site.raw())
+            }
+            Self::InvalidConformerAtom { conformer, atom } => write!(
+                f,
+                "conformer {} stores coordinates for invalid atom {atom}",
+                conformer.raw()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MacroValidateError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacroSanitizeOptions {
+    pub validate_first: bool,
+    pub normalize_elements: bool,
+    pub normalize_atom_site_metadata: bool,
+    pub validate_coordinates: bool,
+    pub recognize_standard_residues: bool,
+    pub assign_template_bonds: bool,
+    pub assign_polymer_bonds: bool,
+    pub detect_disulfides: bool,
+    pub altloc_policy: AltLocPolicy,
+    pub ligand_policy: LigandSanitizePolicy,
+}
+
+impl Default for MacroSanitizeOptions {
+    fn default() -> Self {
+        Self {
+            validate_first: true,
+            normalize_elements: true,
+            normalize_atom_site_metadata: true,
+            validate_coordinates: true,
+            recognize_standard_residues: true,
+            assign_template_bonds: false,
+            assign_polymer_bonds: false,
+            detect_disulfides: false,
+            altloc_policy: AltLocPolicy::PreserveAll,
+            ligand_policy: LigandSanitizePolicy::LeaveRaw,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AltLocPolicy {
+    PreserveAll,
+    SelectHighestOccupancy,
+    SelectLabel(String),
+    ErrorOnAltLoc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LigandSanitizePolicy {
+    LeaveRaw,
+    SanitizeNonPolymerComponents,
+    SanitizeAllDisconnectedComponents,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MacroSanitizeReport {
+    pub validation: Option<MacroValidateReport>,
+    pub normalized_atom_sites: usize,
+    pub recognized_residues: usize,
+    pub assigned_bonds: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MacroSanitizeError {
+    Validate(MacroValidateError),
+    UnsupportedOption(&'static str),
+}
+
+impl fmt::Display for MacroSanitizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Validate(error) => write!(f, "{error}"),
+            Self::UnsupportedOption(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for MacroSanitizeError {}
+
+fn validate_macro_molecule(
+    molecule: &MacroMolecule,
+    options: MacroValidateOptions,
+) -> std::result::Result<MacroValidateReport, MacroValidateError> {
+    let mut report = MacroValidateReport {
+        models_checked: molecule.hierarchy.models().count(),
+        chains_checked: 0,
+        residues_checked: 0,
+        atom_sites_checked: 0,
+        conformers_checked: 0,
+        coordinates_checked: 0,
+    };
+
+    for (chain_id, chain) in molecule.hierarchy.chains() {
+        molecule.hierarchy.model(chain.model).map_err(|_| {
+            MacroValidateError::InvalidChainModel {
+                chain: chain_id,
+                model: chain.model,
+            }
+        })?;
+        report.chains_checked += 1;
+    }
+    for (residue_id, residue) in molecule.hierarchy.residues() {
+        molecule.hierarchy.chain(residue.chain).map_err(|_| {
+            MacroValidateError::InvalidResidueChain {
+                residue: residue_id,
+                chain: residue.chain,
+            }
+        })?;
+        for site in &residue.atom_sites {
+            molecule.hierarchy.atom_site(*site).map_err(|_| {
+                MacroValidateError::InvalidResidueAtomSite {
+                    residue: residue_id,
+                    site: *site,
+                }
+            })?;
+        }
+        report.residues_checked += 1;
+    }
+    for (site_id, site) in molecule.hierarchy.atom_sites() {
+        molecule.hierarchy.residue(site.residue).map_err(|_| {
+            MacroValidateError::InvalidAtomSiteResidue {
+                site: site_id,
+                residue: site.residue,
+            }
+        })?;
+        molecule
+            .graph
+            .atom(site.atom)
+            .map_err(|_| MacroValidateError::InvalidAtomSiteAtom {
+                site: site_id,
+                atom: site.atom,
+            })?;
+        if site
+            .metadata
+            .occupancy
+            .is_some_and(|value| !value.is_finite())
+        {
+            return Err(MacroValidateError::InvalidAtomSiteOccupancy { site: site_id });
+        }
+        if site
+            .metadata
+            .b_factor
+            .is_some_and(|value| !value.is_finite())
+        {
+            return Err(MacroValidateError::InvalidAtomSiteBFactor { site: site_id });
+        }
+        report.atom_sites_checked += 1;
+    }
+    if options.validate_coordinates {
+        for (conformer_id, conformer) in molecule.graph.conformers() {
+            report.conformers_checked += 1;
+            for (atom, point) in conformer.positions() {
+                molecule.graph.atom(atom).map_err(|_| {
+                    MacroValidateError::InvalidConformerAtom {
+                        conformer: conformer_id,
+                        atom,
+                    }
+                })?;
+                if point.x.is_finite() && point.y.is_finite() && point.z.is_finite() {
+                    report.coordinates_checked += 1;
+                } else {
+                    return Err(MacroValidateError::InvalidConformerAtom {
+                        conformer: conformer_id,
+                        atom,
+                    });
+                }
+            }
+        }
+    }
+    Ok(report)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

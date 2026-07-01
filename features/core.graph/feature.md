@@ -12,7 +12,7 @@ Store atoms, bonds, properties, and computed-state invalidation behind stable ty
 - Iterates live atoms, live bonds, neighbors, and incident bonds.
 - Preserves stable `AtomId` and `BondId` values after deletion.
 - Returns scoped `AtomMut` and `BondMut` guards from mutable graph access.
-- Exposes computed perception state read-only.
+- Tracks computed perception state internally without exposing cache freshness as public API.
 
 ## Implementation Notes
 
@@ -40,3 +40,4 @@ Store atoms, bonds, properties, and computed-state invalidation behind stable ty
 
 - v1: Stable-ID molecular graph and wrapper integration.
 - v2: Centralize chemistry invalidation in scoped mutation guards, remove mutable perception-state access, clear stale ring caches, and preserve state across property/coordinate edits.
+- v3: Hide perception freshness/cache state from public core API while retaining internal invalidation checks.

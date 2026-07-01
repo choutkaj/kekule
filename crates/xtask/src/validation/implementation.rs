@@ -219,10 +219,11 @@ pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord
             });
             continue;
         }
-        let (status, molecule) = match smiles::read_str_with_options(&smiles, SmilesParseOptions) {
-            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
-            Err(_) => ("parse_error".to_owned(), None),
-        };
+        let (status, molecule) =
+            match smiles::read_str_with_options(&smiles, SmilesParseOptions::default()) {
+                Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+                Err(_) => ("parse_error".to_owned(), None),
+            };
         records.push(IndexedSmilesRecord {
             record_index: index,
             status,
@@ -246,10 +247,11 @@ pub(crate) fn read_canonical_smiles_records(
         let mut parts = line.splitn(2, char::is_whitespace);
         let smiles = parts.next().unwrap_or_default().to_owned();
         let title = parts.next().unwrap_or_default().trim().to_owned();
-        let (status, molecule) = match smiles::read_str_with_options(&smiles, SmilesParseOptions) {
-            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
-            Err(_) => ("parse_error".to_owned(), None),
-        };
+        let (status, molecule) =
+            match smiles::read_str_with_options(&smiles, SmilesParseOptions::default()) {
+                Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+                Err(_) => ("parse_error".to_owned(), None),
+            };
         records.push(IndexedSmilesRecord {
             record_index: index,
             status,
@@ -363,7 +365,7 @@ pub(crate) fn conformer_atom_json(id: AtomId, atom: &Atom) -> Value {
 }
 
 pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let membership = perception::perceive_ring_membership(record.molecule.graph_mut());
+    let membership = rings::perceive_ring_membership(record.molecule.graph_mut());
     let mol = record.molecule.graph();
     json!({
         "record_index": record.record_index,
@@ -375,7 +377,7 @@ pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Va
 }
 
 pub(crate) fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
-    match perception::perceive_ring_set(record.molecule.graph_mut()) {
+    match rings::perceive_ring_set(record.molecule.graph_mut()) {
         Ok(ring_set) => json!({
             "record_index": record.record_index,
             "status": "ok",
@@ -411,7 +413,7 @@ pub(crate) fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Val
 }
 
 pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let report = perception::perceive_valence(record.molecule.graph_mut(), ValenceModel::RdkitLike);
+    let report = valence::perceive_valence(record.molecule.graph_mut(), ValenceModel::RdkitLike);
     if !report.is_ok() {
         return json!({
             "record_index": record.record_index,
@@ -442,7 +444,7 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
         },
     )
     .and_then(|_| {
-        perception::perceive_aromaticity(record.molecule.graph_mut(), AromaticityModel::RdkitLike)
+        aromaticity::perceive_aromaticity(record.molecule.graph_mut(), AromaticityModel::RdkitLike)
             .map_err(SanitizeError::Aromaticity)
     });
     if status.is_err() {
@@ -468,8 +470,8 @@ pub(crate) fn smiles_write_record_json(
     let Some(molecule) = &record.molecule else {
         return Ok(smiles_error_record_json(record));
     };
-    let written = smiles::write_with_options(molecule, SmilesWriteOptions)?;
-    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions) {
+    let written = smiles::write_with_options(molecule, SmilesWriteOptions::default())?;
+    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -505,8 +507,9 @@ pub(crate) fn canonical_smiles_record_json(
             "input_smiles": record.input_smiles,
         }));
     }
-    let written = smiles::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)?;
-    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions) {
+    let written =
+        smiles::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions::default())?;
+    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -535,14 +538,13 @@ pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
     let Some(molecule) = &record.molecule else {
         return smiles_error_record_json(record);
     };
-    let written = smiles::write_with_options(molecule, SmilesWriteOptions);
-    let round_trip =
-        match written.as_ref().map_err(|_| ()).and_then(|text| {
-            smiles::read_str_with_options(text, SmilesParseOptions).map_err(|_| ())
-        }) {
-            Ok(reparsed) => smiles_sanitized_semantic_json(reparsed),
-            Err(_) => json!({ "status": "write_reparse_error" }),
-        };
+    let written = smiles::write_with_options(molecule, SmilesWriteOptions::default());
+    let round_trip = match written.as_ref().map_err(|_| ()).and_then(|text| {
+        smiles::read_str_with_options(text, SmilesParseOptions::default()).map_err(|_| ())
+    }) {
+        Ok(reparsed) => smiles_sanitized_semantic_json(reparsed),
+        Err(_) => json!({ "status": "write_reparse_error" }),
+    };
     json!({
         "record_index": record.record_index,
         "status": "ok",

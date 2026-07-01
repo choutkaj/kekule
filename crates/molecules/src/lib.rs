@@ -57,7 +57,7 @@ pub mod smiles {
 }
 
 pub mod molfile {
-    pub use crate::io::{MolParseOptions, MolWriteError, SdfParseError};
+    pub use crate::io::{MolWriteError, SdfParseError};
 
     use crate::small::SmallMolecule;
 
@@ -103,15 +103,27 @@ pub mod sdf {
 }
 
 pub mod perception {
-    pub use crate::algorithms::{
-        perceive_aromaticity, perceive_aromaticity_with_ring_options, perceive_ring_membership,
-        perceive_ring_set, perceive_ring_set_with_options, perceive_valence, AromaticityError,
-        AromaticityModel, Ring, RingMembership, RingPerceptionError, RingPerceptionOptions,
-        RingSet, RingWork, ValenceIssue, ValenceModel, ValenceReport,
-    };
     pub use crate::chemistry::{SanitizeError, SanitizeOptions, SanitizeReport};
 
     use crate::small::SmallMolecule;
+
+    pub mod valence {
+        pub use crate::algorithms::{perceive_valence, ValenceIssue, ValenceModel, ValenceReport};
+    }
+
+    pub mod rings {
+        pub use crate::algorithms::{
+            perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options, Ring,
+            RingMembership, RingPerceptionError, RingPerceptionOptions, RingSet, RingWork,
+        };
+    }
+
+    pub mod aromaticity {
+        pub use crate::algorithms::{
+            perceive_aromaticity, perceive_aromaticity_with_ring_options, AromaticityError,
+            AromaticityModel,
+        };
+    }
 
     pub fn sanitize(molecule: &mut SmallMolecule) -> Result<SanitizeReport, SanitizeError> {
         crate::chemistry::sanitize_small_molecule(molecule, SanitizeOptions::default())
@@ -127,7 +139,7 @@ pub mod perception {
     pub fn sanitize_with_ring_options(
         molecule: &mut SmallMolecule,
         options: SanitizeOptions,
-        ring_options: RingPerceptionOptions,
+        ring_options: rings::RingPerceptionOptions,
     ) -> Result<SanitizeReport, SanitizeError> {
         crate::chemistry::sanitize_small_molecule_with_ring_options(molecule, options, ring_options)
     }

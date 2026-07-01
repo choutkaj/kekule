@@ -162,6 +162,112 @@ fn macro_molecule_validates_atom_site_atom_ids() {
 }
 
 #[test]
+fn macro_molecule_validates_and_sanitizes_separate_from_small_molecule_chemistry() {
+    let mut macro_mol = MacroMolecule::default();
+    let atom = macro_mol.graph_mut().add_atom(carbon());
+    let mut conformer = Conformer::new();
+    conformer.set_position(atom, Point3::new(1.0, 2.0, 3.0));
+    macro_mol.graph_mut().add_conformer(conformer);
+
+    let model = macro_mol.hierarchy_mut().add_model("1");
+    let chain = macro_mol
+        .hierarchy_mut()
+        .add_chain(model, "A", None)
+        .expect("chain");
+    let residue = macro_mol
+        .hierarchy_mut()
+        .add_residue(chain, "GLY", Some(1), Some("1".to_owned()), None)
+        .expect("residue");
+    macro_mol
+        .add_atom_site(
+            residue,
+            atom,
+            AtomSiteMetadata {
+                occupancy: Some(1.0),
+                b_factor: Some(12.0),
+                ..AtomSiteMetadata::default()
+            },
+        )
+        .expect("atom site");
+
+    assert_eq!(macro_mol.models().count(), 1);
+    assert_eq!(macro_mol.chains().count(), 1);
+    assert_eq!(macro_mol.residues().count(), 1);
+    assert_eq!(macro_mol.atom_sites().count(), 1);
+    assert_eq!(macro_mol.atom_site_for_atom(atom).expect("site").atom, atom);
+
+    let report = macro_mol.validate().expect("macro molecule validates");
+    assert_eq!(report.models_checked, 1);
+    assert_eq!(report.chains_checked, 1);
+    assert_eq!(report.residues_checked, 1);
+    assert_eq!(report.atom_sites_checked, 1);
+    assert_eq!(report.conformers_checked, 1);
+    assert_eq!(report.coordinates_checked, 1);
+
+    let sanitize = macro_mol.sanitize().expect("macro molecule sanitizes");
+    assert_eq!(sanitize.validation, Some(report));
+    assert_eq!(sanitize.normalized_atom_sites, 0);
+    assert_eq!(sanitize.recognized_residues, 0);
+    assert_eq!(sanitize.assigned_bonds, 0);
+    assert_eq!(macro_mol.graph().bond_count(), 0);
+}
+
+#[test]
+fn macro_molecule_validation_rejects_cross_layer_inconsistency() {
+    let graph = Molecule::new();
+    let mut hierarchy = BioHierarchy::new();
+    let model = hierarchy.add_model("1");
+    let chain = hierarchy.add_chain(model, "A", None).expect("chain");
+    let residue = hierarchy
+        .add_residue(chain, "GLY", None, None, None)
+        .expect("residue");
+    let site = hierarchy
+        .add_atom_site(residue, AtomId::new(0), AtomSiteMetadata::default())
+        .expect("hierarchy accepts graph-external atom ids");
+    let macro_mol = MacroMolecule::from_parts(graph, hierarchy);
+
+    assert_eq!(
+        macro_mol.validate().expect_err("graph-external atom fails"),
+        MacroValidateError::InvalidAtomSiteAtom {
+            site,
+            atom: AtomId::new(0)
+        }
+    );
+}
+
+#[test]
+fn macro_molecule_sanitize_rejects_unsupported_preparation_options() {
+    let mut macro_mol = MacroMolecule::default();
+    let atom = macro_mol.graph_mut().add_atom(carbon());
+    let model = macro_mol.hierarchy_mut().add_model("1");
+    let chain = macro_mol
+        .hierarchy_mut()
+        .add_chain(model, "A", None)
+        .expect("chain");
+    let residue = macro_mol
+        .hierarchy_mut()
+        .add_residue(chain, "LIG", None, None, None)
+        .expect("residue");
+    macro_mol
+        .add_atom_site(residue, atom, AtomSiteMetadata::default())
+        .expect("atom site");
+
+    let options = MacroSanitizeOptions {
+        ligand_policy: LigandSanitizePolicy::SanitizeAllDisconnectedComponents,
+        ..MacroSanitizeOptions::default()
+    };
+
+    assert_eq!(
+        macro_mol
+            .sanitize_with_options(options)
+            .expect_err("unsupported ligand policy fails"),
+        MacroSanitizeError::UnsupportedOption(
+            "bond, disulfide, or ligand sanitization is not implemented"
+        )
+    );
+}
+
+#[test]
 fn core_atom_does_not_store_biomolecular_labels() {
     let atom = carbon();
 

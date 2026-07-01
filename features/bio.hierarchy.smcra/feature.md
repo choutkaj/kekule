@@ -9,6 +9,9 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - Exposes typed hierarchy IDs for models, chains, residues, and atom sites.
 - Stores biomolecular labels and atom-site metadata in `BioHierarchy`, not core `Atom`.
 - `MacroMolecule` owns one core `Molecule` plus one `BioHierarchy`.
+- `MacroMolecule` exposes model, chain, residue, and atom-site iterators plus `atom_site_for_atom`.
+- `MacroMolecule::validate` checks graph/hierarchy/coordinate consistency without mutation.
+- `MacroMolecule::sanitize` uses separate macro options, reports, and errors and rejects unsupported preparation-like requests.
 - Atom-site insertion validates that referenced core atoms exist.
 - Atom-site metadata preserves `_atom_site.group_PDB`, `_atom_site.id`, label/auth atom IDs, alternate location, occupancy, and B-factor.
 
@@ -36,3 +39,4 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - v1: SMCRA sidecar hierarchy for macromolecular parsing.
 - v2: Preserve atom-site row metadata and distinguish author-keyed residues when label sequence IDs are absent.
 - v3: Preserve label/auth component IDs separately and support conservative lenient occurrence grouping.
+- v4: Add direct macro hierarchy accessors plus conservative macro validation and sanitization APIs.

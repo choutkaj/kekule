@@ -590,16 +590,16 @@ fn comparison_normalizes_undirected_bonds_and_ring_order() {
 
 #[test]
 fn smiles_semantic_records_assert_topology_and_atom_identity() {
-    let single =
-        smiles::read_str_with_options("CC", SmilesParseOptions).expect("single bond should parse");
-    let double =
-        smiles::read_str_with_options("C=C", SmilesParseOptions).expect("double bond should parse");
+    let single = smiles::read_str_with_options("CC", SmilesParseOptions::default())
+        .expect("single bond should parse");
+    let double = smiles::read_str_with_options("C=C", SmilesParseOptions::default())
+        .expect("double bond should parse");
     assert_ne!(
         smiles_sanitized_bonds_json(single.graph()),
         smiles_sanitized_bonds_json(double.graph())
     );
 
-    let aromatic = smiles::read_str_with_options("c1ccccc1", SmilesParseOptions)
+    let aromatic = smiles::read_str_with_options("c1ccccc1", SmilesParseOptions::default())
         .expect("benzene should parse");
     let mut sanitized_aromatic = aromatic.clone();
     perception::sanitize_with_options(&mut sanitized_aromatic, SanitizeOptions::default())
@@ -608,8 +608,8 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(sanitized_aromatic.graph(), AtomId::new(0)),
         3
     );
-    let mut thiophene =
-        smiles::read_str_with_options("c1ccsc1", SmilesParseOptions).expect("thiophene parses");
+    let mut thiophene = smiles::read_str_with_options("c1ccsc1", SmilesParseOptions::default())
+        .expect("thiophene parses");
     perception::sanitize_with_options(&mut thiophene, SanitizeOptions::default())
         .expect("thiophene should sanitize");
     let sulfur_id = thiophene
@@ -620,7 +620,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     assert_eq!(explicit_valence_json(thiophene.graph(), sulfur_id), 2);
     let mut fused_triazine = smiles::read_str_with_options(
         "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
-        SmilesParseOptions,
+        SmilesParseOptions::default(),
     )
     .expect("fused triazine should parse");
     perception::sanitize_with_options(&mut fused_triazine, SanitizeOptions::default())
@@ -646,7 +646,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
 
-    let labeled = smiles::read_str_with_options("[13CH3:7]C", SmilesParseOptions)
+    let labeled = smiles::read_str_with_options("[13CH3:7]C", SmilesParseOptions::default())
         .expect("labeled carbon should parse");
     let atoms = smiles_sanitized_atoms_json(labeled.graph());
     assert!(atoms
@@ -686,9 +686,11 @@ fn canonical_smiles_validation_sanitizes_before_writing() {
 
 #[test]
 fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
-    let molecule =
-        smiles::read_str_with_options("CCCCCCCc1cc2c(=O)ccn(O)c2cc1", SmilesParseOptions)
-            .expect("aromatic carbonyl SMILES should parse");
+    let molecule = smiles::read_str_with_options(
+        "CCCCCCCc1cc2c(=O)ccn(O)c2cc1",
+        SmilesParseOptions::default(),
+    )
+    .expect("aromatic carbonyl SMILES should parse");
 
     let item = smiles_sanitized_semantic_json(molecule);
     let atoms = item["atoms"]
@@ -731,7 +733,7 @@ fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
 
 #[test]
 fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
-    let molecule = smiles::read_str_with_options("[nH]1cccc1", SmilesParseOptions)
+    let molecule = smiles::read_str_with_options("[nH]1cccc1", SmilesParseOptions::default())
         .expect("aromatic nH SMILES should parse");
 
     let item = smiles_sanitized_semantic_json(molecule);

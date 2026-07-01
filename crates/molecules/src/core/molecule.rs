@@ -6,7 +6,7 @@ use crate::algorithms::{RingMembership, RingSet};
 use super::*;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum ComputedState {
+pub(crate) enum ComputedState {
     #[default]
     Absent,
     Stale,
@@ -14,7 +14,7 @@ pub enum ComputedState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PerceptionState {
+pub(crate) struct PerceptionState {
     pub valence: ComputedState,
     pub rings: ComputedState,
     pub aromaticity: ComputedState,
@@ -22,7 +22,7 @@ pub struct PerceptionState {
 }
 
 impl PerceptionState {
-    pub fn invalidate_all(&mut self) {
+    pub(crate) fn invalidate_all(&mut self) {
         self.valence = invalidate(self.valence);
         self.rings = invalidate(self.rings);
         self.aromaticity = invalidate(self.aromaticity);
@@ -320,7 +320,8 @@ impl Molecule {
         &mut self.props
     }
 
-    pub fn perception(&self) -> &PerceptionState {
+    #[cfg(test)]
+    pub(crate) fn perception(&self) -> &PerceptionState {
         &self.perception
     }
 

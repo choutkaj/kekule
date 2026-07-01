@@ -6,7 +6,7 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 
 ## Behavior/API
 
-- Exposes `RingMembership` and `perceive_ring_membership`.
+- Exposes `perception::rings::{RingMembership, perceive_ring_membership}`.
 - Reports ring membership for live atoms and bonds.
 - Ignores deleted graph slots.
 - Sets ring perception state to fresh after successful perception.
@@ -36,3 +36,4 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - v1: Graph-cycle membership perception.
 - v2: Hide and clear cached membership after invalidating mutations.
 - v3: Replace recursive bridge traversal with an explicit stack for very large graphs.
+- v4: Move the public expert API under the `perception::rings` facade.

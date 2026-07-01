@@ -21,8 +21,7 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
     mol.add_bond(b, AtomId::new(3), BondOrder::Single)
         .expect("bond");
 
-    let ring_set =
-        perception_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
+    let ring_set = rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
 
     assert_eq!(ring_set.len(), 3);
     assert!(ring_set.rings().iter().all(|ring| ring.atoms.len() >= 4));
@@ -41,7 +40,7 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
         previous = atom;
     }
 
-    let ring_set = perception_api::perceive_ring_set(molecule.graph_mut())
+    let ring_set = rings_api::perceive_ring_set(molecule.graph_mut())
         .expect("long chain should perceive rings");
     assert!(ring_set.is_empty());
     assert_eq!(ring_set.work().atom_count, 20_000);
@@ -68,8 +67,7 @@ fn ladder_ring_work_is_instrumented() {
             .expect("rung");
     }
 
-    let ring_set =
-        perception_api::perceive_ring_set(&mut mol).expect("ladder should perceive rings");
+    let ring_set = rings_api::perceive_ring_set(&mut mol).expect("ladder should perceive rings");
     let work = ring_set.work();
     assert_eq!(ring_set.len(), 11);
     assert!(work.candidate_cycles >= ring_set.len());
@@ -91,7 +89,7 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
                 .expect("cage bond should be valid");
         }
     }
-    let error = perception_api::perceive_ring_set_with_options(
+    let error = rings_api::perceive_ring_set_with_options(
         &mut mol,
         RingPerceptionOptions {
             max_candidates: 2,
@@ -121,13 +119,12 @@ fn theta_graph_and_disconnected_mixture_are_deterministic() {
     mol.add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("disconnected tail");
 
-    let first =
-        perception_api::perceive_ring_set(&mut mol).expect("theta graph should perceive rings");
+    let first = rings_api::perceive_ring_set(&mut mol).expect("theta graph should perceive rings");
     let first_rings = first.rings().to_vec();
     assert_eq!(first.len(), 3);
     assert!(first.rings().iter().all(|ring| ring.atoms.len() == 4));
 
-    let second = perception_api::perceive_ring_set(&mut mol).expect("repeat should perceive rings");
+    let second = rings_api::perceive_ring_set(&mut mol).expect("repeat should perceive rings");
     assert_eq!(second.rings(), first_rings);
 }
 
@@ -137,7 +134,7 @@ fn cycle_size_limit_returns_structured_error() {
         &["C", "C", "C", "C", "C", "C", "C", "C", "C", "C"],
         &[BondOrder::Single; 10],
     );
-    let error = perception_api::perceive_ring_set_with_options(
+    let error = rings_api::perceive_ring_set_with_options(
         &mut mol,
         RingPerceptionOptions {
             max_cycle_size: 5,
@@ -182,7 +179,7 @@ fn ring_resource_errors_propagate_transactionally() {
 
     let mut aromatic = smiles_api::read_str_with_options("c1ccccc1", SmilesParseOptions)
         .expect("benzene should parse");
-    let error = perception_api::perceive_aromaticity_with_ring_options(
+    let error = aromaticity_api::perceive_aromaticity_with_ring_options(
         aromatic.graph_mut(),
         AromaticityModel::RdkitLike,
         RingPerceptionOptions {

@@ -1,7 +1,7 @@
 id = "io.sdf.v2000.write"
 title = "SDF V2000 writer"
 area = "io"
-version = 2
+version = 3
 implemented = true
 validated = false
 description = "Write one or more small molecules as SDF V2000 records with data fields."

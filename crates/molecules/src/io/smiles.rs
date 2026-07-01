@@ -8,12 +8,15 @@ use crate::io::MolWriteError;
 use crate::small::SmallMolecule;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SmilesParseOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SmilesWriteOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CanonicalSmilesWriteOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

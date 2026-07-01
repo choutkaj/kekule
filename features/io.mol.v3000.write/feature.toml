@@ -1,7 +1,7 @@
 id = "io.mol.v3000.write"
 title = "Molfile V3000 writer"
 area = "io"
-version = 3
+version = 4
 implemented = true
 validated = false
 description = "Write deterministic Molfile V3000 CTAB output for the supported raw graph subset."
