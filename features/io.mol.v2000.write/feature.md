@@ -6,7 +6,7 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 
 ## Behavior/API
 
-- Exposes `write_mol_v2000`.
+- Exposes `molfile::write_v2000`.
 - Emits atom coordinates from the first conformer when present.
 - Emits common bond orders plus `M  CHG`, `M  ISO`, and exact `M  RAD` records.
 - Emits supported V2000 bond stereo codes without conflating wedge direction and double-bond either stereo.
@@ -33,3 +33,4 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 - v1: V2000 writer.
 - v2: Validation contract excludes SDF data fields and passes the RDKit-backed `tiny` corpus.
 - v3: Write exact radical multiplicities and supported V2000 bond stereo codes; reject unsupported stereo/order combinations.
+- v4: Move the public writer API under the `molfile` facade.

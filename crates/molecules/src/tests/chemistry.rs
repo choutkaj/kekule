@@ -2,18 +2,19 @@ use super::*;
 
 #[test]
 fn valence_and_sanitization_are_explicit() {
-    let mut small = read_smiles_str("CCO", SmilesParseOptions).expect("smiles should parse");
-    assert_eq!(small.mol.perception().valence, ComputedState::Absent);
+    let mut small =
+        smiles_api::read_str_with_options("CCO", SmilesParseOptions).expect("smiles should parse");
+    assert_eq!(small.graph().perception().valence, ComputedState::Absent);
 
-    let report = sanitize_small_molecule(&mut small, SanitizeOptions::default())
+    let report = perception_api::sanitize_with_options(&mut small, SanitizeOptions::default())
         .expect("ethanol should sanitize");
 
     assert!(report.valence.expect("valence report").is_ok());
-    assert_eq!(small.mol.perception().valence, ComputedState::Fresh);
-    assert_eq!(small.mol.perception().rings, ComputedState::Fresh);
+    assert_eq!(small.graph().perception().valence, ComputedState::Fresh);
+    assert_eq!(small.graph().perception().rings, ComputedState::Fresh);
     assert_eq!(
         small
-            .mol
+            .graph()
             .atom(AtomId::new(2))
             .expect("oxygen")
             .implicit_hydrogens,
@@ -23,9 +24,9 @@ fn valence_and_sanitization_are_explicit() {
 
 #[test]
 fn sanitize_options_do_not_leave_skipped_passes_fresh() {
-    let mut baseline =
-        read_smiles_str("C1=CC=CC=C1", SmilesParseOptions).expect("benzene should parse");
-    sanitize_small_molecule(&mut baseline, SanitizeOptions::default())
+    let mut baseline = smiles_api::read_str_with_options("C1=CC=CC=C1", SmilesParseOptions)
+        .expect("benzene should parse");
+    perception_api::sanitize_with_options(&mut baseline, SanitizeOptions::default())
         .expect("benzene should sanitize");
 
     for mask in 0..8 {
@@ -35,11 +36,11 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             perceive_aromaticity: mask & 4 != 0,
         };
         let mut molecule = baseline.clone();
-        sanitize_small_molecule(&mut molecule, options)
+        perception_api::sanitize_with_options(&mut molecule, options)
             .unwrap_or_else(|error| panic!("options {mask:03b} should succeed: {error}"));
 
         assert_eq!(
-            molecule.mol.perception().valence,
+            molecule.graph().perception().valence,
             if options.perceive_valence {
                 ComputedState::Fresh
             } else {
@@ -48,7 +49,7 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             "valence state for options {mask:03b}"
         );
         assert_eq!(
-            molecule.mol.perception().rings,
+            molecule.graph().perception().rings,
             if options.perceive_rings {
                 ComputedState::Fresh
             } else {
@@ -57,7 +58,7 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             "ring state for options {mask:03b}"
         );
         assert_eq!(
-            molecule.mol.perception().aromaticity,
+            molecule.graph().perception().aromaticity,
             if options.perceive_aromaticity {
                 ComputedState::Fresh
             } else {
@@ -66,7 +67,7 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             "aromaticity state for options {mask:03b}"
         );
         assert_eq!(
-            molecule.mol.ring_set().is_some(),
+            molecule.graph().ring_set().is_some(),
             options.perceive_rings,
             "ring cache exposure for options {mask:03b}"
         );
@@ -82,11 +83,11 @@ fn failed_valence_sanitization_is_transactional() {
         mol.add_bond(carbon, hydrogen, BondOrder::Single)
             .expect("bond");
     }
-    perceive_ring_set(&mut mol).expect("ring perception should succeed");
-    let mut molecule = SmallMolecule { mol };
+    rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
+    let mut molecule = SmallMolecule::from_graph(mol);
     let before = molecule.clone();
 
-    let error = sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+    let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect_err("pentavalent carbon should fail valence");
 
     assert!(matches!(error, SanitizeError::Valence(_)));
@@ -96,10 +97,10 @@ fn failed_valence_sanitization_is_transactional() {
 #[test]
 fn failed_aromaticity_sanitization_is_transactional() {
     let (mol, _, _) = ring_molecule(&["Si", "C", "C", "C", "C", "C"], &[BondOrder::Aromatic; 6]);
-    let mut molecule = SmallMolecule { mol };
+    let mut molecule = SmallMolecule::from_graph(mol);
     let before = molecule.clone();
 
-    let error = sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+    let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect_err("unsupported explicitly aromatic silicon should fail");
 
     assert!(matches!(error, SanitizeError::Aromaticity(_)));
@@ -108,12 +109,13 @@ fn failed_aromaticity_sanitization_is_transactional() {
 
 #[test]
 fn successful_sanitization_is_idempotent() {
-    let mut molecule = read_smiles_str("CCO", SmilesParseOptions).expect("ethanol should parse");
-    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+    let mut molecule =
+        smiles_api::read_str_with_options("CCO", SmilesParseOptions).expect("ethanol should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("first sanitize should succeed");
     let once = molecule.clone();
 
-    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("second sanitize should succeed");
 
     assert_eq!(molecule, once);
@@ -127,9 +129,9 @@ fn sanitize_cleanup_invalidates_preexisting_perception() {
     mol.add_bond(chlorine, oxygen, BondOrder::Double)
         .expect("bond");
     mark_all_fresh(&mut mol);
-    let mut molecule = SmallMolecule { mol };
+    let mut molecule = SmallMolecule::from_graph(mol);
 
-    sanitize_small_molecule(
+    perception_api::sanitize_with_options(
         &mut molecule,
         SanitizeOptions {
             perceive_valence: false,
@@ -139,14 +141,21 @@ fn sanitize_cleanup_invalidates_preexisting_perception() {
     )
     .expect("cleanup-only sanitize should succeed");
 
-    assert_all_stale(&molecule.mol);
+    assert_all_stale(molecule.graph());
     assert_eq!(
-        molecule.mol.atom(chlorine).expect("chlorine").formal_charge,
+        molecule
+            .graph()
+            .atom(chlorine)
+            .expect("chlorine")
+            .formal_charge,
         1
     );
-    assert_eq!(molecule.mol.atom(oxygen).expect("oxygen").formal_charge, -1);
     assert_eq!(
-        molecule.mol.bond(BondId::new(0)).expect("bond").order,
+        molecule.graph().atom(oxygen).expect("oxygen").formal_charge,
+        -1
+    );
+    assert_eq!(
+        molecule.graph().bond(BondId::new(0)).expect("bond").order,
         BondOrder::Single
     );
 }
@@ -160,7 +169,7 @@ fn valence_reports_excess_common_valence() {
         mol.add_bond(c, h, BondOrder::Single).expect("bond");
     }
 
-    let report = perceive_valence(&mut mol, ValenceModel::RdkitLike);
+    let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
 
     assert_eq!(report.issues.len(), 1);
     assert!(!report.is_ok());

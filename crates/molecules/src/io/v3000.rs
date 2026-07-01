@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::core::*;
 use crate::io::{MolWriteError, SdfParseError};
+use crate::small::SmallMolecule;
 
 pub fn read_mol_v3000_str(input: &str) -> std::result::Result<SmallMolecule, SdfParseError> {
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
@@ -10,7 +11,7 @@ pub fn read_mol_v3000_str(input: &str) -> std::result::Result<SmallMolecule, Sdf
 }
 
 pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = &molecule.mol;
+    let mol = molecule.graph();
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let bonds = mol.bond_ids().collect::<Vec<_>>();
     let mut atom_index = BTreeMap::new();
@@ -207,7 +208,7 @@ fn parse_mol_v3000_lines(
     if conformer.positions().next().is_some() {
         mol.add_conformer(conformer);
     }
-    Ok(SmallMolecule { mol })
+    Ok(SmallMolecule::from_graph(mol))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,7 +6,7 @@ Parse a single Molfile V3000 CTAB into `SmallMolecule` using raw parsing semanti
 
 ## Behavior/API
 
-- Exposes `read_mol_v3000_str`.
+- Exposes `molfile::read_v3000_str`.
 - Parses three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND` sections, and line continuations.
 - Preserves title/program/comment properties, atom coordinates, bond orders, atom map numbers, formal charges, isotopes via `MASS`, radical multiplicities, and supported V3000 bond `CFG` stereo.
 - Rejects malformed sections, count mismatches, duplicate atom indices, out-of-range bond endpoints, unknown elements, non-finite coordinates, unsupported bond orders, and atom stereochemistry with structured parse errors.
@@ -33,3 +33,4 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 - v1: Feature contract reserved.
 - v2: Raw Molfile V3000 parser for CTAB atoms, bonds, coordinates, common atom metadata, and supported bond stereo.
 - v3: Declare the same required small-molecule validation corpora as V2000 Molfile parsing.
+- v4: Move the public parser API under the `molfile` facade.

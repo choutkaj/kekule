@@ -1,4 +1,15 @@
-use super::*;
+use crate::bio::*;
+use crate::core::*;
+use crate::perception::{
+    aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
+    valence as valence_api, valence::*,
+};
+use crate::sdf::*;
+use crate::small::*;
+use crate::smiles::*;
+use crate::{
+    bio as bio_api, canon, molfile, perception as perception_api, sdf, smiles as smiles_api,
+};
 
 pub(super) fn carbon() -> Atom {
     Atom::new(Element::from_symbol("C").expect("carbon should be available"))
@@ -86,6 +97,7 @@ mod chemistry;
 mod core_payload;
 mod graph;
 mod perception;
+mod public_api;
 mod ring_limits;
 mod smiles;
 mod v2000;

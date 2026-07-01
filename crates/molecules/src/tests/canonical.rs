@@ -2,11 +2,12 @@ use super::*;
 
 #[test]
 fn canonical_ranking_groups_symmetric_atoms() {
-    let mut molecule = read_smiles_str("CC(C)C", SmilesParseOptions).expect("isobutane parses");
-    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+    let mut molecule =
+        smiles_api::read_str_with_options("CC(C)C", SmilesParseOptions).expect("isobutane parses");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("isobutane sanitizes");
 
-    let ranking = canonical_atom_ranking(&molecule.mol);
+    let ranking = canon::atom_ranking(molecule.graph());
 
     assert_eq!(ranking.rank_count(), 2);
     assert_eq!(
@@ -25,40 +26,38 @@ fn canonical_ranking_groups_symmetric_atoms() {
 
 #[test]
 fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
-    let mut first = SmallMolecule {
-        mol: Molecule::new(),
-    };
-    let first_terminal_a = first.mol.add_atom(carbon());
-    let first_center = first.mol.add_atom(carbon());
-    let first_terminal_b = first.mol.add_atom(carbon());
+    let mut first = SmallMolecule::new();
+    let first_terminal_a = first.graph_mut().add_atom(carbon());
+    let first_center = first.graph_mut().add_atom(carbon());
+    let first_terminal_b = first.graph_mut().add_atom(carbon());
     first
-        .mol
+        .graph_mut()
         .add_bond(first_terminal_a, first_center, BondOrder::Single)
         .expect("bond should be valid");
     first
-        .mol
+        .graph_mut()
         .add_bond(first_center, first_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    sanitize_small_molecule(&mut first, SanitizeOptions::default()).expect("propane sanitizes");
+    perception_api::sanitize_with_options(&mut first, SanitizeOptions::default())
+        .expect("propane sanitizes");
 
-    let mut second = SmallMolecule {
-        mol: Molecule::new(),
-    };
-    let second_center = second.mol.add_atom(carbon());
-    let second_terminal_a = second.mol.add_atom(carbon());
-    let second_terminal_b = second.mol.add_atom(carbon());
+    let mut second = SmallMolecule::new();
+    let second_center = second.graph_mut().add_atom(carbon());
+    let second_terminal_a = second.graph_mut().add_atom(carbon());
+    let second_terminal_b = second.graph_mut().add_atom(carbon());
     second
-        .mol
+        .graph_mut()
         .add_bond(second_center, second_terminal_a, BondOrder::Single)
         .expect("bond should be valid");
     second
-        .mol
+        .graph_mut()
         .add_bond(second_center, second_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    sanitize_small_molecule(&mut second, SanitizeOptions::default()).expect("propane sanitizes");
+    perception_api::sanitize_with_options(&mut second, SanitizeOptions::default())
+        .expect("propane sanitizes");
 
-    let first_ranking = canonical_atom_ranking(&first.mol);
-    let second_ranking = canonical_atom_ranking(&second.mol);
+    let first_ranking = canon::atom_ranking(first.graph());
+    let second_ranking = canon::atom_ranking(second.graph());
 
     assert_eq!(
         first_ranking.rank_of(first_center),
@@ -76,12 +75,12 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
 
 #[test]
 fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
-    let mut molecule = read_smiles_str("[13CH3:7][CH3]", SmilesParseOptions)
+    let mut molecule = smiles_api::read_str_with_options("[13CH3:7][CH3]", SmilesParseOptions)
         .expect("mapped isotope molecule parses");
-    sanitize_small_molecule(&mut molecule, SanitizeOptions::default())
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("mapped isotope molecule sanitizes");
 
-    let ranking = canonical_atom_ranking(&molecule.mol);
+    let ranking = canon::atom_ranking(molecule.graph());
 
     assert_ne!(
         ranking.rank_of(AtomId::new(0)),

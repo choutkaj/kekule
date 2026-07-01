@@ -313,13 +313,13 @@ fn build_macro_molecule_from_atom_site_loop(
 
         let model = *models
             .entry(model_key.clone())
-            .or_insert_with(|| macro_mol.hierarchy.add_model(model_key.clone()));
+            .or_insert_with(|| macro_mol.hierarchy_mut().add_model(model_key.clone()));
         let chain_key = (model_key.clone(), hierarchy_chain_id.to_owned());
         let chain = if let Some(chain) = chains.get(&chain_key) {
             *chain
         } else {
             let chain = macro_mol
-                .hierarchy
+                .hierarchy_mut()
                 .add_chain(
                     model,
                     chain_label.to_owned(),
@@ -361,7 +361,7 @@ fn build_macro_molecule_from_atom_site_loop(
             *residue
         } else {
             let residue = macro_mol
-                .hierarchy
+                .hierarchy_mut()
                 .add_residue(
                     chain,
                     residue_name.to_owned(),
@@ -370,14 +370,14 @@ fn build_macro_molecule_from_atom_site_loop(
                     insertion_code.map(str::to_owned),
                 )
                 .map_err(|error| MmcifParseError::new(line, error.to_string()))?;
-            let residue_record = &mut macro_mol.hierarchy.residues[residue.index()];
+            let residue_record = &mut macro_mol.hierarchy_mut().residues[residue.index()];
             residue_record.label_comp_id = label_comp_id.map(str::to_owned);
             residue_record.author_comp_id = auth_comp_id.map(str::to_owned);
             residues.insert(residue_key, residue);
             residue
         };
 
-        let atom = macro_mol.mol.add_atom(Atom::new(element));
+        let atom = macro_mol.graph_mut_raw().add_atom(Atom::new(element));
         if let Some(point) = coordinates {
             conformer.set_position(atom, point);
             saw_coordinates = true;
@@ -407,7 +407,7 @@ fn build_macro_molecule_from_atom_site_loop(
             .map_err(|error| MmcifParseError::new(line, error.to_string()))?;
     }
     if saw_coordinates {
-        macro_mol.mol.add_conformer(conformer);
+        macro_mol.graph_mut_raw().add_conformer(conformer);
     }
 
     Ok(macro_mol)

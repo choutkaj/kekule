@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{Atom, AtomId, AtomRadical, Bond, BondOrder, Molecule};
+use crate::core::{Atom, AtomId, AtomRadical, Bond, BondOrder, Molecule};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalAtomRanking {

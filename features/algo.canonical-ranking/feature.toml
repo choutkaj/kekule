@@ -1,7 +1,7 @@
 id = "algo.canonical-ranking"
 title = "Canonical atom ranking"
 area = "algorithms"
-version = 2
+version = 3
 implemented = true
 validated = false
 description = "Assign deterministic non-stereo atom symmetry ranks for canonical SMILES and related deterministic workflows."

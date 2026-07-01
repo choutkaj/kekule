@@ -1,0 +1,24 @@
+id = "api.public-facade"
+title = "Public API facade"
+area = "api"
+version = 2
+implemented = true
+validated = false
+description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."
+depends_on = [
+  "core.graph",
+  "core.atom-bond",
+  "bio.hierarchy.smcra",
+  "chem.sanitize.rdkit-like",
+  "io.smiles.parse",
+  "io.smiles.write",
+  "io.smiles.canonical",
+  "io.mol.v2000.parse",
+  "io.mol.v2000.write",
+  "io.mol.v3000.parse",
+  "io.mol.v3000.write",
+  "io.sdf.v2000.parse",
+  "io.sdf.v2000.write",
+  "algo.canonical-ranking",
+]
+validation_required = []

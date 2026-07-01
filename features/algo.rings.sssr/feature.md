@@ -6,7 +6,7 @@ Compute a compact ring basis for downstream small-molecule perception.
 
 ## Behavior/API
 
-- Exposes `RingSet`, `Ring`, `RingWork`, `RingPerceptionOptions`, `RingPerceptionError`, `perceive_ring_set`, and `perceive_ring_set_with_options`.
+- Exposes `perception::rings::{RingSet, Ring, RingWork, RingPerceptionOptions, RingPerceptionError, perceive_ring_set, perceive_ring_set_with_options}`.
 - Reports ring atom and bond IDs for a deterministic cycle basis.
 - Reports graph size, candidate cycles, equivalent shortest paths, path expansions, queue/stack peaks, and total work.
 - Returns a structured resource-limit error without caching a partial ring set.
@@ -37,3 +37,4 @@ Compute a compact ring basis for downstream small-molecule perception.
 - v3: Fixed bridged and symmetric ring selection exposed by external PubChem validation.
 - v4: Hide and clear cached ring sets after invalidating mutations.
 - v5: Add bounded work instrumentation, structured resource errors, configurable limits, and iterative shortest-path reconstruction.
+- v6: Move the public expert API under the `perception::rings` facade.

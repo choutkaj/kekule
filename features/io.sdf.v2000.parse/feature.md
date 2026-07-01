@@ -6,7 +6,7 @@ Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 
 
 ## Behavior/API
 
-- Exposes `SdfParseOptions`, `SdfRecord`, `SdfParseError`, `read_sdf_v2000_str`, and `read_sdf_v2000_records`.
+- Exposes `sdf::{SdfParseOptions, SdfRecord, SdfParseError, read_v2000_str, read_v2000_records}`.
 - Parses V2000 Molfile blocks, coordinates, common atom metadata, supported bond stereo, and SDF data fields.
 - Preserves SDF title, program, comment, and data fields as molecule properties.
 - Rejects V3000 input and malformed graph endpoints.
@@ -40,3 +40,4 @@ Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 
 - v3: Handle fixed-width three-digit V2000 count and bond fields in larger external PubChem records.
 - v4: Inherit panic-free checked V2000 parsing and add SDF fuzz coverage.
 - v5: Inherit exact V2000 radical multiplicity and supported bond stereo parsing.
+- v6: Move the public parser API under the `sdf` facade.

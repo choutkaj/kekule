@@ -1,7 +1,7 @@
 id = "io.mol.v3000.parse"
 title = "Molfile V3000 parser"
 area = "io"
-version = 3
+version = 4
 implemented = true
 validated = false
 description = "Parse a raw Molfile V3000 CTAB into SmallMolecule without sanitization or perception."

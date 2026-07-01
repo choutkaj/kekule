@@ -6,7 +6,7 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 
 ## Behavior/API
 
-- Exposes `read_mol_v2000_str`.
+- Exposes `molfile::read_v2000_str`.
 - Preserves title/program/comment properties, atom coordinates, bond orders, atom map numbers, formal charges, isotopes, radical multiplicities, and supported V2000 bond stereo codes.
 - Rejects V3000, zero or out-of-range graph endpoints, non-ASCII structural fields, truncated records, malformed M records, non-finite coordinates, and counts above the V2000 limit.
 - Does not run sanitization, valence perception, ring perception, aromaticity, or stereochemistry perception.
@@ -38,3 +38,4 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 - v2: Preserve RDKit-compatible V2000 double-bond `STEREOANY` markers and parse fixed-width three-digit counts/endpoints.
 - v3: Make structural parsing byte-safe and checked, reject malformed counts/endpoints/M records, and add fuzz coverage.
 - v4: Preserve exact V2000 radical multiplicity and supported single-/double-bond stereo mappings.
+- v5: Move the public parser API under the `molfile` facade.

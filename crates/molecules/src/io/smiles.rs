@@ -5,14 +5,18 @@ use crate::algorithms::{canonical_atom_ranking, ordered_atom_pair, CanonicalAtom
 use crate::chemistry::{sanitize_small_molecule, SanitizeOptions};
 use crate::core::*;
 use crate::io::MolWriteError;
+use crate::small::SmallMolecule;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SmilesParseOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SmilesWriteOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CanonicalSmilesWriteOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,7 +237,7 @@ pub fn read_smiles_str(
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
-    Ok(SmallMolecule { mol })
+    Ok(SmallMolecule::from_graph(mol))
 }
 
 fn add_smiles_bond(
@@ -617,7 +621,7 @@ pub fn write_smiles(
     molecule: &SmallMolecule,
     _options: SmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
-    let mol = &molecule.mol;
+    let mol = molecule.graph();
     let plan = plan_smiles_write(mol)?;
     let mut parts = Vec::new();
     for start in &plan.roots {
@@ -630,7 +634,7 @@ pub fn write_canonical_smiles(
     molecule: &SmallMolecule,
     _options: CanonicalSmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
-    let mol = &molecule.mol;
+    let mol = molecule.graph();
     validate_smiles_writeable(mol, StereoWriteMode::Ignore)?;
     let ranking = canonical_atom_ranking(mol);
     let mut components = Vec::new();
@@ -753,7 +757,7 @@ fn canonical_smiles_candidate_sanitize_rank(
     if sanitize_small_molecule(&mut molecule, SanitizeOptions::default()).is_err() {
         return 2;
     }
-    if canonical_smiles_semantic_signature(&molecule.mol) == expected_signature {
+    if canonical_smiles_semantic_signature(molecule.graph()) == expected_signature {
         0
     } else {
         1

@@ -16,8 +16,8 @@ pub(crate) fn implementation_expected(
                 .into_iter()
                 .map(|record| record.molecule)
                 .collect::<Vec<_>>();
-            let written = write_sdf_v2000(&molecules)?;
-            let records = read_sdf_v2000_records(&written, SdfParseOptions::default())?
+            let written = sdf::write_v2000(&molecules)?;
+            let records = sdf::read_v2000_records(&written, SdfParseOptions::default())?
                 .into_iter()
                 .enumerate()
                 .map(|(index, record)| IndexedSmallRecord {
@@ -28,21 +28,21 @@ pub(crate) fn implementation_expected(
                 .collect::<Vec<_>>();
             Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
         }
-        "io.mol.v2000.parse" => {
+        "io.graph().v2000.parse" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(mol_parse_record_json).collect::<Vec<_>>() }))
         }
-        "io.mol.v3000.parse" => {
+        "io.graph().v3000.parse" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
                 .into_iter()
                 .enumerate()
                 .map(|(index, record)| {
-                    let written = write_mol_v3000(&record.molecule)?;
-                    let molecule = read_mol_v3000_str(&written)?;
+                    let written = molfile::write_v3000(&record.molecule)?;
+                    let molecule = molfile::read_v3000_str(&written)?;
                     Ok(IndexedSmallRecord {
                         record_index: index,
-                        title: molecule_title(&molecule.mol),
+                        title: molecule_title(molecule.graph()),
                         molecule,
                     })
                 })
@@ -53,34 +53,34 @@ pub(crate) fn implementation_expected(
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(conformer_record_json).collect::<Vec<_>>() }))
         }
-        "io.mol.v2000.write" => {
+        "io.graph().v2000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
                 .into_iter()
                 .enumerate()
                 .map(|(index, record)| {
-                    let written = write_mol_v2000(&record.molecule)?;
-                    let molecule = read_mol_v2000_str(&written)?;
+                    let written = molfile::write_v2000(&record.molecule)?;
+                    let molecule = molfile::read_v2000_str(&written)?;
                     Ok(IndexedSmallRecord {
                         record_index: index,
-                        title: molecule_title(&molecule.mol),
+                        title: molecule_title(molecule.graph()),
                         molecule,
                     })
                 })
                 .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
             Ok(json!({ "records": records.iter().map(mol_record_json).collect::<Vec<_>>() }))
         }
-        "io.mol.v3000.write" => {
+        "io.graph().v3000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
                 .into_iter()
                 .enumerate()
                 .map(|(index, record)| {
-                    let written = write_mol_v3000(&record.molecule)?;
-                    let molecule = read_mol_v3000_str(&written)?;
+                    let written = molfile::write_v3000(&record.molecule)?;
+                    let molecule = molfile::read_v3000_str(&written)?;
                     Ok(IndexedSmallRecord {
                         record_index: index,
-                        title: molecule_title(&molecule.mol),
+                        title: molecule_title(molecule.graph()),
                         molecule,
                     })
                 })
@@ -144,7 +144,7 @@ pub(crate) fn implementation_expected(
         }
         "io.mmcif.parse" | "bio.hierarchy.smcra" => {
             let input = fs::read_to_string(fixture_path)?;
-            let molecule = read_mmcif_str(&input, MmcifParseOptions::default())?;
+            let molecule = bio::read_mmcif_str(&input, MmcifParseOptions::default())?;
             Ok(mmcif_expected_json(&molecule))
         }
         _ => Err(boxed_error(format!(
@@ -177,14 +177,14 @@ pub(crate) fn read_small_records_by_suffix(
         path.extension().and_then(|ext| ext.to_str()),
         Some("mol" | "mdl")
     ) {
-        let molecule = read_mol_v2000_str(&input)?;
+        let molecule = molfile::read_v2000_str(&input)?;
         return Ok(vec![IndexedSmallRecord {
             record_index: 0,
-            title: molecule_title(&molecule.mol),
+            title: molecule_title(molecule.graph()),
             molecule,
         }]);
     }
-    Ok(read_sdf_v2000_records(&input, SdfParseOptions::default())?
+    Ok(sdf::read_v2000_records(&input, SdfParseOptions::default())?
         .into_iter()
         .enumerate()
         .map(|(index, record)| small_record(index, record))
@@ -219,10 +219,11 @@ pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord
             });
             continue;
         }
-        let (status, molecule) = match read_smiles_str(&smiles, SmilesParseOptions) {
-            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
-            Err(_) => ("parse_error".to_owned(), None),
-        };
+        let (status, molecule) =
+            match smiles::read_str_with_options(&smiles, SmilesParseOptions::default()) {
+                Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+                Err(_) => ("parse_error".to_owned(), None),
+            };
         records.push(IndexedSmilesRecord {
             record_index: index,
             status,
@@ -246,10 +247,11 @@ pub(crate) fn read_canonical_smiles_records(
         let mut parts = line.splitn(2, char::is_whitespace);
         let smiles = parts.next().unwrap_or_default().to_owned();
         let title = parts.next().unwrap_or_default().trim().to_owned();
-        let (status, molecule) = match read_smiles_str(&smiles, SmilesParseOptions) {
-            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
-            Err(_) => ("parse_error".to_owned(), None),
-        };
+        let (status, molecule) =
+            match smiles::read_str_with_options(&smiles, SmilesParseOptions::default()) {
+                Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+                Err(_) => ("parse_error".to_owned(), None),
+            };
         records.push(IndexedSmilesRecord {
             record_index: index,
             status,
@@ -269,7 +271,7 @@ pub(crate) fn smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static 
 }
 
 pub(crate) fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule.mol;
+    let mol = record.molecule.graph();
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -283,7 +285,7 @@ pub(crate) fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn mol_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule.mol;
+    let mol = record.molecule.graph();
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -296,7 +298,7 @@ pub(crate) fn mol_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule.mol;
+    let mol = record.molecule.graph();
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -319,7 +321,7 @@ pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn mol_parse_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = &record.molecule.mol;
+    let mol = record.molecule.graph();
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -363,8 +365,8 @@ pub(crate) fn conformer_atom_json(id: AtomId, atom: &Atom) -> Value {
 }
 
 pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let membership = perceive_ring_membership(&mut record.molecule.mol);
-    let mol = &record.molecule.mol;
+    let membership = rings::perceive_ring_membership(record.molecule.graph_mut());
+    let mol = record.molecule.graph();
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -375,7 +377,7 @@ pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Va
 }
 
 pub(crate) fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
-    match perceive_ring_set(&mut record.molecule.mol) {
+    match rings::perceive_ring_set(record.molecule.graph_mut()) {
         Ok(ring_set) => json!({
             "record_index": record.record_index,
             "status": "ok",
@@ -395,12 +397,12 @@ pub(crate) fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Value {
-    match sanitize_small_molecule(&mut record.molecule, SanitizeOptions::default()) {
+    match perception::sanitize_with_options(&mut record.molecule, SanitizeOptions::default()) {
         Ok(_) => json!({
             "record_index": record.record_index,
             "status": "ok",
             "title": record.title,
-            "atoms": basic_atoms_json(&record.molecule.mol),
+            "atoms": basic_atoms_json(record.molecule.graph()),
         }),
         Err(_) => json!({
             "record_index": record.record_index,
@@ -411,7 +413,7 @@ pub(crate) fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Val
 }
 
 pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let report = perceive_valence(&mut record.molecule.mol, ValenceModel::RdkitLike);
+    let report = valence::perceive_valence(record.molecule.graph_mut(), ValenceModel::RdkitLike);
     if !report.is_ok() {
         return json!({
             "record_index": record.record_index,
@@ -425,15 +427,15 @@ pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
         "title": record.title,
         "atoms": record
             .molecule
-            .mol
+            .graph()
             .atoms()
-            .map(|(id, atom)| valence_atom_json(&record.molecule.mol, id, atom))
+            .map(|(id, atom)| valence_atom_json(record.molecule.graph(), id, atom))
             .collect::<Vec<_>>(),
     })
 }
 
 pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let status = sanitize_small_molecule(
+    let status = perception::sanitize_with_options(
         &mut record.molecule,
         SanitizeOptions {
             perceive_valence: true,
@@ -442,8 +444,8 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
         },
     )
     .and_then(|_| {
-        perceive_aromaticity(&mut record.molecule.mol, AromaticityModel::RdkitLike)
-            .map_err(molecules::prelude::SanitizeError::Aromaticity)
+        aromaticity::perceive_aromaticity(record.molecule.graph_mut(), AromaticityModel::RdkitLike)
+            .map_err(SanitizeError::Aromaticity)
     });
     if status.is_err() {
         return json!({
@@ -452,7 +454,7 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
             "title": record.title,
         });
     }
-    let mol = &record.molecule.mol;
+    let mol = record.molecule.graph();
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -468,8 +470,8 @@ pub(crate) fn smiles_write_record_json(
     let Some(molecule) = &record.molecule else {
         return Ok(smiles_error_record_json(record));
     };
-    let written = write_smiles(molecule, SmilesWriteOptions)?;
-    let reparsed = match read_smiles_str(&written, SmilesParseOptions) {
+    let written = smiles::write_with_options(molecule, SmilesWriteOptions::default())?;
+    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -497,7 +499,7 @@ pub(crate) fn canonical_smiles_record_json(
         return Ok(smiles_error_record_json(record));
     };
     let mut molecule = molecule.clone();
-    if sanitize_small_molecule(&mut molecule, SanitizeOptions::default()).is_err() {
+    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
         return Ok(json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
@@ -505,8 +507,9 @@ pub(crate) fn canonical_smiles_record_json(
             "input_smiles": record.input_smiles,
         }));
     }
-    let written = write_canonical_smiles(&molecule, CanonicalSmilesWriteOptions)?;
-    let reparsed = match read_smiles_str(&written, SmilesParseOptions) {
+    let written =
+        smiles::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions::default())?;
+    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -535,12 +538,10 @@ pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
     let Some(molecule) = &record.molecule else {
         return smiles_error_record_json(record);
     };
-    let written = write_smiles(molecule, SmilesWriteOptions);
-    let round_trip = match written
-        .as_ref()
-        .map_err(|_| ())
-        .and_then(|text| read_smiles_str(text, SmilesParseOptions).map_err(|_| ()))
-    {
+    let written = smiles::write_with_options(molecule, SmilesWriteOptions::default());
+    let round_trip = match written.as_ref().map_err(|_| ()).and_then(|text| {
+        smiles::read_str_with_options(text, SmilesParseOptions::default()).map_err(|_| ())
+    }) {
         Ok(reparsed) => smiles_sanitized_semantic_json(reparsed),
         Err(_) => json!({ "status": "write_reparse_error" }),
     };
@@ -565,7 +566,7 @@ pub(crate) fn smiles_error_record_json(record: &IndexedSmilesRecord) -> Value {
 }
 
 pub(crate) fn smiles_raw_semantic_json(molecule: &SmallMolecule) -> Value {
-    let mol = &molecule.mol;
+    let mol = molecule.graph();
     json!({
         "atom_count": mol.atom_count(),
         "bond_count": mol.bond_count(),
@@ -575,9 +576,9 @@ pub(crate) fn smiles_raw_semantic_json(molecule: &SmallMolecule) -> Value {
 }
 
 pub(crate) fn smiles_sanitized_semantic_json(mut molecule: SmallMolecule) -> Value {
-    match sanitize_small_molecule(&mut molecule, SanitizeOptions::default()) {
+    match perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()) {
         Ok(_) => {
-            let mol = &molecule.mol;
+            let mol = molecule.graph();
             json!({
                 "status": "ok",
                 "atom_count": mol.atom_count(),
@@ -939,19 +940,19 @@ pub(crate) fn mmcif_expected_json(molecule: &MacroMolecule) -> Value {
 
 pub(crate) fn atom_site_rows_json(molecule: &MacroMolecule) -> Value {
     let rows = molecule
-        .hierarchy
+        .hierarchy()
         .atom_sites()
         .map(|(site_id, site)| {
             let residue = molecule
-                .hierarchy
+                .hierarchy()
                 .residue(site.residue)
                 .expect("residue exists");
             let chain = molecule
-                .hierarchy
+                .hierarchy()
                 .chain(residue.chain)
                 .expect("chain exists");
-            let model = molecule.hierarchy.model(chain.model).expect("model exists");
-            let atom = molecule.mol.atom(site.atom).expect("atom exists");
+            let model = molecule.hierarchy().model(chain.model).expect("model exists");
+            let atom = molecule.graph().atom(site.atom).expect("atom exists");
             let point = first_conformer_point(molecule, site.atom);
             json!({
                 "group_PDB": site.metadata.group_pdb.clone(),
@@ -986,23 +987,23 @@ pub(crate) fn atom_site_rows_json(molecule: &MacroMolecule) -> Value {
 pub(crate) fn structure_json(molecule: &MacroMolecule) -> Value {
     json!({
         "status": "ok",
-        "models": molecule.hierarchy.models().map(|(model_id, model)| {
+        "models": molecule.hierarchy().models().map(|(model_id, model)| {
             json!({
                 "id": model_id.raw(),
                 "chains": model.chains.iter().map(|chain_id| {
-                    let chain = molecule.hierarchy.chain(*chain_id).expect("chain exists");
+                    let chain = molecule.hierarchy().chain(*chain_id).expect("chain exists");
                     json!({
                         "id": chain.author_id.clone().unwrap_or_else(|| chain.label_id.clone()),
                         "residues": chain.residues.iter().map(|residue_id| {
-                            let residue = molecule.hierarchy.residue(*residue_id).expect("residue exists");
+                            let residue = molecule.hierarchy().residue(*residue_id).expect("residue exists");
                             json!({
                                 "name": residue.name,
                                 "hetflag": residue_hetflag_json(molecule, residue),
                                 "sequence_id": residue_sequence_json(residue),
                                 "insertion_code": residue.insertion_code,
                                 "atoms": residue.atom_sites.iter().map(|site_id| {
-                                    let site = molecule.hierarchy.atom_site(*site_id).expect("site exists");
-                                    let atom = molecule.mol.atom(site.atom).expect("atom exists");
+                                    let site = molecule.hierarchy().atom_site(*site_id).expect("site exists");
+                                    let atom = molecule.graph().atom(site.atom).expect("atom exists");
                                     let name = site
                                         .metadata
                                         .label_atom_id
@@ -1030,17 +1031,14 @@ pub(crate) fn structure_json(molecule: &MacroMolecule) -> Value {
     })
 }
 
-pub(crate) fn first_conformer_point(
-    molecule: &MacroMolecule,
-    atom: AtomId,
-) -> Option<molecules::prelude::Point3> {
+pub(crate) fn first_conformer_point(molecule: &MacroMolecule, atom: AtomId) -> Option<Point3> {
     molecule
-        .mol
+        .graph()
         .first_conformer()
         .and_then(|(_, conformer)| conformer.position(atom))
 }
 
-pub(crate) fn residue_sequence_json(residue: &molecules::prelude::Residue) -> Value {
+pub(crate) fn residue_sequence_json(residue: &Residue) -> Value {
     if let Some(author_seq_id) = &residue.author_seq_id {
         return author_seq_id
             .parse::<i32>()
@@ -1050,13 +1048,10 @@ pub(crate) fn residue_sequence_json(residue: &molecules::prelude::Residue) -> Va
     residue.label_seq_id.map(Value::from).unwrap_or(Value::Null)
 }
 
-pub(crate) fn residue_hetflag_json(
-    molecule: &MacroMolecule,
-    residue: &molecules::prelude::Residue,
-) -> Value {
+pub(crate) fn residue_hetflag_json(molecule: &MacroMolecule, residue: &Residue) -> Value {
     let is_hetatm = residue.atom_sites.iter().any(|site_id| {
         molecule
-            .hierarchy
+            .hierarchy()
             .atom_site(*site_id)
             .ok()
             .and_then(|site| site.metadata.group_pdb.as_deref())
