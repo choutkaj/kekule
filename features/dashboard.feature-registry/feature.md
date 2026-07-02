@@ -22,6 +22,7 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - Per-feature evidence is read from each corpus-owned `status.toml`.
 - Dashboard generation rejects drift between generated evidence and the cached overall `validated` field.
 - Boolean dashboard values render as check and cross marks, with compact failure counts only for recorded fixture-level validation failures.
+- Required validation with no current recorded status, stale or incomplete evidence, or no fixture-level failure count renders as an unknown `?` marker rather than a confirmed failure.
 - The dashboard omits the redundant overall `validated` column, uses centered rotated compact headers, includes corpus case counts from `corpus.toml`, and supports client-side column sorting.
 - `features/DASHBOARD.html` remains the generated source artifact and is published as the GitHub Pages dashboard.
 
@@ -45,3 +46,4 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - v4: Switch generated dashboard from Markdown to sortable HTML with compact rotated headers.
 - v5: Make dashboard generation portable across clean checkouts while preserving content-addressed freshness checks in validation and feature listing.
 - v6: Publish the HTML dashboard through GitHub Pages, show corpus counts in headers, center rotated labels, and surface compact fixture failure counts.
+- v7: Distinguish uncertain required validation from confirmed fixture failures with a question-mark dashboard marker.

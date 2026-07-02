@@ -35,8 +35,8 @@ pub(crate) fn render_dashboard(
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
     out.push_str("<title>Feature Dashboard</title>\n");
     out.push_str("<style>\n");
-    out.push_str(":root { color-scheme: light dark; --border: #d0d7de; --head: #f6f8fa; --ok: #1a7f37; --bad: #cf222e; --muted: #656d76; --text: #24292f; --bg: #ffffff; }\n");
-    out.push_str("@media (prefers-color-scheme: dark) { :root { --border: #30363d; --head: #161b22; --ok: #3fb950; --bad: #ff7b72; --muted: #8b949e; --text: #c9d1d9; --bg: #0d1117; } }\n");
+    out.push_str(":root { color-scheme: light dark; --border: #d0d7de; --head: #f6f8fa; --ok: #1a7f37; --bad: #cf222e; --unknown: #9a6700; --muted: #656d76; --text: #24292f; --bg: #ffffff; }\n");
+    out.push_str("@media (prefers-color-scheme: dark) { :root { --border: #30363d; --head: #161b22; --ok: #3fb950; --bad: #ff7b72; --unknown: #d29922; --muted: #8b949e; --text: #c9d1d9; --bg: #0d1117; } }\n");
     out.push_str("body { margin: 24px; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }\n");
     out.push_str("h1 { margin: 0 0 4px; font-size: 24px; }\n");
     out.push_str("p { margin: 0 0 18px; color: var(--muted); }\n");
@@ -45,15 +45,19 @@ pub(crate) fn render_dashboard(
     out.push_str(
         "th, td { border: 1px solid var(--border); padding: 6px 8px; vertical-align: middle; }\n",
     );
-    out.push_str("thead th { position: sticky; top: 0; z-index: 1; height: 128px; background: var(--head); white-space: nowrap; }\n");
+    out.push_str("thead th { position: sticky; top: 0; z-index: 1; height: 168px; background: var(--head); white-space: nowrap; }\n");
     out.push_str("tbody tr:nth-child(even) { background: color-mix(in srgb, var(--head) 45%, transparent); }\n");
     out.push_str("th.text, td.text { text-align: left; }\n");
     out.push_str("th.compact, td.compact, th.rotated, td.marker { text-align: center; }\n");
     out.push_str(
-        "th.rotated { width: 52px; min-width: 52px; padding: 0; vertical-align: middle; }\n",
+        "th.rotated { width: 52px; min-width: 52px; padding: 0; vertical-align: bottom; overflow: hidden; }\n",
     );
-    out.push_str("th.rotated button { position: relative; height: 124px; width: 52px; padding: 0; display: block; }\n");
-    out.push_str("th.rotated .rotated-label { position: absolute; left: 50%; bottom: 10px; width: 118px; transform: translateX(-50%) rotate(-60deg); transform-origin: center bottom; text-align: center; white-space: normal; line-height: 1.15; }\n");
+    out.push_str("th.rotated button { position: relative; height: 168px; width: 52px; padding: 0; display: block; overflow: hidden; }\n");
+    out.push_str("th.rotated .rotated-label { position: absolute; left: calc(50% + 23px); bottom: 12px; width: 144px; height: 46px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; transform: rotate(-90deg); transform-origin: left bottom; text-align: left; line-height: 1.15; }\n");
+    out.push_str("th.rotated .rotated-name, th.rotated .rotated-count { white-space: nowrap; }\n");
+    out.push_str(
+        "th.rotated .rotated-count { font-size: 12px; font-weight: 650; color: var(--muted); }\n",
+    );
     out.push_str(
         "button.sort { all: unset; cursor: pointer; color: inherit; font-weight: 650; }\n",
     );
@@ -64,6 +68,7 @@ pub(crate) fn render_dashboard(
     out.push_str("th[aria-sort=\"descending\"] button.sort::after { content: \" \\25BC\"; font-size: 10px; color: var(--muted); }\n");
     out.push_str(".ok { color: var(--ok); font-weight: 700; }\n");
     out.push_str(".bad { color: var(--bad); font-weight: 700; }\n");
+    out.push_str(".unknown { color: var(--unknown); font-weight: 700; }\n");
     out.push_str(".count { display: inline-block; min-width: 1.2em; margin-left: 2px; font-size: 12px; font-weight: 650; color: var(--bad); }\n");
     out.push_str(".na { color: var(--muted); }\n");
     out.push_str(".legend { margin-top: -8px; font-size: 12px; }\n");
@@ -74,13 +79,13 @@ pub(crate) fn render_dashboard(
     out.push_str("<body>\n");
     out.push_str("<h1>Feature Dashboard</h1>\n");
     out.push_str("<p>Generated from feature metadata and recorded validation status. Run cargo xtask validate to verify evidence against the current checkout. Do not hand-edit this file.</p>\n");
-    out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"na\">-</span>not required</p>\n");
+    out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"unknown\">?</span>unknown <span class=\"na\">-</span>not required</p>\n");
     out.push_str("<div class=\"dashboard-wrap\">\n");
     out.push_str("<table id=\"feature-dashboard\">\n");
     out.push_str("<thead>\n<tr>");
     out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Feature</button></th>");
     out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Title</button></th>");
-    out.push_str(&rotated_header("Area", "Area", "text"));
+    out.push_str(&compact_header("Area", "Area", "text"));
     out.push_str(&rotated_header("Version", "Version", "number"));
     out.push_str(&rotated_header("Implemented", "Implemented", "number"));
     for (corpus, label) in VALIDATION_CORPORA {
@@ -177,8 +182,29 @@ pub(crate) fn rotated_header(label: &str, title: &str, sort_type: &str) -> Strin
         escape_html(sort_type),
         escape_html(title),
         escape_html(title),
+        rotated_label_html(label)
+    )
+}
+
+pub(crate) fn compact_header(label: &str, title: &str, sort_type: &str) -> String {
+    format!(
+        "<th class=\"compact\" data-sort-type=\"{}\" title=\"{}\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by {}\">{}</button></th>",
+        escape_html(sort_type),
+        escape_html(title),
+        escape_html(title),
         escape_html(label)
     )
+}
+
+pub(crate) fn rotated_label_html(label: &str) -> String {
+    if let Some((name, count)) = label.split_once(" (n=") {
+        return format!(
+            "<span class=\"rotated-name\">{}</span><br><span class=\"rotated-count\">(n={}</span>",
+            escape_html(name),
+            escape_html(count)
+        );
+    }
+    format!("<span class=\"rotated-name\">{}</span>", escape_html(label))
 }
 
 pub(crate) fn dashboard_bool_marker(value: bool) -> &'static str {
@@ -229,16 +255,19 @@ pub(crate) fn dashboard_corpus_cell(
             } else {
                 "validation did not record fixture-level failures"
             };
-            format!(
-                "<span class=\"bad\" aria-label=\"failed\" title=\"{}\">&#10007;</span>",
-                title
-            )
+            dashboard_unknown_marker(title)
         }
     } else {
-        "<span class=\"bad\" aria-label=\"failed\" title=\"no recorded validation status\">&#10007;</span>"
-            .to_owned()
+        dashboard_unknown_marker("no recorded validation status")
     };
     format!("<td class=\"marker\" data-sort-value=\"0\">{marker}</td>")
+}
+
+pub(crate) fn dashboard_unknown_marker(title: &str) -> String {
+    format!(
+        "<span class=\"unknown\" aria-label=\"unknown\" title=\"{}\">?</span>",
+        escape_html(title)
+    )
 }
 
 pub(crate) fn bool_sort_value(value: bool) -> &'static str {

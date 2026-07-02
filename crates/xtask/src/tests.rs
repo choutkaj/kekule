@@ -283,18 +283,40 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
 
     assert!(dashboard.starts_with("<!doctype html>\n"));
     assert!(dashboard.contains("<table id=\"feature-dashboard\">"));
-    assert!(dashboard.contains("<span class=\"rotated-label\">Implemented</span>"));
-    assert!(dashboard.contains("transform-origin: center bottom"));
+    assert!(dashboard.contains("title=\"Area\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Area\">Area</button></th>"));
+    assert!(!dashboard
+        .contains("aria-label=\"Sort by Area\"><span class=\"rotated-label\">Area</span>"));
+    assert!(dashboard.contains(
+        "<span class=\"rotated-label\"><span class=\"rotated-name\">Implemented</span></span>"
+    ));
+    assert!(dashboard.contains("height: 168px"));
+    assert!(dashboard.contains("left: calc(50% + 23px)"));
+    assert!(dashboard.contains("bottom: 12px"));
+    assert!(dashboard.contains("width: 144px"));
+    assert!(dashboard.contains("height: 46px"));
+    assert!(dashboard.contains("display: flex"));
+    assert!(dashboard.contains("rotate(-90deg)"));
+    assert!(dashboard.contains("transform-origin: left bottom"));
+    assert!(dashboard.contains("overflow: hidden"));
+    assert!(dashboard.contains("white-space: nowrap"));
     assert!(!dashboard.contains("Validated"));
-    assert!(dashboard.contains("smoke (n=7)"));
-    assert!(dashboard.contains("pubchem-1k (n=1000)"));
+    assert!(dashboard.contains(
+        "<span class=\"rotated-name\">smoke</span><br><span class=\"rotated-count\">(n=7)</span>"
+    ));
+    assert!(dashboard.contains("<span class=\"rotated-name\">pubchem-1k</span><br><span class=\"rotated-count\">(n=1000)</span>"));
     assert!(dashboard.contains("<code>a.feature</code>"));
     assert!(dashboard.contains("data-sort-value=\"0\""));
     assert!(dashboard.contains("<code>z.feature</code>"));
     assert!(dashboard.contains("data-sort-value=\"1\""));
     assert!(dashboard.contains("aria-label=\"failed: 3 non-passing case(s)\""));
     assert!(dashboard.contains("<span class=\"count\">3</span>"));
-    assert!(dashboard.contains("title=\"no recorded validation status\""));
+    assert!(dashboard.contains("<span class=\"unknown\">?</span>unknown"));
+    assert!(dashboard.contains(
+        "<span class=\"unknown\" aria-label=\"unknown\" title=\"no recorded validation status\">?</span>"
+    ));
+    assert!(!dashboard.contains(
+        "<span class=\"bad\" aria-label=\"failed\" title=\"no recorded validation status\">"
+    ));
     assert!(dashboard.contains("button.addEventListener('click'"));
     assert!(dashboard.ends_with('\n'));
 }

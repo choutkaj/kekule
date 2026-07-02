@@ -1,7 +1,7 @@
 id = "dashboard.feature-registry"
 title = "Feature registry and dashboard"
 area = "infrastructure"
-version = 6
+version = 7
 implemented = true
 validated = false
 description = "Keep feature metadata as the source of truth and generate a dashboard from it."
