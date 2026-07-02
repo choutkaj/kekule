@@ -49,3 +49,4 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - v1-v83: Built the RDKit-like donor classifier, fused-subsystem search, validation workflow, and public expert facade.
 - v84: Removed the post-Huckel motif cleanup passes and their direct tests so aromaticity perception is driven by the shared RDKit-like donor/candidate/fused rules.
 - v85: Reworked fused-system perception around a single RDKit-style connected-subset Huckel evaluator and removed the separate exocyclic fused fallback marking pass.
+- v86: Add PubChem-100k as required broad-corpus validation evidence.

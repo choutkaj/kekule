@@ -59,3 +59,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v23: Move the public canonical writer API under the `smiles` facade and the ranking dependency under `canon`.
 - v24: Remove candidate reparse/sanitize ranking and motif-specific stored-Kekule cleanup fallback; canonical output is selected by RDKit-inspired rank-guided graph traversal plus syntax tie-breakers, with graph-derived stored-Kekule emission for mixed aromatic/aliphatic pi components that cannot be faithfully represented by aromatic shorthand.
 - v25: Complete PubChem-1000 canonical validation by broadening graph-derived representability rules for aromatic carbonyls, charged aromatic carbon components, and zero-hydrogen metal/main-group-bound organic atoms, plus aligning validation semantics for anionic aromatic nitrogen and charged aromatic carbon hydrogens.
+- v26: Add PubChem-100k as required broad-corpus validation evidence.

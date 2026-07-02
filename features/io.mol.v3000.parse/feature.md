@@ -34,3 +34,4 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 - v2: Raw Molfile V3000 parser for CTAB atoms, bonds, coordinates, common atom metadata, and supported bond stereo.
 - v3: Declare the same required small-molecule validation corpora as V2000 Molfile parsing.
 - v4: Move the public parser API under the `molfile` facade.
+- v5: Add PubChem-100k as required broad-corpus validation evidence.

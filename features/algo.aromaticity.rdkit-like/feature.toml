@@ -1,9 +1,9 @@
 id = "algo.aromaticity.rdkit-like"
 title = "RDKit-like aromaticity perception"
 area = "algorithms"
-version = 85
+version = 86
 implemented = true
 validated = false
 description = "Assign aromatic atom and bond flags using an RDKit-like aromaticity model for common organic rings."
 depends_on = ["core.graph", "algo.rings.fast", "algo.rings.sssr", "algo.valence.rdkit-like"]
-validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pl-rex", "enamine-diversity"]
+validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pubchem-100k", "pl-rex", "enamine-diversity"]

@@ -31,6 +31,7 @@ const VALIDATION_CORPORA: &[(&str, &str)] = &[
     ("tiny", "Tiny"),
     ("pubchem-100", "PubChem 100"),
     ("pubchem-1000", "PubChem 1000"),
+    ("pubchem-100k", "PubChem 100k"),
     ("pl-rex", "PL-REX"),
     ("enamine-diversity", "Enamine diversity"),
     ("pdb-10", "PDB 10"),

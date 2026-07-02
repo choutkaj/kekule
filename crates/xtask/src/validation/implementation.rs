@@ -28,11 +28,11 @@ pub(crate) fn implementation_expected(
                 .collect::<Vec<_>>();
             Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
         }
-        "io.graph().v2000.parse" => {
+        "io.mol.v2000.parse" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(mol_parse_record_json).collect::<Vec<_>>() }))
         }
-        "io.graph().v3000.parse" => {
+        "io.mol.v3000.parse" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
                 .into_iter()
@@ -53,7 +53,7 @@ pub(crate) fn implementation_expected(
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(conformer_record_json).collect::<Vec<_>>() }))
         }
-        "io.graph().v2000.write" => {
+        "io.mol.v2000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
                 .into_iter()
@@ -70,7 +70,7 @@ pub(crate) fn implementation_expected(
                 .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
             Ok(json!({ "records": records.iter().map(mol_record_json).collect::<Vec<_>>() }))
         }
-        "io.graph().v3000.write" => {
+        "io.mol.v3000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
                 .into_iter()

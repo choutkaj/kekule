@@ -29,3 +29,4 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 ## Revision Notes
 
 - v1: Shared conformer storage.
+- v2: Add PubChem-100k as required broad-corpus validation evidence.

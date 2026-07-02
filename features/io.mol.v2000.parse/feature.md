@@ -39,3 +39,4 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 - v3: Make structural parsing byte-safe and checked, reject malformed counts/endpoints/M records, and add fuzz coverage.
 - v4: Preserve exact V2000 radical multiplicity and supported single-/double-bond stereo mappings.
 - v5: Move the public parser API under the `molfile` facade.
+- v6: Add PubChem-100k as required broad-corpus validation evidence.

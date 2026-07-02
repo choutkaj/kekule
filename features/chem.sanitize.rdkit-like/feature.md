@@ -42,3 +42,4 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v6: Sanitize imported aromatic SMILES with corrected aromatic valence and atom-contribution aromaticity behavior.
 - v7: Accept explicit ring-work limits and preserve transactional rollback on ring resource errors.
 - v8: Move the public small-molecule sanitizer API under the `perception` facade.
+- v9: Add PubChem-100k as required broad-corpus validation evidence.

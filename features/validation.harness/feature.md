@@ -20,6 +20,7 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
 - Exposes `cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]`.
 - Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence only for successful selected targets, synchronizes overall `validated`, and regenerates the dashboard.
+- Supports corpus pack member checks using PubChem defaults or corpus-declared SDF member properties and SMILES title prefixes.
 
 ## Implementation Notes
 
@@ -27,6 +28,7 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - Biopython reference generators live under `validation/reference/biopython/`.
 - Golden data should be normalized JSON and include reference tool versions.
 - Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
+- Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
 - Status evidence records fixture and comparison counts, reference versions, the manifest SHA-256, a versioned evidence input list, evidence SHA-256, and validation time.
 - Evidence is considered current only when recomputing it from the current checkout produces the stored schema version and hash.
 - Evidence schema v2 includes cross-platform text line-ending normalization.
@@ -54,3 +56,4 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - v5: Content-addressed validation evidence, strict golden metadata checks, non-empty comparison enforcement, and failure-safe selected status updates.
 - v6: Make evidence hashes portable across LF and CRLF working trees.
 - v7: Align SMILES semantic comparison with RDKit aromatic carbonyl valence and aromatic nH no-implicit handling.
+- v8: Add large-corpus pack member metadata for PL-REX, Enamine Diversity, and PubChem-100k validation wiring.

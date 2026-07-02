@@ -41,3 +41,4 @@ Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 
 - v4: Inherit panic-free checked V2000 parsing and add SDF fuzz coverage.
 - v5: Inherit exact V2000 radical multiplicity and supported bond stereo parsing.
 - v6: Move the public parser API under the `sdf` facade.
+- v7: Add PubChem-100k as required broad-corpus validation evidence.

@@ -323,6 +323,72 @@ fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
 }
 
 #[test]
+fn implementation_dispatch_uses_current_molfile_feature_ids() {
+    let root = temp_feature_root("mol-feature-dispatch");
+    let fixture = root.join("fixture.sdf");
+    fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
+
+    for feature in [
+        "io.mol.v2000.parse",
+        "io.mol.v2000.write",
+        "io.mol.v3000.parse",
+        "io.mol.v3000.write",
+    ] {
+        let expected =
+            implementation_expected(feature, "tiny", &fixture).expect("feature should compare");
+        assert_eq!(expected["records"][0]["status"], "ok");
+    }
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
+    let root = temp_feature_root("pack-members");
+    let sdf_path = root.join("pack.sdf");
+    fs::write(
+        &sdf_path,
+        [
+            simple_sdf_record_with_property("first", "Catalog ID", "Z111"),
+            simple_sdf_record_with_property("second", "Catalog ID", "Z222"),
+        ]
+        .join(""),
+    )
+    .expect("sdf pack should write");
+    let sdf_pack = SourcePack {
+        path: "pack.sdf".to_owned(),
+        format: "sdf-v2000".to_owned(),
+        count: 2,
+        members: vec!["Z111".to_owned(), "Z222".to_owned()],
+        sha256: "0".repeat(64),
+        member_id_property: Some("Catalog ID".to_owned()),
+        member_title_prefix: None,
+    };
+    assert_eq!(
+        read_pack_members(&sdf_path, &sdf_pack).expect("sdf members should read"),
+        sdf_pack.members
+    );
+
+    let smiles_path = root.join("pack.smi");
+    fs::write(&smiles_path, "CC ID:Z111\nCO ID:Z222\n").expect("smiles pack should write");
+    let smiles_pack = SourcePack {
+        path: "pack.smi".to_owned(),
+        format: "smiles".to_owned(),
+        count: 2,
+        members: vec!["Z111".to_owned(), "Z222".to_owned()],
+        sha256: "0".repeat(64),
+        member_id_property: None,
+        member_title_prefix: Some("ID:".to_owned()),
+    };
+    assert_eq!(
+        read_pack_members(&smiles_path, &smiles_pack).expect("smiles members should read"),
+        smiles_pack.members
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn current_status_drives_overall_validation_and_metadata_sync() {
     let root = temp_feature_root("status-sync");
     let (features_root, validation_root, manifest_path) = write_evidence_test_repo(&root);
@@ -791,6 +857,27 @@ fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
             && atom["implicit_hydrogens"] == 0
             && atom["no_implicit_hydrogens"] == false
     }));
+}
+
+fn simple_sdf_record(title: &str) -> String {
+    format!(
+        "{title}
+  xtask-test
+
+  1  0  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+M  END
+$$$$
+"
+    )
+}
+
+fn simple_sdf_record_with_property(title: &str, property: &str, value: &str) -> String {
+    let mut record = simple_sdf_record(title);
+    let marker = "M  END\n";
+    let replacement = format!("M  END\n>  <{property}>  (1)\n{value}\n\n");
+    record = record.replacen(marker, &replacement, 1);
+    record
 }
 
 fn temp_feature_root(label: &str) -> PathBuf {

@@ -91,12 +91,13 @@ def main() -> int:
 
 def import_rdkit() -> dict[str, Any]:
     try:
-        from rdkit import Chem, rdBase
+        from rdkit import Chem, RDLogger, rdBase
     except ImportError as error:
         raise SystemExit(
             "RDKit is not importable. Create the environment from "
             "validation/reference/rdkit/environment.yml before generating goldens."
         ) from error
+    RDLogger.DisableLog("rdApp.*")
     return {"Chem": Chem, "version": rdBase.rdkitVersion}
 
 
@@ -224,14 +225,13 @@ def generate_document(
 def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     raw_records = read_sdf_blocks(fixture_path)
-    supplier = Chem.SDMolSupplier(
-        str(fixture_path),
-        sanitize=False,
-        removeHs=False,
-        strictParsing=False,
-    )
-    for index, mol in enumerate(supplier):
-        raw_block = raw_records[index] if index < len(raw_records) else ""
+    for index, raw_block in enumerate(raw_records):
+        mol = Chem.MolFromMolBlock(
+            raw_block,
+            sanitize=False,
+            removeHs=False,
+            strictParsing=False,
+        )
         if mol is None:
             records.append(
                 {
@@ -241,6 +241,7 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
                     "mol": None,
                     "radicals": parse_mdl_radicals(raw_block),
                     "bond_stereo": parse_mdl_bond_stereo(raw_block),
+                    "properties": parse_sdf_data_properties(raw_block),
                 }
             )
             continue
@@ -252,6 +253,7 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
                 "mol": mol,
                 "radicals": parse_mdl_radicals(raw_block),
                 "bond_stereo": parse_mdl_bond_stereo(raw_block),
+                "properties": parse_sdf_data_properties(raw_block),
             }
         )
     return records
@@ -364,6 +366,47 @@ def read_sdf_blocks(fixture_path: Path) -> list[str]:
     return blocks
 
 
+def parse_sdf_data_properties(block: str) -> dict[str, str]:
+    lines = block.splitlines()
+    try:
+        data_start = next(index for index, line in enumerate(lines) if line.strip() == "M  END") + 1
+    except StopIteration:
+        return {}
+
+    properties: dict[str, str] = {}
+    index = data_start
+    while index < len(lines):
+        line = lines[index]
+        if not line.lstrip().startswith(">"):
+            index += 1
+            continue
+        field_name = sdf_field_name(line)
+        if field_name is None:
+            index += 1
+            continue
+        index += 1
+        values: list[str] = []
+        while index < len(lines) and not lines[index].lstrip().startswith(">"):
+            if lines[index] == "":
+                index += 1
+                break
+            values.append(lines[index])
+            index += 1
+        properties[field_name] = "\n".join(values)
+    return dict(sorted(properties.items()))
+
+
+def sdf_field_name(line: str) -> str | None:
+    start = line.find("<")
+    if start < 0:
+        return None
+    end = line.find(">", start + 1)
+    if end < 0:
+        return None
+    name = line[start + 1 : end].strip()
+    return name or None
+
+
 def parse_mdl_radicals(block: str) -> dict[int, str]:
     radicals: dict[int, str] = {}
     code_to_radical = {1: "SINGLET", 2: "DOUBLET", 3: "TRIPLET"}
@@ -407,14 +450,18 @@ def parse_mdl_bond_stereo(block: str) -> dict[int, dict[str, str]]:
     bond_start = 4 + atom_count
     overrides: dict[int, dict[str, str]] = {}
     for bond_index, line in enumerate(lines[bond_start : bond_start + bond_count]):
-        fields = line.split()
-        if len(fields) < 4:
-            continue
         try:
-            order = int(fields[2])
-            stereo_code = int(fields[3])
+            order = int(line[6:9])
+            stereo_code = int(line[9:12])
         except ValueError:
-            continue
+            fields = line.split()
+            if len(fields) < 4:
+                continue
+            try:
+                order = int(fields[2])
+                stereo_code = int(fields[3])
+            except ValueError:
+                continue
         stereo = "STEREONONE"
         direction = "NONE"
         if order == 1 and stereo_code == 1:
@@ -450,7 +497,7 @@ def sdf_record(record: dict[str, Any]) -> dict[str, Any]:
             bond_json(bond, record["bond_stereo"].get(bond.GetIdx()))
             for bond in mol.GetBonds()
         ],
-        "properties": molecule_properties(mol),
+        "properties": record.get("properties", molecule_properties(mol)),
     }
 
 
@@ -469,7 +516,7 @@ def sdf_record_basic(record: dict[str, Any]) -> dict[str, Any]:
         "bond_count": mol.GetNumBonds(),
         "atoms": [basic_atom_json(atom) for atom in mol.GetAtoms()],
         "bonds": [basic_bond_json(bond) for bond in mol.GetBonds()],
-        "properties": molecule_properties(mol),
+        "properties": record.get("properties", molecule_properties(mol)),
     }
 
 

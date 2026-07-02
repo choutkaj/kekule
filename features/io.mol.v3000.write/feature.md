@@ -35,3 +35,4 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
 - v2: Molfile V3000 writer for the parser-supported raw graph subset.
 - v3: Declare the same required small-molecule validation corpora as V2000 Molfile writing.
 - v4: Move the public writer API under the `molfile` facade.
+- v5: Add PubChem-100k as required broad-corpus validation evidence.

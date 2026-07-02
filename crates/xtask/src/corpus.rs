@@ -113,6 +113,10 @@ pub(crate) struct SourcePack {
     pub(crate) count: usize,
     pub(crate) members: Vec<String>,
     pub(crate) sha256: String,
+    #[serde(default)]
+    pub(crate) member_id_property: Option<String>,
+    #[serde(default)]
+    pub(crate) member_title_prefix: Option<String>,
 }
 
 pub(crate) fn corpus_root(corpus: &str) -> PathBuf {
@@ -267,7 +271,7 @@ pub(crate) fn check_corpus_artifacts(
             )));
         }
         check_data_file(&root, &pack.path, &pack.sha256, build_command)?;
-        let actual_members = read_pack_members(&root.join(&pack.path), &pack.format)?;
+        let actual_members = read_pack_members(&root.join(&pack.path), pack)?;
         if actual_members != pack.members {
             return Err(boxed_error(format!(
                 "{} pack `{}` member order differs from sources.lock.json",
@@ -278,44 +282,56 @@ pub(crate) fn check_corpus_artifacts(
     Ok(())
 }
 
-pub(crate) fn read_pack_members(path: &Path, format: &str) -> Result<Vec<String>, Box<dyn Error>> {
+pub(crate) fn read_pack_members(
+    path: &Path,
+    pack: &SourcePack,
+) -> Result<Vec<String>, Box<dyn Error>> {
     let text = fs::read_to_string(path)?;
-    match format {
+    match pack.format.as_str() {
         "smiles" => text
             .lines()
             .filter(|line| !line.trim().is_empty())
             .map(|line| {
+                let prefix = pack.member_title_prefix.as_deref().unwrap_or("CID:");
                 line.split_whitespace()
                     .last()
-                    .and_then(|title| title.strip_prefix("CID:"))
+                    .and_then(|title| title.strip_prefix(prefix))
                     .map(str::to_owned)
                     .ok_or_else(|| {
                         boxed_error(format!(
-                            "{} contains a SMILES row without a CID title",
-                            path.display()
+                            "{} contains a SMILES row without a `{prefix}` title",
+                            path.display(),
                         ))
                     })
             })
             .collect(),
         "sdf-v2000" => {
-            let marker = "> <PUBCHEM_COMPOUND_CID>";
+            let property = pack
+                .member_id_property
+                .as_deref()
+                .unwrap_or("PUBCHEM_COMPOUND_CID");
             let mut members = Vec::new();
             for record in text.split("$$$$") {
                 if record.trim().is_empty() {
                     continue;
                 }
-                let position = record.find(marker).ok_or_else(|| {
-                    boxed_error(format!(
-                        "{} contains an SDF record without PUBCHEM_COMPOUND_CID",
-                        path.display()
-                    ))
-                })?;
-                let cid = record[position + marker.len()..]
-                    .trim_start_matches(['\r', '\n'])
-                    .lines()
-                    .next()
-                    .ok_or_else(|| boxed_error("missing PubChem CID value"))?;
-                members.push(cid.trim().to_owned());
+                let mut lines = record.lines();
+                let id = loop {
+                    let Some(line) = lines.next() else {
+                        return Err(boxed_error(format!(
+                            "{} contains an SDF record without `{property}`",
+                            path.display(),
+                        )));
+                    };
+                    if sdf_data_header_name(line) != Some(property) {
+                        continue;
+                    }
+                    break lines
+                        .by_ref()
+                        .find(|value| !value.trim().is_empty())
+                        .ok_or_else(|| boxed_error(format!("missing `{property}` value")))?;
+                };
+                members.push(id.trim().to_owned());
             }
             Ok(members)
         }
@@ -324,6 +340,16 @@ pub(crate) fn read_pack_members(path: &Path, format: &str) -> Result<Vec<String>
             path.display()
         ))),
     }
+}
+
+fn sdf_data_header_name(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with('>') {
+        return None;
+    }
+    let start = trimmed.find('<')?;
+    let end = trimmed[start + 1..].find('>')? + start + 1;
+    Some(&trimmed[start + 1..end])
 }
 
 pub(crate) fn check_data_file(
