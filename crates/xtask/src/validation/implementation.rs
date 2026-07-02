@@ -820,7 +820,9 @@ fn aromatic_bond_valence_twice(
         return 2;
     }
     match atom.element.symbol() {
+        "C" if atom.formal_charge < 0 && atom.explicit_hydrogens > 0 => 2,
         "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
+        "N" if atom.formal_charge < 0 => 2,
         "N" if atom.formal_charge == 0 && atom.explicit_hydrogens > 0 => 2,
         "N" if atom.formal_charge == 0 && has_non_aromatic_bond => 2,
         "N" if atom.formal_charge == 0 && aromatic_bond_count >= 3 => 2,

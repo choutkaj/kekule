@@ -323,6 +323,37 @@ fn canonical_smiles_prefers_clean_simple_ring_closure() {
 }
 
 #[test]
+fn canonical_smiles_converges_after_aromaticity_perception() {
+    let mut aromatic = smiles_api::read_str_with_options("c1ccccc1", SmilesParseOptions)
+        .expect("aromatic benzene parses");
+    let mut kekule = smiles_api::read_str_with_options("C1=CC=CC=C1", SmilesParseOptions)
+        .expect("Kekule benzene parses");
+    perception_api::sanitize_with_options(&mut aromatic, SanitizeOptions::default())
+        .expect("aromatic benzene sanitizes");
+    perception_api::sanitize_with_options(&mut kekule, SanitizeOptions::default())
+        .expect("Kekule benzene sanitizes");
+
+    let aromatic_written =
+        smiles_api::write_canonical_with_options(&aromatic, CanonicalSmilesWriteOptions)
+            .expect("aromatic benzene canonicalizes");
+    let kekule_written =
+        smiles_api::write_canonical_with_options(&kekule, CanonicalSmilesWriteOptions)
+            .expect("perceived Kekule benzene canonicalizes");
+
+    assert_eq!(aromatic_written, kekule_written);
+    assert_eq!(aromatic_written, "c1ccccc1");
+}
+
+#[test]
+fn canonical_smiles_implementation_avoids_sanitizer_feedback() {
+    let source = include_str!("../io/smiles.rs");
+
+    assert!(!source.contains("canonical_smiles_candidate_sanitize_rank"));
+    assert!(!source.contains("canonical_smiles_semantic_signature"));
+    assert!(!source.contains("KekuleWhenStored"));
+}
+
+#[test]
 fn aromatic_smiles_omitted_bonds_sanitize_with_expected_hydrogens() {
     let mut benzene = smiles_api::read_str_with_options("c1ccccc1", SmilesParseOptions)
         .expect("benzene should parse");
@@ -660,6 +691,110 @@ fn fused_quinone_cn_core_excludes_carbonyl_centers() {
             .count(),
         20
     );
+}
+
+#[test]
+fn canonical_fused_quinone_cn_core_round_trip_matches_aromatic_shape() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "C1=CC=C2C(=C1)C(=O)C3=C(C2=O)C4=C(C=C3)C(=O)C5=CC=CC=C5N4",
+        SmilesParseOptions,
+    )
+    .expect("fused quinone should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused quinone should sanitize");
+
+    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical fused quinone should write");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("canonical fused quinone output should parse");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
+    assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
+    let original_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(molecule.graph());
+    let reparsed_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(reparsed.graph());
+    assert_eq!(
+        reparsed_aromatic_carbonyl_centers, original_aromatic_carbonyl_centers,
+        "{written}"
+    );
+    let aromatic_n_h_count = reparsed
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| {
+            atom.element.symbol() == "N"
+                && atom.aromatic
+                && atom
+                    .explicit_hydrogens
+                    .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+                    == 1
+        })
+        .count();
+    assert_eq!(aromatic_n_h_count, 1, "{written}");
+}
+
+#[test]
+fn canonical_aromatic_carbonyl_component_uses_representable_kekule_form() {
+    let mut molecule =
+        smiles_api::read_str_with_options("CN(C)CCOC(=O)CCNC1=CC=CC=CC1=O", SmilesParseOptions)
+            .expect("aromatic carbonyl ring should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("aromatic carbonyl ring should sanitize");
+
+    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical aromatic carbonyl should write");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("canonical output should parse");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    assert_eq!(
+        local_atom_neighbor_signatures(molecule.graph()),
+        local_atom_neighbor_signatures(reparsed.graph()),
+        "{written}"
+    );
+}
+
+#[test]
+fn canonical_charged_aromatic_carbon_component_uses_representable_kekule_form() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "C1CCOC1.[CH-]1[C-]=[C-][C-]=[C-]1.Cl[Cr]Cl",
+        SmilesParseOptions,
+    )
+    .expect("cyclopentadienyl salt should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("cyclopentadienyl salt should sanitize");
+
+    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical cyclopentadienyl salt should write");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("canonical output should parse");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
+
+    assert_eq!(
+        local_atom_neighbor_signatures(molecule.graph()),
+        local_atom_neighbor_signatures(reparsed.graph()),
+        "{written}"
+    );
+}
+
+fn aromatic_carbonyl_center_count(mol: &Molecule) -> usize {
+    mol.atoms()
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "C"
+                && atom.aromatic
+                && mol
+                    .incident_bonds(*atom_id)
+                    .expect("atom should be live")
+                    .any(|(_, bond)| {
+                        bond.order == BondOrder::Double
+                            && mol
+                                .atom(bond.other_atom(*atom_id))
+                                .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
+                    })
+        })
+        .count()
 }
 
 #[test]
@@ -2287,6 +2422,50 @@ fn canonical_aryl_germanium_round_trip_preserves_no_implicit_aromatic_carbon() {
         .expect("canonical output should retain an aryl germanium bond")
         .1;
     assert!(germanium_bound_carbon.no_implicit_hydrogens, "{written}");
+}
+
+#[test]
+fn canonical_aryl_tin_round_trip_preserves_no_implicit_aromatic_carbons() {
+    let mut molecule =
+        smiles_api::read_str_with_options("C1=CC=C(C=C1)[SnH](C2=CC=CC=C2)Cl", SmilesParseOptions)
+            .expect("aryl tin SMILES parses");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("aryl tin SMILES sanitizes");
+
+    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+        .expect("aryl tin canonical SMILES should write");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("canonical output should parse");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .expect("canonical output should sanitize");
+
+    let tin_bound_aromatic_carbons = reparsed
+        .graph()
+        .atoms()
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "C"
+                && atom.aromatic
+                && reparsed
+                    .graph()
+                    .incident_bonds(*atom_id)
+                    .expect("atom should be live")
+                    .any(|(_, bond)| {
+                        let neighbor_id = bond.other_atom(*atom_id);
+                        reparsed
+                            .graph()
+                            .atom(neighbor_id)
+                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Sn")
+                    })
+        })
+        .map(|(_, atom)| atom)
+        .collect::<Vec<_>>();
+    assert_eq!(tin_bound_aromatic_carbons.len(), 2, "{written}");
+    assert!(
+        tin_bound_aromatic_carbons
+            .iter()
+            .all(|atom| atom.no_implicit_hydrogens && atom.implicit_hydrogens == Some(0)),
+        "{written}"
+    );
 }
 
 #[test]

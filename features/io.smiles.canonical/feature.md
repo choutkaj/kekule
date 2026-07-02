@@ -8,17 +8,18 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 
 - Exposes `smiles::{CanonicalSmilesWriteOptions, write_canonical, write_canonical_with_options}`.
 - Reuses the noncanonical writer's supported chemistry subset and structured write errors.
-- Chooses a deterministic representation by ranking atoms, trying every atom in each connected component as a root, rendering rank-ordered branches and ring closures, and selecting the smallest component string that preserves sanitized local atom-neighbor semantics when one is available.
+- Chooses a deterministic representation by ranking atoms, trying every atom in each connected component as a root, rendering rank-ordered branches and ring closures, and selecting the smallest rank-guided component string using SMILES syntax tie-breakers.
 - Sorts disconnected component strings before joining with `.`.
 - Does not sanitize or perceive chemistry before writing.
 
 ## Implementation Notes
 
 - Builds on `canon::atom_ranking` for atom symmetry classes.
-- Symmetric ties are handled by candidate string selection, with `AtomId` only as a final deterministic fallback inside rank-equivalent traversal choices.
-- Ranks normal aromatic SMILES candidates first, then lazily tries a stored-Kekule candidate family for aromatic components without aromatic heteroatoms when aromatic spelling would alter sanitized reparse topology.
-- Preserves explicit hydrogens on organic atoms bound to a broad metal-like element set when organic shorthand would alter sanitized valence semantics after reparse.
-- Preserves no-implicit organic atoms bound to broad metal-like/main-group neighbors when organic shorthand would alter sanitized atom semantics after reparse.
+- Follows the RDKit-inspired split between canonical atom ranking and canonical traversal/output: graph-derived atom and bond invariants drive traversal, branch order, ring closure order, and disconnected-component ordering.
+- Symmetric ties are handled by candidate string selection across roots and bond-order traversal preferences, with `AtomId` only as a final deterministic fallback inside rank-equivalent traversal choices.
+- Canonical candidate ranking is derived from the graph and emitted SMILES syntax only; it does not reparse candidates, run sanitization, or switch to motif-specific stored-Kekule fallback spellings.
+- Uses stored Kekule atom/bond spelling when a mixed aromatic/aliphatic pi component has non-aromatic multiple-bonded framework atoms that aromatic shorthand cannot represent without seeding a different aromaticity partition on reparse, and only when concrete stored single/double bond orders are available.
+- Preserves explicit hydrogens and no-implicit organic atoms when organic shorthand cannot represent the stored atom state, including metal/main-group neighbor cases handled by the shared SMILES parse/write fidelity rules.
 - The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; stored atom and bond stereo metadata is ignored when writing canonical output.
 
 ## Validation
@@ -56,3 +57,5 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v21: Advance PubChem-1000 validation through imported aromatic-order support for five-member nitrogen/chalcogen rings with exocyclic cationic imine pi bonds.
 - v22: Rank canonical candidates with local atom-neighbor semantics and add a lazy stored-Kekule fallback for aromatic carbocyclic components without aromatic heteroatoms, advancing PubChem-1000 past oxygen-rich multicomponent lactone/carboxyl mixtures while keeping heteroaromatic nitrogen output in aromatic form.
 - v23: Move the public canonical writer API under the `smiles` facade and the ranking dependency under `canon`.
+- v24: Remove candidate reparse/sanitize ranking and motif-specific stored-Kekule cleanup fallback; canonical output is selected by RDKit-inspired rank-guided graph traversal plus syntax tie-breakers, with graph-derived stored-Kekule emission for mixed aromatic/aliphatic pi components that cannot be faithfully represented by aromatic shorthand.
+- v25: Complete PubChem-1000 canonical validation by broadening graph-derived representability rules for aromatic carbonyls, charged aromatic carbon components, and zero-hydrogen metal/main-group-bound organic atoms, plus aligning validation semantics for anionic aromatic nitrogen and charged aromatic carbon hydrogens.
