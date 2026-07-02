@@ -618,6 +618,49 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .find_map(|(id, atom)| (atom.element.symbol() == "S").then_some(id))
         .expect("sulfur atom");
     assert_eq!(explicit_valence_json(thiophene.graph(), sulfur_id), 2);
+    let mut anionic_macrocycle = smiles::read_str_with_options(
+        "CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]",
+        SmilesParseOptions::default(),
+    )
+    .expect("anionic macrocycle parses");
+    perception::sanitize_with_options(&mut anionic_macrocycle, SanitizeOptions::default())
+        .expect("anionic macrocycle should sanitize");
+    let anionic_nitrogen = anionic_macrocycle
+        .graph()
+        .atoms()
+        .find_map(|(id, atom)| {
+            (atom.element.symbol() == "N" && atom.formal_charge < 0 && atom.aromatic).then_some(id)
+        })
+        .expect("anionic aromatic nitrogen");
+    assert_eq!(
+        explicit_valence_json(anionic_macrocycle.graph(), anionic_nitrogen),
+        2
+    );
+    let mut cyclopentadienyl =
+        smiles::read_str_with_options("[CH-]1[C-]=[C-][C-]=[C-]1", SmilesParseOptions::default())
+            .expect("cyclopentadienyl anion parses");
+    perception::sanitize_with_options(&mut cyclopentadienyl, SanitizeOptions::default())
+        .expect("cyclopentadienyl anion should sanitize");
+    let anionic_carbon_with_h = cyclopentadienyl
+        .graph()
+        .atoms()
+        .find_map(|(id, atom)| {
+            (atom.element.symbol() == "C"
+                && atom.formal_charge < 0
+                && atom.aromatic
+                && atom.explicit_hydrogens > 0)
+                .then_some(id)
+        })
+        .expect("anionic aromatic carbon with explicit hydrogen");
+    let anionic_carbon = cyclopentadienyl
+        .graph()
+        .atom(anionic_carbon_with_h)
+        .expect("anionic carbon should exist");
+    assert_eq!(
+        explicit_valence_json(cyclopentadienyl.graph(), anionic_carbon_with_h)
+            + anionic_carbon.explicit_hydrogens,
+        3
+    );
     let mut fused_triazine = smiles::read_str_with_options(
         "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
         SmilesParseOptions::default(),

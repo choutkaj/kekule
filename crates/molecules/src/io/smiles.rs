@@ -716,6 +716,12 @@ fn canonical_component_has_aromatic_shorthand_sensitive_atom(
         let atom = mol
             .atom(*atom_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
+        if atom.aromatic && atom.formal_charge != 0 && matches!(atom.element.symbol(), "B" | "C") {
+            return Ok(true);
+        }
+        if atom.aromatic && atom_has_exocyclic_hetero_multiple_bond(mol, *atom_id, &atom_set)? {
+            return Ok(true);
+        }
         if atom.aromatic || atom.formal_charge != 0 {
             continue;
         }
@@ -745,6 +751,31 @@ fn canonical_component_has_aromatic_shorthand_sensitive_atom(
         if (aromatic_neighbors > 0 || pi_framework_neighbors >= 3)
             && pi_framework_neighbors >= 2
             && multiple_bond_to_non_aromatic_neighbor
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn atom_has_exocyclic_hetero_multiple_bond(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom_set: &BTreeSet<AtomId>,
+) -> std::result::Result<bool, MolWriteError> {
+    for (_, bond) in mol
+        .incident_bonds(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+    {
+        if !matches!(bond.order, BondOrder::Double | BondOrder::Triple) {
+            continue;
+        }
+        let neighbor_id = bond.other_atom(atom_id);
+        let neighbor = mol
+            .atom(neighbor_id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        if !atom_set.contains(&neighbor_id)
+            || !neighbor.aromatic && !matches!(neighbor.element.symbol(), "B" | "C")
         {
             return Ok(true);
         }
@@ -1586,6 +1617,14 @@ fn canonical_smiles_atom(
         normalized.chiral = None;
         return Ok(smiles_atom(&normalized));
     }
+    if canonical_smiles_should_bracket_metal_bound_zero_hydrogens(mol, atom_id, atom)? {
+        let mut normalized = atom.clone();
+        normalized.isotope = None;
+        normalized.implicit_hydrogens = Some(0);
+        normalized.no_implicit_hydrogens = true;
+        normalized.chiral = None;
+        return Ok(smiles_atom(&normalized));
+    }
     if canonical_smiles_can_use_organic_form(mol, atom_id, atom)? {
         let mut normalized = atom.clone();
         normalized.isotope = None;
@@ -1613,6 +1652,23 @@ fn canonical_smiles_should_bracket_metal_bound_hydrogens(
         && atom.explicit_hydrogens == 0
         && atom.implicit_hydrogens.unwrap_or(0) > 0
         && matches!(atom.element.symbol(), "B" | "C" | "N" | "O" | "P" | "S")
+        && atom_has_metal_neighbor(mol, atom_id)?)
+}
+
+fn canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> std::result::Result<bool, MolWriteError> {
+    Ok(atom.formal_charge == 0
+        && atom.radical.is_none()
+        && atom.atom_map.is_none()
+        && atom.explicit_hydrogens == 0
+        && atom.implicit_hydrogens == Some(0)
+        && matches!(
+            atom.element.symbol(),
+            "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
+        )
         && atom_has_metal_neighbor(mol, atom_id)?)
 }
 
@@ -1649,7 +1705,9 @@ fn canonical_smiles_can_use_organic_form(
     let Some(target) = canonical_organic_valence_target(atom) else {
         return Ok(false);
     };
-    if atom.no_implicit_hydrogens && atom_has_metal_neighbor(mol, atom_id)? {
+    if (atom.no_implicit_hydrogens || atom.implicit_hydrogens == Some(0))
+        && atom_has_metal_neighbor(mol, atom_id)?
+    {
         return Ok(false);
     }
     let bond_valence = smiles_bond_valence_sum(mol, atom_id)?;
