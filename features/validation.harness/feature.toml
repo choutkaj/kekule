@@ -1,7 +1,7 @@
 id = "validation.harness"
 title = "Reference validation harness"
 area = "infrastructure"
-version = 7
+version = 9
 implemented = true
 validated = false
 description = "Provide commands and conventions for comparing molecules against RDKit and Biopython generated golden data."

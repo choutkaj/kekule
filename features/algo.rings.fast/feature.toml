@@ -1,9 +1,9 @@
 id = "algo.rings.fast"
 title = "Fast ring membership detection"
 area = "algorithms"
-version = 4
+version = 5
 implemented = true
-validated = false
+validated = true
 description = "Detect whether atoms and bonds are members of any cycle without computing a canonical ring basis."
 depends_on = ["core.graph"]
-validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pl-rex", "enamine-diversity"]
+validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pubchem-100k", "pl-rex", "enamine-diversity"]

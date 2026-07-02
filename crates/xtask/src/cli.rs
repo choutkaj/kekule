@@ -17,7 +17,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
 
 pub(crate) fn print_help() {
     eprintln!(
-        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all] [--update]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
+        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all] [--update] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
     );
 }
 
@@ -31,7 +31,7 @@ pub(crate) fn validate_args(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--feature" | "--corpus" => {
+            "--feature" | "--corpus" | "--jobs" => {
                 if index + 1 >= args.len() {
                     return Err(boxed_error(format!("missing value after {}", args[index])));
                 }
@@ -42,4 +42,19 @@ pub(crate) fn validate_args(args: &[String]) -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+pub(crate) fn validation_jobs(args: &[String]) -> Result<usize, Box<dyn Error>> {
+    let Some(raw) = value_after_flag(args, "--jobs") else {
+        return Ok(std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1));
+    };
+    let jobs = raw
+        .parse::<usize>()
+        .map_err(|_| boxed_error(format!("--jobs must be a positive integer, got `{raw}`")))?;
+    if jobs == 0 {
+        return Err(boxed_error("--jobs must be at least 1"));
+    }
+    Ok(jobs)
 }

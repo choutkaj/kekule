@@ -38,3 +38,4 @@ Compute a compact ring basis for downstream small-molecule perception.
 - v4: Hide and clear cached ring sets after invalidating mutations.
 - v5: Add bounded work instrumentation, structured resource errors, configurable limits, and iterative shortest-path reconstruction.
 - v6: Move the public expert API under the `perception::rings` facade.
+- v7: Add PubChem-100k as required broad-corpus validation evidence.

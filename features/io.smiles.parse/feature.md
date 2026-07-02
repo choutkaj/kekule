@@ -41,3 +41,4 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 - v5: Parse directional `/` and `\` bond markers as bond stereo metadata, and preserve no-implicit hydrogen semantics for metal-bound organic halogens.
 - v6: Parse bracketed aromatic Se/Te atoms and generalize metal-bound no-implicit preservation to valence-filled organic-subset atoms so canonical organometallic output can be reparsed and sanitized.
 - v7: Move the public parser API under the `smiles` facade and keep sanitizing reads explicit by name.
+- v8: Add PubChem-100k as required broad-corpus validation evidence.

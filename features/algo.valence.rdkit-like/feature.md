@@ -35,3 +35,4 @@ Provide conservative valence perception for common organic molecules.
 - v5: Generalize PubChem-1000-driven valence handling for transition-metal coordination, group-14/group-15 heavy elements, oxonium centers, chalcogens, and radicals; PubChem-1000 still requires further table coverage.
 - v6: Add aromatic imported-SMILES valence targets so lowercase aromatic systems sanitize with RDKit-like hydrogen counts.
 - v7: Move the public expert API under the `perception::valence` facade.
+- v8: Add PubChem-100k as required broad-corpus validation evidence.

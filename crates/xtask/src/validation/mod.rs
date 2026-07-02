@@ -37,6 +37,8 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         );
         return Ok(());
     }
+    let jobs = validation_jobs(&args)?;
+    println!("validation worker count: {jobs}");
 
     let mut statuses = read_validation_statuses(&features)?;
     let mut failures = Vec::new();
@@ -96,7 +98,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 "validation manifest lists {} fixture(s)",
                 manifest.fixtures.len()
             );
-            let compared = validate_golden_outputs(&manifest_path, &manifest)?;
+            let compared = validate_golden_outputs(&manifest_path, &manifest, jobs)?;
             if compared > 0 {
                 println!("validation compared {compared} golden file(s)");
             }

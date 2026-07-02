@@ -31,3 +31,4 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 - v1: SDF V2000 writer.
 - v2: Preserve exact Molfile radical and supported bond-stereo semantics in SDF records.
 - v3: Move the public writer API under the `sdf` facade.
+- v4: Add PubChem-100k as required broad-corpus validation evidence.
