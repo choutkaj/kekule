@@ -6,12 +6,13 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 
 ## Behavior/API
 
-- Exposes `cargo xtask validate --feature FEATURE_ID|all --corpus CORPUS_ID|all [--update]`.
+- Exposes `cargo xtask validate --feature FEATURE_ID|all --corpus CORPUS_ID|all [--update] [--jobs N]`.
 - Defaults omitted `--corpus` to `tiny` for compatibility.
 - Discovers corpus manifests under `validation/corpora/<corpus-id>/features/<feature-id>.toml`.
 - Verifies listed fixture paths exist.
 - Requires one deterministic gzip golden under the corpus `golden/<feature-id>/` directory for each listed fixture.
 - Compares normalized Rust implementation output against each golden file's `expected` payload.
+- Compares fixtures in parallel by default using all available processors; `--jobs N` bounds validation to a fixed worker count.
 - Accepts only declared implementation-vs-golden comparison manifests for required implemented validation.
 - Verifies golden `feature_id`, `corpus_id`, `fixture_path`, current fixture SHA-256, and reference tool/version metadata before comparing payloads.
 - Records content-addressed pass evidence over manifests, source locks, fixtures, goldens, Rust source, Cargo manifests, feature metadata, and reference generator/environment files.
@@ -34,6 +35,7 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - Evidence schema v2 includes cross-platform text line-ending normalization.
 - Repeated `--update` runs preserve timestamps when the evidence hash is unchanged.
 - The validation command uses the Rust implementation only; RDKit and Biopython are used to generate goldens, not to run validation.
+- Fixture comparison uses a bounded worker pool while status writes and dashboard regeneration remain single-threaded.
 - Reference tools are never Rust runtime dependencies.
 
 ## Validation
@@ -57,3 +59,4 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - v6: Make evidence hashes portable across LF and CRLF working trees.
 - v7: Align SMILES semantic comparison with RDKit aromatic carbonyl valence and aromatic nH no-implicit handling.
 - v8: Add large-corpus pack member metadata for PL-REX, Enamine Diversity, and PubChem-100k validation wiring.
+- v9: Parallelize fixture comparison by default and add `--jobs N` for bounded validation runs.

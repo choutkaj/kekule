@@ -215,6 +215,7 @@ pub(crate) fn validate_manifest_paths(
 pub(crate) fn validate_golden_outputs(
     manifest_path: &Path,
     manifest: &ValidationManifest,
+    jobs: usize,
 ) -> Result<usize, Box<dyn Error>> {
     if manifest.fixtures.is_empty() {
         return Ok(0);
@@ -228,37 +229,106 @@ pub(crate) fn validate_golden_outputs(
                 manifest_path.display()
             ))
         })?;
+    let worker_count = jobs.max(1).min(manifest.fixtures.len());
+    if worker_count == 1 {
+        return validate_golden_outputs_serial(manifest, base);
+    }
+
+    let next_fixture = std::sync::Mutex::new(0usize);
+    let results = std::sync::Mutex::new(
+        (0..manifest.fixtures.len())
+            .map(|_| None)
+            .collect::<Vec<Option<Result<(), String>>>>(),
+    );
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| loop {
+                if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let index = {
+                    let mut next = next_fixture
+                        .lock()
+                        .expect("validation fixture queue lock should not be poisoned");
+                    if *next >= manifest.fixtures.len() {
+                        None
+                    } else {
+                        let index = *next;
+                        *next += 1;
+                        Some(index)
+                    }
+                };
+                let Some(index) = index else {
+                    break;
+                };
+                let fixture = &manifest.fixtures[index];
+                let result =
+                    validate_one_golden(base, manifest, fixture).map_err(|error| error.to_string());
+                if result.is_err() {
+                    failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                results
+                    .lock()
+                    .expect("validation result lock should not be poisoned")[index] = Some(result);
+            });
+        }
+    });
+
+    let results = results
+        .into_inner()
+        .expect("validation result lock should not be poisoned");
+    for result in results.into_iter().flatten() {
+        if let Err(error) = result {
+            return Err(boxed_error(error));
+        }
+    }
+    Ok(manifest.fixtures.len())
+}
+
+fn validate_golden_outputs_serial(
+    manifest: &ValidationManifest,
+    base: &Path,
+) -> Result<usize, Box<dyn Error>> {
     let mut compared = 0;
     for fixture in &manifest.fixtures {
-        let fixture_path = base.join(fixture);
-        let golden_path = base
-            .join("golden")
-            .join(&manifest.feature_id)
-            .join(format!("{}.json.gz", slugify_fixture(fixture)));
-        if !golden_path.exists() {
-            return Err(boxed_error(format!(
-                "{} is missing golden file for fixture `{fixture}`",
-                manifest_path.display()
-            )));
-        }
-        let golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
-        validate_golden_metadata(&golden_path, &golden, manifest, fixture, &fixture_path)?;
-        let expected = golden.get("expected").ok_or_else(|| {
-            boxed_error(format!("{} is missing `expected`", golden_path.display()))
-        })?;
-        let actual =
-            implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path)?;
-        let expected = normalize_for_comparison(expected);
-        let actual = normalize_for_comparison(&actual);
-        if let Some(diff) = first_json_diff("$", &expected, &actual) {
-            return Err(boxed_error(format!(
-                "{} differs from implementation output for fixture `{fixture}`: {diff}",
-                golden_path.display()
-            )));
-        }
+        validate_one_golden(base, manifest, fixture)?;
         compared += 1;
     }
     Ok(compared)
+}
+
+fn validate_one_golden(
+    base: &Path,
+    manifest: &ValidationManifest,
+    fixture: &str,
+) -> Result<(), Box<dyn Error>> {
+    let fixture_path = base.join(fixture);
+    let golden_path = base
+        .join("golden")
+        .join(&manifest.feature_id)
+        .join(format!("{}.json.gz", slugify_fixture(fixture)));
+    if !golden_path.exists() {
+        return Err(boxed_error(format!(
+            "{} is missing golden file for fixture `{fixture}`",
+            golden_path.display()
+        )));
+    }
+    let golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
+    validate_golden_metadata(&golden_path, &golden, manifest, fixture, &fixture_path)?;
+    let expected = golden
+        .get("expected")
+        .ok_or_else(|| boxed_error(format!("{} is missing `expected`", golden_path.display())))?;
+    let actual = implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path)?;
+    let expected = normalize_for_comparison(expected);
+    let actual = normalize_for_comparison(&actual);
+    if let Some(diff) = first_json_diff("$", &expected, &actual) {
+        return Err(boxed_error(format!(
+            "{} differs from implementation output for fixture `{fixture}`: {diff}",
+            golden_path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_golden_metadata(

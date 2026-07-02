@@ -282,6 +282,25 @@ fn validation_manifest_path_is_feature_scoped() {
 }
 
 #[test]
+fn validate_jobs_defaults_to_available_parallelism_and_accepts_override() {
+    let default_jobs = validation_jobs(&[]).expect("default worker count should resolve");
+    assert!(default_jobs >= 1);
+    assert_eq!(
+        validation_jobs(&["--jobs".to_owned(), "2".to_owned()])
+            .expect("explicit jobs should parse"),
+        2
+    );
+    assert!(validation_jobs(&["--jobs".to_owned(), "0".to_owned()]).is_err());
+    assert!(validation_jobs(&["--jobs".to_owned(), "many".to_owned()]).is_err());
+    assert!(validate_args(&[
+        "--feature".to_owned(),
+        "all".to_owned(),
+        "--jobs".to_owned()
+    ])
+    .is_err());
+}
+
+#[test]
 fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
     let features = vec![
         Feature {
