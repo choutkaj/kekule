@@ -212,13 +212,24 @@ pub(crate) fn validate_manifest_paths(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ValidationComparison {
+    pub(crate) compared_count: usize,
+    pub(crate) failed_count: usize,
+    pub(crate) first_failure: Option<String>,
+}
+
 pub(crate) fn validate_golden_outputs(
     manifest_path: &Path,
     manifest: &ValidationManifest,
     jobs: usize,
-) -> Result<usize, Box<dyn Error>> {
+) -> Result<ValidationComparison, Box<dyn Error>> {
     if manifest.fixtures.is_empty() {
-        return Ok(0);
+        return Ok(ValidationComparison {
+            compared_count: 0,
+            failed_count: 0,
+            first_failure: None,
+        });
     }
     let base = manifest_path
         .parent()
@@ -231,22 +242,18 @@ pub(crate) fn validate_golden_outputs(
         })?;
     let worker_count = jobs.max(1).min(manifest.fixtures.len());
     if worker_count == 1 {
-        return validate_golden_outputs_serial(manifest, base);
+        return validate_golden_outputs_serial(manifest_path, manifest, base);
     }
 
     let next_fixture = std::sync::Mutex::new(0usize);
     let results = std::sync::Mutex::new(
         (0..manifest.fixtures.len())
             .map(|_| None)
-            .collect::<Vec<Option<Result<(), String>>>>(),
+            .collect::<Vec<Option<Result<FixtureComparison, String>>>>(),
     );
-    let failed = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|scope| {
         for _ in 0..worker_count {
             scope.spawn(|| loop {
-                if failed.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
                 let index = {
                     let mut next = next_fixture
                         .lock()
@@ -263,11 +270,8 @@ pub(crate) fn validate_golden_outputs(
                     break;
                 };
                 let fixture = &manifest.fixtures[index];
-                let result =
-                    validate_one_golden(base, manifest, fixture).map_err(|error| error.to_string());
-                if result.is_err() {
-                    failed.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
+                let result = compare_one_golden(manifest_path, base, manifest, fixture)
+                    .map_err(|error| error.to_string());
                 results
                     .lock()
                     .expect("validation result lock should not be poisoned")[index] = Some(result);
@@ -278,31 +282,61 @@ pub(crate) fn validate_golden_outputs(
     let results = results
         .into_inner()
         .expect("validation result lock should not be poisoned");
-    for result in results.into_iter().flatten() {
-        if let Err(error) = result {
-            return Err(boxed_error(error));
-        }
+    let mut comparison = ValidationComparison {
+        compared_count: 0,
+        failed_count: 0,
+        first_failure: None,
+    };
+    for result in results {
+        let result = result
+            .ok_or_else(|| boxed_error("validation worker did not record a fixture result"))?;
+        record_fixture_comparison(&mut comparison, result.map_err(boxed_error)?);
     }
-    Ok(manifest.fixtures.len())
+    Ok(comparison)
 }
 
 fn validate_golden_outputs_serial(
+    manifest_path: &Path,
     manifest: &ValidationManifest,
     base: &Path,
-) -> Result<usize, Box<dyn Error>> {
-    let mut compared = 0;
+) -> Result<ValidationComparison, Box<dyn Error>> {
+    let mut comparison = ValidationComparison {
+        compared_count: 0,
+        failed_count: 0,
+        first_failure: None,
+    };
     for fixture in &manifest.fixtures {
-        validate_one_golden(base, manifest, fixture)?;
-        compared += 1;
+        let result = compare_one_golden(manifest_path, base, manifest, fixture)?;
+        record_fixture_comparison(&mut comparison, result);
     }
-    Ok(compared)
+    Ok(comparison)
 }
 
-fn validate_one_golden(
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FixtureComparison {
+    Passed,
+    Failed(String),
+}
+
+fn record_fixture_comparison(
+    comparison: &mut ValidationComparison,
+    fixture_result: FixtureComparison,
+) {
+    match fixture_result {
+        FixtureComparison::Passed => comparison.compared_count += 1,
+        FixtureComparison::Failed(failure) => {
+            comparison.failed_count += 1;
+            comparison.first_failure.get_or_insert(failure);
+        }
+    }
+}
+
+fn compare_one_golden(
+    manifest_path: &Path,
     base: &Path,
     manifest: &ValidationManifest,
     fixture: &str,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<FixtureComparison, Box<dyn Error>> {
     let fixture_path = base.join(fixture);
     let golden_path = base
         .join("golden")
@@ -311,7 +345,7 @@ fn validate_one_golden(
     if !golden_path.exists() {
         return Err(boxed_error(format!(
             "{} is missing golden file for fixture `{fixture}`",
-            golden_path.display()
+            manifest_path.display()
         )));
     }
     let golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
@@ -319,16 +353,24 @@ fn validate_one_golden(
     let expected = golden
         .get("expected")
         .ok_or_else(|| boxed_error(format!("{} is missing `expected`", golden_path.display())))?;
-    let actual = implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path)?;
+    let actual =
+        match implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path) {
+            Ok(actual) => actual,
+            Err(error) => {
+                return Ok(FixtureComparison::Failed(format!(
+                    "fixture `{fixture}` implementation output failed: {error}"
+                )))
+            }
+        };
     let expected = normalize_for_comparison(expected);
     let actual = normalize_for_comparison(&actual);
     if let Some(diff) = first_json_diff("$", &expected, &actual) {
-        return Err(boxed_error(format!(
+        return Ok(FixtureComparison::Failed(format!(
             "{} differs from implementation output for fixture `{fixture}`: {diff}",
             golden_path.display()
         )));
     }
-    Ok(())
+    Ok(FixtureComparison::Passed)
 }
 
 pub(crate) fn validate_golden_metadata(

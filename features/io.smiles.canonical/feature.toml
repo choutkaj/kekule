@@ -6,4 +6,4 @@ implemented = true
 validated = false
 description = "Write deterministic non-stereo canonical SMILES using canonical atom ranking and rank-guided graph traversal."
 depends_on = ["io.smiles.write", "algo.canonical-ranking"]
-validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pubchem-100k"]
+validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k"]

@@ -12,8 +12,8 @@
 - [ ] `cargo test --workspace --doc`
 - [ ] `cargo xtask dashboard --check`
 - [ ] `cargo xtask skills --check`
-- [ ] `cargo xtask corpus check --corpus tiny --require-data`
-- [ ] `cargo xtask validate --feature all --corpus tiny`
+- [ ] `cargo xtask corpus check --corpus smoke --require-data`
+- [ ] `cargo xtask validate --feature all --corpus smoke`
 - [ ] Reference validation, if applicable
 
 ## Notes

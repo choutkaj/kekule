@@ -4,8 +4,9 @@ pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let check = args.iter().any(|arg| arg == "--check");
     let features = read_features()?;
     let statuses = read_validation_statuses(&features)?;
+    let corpus_info = read_dashboard_corpus_info()?;
     ensure_recorded_validation_flags_synced(&features, &statuses)?;
-    let rendered = render_dashboard(&features, &statuses);
+    let rendered = render_dashboard(&features, &statuses, &corpus_info);
     let path = Path::new(DASHBOARD_PATH);
 
     if check {
@@ -24,6 +25,7 @@ pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 pub(crate) fn render_dashboard(
     features: &[Feature],
     statuses: &BTreeMap<String, ValidationStatus>,
+    corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
 ) -> String {
     let mut out = String::new();
     out.push_str("<!doctype html>\n");
@@ -43,15 +45,15 @@ pub(crate) fn render_dashboard(
     out.push_str(
         "th, td { border: 1px solid var(--border); padding: 6px 8px; vertical-align: middle; }\n",
     );
-    out.push_str("thead th { position: sticky; top: 0; z-index: 1; height: 112px; background: var(--head); white-space: nowrap; }\n");
+    out.push_str("thead th { position: sticky; top: 0; z-index: 1; height: 128px; background: var(--head); white-space: nowrap; }\n");
     out.push_str("tbody tr:nth-child(even) { background: color-mix(in srgb, var(--head) 45%, transparent); }\n");
     out.push_str("th.text, td.text { text-align: left; }\n");
     out.push_str("th.compact, td.compact, th.rotated, td.marker { text-align: center; }\n");
     out.push_str(
-        "th.rotated { width: 42px; min-width: 42px; padding: 0; vertical-align: bottom; }\n",
+        "th.rotated { width: 52px; min-width: 52px; padding: 0; vertical-align: middle; }\n",
     );
-    out.push_str("th.rotated button { height: 108px; width: 42px; padding: 0; display: flex; align-items: flex-end; justify-content: center; }\n");
-    out.push_str("th.rotated span { display: inline-block; transform: rotate(-60deg); transform-origin: bottom left; width: 96px; text-align: left; }\n");
+    out.push_str("th.rotated button { position: relative; height: 124px; width: 52px; padding: 0; display: block; }\n");
+    out.push_str("th.rotated .rotated-label { position: absolute; left: 50%; bottom: 10px; width: 118px; transform: translateX(-50%) rotate(-60deg); transform-origin: center bottom; text-align: center; white-space: normal; line-height: 1.15; }\n");
     out.push_str(
         "button.sort { all: unset; cursor: pointer; color: inherit; font-weight: 650; }\n",
     );
@@ -62,26 +64,28 @@ pub(crate) fn render_dashboard(
     out.push_str("th[aria-sort=\"descending\"] button.sort::after { content: \" \\25BC\"; font-size: 10px; color: var(--muted); }\n");
     out.push_str(".ok { color: var(--ok); font-weight: 700; }\n");
     out.push_str(".bad { color: var(--bad); font-weight: 700; }\n");
+    out.push_str(".count { display: inline-block; min-width: 1.2em; margin-left: 2px; font-size: 12px; font-weight: 650; color: var(--bad); }\n");
     out.push_str(".na { color: var(--muted); }\n");
+    out.push_str(".legend { margin-top: -8px; font-size: 12px; }\n");
+    out.push_str(".legend span { margin-right: 3px; }\n");
     out.push_str("code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }\n");
     out.push_str("</style>\n");
     out.push_str("</head>\n");
     out.push_str("<body>\n");
     out.push_str("<h1>Feature Dashboard</h1>\n");
     out.push_str("<p>Generated from feature metadata and recorded validation status. Run cargo xtask validate to verify evidence against the current checkout. Do not hand-edit this file.</p>\n");
+    out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"na\">-</span>not required</p>\n");
     out.push_str("<div class=\"dashboard-wrap\">\n");
     out.push_str("<table id=\"feature-dashboard\">\n");
     out.push_str("<thead>\n<tr>");
     out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Feature</button></th>");
     out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Title</button></th>");
-    out.push_str("<th class=\"compact rotated\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\"><span>Area</span></button></th>");
-    out.push_str("<th class=\"compact rotated\" data-sort-type=\"number\"><button class=\"sort\" type=\"button\"><span>Version</span></button></th>");
-    out.push_str("<th class=\"compact rotated\" data-sort-type=\"number\"><button class=\"sort\" type=\"button\"><span>Implemented</span></button></th>");
-    for (_, label) in VALIDATION_CORPORA {
-        out.push_str(&format!(
-            "<th class=\"rotated\" data-sort-type=\"number\"><button class=\"sort\" type=\"button\"><span>{}</span></button></th>",
-            escape_html(label)
-        ));
+    out.push_str(&rotated_header("Area", "Area", "text"));
+    out.push_str(&rotated_header("Version", "Version", "number"));
+    out.push_str(&rotated_header("Implemented", "Implemented", "number"));
+    for (corpus, label) in VALIDATION_CORPORA {
+        let (visible, title) = corpus_header(corpus, label, corpus_info);
+        out.push_str(&rotated_header(&visible, &title, "number"));
     }
     out.push_str("</tr>\n</thead>\n<tbody>\n");
     for feature in features {
@@ -107,23 +111,10 @@ pub(crate) fn render_dashboard(
         out.push_str(&format!(
             "<td class=\"marker\" data-sort-value=\"{}\">{}</td>",
             bool_sort_value(feature.implemented),
-            dashboard_marker(Some(feature.implemented))
+            dashboard_bool_marker(feature.implemented)
         ));
         for (corpus, _) in VALIDATION_CORPORA {
-            let marker = if feature
-                .validation_required
-                .iter()
-                .any(|required| required == corpus)
-            {
-                Some(recorded_corpus_passed(feature, status, corpus))
-            } else {
-                None
-            };
-            out.push_str(&format!(
-                "<td class=\"marker\" data-sort-value=\"{}\">{}</td>",
-                optional_bool_sort_value(marker),
-                dashboard_marker(marker)
-            ));
+            out.push_str(&dashboard_corpus_cell(feature, status, corpus));
         }
         out.push_str("</tr>\n");
     }
@@ -164,12 +155,90 @@ pub(crate) fn render_dashboard(
     out
 }
 
-pub(crate) fn dashboard_marker(value: Option<bool>) -> &'static str {
-    match value {
-        Some(true) => "<span class=\"ok\" aria-label=\"passed\">&#10003;</span>",
-        Some(false) => "<span class=\"bad\" aria-label=\"failed\">&#10007;</span>",
-        None => "<span class=\"na\" aria-label=\"not required\">-</span>",
+pub(crate) fn corpus_header(
+    corpus: &str,
+    label: &str,
+    corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
+) -> (String, String) {
+    corpus_info
+        .get(corpus)
+        .map(|info| {
+            (
+                format!("{} (n={})", info.id, info.expected_count),
+                format!("{}: {} expected case(s)", info.title, info.expected_count),
+            )
+        })
+        .unwrap_or_else(|| (label.to_owned(), label.to_owned()))
+}
+
+pub(crate) fn rotated_header(label: &str, title: &str, sort_type: &str) -> String {
+    format!(
+        "<th class=\"compact rotated\" data-sort-type=\"{}\" title=\"{}\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by {}\"><span class=\"rotated-label\">{}</span></button></th>",
+        escape_html(sort_type),
+        escape_html(title),
+        escape_html(title),
+        escape_html(label)
+    )
+}
+
+pub(crate) fn dashboard_bool_marker(value: bool) -> &'static str {
+    if value {
+        "<span class=\"ok\" aria-label=\"passed\">&#10003;</span>"
+    } else {
+        "<span class=\"bad\" aria-label=\"failed\">&#10007;</span>"
     }
+}
+
+pub(crate) fn dashboard_corpus_cell(
+    feature: &Feature,
+    status: Option<&ValidationStatus>,
+    corpus: &str,
+) -> String {
+    if !feature
+        .validation_required
+        .iter()
+        .any(|required| required == corpus)
+    {
+        return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not required\" title=\"not required\">-</span></td>".to_owned();
+    }
+    if recorded_corpus_passed(feature, status, corpus) {
+        return "<td class=\"marker\" data-sort-value=\"1\"><span class=\"ok\" aria-label=\"passed\" title=\"recorded evidence passed\">&#10003;</span></td>".to_owned();
+    }
+    let failed_status = status.and_then(|status| status.corpora.get(corpus));
+    let marker = if let Some(corpus_status) = failed_status {
+        if !corpus_status.passed && corpus_status.failed_count > 0 {
+            let title = corpus_status
+                .first_failure
+                .as_deref()
+                .map(|failure| {
+                    format!(
+                        "{} non-passing case(s); first failure: {}",
+                        corpus_status.failed_count, failure
+                    )
+                })
+                .unwrap_or_else(|| format!("{} non-passing case(s)", corpus_status.failed_count));
+            format!(
+                "<span class=\"bad\" aria-label=\"failed: {} non-passing case(s)\" title=\"{}\">&#10007;<span class=\"count\">{}</span></span>",
+                corpus_status.failed_count,
+                escape_html(&title),
+                corpus_status.failed_count
+            )
+        } else {
+            let title = if corpus_status.passed {
+                "recorded evidence is stale or incomplete"
+            } else {
+                "validation did not record fixture-level failures"
+            };
+            format!(
+                "<span class=\"bad\" aria-label=\"failed\" title=\"{}\">&#10007;</span>",
+                title
+            )
+        }
+    } else {
+        "<span class=\"bad\" aria-label=\"failed\" title=\"no recorded validation status\">&#10007;</span>"
+            .to_owned()
+    };
+    format!("<td class=\"marker\" data-sort-value=\"0\">{marker}</td>")
 }
 
 pub(crate) fn bool_sort_value(value: bool) -> &'static str {
@@ -177,14 +246,6 @@ pub(crate) fn bool_sort_value(value: bool) -> &'static str {
         "1"
     } else {
         "0"
-    }
-}
-
-pub(crate) fn optional_bool_sort_value(value: Option<bool>) -> &'static str {
-    match value {
-        Some(true) => "1",
-        Some(false) => "0",
-        None => "-1",
     }
 }
 

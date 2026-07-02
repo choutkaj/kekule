@@ -6,4 +6,4 @@ implemented = true
 validated = false
 description = "Compute a smallest-set ring basis for small-molecule workflows."
 depends_on = ["algo.rings.fast"]
-validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pubchem-100k", "pl-rex", "enamine-diversity"]
+validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "pl-rex", "enamine-diversity"]

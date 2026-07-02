@@ -19,18 +19,18 @@ micromamba create -f validation/reference/biopython/environment.yml
 Run dependency checks through those environments:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus tiny --check-deps
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus tiny --check-deps
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus smoke --check-deps
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus smoke --check-deps
 ```
 
 Generate goldens for a feature:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus tiny
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.rings.fast --corpus tiny
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like --corpus tiny
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus tiny
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra --corpus tiny
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus smoke
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.rings.fast --corpus smoke
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like --corpus smoke
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus smoke
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra --corpus smoke
 ```
 
 By default, output goes to `validation/corpora/<corpus-id>/golden/<feature-id>/`. Use `--fixture`

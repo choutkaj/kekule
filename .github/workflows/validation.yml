@@ -10,7 +10,7 @@ on:
       corpus:
         description: Corpus ID or all
         required: true
-        default: tiny
+        default: smoke
         type: string
       reference_tool:
         description: Reference environment to prepare

@@ -31,7 +31,7 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Revision Notes
 
 - v1: V2000 writer.
-- v2: Validation contract excludes SDF data fields and passes the RDKit-backed `tiny` corpus.
+- v2: Validation contract excludes SDF data fields and passes the RDKit-backed `smoke` corpus.
 - v3: Write exact radical multiplicities and supported V2000 bond stereo codes; reject unsupported stereo/order combinations.
 - v4: Move the public writer API under the `molfile` facade.
 - v5: Add PubChem-100k as required broad-corpus validation evidence.

@@ -75,6 +75,39 @@ pub(crate) struct CorpusDescriptor {
     pub(crate) build_command: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CorpusDashboardInfo {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) title: String,
+    pub(crate) expected_count: usize,
+}
+
+pub(crate) fn read_dashboard_corpus_info(
+) -> Result<BTreeMap<String, CorpusDashboardInfo>, Box<dyn Error>> {
+    let mut summaries = BTreeMap::new();
+    for (corpus, label) in VALIDATION_CORPORA {
+        let descriptor = read_corpus_descriptor(corpus)?;
+        if descriptor.id != *corpus {
+            return Err(boxed_error(format!(
+                "{} declares id `{}`, expected `{corpus}`",
+                corpus_descriptor_path(corpus).display(),
+                descriptor.id
+            )));
+        }
+        summaries.insert(
+            (*corpus).to_owned(),
+            CorpusDashboardInfo {
+                id: (*corpus).to_owned(),
+                label: (*label).to_owned(),
+                title: descriptor.title,
+                expected_count: descriptor.expected_count,
+            },
+        );
+    }
+    Ok(summaries)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceLock {
@@ -378,7 +411,7 @@ pub(crate) fn check_data_file(
 pub(crate) fn check_nested_corpora(
     locks: &BTreeMap<String, SourceLock>,
 ) -> Result<(), Box<dyn Error>> {
-    for (child, parent) in [("pubchem-100", "pubchem-1000"), ("pdb-10", "pdb-100")] {
+    for (child, parent) in [("pubchem-100", "pubchem-1k"), ("pdb-10", "pdb-100")] {
         let (Some(child_lock), Some(parent_lock)) = (locks.get(child), locks.get(parent)) else {
             continue;
         };

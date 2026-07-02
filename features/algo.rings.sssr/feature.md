@@ -33,7 +33,7 @@ Compute a compact ring basis for downstream small-molecule perception.
 ## Revision Notes
 
 - v1: Deterministic ring basis.
-- v2: Shortest-cycle basis passes the RDKit-backed `tiny` corpus; broader required corpora remain pending.
+- v2: Shortest-cycle basis passes the RDKit-backed `smoke` corpus; broader required corpora remain pending.
 - v3: Fixed bridged and symmetric ring selection exposed by external PubChem validation.
 - v4: Hide and clear cached ring sets after invalidating mutations.
 - v5: Add bounded work instrumentation, structured resource errors, configurable limits, and iterative shortest-path reconstruction.

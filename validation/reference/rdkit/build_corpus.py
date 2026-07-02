@@ -71,10 +71,10 @@ def main() -> int:
         for index in range(TARGET_PER_CATEGORY)
         for category in CATEGORIES
     ]
-    build_tier(corpus_root / "pubchem-1000", ordered, snapshot, sdf_shard)
+    build_tier(corpus_root / "pubchem-1k", ordered, snapshot, sdf_shard)
     build_tier(corpus_root / "pubchem-100", ordered[:100], snapshot, sdf_shard)
     generate_goldens(repo, "pubchem-100")
-    generate_goldens(repo, "pubchem-1000")
+    generate_goldens(repo, "pubchem-1k")
     return 0
 
 

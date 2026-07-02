@@ -16,7 +16,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     validate_args(&args)?;
     let feature_selector = value_after_flag(&args, "--feature")
         .ok_or_else(|| boxed_error("missing required flag: --feature FEATURE_ID"))?;
-    let corpus_selector = value_after_flag(&args, "--corpus").unwrap_or("tiny");
+    let corpus_selector = value_after_flag(&args, "--corpus").unwrap_or("smoke");
     let update = args.iter().any(|arg| arg == "--update");
     let features = read_features()?;
     if feature_selector != "all"
@@ -65,7 +65,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 .corpora
                 .remove(&corpus);
         }
-        let result = (|| -> Result<ValidationRun, Box<dyn Error>> {
+        let result = (|| -> Result<ValidationOutcome, Box<dyn Error>> {
             let manifest = read_validation_manifest(&manifest_path)?;
             if manifest.feature_id != feature.id {
                 return Err(boxed_error(format!(
@@ -98,30 +98,51 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 "validation manifest lists {} fixture(s)",
                 manifest.fixtures.len()
             );
-            let compared = validate_golden_outputs(&manifest_path, &manifest, jobs)?;
-            if compared > 0 {
-                println!("validation compared {compared} golden file(s)");
+            let comparison = validate_golden_outputs(&manifest_path, &manifest, jobs)?;
+            if comparison.compared_count > 0 {
+                println!(
+                    "validation compared {} golden file(s)",
+                    comparison.compared_count
+                );
             }
-            if compared != manifest.fixtures.len() {
+            if comparison.failed_count > 0 {
+                println!(
+                    "validation found {} non-passing fixture(s)",
+                    comparison.failed_count
+                );
+                return Ok(ValidationOutcome::Failed(FailedValidationRun {
+                    fixture_count: manifest.fixtures.len(),
+                    compared_count: comparison.compared_count,
+                    failed_count: comparison.failed_count,
+                    first_failure: comparison
+                        .first_failure
+                        .unwrap_or_else(|| "fixture comparison failed".to_owned()),
+                    reference_tool: manifest.reference_tool,
+                    reference_version: manifest.reference_version,
+                    manifest_hash: hash_file(&manifest_path)?,
+                }));
+            }
+            if comparison.compared_count != manifest.fixtures.len() {
                 return Err(boxed_error(format!(
-                    "{} compared {compared} fixture(s), expected {}",
+                    "{} compared {} fixture(s), expected {}",
                     manifest_path.display(),
+                    comparison.compared_count,
                     manifest.fixtures.len()
                 )));
             }
             let evidence = build_validation_evidence(Path::new("."), &manifest_path, &manifest)?;
-            Ok(ValidationRun {
+            Ok(ValidationOutcome::Passed(ValidationRun {
                 fixture_count: manifest.fixtures.len(),
-                compared_count: compared,
+                compared_count: comparison.compared_count,
                 reference_tool: manifest.reference_tool,
                 reference_version: manifest.reference_version,
                 manifest_hash: hash_file(&manifest_path)?,
                 evidence,
-            })
+            }))
         })();
 
         match result {
-            Ok(run) => {
+            Ok(ValidationOutcome::Passed(run)) => {
                 passed += 1;
                 if update {
                     let existing = statuses
@@ -135,6 +156,21 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                         .insert(corpus, updated);
                 }
             }
+            Ok(ValidationOutcome::Failed(run)) => {
+                let failure = format!(
+                    "{} [{corpus}]: {} non-passing fixture(s); first failure: {}",
+                    feature.id, run.failed_count, run.first_failure
+                );
+                if update {
+                    let updated = CorpusStatus::from_failed_run(run)?;
+                    statuses
+                        .entry(feature.id.clone())
+                        .or_insert_with(|| ValidationStatus::new(&feature.id))
+                        .corpora
+                        .insert(corpus, updated);
+                }
+                failures.push(failure);
+            }
             Err(error) => failures.push(format!("{} [{corpus}]: {error}", feature.id)),
         }
     }
@@ -143,7 +179,8 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         write_validation_statuses(&statuses, &update_corpora)?;
         sync_feature_validation_flags(&features, &statuses)?;
         let refreshed_features = read_features()?;
-        let rendered = render_dashboard(&refreshed_features, &statuses);
+        let corpus_info = read_dashboard_corpus_info()?;
+        let rendered = render_dashboard(&refreshed_features, &statuses, &corpus_info);
         write_atomic_text(Path::new(DASHBOARD_PATH), &rendered)?;
         println!("updated validation status and dashboard");
     }

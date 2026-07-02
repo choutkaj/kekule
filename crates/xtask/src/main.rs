@@ -28,9 +28,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 const VALIDATION_CORPORA: &[(&str, &str)] = &[
-    ("tiny", "Tiny"),
+    ("smoke", "Smoke"),
     ("pubchem-100", "PubChem 100"),
-    ("pubchem-1000", "PubChem 1000"),
+    ("pubchem-1k", "PubChem 1k"),
     ("pubchem-100k", "PubChem 100k"),
     ("pl-rex", "PL-REX"),
     ("enamine-diversity", "Enamine diversity"),

@@ -38,3 +38,4 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - v3: Replace recursive bridge traversal with an explicit stack for very large graphs.
 - v4: Move the public expert API under the `perception::rings` facade.
 - v5: Add PubChem-100k as required broad-corpus validation evidence.
+- v6: Mark current broad-corpus validation evidence as passing in feature metadata.

@@ -32,7 +32,7 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 ## Revision Notes
 
 - v1: Noncanonical writer.
-- v2: Deterministic ring-closure and branch emission passes the RDKit-backed `tiny` corpus.
+- v2: Deterministic ring-closure and branch emission passes the RDKit-backed `smoke` corpus.
 - v3: Make writer output self-readable for aromatic SMILES, preserve aromatic donor `[nH]`, and reject unencoded lossy bond/stereo representations.
 - v4: Make graph-size-dependent writer traversals iterative while preserving deterministic output.
 - v5: Move the public noncanonical writer API under the `smiles` facade.

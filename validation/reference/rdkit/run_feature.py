@@ -36,7 +36,7 @@ def main() -> int:
         description="Generate normalized JSON golden data with RDKit."
     )
     parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
-    parser.add_argument("--corpus", default="tiny")
+    parser.add_argument("--corpus", default="smoke")
     parser.add_argument(
         "--repo-root",
         type=Path,
@@ -184,7 +184,7 @@ def generate_document(
         records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
         expected = {
             "records": [
-                canonical_smiles_record(record, exact_smiles=corpus_id == "tiny")
+                canonical_smiles_record(record, exact_smiles=corpus_id == "smoke")
                 for record in records
             ]
         }
