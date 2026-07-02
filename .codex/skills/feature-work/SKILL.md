@@ -67,7 +67,7 @@ Keep feature docs concise and current. Do not recreate stale phase-specific plan
 
 Molecular validation fixtures must be externally supplied and provenance-pinned. Keep corpus descriptors, source locks, inputs, feature manifests, goldens, and evidence under `validation/corpora/<corpus-id>/`.
 
-The `tiny` corpus is a fast wiring/regression tier, not broad validation by itself. Use declared PubChem, PDB, PL-REX, and Enamine corpora where applicable. Plain validation is read-only; use `--update` only after implementation-versus-golden comparison passes and should become committed evidence.
+The `tiny` corpus is a fast wiring/regression tier, not broad validation by itself. During routine coding work, primarily validate against `tiny`, `pubchem-100`, `pubchem-1000`, `pdb-10`, `pdb-100`, and `pl-rex` where applicable. Treat `pubchem-100k` and `enamine-diversity` as large, occasional validation runs; do not run them routinely unless the user asks for them or the change clearly needs large-corpus coverage. Plain validation is read-only; use `--update` only after implementation-versus-golden comparison passes and should become committed evidence.
 
 ## Checks
 
