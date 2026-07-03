@@ -6,4 +6,4 @@ implemented = true
 validated = false
 description = "Parse raw Molfile V2000 blocks into small molecules while preserving common atom metadata and coordinates."
 depends_on = ["core.graph", "core.atom-bond", "core.conformers"]
-validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pubchem-100k", "pl-rex", "enamine-diversity"]
+validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "pl-rex", "enamine-diversity"]

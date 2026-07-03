@@ -7,7 +7,7 @@
 
 `molecules` is an experimental pure-Rust backend for both small-molecule and macromolecular structure work. This project is human-architected and AI-coded. The cheminformatic capabilities are bundled into features, which are validated by comparison with established codebases - RDkit for small molecules and Biopython for macromolecules.
 
-For already-implemented features, see the [feature dashboard](features/DASHBOARD.html).
+For already-implemented features, see the [rendered feature dashboard](https://choutkaj.github.io/molecules/) or inspect the generated [dashboard source](features/DASHBOARD.html).
 
 > [!NOTE]
 > It is early. API may break without warning.

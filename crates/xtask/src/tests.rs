@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -191,7 +192,7 @@ validation_required = []
 }
 
 #[test]
-fn render_dashboard_is_stable_and_uses_boolean_labels() {
+fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     let features = vec![
         Feature {
             id: "a.feature".to_owned(),
@@ -215,19 +216,109 @@ fn render_dashboard_is_stable_and_uses_boolean_labels() {
             depends_on: vec!["a.feature".to_owned()],
             validation_required: Vec::new(),
         },
+        Feature {
+            id: "failing.feature".to_owned(),
+            title: "Failing".to_owned(),
+            area: "validation".to_owned(),
+            version: 1,
+            implemented: true,
+            validated: false,
+            description: "Feature with counted failures.".to_owned(),
+            depends_on: Vec::new(),
+            validation_required: vec!["smoke".to_owned()],
+        },
+        Feature {
+            id: "missing.feature".to_owned(),
+            title: "Missing".to_owned(),
+            area: "validation".to_owned(),
+            version: 1,
+            implemented: true,
+            validated: false,
+            description: "Feature without recorded status.".to_owned(),
+            depends_on: Vec::new(),
+            validation_required: vec!["pubchem-100".to_owned()],
+        },
     ];
+    let statuses = BTreeMap::from([(
+        "failing.feature".to_owned(),
+        ValidationStatus {
+            feature_id: "failing.feature".to_owned(),
+            corpora: BTreeMap::from([(
+                "smoke".to_owned(),
+                CorpusStatus::from_failed_run(FailedValidationRun {
+                    fixture_count: 7,
+                    compared_count: 4,
+                    failed_count: 3,
+                    first_failure: "fixture `data/bad.sdf` differs".to_owned(),
+                    reference_tool: "rdkit".to_owned(),
+                    reference_version: "RDKit test".to_owned(),
+                    manifest_hash: "0".repeat(64),
+                })
+                .expect("failed status should build"),
+            )]),
+        },
+    )]);
+    let corpus_info = BTreeMap::from([
+        (
+            "smoke".to_owned(),
+            CorpusDashboardInfo {
+                id: "smoke".to_owned(),
+                label: "smoke".to_owned(),
+                title: "Checked-in external smoke corpus".to_owned(),
+                expected_count: 7,
+            },
+        ),
+        (
+            "pubchem-1k".to_owned(),
+            CorpusDashboardInfo {
+                id: "pubchem-1k".to_owned(),
+                label: "PubChem 1k".to_owned(),
+                title: "PubChem deterministic 1000-compound corpus".to_owned(),
+                expected_count: 1000,
+            },
+        ),
+    ]);
 
-    let dashboard = render_dashboard(&features, &BTreeMap::new());
+    let dashboard = render_dashboard(&features, &statuses, &corpus_info);
 
     assert!(dashboard.starts_with("<!doctype html>\n"));
     assert!(dashboard.contains("<table id=\"feature-dashboard\">"));
-    assert!(dashboard.contains("<span>Implemented</span>"));
+    assert!(dashboard.contains("th.area, td.area { text-align: left; }"));
+    assert!(dashboard.contains("<th class=\"compact area\" data-sort-type=\"text\" title=\"Area\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Area\">Area</button></th>"));
+    assert!(dashboard.contains("<td class=\"compact area\" data-sort-value=\"core\">core</td>"));
+    assert!(!dashboard
+        .contains("aria-label=\"Sort by Area\"><span class=\"rotated-label\">Area</span>"));
+    assert!(dashboard.contains(
+        "<span class=\"rotated-label\"><span class=\"rotated-name\">Implemented</span></span>"
+    ));
+    assert!(dashboard.contains("height: 168px"));
+    assert!(dashboard.contains("left: calc(50% + 23px)"));
+    assert!(dashboard.contains("bottom: 12px"));
+    assert!(dashboard.contains("width: 144px"));
+    assert!(dashboard.contains("height: 46px"));
+    assert!(dashboard.contains("display: flex"));
+    assert!(dashboard.contains("rotate(-90deg)"));
+    assert!(dashboard.contains("transform-origin: left bottom"));
+    assert!(dashboard.contains("overflow: hidden"));
+    assert!(dashboard.contains("white-space: nowrap"));
     assert!(!dashboard.contains("Validated"));
-    assert!(dashboard.contains("<span>Tiny</span>"));
+    assert!(dashboard.contains(
+        "<span class=\"rotated-name\">smoke</span><br><span class=\"rotated-count\">(n=7)</span>"
+    ));
+    assert!(dashboard.contains("<span class=\"rotated-name\">pubchem-1k</span><br><span class=\"rotated-count\">(n=1000)</span>"));
     assert!(dashboard.contains("<code>a.feature</code>"));
     assert!(dashboard.contains("data-sort-value=\"0\""));
     assert!(dashboard.contains("<code>z.feature</code>"));
     assert!(dashboard.contains("data-sort-value=\"1\""));
+    assert!(dashboard.contains("aria-label=\"failed: 3 non-passing case(s)\""));
+    assert!(dashboard.contains("<span class=\"count\">3</span>"));
+    assert!(dashboard.contains("<span class=\"unknown\">?</span>unknown"));
+    assert!(dashboard.contains(
+        "<span class=\"unknown\" aria-label=\"unknown\" title=\"no recorded validation status\">?</span>"
+    ));
+    assert!(!dashboard.contains(
+        "<span class=\"bad\" aria-label=\"failed\" title=\"no recorded validation status\">"
+    ));
     assert!(dashboard.contains("button.addEventListener('click'"));
     assert!(dashboard.ends_with('\n'));
 }
@@ -246,7 +337,7 @@ description: Builder skill.
 add -> optional research -> plan -> implement
 Use feature.md. Set implemented = true with evidence and declare validation_required.
 Molecular validation fixtures must be externally supplied.
-Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id> --corpus tiny.
+Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id> --corpus smoke.
 "#,
     );
     write_skill(
@@ -258,7 +349,7 @@ description: Review skill.
 ---
 # Feature Review
 Independent audit for architecture and validation claims.
-Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <feature-id> --corpus tiny.
+Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <feature-id> --corpus smoke.
 "#,
     );
 
@@ -276,8 +367,8 @@ Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <
 #[test]
 fn validation_manifest_path_is_feature_scoped() {
     assert_eq!(
-        validation_manifest_path("core.graph", "tiny"),
-        PathBuf::from("validation/corpora/tiny/features/core.graph.toml")
+        validation_manifest_path("core.graph", "smoke"),
+        PathBuf::from("validation/corpora/smoke/features/core.graph.toml")
     );
 }
 
@@ -301,6 +392,15 @@ fn validate_jobs_defaults_to_available_parallelism_and_accepts_override() {
 }
 
 #[test]
+fn progress_bars_are_compact_and_deterministic() {
+    assert_eq!(progress_bar(0, 4), "[------------------------] 0/4   0%");
+    assert_eq!(progress_bar(2, 4), "[############------------] 2/4  50%");
+    assert_eq!(progress_bar(4, 4), "[########################] 4/4 100%");
+    assert_eq!(validation_worker_count(16, 3), 3);
+    assert_eq!(validation_worker_count(0, 3), 1);
+}
+
+#[test]
 fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
     let features = vec![
         Feature {
@@ -312,7 +412,7 @@ fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
             validated: false,
             description: "Small feature.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["tiny".to_owned(), "pubchem-100".to_owned()],
+            validation_required: vec!["smoke".to_owned(), "pubchem-100".to_owned()],
         },
         Feature {
             id: "macro".to_owned(),
@@ -323,7 +423,7 @@ fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
             validated: false,
             description: "Macro feature.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["tiny".to_owned(), "pdb-10".to_owned()],
+            validation_required: vec!["smoke".to_owned(), "pdb-10".to_owned()],
         },
     ];
 
@@ -354,7 +454,7 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
         "io.mol.v3000.write",
     ] {
         let expected =
-            implementation_expected(feature, "tiny", &fixture).expect("feature should compare");
+            implementation_expected(feature, "smoke", &fixture).expect("feature should compare");
         assert_eq!(expected["records"][0]["status"], "ok");
     }
 
@@ -422,7 +522,7 @@ fn current_status_drives_overall_validation_and_metadata_sync() {
         validated: false,
         description: "Example feature.".to_owned(),
         depends_on: Vec::new(),
-        validation_required: vec!["tiny".to_owned()],
+        validation_required: vec!["smoke".to_owned()],
     };
     let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
     let evidence =
@@ -434,6 +534,8 @@ fn current_status_drives_overall_validation_and_metadata_sync() {
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit test".to_owned(),
         manifest_hash: hash_file(&manifest_path).expect("manifest should hash"),
+        failed_count: 0,
+        first_failure: None,
         evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
         evidence_hash: Some(evidence.sha256),
         evidence_inputs: evidence.inputs,
@@ -441,7 +543,7 @@ fn current_status_drives_overall_validation_and_metadata_sync() {
     };
     let status = ValidationStatus {
         feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("tiny".to_owned(), corpus_status)]),
+        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status)]),
     };
     let statuses = BTreeMap::from([(feature.id.clone(), status.clone())]);
 
@@ -485,7 +587,7 @@ fn evidence_changes_after_material_input_changes() {
     assert_ne!(original.sha256, source_changed.sha256);
 
     fs::write(
-        root.join("validation/corpora/tiny/data/example.sdf"),
+        root.join("validation/corpora/smoke/data/example.sdf"),
         "changed fixture\n",
     )
     .expect("fixture should mutate");
@@ -494,7 +596,7 @@ fn evidence_changes_after_material_input_changes() {
     assert_ne!(source_changed.sha256, fixture_changed.sha256);
 
     fs::write(
-        root.join("validation/corpora/tiny/golden/example/data_example.sdf.json.gz"),
+        root.join("validation/corpora/smoke/golden/example/data_example.sdf.json.gz"),
         "changed golden\n",
     )
     .expect("golden should mutate");
@@ -534,7 +636,7 @@ fn current_status_requires_known_nonempty_evidence() {
         validated: false,
         description: "Example feature.".to_owned(),
         depends_on: Vec::new(),
-        validation_required: vec!["tiny".to_owned()],
+        validation_required: vec!["smoke".to_owned()],
     };
     let mut corpus_status = CorpusStatus {
         passed: true,
@@ -543,6 +645,8 @@ fn current_status_requires_known_nonempty_evidence() {
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit test".to_owned(),
         manifest_hash: hash_file(&manifest_path).expect("manifest should hash"),
+        failed_count: 0,
+        first_failure: None,
         evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
         evidence_hash: Some(evidence.sha256),
         evidence_inputs: evidence.inputs,
@@ -550,7 +654,7 @@ fn current_status_requires_known_nonempty_evidence() {
     };
     let status = ValidationStatus {
         feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("tiny".to_owned(), corpus_status.clone())]),
+        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status.clone())]),
     };
     assert!(overall_validated_at(
         &feature,
@@ -561,7 +665,7 @@ fn current_status_requires_known_nonempty_evidence() {
     corpus_status.evidence_schema_version = Some(999);
     let status = ValidationStatus {
         feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("tiny".to_owned(), corpus_status.clone())]),
+        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status.clone())]),
     };
     assert!(!overall_validated_at(
         &feature,
@@ -573,7 +677,7 @@ fn current_status_requires_known_nonempty_evidence() {
     corpus_status.compared_count = 0;
     let status = ValidationStatus {
         feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("tiny".to_owned(), corpus_status)]),
+        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status)]),
     };
     assert!(!overall_validated_at(
         &feature,
@@ -602,12 +706,12 @@ fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed
         validated: true,
         description: "Portable dashboard evidence.".to_owned(),
         depends_on: Vec::new(),
-        validation_required: vec!["tiny".to_owned()],
+        validation_required: vec!["smoke".to_owned()],
     };
     let status = ValidationStatus {
         feature_id: feature.id.clone(),
         corpora: BTreeMap::from([(
-            "tiny".to_owned(),
+            "smoke".to_owned(),
             CorpusStatus {
                 passed: true,
                 fixture_count: 1,
@@ -615,6 +719,8 @@ fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed
                 reference_tool: "rdkit".to_owned(),
                 reference_version: "test".to_owned(),
                 manifest_hash: "0".repeat(64),
+                failed_count: 0,
+                first_failure: None,
                 evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
                 evidence_hash: Some("1".repeat(64)),
                 evidence_inputs: vec![EvidenceInput {
@@ -635,10 +741,39 @@ fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed
 }
 
 #[test]
+fn old_status_toml_defaults_failure_summary_fields() {
+    let status: CorpusStatusFile = toml::from_str(
+        r#"
+corpus_id = "smoke"
+
+[features.example]
+passed = true
+fixture_count = 1
+compared_count = 1
+reference_tool = "rdkit"
+reference_version = "RDKit test"
+manifest_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+evidence_schema_version = 2
+evidence_hash = "1111111111111111111111111111111111111111111111111111111111111111"
+evidence_inputs = []
+validated_at_unix = 1
+"#,
+    )
+    .expect("old status shape should deserialize");
+    let corpus_status = status
+        .features
+        .get("example")
+        .expect("feature status should exist");
+
+    assert_eq!(corpus_status.failed_count, 0);
+    assert_eq!(corpus_status.first_failure, None);
+}
+
+#[test]
 fn unsupported_comparison_mode_is_rejected() {
     let manifest = ValidationManifest {
         feature_id: "example".to_owned(),
-        corpus_id: "tiny".to_owned(),
+        corpus_id: "smoke".to_owned(),
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit test".to_owned(),
         comparison_mode: "planned".to_owned(),
@@ -646,6 +781,61 @@ fn unsupported_comparison_mode_is_rejected() {
         _notes: Vec::new(),
     };
     assert!(validate_comparison_mode(Path::new("example.toml"), &manifest).is_err());
+}
+
+#[test]
+fn validation_comparison_counts_multiple_fixture_failures() {
+    let root = temp_feature_root("comparison-counts-failures");
+    let corpus_root = root.join("validation").join("corpora").join("smoke");
+    let manifest_dir = corpus_root.join("features");
+    let data_dir = corpus_root.join("data");
+    let golden_dir = corpus_root.join("golden").join("io.smiles.parse");
+    fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
+    fs::create_dir_all(&data_dir).expect("data dir should create");
+    fs::create_dir_all(&golden_dir).expect("golden dir should create");
+    let manifest_path = manifest_dir.join("io.smiles.parse.toml");
+    fs::write(
+        &manifest_path,
+        "feature_id = \"io.smiles.parse\"\ncorpus_id = \"smoke\"\nreference_tool = \"rdkit\"\nreference_version = \"RDKit test\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/one.smi\", \"data/two.smi\"]\n",
+    )
+    .expect("manifest should write");
+    for (fixture, text) in [("data/one.smi", "C CID:1\n"), ("data/two.smi", "O CID:2\n")] {
+        fs::write(corpus_root.join(fixture), text).expect("fixture should write");
+        let golden = json!({
+            "schema_version": GOLDEN_SCHEMA_VERSION,
+            "feature_id": "io.smiles.parse",
+            "corpus_id": "smoke",
+            "fixture_path": fixture,
+            "input_sha256": hash_file(&corpus_root.join(fixture)).expect("fixture should hash"),
+            "reference": {
+                "tool": "rdkit",
+                "version": "RDKit test",
+                "runtime_dependency": false,
+            },
+            "expected": {
+                "records": [{
+                    "record_index": 999,
+                    "status": "intentionally_wrong",
+                }]
+            },
+        });
+        write_gzip_json(
+            &golden_dir.join(format!("{}.json.gz", slugify_fixture(fixture))),
+            &golden,
+        );
+    }
+    let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
+
+    let comparison = validate_golden_outputs(&manifest_path, &manifest, 1, None)
+        .expect("comparison should complete");
+
+    assert_eq!(comparison.compared_count, 0);
+    assert_eq!(comparison.failed_count, 2);
+    assert!(comparison
+        .first_failure
+        .as_deref()
+        .is_some_and(|failure| failure.contains("data/one.smi")));
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
@@ -913,7 +1103,7 @@ fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let features_root = root.join("features");
     let validation_root = root.join("validation");
     let feature_dir = features_root.join("example");
-    let corpus_root = validation_root.join("corpora").join("tiny");
+    let corpus_root = validation_root.join("corpora").join("smoke");
     let manifest_dir = corpus_root.join("features");
     fs::create_dir_all(&feature_dir).expect("feature dir should create");
     fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
@@ -926,13 +1116,13 @@ fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let manifest_path = manifest_dir.join("example.toml");
     fs::write(
             &manifest_path,
-            "feature_id = \"example\"\ncorpus_id = \"tiny\"\nreference_tool = \"rdkit\"\nreference_version = \"RDKit test\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
+            "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"rdkit\"\nreference_version = \"RDKit test\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
         )
         .expect("manifest should write");
     fs::create_dir_all(corpus_root.join("data")).expect("data dir should create");
     fs::create_dir_all(corpus_root.join("golden").join("example"))
         .expect("golden dir should create");
-    fs::write(corpus_root.join("corpus.toml"), "id = \"tiny\"\n")
+    fs::write(corpus_root.join("corpus.toml"), "id = \"smoke\"\n")
         .expect("corpus descriptor should write");
     fs::write(corpus_root.join("sources.lock.json"), "{}\n").expect("source lock should write");
     fs::write(corpus_root.join("data").join("example.sdf"), "fixture\n")
@@ -980,4 +1170,13 @@ fn write_skill(root: &Path, name: &str, text: &str) {
     let dir = root.join(name);
     fs::create_dir_all(&dir).expect("skill dir should create");
     fs::write(dir.join("SKILL.md"), text).expect("skill should write");
+}
+
+fn write_gzip_json(path: &Path, value: &Value) {
+    let file = fs::File::create(path).expect("gzip file should create");
+    let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    encoder
+        .write_all(value.to_string().as_bytes())
+        .expect("gzip json should write");
+    encoder.finish().expect("gzip json should finish");
 }

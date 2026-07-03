@@ -41,8 +41,8 @@ cargo test --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask corpus check --corpus tiny --require-data
-cargo xtask validate --feature <feature-id> --corpus tiny
+cargo xtask corpus check --corpus smoke --require-data
+cargo xtask validate --feature <feature-id> --corpus smoke
 ```
 
 Report every check that was not run.

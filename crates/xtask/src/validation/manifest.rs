@@ -24,6 +24,23 @@ pub(crate) struct ValidationRun {
     pub(crate) evidence: ValidationEvidence,
 }
 
+#[derive(Debug)]
+pub(crate) struct FailedValidationRun {
+    pub(crate) fixture_count: usize,
+    pub(crate) compared_count: usize,
+    pub(crate) failed_count: usize,
+    pub(crate) first_failure: String,
+    pub(crate) reference_tool: String,
+    pub(crate) reference_version: String,
+    pub(crate) manifest_hash: String,
+}
+
+#[derive(Debug)]
+pub(crate) enum ValidationOutcome {
+    Passed(ValidationRun),
+    Failed(FailedValidationRun),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ValidationEvidence {
@@ -49,6 +66,10 @@ pub(crate) struct CorpusStatus {
     pub(crate) reference_tool: String,
     pub(crate) reference_version: String,
     pub(crate) manifest_hash: String,
+    #[serde(default)]
+    pub(crate) failed_count: usize,
+    #[serde(default)]
+    pub(crate) first_failure: Option<String>,
     #[serde(default)]
     pub(crate) evidence_schema_version: Option<u32>,
     #[serde(default)]
@@ -79,10 +100,29 @@ impl CorpusStatus {
             reference_tool: run.reference_tool,
             reference_version: run.reference_version,
             manifest_hash: run.manifest_hash,
+            failed_count: 0,
+            first_failure: None,
             evidence_schema_version: Some(run.evidence.schema_version),
             evidence_hash: Some(run.evidence.sha256),
             evidence_inputs: run.evidence.inputs,
             validated_at_unix,
+        })
+    }
+
+    pub(crate) fn from_failed_run(run: FailedValidationRun) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            passed: false,
+            fixture_count: run.fixture_count,
+            compared_count: run.compared_count,
+            reference_tool: run.reference_tool,
+            reference_version: run.reference_version,
+            manifest_hash: run.manifest_hash,
+            failed_count: run.failed_count,
+            first_failure: Some(run.first_failure),
+            evidence_schema_version: None,
+            evidence_hash: None,
+            evidence_inputs: Vec::new(),
+            validated_at_unix: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         })
     }
 }

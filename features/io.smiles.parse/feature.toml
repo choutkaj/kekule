@@ -6,4 +6,4 @@ implemented = true
 validated = false
 description = "Parse a practical subset of SMILES, including omitted aromatic bonds, without implicit sanitization."
 depends_on = ["core.graph", "core.atom-bond"]
-validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pubchem-100k", "enamine-diversity"]
+validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "enamine-diversity"]

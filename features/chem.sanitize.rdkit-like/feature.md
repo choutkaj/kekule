@@ -37,7 +37,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v1: Explicit sanitization pipeline.
 - v2: Validated through the corrected valence, ring, and aromaticity passes.
 - v3: Add RDKit-like oxyhalogen cleanup and pass PubChem-100 through the corrected valence and aromaticity stack.
-- v4: Incorporate broader PubChem-1000-driven valence and aromaticity behavior; PubChem-1000 remains pending on fused aromatic bond selection and remaining valence-table coverage.
+- v4: Incorporate broader pubchem-1k-driven valence and aromaticity behavior; pubchem-1k remains pending on fused aromatic bond selection and remaining valence-table coverage.
 - v5: Make sanitization transactional and define fresh/stale state outcomes for every option combination.
 - v6: Sanitize imported aromatic SMILES with corrected aromatic valence and atom-contribution aromaticity behavior.
 - v7: Accept explicit ring-work limits and preserve transactional rollback on ring resource errors.

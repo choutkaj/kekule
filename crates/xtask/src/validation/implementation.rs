@@ -104,7 +104,7 @@ pub(crate) fn implementation_expected(
         }
         "io.smiles.canonical" => {
             let records = read_canonical_smiles_records(fixture_path)?;
-            let exact_smiles = corpus == "tiny";
+            let exact_smiles = corpus == "smoke";
             Ok(json!({
                 "records": records
                     .iter()

@@ -46,7 +46,7 @@ def main() -> int:
         description="Generate normalized JSON golden data with Biopython."
     )
     parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
-    parser.add_argument("--corpus", default="tiny")
+    parser.add_argument("--corpus", default="smoke")
     parser.add_argument(
         "--repo-root",
         type=Path,

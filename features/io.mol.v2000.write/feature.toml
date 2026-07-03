@@ -6,4 +6,4 @@ implemented = true
 validated = false
 description = "Write small molecules as V2000 Molfile blocks with coordinates and common atom metadata."
 depends_on = ["io.mol.v2000.parse"]
-validation_required = ["tiny", "pubchem-100", "pubchem-1000", "pubchem-100k", "pl-rex", "enamine-diversity"]
+validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "pl-rex", "enamine-diversity"]
