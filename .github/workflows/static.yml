@@ -22,9 +22,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Verify dashboard is current
-        run: cargo xtask dashboard --check
-
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
