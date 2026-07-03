@@ -49,6 +49,7 @@ pub(crate) fn render_dashboard(
     out.push_str("tbody tr:nth-child(even) { background: color-mix(in srgb, var(--head) 45%, transparent); }\n");
     out.push_str("th.text, td.text { text-align: left; }\n");
     out.push_str("th.compact, td.compact, th.rotated, td.marker { text-align: center; }\n");
+    out.push_str("th.area, td.area { text-align: left; }\n");
     out.push_str(
         "th.rotated { width: 52px; min-width: 52px; padding: 0; vertical-align: bottom; overflow: hidden; }\n",
     );
@@ -85,7 +86,7 @@ pub(crate) fn render_dashboard(
     out.push_str("<thead>\n<tr>");
     out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Feature</button></th>");
     out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Title</button></th>");
-    out.push_str(&compact_header("Area", "Area", "text"));
+    out.push_str(&area_header());
     out.push_str(&rotated_header("Version", "Version", "number"));
     out.push_str(&rotated_header("Implemented", "Implemented", "number"));
     for (corpus, label) in VALIDATION_CORPORA {
@@ -105,7 +106,7 @@ pub(crate) fn render_dashboard(
             escape_html(&feature.title)
         ));
         out.push_str(&format!(
-            "<td class=\"compact\" data-sort-value=\"{}\">{}</td>",
+            "<td class=\"compact area\" data-sort-value=\"{}\">{}</td>",
             escape_html(&feature.area),
             escape_html(&feature.area)
         ));
@@ -186,14 +187,8 @@ pub(crate) fn rotated_header(label: &str, title: &str, sort_type: &str) -> Strin
     )
 }
 
-pub(crate) fn compact_header(label: &str, title: &str, sort_type: &str) -> String {
-    format!(
-        "<th class=\"compact\" data-sort-type=\"{}\" title=\"{}\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by {}\">{}</button></th>",
-        escape_html(sort_type),
-        escape_html(title),
-        escape_html(title),
-        escape_html(label)
-    )
+pub(crate) fn area_header() -> String {
+    "<th class=\"compact area\" data-sort-type=\"text\" title=\"Area\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Area\">Area</button></th>".to_owned()
 }
 
 pub(crate) fn rotated_label_html(label: &str) -> String {

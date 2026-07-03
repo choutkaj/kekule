@@ -4,12 +4,14 @@ mod compare;
 mod evidence;
 mod implementation;
 mod manifest;
+mod progress;
 mod status;
 
 pub(crate) use compare::*;
 pub(crate) use evidence::*;
 pub(crate) use implementation::*;
 pub(crate) use manifest::*;
+pub(crate) use progress::*;
 pub(crate) use status::*;
 
 pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -38,24 +40,26 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let jobs = validation_jobs(&args)?;
-    println!("validation worker count: {jobs}");
+    let mut progress = ValidationProgress::start(targets.len(), jobs, update);
 
     let mut statuses = read_validation_statuses(&features)?;
     let mut failures = Vec::new();
     let mut passed = 0;
     let mut update_corpora = BTreeSet::new();
-    for (feature, corpus) in targets {
-        println!("validating `{}` against `{corpus}`", feature.id);
+    for (target_index, (feature, corpus)) in targets.into_iter().enumerate() {
+        progress.target_start(target_index + 1, &feature.id, &corpus);
         if update {
             update_corpora.insert(corpus.clone());
         }
         let manifest_path = validation_manifest_path(&feature.id, &corpus);
         if !manifest_path.exists() {
-            failures.push(format!(
+            let failure = format!(
                 "{} is missing required manifest {}",
                 feature.id,
                 manifest_path.display()
-            ));
+            );
+            progress.target_error();
+            failures.push(failure);
             continue;
         }
         if update {
@@ -82,10 +86,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     manifest.corpus_id
                 )));
             }
-            println!(
-                "validation manifest uses {} {}",
-                manifest.reference_tool, manifest.reference_version
-            );
+            progress.manifest(&manifest.reference_tool, &manifest.reference_version);
             validate_comparison_mode(&manifest_path, &manifest)?;
             if manifest.fixtures.is_empty() {
                 return Err(boxed_error(format!(
@@ -94,22 +95,13 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 )));
             }
             validate_manifest_paths(&manifest_path, &manifest)?;
-            println!(
-                "validation manifest lists {} fixture(s)",
-                manifest.fixtures.len()
-            );
-            let comparison = validate_golden_outputs(&manifest_path, &manifest, jobs)?;
-            if comparison.compared_count > 0 {
-                println!(
-                    "validation compared {} golden file(s)",
-                    comparison.compared_count
-                );
-            }
+            let worker_count = validation_worker_count(jobs, manifest.fixtures.len());
+            let fixture_progress = FixtureProgress::start(manifest.fixtures.len(), worker_count);
+            let comparison_result =
+                validate_golden_outputs(&manifest_path, &manifest, jobs, Some(&fixture_progress));
+            fixture_progress.finish();
+            let comparison = comparison_result?;
             if comparison.failed_count > 0 {
-                println!(
-                    "validation found {} non-passing fixture(s)",
-                    comparison.failed_count
-                );
                 return Ok(ValidationOutcome::Failed(FailedValidationRun {
                     fixture_count: manifest.fixtures.len(),
                     compared_count: comparison.compared_count,
@@ -144,6 +136,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         match result {
             Ok(ValidationOutcome::Passed(run)) => {
                 passed += 1;
+                progress.target_passed(run.compared_count, run.fixture_count);
                 if update {
                     let existing = statuses
                         .get(&feature.id)
@@ -161,6 +154,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     "{} [{corpus}]: {} non-passing fixture(s); first failure: {}",
                     feature.id, run.failed_count, run.first_failure
                 );
+                progress.target_failed(run.failed_count, run.compared_count, run.fixture_count);
                 if update {
                     let updated = CorpusStatus::from_failed_run(run)?;
                     statuses
@@ -171,7 +165,10 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 }
                 failures.push(failure);
             }
-            Err(error) => failures.push(format!("{} [{corpus}]: {error}", feature.id)),
+            Err(error) => {
+                progress.target_error();
+                failures.push(format!("{} [{corpus}]: {error}", feature.id));
+            }
         }
     }
 

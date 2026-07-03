@@ -13,6 +13,7 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - Requires one deterministic gzip golden under the corpus `golden/<feature-id>/` directory for each listed fixture.
 - Compares normalized Rust implementation output against each golden file's `expected` payload.
 - Compares fixtures in parallel by default using all available processors; `--jobs N` bounds validation to a fixed worker count.
+- Prints compact progress output for the overall target set and for fixture comparison within each feature/corpus target.
 - Accepts only declared implementation-vs-golden comparison manifests for required implemented validation.
 - Verifies golden `feature_id`, `corpus_id`, `fixture_path`, current fixture SHA-256, and reference tool/version metadata before comparing payloads.
 - Records content-addressed pass evidence over manifests, source locks, fixtures, goldens, Rust source, Cargo manifests, feature metadata, and reference generator/environment files.
@@ -37,6 +38,7 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - Repeated `--update` runs preserve timestamps when the evidence hash is unchanged.
 - The validation command uses the Rust implementation only; RDKit and Biopython are used to generate goldens, not to run validation.
 - Fixture comparison uses a bounded worker pool while status writes and dashboard regeneration remain single-threaded.
+- Progress output uses plain ASCII bars and throttled checkpoint updates so it stays readable in terminals and captured logs.
 - Reference tools are never Rust runtime dependencies.
 
 ## Validation
@@ -62,3 +64,4 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - v8: Add large-corpus pack member metadata for PL-REX, Enamine Diversity, and PubChem-100k validation wiring.
 - v9: Parallelize fixture comparison by default and add `--jobs N` for bounded validation runs.
 - v10: Preserve fixture-level failure summaries in corpus status so the dashboard can show compact non-passing counts.
+- v11: Add clean overall and per-target fixture progress bars to `cargo xtask validate`.

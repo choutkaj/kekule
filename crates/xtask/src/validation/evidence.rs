@@ -223,6 +223,7 @@ pub(crate) fn validate_golden_outputs(
     manifest_path: &Path,
     manifest: &ValidationManifest,
     jobs: usize,
+    progress: Option<&FixtureProgress>,
 ) -> Result<ValidationComparison, Box<dyn Error>> {
     if manifest.fixtures.is_empty() {
         return Ok(ValidationComparison {
@@ -240,9 +241,9 @@ pub(crate) fn validate_golden_outputs(
                 manifest_path.display()
             ))
         })?;
-    let worker_count = jobs.max(1).min(manifest.fixtures.len());
+    let worker_count = validation_worker_count(jobs, manifest.fixtures.len());
     if worker_count == 1 {
-        return validate_golden_outputs_serial(manifest_path, manifest, base);
+        return validate_golden_outputs_serial(manifest_path, manifest, base, progress);
     }
 
     let next_fixture = std::sync::Mutex::new(0usize);
@@ -272,6 +273,9 @@ pub(crate) fn validate_golden_outputs(
                 let fixture = &manifest.fixtures[index];
                 let result = compare_one_golden(manifest_path, base, manifest, fixture)
                     .map_err(|error| error.to_string());
+                if let Some(progress) = progress {
+                    progress.fixture_finished();
+                }
                 results
                     .lock()
                     .expect("validation result lock should not be poisoned")[index] = Some(result);
@@ -299,6 +303,7 @@ fn validate_golden_outputs_serial(
     manifest_path: &Path,
     manifest: &ValidationManifest,
     base: &Path,
+    progress: Option<&FixtureProgress>,
 ) -> Result<ValidationComparison, Box<dyn Error>> {
     let mut comparison = ValidationComparison {
         compared_count: 0,
@@ -306,7 +311,11 @@ fn validate_golden_outputs_serial(
         first_failure: None,
     };
     for fixture in &manifest.fixtures {
-        let result = compare_one_golden(manifest_path, base, manifest, fixture)?;
+        let result = compare_one_golden(manifest_path, base, manifest, fixture);
+        if let Some(progress) = progress {
+            progress.fixture_finished();
+        }
+        let result = result?;
         record_fixture_comparison(&mut comparison, result);
     }
     Ok(comparison)

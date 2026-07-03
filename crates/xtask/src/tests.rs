@@ -283,7 +283,9 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
 
     assert!(dashboard.starts_with("<!doctype html>\n"));
     assert!(dashboard.contains("<table id=\"feature-dashboard\">"));
-    assert!(dashboard.contains("title=\"Area\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Area\">Area</button></th>"));
+    assert!(dashboard.contains("th.area, td.area { text-align: left; }"));
+    assert!(dashboard.contains("<th class=\"compact area\" data-sort-type=\"text\" title=\"Area\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Area\">Area</button></th>"));
+    assert!(dashboard.contains("<td class=\"compact area\" data-sort-value=\"core\">core</td>"));
     assert!(!dashboard
         .contains("aria-label=\"Sort by Area\"><span class=\"rotated-label\">Area</span>"));
     assert!(dashboard.contains(
@@ -387,6 +389,15 @@ fn validate_jobs_defaults_to_available_parallelism_and_accepts_override() {
         "--jobs".to_owned()
     ])
     .is_err());
+}
+
+#[test]
+fn progress_bars_are_compact_and_deterministic() {
+    assert_eq!(progress_bar(0, 4), "[------------------------] 0/4   0%");
+    assert_eq!(progress_bar(2, 4), "[############------------] 2/4  50%");
+    assert_eq!(progress_bar(4, 4), "[########################] 4/4 100%");
+    assert_eq!(validation_worker_count(16, 3), 3);
+    assert_eq!(validation_worker_count(0, 3), 1);
 }
 
 #[test]
@@ -815,8 +826,8 @@ fn validation_comparison_counts_multiple_fixture_failures() {
     }
     let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
 
-    let comparison =
-        validate_golden_outputs(&manifest_path, &manifest, 1).expect("comparison should complete");
+    let comparison = validate_golden_outputs(&manifest_path, &manifest, 1, None)
+        .expect("comparison should complete");
 
     assert_eq!(comparison.compared_count, 0);
     assert_eq!(comparison.failed_count, 2);
