@@ -19,6 +19,16 @@ pub(super) fn oxygen() -> Atom {
     Atom::new(Element::from_symbol("O").expect("oxygen should be available"))
 }
 
+pub(super) fn element_atom(symbol: &str) -> Atom {
+    Atom::new(Element::from_symbol(symbol).expect("test element should be available"))
+}
+
+pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
+    let mut atom = element_atom(symbol);
+    atom.formal_charge = formal_charge;
+    atom
+}
+
 pub(super) fn ring_molecule(
     symbols: &[&str],
     orders: &[BondOrder],

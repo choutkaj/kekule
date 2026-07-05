@@ -174,3 +174,79 @@ fn valence_reports_excess_common_valence() {
     assert_eq!(report.issues.len(), 1);
     assert!(!report.is_ok());
 }
+
+#[test]
+fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
+    for (symbol, charge, expected_implicit_hydrogens) in [
+        ("H", 1, 0),
+        ("H", -1, 0),
+        ("Rb", 1, 0),
+        ("Cs", 1, 0),
+        ("Be", 2, 0),
+        ("Al", 3, 0),
+        ("Ga", 3, 0),
+        ("Tl", 1, 0),
+        ("U", 2, 0),
+        ("Pb", 2, 0),
+        ("S", -2, 0),
+        ("Se", -2, 0),
+    ] {
+        let mut mol = Molecule::new();
+        let atom_id = mol.add_atom(charged_atom(symbol, charge));
+
+        let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+
+        assert!(report.is_ok(), "{symbol}{charge:+} should be supported");
+        assert_eq!(
+            mol.atom(atom_id).expect("atom").implicit_hydrogens,
+            Some(expected_implicit_hydrogens),
+            "{symbol}{charge:+} implicit hydrogens"
+        );
+    }
+
+    let mut covalent_aluminum = Molecule::new();
+    let aluminum = covalent_aluminum.add_atom(element_atom("Al"));
+    for _ in 0..3 {
+        let chlorine = covalent_aluminum.add_atom(element_atom("Cl"));
+        covalent_aluminum
+            .add_bond(aluminum, chlorine, BondOrder::Single)
+            .expect("bond");
+    }
+
+    let report = valence_api::perceive_valence(&mut covalent_aluminum, ValenceModel::RdkitLike);
+
+    assert!(
+        report.is_ok(),
+        "neutral trivalent aluminum should be supported"
+    );
+    assert_eq!(
+        covalent_aluminum
+            .atom(aluminum)
+            .expect("aluminum")
+            .implicit_hydrogens,
+        Some(0)
+    );
+
+    let mut neutral_magnesium = Molecule::new();
+    let magnesium = neutral_magnesium.add_atom(element_atom("Mg"));
+    for _ in 0..2 {
+        let chlorine = neutral_magnesium.add_atom(element_atom("Cl"));
+        neutral_magnesium
+            .add_bond(magnesium, chlorine, BondOrder::Single)
+            .expect("bond");
+    }
+
+    let report = valence_api::perceive_valence(&mut neutral_magnesium, ValenceModel::RdkitLike);
+
+    assert!(
+        report.is_ok(),
+        "neutral divalent magnesium should be supported"
+    );
+    assert_eq!(
+        neutral_magnesium
+            .atom(magnesium)
+            .expect("magnesium")
+            .implicit_hydrogens,
+        Some(0)
+    );
+}
