@@ -165,6 +165,20 @@ fn perceive_rdkit_like_aromaticity(
             }) {
                 return false;
             }
+            let aromatic_containing_rings = containing_rings
+                .iter()
+                .filter(|(index, _)| ring_aromatic[*index])
+                .count();
+            if aromatic_containing_rings == 1
+                && containing_rings
+                    .iter()
+                    .filter(|(index, _)| !ring_aromatic[*index])
+                    .all(|(index, ring)| {
+                        !aromatic_fused_candidate_from_analysis(mol, ring, &ring_analyses[*index])
+                    })
+            {
+                return false;
+            }
             containing_rings.iter().any(|(index, ring)| {
                 ring_protects_non_aromatic_fusion_single(
                     mol,
@@ -181,7 +195,7 @@ fn perceive_rdkit_like_aromaticity(
         .copied()
         .collect::<BTreeSet<_>>();
 
-    for (ring, aromatic) in ring_set.rings().iter().zip(ring_aromatic) {
+    for (ring, aromatic) in ring_set.rings().iter().zip(ring_aromatic.iter().copied()) {
         if aromatic {
             mark_aromatic_atoms_and_bonds(
                 mol,

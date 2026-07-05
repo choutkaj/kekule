@@ -587,6 +587,62 @@ fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
 }
 
 #[test]
+fn aromaticity_keeps_aromatic_heteroring_bond_shared_with_saturated_ring() {
+    let mut mol = Molecule::new();
+    let c0 = mol.add_atom(carbon());
+    let c1 = mol.add_atom(carbon());
+    let c2 = mol.add_atom(carbon());
+    let n3 = mol.add_atom(Atom::new(
+        Element::from_symbol("N").expect("nitrogen should be available"),
+    ));
+    let n4 = mol.add_atom(Atom::new(
+        Element::from_symbol("N").expect("nitrogen should be available"),
+    ));
+    let saturated_a = mol.add_atom(carbon());
+    let saturated_b = mol.add_atom(carbon());
+    let saturated_c = mol.add_atom(carbon());
+
+    let aromatic_bonds = [
+        mol.add_bond(c0, c1, BondOrder::Double)
+            .expect("aromatic ring bond"),
+        mol.add_bond(c1, c2, BondOrder::Single)
+            .expect("shared fused bond"),
+        mol.add_bond(c2, n3, BondOrder::Double)
+            .expect("aromatic ring bond"),
+        mol.add_bond(n3, n4, BondOrder::Single)
+            .expect("aromatic ring bond"),
+        mol.add_bond(n4, c0, BondOrder::Single)
+            .expect("aromatic ring bond"),
+    ];
+    let saturated_bonds = [
+        mol.add_bond(c1, saturated_a, BondOrder::Single)
+            .expect("saturated ring bond"),
+        mol.add_bond(saturated_a, saturated_b, BondOrder::Single)
+            .expect("saturated ring bond"),
+        mol.add_bond(saturated_b, saturated_c, BondOrder::Single)
+            .expect("saturated ring bond"),
+        mol.add_bond(saturated_c, c2, BondOrder::Single)
+            .expect("saturated ring bond"),
+    ];
+
+    aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
+        .expect("fused heteroaromatic ring should be supported");
+
+    for bond_id in aromatic_bonds {
+        assert!(
+            mol.bond(bond_id).expect("aromatic bond exists").aromatic,
+            "aromatic ring bond {bond_id} should be aromatic"
+        );
+    }
+    for bond_id in saturated_bonds {
+        assert!(
+            !mol.bond(bond_id).expect("saturated bond exists").aromatic,
+            "saturated fused-neighbor bond {bond_id} should stay aliphatic"
+        );
+    }
+}
+
+#[test]
 fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
     let (mut mol, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C"],
