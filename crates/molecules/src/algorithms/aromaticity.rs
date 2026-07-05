@@ -291,7 +291,13 @@ fn mark_aromatic_fused_subset(
     }
     let mut resolved_bonds = perimeter_bonds;
     for bond_id in fused_internal_bonds(rings, indexes) {
-        if fused_internal_bond_can_follow_accepted_subset(rings, ring_analyses, indexes, bond_id) {
+        if fused_internal_bond_can_follow_accepted_subset(
+            mol,
+            rings,
+            ring_analyses,
+            indexes,
+            bond_id,
+        ) {
             if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
                 bond.aromatic = !imported_explicit_aromatic_singles.contains(&bond_id);
             }
@@ -323,6 +329,7 @@ fn fused_perimeter_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> 
 }
 
 fn fused_internal_bond_can_follow_accepted_subset(
+    mol: &Molecule,
     rings: &[Ring],
     ring_analyses: &[RingAromaticityAnalysis],
     indexes: &[usize],
@@ -341,13 +348,40 @@ fn fused_internal_bond_can_follow_accepted_subset(
             let analysis = &ring_analyses[*index];
             analysis.localized_all_atoms_are_candidates()
                 && analysis.aromatic.fixed_electron_count != Some(0)
-                && (analysis.is_huckel_aromatic()
-                    || analysis
-                        .localized
-                        .as_ref()
-                        .and_then(AromaticRingDonorAnalysis::electron_count)
-                        == Some(5))
+                && fused_internal_ring_can_follow_accepted_subset(mol, &rings[*index], analysis)
         })
+}
+
+fn fused_internal_ring_can_follow_accepted_subset(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    analysis.is_huckel_aromatic()
+        || analysis
+            .localized
+            .as_ref()
+            .and_then(AromaticRingDonorAnalysis::electron_count)
+            == Some(5)
+        || ring_is_lone_pair_dione_fused_partner(mol, ring, analysis)
+}
+
+fn ring_is_lone_pair_dione_fused_partner(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    ring.atoms.len() == 6
+        && ring_pi_bond_count(mol, ring) == 0
+        && ring_terminal_exocyclic_pi_bond_count(mol, ring) >= 2
+        && analysis.localized_all_atoms_are_candidates()
+        && analysis.localized_active_hetero_donor_count(mol) >= 2
+        && analysis.has_nitrogen_lone_pair_donor(mol)
+        && analysis
+            .localized
+            .as_ref()
+            .and_then(AromaticRingDonorAnalysis::electron_count)
+            == Some(4)
 }
 
 fn fused_internal_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> {
@@ -831,6 +865,7 @@ fn aromatic_ring_donor_analysis(
     if ring.atoms.len() == 5
         && has_active_nitrogen_donor
         && ring_exocyclic_pi_bond_count(mol, ring) > 0
+        && !ring_is_lone_pair_five_member_fused_partner(mol, ring, localized)
         && ((active_hetero_donors < 2 && !has_active_chalcogen_donor)
             || (has_active_chalcogen_donor
                 && !ring_has_candidate_carbon_electronegative_exocyclic_pi_bond(
@@ -854,8 +889,30 @@ fn aromatic_ring_donor_analysis(
     {
         return Ok(AromaticRingDonorAnalysis::non_aromatic());
     }
+    if ring.atoms.len() == 6
+        && ring_pi_bond_count(mol, ring) == 2
+        && localized.all_atoms_are_candidates()
+        && localized.is_huckel_aromatic()
+        && localized.has_nitrogen_lone_pair_donor(mol)
+        && ring_has_fused_exocyclic_pi_bond(mol, ring)
+    {
+        return Ok(AromaticRingDonorAnalysis::non_aromatic());
+    }
 
     Ok(localized.clone())
+}
+
+fn ring_is_lone_pair_five_member_fused_partner(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &AromaticRingDonorAnalysis,
+) -> bool {
+    ring.atoms.len() == 5
+        && ring_pi_bond_count(mol, ring) >= 1
+        && ring_fused_exocyclic_pi_bond_count(mol, ring) >= 2
+        && analysis.all_atoms_are_candidates()
+        && analysis.is_huckel_aromatic()
+        && analysis.has_nitrogen_lone_pair_donor(mol)
 }
 
 fn localized_ring_donor_analysis(
@@ -1584,6 +1641,36 @@ fn atom_has_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> b
                 && !ring.atoms.contains(&bond.other_atom(atom_id))
                 && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
         })
+}
+
+fn ring_has_fused_exocyclic_pi_bond(mol: &Molecule, ring: &Ring) -> bool {
+    ring_fused_exocyclic_pi_bond_count(mol, ring) > 0
+}
+
+fn ring_fused_exocyclic_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
+    let computed_membership;
+    let membership = if let Some(membership) = mol.ring_membership() {
+        membership
+    } else {
+        computed_membership = super::rings::compute_ring_membership(mol).0;
+        &computed_membership
+    };
+
+    ring.atoms
+        .iter()
+        .filter(|atom_id| {
+            mol.incident_bonds(**atom_id)
+                .ok()
+                .into_iter()
+                .flatten()
+                .any(|(bond_id, bond)| {
+                    !ring.bonds.contains(&bond_id)
+                        && !ring.atoms.contains(&bond.other_atom(**atom_id))
+                        && membership.bond_in_ring(bond_id)
+                        && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+                })
+        })
+        .count()
 }
 
 fn atom_has_terminal_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {

@@ -774,6 +774,75 @@ $$$$
 }
 
 #[test]
+fn fused_dione_partner_shares_aromatic_internal_bond() {
+    let input = r#"10250
+  -OEChem-06192605442D
+
+ 16 17  0     0  0  0  0  0  0999 V2000
+    3.7321    1.8100    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.0000   -1.1900    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7321   -1.1900    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    2.8660    0.3100    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    5.4920    0.8447    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    5.4920   -1.2247    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    4.5981    0.3100    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    4.5981   -0.6900    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7321    0.8100    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.8660   -0.6900    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.3981    0.3308    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.3981   -0.7108    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7321   -1.8100    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    2.3291    0.6200    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    6.9338    0.6429    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    6.9338   -1.0229    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  9  2  0  0  0  0
+  2 10  2  0  0  0  0
+  3  8  1  0  0  0  0
+  3 10  1  0  0  0  0
+  3 13  1  0  0  0  0
+  4  9  1  0  0  0  0
+  4 10  1  0  0  0  0
+  4 14  1  0  0  0  0
+  5  7  2  0  0  0  0
+  5 11  1  0  0  0  0
+  6  8  2  0  0  0  0
+  6 12  1  0  0  0  0
+  7  8  1  0  0  0  0
+  7  9  1  0  0  0  0
+ 11 12  2  0  0  0  0
+ 11 15  1  0  0  0  0
+ 12 16  1  0  0  0  0
+M  END
+$$$$
+"#;
+    let mut molecule = sdf::read_v2000_str(input, SdfParseOptions::default())
+        .expect("fused dione SDF parses")
+        .into_iter()
+        .next()
+        .expect("one SDF molecule");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused dione regression sanitizes");
+
+    assert!(
+        molecule
+            .graph()
+            .bond(BondId::new(12))
+            .expect("shared dione fused bond")
+            .aromatic,
+        "accepted lone-pair dione fused partner should not suppress the shared bond"
+    );
+    assert_eq!(
+        molecule
+            .graph()
+            .bonds()
+            .filter(|(_, bond)| bond.aromatic)
+            .count(),
+        11
+    );
+}
+
+#[test]
 fn fused_chalcogen_subset_with_exocyclic_pi_links_becomes_aromatic() {
     let mut molecule = smiles_api::read_str_with_options(
         "CC1=C2OC3=C(C)C=CC(C(=O)NC4C(=O)NC(C(C)C)C(=O)N5CCCC5C(=O)N(C)CC(=O)N(C)C(C(C)C)C(=O)OC4C)=C3N=C2C(C(=O)NC2C(=O)NC(C(C)C)C(=O)N3CCCC3C(=O)N(C)CC(=O)N(C)C(C(C)C)C(=O)OC2C)=C(N)C1=O",
@@ -2171,6 +2240,71 @@ fn fused_pubchem_subset_aromaticity_remains_additive() {
 }
 
 #[test]
+fn fused_imine_sulfonamide_neighbor_ring_stays_aliphatic() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "O=C(NC1=CC2=NC=CN=C2C=C1)C1=CC=CN2CCS(=O)(=O)N=C12",
+        SmilesParseOptions,
+    )
+    .expect("fused imine sulfonamide record should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused imine sulfonamide record should sanitize");
+
+    let aromatic_atoms = molecule
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    let aromatic_bonds = molecule
+        .graph()
+        .bonds()
+        .filter(|(_, bond)| bond.aromatic)
+        .count();
+    assert_eq!((aromatic_atoms, aromatic_bonds), (10, 11));
+
+    for atom_id in [13, 14, 15, 16, 17, 24] {
+        assert!(
+            !molecule
+                .graph()
+                .atom(AtomId::new(atom_id))
+                .expect("sulfonamide-adjacent ring atom")
+                .aromatic,
+            "sulfonamide-adjacent fused atom {atom_id} should stay aliphatic"
+        );
+    }
+}
+
+#[test]
+fn fused_imide_heterocycle_keeps_only_phenyl_rings_aromatic() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "OOC1(CC2=CC=C(O)C=C2)N=C2C(CC3=CC=CC=C3)=NC(C3=CC=C(O)C=C3)=CN2C1=O",
+        SmilesParseOptions,
+    )
+    .expect("fused imide heterocycle should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused imide heterocycle should sanitize");
+
+    let aromatic_atoms = molecule
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    let aromatic_bonds = molecule
+        .graph()
+        .bonds()
+        .filter(|(_, bond)| bond.aromatic)
+        .count();
+    let aromatic_nitrogens = molecule
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "N" && atom.aromatic)
+        .count();
+    assert_eq!((aromatic_atoms, aromatic_bonds), (18, 18));
+    assert_eq!(aromatic_nitrogens, 0);
+}
+
+#[test]
 fn fused_four_member_diketone_ring_can_be_aromatic() {
     let mut molecule = smiles_api::read_str_with_options(
         "C1CSC2(C3=C(C=CC(=C3)Cl)OC4=C2C(=O)C4=O)SC1",
@@ -2218,6 +2352,30 @@ fn large_conjugated_macrocycle_aromatic_core_is_not_size_skipped() {
     let copper = molecule.graph().atom(AtomId::new(46)).expect("copper atom");
     assert!(!copper.aromatic);
     assert_eq!(copper.formal_charge, 2);
+}
+
+#[test]
+fn fused_lone_pair_five_ring_with_macrocycle_pi_links_stays_aromatic() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "CC1=C(C2=CC3=NC(=CC4=NC(=CC5=C(C(=C(N5)C=C1N2)C=C)C)C(=C4CCC(=O)O)C)C(=C3C)CCC(=O)O)C=C",
+        SmilesParseOptions,
+    )
+    .expect("porphyrinoid macrocycle should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("porphyrinoid macrocycle should sanitize");
+
+    let aromatic_atoms = molecule
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    let aromatic_bonds = molecule
+        .graph()
+        .bonds()
+        .filter(|(_, bond)| bond.aromatic)
+        .count();
+    assert_eq!((aromatic_atoms, aromatic_bonds), (20, 22));
 }
 
 #[test]
