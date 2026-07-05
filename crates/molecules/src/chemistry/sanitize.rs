@@ -92,6 +92,9 @@ pub fn sanitize_small_molecule_with_ring_options(
             ring_options,
         )
         .map_err(SanitizeError::Aromaticity)?;
+        if options.perceive_valence {
+            normalize_aromatic_nitrogen_hydrogens(staged.graph_mut_raw());
+        }
         if let Some(state) = skipped_ring_state {
             staged.graph_mut_raw().perception.rings = state;
             staged.graph_mut_raw().ring_membership = None;
@@ -121,6 +124,23 @@ fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {
 
 fn normalize_sanitize_charges(mol: &mut Molecule) {
     normalize_hypervalent_oxo_halides(mol);
+}
+
+fn normalize_aromatic_nitrogen_hydrogens(mol: &mut Molecule) {
+    for atom in mol.atoms.iter_mut().flatten() {
+        if atom.element.symbol() != "N" || !atom.aromatic || atom.formal_charge != 0 {
+            continue;
+        }
+        let hydrogens = atom
+            .explicit_hydrogens
+            .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+        if hydrogens != 1 {
+            continue;
+        }
+        atom.explicit_hydrogens = 1;
+        atom.implicit_hydrogens = Some(0);
+        atom.no_implicit_hydrogens = false;
+    }
 }
 
 fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {

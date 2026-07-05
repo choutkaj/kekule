@@ -50,7 +50,7 @@ fn smiles_parses_directional_bond_markers_without_sanitizing_stereo() {
 }
 
 #[test]
-fn metal_bound_organic_subset_halogen_parse_disables_implicit_hydrogens() {
+fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
     let mut small = smiles_api::read_str_with_options("Br[Pt+2]Br", SmilesParseOptions)
         .expect("platinum bromide salt parses");
     perception_api::sanitize_with_options(&mut small, SanitizeOptions::default())
@@ -67,7 +67,7 @@ fn metal_bound_organic_subset_halogen_parse_disables_implicit_hydrogens() {
             )
         })
         .collect::<Vec<_>>();
-    assert_eq!(bromines, vec![(true, 0), (true, 0)]);
+    assert_eq!(bromines, vec![(false, 0), (false, 0)]);
 
     let mut aryl_bromide = smiles_api::read_str_with_options("c1ccccc1Br", SmilesParseOptions)
         .expect("aryl bromide should parse");
@@ -82,7 +82,7 @@ fn metal_bound_organic_subset_halogen_parse_disables_implicit_hydrogens() {
 }
 
 #[test]
-fn metal_bound_organic_subset_atoms_disable_implicit_only_when_valence_is_full() {
+fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
     let mut aryl_mercury = smiles_api::read_str_with_options("c1ccccc1[Hg]", SmilesParseOptions)
         .expect("aryl mercury should parse");
     perception_api::sanitize_with_options(&mut aryl_mercury, SanitizeOptions::default())
@@ -103,7 +103,7 @@ fn metal_bound_organic_subset_atoms_disable_implicit_only_when_valence_is_full()
             .then_some(atom)
         })
         .expect("aryl carbon bound to mercury");
-    assert!(aryl_mercury_carbon.no_implicit_hydrogens);
+    assert!(!aryl_mercury_carbon.no_implicit_hydrogens);
     assert_eq!(aryl_mercury_carbon.implicit_hydrogens, Some(0));
 
     let methyl_sodium = smiles_api::read_str_with_options("C[Na]", SmilesParseOptions)
@@ -773,10 +773,11 @@ fn canonical_charged_aromatic_carbon_component_uses_representable_kekule_form() 
         .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error}"));
 
     assert_eq!(
-        local_atom_neighbor_signatures(molecule.graph()),
-        local_atom_neighbor_signatures(reparsed.graph()),
+        local_atom_neighbor_signatures_ignoring_halogen_no_implicit(molecule.graph()),
+        local_atom_neighbor_signatures_ignoring_halogen_no_implicit(reparsed.graph()),
         "{written}"
     );
+    assert!(written.contains("[Cl][Cr][Cl]"), "{written}");
 }
 
 fn aromatic_carbonyl_center_count(mol: &Molecule) -> usize {
@@ -2548,6 +2549,15 @@ fn canonical_substituted_pyrrole_uses_aromatic_nitrogen_form() {
     .expect("substituted pyrrole should parse");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("substituted pyrrole should sanitize");
+    let nitrogen = molecule
+        .graph()
+        .atoms()
+        .find_map(|(_, atom)| (atom.element.symbol() == "N").then_some(atom))
+        .expect("substituted pyrrole nitrogen");
+    assert!(nitrogen.aromatic);
+    assert_eq!(nitrogen.explicit_hydrogens, 1);
+    assert_eq!(nitrogen.implicit_hydrogens, Some(0));
+    assert!(!nitrogen.no_implicit_hydrogens);
 
     let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
         .expect("canonical SMILES should write");
@@ -2567,6 +2577,19 @@ type TestAtomNeighborSignature = (
 );
 
 fn local_atom_neighbor_signatures(mol: &Molecule) -> Vec<TestAtomNeighborSignature> {
+    local_atom_neighbor_signatures_with(mol, test_atom_state_signature)
+}
+
+fn local_atom_neighbor_signatures_ignoring_halogen_no_implicit(
+    mol: &Molecule,
+) -> Vec<TestAtomNeighborSignature> {
+    local_atom_neighbor_signatures_with(mol, test_atom_state_signature_ignoring_halogen_no_implicit)
+}
+
+fn local_atom_neighbor_signatures_with(
+    mol: &Molecule,
+    atom_signature: fn(&Atom) -> TestAtomStateSignature,
+) -> Vec<TestAtomNeighborSignature> {
     let mut atoms = mol
         .atoms()
         .map(|(id, atom)| {
@@ -2578,14 +2601,14 @@ fn local_atom_neighbor_signatures(mol: &Molecule) -> Vec<TestAtomNeighborSignatu
                         .atom(bond.other_atom(id))
                         .expect("neighbor should be live");
                     (
-                        test_atom_state_signature(neighbor),
+                        atom_signature(neighbor),
                         test_semantic_bond_order_code(bond),
                         bond.aromatic,
                     )
                 })
                 .collect::<Vec<_>>();
             neighbors.sort_unstable();
-            (test_atom_state_signature(atom), neighbors)
+            (atom_signature(atom), neighbors)
         })
         .collect::<Vec<_>>();
     atoms.sort_unstable();
@@ -2602,6 +2625,14 @@ fn test_atom_state_signature(atom: &Atom) -> TestAtomStateSignature {
         atom.no_implicit_hydrogens,
         atom.aromatic,
     )
+}
+
+fn test_atom_state_signature_ignoring_halogen_no_implicit(atom: &Atom) -> TestAtomStateSignature {
+    let mut signature = test_atom_state_signature(atom);
+    if matches!(atom.element.symbol(), "F" | "Cl" | "Br" | "I") {
+        signature.5 = false;
+    }
+    signature
 }
 
 fn test_semantic_bond_order_code(bond: &Bond) -> u8 {

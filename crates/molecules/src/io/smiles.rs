@@ -255,70 +255,7 @@ fn add_smiles_bond(
             .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
             .stereo = Some(stereo);
     }
-    preserve_metal_bound_organic_no_implicit(mol, left, right);
     Ok(())
-}
-
-fn preserve_metal_bound_organic_no_implicit(mol: &mut Molecule, left: AtomId, right: AtomId) {
-    let left_no_implicit = metal_bound_organic_atom_has_full_valence(mol, left, right);
-    let right_no_implicit = metal_bound_organic_atom_has_full_valence(mol, right, left);
-    if left_no_implicit {
-        if let Some(atom) = mol.atoms[left.index()].as_mut() {
-            atom.no_implicit_hydrogens = true;
-        }
-    }
-    if right_no_implicit {
-        if let Some(atom) = mol.atoms[right.index()].as_mut() {
-            atom.no_implicit_hydrogens = true;
-        }
-    }
-}
-
-fn metal_bound_organic_atom_has_full_valence(
-    mol: &Molecule,
-    atom_id: AtomId,
-    neighbor_id: AtomId,
-) -> bool {
-    let Ok(atom) = mol.atom(atom_id) else {
-        return false;
-    };
-    let Ok(neighbor) = mol.atom(neighbor_id) else {
-        return false;
-    };
-    if !is_smiles_metal_like(neighbor.element.symbol()) {
-        return false;
-    }
-    let Some(target) = smiles_parse_organic_valence_target(atom) else {
-        return false;
-    };
-    let explicit = mol
-        .incident_bonds(atom_id)
-        .ok()
-        .into_iter()
-        .flatten()
-        .map(|(_, bond)| match bond.order {
-            BondOrder::Zero | BondOrder::Dative => 0,
-            BondOrder::Single | BondOrder::Aromatic => 1,
-            BondOrder::Double => 2,
-            BondOrder::Triple => 3,
-            BondOrder::Quadruple => 4,
-        })
-        .sum::<u8>()
-        .saturating_add(atom.explicit_hydrogens);
-    explicit >= target
-}
-
-fn smiles_parse_organic_valence_target(atom: &Atom) -> Option<u8> {
-    match (atom.element.symbol(), atom.aromatic) {
-        ("B", false) => Some(3),
-        ("C", false) => Some(4),
-        ("N", false) | ("P", false) => Some(3),
-        ("O", false) | ("S", false) => Some(2),
-        ("F" | "Cl" | "Br" | "I", false) => Some(1),
-        ("B" | "C", true) => Some(3),
-        ("N" | "O" | "S" | "P", true) => Some(2),
-        _ => None,
-    }
 }
 
 fn default_smiles_bond_order(

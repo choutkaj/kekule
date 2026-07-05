@@ -11,6 +11,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - Commits changes only after every requested pass succeeds; any error leaves the input exactly unchanged.
 - Propagates ring resource limits through `SanitizeError::Rings` or `SanitizeError::Aromaticity` without committing staged mutations.
 - Marks requested successful passes fresh and ensures skipped passes are not fresh. Aromaticity may compute rings internally, but an unrequested ring result is not retained or exposed.
+- Normalizes neutral aromatic nitrogen with one perceived donor hydrogen to RDKit-style `nH` atom state: one explicit atom hydrogen, zero implicit hydrogens, and no implicit-hydrogen suppression.
 - Does not run automatically from file parsers.
 
 ## Implementation Notes
@@ -20,6 +21,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
 - The public facade is `perception`; lower-level sanitizer internals are not root-level API.
 - Applies sanitization-only charge cleanup for hypervalent oxyhalogen patterns before valence perception.
+- Performs the aromatic nitrogen hydrogen normalization after both valence and aromaticity perception succeed, preserving total hydrogen count while exposing RDKit-like sanitized atom fields.
 - Its valence, ring, and aromaticity passes are compared together against each required corpus.
 - Inherits the current valence and aromaticity improvements, including radical implicit-hydrogen handling, imported aromatic SMILES handling, and conservative unsupported-ring behavior.
 
@@ -43,3 +45,4 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v7: Accept explicit ring-work limits and preserve transactional rollback on ring resource errors.
 - v8: Move the public small-molecule sanitizer API under the `perception` facade.
 - v9: Add PubChem-100k as required broad-corpus validation evidence.
+- v10: Normalize pyrrolic aromatic nitrogen donor hydrogens to RDKit-style sanitized `nH` atom state.
