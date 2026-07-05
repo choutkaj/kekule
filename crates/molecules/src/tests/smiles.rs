@@ -2379,6 +2379,30 @@ fn fused_lone_pair_five_ring_with_macrocycle_pi_links_stays_aromatic() {
 }
 
 #[test]
+fn fused_five_electron_support_ring_keeps_outer_perimeter_aliphatic() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "CC1=C(C2=CC3=NC(=CC4=C(C(=C([N-]4)C=C5C(=C(C(=N5)C=C1[N-]2)C)C=C)C)C=C)C(=C3CCC(=O)O)C)CCC(=O)O.[Fe+2]",
+        SmilesParseOptions,
+    )
+    .expect("anionic macrocycle salt should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("anionic macrocycle salt should sanitize");
+
+    let aromatic_atoms = molecule
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .count();
+    let aromatic_bonds = molecule
+        .graph()
+        .bonds()
+        .filter(|(_, bond)| bond.aromatic)
+        .count();
+    assert_eq!((aromatic_atoms, aromatic_bonds), (20, 22));
+}
+
+#[test]
 fn neutral_aza_macrocycle_core_stays_aliphatic() {
     let mut molecule = smiles_api::read_str_with_options(
         "C1=CC=C2C(=C1)C3=NC4=NC(=NC5=NC(=NC6=NC(=NC2=N3)C7=CC=CC=C76)C8=CC=CC=C85)C9=CC=CC=C94",

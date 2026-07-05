@@ -30,6 +30,7 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - Uses RDKit-like fused-system atom multiplicity, selected-subsystem perimeter bonds, additive accepted subsets, and the 24-atom fused-ring candidate cap.
 - Keeps simple-ring nonaromatic fused-bond suppression local to simple-ring assignment, then lets accepted fused subsets decide perimeter and internal bond flags from the accepted subset topology.
 - Keeps multi-protected fused-subset perimeter singles and explicitly rejected internal shared singles aliphatic, while allowing accepted fused subsets to aromatize shared bonds when member rings remain candidate-compatible and have individual Huckel or one-electron-deficient fused support.
+- Distinguishes fused support rings from perimeter-marking rings, so candidate-compatible hetero five-electron rings fused to a large accepted member can support internal fused aromaticity without aromatizing their non-shared perimeter.
 - Allows accepted fused subsets to aromatize internal shared bonds through candidate-compatible four-electron dione partners when the fused-system Huckel evaluator accepts the larger system.
 - Allows low-unsaturation chalcogen-containing fused candidates with exocyclic pi links into the surrounding fused system to reach the fused-subset Huckel evaluator.
 - Allows candidate-compatible five-member rings with a nitrogen lone-pair Huckel count and two fused-system-local exocyclic pi links to remain aromatic inside accepted macrocyclic/fused systems.
@@ -59,3 +60,4 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - v87: Narrow fused-neighbor nonaromatic bond suppression so accepted simple aromatic rings are not vetoed by adjacent nonaromatic rings.
 - v88: Localize fused-system bond suppression to accepted simple rings and fused subsets, and admit exocyclic-pi chalcogen fused candidates into the subset Huckel evaluator.
 - v89: Add fused-topology handling for ring-local exocyclic pi links: veto lone-pair-rescued six-member rings that RDKit keeps aliphatic, admit lone-pair five-member macrocycle partners that RDKit keeps aromatic, and allow accepted fused subsets to mark shared bonds through candidate-compatible four-electron dione partners.
+- v90: Split fused support from perimeter assignment so hetero five-electron support rings fused to a large accepted member can contribute to accepted fused systems without marking their non-shared outer perimeter.

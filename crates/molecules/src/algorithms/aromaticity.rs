@@ -272,6 +272,15 @@ fn mark_aromatic_fused_subset(
         .collect::<BTreeSet<_>>();
     let preserve_local_perimeter_singles = protected_perimeter_fusion_singles.len() > 1;
     for bond_id in &perimeter_bonds {
+        if !fused_perimeter_bond_can_follow_accepted_subset(
+            mol,
+            rings,
+            ring_analyses,
+            indexes,
+            *bond_id,
+        ) {
+            continue;
+        }
         let Ok(bond) = mol.bond(*bond_id) else {
             continue;
         };
@@ -326,6 +335,69 @@ fn fused_perimeter_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> 
         .into_iter()
         .filter_map(|(bond_id, count)| (count == 1).then_some(bond_id))
         .collect()
+}
+
+fn fused_perimeter_bond_can_follow_accepted_subset(
+    mol: &Molecule,
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+    indexes: &[usize],
+    bond_id: BondId,
+) -> bool {
+    indexes
+        .iter()
+        .copied()
+        .filter(|index| rings[*index].bonds.contains(&bond_id))
+        .any(|index| {
+            fused_perimeter_ring_can_follow_accepted_subset(
+                mol,
+                rings,
+                indexes,
+                index,
+                &ring_analyses[index],
+            )
+        })
+}
+
+fn fused_perimeter_ring_can_follow_accepted_subset(
+    mol: &Molecule,
+    rings: &[Ring],
+    indexes: &[usize],
+    ring_index: usize,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    let ring = &rings[ring_index];
+    !ring_is_one_electron_deficient_fused_support(mol, ring, analysis)
+        || ring_is_lone_pair_dione_fused_partner(mol, ring, analysis)
+        || !ring_is_fused_to_large_accepted_member(rings, indexes, ring_index)
+}
+
+fn ring_is_fused_to_large_accepted_member(
+    rings: &[Ring],
+    indexes: &[usize],
+    ring_index: usize,
+) -> bool {
+    indexes.iter().copied().any(|other_index| {
+        other_index != ring_index
+            && rings[other_index].atoms.len() > 7
+            && rings_share_bond(&rings[ring_index], &rings[other_index])
+    })
+}
+
+fn ring_is_one_electron_deficient_fused_support(
+    mol: &Molecule,
+    ring: &Ring,
+    analysis: &RingAromaticityAnalysis,
+) -> bool {
+    !analysis.is_huckel_aromatic()
+        && ring.atoms.len() == 5
+        && ring_pi_bond_count(mol, ring) >= 2
+        && analysis.localized_active_hetero_donor_count(mol) > 0
+        && analysis
+            .localized
+            .as_ref()
+            .and_then(AromaticRingDonorAnalysis::electron_count)
+            == Some(5)
 }
 
 fn fused_internal_bond_can_follow_accepted_subset(
