@@ -190,18 +190,25 @@ fn perceive_rdkit_like_aromaticity(
             })
         })
         .collect::<BTreeSet<_>>();
-    let protected_non_aromatic_bonds = imported_explicit_aromatic_singles
+    let protected_simple_aromatic_bonds = imported_explicit_aromatic_singles
         .union(&non_aromatic_fusion_singles)
         .copied()
         .collect::<BTreeSet<_>>();
-
+    let protected_simple_fusion_singles = ring_set
+        .rings()
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| ring_aromatic[*index])
+        .flat_map(|(_, ring)| ring.bonds.iter().copied())
+        .filter(|bond_id| non_aromatic_fusion_singles.contains(bond_id))
+        .collect::<BTreeSet<_>>();
     for (ring, aromatic) in ring_set.rings().iter().zip(ring_aromatic.iter().copied()) {
         if aromatic {
             mark_aromatic_atoms_and_bonds(
                 mol,
                 ring.atoms.iter().copied(),
                 ring.bonds.iter().copied(),
-                &protected_non_aromatic_bonds,
+                &protected_simple_aromatic_bonds,
             );
         }
     }
@@ -209,7 +216,9 @@ fn perceive_rdkit_like_aromaticity(
         mol,
         ring_set.rings(),
         &ring_analyses,
-        &protected_non_aromatic_bonds,
+        &imported_explicit_aromatic_singles,
+        &non_aromatic_fusion_singles,
+        &protected_simple_fusion_singles,
     )?;
     for component in imported_aromatic_components {
         if !component.iter().any(|atom_id| {
@@ -249,10 +258,19 @@ fn mark_aromatic_atoms_and_bonds(
 fn mark_aromatic_fused_subset(
     mol: &mut Molecule,
     rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
     indexes: &[usize],
-    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+    imported_explicit_aromatic_singles: &BTreeSet<BondId>,
+    local_non_aromatic_fusion_singles: &BTreeSet<BondId>,
+    protected_simple_fusion_singles: &BTreeSet<BondId>,
 ) -> BTreeSet<BondId> {
     let perimeter_bonds = fused_perimeter_bonds(rings, indexes);
+    let protected_perimeter_fusion_singles = perimeter_bonds
+        .iter()
+        .copied()
+        .filter(|bond_id| local_non_aromatic_fusion_singles.contains(bond_id))
+        .collect::<BTreeSet<_>>();
+    let preserve_local_perimeter_singles = protected_perimeter_fusion_singles.len() > 1;
     for bond_id in &perimeter_bonds {
         let Ok(bond) = mol.bond(*bond_id) else {
             continue;
@@ -264,10 +282,31 @@ fn mark_aromatic_fused_subset(
             }
         }
         if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-            bond.aromatic = !protected_non_aromatic_bonds.contains(bond_id);
+            let keep_aliphatic = imported_explicit_aromatic_singles.contains(bond_id)
+                || protected_simple_fusion_singles.contains(bond_id)
+                || preserve_local_perimeter_singles
+                    && protected_perimeter_fusion_singles.contains(bond_id);
+            bond.aromatic = !keep_aliphatic;
         }
     }
-    perimeter_bonds
+    let mut resolved_bonds = perimeter_bonds;
+    for bond_id in fused_internal_bonds(rings, indexes) {
+        if fused_internal_bond_can_follow_accepted_subset(rings, ring_analyses, indexes, bond_id) {
+            if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+                bond.aromatic = !imported_explicit_aromatic_singles.contains(&bond_id);
+            }
+            resolved_bonds.insert(bond_id);
+            continue;
+        }
+        if !local_non_aromatic_fusion_singles.contains(&bond_id) {
+            continue;
+        }
+        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
+            bond.aromatic = false;
+        }
+        resolved_bonds.insert(bond_id);
+    }
+    resolved_bonds
 }
 
 fn fused_perimeter_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> {
@@ -280,6 +319,47 @@ fn fused_perimeter_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> 
     bond_counts
         .into_iter()
         .filter_map(|(bond_id, count)| (count == 1).then_some(bond_id))
+        .collect()
+}
+
+fn fused_internal_bond_can_follow_accepted_subset(
+    rings: &[Ring],
+    ring_analyses: &[RingAromaticityAnalysis],
+    indexes: &[usize],
+    bond_id: BondId,
+) -> bool {
+    let containing = indexes
+        .iter()
+        .copied()
+        .filter(|index| rings[*index].bonds.contains(&bond_id))
+        .collect::<Vec<_>>();
+    containing.len() > 1
+        && containing
+            .iter()
+            .any(|index| ring_analyses[*index].is_huckel_aromatic())
+        && containing.iter().all(|index| {
+            let analysis = &ring_analyses[*index];
+            analysis.localized_all_atoms_are_candidates()
+                && analysis.aromatic.fixed_electron_count != Some(0)
+                && (analysis.is_huckel_aromatic()
+                    || analysis
+                        .localized
+                        .as_ref()
+                        .and_then(AromaticRingDonorAnalysis::electron_count)
+                        == Some(5))
+        })
+}
+
+fn fused_internal_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> {
+    let mut bond_counts = BTreeMap::<BondId, usize>::new();
+    for index in indexes {
+        for bond_id in &rings[*index].bonds {
+            *bond_counts.entry(*bond_id).or_default() += 1;
+        }
+    }
+    bond_counts
+        .into_iter()
+        .filter_map(|(bond_id, count)| (count > 1).then_some(bond_id))
         .collect()
 }
 
@@ -378,7 +458,9 @@ fn perceive_fused_aromatic_components(
     mol: &mut Molecule,
     rings: &[Ring],
     ring_analyses: &[RingAromaticityAnalysis],
-    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+    imported_explicit_aromatic_singles: &BTreeSet<BondId>,
+    non_aromatic_fusion_singles: &BTreeSet<BondId>,
+    protected_simple_fusion_singles: &BTreeSet<BondId>,
 ) -> std::result::Result<(), AromaticityError> {
     let candidates = rings
         .iter()
@@ -409,7 +491,9 @@ fn perceive_fused_aromatic_components(
             rings,
             ring_analyses,
             indexes,
-            protected_non_aromatic_bonds,
+            imported_explicit_aromatic_singles,
+            non_aromatic_fusion_singles,
+            protected_simple_fusion_singles,
         )?;
     }
     Ok(())
@@ -420,7 +504,9 @@ fn apply_huckel_to_fused_component(
     rings: &[Ring],
     ring_analyses: &[RingAromaticityAnalysis],
     indexes: &[usize],
-    protected_non_aromatic_bonds: &BTreeSet<BondId>,
+    imported_explicit_aromatic_singles: &BTreeSet<BondId>,
+    non_aromatic_fusion_singles: &BTreeSet<BondId>,
+    protected_simple_fusion_singles: &BTreeSet<BondId>,
 ) -> std::result::Result<(), AromaticityError> {
     let all_bonds = indexes
         .iter()
@@ -437,8 +523,11 @@ fn apply_huckel_to_fused_component(
                 done_bonds.extend(mark_aromatic_fused_subset(
                     mol,
                     rings,
+                    ring_analyses,
                     &subset,
-                    protected_non_aromatic_bonds,
+                    imported_explicit_aromatic_singles,
+                    non_aromatic_fusion_singles,
+                    protected_simple_fusion_singles,
                 ));
                 if done_bonds.len() >= all_bonds.len() {
                     return Ok(());
@@ -584,6 +673,7 @@ fn ring_has_low_unsaturation_active_chalcogen_bridge_for_fused(
     analysis: &RingAromaticityAnalysis,
 ) -> bool {
     ring_pi_bond_count(mol, ring) < 2
+        && ring_exocyclic_pi_bond_count(mol, ring) == 0
         && analysis.localized_active_hetero_donor_count(mol) > 1
         && analysis.localized_has_active_chalcogen_donor(mol)
 }
@@ -2037,8 +2127,15 @@ mod tests {
                 .count(),
             0
         );
-        perceive_fused_aromatic_components(&mut mol, &rings, &analyses, &BTreeSet::new())
-            .expect("fused aromaticity");
+        perceive_fused_aromatic_components(
+            &mut mol,
+            &rings,
+            &analyses,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        )
+        .expect("fused aromaticity");
 
         let aromatic_bond_count = component
             .bonds

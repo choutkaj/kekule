@@ -651,6 +651,189 @@ fn fused_aromatic_component_preserves_explicit_single_bond() {
 }
 
 #[test]
+fn fused_subset_marks_perimeter_without_aromatizing_internal_shared_bond() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "O=C(NC1=CC=CC=C1)N1CCCC(C(=O)N2CCN(C3=C4C=CN=C4NC=N3)CC2)C1",
+        SmilesParseOptions,
+    )
+    .expect("fused Enamine regression should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused Enamine regression should sanitize");
+
+    for atom_id in [20, 21, 22, 23, 24, 25, 26, 27, 28] {
+        assert!(
+            molecule
+                .graph()
+                .atom(AtomId::new(atom_id))
+                .expect("fused aromatic atom")
+                .aromatic,
+            "fused atom {atom_id} should be aromatic"
+        );
+    }
+    assert!(
+        molecule
+            .graph()
+            .bond(BondId::new(30))
+            .expect("accepted fused perimeter bond")
+            .aromatic,
+        "accepted fused-subset perimeter bond should be aromatic"
+    );
+    assert!(
+        !molecule
+            .graph()
+            .bond(BondId::new(26))
+            .expect("internal fused shared bond")
+            .aromatic,
+        "internal fused shared bond should remain aliphatic"
+    );
+}
+
+#[test]
+fn fused_sdf_five_electron_neighbor_shares_aromatic_internal_bond() {
+    let input = r#"
+     RDKit          2D
+
+ 27 29  0  0  0  0  0  0  0  0999 V2000
+    4.5000   -5.1962    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7500   -3.8971    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    4.5000   -2.5981    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.0000   -2.5981    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    8.2500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    9.0000   -0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    8.2500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    6.0000   -0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    2.2500   -3.8971    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000   -2.5981    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+    0.2010   -3.3481    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    2.7990   -1.8481    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7500    1.2990    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500    1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.7500   -1.2990    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.7500    1.2990    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.0000    2.5981    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+   -3.7500    3.8971    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.5000    2.5981    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7500    3.8971    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+  2  1  1  1
+  2  3  1  0
+  3  4  1  0
+  4  5  1  0
+  5  6  2  0
+  6  7  1  0
+  7  8  2  0
+  8  9  1  0
+  9 10  2  0
+  2 11  1  0
+ 11 12  1  0
+ 12 13  2  0
+ 12 14  2  0
+ 12 15  1  0
+ 15 16  2  0
+ 16 17  1  0
+ 17 18  2  0
+ 18 19  1  0
+ 19 20  2  0
+ 19 21  1  0
+ 21 22  2  0
+ 21 23  1  0
+ 23 24  1  0
+ 24 25  2  0
+ 24 26  1  0
+ 26 27  1  0
+  5 10  1  0
+ 15 20  1  0
+ 26 18  1  0
+M  END
+$$$$
+"#;
+    let mut molecule = sdf::read_v2000_str(input, SdfParseOptions::default())
+        .expect("regression SDF parses")
+        .into_iter()
+        .next()
+        .expect("one SDF molecule");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused SDF regression sanitizes");
+
+    assert!(
+        molecule
+            .graph()
+            .bond(BondId::new(17))
+            .expect("shared fused bond")
+            .aromatic,
+        "candidate five-electron fused neighbor should not suppress the accepted shared bond"
+    );
+}
+
+#[test]
+fn fused_chalcogen_subset_with_exocyclic_pi_links_becomes_aromatic() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "CC1=C2OC3=C(C)C=CC(C(=O)NC4C(=O)NC(C(C)C)C(=O)N5CCCC5C(=O)N(C)CC(=O)N(C)C(C(C)C)C(=O)OC4C)=C3N=C2C(C(=O)NC2C(=O)NC(C(C)C)C(=O)N3CCCC3C(=O)N(C)CC(=O)N(C)C(C(C)C)C(=O)OC2C)=C(N)C1=O",
+        SmilesParseOptions,
+    )
+    .expect("PubChem fused chalcogen regression should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("PubChem fused chalcogen regression should sanitize");
+
+    assert!(
+        molecule
+            .graph()
+            .atom(AtomId::new(3))
+            .expect("fused bridge oxygen")
+            .aromatic,
+        "fused bridge oxygen should be aromatic"
+    );
+    for bond_id in [2, 3] {
+        assert!(
+            molecule
+                .graph()
+                .bond(BondId::new(bond_id))
+                .expect("oxygen fused-subset perimeter bond")
+                .aromatic,
+            "oxygen perimeter bond {bond_id} should be aromatic"
+        );
+    }
+    assert!(
+        !molecule
+            .graph()
+            .atom(AtomId::new(10))
+            .expect("carbonyl center")
+            .aromatic,
+        "adjacent carbonyl center should stay aliphatic"
+    );
+}
+
+#[test]
+fn fused_simple_aromatic_member_rings_can_share_aromatic_single_bond() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "CC(CCC1=CC=CC=C1)NS(=O)(=O)C1=CC2=C(N=C1)N(C)C(=O)NC2=O",
+        SmilesParseOptions,
+    )
+    .expect("fused pyrimidinedione regression should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("fused pyrimidinedione regression should sanitize");
+
+    assert!(
+        molecule
+            .graph()
+            .bond(BondId::new(17))
+            .expect("shared simple-ring bond")
+            .aromatic,
+        "shared bond between simple aromatic member rings should be aromatic"
+    );
+}
+
+#[test]
 fn fused_quinone_cn_core_excludes_carbonyl_centers() {
     let mut molecule = smiles_api::read_str_with_options(
         "C1=CC=C2C(=C1)C(=O)C3=C(C2=O)C4=C(C=C3)C(=O)C5=CC=CC=C5N4",

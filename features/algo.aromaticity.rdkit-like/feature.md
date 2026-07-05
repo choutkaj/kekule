@@ -28,7 +28,9 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - Uses cached per-ring donor analysis so initial ring gates, Huckel counting, fused candidate admission, and fused single-bond protection share the same candidate state.
 - Applies a bounded RDKit-style fused-system pass: fused candidate rings are grouped by shared bonds, connected subsets are evaluated from small to large, subset atom sets use fused-ring multiplicity, and accepted subsets mark perimeter bonds.
 - Uses RDKit-like fused-system atom multiplicity, selected-subsystem perimeter bonds, additive accepted subsets, and the 24-atom fused-ring candidate cap.
-- Keeps nonaromatic fused-neighbor bond suppression from vetoing bonds that are already owned by an accepted simple aromatic ring.
+- Keeps simple-ring nonaromatic fused-bond suppression local to simple-ring assignment, then lets accepted fused subsets decide perimeter and internal bond flags from the accepted subset topology.
+- Keeps multi-protected fused-subset perimeter singles and explicitly rejected internal shared singles aliphatic, while allowing accepted fused subsets to aromatize shared bonds when member rings remain candidate-compatible and have individual Huckel or one-electron-deficient fused support.
+- Allows low-unsaturation chalcogen-containing fused candidates with exocyclic pi links into the surrounding fused system to reach the fused-subset Huckel evaluator.
 - Does not run a post-Huckel molecule-specific cleanup pass. Carbonyl, imide, lactam, lactone, amidine, chalcogen-oxo, terminal-imine, and orphan-atom corrections are expected to emerge from the general donor/candidate/fused rules rather than separate motif clearing.
 - Keeps parsing separate from aromaticity perception. Canonical SMILES normalization issues exposed by these flags belong to `io.smiles.canonical`, not hidden aromaticity cleanup.
 - Treats unsupported or ambiguous systems conservatively rather than claiming full RDKit parity.
@@ -52,3 +54,4 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - v85: Reworked fused-system perception around a single RDKit-style connected-subset Huckel evaluator and removed the separate exocyclic fused fallback marking pass.
 - v86: Add PubChem-100k as required broad-corpus validation evidence.
 - v87: Narrow fused-neighbor nonaromatic bond suppression so accepted simple aromatic rings are not vetoed by adjacent nonaromatic rings.
+- v88: Localize fused-system bond suppression to accepted simple rings and fused subsets, and admit exocyclic-pi chalcogen fused candidates into the subset Huckel evaluator.
