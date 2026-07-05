@@ -1,9 +1,9 @@
 id = "core.atom-bond"
 title = "Core atom and bond model"
 area = "core"
-version = 4
+version = 5
 implemented = true
 validated = false
-description = "Represent chemically general atom and bond data shared by small and macromolecular workflows."
+description = "Represent chemically general atom and bond data shared by small and macromolecular workflows, excluding authoritative stereo state."
 depends_on = ["core.graph"]
 validation_required = []

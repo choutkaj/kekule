@@ -10,7 +10,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use flate2::read::GzDecoder;
 use molecules::{
     bio::{self, MacroMolecule, MmcifParseOptions, Residue},
-    core::{Atom, AtomId, AtomRadical, Bond, BondOrder, BondStereo, Molecule, Point3, PropValue},
+    core::{
+        Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondOrder, DoubleBondOrientation,
+        Molecule, Point3, PropValue, StereoBondMark, StereoBondMarkKind, StereoCarrier,
+        StereoDescriptor, StereoElement, StereoElementKind, StereoGroup, StereoGroupKind,
+        StereoSource, StereoSpecifiedness, TetrahedralOrientation,
+    },
     molfile,
     perception::{
         self,

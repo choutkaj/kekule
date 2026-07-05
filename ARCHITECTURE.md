@@ -31,14 +31,14 @@ The desired public namespace is:
 
 ```text
 molecules
-  core         raw graph kernel: Molecule, Atom, Bond, IDs, Element, Conformer
+  core         raw graph kernel: Molecule, Atom, Bond, IDs, Element, Conformer, stereo elements
   small        SmallMolecule and small-molecule convenience API
   bio          MacroMolecule, BioHierarchy, Model, Chain, Residue, AtomSite
   smiles       SMILES parsing/writing facade
   molfile      V2000/V3000 Molfile parsing/writing facade
   sdf          SDF record parsing/writing facade
   mmcif        mmCIF parsing facade for macromolecular structures
-  perception   sanitization, valence, rings, aromaticity, stereo models
+  perception   sanitization, valence, rings, aromaticity, stereo perception
   canon        canonical ranking, identity, canonical graph utilities
   prelude      small set of common user-facing imports
 ```
@@ -132,6 +132,7 @@ The core graph owns:
 - typed IDs: `AtomId`, `BondId`, `ConformerId`
 - element and atom payloads
 - bond payloads
+- graph-adjacent stereo elements, stereo groups, and source bond marks
 - graph topology and adjacency
 - optional conformers
 - arbitrary properties
@@ -140,7 +141,8 @@ The core graph owns:
 
 Core invariants:
 
-- `AtomId`, `BondId`, and `ConformerId` are typed IDs, not plain indices.
+- `AtomId`, `BondId`, `ConformerId`, `StereoElementId`, and `StereoGroupId`
+  are typed IDs, not plain indices.
 - IDs are stable for the lifetime of a molecule object.
 - Deleted atoms/bonds leave holes; IDs are not reused.
 - `Molecule` may represent chemically invalid or unsanitized input.
@@ -148,9 +150,18 @@ Core invariants:
 - Cached perception data is only valid when the corresponding perception state is fresh.
 - Topology-changing edits invalidate all dependent perception state.
 - Chemistry-sensitive payload edits invalidate dependent perception state.
+- Topology changes prune graph-adjacent stereo elements and source bond marks
+  that reference removed atoms or bonds.
 - Property-only and coordinate-only edits should not invalidate topology-derived state.
 
 The perception cache and freshness flags are implementation details. Users should query chemistry through methods such as `rings()`, `ring_count()`, `atom_in_ring()`, `is_aromatic()`, or explicit perception reports, rather than manually editing cache state.
+
+Stereochemistry is a graph-adjacent layer on `Molecule`, not payload flags on
+`Atom` or `Bond`. Local stereo elements and relation groups are stored truth;
+source bond marks preserve parser or Molfile wedge/either syntax before
+perception; CIP descriptors are derived cache. Missing stereo elements mean
+absent stereo, while explicit unknown or invalid-cleared stereo must be modeled
+with stereo specifiedness instead of being collapsed into absence.
 
 ## SmallMolecule
 
@@ -439,6 +450,14 @@ AromaticityModel::RdkitLike
 Aromaticity is a toolkit convention, not a single physical truth. The API should allow future models such as Daylight-like, MDL-like, OpenEye-like, Pauling, or custom research models without rewriting user code.
 
 Macromolecule validation/sanitization uses separate `MacroValidateOptions`, `MacroSanitizeOptions`, reports, and error types. Do not reuse small-molecule `SanitizeOptions` for macromolecules.
+
+Stereo perception should be its own explicit stage. It identifies candidate
+tetrahedral, double-bond, and later axial elements; validates stored local
+stereo against current topology and hydrogen semantics; and assigns local
+orientation from coordinates or source bond marks. Exact CIP assignment belongs
+to a later descriptor layer over validated stereo elements, not to raw parsing.
+Do not run small-molecule stereo perception over whole `MacroMolecule`
+structures by default.
 
 ## Canonicalization and identity
 

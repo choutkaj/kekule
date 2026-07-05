@@ -39,18 +39,25 @@ pub(crate) fn build_validation_evidence(
     collect_files(&repo_root.join("crates/molecules/src"), &mut paths)?;
     collect_files(&repo_root.join("crates/xtask/src"), &mut paths)?;
 
-    let reference_root = match manifest.reference_tool.as_str() {
-        "rdkit" => repo_root.join("validation/reference/rdkit"),
-        "biopython" => repo_root.join("validation/reference/biopython"),
+    match manifest.reference_tool.as_str() {
+        "rdkit" => {
+            let reference_root = repo_root.join("validation/reference/rdkit");
+            paths.insert(reference_root.join("run_feature.py"));
+            paths.insert(reference_root.join("environment.yml"));
+        }
+        "biopython" => {
+            let reference_root = repo_root.join("validation/reference/biopython");
+            paths.insert(reference_root.join("run_feature.py"));
+            paths.insert(reference_root.join("environment.yml"));
+        }
+        "pubchem-manual-semantic" => {}
         value => {
             return Err(boxed_error(format!(
                 "{} uses unsupported reference_tool `{value}`",
                 manifest_path.display()
             )))
         }
-    };
-    paths.insert(reference_root.join("run_feature.py"));
-    paths.insert(reference_root.join("environment.yml"));
+    }
 
     for fixture in &manifest.fixtures {
         paths.insert(corpus_root.join(fixture));

@@ -20,7 +20,7 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 - Canonical candidate ranking is derived from the graph and emitted SMILES syntax only; it does not reparse candidates, run sanitization, or switch to motif-specific stored-Kekule fallback spellings.
 - Uses stored Kekule atom/bond spelling when a mixed aromatic/aliphatic pi component has non-aromatic multiple-bonded framework atoms that aromatic shorthand cannot represent without seeding a different aromaticity partition on reparse, and only when concrete stored single/double bond orders are available.
 - Preserves explicit hydrogens and no-implicit organic atoms when organic shorthand cannot represent the stored atom state, including metal/main-group neighbor cases handled by the shared SMILES parse/write fidelity rules.
-- The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; stored atom and bond stereo metadata is ignored when writing canonical output.
+- The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; first-class stereo elements and source bond marks are ignored only in this explicit canonical non-isomeric output mode.
 
 ## Validation
 
@@ -60,3 +60,4 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v24: Remove candidate reparse/sanitize ranking and motif-specific stored-Kekule cleanup fallback; canonical output is selected by RDKit-inspired rank-guided graph traversal plus syntax tie-breakers, with graph-derived stored-Kekule emission for mixed aromatic/aliphatic pi components that cannot be faithfully represented by aromatic shorthand.
 - v25: Complete pubchem-1k canonical validation by broadening graph-derived representability rules for aromatic carbonyls, charged aromatic carbon components, and zero-hydrogen metal/main-group-bound organic atoms, plus aligning validation semantics for anionic aromatic nitrogen and charged aromatic carbon hydrogens.
 - v26: Add PubChem-100k as required broad-corpus validation evidence.
+- v27: Document that canonical non-isomeric output ignores first-class stereo elements and source bond marks by policy, rather than reading removed atom/bond stereo metadata.

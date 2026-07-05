@@ -21,11 +21,26 @@ fn smiles_parses_branches_rings_brackets_and_fragments_without_sanitizing() {
         .graph()
         .atom(AtomId::new(10))
         .expect("chiral bracket atom");
-    assert_eq!(
-        chiral_atom.chiral,
-        Some(AtomStereo::TetrahedralCounterClockwise)
-    );
     assert_eq!(chiral_atom.explicit_hydrogens, 1);
+    let stereo = small
+        .graph()
+        .stereo_elements()
+        .map(|(_, element)| element)
+        .collect::<Vec<_>>();
+    assert_eq!(stereo.len(), 1);
+    match &stereo[0].kind {
+        StereoElementKind::Tetrahedral(tetrahedral) => {
+            assert_eq!(tetrahedral.center, AtomId::new(10));
+            assert_eq!(
+                tetrahedral.orientation,
+                TetrahedralOrientation::CounterClockwise
+            );
+            assert!(tetrahedral
+                .carriers
+                .contains(&StereoCarrier::ImplicitHydrogen));
+        }
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
 }
 
 #[test]
@@ -35,12 +50,22 @@ fn smiles_parses_directional_bond_markers_without_sanitizing_stereo() {
 
     assert_eq!(small.graph().atom_count(), 4);
     assert_eq!(small.graph().bond_count(), 3);
-    let stereos = small
-        .graph()
-        .bonds()
-        .filter_map(|(_, bond)| bond.stereo)
-        .collect::<Vec<_>>();
-    assert_eq!(stereos, vec![BondStereo::Up, BondStereo::Down]);
+    assert_eq!(
+        small
+            .graph()
+            .stereo_bond_mark(BondId::new(0))
+            .expect("first directional mark")
+            .kind,
+        StereoBondMarkKind::DirectionalUp
+    );
+    assert_eq!(
+        small
+            .graph()
+            .stereo_bond_mark(BondId::new(2))
+            .expect("second directional mark")
+            .kind,
+        StereoBondMarkKind::DirectionalDown
+    );
     let canonical = smiles_api::write_canonical_with_options(&small, CanonicalSmilesWriteOptions)
         .expect("non-isomeric canonical SMILES should ignore directional bond markers");
     let mut reparsed = smiles_api::read_str_with_options(&canonical, SmilesParseOptions)
@@ -277,10 +302,7 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
         .expect("canonical output should parse");
 
     assert!(!written.contains('['), "{written}");
-    assert!(reparsed
-        .graph()
-        .atoms()
-        .all(|(_, atom)| atom.chiral.is_none()));
+    assert_eq!(reparsed.graph().stereo_elements().count(), 0);
     assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
     assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
 
@@ -3037,7 +3059,14 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     );
 
     molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Single;
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = Some(BondStereo::Up);
+    molecule
+        .graph_mut()
+        .set_stereo_bond_mark(StereoBondMark {
+            bond,
+            kind: StereoBondMarkKind::DirectionalUp,
+            source: StereoSource::Smiles,
+        })
+        .expect("stereo mark");
     assert!(
         smiles_api::write_with_options(&molecule, SmilesWriteOptions)
             .expect_err("stereo should be rejected")
@@ -3045,8 +3074,21 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
             .contains("stereochemistry")
     );
 
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = None;
-    molecule.graph_mut().atom_mut(a).expect("atom").chiral = Some(AtomStereo::TetrahedralClockwise);
+    molecule
+        .graph_mut()
+        .clear_stereo_bond_mark(bond)
+        .expect("clear mark");
+    molecule
+        .graph_mut()
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center: a,
+                carriers: vec![StereoCarrier::Atom(b), StereoCarrier::ImplicitHydrogen],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("atom stereo");
     assert!(
         smiles_api::write_with_options(&molecule, SmilesWriteOptions)
             .expect_err("atom chirality should be rejected")
@@ -3054,7 +3096,15 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
             .contains("atom stereochemistry")
     );
 
-    molecule.graph_mut().atom_mut(a).expect("atom").chiral = None;
+    let element = molecule
+        .graph()
+        .stereo_element_ids()
+        .next()
+        .expect("stereo element");
+    molecule
+        .graph_mut()
+        .remove_stereo_element(element)
+        .expect("remove atom stereo");
     molecule.graph_mut().atom_mut(a).expect("atom").radical = Some(AtomRadical::Doublet);
     assert!(
         smiles_api::write_with_options(&molecule, SmilesWriteOptions)

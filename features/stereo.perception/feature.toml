@@ -1,0 +1,9 @@
+id = "stereo.perception"
+title = "Stereochemistry perception"
+area = "stereo"
+version = 1
+implemented = false
+validated = false
+description = "Plan candidate stereo perception, local validation, and coordinate or wedge assignment."
+depends_on = ["stereo.representation", "chem.sanitize.rdkit-like", "algo.canonical-ranking"]
+validation_required = []

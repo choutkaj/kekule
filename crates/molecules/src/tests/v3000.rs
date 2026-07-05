@@ -43,7 +43,12 @@ M  END
     let bond0 = mol.bond(BondId::new(0)).expect("bond exists");
     let bond1 = mol.bond(BondId::new(1)).expect("bond exists");
     assert_eq!(bond0.order, BondOrder::Single);
-    assert_eq!(bond0.stereo, Some(BondStereo::Up));
+    assert_eq!(
+        mol.stereo_bond_mark(BondId::new(0))
+            .expect("stereo mark")
+            .kind,
+        StereoBondMarkKind::WedgeUp
+    );
     assert_eq!(bond1.order, BondOrder::Double);
     let (_, conformer) = mol.first_conformer().expect("conformer exists");
     assert_eq!(
@@ -160,7 +165,14 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         .graph_mut()
         .add_bond(n, c, BondOrder::Single)
         .expect("single bond");
-    molecule.graph_mut().bond_mut(wedge).expect("bond").stereo = Some(BondStereo::Up);
+    molecule
+        .graph_mut()
+        .set_stereo_bond_mark(StereoBondMark {
+            bond: wedge,
+            kind: StereoBondMarkKind::WedgeUp,
+            source: StereoSource::MolfileV3000,
+        })
+        .expect("stereo mark");
     molecule
         .graph_mut()
         .add_bond(c, o, BondOrder::Double)
@@ -209,8 +221,12 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         Some(13)
     );
     assert_eq!(
-        reparsed.graph().bond(BondId::new(0)).expect("bond").stereo,
-        Some(BondStereo::Up)
+        reparsed
+            .graph()
+            .stereo_bond_mark(BondId::new(0))
+            .expect("stereo mark")
+            .kind,
+        StereoBondMarkKind::WedgeUp
     );
     let (_, conformer) = reparsed.graph().first_conformer().expect("conformer");
     assert_eq!(
@@ -222,13 +238,22 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
 #[test]
 fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
     let mut molecule = SmallMolecule::default();
-    let mut chiral = carbon();
-    chiral.chiral = Some(AtomStereo::TetrahedralClockwise);
-    molecule.graph_mut().add_atom(chiral);
+    let a = molecule.graph_mut().add_atom(carbon());
+    molecule
+        .graph_mut()
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center: a,
+                carriers: vec![StereoCarrier::ImplicitHydrogen],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("stereo element");
     assert!(molfile::write_v3000(&molecule)
-        .expect_err("atom stereo should be rejected")
+        .expect_err("stereo elements should be rejected")
         .message
-        .contains("atom stereochemistry"));
+        .contains("stereo elements"));
 
     let mut molecule = SmallMolecule::default();
     let a = molecule.graph_mut().add_atom(carbon());
@@ -237,19 +262,51 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .graph_mut()
         .add_bond(a, b, BondOrder::Double)
         .expect("bond");
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = Some(BondStereo::E);
+    molecule
+        .graph_mut()
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond,
+                left: a,
+                right: b,
+                left_carrier: a,
+                right_carrier: b,
+                orientation: DoubleBondOrientation::Together,
+            }),
+            StereoSource::User,
+        ))
+        .expect("double-bond stereo");
     assert!(molfile::write_v3000(&molecule)
-        .expect_err("E/Z should be rejected")
+        .expect_err("stereo elements should be rejected")
         .message
-        .contains("E/Z"));
+        .contains("stereo elements"));
 
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = Some(BondStereo::Up);
+    let element = molecule
+        .graph()
+        .stereo_element_ids()
+        .next()
+        .expect("stereo element");
+    molecule
+        .graph_mut()
+        .remove_stereo_element(element)
+        .expect("remove stereo element");
+    molecule
+        .graph_mut()
+        .set_stereo_bond_mark(StereoBondMark {
+            bond,
+            kind: StereoBondMarkKind::WedgeUp,
+            source: StereoSource::MolfileV3000,
+        })
+        .expect("stereo mark");
     assert!(molfile::write_v3000(&molecule)
         .expect_err("double wedge should be rejected")
         .message
         .contains("incompatible"));
 
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = None;
+    molecule
+        .graph_mut()
+        .clear_stereo_bond_mark(bond)
+        .expect("clear mark");
     molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
     assert!(molfile::write_v3000(&molecule)
         .expect_err("quadruple should be rejected")

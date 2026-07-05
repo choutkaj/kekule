@@ -49,9 +49,16 @@ pub fn read_smiles_str(
     let mut mol = Molecule::new();
     let mut current: Option<AtomId> = None;
     let mut stack = Vec::<AtomId>::new();
-    let mut pending_bond = None::<(BondOrder, Option<BondStereo>, usize)>;
-    let mut rings =
-        BTreeMap::<usize, (AtomId, Option<(BondOrder, Option<BondStereo>)>, usize)>::new();
+    let mut pending_bond = None::<(BondOrder, Option<StereoBondMarkKind>, usize)>;
+    let mut rings = BTreeMap::<
+        usize,
+        (
+            AtomId,
+            Option<(BondOrder, Option<StereoBondMarkKind>)>,
+            usize,
+        ),
+    >::new();
+    let mut pending_tetrahedral = Vec::<(AtomId, TetrahedralOrientation)>::new();
     let mut component = 0usize;
     let mut previous = SmilesTokenKind::Start;
     let mut cursor = 0;
@@ -133,8 +140,8 @@ pub fn read_smiles_str(
                     _ => unreachable!(),
                 };
                 let stereo = match ch {
-                    '/' => Some(BondStereo::Up),
-                    '\\' => Some(BondStereo::Down),
+                    '/' => Some(StereoBondMarkKind::DirectionalUp),
+                    '\\' => Some(StereoBondMarkKind::DirectionalDown),
                     _ => None,
                 };
                 pending_bond = Some((order, stereo, offset));
@@ -173,8 +180,11 @@ pub fn read_smiles_str(
                 cursor = next_cursor;
             }
             '[' => {
-                let (atom, next_cursor) = parse_bracket_atom(&chars, cursor)?;
+                let (atom, chirality, next_cursor) = parse_bracket_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
+                if let Some(orientation) = chirality {
+                    pending_tetrahedral.push((atom_id, orientation));
+                }
                 if let Some(previous) = current {
                     let (order, stereo) = match pending_bond
                         .take()
@@ -236,6 +246,7 @@ pub fn read_smiles_str(
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
+    add_smiles_tetrahedral_elements(&mut mol, pending_tetrahedral, input.len())?;
     Ok(SmallMolecule::from_graph(mol))
 }
 
@@ -244,18 +255,60 @@ fn add_smiles_bond(
     left: AtomId,
     right: AtomId,
     order: BondOrder,
-    stereo: Option<BondStereo>,
+    stereo: Option<StereoBondMarkKind>,
     offset: usize,
 ) -> std::result::Result<(), SmilesParseError> {
     let bond_id = mol
         .add_bond(left, right, order)
         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-    if let Some(stereo) = stereo {
-        mol.bond_mut(bond_id)
-            .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
-            .stereo = Some(stereo);
+    if let Some(kind) = stereo {
+        mol.set_stereo_bond_mark(StereoBondMark {
+            bond: bond_id,
+            kind,
+            source: StereoSource::Smiles,
+        })
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
     }
     Ok(())
+}
+
+fn add_smiles_tetrahedral_elements(
+    mol: &mut Molecule,
+    centers: Vec<(AtomId, TetrahedralOrientation)>,
+    offset: usize,
+) -> std::result::Result<(), SmilesParseError> {
+    for (center, orientation) in centers {
+        let carriers = smiles_tetrahedral_carriers(mol, center, offset)?;
+        mol.add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers,
+                orientation,
+            }),
+            StereoSource::Smiles,
+        ))
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn smiles_tetrahedral_carriers(
+    mol: &Molecule,
+    center: AtomId,
+    offset: usize,
+) -> std::result::Result<Vec<StereoCarrier>, SmilesParseError> {
+    let atom = mol
+        .atom(center)
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+    let mut carriers = mol
+        .incident_bonds(center)
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
+        .map(|(_, bond)| StereoCarrier::Atom(bond.other_atom(center)))
+        .collect::<Vec<_>>();
+    for _ in 0..atom.explicit_hydrogens {
+        carriers.push(StereoCarrier::ImplicitHydrogen);
+    }
+    Ok(carriers)
 }
 
 fn default_smiles_bond_order(
@@ -346,7 +399,7 @@ fn parse_organic_atom(
 fn parse_bracket_atom(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(Atom, usize), SmilesParseError> {
+) -> std::result::Result<(Atom, Option<TetrahedralOrientation>, usize), SmilesParseError> {
     let start = chars[cursor].0;
     let mut end = cursor + 1;
     while end < chars.len() && chars[end].1 != ']' {
@@ -418,6 +471,7 @@ fn parse_bracket_atom(
     atom.isotope = isotope;
     atom.no_implicit_hydrogens = true;
     let mut saw_chirality = false;
+    let mut chirality = None;
     let mut saw_hydrogen = false;
     let mut saw_charge = false;
     let mut saw_map = false;
@@ -426,11 +480,11 @@ fn parse_bracket_atom(
             b'@' if !saw_chirality && !saw_hydrogen && !saw_charge && !saw_map => {
                 saw_chirality = true;
                 index += 1;
-                atom.chiral = if bytes.get(index) == Some(&b'@') {
+                chirality = if bytes.get(index) == Some(&b'@') {
                     index += 1;
-                    Some(AtomStereo::TetrahedralCounterClockwise)
+                    Some(TetrahedralOrientation::CounterClockwise)
                 } else {
-                    Some(AtomStereo::TetrahedralClockwise)
+                    Some(TetrahedralOrientation::Clockwise)
                 };
             }
             b'H' if !saw_hydrogen && !saw_charge && !saw_map => {
@@ -529,7 +583,7 @@ fn parse_bracket_atom(
             }
         }
     }
-    Ok((atom, end + 1))
+    Ok((atom, chirality, end + 1))
 }
 
 fn parse_aromatic_bracket_element(bytes: &[u8], index: usize) -> Option<(&'static str, usize)> {
@@ -887,12 +941,17 @@ fn validate_smiles_writeable(
     mol: &Molecule,
     stereo: StereoWriteMode,
 ) -> std::result::Result<(), MolWriteError> {
+    if stereo == StereoWriteMode::Reject && mol.stereo_elements().next().is_some() {
+        return Err(MolWriteError::new(
+            "SMILES writer cannot encode atom stereochemistry",
+        ));
+    }
+    if stereo == StereoWriteMode::Reject && mol.stereo_bond_marks().next().is_some() {
+        return Err(MolWriteError::new(
+            "SMILES writer cannot encode bond stereochemistry",
+        ));
+    }
     for (_, atom) in mol.atoms() {
-        if stereo == StereoWriteMode::Reject && atom.chiral.is_some() {
-            return Err(MolWriteError::new(
-                "SMILES writer cannot encode atom stereochemistry",
-            ));
-        }
         if atom.radical.is_some() {
             return Err(MolWriteError::new(
                 "SMILES writer cannot encode atom radicals",
@@ -907,13 +966,6 @@ fn validate_smiles_writeable(
                     "SMILES writer cannot encode zero, dative, or quadruple bonds",
                 ));
             }
-        }
-        if stereo == StereoWriteMode::Reject
-            && !matches!(bond.stereo, None | Some(BondStereo::Unspecified))
-        {
-            return Err(MolWriteError::new(
-                "SMILES writer cannot encode bond stereochemistry",
-            ));
         }
     }
     Ok(())
@@ -1542,7 +1594,6 @@ fn canonical_smiles_atom(
             normalized.implicit_hydrogens = Some(0);
             normalized.no_implicit_hydrogens = true;
         }
-        normalized.chiral = None;
         return Ok(smiles_atom(&normalized));
     }
     if canonical_smiles_should_bracket_metal_bound_hydrogens(mol, atom_id, atom)? {
@@ -1551,7 +1602,6 @@ fn canonical_smiles_atom(
         normalized.explicit_hydrogens = atom.implicit_hydrogens.unwrap_or(0);
         normalized.implicit_hydrogens = Some(0);
         normalized.no_implicit_hydrogens = true;
-        normalized.chiral = None;
         return Ok(smiles_atom(&normalized));
     }
     if canonical_smiles_should_bracket_metal_bound_zero_hydrogens(mol, atom_id, atom)? {
@@ -1559,7 +1609,6 @@ fn canonical_smiles_atom(
         normalized.isotope = None;
         normalized.implicit_hydrogens = Some(0);
         normalized.no_implicit_hydrogens = true;
-        normalized.chiral = None;
         return Ok(smiles_atom(&normalized));
     }
     if canonical_smiles_can_use_organic_form(mol, atom_id, atom)? {
@@ -1567,12 +1616,10 @@ fn canonical_smiles_atom(
         normalized.isotope = None;
         normalized.explicit_hydrogens = 0;
         normalized.no_implicit_hydrogens = false;
-        normalized.chiral = None;
         return Ok(smiles_atom(&normalized));
     }
     let mut normalized = atom.clone();
     normalized.isotope = None;
-    normalized.chiral = None;
     Ok(smiles_atom(&normalized))
 }
 

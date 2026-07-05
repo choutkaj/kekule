@@ -607,6 +607,28 @@ fn evidence_changes_after_material_input_changes() {
 }
 
 #[test]
+fn manual_semantic_reference_evidence_does_not_require_generator_files() {
+    let root = temp_feature_root("manual-reference-evidence");
+    let (_, _, manifest_path) = write_evidence_test_repo(&root);
+    fs::write(
+        &manifest_path,
+        "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"pubchem-manual-semantic\"\nreference_version = \"PubChem PUG REST 2026-07-05\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
+    )
+    .expect("manual manifest should write");
+    fs::remove_dir_all(root.join("validation/reference")).ok();
+
+    let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
+    let evidence =
+        build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
+
+    assert!(evidence
+        .inputs
+        .iter()
+        .all(|input| !input.path.starts_with("validation/reference/")));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn evidence_hash_normalizes_text_line_endings() {
     let root = temp_feature_root("evidence-line-endings");
     let path = root.join("source.rs");

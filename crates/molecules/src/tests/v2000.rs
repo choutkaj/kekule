@@ -269,10 +269,15 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
 #[test]
 fn v2000_supported_bond_stereo_codes_round_trip_exactly() {
     for (order_code, stereo_code, order, expected) in [
-        (1, 1, BondOrder::Single, BondStereo::Up),
-        (1, 4, BondOrder::Single, BondStereo::Any),
-        (1, 6, BondOrder::Single, BondStereo::Down),
-        (2, 3, BondOrder::Double, BondStereo::Any),
+        (1, 1, BondOrder::Single, StereoBondMarkKind::WedgeUp),
+        (1, 4, BondOrder::Single, StereoBondMarkKind::WedgeEither),
+        (1, 6, BondOrder::Single, StereoBondMarkKind::WedgeDown),
+        (
+            2,
+            3,
+            BondOrder::Double,
+            StereoBondMarkKind::DoubleBondEither,
+        ),
     ] {
         let input = format!(
                 "stereo\nmolecules\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
@@ -280,14 +285,25 @@ fn v2000_supported_bond_stereo_codes_round_trip_exactly() {
         let parsed = molfile::read_v2000_str(&input).expect("stereo record should parse");
         let bond = parsed.graph().bond(BondId::new(0)).expect("bond");
         assert_eq!(bond.order, order);
-        assert_eq!(bond.stereo, Some(expected));
+        assert_eq!(
+            parsed
+                .graph()
+                .stereo_bond_mark(BondId::new(0))
+                .expect("stereo mark")
+                .kind,
+            expected
+        );
 
         let written = molfile::write_v2000(&parsed).expect("stereo record should write");
         let reparsed =
             molfile::read_v2000_str(&written).expect("written stereo record should parse");
         assert_eq!(
-            reparsed.graph().bond(BondId::new(0)).expect("bond").stereo,
-            Some(expected)
+            reparsed
+                .graph()
+                .stereo_bond_mark(BondId::new(0))
+                .expect("stereo mark")
+                .kind,
+            expected
         );
         assert_eq!(
             reparsed
@@ -317,19 +333,51 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         .graph_mut()
         .add_bond(a, b, BondOrder::Double)
         .expect("bond");
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = Some(BondStereo::E);
+    molecule
+        .graph_mut()
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond,
+                left: a,
+                right: b,
+                left_carrier: a,
+                right_carrier: b,
+                orientation: DoubleBondOrientation::Opposite,
+            }),
+            StereoSource::User,
+        ))
+        .expect("double-bond stereo");
     assert!(molfile::write_v2000(&molecule)
-        .expect_err("E stereo should be rejected")
+        .expect_err("stereo elements should be rejected")
         .message
-        .contains("E/Z"));
+        .contains("stereo elements"));
 
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = Some(BondStereo::Up);
+    let element = molecule
+        .graph()
+        .stereo_element_ids()
+        .next()
+        .expect("stereo element");
+    molecule
+        .graph_mut()
+        .remove_stereo_element(element)
+        .expect("remove stereo element");
+    molecule
+        .graph_mut()
+        .set_stereo_bond_mark(StereoBondMark {
+            bond,
+            kind: StereoBondMarkKind::WedgeUp,
+            source: StereoSource::MolfileV2000,
+        })
+        .expect("mark");
     assert!(molfile::write_v2000(&molecule)
         .expect_err("double wedge should be rejected")
         .message
         .contains("incompatible"));
 
-    molecule.graph_mut().bond_mut(bond).expect("bond").stereo = None;
+    molecule
+        .graph_mut()
+        .clear_stereo_bond_mark(bond)
+        .expect("clear mark");
     molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
     assert!(molfile::write_v2000(&molecule)
         .expect_err("quadruple bond should be rejected")
