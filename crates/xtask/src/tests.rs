@@ -1068,6 +1068,32 @@ fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
     }));
 }
 
+#[test]
+fn smiles_semantics_match_rdkit_promoted_aromatic_nh_valence() {
+    let molecule = smiles::read_str_with_options(
+        "CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C",
+        SmilesParseOptions::default(),
+    )
+    .expect("substituted pyrrole SMILES should parse");
+
+    let item = smiles_sanitized_semantic_json(molecule);
+    let atoms = item["atoms"]
+        .as_array()
+        .expect("sanitized atoms should be an array");
+
+    assert!(atoms.iter().any(|atom| {
+        atom["symbol"] == "N"
+            && atom["aromatic"] == true
+            && atom["explicit_hydrogens"] == 1
+            && atom["implicit_hydrogens"] == 0
+            && atom["no_implicit_hydrogens"] == false
+            && atom["explicit_valence"] == 3
+    }));
+    assert!(!atoms.iter().any(|atom| {
+        atom["symbol"] == "N" && atom["aromatic"] == true && atom["explicit_valence"] == 4
+    }));
+}
+
 fn simple_sdf_record(title: &str) -> String {
     format!(
         "{title}

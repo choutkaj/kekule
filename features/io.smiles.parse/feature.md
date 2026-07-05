@@ -18,7 +18,7 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 - The parser is intentionally non-query and non-reaction.
 - Bracket `@` and `@@` tetrahedral markers are stored as atom stereo metadata but are not assigned, normalized, or validated against neighbor order.
 - Directional `/` and `\` bond markers are stored as bond stereo metadata but are not assigned, normalized, or validated across double-bond stereo systems.
-- Metal-bound organic-subset atoms are marked as no-implicit-hydrogen atoms during parsing when their parsed bond valence is already filled, preserving RDKit-like valence semantics after canonical reparse without suppressing hydrogens on lower-valence organometallic shorthand.
+- Metal-bound organic-subset atoms keep parsed no-implicit-hydrogen state separate from valence perception; sanitization assigns zero implicit hydrogens when bond valence is filled without forcing RDKit-visible no-implicit flags.
 - Cursor offsets remain UTF-8 character boundaries; bracket grammar is consumed strictly as ASCII rather than skipping unknown bytes.
 - Aromatic lowercase atoms set aromatic flags and aromatic omitted bonds, but they do not replace explicit sanitization/perception. Bracketed aromatic element support follows the current RDKit-like aromatic donor set used by perception.
 
@@ -42,3 +42,4 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 - v6: Parse bracketed aromatic Se/Te atoms and generalize metal-bound no-implicit preservation to valence-filled organic-subset atoms so canonical organometallic output can be reparsed and sanitized.
 - v7: Move the public parser API under the `smiles` facade and keep sanitizing reads explicit by name.
 - v8: Add PubChem-100k as required broad-corpus validation evidence.
+- v9: Remove parser-side metal-bound organic no-implicit preservation so sanitized SMILES semantics keep RDKit-like no-implicit flags while valence perception still assigns zero implicit hydrogens.
