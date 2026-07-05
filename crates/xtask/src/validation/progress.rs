@@ -5,16 +5,10 @@ const PROGRESS_BAR_WIDTH: usize = 24;
 
 pub(crate) fn progress_bar(completed: usize, total: usize) -> String {
     let clamped = completed.min(total);
-    let filled = if total == 0 {
-        PROGRESS_BAR_WIDTH
-    } else {
-        clamped * PROGRESS_BAR_WIDTH / total
-    };
-    let percent = if total == 0 {
-        100
-    } else {
-        clamped * 100 / total
-    };
+    let filled = (clamped * PROGRESS_BAR_WIDTH)
+        .checked_div(total)
+        .unwrap_or(PROGRESS_BAR_WIDTH);
+    let percent = (clamped * 100).checked_div(total).unwrap_or(100);
     format!(
         "[{}{}] {}/{} {:>3}%",
         "#".repeat(filled),
@@ -164,11 +158,9 @@ impl FixtureProgress {
 }
 
 fn progress_filled_segments(completed: usize, total: usize) -> usize {
-    if total == 0 {
-        PROGRESS_BAR_WIDTH
-    } else {
-        completed.min(total) * PROGRESS_BAR_WIDTH / total
-    }
+    (completed.min(total) * PROGRESS_BAR_WIDTH)
+        .checked_div(total)
+        .unwrap_or(PROGRESS_BAR_WIDTH)
 }
 
 fn print_fixture_progress(state: &FixtureProgressState, start: bool) {
