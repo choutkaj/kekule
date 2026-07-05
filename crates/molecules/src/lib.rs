@@ -138,6 +138,14 @@ pub mod perception {
         };
     }
 
+    pub mod stereo {
+        pub use crate::algorithms::{
+            perceive_stereo, perceive_stereo_with_options, validate_stereo,
+            validate_stereo_with_options, StereoCandidate, StereoPerceptionIssue,
+            StereoPerceptionOptions, StereoPerceptionReport,
+        };
+    }
+
     pub fn sanitize(molecule: &mut SmallMolecule) -> Result<SanitizeReport, SanitizeError> {
         crate::chemistry::sanitize_small_molecule(molecule, SanitizeOptions::default())
     }

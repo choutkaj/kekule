@@ -2,7 +2,7 @@ use crate::bio::*;
 use crate::core::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
-    valence as valence_api, valence::*,
+    stereo as stereo_api, stereo::*, valence as valence_api, valence::*,
 };
 use crate::sdf::*;
 use crate::small::*;

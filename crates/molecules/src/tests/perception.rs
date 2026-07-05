@@ -758,3 +758,139 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
         .iter()
         .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
 }
+
+#[test]
+fn stereo_validation_reports_invalid_local_elements_without_mutating() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon());
+    let a = mol.add_atom(oxygen());
+    let b = mol.add_atom(element_atom("N"));
+    mol.add_bond(center, a, BondOrder::Single).expect("bond");
+    mark_all_fresh(&mut mol);
+    let element = mol
+        .add_stereo_element(StereoElement {
+            kind: StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(a),
+                    StereoCarrier::Atom(a),
+                    StereoCarrier::Atom(b),
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            specifiedness: StereoSpecifiedness::Unknown,
+            source: StereoSource::User,
+            group: None,
+            descriptor: None,
+        })
+        .expect("stereo element");
+    mark_all_fresh(&mut mol);
+
+    let report = stereo_api::validate_stereo(&mol);
+
+    assert_eq!(mol.perception().stereo, ComputedState::Fresh);
+    assert!(report
+        .issues
+        .contains(&StereoPerceptionIssue::InvalidTetrahedralCarrierCount {
+            element,
+            center,
+            carrier_count: 3,
+        }));
+    assert!(report
+        .issues
+        .contains(&StereoPerceptionIssue::DuplicateTetrahedralCarrier {
+            element,
+            center,
+            carrier: StereoCarrier::Atom(a),
+        }));
+    assert!(report
+        .issues
+        .contains(&StereoPerceptionIssue::TetrahedralCarrierNotAdjacent {
+            element,
+            center,
+            carrier: StereoCarrier::Atom(b),
+        }));
+    assert!(
+        mol.stereo_element(element).expect("element").specifiedness == StereoSpecifiedness::Unknown
+    );
+}
+
+#[test]
+fn stereo_candidates_use_sanitized_hydrogen_state_without_cip_assignment() {
+    let mut molecule = smiles_api::read_str("CC(F)(Cl)Br").expect("smiles should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("molecule should sanitize");
+
+    let report = stereo_api::validate_stereo(molecule.graph());
+
+    assert!(report.is_ok());
+    assert!(report.candidates.iter().any(|candidate| matches!(
+        candidate,
+        StereoCandidate::Tetrahedral { center, carriers }
+            if *center == AtomId::new(1)
+                && carriers.len() == 4
+                && !carriers.contains(&StereoCarrier::ImplicitHydrogen)
+    )));
+    assert!(molecule.graph().stereo_elements().next().is_none());
+}
+
+#[test]
+fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element() {
+    let mut molecule = smiles_api::read_str("C/C=C\\F").expect("directional smiles should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("molecule should sanitize");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok());
+    assert_eq!(report.created_elements.len(), 1);
+    assert_eq!(molecule.graph().perception().stereo, ComputedState::Fresh);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    match &element.kind {
+        StereoElementKind::DoubleBond(stereo) => {
+            assert_eq!(stereo.bond, BondId::new(1));
+            assert_eq!(stereo.left, AtomId::new(1));
+            assert_eq!(stereo.right, AtomId::new(2));
+            assert_eq!(stereo.left_carrier, StereoCarrier::Atom(AtomId::new(0)));
+            assert_eq!(stereo.right_carrier, StereoCarrier::Atom(AtomId::new(3)));
+            assert_eq!(stereo.orientation, DoubleBondOrientation::Opposite);
+        }
+        other => panic!("expected double-bond stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
+    let mut marked = Molecule::new();
+    let a = marked.add_atom(carbon());
+    let b = marked.add_atom(carbon());
+    let bond = marked.add_bond(a, b, BondOrder::Single).expect("bond");
+    marked
+        .set_stereo_bond_mark(StereoBondMark {
+            bond,
+            kind: StereoBondMarkKind::WedgeEither,
+            source: StereoSource::MolfileV2000,
+        })
+        .expect("mark");
+
+    let marked_report = stereo_api::perceive_stereo(&mut marked);
+    assert!(marked_report
+        .issues
+        .contains(&StereoPerceptionIssue::UnsupportedSourceBondMark {
+            bond,
+            kind: StereoBondMarkKind::WedgeEither,
+        }));
+    assert!(marked.stereo_elements().next().is_none());
+
+    let mut absent = Molecule::new();
+    let x = absent.add_atom(carbon());
+    let y = absent.add_atom(carbon());
+    absent.add_bond(x, y, BondOrder::Single).expect("bond");
+    let absent_report = stereo_api::perceive_stereo(&mut absent);
+    assert!(absent_report.is_ok());
+    assert!(absent.stereo_elements().next().is_none());
+    assert!(absent.stereo_bond_marks().next().is_none());
+}
