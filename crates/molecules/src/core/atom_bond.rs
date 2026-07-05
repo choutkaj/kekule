@@ -22,7 +22,6 @@ pub struct Atom {
     pub implicit_hydrogens: Option<u8>,
     pub no_implicit_hydrogens: bool,
     pub aromatic: bool,
-    pub chiral: Option<AtomStereo>,
     pub atom_map: Option<u32>,
     pub props: PropMap,
 }
@@ -38,7 +37,6 @@ impl Atom {
             implicit_hydrogens: None,
             no_implicit_hydrogens: false,
             aromatic: false,
-            chiral: None,
             atom_map: None,
             props: PropMap::new(),
         }
@@ -62,20 +60,12 @@ impl AtomRadical {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AtomStereo {
-    TetrahedralClockwise,
-    TetrahedralCounterClockwise,
-    Unspecified,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bond {
     pub(crate) a: AtomId,
     pub(crate) b: AtomId,
     pub order: BondOrder,
     pub aromatic: bool,
-    pub stereo: Option<BondStereo>,
     pub props: PropMap,
 }
 
@@ -86,7 +76,6 @@ impl Bond {
             b,
             order,
             aromatic: matches!(order, BondOrder::Aromatic),
-            stereo: None,
             props: PropMap::new(),
         }
     }
@@ -113,14 +102,4 @@ pub enum BondOrder {
     Quadruple,
     Aromatic,
     Dative,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BondStereo {
-    E,
-    Z,
-    Up,
-    Down,
-    Any,
-    Unspecified,
 }

@@ -1,9 +1,9 @@
 id = "stereo.representation"
 title = "Stereochemistry representation"
 area = "stereo"
-version = 1
-implemented = false
-validated = false
-description = "Plan richer atom and bond stereochemistry representation for small molecules."
-depends_on = ["core.atom-bond"]
-validation_required = []
+version = 2
+implemented = true
+validated = true
+description = "Store first-class stereo elements, relation groups, and source bond marks adjacent to the molecular graph."
+depends_on = ["core.graph", "core.atom-bond"]
+validation_required = ["smoke"]

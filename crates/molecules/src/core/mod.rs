@@ -3,9 +3,11 @@ mod conformer;
 mod element;
 mod ids;
 mod molecule;
+mod stereo;
 
 pub use atom_bond::*;
 pub use conformer::*;
 pub use element::*;
 pub use ids::*;
 pub use molecule::*;
+pub use stereo::*;

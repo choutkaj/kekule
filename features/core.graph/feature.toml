@@ -1,9 +1,9 @@
 id = "core.graph"
 title = "Core molecular graph"
 area = "core"
-version = 3
+version = 4
 implemented = true
 validated = false
-description = "Store atoms, bonds, properties, and computed-state invalidation behind typed atom and bond IDs."
+description = "Store atoms, bonds, graph-adjacent stereo state, properties, and computed-state invalidation behind typed IDs."
 depends_on = []
 validation_required = []

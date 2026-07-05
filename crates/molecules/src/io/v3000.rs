@@ -34,15 +34,15 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
         bonds.len()
     ));
     out.push_str("M  V30 BEGIN ATOM\n");
+    if mol.stereo_elements().next().is_some() {
+        return Err(MolWriteError::new(
+            "V3000 writer does not support stereo elements",
+        ));
+    }
     for atom_id in &atoms {
         let atom = mol
             .atom(*atom_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
-        if atom.chiral.is_some() {
-            return Err(MolWriteError::new(
-                "V3000 writer does not support atom stereochemistry",
-            ));
-        }
         let point = conformer
             .and_then(|conformer| conformer.position(*atom_id))
             .unwrap_or_default();
@@ -82,7 +82,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
         let order_code = v3000_bond_code(bond.order)?;
         out.push_str(&format!("M  V30 {} {order_code} {a} {b}", index + 1));
-        if let Some(cfg) = v3000_bond_cfg(bond.order, bond.stereo)? {
+        if let Some(cfg) = v3000_bond_cfg(bond.order, mol.stereo_bond_mark(*bond_id))? {
             out.push_str(&format!(" CFG={cfg}"));
         }
         out.push('\n');
@@ -198,10 +198,13 @@ fn parse_mol_v3000_lines(
         let bond_id = mol
             .add_bond(a, b, parsed.order)
             .map_err(|error| SdfParseError::new(record, row.line, error.to_string()))?;
-        if let Some(stereo) = parsed.stereo {
-            mol.bond_mut(bond_id)
-                .expect("newly added bond should be mutable")
-                .stereo = Some(stereo);
+        if let Some(kind) = parsed.stereo {
+            mol.set_stereo_bond_mark(StereoBondMark {
+                bond: bond_id,
+                kind,
+                source: StereoSource::MolfileV3000,
+            })
+            .expect("newly added bond should accept a stereo mark");
         }
     }
 
@@ -243,7 +246,7 @@ struct V3000Bond {
     order: BondOrder,
     a: usize,
     b: usize,
-    stereo: Option<BondStereo>,
+    stereo: Option<StereoBondMarkKind>,
 }
 
 fn collect_v3000_lines(
@@ -416,7 +419,7 @@ fn parse_v3000_bond(line: &str) -> Option<V3000Bond> {
     let mut stereo = None;
     for (key, value) in fields.filter_map(split_v3000_option) {
         if key == "CFG" {
-            stereo = Some(v3000_bond_stereo(order, value)?);
+            stereo = v3000_bond_stereo(order, value)?;
         }
     }
     Some(V3000Bond {
@@ -439,13 +442,13 @@ fn v3000_bond_order(code: u8) -> Option<BondOrder> {
     }
 }
 
-fn v3000_bond_stereo(order: BondOrder, value: &str) -> Option<BondStereo> {
+fn v3000_bond_stereo(order: BondOrder, value: &str) -> Option<Option<StereoBondMarkKind>> {
     match (order, value) {
-        (_, "0") => Some(BondStereo::Unspecified),
-        (BondOrder::Single, "1") => Some(BondStereo::Up),
-        (BondOrder::Single, "2") => Some(BondStereo::Any),
-        (BondOrder::Single, "3") => Some(BondStereo::Down),
-        (BondOrder::Double, "2") => Some(BondStereo::Any),
+        (_, "0") => Some(None),
+        (BondOrder::Single, "1") => Some(Some(StereoBondMarkKind::WedgeUp)),
+        (BondOrder::Single, "2") => Some(Some(StereoBondMarkKind::WedgeEither)),
+        (BondOrder::Single, "3") => Some(Some(StereoBondMarkKind::WedgeDown)),
+        (BondOrder::Double, "2") => Some(Some(StereoBondMarkKind::DoubleBondEither)),
         _ => None,
     }
 }
@@ -473,17 +476,14 @@ fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 
 fn v3000_bond_cfg(
     order: BondOrder,
-    stereo: Option<BondStereo>,
+    stereo: Option<&StereoBondMark>,
 ) -> std::result::Result<Option<u8>, MolWriteError> {
-    match (order, stereo) {
-        (_, None | Some(BondStereo::Unspecified)) => Ok(None),
-        (BondOrder::Single, Some(BondStereo::Up)) => Ok(Some(1)),
-        (BondOrder::Single, Some(BondStereo::Any)) => Ok(Some(2)),
-        (BondOrder::Single, Some(BondStereo::Down)) => Ok(Some(3)),
-        (BondOrder::Double, Some(BondStereo::Any)) => Ok(Some(2)),
-        (_, Some(BondStereo::E | BondStereo::Z)) => Err(MolWriteError::new(
-            "V3000 writer does not support perceived E/Z bond stereo",
-        )),
+    match (order, stereo.map(|mark| mark.kind)) {
+        (_, None) => Ok(None),
+        (BondOrder::Single, Some(StereoBondMarkKind::WedgeUp)) => Ok(Some(1)),
+        (BondOrder::Single, Some(StereoBondMarkKind::WedgeEither)) => Ok(Some(2)),
+        (BondOrder::Single, Some(StereoBondMarkKind::WedgeDown)) => Ok(Some(3)),
+        (BondOrder::Double, Some(StereoBondMarkKind::DoubleBondEither)) => Ok(Some(2)),
         _ => Err(MolWriteError::new(
             "V3000 bond CFG is incompatible with the bond order",
         )),

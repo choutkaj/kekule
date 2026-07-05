@@ -43,6 +43,9 @@ pub struct Molecule {
     pub(crate) bonds: Vec<Option<Bond>>,
     pub(crate) adjacency: Vec<Vec<BondId>>,
     pub(crate) conformers: Vec<Option<Conformer>>,
+    pub(crate) stereo_elements: Vec<Option<StereoElement>>,
+    pub(crate) stereo_groups: Vec<Option<StereoGroup>>,
+    pub(crate) stereo_bond_marks: Vec<StereoBondMark>,
     pub(crate) props: PropMap,
     pub(crate) perception: PerceptionState,
     pub(crate) ring_membership: Option<RingMembership>,
@@ -123,7 +126,6 @@ struct AtomChemistry {
     implicit_hydrogens: Option<u8>,
     no_implicit_hydrogens: bool,
     aromatic: bool,
-    chiral: Option<AtomStereo>,
 }
 
 impl From<&Atom> for AtomChemistry {
@@ -137,7 +139,6 @@ impl From<&Atom> for AtomChemistry {
             implicit_hydrogens: atom.implicit_hydrogens,
             no_implicit_hydrogens: atom.no_implicit_hydrogens,
             aromatic: atom.aromatic,
-            chiral: atom.chiral,
         }
     }
 }
@@ -146,7 +147,6 @@ impl From<&Atom> for AtomChemistry {
 struct BondChemistry {
     order: BondOrder,
     aromatic: bool,
-    stereo: Option<BondStereo>,
 }
 
 impl From<&Bond> for BondChemistry {
@@ -154,7 +154,6 @@ impl From<&Bond> for BondChemistry {
         Self {
             order: bond.order,
             aromatic: bond.aromatic,
-            stereo: bond.stereo,
         }
     }
 }
@@ -200,6 +199,7 @@ impl Molecule {
         for conformer in self.conformers.iter_mut().flatten() {
             conformer.clear_position(id);
         }
+        self.prune_stereo_for_atom(id);
         self.invalidate_topology();
         Ok(atom)
     }
@@ -256,6 +256,7 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidBondId(id))?;
         self.remove_incident_bond(bond.a, id);
         self.remove_incident_bond(bond.b, id);
+        self.prune_stereo_for_bond(id);
         self.invalidate_topology();
         Ok(bond)
     }
@@ -379,6 +380,158 @@ impl Molecule {
         self.conformers().next()
     }
 
+    pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
+        self.validate_stereo_element_refs(&element)?;
+        let id = StereoElementId::new(self.stereo_elements.len() as u32);
+        self.stereo_elements.push(Some(element));
+        self.invalidate_stereo();
+        Ok(id)
+    }
+
+    pub fn stereo_element(&self, id: StereoElementId) -> Result<&StereoElement> {
+        self.stereo_elements
+            .get(id.index())
+            .and_then(Option::as_ref)
+            .ok_or(MoleculeError::InvalidStereoElementId(id))
+    }
+
+    pub fn stereo_element_mut(&mut self, id: StereoElementId) -> Result<&mut StereoElement> {
+        if self
+            .stereo_elements
+            .get(id.index())
+            .and_then(Option::as_ref)
+            .is_none()
+        {
+            return Err(MoleculeError::InvalidStereoElementId(id));
+        }
+        self.invalidate_stereo();
+        Ok(self.stereo_elements[id.index()]
+            .as_mut()
+            .expect("validated stereo element should remain live"))
+    }
+
+    pub fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
+        let element = self
+            .stereo_elements
+            .get_mut(id.index())
+            .and_then(Option::take)
+            .ok_or(MoleculeError::InvalidStereoElementId(id))?;
+        self.remove_stereo_element_from_groups(id);
+        self.invalidate_stereo();
+        Ok(element)
+    }
+
+    pub fn stereo_elements(&self) -> impl Iterator<Item = (StereoElementId, &StereoElement)> {
+        self.stereo_elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, element)| {
+                element
+                    .as_ref()
+                    .map(|element| (StereoElementId::new(index as u32), element))
+            })
+    }
+
+    pub fn stereo_element_ids(&self) -> impl Iterator<Item = StereoElementId> + '_ {
+        self.stereo_elements().map(|(id, _)| id)
+    }
+
+    pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
+        for member in &group.members {
+            let element = self.stereo_element(*member)?;
+            if element.group.is_some() {
+                return Err(MoleculeError::InvalidStereoReference(
+                    "stereo element already belongs to a group",
+                ));
+            }
+        }
+        let id = StereoGroupId::new(self.stereo_groups.len() as u32);
+        for member in &group.members {
+            self.stereo_elements[member.index()]
+                .as_mut()
+                .expect("validated stereo group member should remain live")
+                .group = Some(id);
+        }
+        self.stereo_groups.push(Some(group));
+        self.invalidate_stereo();
+        Ok(id)
+    }
+
+    pub fn stereo_group(&self, id: StereoGroupId) -> Result<&StereoGroup> {
+        self.stereo_groups
+            .get(id.index())
+            .and_then(Option::as_ref)
+            .ok_or(MoleculeError::InvalidStereoGroupId(id))
+    }
+
+    pub fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
+        let group = self
+            .stereo_groups
+            .get_mut(id.index())
+            .and_then(Option::take)
+            .ok_or(MoleculeError::InvalidStereoGroupId(id))?;
+        for member in &group.members {
+            if let Some(element) = self
+                .stereo_elements
+                .get_mut(member.index())
+                .and_then(Option::as_mut)
+            {
+                if element.group == Some(id) {
+                    element.group = None;
+                }
+            }
+        }
+        self.invalidate_stereo();
+        Ok(group)
+    }
+
+    pub fn stereo_groups(&self) -> impl Iterator<Item = (StereoGroupId, &StereoGroup)> {
+        self.stereo_groups
+            .iter()
+            .enumerate()
+            .filter_map(|(index, group)| {
+                group
+                    .as_ref()
+                    .map(|group| (StereoGroupId::new(index as u32), group))
+            })
+    }
+
+    pub fn set_stereo_bond_mark(&mut self, mark: StereoBondMark) -> Result<()> {
+        self.bond(mark.bond)?;
+        if let Some(existing) = self
+            .stereo_bond_marks
+            .iter_mut()
+            .find(|existing| existing.bond == mark.bond)
+        {
+            *existing = mark;
+        } else {
+            self.stereo_bond_marks.push(mark);
+        }
+        self.invalidate_stereo();
+        Ok(())
+    }
+
+    pub fn clear_stereo_bond_mark(&mut self, bond: BondId) -> Result<Option<StereoBondMark>> {
+        self.bond(bond)?;
+        let Some(index) = self
+            .stereo_bond_marks
+            .iter()
+            .position(|mark| mark.bond == bond)
+        else {
+            return Ok(None);
+        };
+        self.invalidate_stereo();
+        Ok(Some(self.stereo_bond_marks.remove(index)))
+    }
+
+    pub fn stereo_bond_mark(&self, bond: BondId) -> Option<&StereoBondMark> {
+        self.stereo_bond_marks.iter().find(|mark| mark.bond == bond)
+    }
+
+    pub fn stereo_bond_marks(&self) -> impl Iterator<Item = &StereoBondMark> {
+        self.stereo_bond_marks.iter()
+    }
+
     pub fn invalidate_topology(&mut self) {
         self.perception.invalidate_all();
         self.ring_membership = None;
@@ -388,6 +541,74 @@ impl Molecule {
     fn remove_incident_bond(&mut self, atom: AtomId, bond: BondId) {
         if let Some(incident) = self.adjacency.get_mut(atom.index()) {
             incident.retain(|id| *id != bond);
+        }
+    }
+
+    pub(crate) fn invalidate_stereo(&mut self) {
+        self.perception.stereo = invalidate(self.perception.stereo);
+    }
+
+    fn validate_stereo_element_refs(&self, element: &StereoElement) -> Result<()> {
+        match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                self.atom(stereo.center)?;
+                self.validate_stereo_carriers(&stereo.carriers)?;
+            }
+            StereoElementKind::DoubleBond(stereo) => {
+                let bond = self.bond(stereo.bond)?;
+                if !bond.connects(stereo.left, stereo.right) {
+                    return Err(MoleculeError::InvalidStereoReference(
+                        "double-bond stereo focus does not match bond endpoints",
+                    ));
+                }
+                self.atom(stereo.left_carrier)?;
+                self.atom(stereo.right_carrier)?;
+            }
+            StereoElementKind::Axis(stereo) => {
+                self.bond(stereo.axis)?;
+                self.validate_stereo_carriers(&stereo.carriers)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_stereo_carriers(&self, carriers: &[StereoCarrier]) -> Result<()> {
+        for carrier in carriers {
+            if let StereoCarrier::Atom(atom) = carrier {
+                self.atom(*atom)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn prune_stereo_for_atom(&mut self, atom: AtomId) {
+        let removed = self
+            .stereo_elements()
+            .filter_map(|(id, element)| element.references_atom(atom).then_some(id))
+            .collect::<Vec<_>>();
+        for id in removed {
+            self.stereo_elements[id.index()] = None;
+            self.remove_stereo_element_from_groups(id);
+        }
+        self.invalidate_stereo();
+    }
+
+    fn prune_stereo_for_bond(&mut self, bond: BondId) {
+        let removed = self
+            .stereo_elements()
+            .filter_map(|(id, element)| element.references_bond(bond).then_some(id))
+            .collect::<Vec<_>>();
+        for id in removed {
+            self.stereo_elements[id.index()] = None;
+            self.remove_stereo_element_from_groups(id);
+        }
+        self.stereo_bond_marks.retain(|mark| mark.bond != bond);
+        self.invalidate_stereo();
+    }
+
+    fn remove_stereo_element_from_groups(&mut self, id: StereoElementId) {
+        for group in self.stereo_groups.iter_mut().flatten() {
+            group.members.retain(|member| *member != id);
         }
     }
 }
@@ -413,6 +634,9 @@ pub enum MoleculeError {
     InvalidAtomId(AtomId),
     InvalidBondId(BondId),
     InvalidConformerId(ConformerId),
+    InvalidStereoElementId(StereoElementId),
+    InvalidStereoGroupId(StereoGroupId),
+    InvalidStereoReference(&'static str),
     SelfBond(AtomId),
     DuplicateBond { a: AtomId, b: AtomId },
     UnsupportedFeature(&'static str),
@@ -424,6 +648,11 @@ impl fmt::Display for MoleculeError {
             Self::InvalidAtomId(id) => write!(f, "invalid atom id: {id}"),
             Self::InvalidBondId(id) => write!(f, "invalid bond id: {id}"),
             Self::InvalidConformerId(id) => write!(f, "invalid conformer id: {id}"),
+            Self::InvalidStereoElementId(id) => write!(f, "invalid stereo element id: {id}"),
+            Self::InvalidStereoGroupId(id) => write!(f, "invalid stereo group id: {id}"),
+            Self::InvalidStereoReference(message) => {
+                write!(f, "invalid stereo reference: {message}")
+            }
             Self::SelfBond(id) => write!(f, "cannot create a bond from atom {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate bond between {a} and {b}"),
             Self::UnsupportedFeature(name) => write!(f, "unsupported feature: {name}"),

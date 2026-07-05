@@ -2,7 +2,8 @@
 
 ## Summary
 
-Provide repeatable infrastructure for comparing Rust behavior against reference-generated golden data.
+Provide repeatable infrastructure for comparing Rust behavior against generated
+or manually curated external-reference golden data.
 
 ## Behavior/API
 
@@ -16,7 +17,8 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - Prints compact progress output for the overall target set and for fixture comparison within each feature/corpus target.
 - Accepts only declared implementation-vs-golden comparison manifests for required implemented validation.
 - Verifies golden `feature_id`, `corpus_id`, `fixture_path`, current fixture SHA-256, and reference tool/version metadata before comparing payloads.
-- Records content-addressed pass evidence over manifests, source locks, fixtures, goldens, Rust source, Cargo manifests, feature metadata, and reference generator/environment files.
+- Records content-addressed pass evidence over manifests, source locks, fixtures, goldens, Rust source, Cargo manifests, feature metadata, and reference generator/environment files when the reference tool is generator-backed.
+- Supports manually curated semantic references when the manifest uses `pubchem-manual-semantic`; these are evidence-backed by pinned source fixtures, manifest metadata, committed goldens, and Rust implementation sources rather than by local reference generator files.
 - Canonicalizes UTF-8 text inputs to LF before hashing so evidence is stable across Windows and Linux checkouts; binary inputs remain byte-exact.
 - Normalizes representation-only graph differences such as undirected bond endpoint orientation, bond array order, and ring atom order before comparison.
 - Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
@@ -28,6 +30,7 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 
 - RDKit reference generators live under `validation/reference/rdkit/`.
 - Biopython reference generators live under `validation/reference/biopython/`.
+- `pubchem-manual-semantic` manifests use externally pinned PubChem fixtures and manually reviewed semantic goldens; they do not require local reference generator files.
 - Golden data should be normalized JSON and include reference tool versions.
 - Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
 - Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
@@ -36,7 +39,7 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - Failed comparison status records fixture count, successful comparison count, failed count, and the first fixture-level failure without recording pass evidence.
 - Evidence schema v2 includes cross-platform text line-ending normalization.
 - Repeated `--update` runs preserve timestamps when the evidence hash is unchanged.
-- The validation command uses the Rust implementation only; RDKit and Biopython are used to generate goldens, not to run validation.
+- The validation command uses the Rust implementation only; RDKit, Biopython, or manually pinned external sources are used to generate or curate goldens, not to run validation.
 - Fixture comparison uses a bounded worker pool while status writes and dashboard regeneration remain single-threaded.
 - Progress output uses plain ASCII bars and throttled checkpoint updates so it stays readable in terminals and captured logs.
 - Reference tools are never Rust runtime dependencies.
@@ -65,3 +68,4 @@ Provide repeatable infrastructure for comparing Rust behavior against reference-
 - v9: Parallelize fixture comparison by default and add `--jobs N` for bounded validation runs.
 - v10: Preserve fixture-level failure summaries in corpus status so the dashboard can show compact non-passing counts.
 - v11: Add clean overall and per-target fixture progress bars to `cargo xtask validate`.
+- v12: Allow manually curated `pubchem-manual-semantic` validation manifests without local reference generator files.

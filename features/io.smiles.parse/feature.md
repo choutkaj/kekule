@@ -16,15 +16,15 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 ## Implementation Notes
 
 - The parser is intentionally non-query and non-reaction.
-- Bracket `@` and `@@` tetrahedral markers are stored as atom stereo metadata but are not assigned, normalized, or validated against neighbor order.
-- Directional `/` and `\` bond markers are stored as bond stereo metadata but are not assigned, normalized, or validated across double-bond stereo systems.
+- Bracket `@` and `@@` tetrahedral markers are stored as `Molecule` stereo elements with SMILES local orientation, carrier order, source, and specifiedness; they are not assigned CIP descriptors, normalized, or validated against stereogenicity.
+- Directional `/` and `\` bond markers are stored as source bond marks on `Molecule`; they are not assembled, normalized, or validated across double-bond stereo systems.
 - Metal-bound organic-subset atoms keep parsed no-implicit-hydrogen state separate from valence perception; sanitization assigns zero implicit hydrogens when bond valence is filled without forcing RDKit-visible no-implicit flags.
 - Cursor offsets remain UTF-8 character boundaries; bracket grammar is consumed strictly as ASCII rather than skipping unknown bytes.
 - Aromatic lowercase atoms set aromatic flags and aromatic omitted bonds, but they do not replace explicit sanitization/perception. Bracketed aromatic element support follows the current RDKit-like aromatic donor set used by perception.
 
 ## Validation
 
-- Unit tests cover branches, ring closures, bracket atoms, dot fragments, malformed percent labels, non-ASCII brackets, pending bonds, and unsupported syntax.
+- Unit tests cover branches, ring closures, bracket atoms, dot fragments, malformed percent labels, non-ASCII brackets, pending bonds, supported local stereo preservation, and unsupported syntax.
 - The standalone `smiles` fuzz target checks panic safety and successful parse/write/parse paths.
 - RDKit-generated goldens compare raw parsed graph records plus parse-sanitize-write-reparse atom identity, labeled-neighbor topology, bond order/aromaticity, charge, isotope, hydrogen, map, and valence records for external PubChem SMILES fixtures.
 
@@ -43,3 +43,4 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 - v7: Move the public parser API under the `smiles` facade and keep sanitizing reads explicit by name.
 - v8: Add PubChem-100k as required broad-corpus validation evidence.
 - v9: Remove parser-side metal-bound organic no-implicit preservation so sanitized SMILES semantics keep RDKit-like no-implicit flags while valence perception still assigns zero implicit hydrogens.
+- v10: Preserve supported local SMILES stereo syntax in the first-class stereo representation instead of atom/bond payload fields.

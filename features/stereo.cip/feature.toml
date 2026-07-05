@@ -1,9 +1,9 @@
 id = "stereo.cip"
 title = "CIP stereochemistry"
 area = "stereo"
-version = 1
+version = 2
 implemented = false
 validated = false
 description = "Plan CIP stereochemistry assignment for small molecules."
-depends_on = ["stereo.representation", "chem.sanitize.rdkit-like"]
+depends_on = ["stereo.representation", "stereo.perception", "chem.sanitize.rdkit-like", "algo.canonical-ranking"]
 validation_required = []

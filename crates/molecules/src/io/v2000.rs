@@ -245,10 +245,13 @@ fn parse_mol_v2000_lines(
         let bond_id = mol.add_bond(a, b, order).map_err(|error| {
             SdfParseError::new(record, line_number, format!("invalid graph bond: {error}"))
         })?;
-        if let Some(stereo) = stereo {
-            mol.bond_mut(bond_id)
-                .expect("newly added bond should be mutable")
-                .stereo = Some(stereo);
+        if let Some(kind) = stereo {
+            mol.set_stereo_bond_mark(StereoBondMark {
+                bond: bond_id,
+                kind,
+                source: StereoSource::MolfileV2000,
+            })
+            .expect("newly added bond should accept a stereo mark");
         }
     }
 
@@ -354,7 +357,9 @@ fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
     }
 }
 
-fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder, Option<BondStereo>)> {
+fn parse_v2000_bond_line(
+    line: &str,
+) -> Option<(usize, usize, BondOrder, Option<StereoBondMarkKind>)> {
     if !line.is_ascii() {
         return None;
     }
@@ -391,10 +396,10 @@ fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, BondOrder, Option<
     let stereo_code = stereo_code.unwrap_or(0);
     let stereo = match (order, stereo_code) {
         (_, 0) => None,
-        (BondOrder::Single, 1) => Some(BondStereo::Up),
-        (BondOrder::Single, 4) => Some(BondStereo::Any),
-        (BondOrder::Single, 6) => Some(BondStereo::Down),
-        (BondOrder::Double, 3) => Some(BondStereo::Any),
+        (BondOrder::Single, 1) => Some(StereoBondMarkKind::WedgeUp),
+        (BondOrder::Single, 4) => Some(StereoBondMarkKind::WedgeEither),
+        (BondOrder::Single, 6) => Some(StereoBondMarkKind::WedgeDown),
+        (BondOrder::Double, 3) => Some(StereoBondMarkKind::DoubleBondEither),
         _ => return None,
     };
     Some((a, b, order, stereo))
@@ -597,6 +602,11 @@ impl std::error::Error for MolWriteError {}
 
 pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
+    if mol.stereo_elements().next().is_some() {
+        return Err(MolWriteError::new(
+            "V2000 writer does not support stereo elements",
+        ));
+    }
     if mol.atom_count() > 999 || mol.bond_count() > 999 {
         return Err(MolWriteError::new(
             "V2000 writer supports at most 999 atoms and 999 bonds",
@@ -651,7 +661,7 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .get(&bond.b())
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
         let order_code = v2000_bond_code(bond.order)?;
-        let stereo_code = v2000_bond_stereo_code(bond.order, bond.stereo)?;
+        let stereo_code = v2000_bond_stereo_code(bond.order, mol.stereo_bond_mark(*bond_id))?;
         out.push_str(&format!(
             "{:>3}{:>3}{:>3}{:>3}  0  0  0\n",
             a, b, order_code, stereo_code
@@ -752,17 +762,14 @@ fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 
 fn v2000_bond_stereo_code(
     order: BondOrder,
-    stereo: Option<BondStereo>,
+    stereo: Option<&StereoBondMark>,
 ) -> std::result::Result<u8, MolWriteError> {
-    match (order, stereo) {
-        (_, None | Some(BondStereo::Unspecified)) => Ok(0),
-        (BondOrder::Single, Some(BondStereo::Up)) => Ok(1),
-        (BondOrder::Single, Some(BondStereo::Any)) => Ok(4),
-        (BondOrder::Single, Some(BondStereo::Down)) => Ok(6),
-        (BondOrder::Double, Some(BondStereo::Any)) => Ok(3),
-        (_, Some(BondStereo::E | BondStereo::Z)) => Err(MolWriteError::new(
-            "V2000 cannot encode perceived E/Z bond stereo directly",
-        )),
+    match (order, stereo.map(|mark| mark.kind)) {
+        (_, None) => Ok(0),
+        (BondOrder::Single, Some(StereoBondMarkKind::WedgeUp)) => Ok(1),
+        (BondOrder::Single, Some(StereoBondMarkKind::WedgeEither)) => Ok(4),
+        (BondOrder::Single, Some(StereoBondMarkKind::WedgeDown)) => Ok(6),
+        (BondOrder::Double, Some(StereoBondMarkKind::DoubleBondEither)) => Ok(3),
         _ => Err(MolWriteError::new(
             "V2000 bond stereo is incompatible with the bond order",
         )),
