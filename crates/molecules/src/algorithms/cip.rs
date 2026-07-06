@@ -248,35 +248,51 @@ struct LigandSignature {
 
 impl LigandSignature {
     fn compare(&self, other: &Self) -> Ordering {
-        compare_spheres(&self.atomic_spheres, &other.atomic_spheres)
-            .then_with(|| compare_spheres(&self.isotope_spheres, &other.isotope_spheres))
+        let len = self
+            .atomic_spheres
+            .len()
+            .max(other.atomic_spheres.len())
+            .max(self.isotope_spheres.len())
+            .max(other.isotope_spheres.len());
+        for index in 0..len {
+            let atomic = compare_sphere(
+                self.atomic_spheres.get(index).map(Vec::as_slice),
+                other.atomic_spheres.get(index).map(Vec::as_slice),
+            );
+            if atomic != Ordering::Equal {
+                return atomic;
+            }
+            let isotope = compare_sphere(
+                self.isotope_spheres.get(index).map(Vec::as_slice),
+                other.isotope_spheres.get(index).map(Vec::as_slice),
+            );
+            if isotope != Ordering::Equal {
+                return isotope;
+            }
+        }
+        Ordering::Equal
     }
 }
 
-fn compare_spheres<T: Ord>(left: &[Vec<T>], right: &[Vec<T>]) -> Ordering {
-    let len = left.len().max(right.len());
-    for index in 0..len {
-        match (left.get(index), right.get(index)) {
-            (Some(left), Some(right)) => {
-                let ordering = left.cmp(right);
-                if ordering != Ordering::Equal {
-                    return ordering;
-                }
+fn compare_sphere<T: Ord>(left: Option<&[T]>, right: Option<&[T]>) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left.cmp(right),
+        (Some(left), None) => {
+            if left.is_empty() {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
             }
-            (Some(left), None) => {
-                if !left.is_empty() {
-                    return Ordering::Greater;
-                }
-            }
-            (None, Some(right)) => {
-                if !right.is_empty() {
-                    return Ordering::Less;
-                }
-            }
-            (None, None) => {}
         }
+        (None, Some(right)) => {
+            if right.is_empty() {
+                Ordering::Equal
+            } else {
+                Ordering::Less
+            }
+        }
+        (None, None) => Ordering::Equal,
     }
-    Ordering::Equal
 }
 
 fn carrier_signature(

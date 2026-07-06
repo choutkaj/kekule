@@ -59,6 +59,54 @@ fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
 }
 
 #[test]
+fn cip_isotope_priority_refines_current_sphere_before_deeper_atoms() {
+    let mut mol = Molecule::new();
+    let mut center_atom = carbon();
+    center_atom.implicit_hydrogens = Some(1);
+    let center = mol.add_atom(center_atom);
+    let bromine = mol.add_atom(element_atom("Br"));
+    let mut carbon_13 = carbon();
+    carbon_13.isotope = Some(13);
+    let isotope_carbon = mol.add_atom(carbon_13);
+    let substituted_carbon = mol.add_atom(carbon());
+    let iodine = mol.add_atom(element_atom("I"));
+
+    for carrier in [bromine, isotope_carbon, substituted_carbon] {
+        mol.add_bond(center, carrier, BondOrder::Single)
+            .expect("carrier bond");
+    }
+    mol.add_bond(substituted_carbon, iodine, BondOrder::Single)
+        .expect("substituent bond");
+
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(bromine),
+                    StereoCarrier::Atom(isotope_carbon),
+                    StereoCarrier::Atom(substituted_carbon),
+                    StereoCarrier::ImplicitHydrogen,
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: stereo,
+            descriptor: StereoDescriptor::S,
+        }]
+    );
+}
+
+#[test]
 fn cip_reports_unresolved_equivalent_ligands_without_descriptor() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());

@@ -1,9 +1,9 @@
 id = "stereo.cip"
 title = "CIP stereochemistry"
 area = "stereo"
-version = 3
+version = 4
 implemented = true
 validated = true
-description = "Assign bounded R/S and E/Z CIP descriptors for validated local tetrahedral and double-bond stereo elements."
+description = "Assign bounded isotope-sensitive R/S and E/Z CIP descriptors for validated local tetrahedral and double-bond stereo elements."
 depends_on = ["stereo.representation", "stereo.perception", "chem.sanitize.rdkit-like", "algo.canonical-ranking"]
 validation_required = ["smoke"]
