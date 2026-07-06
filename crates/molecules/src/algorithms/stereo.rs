@@ -5,6 +5,7 @@ pub struct StereoPerceptionOptions {
     pub validate_existing: bool,
     pub detect_candidates: bool,
     pub assemble_source_marks: bool,
+    pub assign_coordinates: bool,
 }
 
 impl Default for StereoPerceptionOptions {
@@ -13,6 +14,7 @@ impl Default for StereoPerceptionOptions {
             validate_existing: true,
             detect_candidates: true,
             assemble_source_marks: true,
+            assign_coordinates: true,
         }
     }
 }
@@ -188,6 +190,11 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
                 &mut used_marks,
             ));
         report_unassembled_source_marks(mol, &used_marks, &mut report.issues);
+    }
+    if options.assign_coordinates {
+        report
+            .assembled_elements
+            .extend(assign_coordinate_stereo(mol, &report.assembled_elements));
     }
     report
 }
@@ -578,13 +585,18 @@ fn assemble_directional_double_bonds(
 ) -> Vec<StereoElement> {
     let mut assembled = Vec::new();
     for (bond_id, bond) in mol.bonds() {
-        if bond.order != BondOrder::Double || has_double_bond_element(mol, bond_id) {
+        if bond.order != BondOrder::Double {
             continue;
         }
         let left = bond.a();
         let right = bond.b();
         let left_marks = directional_marks_for_endpoint(mol, left, bond_id);
         let right_marks = directional_marks_for_endpoint(mol, right, bond_id);
+        if has_double_bond_element(mol, bond_id) {
+            used_marks.extend(left_marks.iter().map(|mark| mark.bond));
+            used_marks.extend(right_marks.iter().map(|mark| mark.bond));
+            continue;
+        }
         if left_marks.len() > 1 {
             issues.push(StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
                 double_bond: bond_id,
@@ -657,6 +669,239 @@ fn report_unassembled_source_marks(
         }
     }
 }
+
+fn assign_coordinate_stereo(
+    mol: &Molecule,
+    planned_elements: &[StereoElement],
+) -> Vec<StereoElement> {
+    let Some((_, conformer)) = mol.first_conformer() else {
+        return Vec::new();
+    };
+    let mut assigned = Vec::new();
+    assigned.extend(assign_coordinate_tetrahedral(
+        mol,
+        conformer,
+        planned_elements,
+    ));
+    assigned.extend(assign_coordinate_double_bonds(
+        mol,
+        conformer,
+        planned_elements,
+    ));
+    assigned
+}
+
+fn assign_coordinate_tetrahedral(
+    mol: &Molecule,
+    conformer: &Conformer,
+    planned_elements: &[StereoElement],
+) -> Vec<StereoElement> {
+    let mut assigned = Vec::new();
+    for candidate in tetrahedral_candidates(mol) {
+        let StereoCandidate::Tetrahedral { center, carriers } = candidate else {
+            continue;
+        };
+        if has_tetrahedral_element(mol, center)
+            || planned_elements
+                .iter()
+                .any(|element| planned_tetrahedral_center(element) == Some(center))
+        {
+            continue;
+        }
+        let atom_carriers = carriers
+            .iter()
+            .map(|carrier| match carrier {
+                StereoCarrier::Atom(atom) => Some(*atom),
+                StereoCarrier::ImplicitHydrogen => None,
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(atom_carriers) = atom_carriers else {
+            continue;
+        };
+        let Some(points) = tetrahedral_points(conformer, center, &atom_carriers) else {
+            continue;
+        };
+        let Some(orientation) = tetrahedral_orientation_from_points(points) else {
+            continue;
+        };
+        assigned.push(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers,
+                orientation,
+            }),
+            StereoSource::Coordinates3D,
+        ));
+    }
+    assigned
+}
+
+fn assign_coordinate_double_bonds(
+    mol: &Molecule,
+    conformer: &Conformer,
+    planned_elements: &[StereoElement],
+) -> Vec<StereoElement> {
+    let mut assigned = Vec::new();
+    for candidate in double_bond_candidates(mol) {
+        let StereoCandidate::DoubleBond {
+            bond,
+            left,
+            right,
+            left_carriers,
+            right_carriers,
+        } = candidate
+        else {
+            continue;
+        };
+        if has_double_bond_element(mol, bond)
+            || planned_elements
+                .iter()
+                .any(|element| planned_double_bond(element) == Some(bond))
+        {
+            continue;
+        }
+        let Some(left_carrier) = only_atom_carrier(&left_carriers) else {
+            continue;
+        };
+        let Some(right_carrier) = only_atom_carrier(&right_carriers) else {
+            continue;
+        };
+        let Some(points) = double_bond_points(conformer, left, right, left_carrier, right_carrier)
+        else {
+            continue;
+        };
+        let Some(orientation) = double_bond_orientation_from_points(points) else {
+            continue;
+        };
+        assigned.push(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond,
+                left,
+                right,
+                left_carrier: StereoCarrier::Atom(left_carrier),
+                right_carrier: StereoCarrier::Atom(right_carrier),
+                orientation,
+            }),
+            coordinate_source(&points),
+        ));
+    }
+    assigned
+}
+
+fn planned_tetrahedral_center(element: &StereoElement) -> Option<AtomId> {
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
+        _ => None,
+    }
+}
+
+fn planned_double_bond(element: &StereoElement) -> Option<BondId> {
+    match &element.kind {
+        StereoElementKind::DoubleBond(stereo) => Some(stereo.bond),
+        _ => None,
+    }
+}
+
+fn only_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
+    let mut atoms = carriers.iter().filter_map(|carrier| match carrier {
+        StereoCarrier::Atom(atom) => Some(*atom),
+        StereoCarrier::ImplicitHydrogen => None,
+    });
+    let atom = atoms.next()?;
+    atoms.next().is_none().then_some(atom)
+}
+
+fn tetrahedral_points(
+    conformer: &Conformer,
+    center: AtomId,
+    carriers: &[AtomId],
+) -> Option<[Point3; 5]> {
+    (carriers.len() == 4).then_some(())?;
+    Some([
+        conformer.position(center)?,
+        conformer.position(carriers[0])?,
+        conformer.position(carriers[1])?,
+        conformer.position(carriers[2])?,
+        conformer.position(carriers[3])?,
+    ])
+}
+
+fn double_bond_points(
+    conformer: &Conformer,
+    left: AtomId,
+    right: AtomId,
+    left_carrier: AtomId,
+    right_carrier: AtomId,
+) -> Option<[Point3; 4]> {
+    Some([
+        conformer.position(left)?,
+        conformer.position(right)?,
+        conformer.position(left_carrier)?,
+        conformer.position(right_carrier)?,
+    ])
+}
+
+fn tetrahedral_orientation_from_points(points: [Point3; 5]) -> Option<TetrahedralOrientation> {
+    let a = vector_between(points[4], points[1]);
+    let b = vector_between(points[4], points[2]);
+    let c = vector_between(points[4], points[3]);
+    let volume = dot(cross(a, b), c);
+    if volume.abs() <= COORDINATE_EPSILON {
+        return None;
+    }
+    Some(if volume > 0.0 {
+        TetrahedralOrientation::Clockwise
+    } else {
+        TetrahedralOrientation::CounterClockwise
+    })
+}
+
+fn double_bond_orientation_from_points(points: [Point3; 4]) -> Option<DoubleBondOrientation> {
+    let axis = vector_between(points[0], points[1]);
+    let left_vector = vector_between(points[0], points[2]);
+    let right_vector = vector_between(points[1], points[3]);
+    let sidedness = dot(cross(axis, left_vector), cross(axis, right_vector));
+    if sidedness.abs() <= COORDINATE_EPSILON {
+        return None;
+    }
+    Some(if sidedness > 0.0 {
+        DoubleBondOrientation::Together
+    } else {
+        DoubleBondOrientation::Opposite
+    })
+}
+
+fn coordinate_source(points: &[Point3]) -> StereoSource {
+    let Some(first) = points.first() else {
+        return StereoSource::Coordinates3D;
+    };
+    if points
+        .iter()
+        .all(|point| (point.z - first.z).abs() <= COORDINATE_EPSILON)
+    {
+        StereoSource::Coordinates2D
+    } else {
+        StereoSource::Coordinates3D
+    }
+}
+
+fn vector_between(origin: Point3, point: Point3) -> Point3 {
+    Point3::new(point.x - origin.x, point.y - origin.y, point.z - origin.z)
+}
+
+fn cross(a: Point3, b: Point3) -> Point3 {
+    Point3::new(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x,
+    )
+}
+
+fn dot(a: Point3, b: Point3) -> f64 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+const COORDINATE_EPSILON: f64 = 1.0e-8;
 
 #[derive(Clone, Copy)]
 struct EndpointMark<'a> {

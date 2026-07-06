@@ -29,15 +29,16 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
     perception_api::sanitize_with_options(&mut baseline, SanitizeOptions::default())
         .expect("benzene should sanitize");
 
-    for mask in 0..8 {
+    for mask in 0..16 {
         let options = SanitizeOptions {
             perceive_valence: mask & 1 != 0,
             perceive_rings: mask & 2 != 0,
             perceive_aromaticity: mask & 4 != 0,
+            perceive_stereo: mask & 8 != 0,
         };
         let mut molecule = baseline.clone();
         perception_api::sanitize_with_options(&mut molecule, options)
-            .unwrap_or_else(|error| panic!("options {mask:03b} should succeed: {error}"));
+            .unwrap_or_else(|error| panic!("options {mask:04b} should succeed: {error}"));
 
         assert_eq!(
             molecule.graph().perception().valence,
@@ -46,7 +47,7 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             } else {
                 ComputedState::Stale
             },
-            "valence state for options {mask:03b}"
+            "valence state for options {mask:04b}"
         );
         assert_eq!(
             molecule.graph().perception().rings,
@@ -55,7 +56,7 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             } else {
                 ComputedState::Stale
             },
-            "ring state for options {mask:03b}"
+            "ring state for options {mask:04b}"
         );
         assert_eq!(
             molecule.graph().perception().aromaticity,
@@ -64,14 +65,103 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             } else {
                 ComputedState::Stale
             },
-            "aromaticity state for options {mask:03b}"
+            "aromaticity state for options {mask:04b}"
+        );
+        assert_eq!(
+            molecule.graph().perception().stereo,
+            if options.perceive_stereo {
+                ComputedState::Fresh
+            } else {
+                ComputedState::Stale
+            },
+            "stereo state for options {mask:04b}"
         );
         assert_eq!(
             molecule.graph().ring_set().is_some(),
             options.perceive_rings,
-            "ring cache exposure for options {mask:03b}"
+            "ring cache exposure for options {mask:04b}"
         );
     }
+}
+
+#[test]
+fn sanitization_perceives_stereo_by_default_and_can_skip_it() {
+    let mut molecule = smiles_api::read_str("C/C=C\\F").expect("directional smiles should parse");
+
+    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("directional molecule should sanitize");
+
+    assert!(report.stereo.expect("stereo report").is_ok());
+    assert_eq!(molecule.graph().perception().stereo, ComputedState::Fresh);
+    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+
+    let mut skipped = smiles_api::read_str("C/C=C\\F").expect("directional smiles should parse");
+    perception_api::sanitize_with_options(
+        &mut skipped,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("stereo-skipped molecule should sanitize");
+
+    assert_eq!(skipped.graph().perception().stereo, ComputedState::Absent);
+    assert_eq!(skipped.graph().stereo_elements().count(), 0);
+}
+
+#[test]
+fn sanitization_does_not_assign_coordinate_only_stereo() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let left_carrier = mol.add_atom(element_atom("F"));
+    let right_carrier = mol.add_atom(element_atom("Cl"));
+    mol.add_bond(left, right, BondOrder::Double).expect("bond");
+    mol.add_bond(left, left_carrier, BondOrder::Single)
+        .expect("left carrier");
+    mol.add_bond(right, right_carrier, BondOrder::Single)
+        .expect("right carrier");
+    let mut conformer = Conformer::new();
+    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
+    conformer.set_position(left_carrier, Point3::new(0.0, 1.0, 0.0));
+    conformer.set_position(right_carrier, Point3::new(1.0, -1.0, 0.0));
+    mol.add_conformer(conformer);
+    let mut molecule = SmallMolecule::from_graph(mol);
+
+    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("coordinate-only molecule should sanitize");
+
+    assert!(report.stereo.expect("stereo report").is_ok());
+    assert_eq!(molecule.graph().perception().stereo, ComputedState::Fresh);
+    assert_eq!(molecule.graph().stereo_elements().count(), 0);
+
+    let direct_report = stereo_api::perceive_stereo(molecule.graph_mut());
+    assert!(direct_report.is_ok(), "{:?}", direct_report.issues);
+    assert_eq!(direct_report.created_elements.len(), 1);
+    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+}
+
+#[test]
+fn failed_stereo_sanitization_is_transactional() {
+    let mut mol = Molecule::new();
+    let a = mol.add_atom(carbon());
+    let b = mol.add_atom(carbon());
+    let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+    mol.set_stereo_bond_mark(StereoBondMark {
+        bond,
+        kind: StereoBondMarkKind::WedgeEither,
+        source: StereoSource::MolfileV2000,
+    })
+    .expect("wedge mark");
+    let mut molecule = SmallMolecule::from_graph(mol);
+    let before = molecule.clone();
+
+    let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect_err("unassembled stereo mark should fail sanitization");
+
+    assert!(matches!(error, SanitizeError::Stereo(_)));
+    assert_eq!(molecule, before);
 }
 
 #[test]
@@ -137,6 +227,7 @@ fn sanitize_cleanup_invalidates_preexisting_perception() {
             perceive_valence: false,
             perceive_rings: false,
             perceive_aromaticity: false,
+            perceive_stereo: false,
         },
     )
     .expect("cleanup-only sanitize should succeed");

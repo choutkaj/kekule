@@ -837,8 +837,14 @@ fn stereo_candidates_use_sanitized_hydrogen_state_without_cip_assignment() {
 #[test]
 fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element() {
     let mut molecule = smiles_api::read_str("C/C=C\\F").expect("directional smiles should parse");
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("molecule should sanitize");
+    perception_api::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("molecule should sanitize");
 
     let report = stereo_api::perceive_stereo(molecule.graph_mut());
 
@@ -964,6 +970,82 @@ fn stereo_perception_reports_ambiguous_tetrahedral_wedge_marks() {
         }));
     assert!(report.created_elements.is_empty());
     assert!(mol.stereo_elements().next().is_none());
+}
+
+#[test]
+fn stereo_perception_assigns_tetrahedral_from_3d_coordinates() {
+    let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
+    let mut conformer = Conformer::new();
+    conformer.set_position(center, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(carriers[0], Point3::new(1.0, 0.0, 0.0));
+    conformer.set_position(carriers[1], Point3::new(0.0, 1.0, 0.0));
+    conformer.set_position(carriers[2], Point3::new(0.0, 0.0, 1.0));
+    conformer.set_position(carriers[3], Point3::new(0.0, 0.0, -1.0));
+    mol.add_conformer(conformer);
+
+    let report = stereo_api::perceive_stereo(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = mol
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert_eq!(element.source, StereoSource::Coordinates3D);
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            assert_eq!(stereo.center, center);
+            assert_eq!(
+                stereo.carriers,
+                carriers
+                    .iter()
+                    .copied()
+                    .map(StereoCarrier::Atom)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(stereo.orientation, TetrahedralOrientation::Clockwise);
+        }
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let left_carrier = mol.add_atom(element_atom("F"));
+    let right_carrier = mol.add_atom(element_atom("Cl"));
+    let double_bond = mol.add_bond(left, right, BondOrder::Double).expect("bond");
+    mol.add_bond(left, left_carrier, BondOrder::Single)
+        .expect("left carrier");
+    mol.add_bond(right, right_carrier, BondOrder::Single)
+        .expect("right carrier");
+    let mut conformer = Conformer::new();
+    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
+    conformer.set_position(left_carrier, Point3::new(0.0, 1.0, 0.0));
+    conformer.set_position(right_carrier, Point3::new(1.0, -1.0, 0.0));
+    mol.add_conformer(conformer);
+
+    let report = stereo_api::perceive_stereo(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = mol
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert_eq!(element.source, StereoSource::Coordinates2D);
+    match &element.kind {
+        StereoElementKind::DoubleBond(stereo) => {
+            assert_eq!(stereo.bond, double_bond);
+            assert_eq!(stereo.left, left);
+            assert_eq!(stereo.right, right);
+            assert_eq!(stereo.left_carrier, StereoCarrier::Atom(left_carrier));
+            assert_eq!(stereo.right_carrier, StereoCarrier::Atom(right_carrier));
+            assert_eq!(stereo.orientation, DoubleBondOrientation::Opposite);
+        }
+        other => panic!("expected double-bond stereo, found {other:?}"),
+    }
 }
 
 #[test]

@@ -156,7 +156,10 @@ pub(crate) fn implementation_expected(
             for record in &mut records {
                 perception::sanitize_with_options(
                     &mut record.molecule,
-                    SanitizeOptions::default(),
+                    SanitizeOptions {
+                        perceive_stereo: false,
+                        ..SanitizeOptions::default()
+                    },
                 )?;
             }
             Ok(json!({
@@ -521,6 +524,7 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
             perceive_valence: true,
             perceive_rings: true,
             perceive_aromaticity: false,
+            perceive_stereo: false,
         },
     )
     .and_then(|_| {
