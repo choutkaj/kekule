@@ -151,6 +151,21 @@ pub(crate) fn implementation_expected(
             let records = read_stereo_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(stereo_record_json).collect::<Vec<_>>() }))
         }
+        "stereo.perception" => {
+            let mut records = read_stereo_records_by_suffix(fixture_path)?;
+            for record in &mut records {
+                perception::sanitize_with_options(
+                    &mut record.molecule,
+                    SanitizeOptions::default(),
+                )?;
+            }
+            Ok(json!({
+                "records": records
+                    .iter_mut()
+                    .map(stereo_perception_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
         _ => Err(boxed_error(format!(
             "no implementation comparison configured for feature `{feature}`"
         ))),
@@ -375,6 +390,22 @@ pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
         "title": record.title,
         "atom_count": mol.atom_count(),
         "bond_count": mol.bond_count(),
+        "stereo_elements": stereo_elements_json(mol),
+        "stereo_groups": stereo_groups_json(mol),
+        "stereo_bond_marks": stereo_bond_marks_json(mol),
+    })
+}
+
+pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let report = stereo::perceive_stereo(record.molecule.graph_mut());
+    let mol = record.molecule.graph();
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "report": stereo_perception_report_json(&report),
         "stereo_elements": stereo_elements_json(mol),
         "stereo_groups": stereo_groups_json(mol),
         "stereo_bond_marks": stereo_bond_marks_json(mol),
@@ -974,6 +1005,193 @@ pub(crate) fn bond_direction_json(
     }
 }
 
+pub(crate) fn stereo_perception_report_json(report: &StereoPerceptionReport) -> Value {
+    json!({
+        "is_ok": report.is_ok(),
+        "candidates": report
+            .candidates
+            .iter()
+            .map(stereo_candidate_json)
+            .collect::<Vec<_>>(),
+        "issues": report
+            .issues
+            .iter()
+            .map(stereo_perception_issue_json)
+            .collect::<Vec<_>>(),
+        "assembled_elements": report
+            .assembled_elements
+            .iter()
+            .enumerate()
+            .map(|(index, element)| stereo_element_json(index as u32, element))
+            .collect::<Vec<_>>(),
+        "created_element_indices": report
+            .created_elements
+            .iter()
+            .map(|id| id.raw())
+            .collect::<Vec<_>>(),
+    })
+}
+
+pub(crate) fn stereo_candidate_json(candidate: &StereoCandidate) -> Value {
+    match candidate {
+        StereoCandidate::Tetrahedral { center, carriers } => json!({
+            "type": "tetrahedral",
+            "center_atom_index": center.raw(),
+            "carriers": carriers.iter().map(stereo_carrier_json).collect::<Vec<_>>(),
+        }),
+        StereoCandidate::DoubleBond {
+            bond,
+            left,
+            right,
+            left_carriers,
+            right_carriers,
+        } => json!({
+            "type": "double_bond",
+            "center_bond_index": bond.raw(),
+            "left_atom_index": left.raw(),
+            "right_atom_index": right.raw(),
+            "left_carriers": left_carriers.iter().map(stereo_carrier_json).collect::<Vec<_>>(),
+            "right_carriers": right_carriers.iter().map(stereo_carrier_json).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Value {
+    match issue {
+        StereoPerceptionIssue::MissingStereoAtom { element, atom } => json!({
+            "type": "missing_stereo_atom",
+            "element_index": element.raw(),
+            "atom_index": atom.raw(),
+        }),
+        StereoPerceptionIssue::MissingStereoBond { element, bond } => json!({
+            "type": "missing_stereo_bond",
+            "element_index": element.raw(),
+            "bond_index": bond.raw(),
+        }),
+        StereoPerceptionIssue::InvalidTetrahedralCarrierCount {
+            element,
+            center,
+            carrier_count,
+        } => json!({
+            "type": "invalid_tetrahedral_carrier_count",
+            "element_index": element.raw(),
+            "center_atom_index": center.raw(),
+            "carrier_count": carrier_count,
+        }),
+        StereoPerceptionIssue::DuplicateTetrahedralCarrier {
+            element,
+            center,
+            carrier,
+        } => json!({
+            "type": "duplicate_tetrahedral_carrier",
+            "element_index": element.raw(),
+            "center_atom_index": center.raw(),
+            "carrier": stereo_carrier_json(carrier),
+        }),
+        StereoPerceptionIssue::TetrahedralCarrierNotAdjacent {
+            element,
+            center,
+            carrier,
+        } => json!({
+            "type": "tetrahedral_carrier_not_adjacent",
+            "element_index": element.raw(),
+            "center_atom_index": center.raw(),
+            "carrier": stereo_carrier_json(carrier),
+        }),
+        StereoPerceptionIssue::TetrahedralHydrogenCarrierUnavailable { element, center } => json!({
+            "type": "tetrahedral_hydrogen_carrier_unavailable",
+            "element_index": element.raw(),
+            "center_atom_index": center.raw(),
+        }),
+        StereoPerceptionIssue::InvalidDoubleBondOrder {
+            element,
+            bond,
+            order,
+        } => json!({
+            "type": "invalid_double_bond_order",
+            "element_index": element.raw(),
+            "bond_index": bond.raw(),
+            "bond_order": bond_order_json(*order),
+        }),
+        StereoPerceptionIssue::DoubleBondFocusMismatch {
+            element,
+            bond,
+            left,
+            right,
+        } => json!({
+            "type": "double_bond_focus_mismatch",
+            "element_index": element.raw(),
+            "bond_index": bond.raw(),
+            "left_atom_index": left.raw(),
+            "right_atom_index": right.raw(),
+        }),
+        StereoPerceptionIssue::DoubleBondCarrierIsFocusAtom {
+            element,
+            endpoint,
+            carrier,
+        } => json!({
+            "type": "double_bond_carrier_is_focus_atom",
+            "element_index": element.raw(),
+            "endpoint_atom_index": endpoint.raw(),
+            "carrier_atom_index": carrier.raw(),
+        }),
+        StereoPerceptionIssue::DoubleBondCarrierNotAdjacent {
+            element,
+            endpoint,
+            carrier,
+        } => json!({
+            "type": "double_bond_carrier_not_adjacent",
+            "element_index": element.raw(),
+            "endpoint_atom_index": endpoint.raw(),
+            "carrier": stereo_carrier_json(carrier),
+        }),
+        StereoPerceptionIssue::DoubleBondHydrogenCarrierUnavailable { element, endpoint } => {
+            json!({
+                "type": "double_bond_hydrogen_carrier_unavailable",
+                "element_index": element.raw(),
+                "endpoint_atom_index": endpoint.raw(),
+            })
+        }
+        StereoPerceptionIssue::UnsupportedAxisElement { element } => json!({
+            "type": "unsupported_axis_element",
+            "element_index": element.raw(),
+        }),
+        StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks { center, mark_count } => json!({
+            "type": "ambiguous_tetrahedral_wedge_marks",
+            "center_atom_index": center.raw(),
+            "mark_count": mark_count,
+        }),
+        StereoPerceptionIssue::UnassembledTetrahedralBondMark { bond, kind } => json!({
+            "type": "unassembled_tetrahedral_bond_mark",
+            "bond_index": bond.raw(),
+            "kind": stereo_bond_mark_kind_json(*kind),
+        }),
+        StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
+            double_bond,
+            endpoint,
+            mark_count,
+        } => json!({
+            "type": "ambiguous_directional_bond_marks",
+            "double_bond_index": double_bond.raw(),
+            "endpoint_atom_index": endpoint.raw(),
+            "mark_count": mark_count,
+        }),
+        StereoPerceptionIssue::UnpairedDirectionalBondMark { bond } => json!({
+            "type": "unpaired_directional_bond_mark",
+            "bond_index": bond.raw(),
+        }),
+        StereoPerceptionIssue::UnsupportedSourceBondMark { bond, kind } => json!({
+            "type": "unsupported_source_bond_mark",
+            "bond_index": bond.raw(),
+            "kind": stereo_bond_mark_kind_json(*kind),
+        }),
+        StereoPerceptionIssue::CouldNotCreateElement { message } => json!({
+            "type": "could_not_create_element",
+            "message": message,
+        }),
+    }
+}
+
 pub(crate) fn stereo_elements_json(mol: &Molecule) -> Vec<Value> {
     mol.stereo_elements()
         .map(|(id, element)| stereo_element_json(id.raw(), element))
@@ -1025,12 +1243,12 @@ pub(crate) fn stereo_element_json(index: u32, element: &StereoElement) -> Value 
             object.insert("left_atom_index".to_owned(), json!(stereo.left.raw()));
             object.insert("right_atom_index".to_owned(), json!(stereo.right.raw()));
             object.insert(
-                "left_carrier_atom_index".to_owned(),
-                json!(stereo.left_carrier.raw()),
+                "left_carrier".to_owned(),
+                stereo_carrier_json(&stereo.left_carrier),
             );
             object.insert(
-                "right_carrier_atom_index".to_owned(),
-                json!(stereo.right_carrier.raw()),
+                "right_carrier".to_owned(),
+                stereo_carrier_json(&stereo.right_carrier),
             );
             object.insert(
                 "orientation".to_owned(),

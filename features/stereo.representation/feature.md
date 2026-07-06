@@ -10,8 +10,9 @@ not atom/bond payload flags.
 
 - `core::stereo` defines stable stereo element IDs, stereo group IDs,
   tetrahedral atom elements, double-bond elements, reserved axis elements,
-  local orientations, specifiedness, source metadata, optional derived
-  descriptors, source bond marks, stereo groups, and group kinds.
+  atom or implicit-hydrogen carriers, local orientations, specifiedness, source
+  metadata, optional derived descriptors, source bond marks, stereo groups, and
+  group kinds.
 - `Molecule` stores stereo elements, stereo groups, and source bond marks with
   focused insertion, lookup, iteration, removal, and topology-aware pruning
   methods.
@@ -71,3 +72,6 @@ not atom/bond payload flags.
 - v2: Add first-class `core::stereo` representation, graph-adjacent storage on
   `Molecule`, parser preservation adapters, writer rejection/mark handling, and
   smoke semantic stereo validation.
+- v3: Generalize double-bond stereo carriers from atom-only IDs to
+  `StereoCarrier` so alkene perception can represent implicit-hydrogen
+  substituents.

@@ -561,8 +561,7 @@ impl Molecule {
                         "double-bond stereo focus does not match bond endpoints",
                     ));
                 }
-                self.atom(stereo.left_carrier)?;
-                self.atom(stereo.right_carrier)?;
+                self.validate_stereo_carriers(&[stereo.left_carrier, stereo.right_carrier])?;
             }
             StereoElementKind::Axis(stereo) => {
                 self.bond(stereo.axis)?;

@@ -49,8 +49,8 @@ impl StereoElementKind {
             Self::DoubleBond(stereo) => {
                 stereo.left == atom
                     || stereo.right == atom
-                    || stereo.left_carrier == atom
-                    || stereo.right_carrier == atom
+                    || matches!(stereo.left_carrier, StereoCarrier::Atom(id) if id == atom)
+                    || matches!(stereo.right_carrier, StereoCarrier::Atom(id) if id == atom)
             }
             Self::Axis(stereo) => stereo
                 .carriers
@@ -80,8 +80,8 @@ pub struct DoubleBondStereo {
     pub bond: BondId,
     pub left: AtomId,
     pub right: AtomId,
-    pub left_carrier: AtomId,
-    pub right_carrier: AtomId,
+    pub left_carrier: StereoCarrier,
+    pub right_carrier: StereoCarrier,
     pub orientation: DoubleBondOrientation,
 }
 
