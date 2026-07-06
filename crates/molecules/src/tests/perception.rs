@@ -863,6 +863,110 @@ fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element
 }
 
 #[test]
+fn stereo_perception_assembles_molfile_wedge_into_tetrahedral_element() {
+    let input = "\
+wedge
+molecules
+
+  5  4  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0
+    1.0000    0.0000    0.0000 F   0  0  0  0  0  0
+   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0
+    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0
+    0.0000   -1.0000    0.0000 I   0  0  0  0  0  0
+  1  2  1  1  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END
+";
+    let mut molecule = molfile::read_v2000_str(input).expect("wedge molfile should parse");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert_eq!(element.specifiedness, StereoSpecifiedness::Specified);
+    assert_eq!(element.source, StereoSource::MolfileV2000);
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            assert_eq!(stereo.center, AtomId::new(0));
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(1)),
+                    StereoCarrier::Atom(AtomId::new(2)),
+                    StereoCarrier::Atom(AtomId::new(3)),
+                    StereoCarrier::Atom(AtomId::new(4)),
+                ]
+            );
+            assert_eq!(stereo.orientation, TetrahedralOrientation::Clockwise);
+        }
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_assembles_wedge_either_as_explicit_unknown() {
+    let (mut mol, center, carriers, marked_bond) = tetrahedral_marked_graph();
+    mol.set_stereo_bond_mark(StereoBondMark {
+        bond: marked_bond,
+        kind: StereoBondMarkKind::WedgeEither,
+        source: StereoSource::MolfileV2000,
+    })
+    .expect("wedge mark");
+
+    let report = stereo_api::perceive_stereo(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = mol
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            assert_eq!(stereo.center, center);
+            assert_eq!(stereo.carriers[0], StereoCarrier::Atom(carriers[0]));
+        }
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_reports_ambiguous_tetrahedral_wedge_marks() {
+    let (mut mol, center, _carriers, first_bond) = tetrahedral_marked_graph();
+    let second_bond = BondId::new(1);
+    mol.set_stereo_bond_mark(StereoBondMark {
+        bond: first_bond,
+        kind: StereoBondMarkKind::WedgeUp,
+        source: StereoSource::MolfileV2000,
+    })
+    .expect("first wedge mark");
+    mol.set_stereo_bond_mark(StereoBondMark {
+        bond: second_bond,
+        kind: StereoBondMarkKind::WedgeDown,
+        source: StereoSource::MolfileV2000,
+    })
+    .expect("second wedge mark");
+
+    let report = stereo_api::perceive_stereo(&mut mol);
+
+    assert!(report
+        .issues
+        .contains(&StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks {
+            center,
+            mark_count: 2,
+        }));
+    assert!(report.created_elements.is_empty());
+    assert!(mol.stereo_elements().next().is_none());
+}
+
+#[test]
 fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     let mut marked = Molecule::new();
     let a = marked.add_atom(carbon());
@@ -877,13 +981,32 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
         .expect("mark");
 
     let marked_report = stereo_api::perceive_stereo(&mut marked);
-    assert!(marked_report
-        .issues
-        .contains(&StereoPerceptionIssue::UnsupportedSourceBondMark {
+    assert!(marked_report.issues.contains(
+        &StereoPerceptionIssue::UnassembledTetrahedralBondMark {
             bond,
             kind: StereoBondMarkKind::WedgeEither,
-        }));
+        }
+    ));
     assert!(marked.stereo_elements().next().is_none());
+
+    let mut unsupported = Molecule::new();
+    let c = unsupported.add_atom(carbon());
+    let d = unsupported.add_atom(carbon());
+    let double_bond = unsupported.add_bond(c, d, BondOrder::Double).expect("bond");
+    unsupported
+        .set_stereo_bond_mark(StereoBondMark {
+            bond: double_bond,
+            kind: StereoBondMarkKind::DoubleBondEither,
+            source: StereoSource::MolfileV2000,
+        })
+        .expect("double bond either mark");
+    let unsupported_report = stereo_api::perceive_stereo(&mut unsupported);
+    assert!(unsupported_report.issues.contains(
+        &StereoPerceptionIssue::UnsupportedSourceBondMark {
+            bond: double_bond,
+            kind: StereoBondMarkKind::DoubleBondEither,
+        }
+    ));
 
     let mut absent = Molecule::new();
     let x = absent.add_atom(carbon());
@@ -893,4 +1016,22 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     assert!(absent_report.is_ok());
     assert!(absent.stereo_elements().next().is_none());
     assert!(absent.stereo_bond_marks().next().is_none());
+}
+
+fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon());
+    let carriers = ["F", "Cl", "Br", "I"]
+        .into_iter()
+        .map(element_atom)
+        .map(|atom| mol.add_atom(atom))
+        .collect::<Vec<_>>();
+    let mut bonds = Vec::new();
+    for carrier in &carriers {
+        bonds.push(
+            mol.add_bond(center, *carrier, BondOrder::Single)
+                .expect("tetrahedral carrier bond"),
+        );
+    }
+    (mol, center, carriers, bonds[0])
 }

@@ -1156,6 +1156,16 @@ pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Val
             "type": "unsupported_axis_element",
             "element_index": element.raw(),
         }),
+        StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks { center, mark_count } => json!({
+            "type": "ambiguous_tetrahedral_wedge_marks",
+            "center_atom_index": center.raw(),
+            "mark_count": mark_count,
+        }),
+        StereoPerceptionIssue::UnassembledTetrahedralBondMark { bond, kind } => json!({
+            "type": "unassembled_tetrahedral_bond_mark",
+            "bond_index": bond.raw(),
+            "kind": stereo_bond_mark_kind_json(*kind),
+        }),
         StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
             double_bond,
             endpoint,

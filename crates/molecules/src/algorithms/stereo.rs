@@ -103,6 +103,14 @@ pub enum StereoPerceptionIssue {
     UnsupportedAxisElement {
         element: StereoElementId,
     },
+    AmbiguousTetrahedralWedgeMarks {
+        center: AtomId,
+        mark_count: usize,
+    },
+    UnassembledTetrahedralBondMark {
+        bond: BondId,
+        kind: StereoBondMarkKind,
+    },
     AmbiguousDirectionalBondMarks {
         double_bond: BondId,
         endpoint: AtomId,
@@ -164,9 +172,22 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
         report.candidates.extend(double_bond_candidates(mol));
     }
     if options.assemble_source_marks {
+        let mut used_marks = Vec::<BondId>::new();
         report
             .assembled_elements
-            .extend(assemble_directional_double_bonds(mol, &mut report.issues));
+            .extend(assemble_tetrahedral_wedges(
+                mol,
+                &mut report.issues,
+                &mut used_marks,
+            ));
+        report
+            .assembled_elements
+            .extend(assemble_directional_double_bonds(
+                mol,
+                &mut report.issues,
+                &mut used_marks,
+            ));
+        report_unassembled_source_marks(mol, &used_marks, &mut report.issues);
     }
     report
 }
@@ -363,6 +384,29 @@ fn tetrahedral_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     candidates
 }
 
+fn tetrahedral_carriers(mol: &Molecule, center: AtomId) -> Option<Vec<StereoCarrier>> {
+    let atom = mol.atom(center).ok()?;
+    if atom.element.symbol() == "H" {
+        return None;
+    }
+    let mut carriers = Vec::new();
+    for (_, bond) in mol.incident_bonds(center).ok()? {
+        if bond.order != BondOrder::Single {
+            return None;
+        }
+        carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
+    }
+    carriers.sort_by_key(carrier_key);
+    let hydrogens = hydrogen_count(mol, center);
+    if hydrogens > 1 || carriers.len() + usize::from(hydrogens) != 4 {
+        return None;
+    }
+    if hydrogens == 1 {
+        carriers.push(StereoCarrier::ImplicitHydrogen);
+    }
+    Some(carriers)
+}
+
 fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol.bonds() {
@@ -411,12 +455,128 @@ fn double_bond_endpoint_carriers(
     carriers
 }
 
+fn assemble_tetrahedral_wedges(
+    mol: &Molecule,
+    issues: &mut Vec<StereoPerceptionIssue>,
+    used_marks: &mut Vec<BondId>,
+) -> Vec<StereoElement> {
+    let mut marks = Vec::<TetrahedralWedgeMark<'_>>::new();
+    for mark in mol.stereo_bond_marks() {
+        if !matches!(
+            mark.kind,
+            StereoBondMarkKind::WedgeUp
+                | StereoBondMarkKind::WedgeDown
+                | StereoBondMarkKind::WedgeEither
+        ) {
+            continue;
+        }
+        let Ok(bond) = mol.bond(mark.bond) else {
+            continue;
+        };
+        if bond.order != BondOrder::Single {
+            continue;
+        }
+        marks.push(TetrahedralWedgeMark {
+            center: bond.a(),
+            carrier: bond.b(),
+            mark,
+        });
+    }
+    marks.sort_by_key(|mark| (mark.center, mark.mark.bond));
+
+    let mut assembled = Vec::new();
+    let mut start = 0;
+    while start < marks.len() {
+        let center = marks[start].center;
+        let end = marks[start..]
+            .iter()
+            .position(|mark| mark.center != center)
+            .map_or(marks.len(), |offset| start + offset);
+        let center_marks = &marks[start..end];
+        if has_tetrahedral_element(mol, center) {
+            used_marks.extend(center_marks.iter().map(|mark| mark.mark.bond));
+            start = end;
+            continue;
+        }
+        if center_marks.len() > 1 {
+            issues.push(StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks {
+                center,
+                mark_count: center_marks.len(),
+            });
+            start = end;
+            continue;
+        }
+        let mark = center_marks[0];
+        if let Some(carriers) = tetrahedral_carriers_from_wedge(mol, center, mark.carrier) {
+            used_marks.push(mark.mark.bond);
+            assembled.push(tetrahedral_element_from_wedge(mark.mark, center, carriers));
+        }
+        start = end;
+    }
+    assembled
+}
+
+#[derive(Clone, Copy)]
+struct TetrahedralWedgeMark<'a> {
+    center: AtomId,
+    carrier: AtomId,
+    mark: &'a StereoBondMark,
+}
+
+fn tetrahedral_carriers_from_wedge(
+    mol: &Molecule,
+    center: AtomId,
+    marked_carrier: AtomId,
+) -> Option<Vec<StereoCarrier>> {
+    let marked = StereoCarrier::Atom(marked_carrier);
+    let mut carriers = tetrahedral_carriers(mol, center)?;
+    if !carriers.contains(&marked) {
+        return None;
+    }
+    carriers.retain(|carrier| *carrier != marked);
+    carriers.insert(0, marked);
+    Some(carriers)
+}
+
+fn tetrahedral_element_from_wedge(
+    mark: &StereoBondMark,
+    center: AtomId,
+    carriers: Vec<StereoCarrier>,
+) -> StereoElement {
+    let (specifiedness, orientation) = match mark.kind {
+        StereoBondMarkKind::WedgeUp => (
+            StereoSpecifiedness::Specified,
+            TetrahedralOrientation::Clockwise,
+        ),
+        StereoBondMarkKind::WedgeDown => (
+            StereoSpecifiedness::Specified,
+            TetrahedralOrientation::CounterClockwise,
+        ),
+        StereoBondMarkKind::WedgeEither => (
+            StereoSpecifiedness::Unknown,
+            TetrahedralOrientation::Clockwise,
+        ),
+        _ => unreachable!("non-wedge mark passed to tetrahedral wedge assembly"),
+    };
+    StereoElement {
+        kind: StereoElementKind::Tetrahedral(TetrahedralStereo {
+            center,
+            carriers,
+            orientation,
+        }),
+        specifiedness,
+        source: mark.source,
+        group: None,
+        descriptor: None,
+    }
+}
+
 fn assemble_directional_double_bonds(
     mol: &Molecule,
     issues: &mut Vec<StereoPerceptionIssue>,
+    used_marks: &mut Vec<BondId>,
 ) -> Vec<StereoElement> {
     let mut assembled = Vec::new();
-    let mut used_marks = Vec::<BondId>::new();
     for (bond_id, bond) in mol.bonds() {
         if bond.order != BondOrder::Double || has_double_bond_element(mol, bond_id) {
             continue;
@@ -461,7 +621,14 @@ fn assemble_directional_double_bonds(
             common_source(left_mark.mark.source, right_mark.mark.source),
         ));
     }
+    assembled
+}
 
+fn report_unassembled_source_marks(
+    mol: &Molecule,
+    used_marks: &[BondId],
+    issues: &mut Vec<StereoPerceptionIssue>,
+) {
     for mark in mol.stereo_bond_marks() {
         match mark.kind {
             StereoBondMarkKind::DirectionalUp | StereoBondMarkKind::DirectionalDown => {
@@ -473,8 +640,15 @@ fn assemble_directional_double_bonds(
             }
             StereoBondMarkKind::WedgeUp
             | StereoBondMarkKind::WedgeDown
-            | StereoBondMarkKind::WedgeEither
-            | StereoBondMarkKind::DoubleBondEither => {
+            | StereoBondMarkKind::WedgeEither => {
+                if !used_marks.contains(&mark.bond) {
+                    issues.push(StereoPerceptionIssue::UnassembledTetrahedralBondMark {
+                        bond: mark.bond,
+                        kind: mark.kind,
+                    });
+                }
+            }
+            StereoBondMarkKind::DoubleBondEither => {
                 issues.push(StereoPerceptionIssue::UnsupportedSourceBondMark {
                     bond: mark.bond,
                     kind: mark.kind,
@@ -482,7 +656,6 @@ fn assemble_directional_double_bonds(
             }
         }
     }
-    assembled
 }
 
 #[derive(Clone, Copy)]
@@ -528,6 +701,15 @@ fn has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {
         matches!(
             &element.kind,
             StereoElementKind::DoubleBond(stereo) if stereo.bond == bond
+        )
+    })
+}
+
+fn has_tetrahedral_element(mol: &Molecule, center: AtomId) -> bool {
+    mol.stereo_elements().any(|(_, element)| {
+        matches!(
+            &element.kind,
+            StereoElementKind::Tetrahedral(stereo) if stereo.center == center
         )
     })
 }
