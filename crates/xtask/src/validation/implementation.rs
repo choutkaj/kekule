@@ -169,6 +169,15 @@ pub(crate) fn implementation_expected(
                     .collect::<Vec<_>>()
             }))
         }
+        "stereo.cip" => {
+            let mut records = read_stereo_records_by_suffix(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter_mut()
+                    .map(stereo_cip_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
         _ => Err(boxed_error(format!(
             "no implementation comparison configured for feature `{feature}`"
         ))),
@@ -409,6 +418,31 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
         "atom_count": mol.atom_count(),
         "bond_count": mol.bond_count(),
         "report": stereo_perception_report_json(&report),
+        "stereo_elements": stereo_elements_json(mol),
+        "stereo_groups": stereo_groups_json(mol),
+        "stereo_bond_marks": stereo_bond_marks_json(mol),
+    })
+}
+
+pub(crate) fn stereo_cip_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let sanitize =
+        perception::sanitize_with_options(&mut record.molecule, SanitizeOptions::default());
+    if sanitize.is_err() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+        });
+    }
+    let report = stereo::assign_cip_descriptors(record.molecule.graph_mut());
+    let mol = record.molecule.graph();
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "report": cip_assignment_report_json(&report),
         "stereo_elements": stereo_elements_json(mol),
         "stereo_groups": stereo_groups_json(mol),
         "stereo_bond_marks": stereo_bond_marks_json(mol),
@@ -1034,6 +1068,58 @@ pub(crate) fn stereo_perception_report_json(report: &StereoPerceptionReport) -> 
             .map(|id| id.raw())
             .collect::<Vec<_>>(),
     })
+}
+
+pub(crate) fn cip_assignment_report_json(report: &CipAssignmentReport) -> Value {
+    json!({
+        "is_ok": report.is_ok(),
+        "assigned": report
+            .assigned
+            .iter()
+            .map(|assignment| json!({
+                "element_index": assignment.element.raw(),
+                "descriptor": stereo_descriptor_json(assignment.descriptor),
+            }))
+            .collect::<Vec<_>>(),
+        "skipped": report
+            .skipped
+            .iter()
+            .map(|skipped| json!({
+                "element_index": skipped.element.raw(),
+                "reason": cip_skipped_reason_json(skipped.reason),
+            }))
+            .collect::<Vec<_>>(),
+        "issues": report
+            .issues
+            .iter()
+            .map(cip_assignment_issue_json)
+            .collect::<Vec<_>>(),
+    })
+}
+
+pub(crate) fn cip_assignment_issue_json(issue: &CipAssignmentIssue) -> Value {
+    match issue {
+        CipAssignmentIssue::InvalidStereo { issue } => json!({
+            "type": "invalid_stereo",
+            "issue": stereo_perception_issue_json(issue),
+        }),
+        CipAssignmentIssue::UnresolvedPriority { element } => json!({
+            "type": "unresolved_priority",
+            "element_index": element.raw(),
+        }),
+        CipAssignmentIssue::ResourceLimitExceeded { element, max_nodes } => json!({
+            "type": "resource_limit_exceeded",
+            "element_index": element.raw(),
+            "max_nodes": max_nodes,
+        }),
+    }
+}
+
+pub(crate) fn cip_skipped_reason_json(reason: CipSkippedReason) -> &'static str {
+    match reason {
+        CipSkippedReason::NotSpecified => "not_specified",
+        CipSkippedReason::UnsupportedAxis => "unsupported_axis",
+    }
 }
 
 pub(crate) fn stereo_candidate_json(candidate: &StereoCandidate) -> Value {

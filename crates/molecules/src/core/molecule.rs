@@ -534,6 +534,7 @@ impl Molecule {
 
     pub fn invalidate_topology(&mut self) {
         self.perception.invalidate_all();
+        self.clear_stereo_descriptors();
         self.ring_membership = None;
         self.ring_set = None;
     }
@@ -546,6 +547,13 @@ impl Molecule {
 
     pub(crate) fn invalidate_stereo(&mut self) {
         self.perception.stereo = invalidate(self.perception.stereo);
+        self.clear_stereo_descriptors();
+    }
+
+    fn clear_stereo_descriptors(&mut self) {
+        for element in self.stereo_elements.iter_mut().flatten() {
+            element.descriptor = None;
+        }
     }
 
     fn validate_stereo_element_refs(&self, element: &StereoElement) -> Result<()> {

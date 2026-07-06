@@ -140,8 +140,10 @@ pub mod perception {
 
     pub mod stereo {
         pub use crate::algorithms::{
-            perceive_stereo, perceive_stereo_with_options, validate_stereo,
-            validate_stereo_with_options, StereoCandidate, StereoPerceptionIssue,
+            assign_cip_descriptors, assign_cip_descriptors_with_options, perceive_stereo,
+            perceive_stereo_with_options, validate_stereo, validate_stereo_with_options,
+            CipAssignment, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
+            CipSkipped, CipSkippedReason, StereoCandidate, StereoPerceptionIssue,
             StereoPerceptionOptions, StereoPerceptionReport,
         };
     }

@@ -21,7 +21,10 @@ use molecules::{
         self,
         aromaticity::{self, AromaticityModel},
         rings,
-        stereo::{self, StereoCandidate, StereoPerceptionIssue, StereoPerceptionReport},
+        stereo::{
+            self, CipAssignmentIssue, CipAssignmentReport, CipSkippedReason, StereoCandidate,
+            StereoPerceptionIssue, StereoPerceptionReport,
+        },
         valence::{self, ValenceModel},
         SanitizeError, SanitizeOptions,
     },
