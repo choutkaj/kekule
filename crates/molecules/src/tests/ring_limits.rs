@@ -170,6 +170,7 @@ fn ring_resource_errors_propagate_transactionally() {
             perceive_valence: false,
             perceive_rings: true,
             perceive_aromaticity: false,
+            perceive_stereo: false,
         },
         ring_options,
     )

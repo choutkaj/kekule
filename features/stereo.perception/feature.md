@@ -3,7 +3,7 @@
 ## Summary
 
 Validate graph-local stereo elements, detect candidate stereochemical units,
-and assemble supported source marks into local stereo elements.
+and assign local stereo elements from supported source marks and coordinates.
 
 ## Behavior/API
 
@@ -15,8 +15,9 @@ and assemble supported source marks into local stereo elements.
   potential tetrahedral atom candidates, potential double-bond candidates, and
   source-mark assembly diagnostics without mutating the graph.
 - `perceive_stereo` is mutating. It runs the same checks, assembles supported
-  source marks into first-class stereo elements, records created stereo element
-  IDs, and marks stereo perception fresh.
+  source marks and supported coordinate geometry into first-class stereo
+  elements, records created stereo element IDs, and marks stereo perception
+  fresh.
 - Candidate detection uses current graph and hydrogen state. Sanitization or
   valence perception should run first when implicit hydrogens matter.
 - Tetrahedral candidates are local geometry candidates only; no exact ligand
@@ -28,26 +29,33 @@ and assemble supported source marks into local stereo elements.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
   local stereo center and the marked carrier is placed first in carrier order.
-- Coordinate-derived assignment remains out of scope.
+- Coordinate-derived assignment uses the first conformer conservatively. It
+  assigns tetrahedral stereo only when all four carriers are explicit atoms
+  with nondegenerate 3D coordinates, and assigns double-bond stereo only when
+  each side has exactly one explicit atom carrier with nondegenerate 2D or 3D
+  geometry. It does not infer coordinates for implicit hydrogens.
 
 ## Implementation Notes
 
 This feature identifies candidate tetrahedral atoms and double bonds, validates
 existing local stereo elements against current topology and hydrogen semantics,
 assembles SMILES-style paired directional bond marks, and assembles supported
-Molfile tetrahedral wedge/either source marks. It does not assign exact CIP
-descriptors directly; that belongs to `stereo.cip`.
+Molfile tetrahedral wedge/either source marks. Coordinate-derived assignment is
+local and conservative; exact CIP descriptors belong to `stereo.cip`.
 
 Small-molecule perception should run as an explicit staged workflow and may be
-integrated into sanitization later. It should not run over whole
-`MacroMolecule` structures by default.
+run from the small-molecule sanitizer when `SanitizeOptions::perceive_stereo`
+is enabled. The sanitizer uses the source-mark assembly subset and leaves
+coordinate-derived assignment to explicit stereo perception calls. It should not
+run over whole `MacroMolecule` structures by default.
 
 ## Validation
 
 - Unit tests cover read-only validation, candidate detection after sanitization,
   directional double-bond assembly, Molfile wedge/either assembly, unsupported
-  source-mark diagnostics, and preservation of explicit unknown versus absent
-  stereo.
+  source-mark diagnostics, coordinate-derived tetrahedral and double-bond
+  assignment, sanitizer integration, transactional rollback, and preservation
+  of explicit unknown versus absent stereo.
 - Smoke validation records semantic perception JSON for externally pinned
   PubChem fixtures covering absent stereo, stored tetrahedral stereo, and
   directional double-bond source-mark assembly.
@@ -55,8 +63,8 @@ integrated into sanitization later. It should not run over whole
 ## Out Of Scope
 
 Exact CIP descriptors, isomeric SMILES writing, enhanced stereo serialization,
-coordinate-derived stereo assignment, stereo enumeration, and reaction stereo
-transfer.
+implicit-hydrogen coordinate reconstruction, stereo enumeration, and reaction
+stereo transfer.
 
 ## Revision Notes
 
@@ -68,3 +76,8 @@ transfer.
 - v3: Assemble supported Molfile wedge up/down source marks into specified
   tetrahedral elements and wedge/either source marks into explicit unknown
   tetrahedral elements.
+- v4: Integrate stereo perception into the explicit small-molecule sanitization
+  pipeline with opt-out options, reporting, freshness-state handling, and
+  transactional rollback on stereo issues.
+- v5: Add conservative coordinate-derived local assignment for explicit-atom
+  tetrahedral centers and double bonds using the first conformer.

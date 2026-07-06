@@ -9,6 +9,7 @@ pub struct SanitizeOptions {
     pub perceive_valence: bool,
     pub perceive_rings: bool,
     pub perceive_aromaticity: bool,
+    pub perceive_stereo: bool,
 }
 
 impl Default for SanitizeOptions {
@@ -17,6 +18,7 @@ impl Default for SanitizeOptions {
             perceive_valence: true,
             perceive_rings: true,
             perceive_aromaticity: true,
+            perceive_stereo: true,
         }
     }
 }
@@ -25,6 +27,7 @@ impl Default for SanitizeOptions {
 pub struct SanitizeReport {
     pub valence: Option<ValenceReport>,
     pub ring_count: Option<usize>,
+    pub stereo: Option<StereoPerceptionReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +35,7 @@ pub enum SanitizeError {
     Valence(ValenceReport),
     Rings(RingPerceptionError),
     Aromaticity(AromaticityError),
+    Stereo(StereoPerceptionReport),
 }
 
 impl fmt::Display for SanitizeError {
@@ -44,6 +48,11 @@ impl fmt::Display for SanitizeError {
             ),
             Self::Rings(error) => write!(f, "{error}"),
             Self::Aromaticity(error) => write!(f, "{error}"),
+            Self::Stereo(report) => write!(
+                f,
+                "stereo perception reported {} issue(s)",
+                report.issues.len()
+            ),
         }
     }
 }
@@ -101,10 +110,26 @@ pub fn sanitize_small_molecule_with_ring_options(
             staged.graph_mut_raw().ring_set = None;
         }
     }
+    let stereo = if options.perceive_stereo {
+        let report = perceive_stereo_with_options(
+            staged.graph_mut_raw(),
+            StereoPerceptionOptions {
+                assign_coordinates: false,
+                ..StereoPerceptionOptions::default()
+            },
+        );
+        if !report.is_ok() {
+            return Err(SanitizeError::Stereo(report));
+        }
+        Some(report)
+    } else {
+        None
+    };
     *molecule = staged;
     Ok(SanitizeReport {
         valence,
         ring_count,
+        stereo,
     })
 }
 
@@ -119,6 +144,9 @@ fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {
     }
     if !options.perceive_aromaticity {
         mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
+    }
+    if !options.perceive_stereo {
+        mol.perception.stereo = invalidate(mol.perception.stereo);
     }
 }
 
