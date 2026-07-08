@@ -364,25 +364,25 @@ fn rank_s4_tetrahedral_signatures_with_rule6(
     signatures: &[(StereoCarrier, LigandSignature)],
     group: &[usize],
 ) -> CipResult<RankedCarriers> {
-    let Some(first_reference) = group
-        .first()
-        .and_then(|index| carrier_rule6_atom(signatures[*index].0))
-    else {
-        return Err(CipAssignmentIssue::UnresolvedPriority { element });
-    };
-    let Some(second_reference) = group
-        .get(1)
-        .and_then(|index| carrier_rule6_atom(signatures[*index].0))
-    else {
-        return Err(CipAssignmentIssue::UnresolvedPriority { element });
-    };
-    let first = rank_carrier_signatures(element, signatures, Some(first_reference))?;
-    let second = rank_carrier_signatures(element, signatures, Some(second_reference))?;
-    if carrier_permutation_is_odd(&first.carriers, &second.carriers).unwrap_or(true) {
-        Err(CipAssignmentIssue::UnresolvedPriority { element })
-    } else {
-        Ok(second)
+    let mut stable_ranking: Option<RankedCarriers> = None;
+    for index in group {
+        let Some(reference) = carrier_rule6_atom(signatures[*index].0) else {
+            continue;
+        };
+        let ranking = match rank_carrier_signatures(element, signatures, Some(reference)) {
+            Ok(ranking) => ranking,
+            Err(CipAssignmentIssue::UnresolvedPriority { .. }) => continue,
+            Err(issue) => return Err(issue),
+        };
+        if let Some(stable) = &stable_ranking {
+            if carrier_permutation_is_odd(&stable.carriers, &ranking.carriers).unwrap_or(true) {
+                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            }
+        } else {
+            stable_ranking = Some(ranking);
+        }
     }
+    stable_ranking.ok_or(CipAssignmentIssue::UnresolvedPriority { element })
 }
 
 fn grouped_signature_indices(signatures: &[(StereoCarrier, LigandSignature)]) -> Vec<Vec<usize>> {
@@ -2031,6 +2031,72 @@ mod tests {
             ]
         );
         assert!(!ranked.pseudo_asymmetric_ordering);
+    }
+
+    fn s4_rule6_signatures(
+        child_reference_counts: [[usize; 4]; 4],
+    ) -> Vec<(StereoCarrier, LigandSignature)> {
+        let carriers = [
+            AtomId::new(0),
+            AtomId::new(1),
+            AtomId::new(2),
+            AtomId::new(3),
+        ];
+        carriers
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(carrier_index, carrier)| {
+                let mut children = Vec::new();
+                for (reference_index, reference) in carriers.iter().copied().enumerate() {
+                    for _ in 0..child_reference_counts[carrier_index][reference_index] {
+                        children.push(LigandTree {
+                            priority: node_priority_with_rule6_atom(1, reference),
+                            children: Vec::new(),
+                        });
+                    }
+                }
+                (
+                    StereoCarrier::Atom(carrier),
+                    signature(LigandTree {
+                        priority: node_priority_with_rule6_atom(6, carrier),
+                        children,
+                    }),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rule6_s4_retry_accepts_parity_stable_reference_rankings() {
+        let signatures =
+            s4_rule6_signatures([[0, 2, 0, 2], [2, 0, 2, 0], [1, 0, 2, 1], [0, 1, 1, 2]]);
+
+        let ranked = rank_tetrahedral_signatures_with_rule6(StereoElementId::new(0), &signatures)
+            .expect("Rule 6 should accept parity-stable S4 rankings");
+
+        assert_eq!(
+            ranked.carriers,
+            vec![
+                StereoCarrier::Atom(AtomId::new(0)),
+                StereoCarrier::Atom(AtomId::new(1)),
+                StereoCarrier::Atom(AtomId::new(2)),
+                StereoCarrier::Atom(AtomId::new(3)),
+            ]
+        );
+        assert!(!ranked.pseudo_asymmetric_ordering);
+    }
+
+    #[test]
+    fn rule6_s4_retry_rejects_parity_unstable_reference_rankings() {
+        let element = StereoElementId::new(0);
+        let signatures =
+            s4_rule6_signatures([[0, 2, 1, 1], [2, 0, 0, 2], [1, 1, 2, 0], [0, 0, 2, 2]]);
+
+        let issue = rank_tetrahedral_signatures_with_rule6(element, &signatures)
+            .expect_err("odd reference permutations must remain unresolved");
+
+        assert_eq!(issue, CipAssignmentIssue::UnresolvedPriority { element });
     }
 
     #[test]

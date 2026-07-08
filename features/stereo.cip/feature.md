@@ -29,10 +29,11 @@ is valid and carrier priorities are unique under the implemented bounded
 ranking rules, including isotope priority, E/Z descriptor priority, descriptor
 class and pair priority, and RDKit-like mancude fractional priority for bond
 duplicate nodes. Rule helpers also understand stored `seqCis`/`seqTrans`
-descriptor values for RDKit-like sequence-rule ordering. Unspecified, unknown,
-or invalid-cleared elements are skipped. Axis elements, invalid local stereo,
-unresolved priorities, and resource-limit exhaustion are reported without
-assigning lossy descriptors.
+descriptor values for RDKit-like sequence-rule ordering and use a
+parity-stable symmetric S4-style Rule 6 retry for fully equivalent
+tetrahedral carrier sets. Unspecified, unknown, or invalid-cleared elements
+are skipped. Axis elements, invalid local stereo, unresolved priorities, and
+resource-limit exhaustion are reported without assigning lossy descriptors.
 
 ## Implementation Notes
 
@@ -65,7 +66,10 @@ nodes do not carry isotope mass, duplicate nodes for higher-order bonds back to
 the original stereocenter are suppressed, bond duplicates carry the parent
 atom's mancude fraction when it is fractional, and negative atoms with
 fractional mancude atomic numbers receive one terminal duplicate child
-following RDKit's digraph expansion rule.
+following RDKit's digraph expansion rule. For fully equivalent tetrahedral
+carrier sets, Rule 6 retries all atom carriers that can produce a complete
+ranking and accepts the result only when every successful reference choice
+preserves the same carrier permutation parity.
 
 Assignment is descriptor-aware and iterative. Descriptors that are unique under
 constitutional rules are assigned first, then previously unresolved elements
@@ -90,7 +94,8 @@ reference-atom tie breaking for tetrahedral retry ranking, isotope priority,
 Rule 1b duplicate-node ordering, negative-fraction duplicate expansion,
 implicit lone-pair carriers, unsupported double-bond stereo exclusions,
 unresolved equivalent ligands, bounded resource failures, and descriptor
-invalidation after mutation.
+invalidation after mutation. Targeted Rule 6 regressions cover both
+parity-stable and parity-unstable symmetric S4-style reference retries.
 
 Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
 supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
@@ -110,10 +115,11 @@ descriptor-bearing coverage.
 
 Full exact machine-oriented CIP coverage remains out of scope for this version:
 perception or assignment of sequence cis/trans descriptors, kekulization of
-aromatic-only inputs for mancude parity, exact symmetric S4-style Rule 6
-fallback behavior, axial `M`/`P`, non-tetrahedral geometries, enhanced stereo
-relation semantics, parity beyond the current descriptor-bearing validation
-corpora, isomeric SMILES emission, and stereo enumeration.
+aromatic-only inputs for mancude parity, remaining exact Rule 6 edge cases
+beyond the parity-stable tetrahedral fallback, axial `M`/`P`,
+non-tetrahedral geometries, enhanced stereo relation semantics, parity beyond
+the current descriptor-bearing validation corpora, isomeric SMILES emission,
+and stereo enumeration.
 
 ## Revision Notes
 
@@ -156,3 +162,5 @@ corpora, isomeric SMILES emission, and stereo enumeration.
   including Rule 4a class and Rule 4b/5 descriptor-family handling.
 - v16: Add RDKit-like mancude fractional atomic-number comparison for Rule 1a
   and negative-fraction duplicate expansion in the ligand digraph.
+- v17: Generalize symmetric tetrahedral Rule 6 retry to test all successful
+  atom-reference rankings and reject parity-unstable S4 outcomes.
