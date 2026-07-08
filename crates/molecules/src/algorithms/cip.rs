@@ -298,6 +298,7 @@ impl LigandTree {
             SequenceRule::Rule1b,
             SequenceRule::Rule2,
             SequenceRule::Rule3,
+            SequenceRule::Rule4a,
         ] {
             let priority = self.recursive_compare(other, rule);
             if priority != Ordering::Equal {
@@ -377,6 +378,7 @@ enum SequenceRule {
     Rule1b,
     Rule2,
     Rule3,
+    Rule4a,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,6 +404,8 @@ impl NodePriority {
             SequenceRule::Rule2 => self.isotope.cmp(&other.isotope),
             SequenceRule::Rule3 => rule3_descriptor_priority(self.descriptor)
                 .cmp(&rule3_descriptor_priority(other.descriptor)),
+            SequenceRule::Rule4a => rule4a_descriptor_priority(self.descriptor)
+                .cmp(&rule4a_descriptor_priority(other.descriptor)),
         }
     }
 }
@@ -690,6 +694,20 @@ fn rule3_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
     }
 }
 
+fn rule4a_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
+    match descriptor {
+        Some(StereoDescriptor::R)
+        | Some(StereoDescriptor::S)
+        | Some(StereoDescriptor::M)
+        | Some(StereoDescriptor::P) => 2,
+        Some(StereoDescriptor::LowerR)
+        | Some(StereoDescriptor::LowerS)
+        | Some(StereoDescriptor::E)
+        | Some(StereoDescriptor::Z) => 1,
+        None => 0,
+    }
+}
+
 fn double_bond_endpoint_carriers(
     mol: &Molecule,
     endpoint: AtomId,
@@ -759,6 +777,13 @@ mod tests {
         }
     }
 
+    fn node_priority_with_descriptor(descriptor: StereoDescriptor) -> NodePriority {
+        NodePriority {
+            descriptor: Some(descriptor),
+            ..node_priority(6, 0, 0)
+        }
+    }
+
     fn one_node_signature(rule1b: u32, isotope: u16) -> LigandTree {
         LigandTree {
             priority: node_priority(6, rule1b, isotope),
@@ -786,6 +811,23 @@ mod tests {
 
         assert_eq!(root_reference.compare(&deeper_reference), Ordering::Greater);
         assert_eq!(deeper_reference.compare(&root_reference), Ordering::Less);
+    }
+
+    #[test]
+    fn rule4a_prefers_uppercase_sequence_descriptors_over_pseudo_descriptors() {
+        let uppercase = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::R),
+            children: Vec::new(),
+        });
+        let pseudo = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::LowerR),
+            children: Vec::new(),
+        });
+        let unlabeled = signature(one_node_signature(0, 0));
+
+        assert_eq!(uppercase.compare(&pseudo), Ordering::Greater);
+        assert_eq!(pseudo.compare(&unlabeled), Ordering::Greater);
+        assert_eq!(unlabeled.compare(&uppercase), Ordering::Less);
     }
 
     #[test]
