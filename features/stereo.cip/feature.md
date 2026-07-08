@@ -48,11 +48,13 @@ considered only after both earlier rules remain tied; and Rule 3 orders
 embedded `Z` descriptors before embedded `E` descriptors before unlabeled
 double bonds. Rule 4a orders uppercase sequence descriptors (`R`/`S`/`M`/`P`)
 before pseudo or geometric descriptors (`r`/`s`/`E`/`Z`) before unlabeled
-nodes; Rule 4c orders pseudoasymmetric `r` before `s`; and Rule 5 uses
-descriptor-pair lists over the `R`/`M` versus `S`/`P` descriptor families so
-like descriptor pairs outrank unlike pairs. Duplicate nodes do not carry
-isotope mass, and duplicate nodes for higher-order bonds back to the original
-stereocenter are suppressed.
+nodes; Rule 4b derives a reference descriptor from the first
+descriptor-bearing equivalent ligand level and compares like versus unlike
+descriptor families relative to that reference; Rule 4c orders
+pseudoasymmetric `r` before `s`; and Rule 5 uses descriptor-pair lists over
+the `R`/`M` versus `S`/`P` descriptor families so like descriptor pairs outrank
+unlike pairs. Duplicate nodes do not carry isotope mass, and duplicate nodes
+for higher-order bonds back to the original stereocenter are suppressed.
 
 Assignment is descriptor-aware and iterative. Descriptors that are unique under
 constitutional rules are assigned first, then previously unresolved elements
@@ -69,11 +71,12 @@ stereo or when the implemented ranking rules cannot distinguish carriers.
 
 Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
 Rule 1a/1b/2 ordering, Rule 3 embedded E/Z ordering, Rule 4a descriptor-class
-ordering, Rule 4c pseudo-descriptor ordering, Rule 5 descriptor-pair ordering,
-pseudoasymmetric tetrahedral `r`/`s` assignment, isotope priority, Rule 1b
-duplicate-node ordering, implicit lone-pair carriers, unsupported double-bond
-stereo exclusions, unresolved equivalent ligands, bounded resource failures,
-and descriptor invalidation after mutation.
+ordering, Rule 4b reference-descriptor and like/unlike pairing, Rule 4c
+pseudo-descriptor ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric
+tetrahedral `r`/`s` assignment, isotope priority, Rule 1b duplicate-node
+ordering, implicit lone-pair carriers, unsupported double-bond stereo
+exclusions, unresolved equivalent ligands, bounded resource failures, and
+descriptor invalidation after mutation.
 
 Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
 supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
@@ -92,11 +95,11 @@ descriptor-bearing coverage.
 ## Out Of Scope
 
 Full exact machine-oriented CIP coverage remains out of scope for this version:
-Rule 4b reference-descriptor majority handling, `seqCis`/`seqTrans`, mancude
-and fractional atomic numbers, Rule 6 duplicate-reference tie breaking, axial
-`M`/`P`, non-tetrahedral geometries, enhanced stereo relation semantics,
-parity beyond the current descriptor-bearing validation corpora, isomeric
-SMILES emission, and stereo enumeration.
+`seqCis`/`seqTrans`, mancude and fractional atomic numbers, Rule 6
+duplicate-reference tie breaking, axial `M`/`P`, non-tetrahedral geometries,
+enhanced stereo relation semantics, parity beyond the current
+descriptor-bearing validation corpora, isomeric SMILES emission, and stereo
+enumeration.
 
 ## Revision Notes
 
@@ -131,3 +134,5 @@ SMILES emission, and stereo enumeration.
   descriptors versus pseudo/geometric descriptors.
 - v12: Add Rule 4c pseudo-descriptor ordering, Rule 5 descriptor-pair ordering,
   and pseudoasymmetric tetrahedral `r`/`s` assignment.
+- v13: Add Rule 4b reference-descriptor selection and like/unlike descriptor
+  family comparison.

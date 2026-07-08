@@ -320,6 +320,7 @@ impl LigandTree {
             SequenceRule::Rule2,
             SequenceRule::Rule3,
             SequenceRule::Rule4a,
+            SequenceRule::Rule4b,
             SequenceRule::Rule4c,
             SequenceRule::Rule5,
         ] {
@@ -333,6 +334,7 @@ impl LigandTree {
 
     fn compare_by_sequence_rule(&self, other: &Self, rule: SequenceRule) -> LigandComparison {
         match rule {
+            SequenceRule::Rule4b => self.rule4b_reference_comparison(other),
             SequenceRule::Rule5 => self.rule5_pair_comparison(other),
             _ => LigandComparison::from_ordering(self.recursive_compare(other, rule)),
         }
@@ -377,12 +379,164 @@ impl LigandTree {
             SequenceRule::Rule2,
             SequenceRule::Rule3,
             SequenceRule::Rule4a,
+            SequenceRule::Rule4b,
+            SequenceRule::Rule4c,
+        ] {
+            let priority = self.compare_by_sequence_rule(other, rule).ordering;
+            if priority != Ordering::Equal {
+                return priority;
+            }
+        }
+        Ordering::Equal
+    }
+
+    fn compare_before_rule4b(&self, other: &Self) -> Ordering {
+        for rule in [
+            SequenceRule::Rule1a,
+            SequenceRule::Rule1b,
+            SequenceRule::Rule2,
+            SequenceRule::Rule3,
+            SequenceRule::Rule4a,
+        ] {
+            let priority = self.recursive_compare(other, rule);
+            if priority != Ordering::Equal {
+                return priority;
+            }
+        }
+        Ordering::Equal
+    }
+
+    fn compare_with_reference(&self, other: &Self, reference: DescriptorRef) -> Ordering {
+        self.compare_without_rule4b_or_rule5(other)
+            .then_with(|| self.fixed_reference_compare(other, reference))
+    }
+
+    fn compare_without_rule4b_or_rule5(&self, other: &Self) -> Ordering {
+        for rule in [
+            SequenceRule::Rule1a,
+            SequenceRule::Rule1b,
+            SequenceRule::Rule2,
+            SequenceRule::Rule3,
+            SequenceRule::Rule4a,
             SequenceRule::Rule4c,
         ] {
             let priority = self.recursive_compare(other, rule);
             if priority != Ordering::Equal {
                 return priority;
             }
+        }
+        Ordering::Equal
+    }
+
+    fn fixed_reference_compare(&self, other: &Self, reference: DescriptorRef) -> Ordering {
+        let priority = fixed_reference_priority(self.priority.descriptor, reference).cmp(
+            &fixed_reference_priority(other.priority.descriptor, reference),
+        );
+        if priority != Ordering::Equal {
+            return priority;
+        }
+
+        let mut queue = vec![(self, other)];
+        let mut position = 0usize;
+        while position < queue.len() {
+            let (left, right) = queue[position];
+            position += 1;
+
+            let left_children = left.children_sorted_by_reference(reference);
+            let right_children = right.children_sorted_by_reference(reference);
+            for (left_child, right_child) in left_children.iter().zip(&right_children) {
+                let priority =
+                    fixed_reference_priority(left_child.priority.descriptor, reference).cmp(
+                        &fixed_reference_priority(right_child.priority.descriptor, reference),
+                    );
+                if priority != Ordering::Equal {
+                    return priority;
+                }
+            }
+            let length = left_children.len().cmp(&right_children.len());
+            if length != Ordering::Equal {
+                return length;
+            }
+            for (left_child, right_child) in left_children.into_iter().zip(right_children) {
+                queue.push((left_child, right_child));
+            }
+        }
+        Ordering::Equal
+    }
+
+    fn rule4b_reference_comparison(&self, other: &Self) -> LigandComparison {
+        let left_refs = self.rule4b_reference_descriptors();
+        let right_refs = other.rule4b_reference_descriptors();
+        if left_refs.is_empty() || right_refs.is_empty() || left_refs.len() != right_refs.len() {
+            return LigandComparison::equal();
+        }
+
+        if left_refs.len() == 1 {
+            return LigandComparison::from_ordering(self.compare_pairs_for_references(
+                other,
+                left_refs[0],
+                right_refs[0],
+            ));
+        }
+
+        let mut left_lists = left_refs
+            .iter()
+            .copied()
+            .map(|reference| DescriptorPairList::collect_with_reference(self, reference))
+            .collect::<Vec<_>>();
+        let mut right_lists = right_refs
+            .iter()
+            .copied()
+            .map(|reference| DescriptorPairList::collect_with_reference(other, reference))
+            .collect::<Vec<_>>();
+        left_lists.sort_by(|left, right| right.compare_to(left));
+        right_lists.sort_by(|left, right| right.compare_to(left));
+        for (left, right) in left_lists.iter().zip(&right_lists) {
+            let comparison = left.compare_to(right);
+            if comparison != Ordering::Equal {
+                return LigandComparison::from_ordering(comparison);
+            }
+        }
+        LigandComparison::equal()
+    }
+
+    fn rule4b_reference_descriptors(&self) -> Vec<DescriptorRef> {
+        let mut level = vec![vec![self]];
+        while !level.is_empty() {
+            for group in &level {
+                if let Some(reference) = reference_descriptor_for_group(group) {
+                    return reference;
+                }
+            }
+            level = next_reference_level(&level);
+        }
+        Vec::new()
+    }
+
+    fn compare_pairs_for_references(
+        &self,
+        other: &Self,
+        left_reference: DescriptorRef,
+        right_reference: DescriptorRef,
+    ) -> Ordering {
+        let mut left_queue = vec![self];
+        let mut right_queue = vec![other];
+        let mut position = 0usize;
+        while position < left_queue.len() && position < right_queue.len() {
+            let left = left_queue[position];
+            let right = right_queue[position];
+            position += 1;
+
+            let left_like = descriptor_ref_matches(left.priority.descriptor, left_reference);
+            let right_like = descriptor_ref_matches(right.priority.descriptor, right_reference);
+            match (left_like, right_like) {
+                (true, false) => return Ordering::Greater,
+                (false, true) => return Ordering::Less,
+                _ => {}
+            }
+
+            left_queue.extend(left.children_sorted_by_reference(left_reference));
+            right_queue.extend(right.children_sorted_by_reference(right_reference));
         }
         Ordering::Equal
     }
@@ -418,6 +572,29 @@ impl LigandTree {
         }
         children
     }
+
+    fn children_sorted_by_reference(&self, reference: DescriptorRef) -> Vec<&LigandTree> {
+        let mut children = self.children.iter().collect::<Vec<_>>();
+        children.sort_by(|left, right| right.compare_with_reference(left, reference));
+        children
+    }
+
+    fn children_grouped_before_rule4b(&self) -> Vec<Vec<&LigandTree>> {
+        let mut children = self.children.iter().collect::<Vec<_>>();
+        children.sort_by(|left, right| right.compare_before_rule4b(left));
+
+        let mut groups: Vec<Vec<&LigandTree>> = Vec::new();
+        for child in children {
+            if let Some(last) = groups.last_mut() {
+                if last[0].compare_before_rule4b(child) == Ordering::Equal {
+                    last.push(child);
+                    continue;
+                }
+            }
+            groups.push(vec![child]);
+        }
+        groups
+    }
 }
 
 fn compare_child_priorities(
@@ -443,6 +620,7 @@ enum SequenceRule {
     Rule2,
     Rule3,
     Rule4a,
+    Rule4b,
     Rule4c,
     Rule5,
 }
@@ -495,6 +673,7 @@ impl NodePriority {
                 .cmp(&rule3_descriptor_priority(other.descriptor)),
             SequenceRule::Rule4a => rule4a_descriptor_priority(self.descriptor)
                 .cmp(&rule4a_descriptor_priority(other.descriptor)),
+            SequenceRule::Rule4b => Ordering::Equal,
             SequenceRule::Rule4c => rule4c_descriptor_priority(self.descriptor)
                 .cmp(&rule4c_descriptor_priority(other.descriptor)),
             SequenceRule::Rule5 => Ordering::Equal,
@@ -534,6 +713,22 @@ impl DescriptorPairList {
         list
     }
 
+    fn collect_with_reference(root: &LigandTree, reference: DescriptorRef) -> Self {
+        let mut list = Self {
+            reference,
+            descriptors: vec![reference],
+        };
+        let mut queue = vec![root];
+        let mut position = 0usize;
+        while position < queue.len() {
+            let node = queue[position];
+            position += 1;
+            list.add(node.priority.descriptor);
+            queue.extend(node.children_sorted_by_reference(reference));
+        }
+        list
+    }
+
     fn add(&mut self, descriptor: Option<StereoDescriptor>) {
         if let Some(reference) = descriptor.and_then(descriptor_ref) {
             self.descriptors.push(reference);
@@ -559,6 +754,71 @@ impl DescriptorPairList {
             }
         }
         Ordering::Equal
+    }
+}
+
+fn reference_descriptor_for_group(group: &[&LigandTree]) -> Option<Vec<DescriptorRef>> {
+    let mut right = 0usize;
+    let mut left = 0usize;
+    for node in group {
+        match node.priority.descriptor.and_then(descriptor_ref) {
+            Some(DescriptorRef::R) => right += 1,
+            Some(DescriptorRef::S) => left += 1,
+            None => {}
+        }
+    }
+    match right.cmp(&left) {
+        Ordering::Greater => Some(vec![DescriptorRef::R]),
+        Ordering::Less => Some(vec![DescriptorRef::S]),
+        Ordering::Equal if right > 0 => Some(vec![DescriptorRef::R, DescriptorRef::S]),
+        Ordering::Equal => None,
+    }
+}
+
+fn next_reference_level<'a>(previous: &[Vec<&'a LigandTree>]) -> Vec<Vec<&'a LigandTree>> {
+    let mut next = Vec::new();
+    for group in previous {
+        let mut grouped_children = Vec::new();
+        let mut group_count = None;
+        for node in group {
+            let children = node.children_grouped_before_rule4b();
+            if children.is_empty() {
+                continue;
+            }
+            if let Some(expected) = group_count {
+                if expected != children.len() {
+                    return Vec::new();
+                }
+            } else {
+                group_count = Some(children.len());
+            }
+            grouped_children.push(children);
+        }
+        let Some(group_count) = group_count else {
+            continue;
+        };
+        for index in 0..group_count {
+            let mut equivalent_nodes = Vec::new();
+            for children in &grouped_children {
+                equivalent_nodes.extend(children[index].iter().copied());
+            }
+            if !equivalent_nodes.is_empty() {
+                next.push(equivalent_nodes);
+            }
+        }
+    }
+    next
+}
+
+fn descriptor_ref_matches(descriptor: Option<StereoDescriptor>, reference: DescriptorRef) -> bool {
+    descriptor.and_then(descriptor_ref) == Some(reference)
+}
+
+fn fixed_reference_priority(descriptor: Option<StereoDescriptor>, reference: DescriptorRef) -> u8 {
+    match descriptor.and_then(descriptor_ref) {
+        Some(descriptor) if descriptor == reference => 2,
+        Some(_) => 1,
+        None => 0,
     }
 }
 
@@ -999,6 +1259,70 @@ mod tests {
         assert_eq!(uppercase.compare(&pseudo), Ordering::Greater);
         assert_eq!(pseudo.compare(&unlabeled), Ordering::Greater);
         assert_eq!(unlabeled.compare(&uppercase), Ordering::Less);
+    }
+
+    #[test]
+    fn rule4b_reference_descriptors_use_first_equivalent_descriptor_level() {
+        let majority_r = LigandTree {
+            priority: node_priority(6, 0, 0),
+            children: vec![
+                LigandTree {
+                    priority: node_priority_with_descriptor(StereoDescriptor::R),
+                    children: Vec::new(),
+                },
+                LigandTree {
+                    priority: node_priority_with_descriptor(StereoDescriptor::M),
+                    children: Vec::new(),
+                },
+                LigandTree {
+                    priority: node_priority_with_descriptor(StereoDescriptor::S),
+                    children: Vec::new(),
+                },
+            ],
+        };
+        let tied = LigandTree {
+            priority: node_priority(6, 0, 0),
+            children: vec![
+                LigandTree {
+                    priority: node_priority_with_descriptor(StereoDescriptor::R),
+                    children: Vec::new(),
+                },
+                LigandTree {
+                    priority: node_priority_with_descriptor(StereoDescriptor::P),
+                    children: Vec::new(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            majority_r.rule4b_reference_descriptors(),
+            vec![DescriptorRef::R]
+        );
+        assert_eq!(
+            tied.rule4b_reference_descriptors(),
+            vec![DescriptorRef::R, DescriptorRef::S]
+        );
+    }
+
+    #[test]
+    fn rule4b_fixed_reference_prefers_like_descriptor_families() {
+        let r_ligand = LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::R),
+            children: Vec::new(),
+        };
+        let s_ligand = LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::S),
+            children: Vec::new(),
+        };
+
+        assert_eq!(
+            r_ligand.compare_with_reference(&s_ligand, DescriptorRef::R),
+            Ordering::Greater
+        );
+        assert_eq!(
+            r_ligand.compare_with_reference(&s_ligand, DescriptorRef::S),
+            Ordering::Less
+        );
     }
 
     #[test]
