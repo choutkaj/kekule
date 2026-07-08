@@ -28,6 +28,7 @@ SUPPORTED_FEATURES = {
     "io.smiles.parse",
     "io.smiles.write",
     "io.smiles.canonical",
+    "stereo.cip",
 }
 
 
@@ -203,6 +204,9 @@ def generate_document(
     elif feature_id == "algo.aromaticity.rdkit-like":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [aromaticity_record(record) for record in records]}
+    elif feature_id == "stereo.cip":
+        records = read_stereo_cip_records(fixture_path, rdkit["Chem"])
+        expected = {"records": [stereo_cip_record(record, rdkit["Chem"]) for record in records]}
     else:
         raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
 
@@ -309,6 +313,43 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
             {
                 "record_index": index,
                 "status": "ok" if mol is not None else "parse_error",
+                "title": title,
+                "smiles": smiles,
+                "mol": mol,
+                "radicals": {},
+                "bond_stereo": {},
+            }
+        )
+    return records
+
+
+def read_stereo_cip_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
+    if fixture_path.suffix.lower() in {".smi", ".smiles", ".txt"}:
+        return read_stereo_cip_smiles_records(fixture_path, Chem)
+    return read_records_by_suffix(fixture_path, Chem)
+
+
+def read_stereo_cip_smiles_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=1)
+        smiles = parts[0]
+        title = parts[1] if len(parts) > 1 else ""
+        unsupported = "*" in smiles
+        mol = None if unsupported else Chem.MolFromSmiles(smiles, sanitize=True)
+        records.append(
+            {
+                "record_index": index,
+                "status": (
+                    "unsupported"
+                    if unsupported
+                    else "ok"
+                    if mol is not None
+                    else "parse_error"
+                ),
                 "title": title,
                 "smiles": smiles,
                 "mol": mol,
@@ -891,6 +932,70 @@ def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
         "atom_aromatic": [atom.GetIsAromatic() for atom in sanitized.GetAtoms()],
         "bond_aromatic": [bond.GetIsAromatic() for bond in sanitized.GetBonds()],
     }
+
+
+def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+            "title": record["title"],
+        }
+    prepared = Chem.Mol(mol)
+    try:
+        Chem.AssignCIPLabels(prepared)
+    except Exception:
+        return {
+            "record_index": record["record_index"],
+            "status": "cip_error",
+            "title": record["title"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atom_count": prepared.GetNumAtoms(),
+        "bond_count": prepared.GetNumBonds(),
+        "atom_descriptors": cip_atom_descriptors(prepared),
+        "bond_descriptors": cip_bond_descriptors(prepared),
+    }
+
+
+def cip_atom_descriptors(mol: Any) -> list[dict[str, Any]]:
+    descriptors = []
+    for atom in mol.GetAtoms():
+        if atom.HasProp("_CIPCode"):
+            descriptors.append(
+                {
+                    "atom_index": atom.GetIdx(),
+                    "descriptor": atom.GetProp("_CIPCode"),
+                }
+            )
+    descriptors.sort(key=lambda item: item["atom_index"])
+    return descriptors
+
+
+def cip_bond_descriptors(mol: Any) -> list[dict[str, Any]]:
+    descriptors = []
+    for bond in mol.GetBonds():
+        if bond.HasProp("_CIPCode"):
+            descriptors.append(
+                {
+                    "bond_index": bond.GetIdx(),
+                    "begin_atom_index": bond.GetBeginAtomIdx(),
+                    "end_atom_index": bond.GetEndAtomIdx(),
+                    "descriptor": bond.GetProp("_CIPCode"),
+                }
+            )
+    descriptors.sort(
+        key=lambda item: (
+            item["bond_index"],
+            item["begin_atom_index"],
+            item["end_atom_index"],
+        )
+    )
+    return descriptors
 
 
 def clone_and_sanitize(mol: Any) -> Any | None:

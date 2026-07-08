@@ -34,6 +34,43 @@ fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
+    let mut molecule =
+        smiles_api::read_str("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");
+    perception_api::sanitize(&mut molecule).expect("tartrate sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report
+            .assigned
+            .iter()
+            .map(|assignment| assignment.descriptor)
+            .collect::<Vec<_>>(),
+        vec![StereoDescriptor::R, StereoDescriptor::R]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_smiles_ring_digit_tetrahedral_order() {
+    let mut molecule = smiles_api::read_str("CC(C)C[C@@H]1CN2CCC3=CC(=C(C=C3C2CC1=O)OC)O[11CH3]")
+        .expect("ring chiral molecule parses");
+    perception_api::sanitize(&mut molecule).expect("ring chiral molecule sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: StereoElementId::new(0),
+            descriptor: StereoDescriptor::R,
+        }]
+    );
+}
+
+#[test]
 fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
     let mut together = smiles_api::read_str("C(=C\\F)\\F").expect("alkene parses");
     perception_api::sanitize(&mut together).expect("alkene sanitizes");

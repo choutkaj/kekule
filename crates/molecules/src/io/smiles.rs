@@ -58,7 +58,8 @@ pub fn read_smiles_str(
             usize,
         ),
     >::new();
-    let mut pending_tetrahedral = Vec::<(AtomId, TetrahedralOrientation)>::new();
+    let mut pending_tetrahedral = Vec::<PendingTetrahedral>::new();
+    let mut tetrahedral_carriers = BTreeMap::<AtomId, Vec<PendingStereoCarrier>>::new();
     let mut component = 0usize;
     let mut previous = SmilesTokenKind::Start;
     let mut cursor = 0;
@@ -173,17 +174,43 @@ pub fn read_smiles_str(
                         None => (default_smiles_bond_order(&mol, other, atom, offset)?, None),
                     };
                     add_smiles_bond(&mut mol, other, atom, order, stereo, offset)?;
+                    resolve_tetrahedral_ring_carrier(
+                        &mut tetrahedral_carriers,
+                        other,
+                        label,
+                        component,
+                        atom,
+                    );
+                    push_tetrahedral_carrier(
+                        &mut tetrahedral_carriers,
+                        atom,
+                        StereoCarrier::Atom(other),
+                    );
                 } else {
                     rings.insert(label, (atom, close_bond, component));
+                    push_tetrahedral_ring_carrier(
+                        &mut tetrahedral_carriers,
+                        atom,
+                        label,
+                        component,
+                    );
                 }
                 previous = SmilesTokenKind::Ring;
                 cursor = next_cursor;
             }
             '[' => {
                 let (atom, chirality, next_cursor) = parse_bracket_atom(&chars, cursor)?;
+                let explicit_hydrogens = atom.explicit_hydrogens;
                 let atom_id = mol.add_atom(atom);
                 if let Some(orientation) = chirality {
-                    pending_tetrahedral.push((atom_id, orientation));
+                    pending_tetrahedral.push(PendingTetrahedral {
+                        center: atom_id,
+                        orientation,
+                    });
+                    tetrahedral_carriers.insert(
+                        atom_id,
+                        initial_tetrahedral_carriers(current, explicit_hydrogens),
+                    );
                 }
                 if let Some(previous) = current {
                     let (order, stereo) = match pending_bond
@@ -197,6 +224,11 @@ pub fn read_smiles_str(
                         ),
                     };
                     add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
+                    push_tetrahedral_carrier(
+                        &mut tetrahedral_carriers,
+                        previous,
+                        StereoCarrier::Atom(atom_id),
+                    );
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
@@ -225,6 +257,11 @@ pub fn read_smiles_str(
                         ),
                     };
                     add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
+                    push_tetrahedral_carrier(
+                        &mut tetrahedral_carriers,
+                        previous,
+                        StereoCarrier::Atom(atom_id),
+                    );
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
@@ -246,7 +283,12 @@ pub fn read_smiles_str(
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
-    add_smiles_tetrahedral_elements(&mut mol, pending_tetrahedral, input.len())?;
+    add_smiles_tetrahedral_elements(
+        &mut mol,
+        pending_tetrahedral,
+        tetrahedral_carriers,
+        input.len(),
+    )?;
     Ok(SmallMolecule::from_graph(mol))
 }
 
@@ -274,16 +316,22 @@ fn add_smiles_bond(
 
 fn add_smiles_tetrahedral_elements(
     mol: &mut Molecule,
-    centers: Vec<(AtomId, TetrahedralOrientation)>,
+    centers: Vec<PendingTetrahedral>,
+    mut carriers_by_center: BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
     offset: usize,
 ) -> std::result::Result<(), SmilesParseError> {
-    for (center, orientation) in centers {
-        let carriers = smiles_tetrahedral_carriers(mol, center, offset)?;
+    for pending in centers {
+        let carriers = resolve_smiles_tetrahedral_carriers(
+            carriers_by_center
+                .remove(&pending.center)
+                .unwrap_or_default(),
+            offset,
+        )?;
         mol.add_stereo_element(StereoElement::specified(
             StereoElementKind::Tetrahedral(TetrahedralStereo {
-                center,
+                center: pending.center,
                 carriers,
-                orientation,
+                orientation: pending.orientation,
             }),
             StereoSource::Smiles,
         ))
@@ -292,23 +340,94 @@ fn add_smiles_tetrahedral_elements(
     Ok(())
 }
 
-fn smiles_tetrahedral_carriers(
-    mol: &Molecule,
+fn initial_tetrahedral_carriers(
+    previous: Option<AtomId>,
+    explicit_hydrogens: u8,
+) -> Vec<PendingStereoCarrier> {
+    let mut carriers = Vec::new();
+    if let Some(previous) = previous {
+        carriers.push(PendingStereoCarrier::Resolved(StereoCarrier::Atom(
+            previous,
+        )));
+    }
+    for _ in 0..explicit_hydrogens {
+        carriers.push(PendingStereoCarrier::Resolved(
+            StereoCarrier::ImplicitHydrogen,
+        ));
+    }
+    carriers
+}
+
+fn push_tetrahedral_carrier(
+    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
     center: AtomId,
+    carrier: StereoCarrier,
+) {
+    if let Some(carriers) = carriers_by_center.get_mut(&center) {
+        carriers.push(PendingStereoCarrier::Resolved(carrier));
+    }
+}
+
+fn push_tetrahedral_ring_carrier(
+    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+    center: AtomId,
+    label: usize,
+    component: usize,
+) {
+    if let Some(carriers) = carriers_by_center.get_mut(&center) {
+        carriers.push(PendingStereoCarrier::Ring { label, component });
+    }
+}
+
+fn resolve_tetrahedral_ring_carrier(
+    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+    center: AtomId,
+    label: usize,
+    component: usize,
+    carrier: AtomId,
+) {
+    let Some(carriers) = carriers_by_center.get_mut(&center) else {
+        return;
+    };
+    if let Some(pending) = carriers.iter_mut().find(|pending| {
+        matches!(
+            pending,
+            PendingStereoCarrier::Ring {
+                label: pending_label,
+                component: pending_component,
+            } if *pending_label == label && *pending_component == component
+        )
+    }) {
+        *pending = PendingStereoCarrier::Resolved(StereoCarrier::Atom(carrier));
+    }
+}
+
+fn resolve_smiles_tetrahedral_carriers(
+    carriers: Vec<PendingStereoCarrier>,
     offset: usize,
 ) -> std::result::Result<Vec<StereoCarrier>, SmilesParseError> {
-    let atom = mol
-        .atom(center)
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-    let mut carriers = mol
-        .incident_bonds(center)
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
-        .map(|(_, bond)| StereoCarrier::Atom(bond.other_atom(center)))
-        .collect::<Vec<_>>();
-    for _ in 0..atom.explicit_hydrogens {
-        carriers.push(StereoCarrier::ImplicitHydrogen);
-    }
-    Ok(carriers)
+    carriers
+        .into_iter()
+        .map(|carrier| match carrier {
+            PendingStereoCarrier::Resolved(carrier) => Ok(carrier),
+            PendingStereoCarrier::Ring { .. } => Err(SmilesParseError::new(
+                offset,
+                "unresolved tetrahedral ring carrier",
+            )),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingTetrahedral {
+    center: AtomId,
+    orientation: TetrahedralOrientation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingStereoCarrier {
+    Resolved(StereoCarrier),
+    Ring { label: usize, component: usize },
 }
 
 fn default_smiles_bond_order(

@@ -53,9 +53,11 @@ Unit tests cover tetrahedral descriptors, double-bond descriptors, isotope
 priority, Rule 1b duplicate-node ordering, unresolved equivalent ligands,
 bounded resource failures, and descriptor invalidation after mutation.
 
-Smoke validation uses externally supplied PubChem SMILES fixtures and compares
-semantic JSON containing the CIP assignment report plus stereo elements with
-derived descriptors.
+Smoke, PubChem 100, and PubChem 1k validation use externally supplied PubChem
+isomeric SMILES fixtures. CIP goldens are generated with RDKit and compare atom
+and bond descriptor maps, not bytewise SMILES spelling or internal stereo
+element IDs. PubChem 1k is enabled as a parity gate and currently records
+non-passing cases for the documented exact-CIP follow-on rules.
 
 ## Out Of Scope
 
@@ -76,3 +78,5 @@ semantics, broad RDKit parity, isomeric SMILES emission, and stereo enumeration.
   atoms before deeper substituent atoms are considered.
 - v5: Add RDKit-aligned terminal duplicate nodes, Rule 1b ring-duplicate
   priority before isotope priority, and zero isotope mass for duplicate nodes.
+- v6: Switch CIP validation to RDKit-backed descriptor maps and require smoke,
+  PubChem 100, and PubChem 1k parity corpora.
