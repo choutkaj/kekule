@@ -206,7 +206,13 @@ def generate_document(
         expected = {"records": [aromaticity_record(record) for record in records]}
     elif feature_id == "stereo.cip":
         records = read_stereo_cip_records(fixture_path, rdkit["Chem"])
-        expected = {"records": [stereo_cip_record(record, rdkit["Chem"]) for record in records]}
+        expected = {
+            "records": [
+                expected_record
+                for record in records
+                if (expected_record := stereo_cip_record(record, rdkit["Chem"])) is not None
+            ]
+        }
     else:
         raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
 
@@ -934,31 +940,27 @@ def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
+def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any] | None:
     mol = record["mol"]
     if mol is None:
-        return {
-            "record_index": record["record_index"],
-            "status": record["status"],
-            "title": record["title"],
-        }
+        return None
     prepared = Chem.Mol(mol)
     try:
         Chem.AssignCIPLabels(prepared)
     except Exception:
-        return {
-            "record_index": record["record_index"],
-            "status": "cip_error",
-            "title": record["title"],
-        }
+        return None
+    atom_descriptors = cip_atom_descriptors(prepared)
+    bond_descriptors = cip_bond_descriptors(prepared)
+    if not atom_descriptors and not bond_descriptors:
+        return None
     return {
         "record_index": record["record_index"],
         "status": "ok",
         "title": record["title"],
         "atom_count": prepared.GetNumAtoms(),
         "bond_count": prepared.GetNumBonds(),
-        "atom_descriptors": cip_atom_descriptors(prepared),
-        "bond_descriptors": cip_bond_descriptors(prepared),
+        "atom_descriptors": atom_descriptors,
+        "bond_descriptors": bond_descriptors,
     }
 
 

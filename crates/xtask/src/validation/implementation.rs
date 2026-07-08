@@ -174,7 +174,7 @@ pub(crate) fn implementation_expected(
             Ok(json!({
                 "records": records
                     .iter_mut()
-                    .map(stereo_cip_record_json)
+                    .filter_map(stereo_cip_record_json)
                     .collect::<Vec<_>>()
             }))
         }
@@ -424,27 +424,28 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
     })
 }
 
-pub(crate) fn stereo_cip_record_json(record: &mut IndexedSmallRecord) -> Value {
+pub(crate) fn stereo_cip_record_json(record: &mut IndexedSmallRecord) -> Option<Value> {
     let sanitize =
         perception::sanitize_with_options(&mut record.molecule, SanitizeOptions::default());
     if sanitize.is_err() {
-        return json!({
-            "record_index": record.record_index,
-            "status": "sanitize_error",
-            "title": record.title,
-        });
+        return None;
     }
     stereo::assign_cip_descriptors(record.molecule.graph_mut());
     let mol = record.molecule.graph();
-    json!({
+    let atom_descriptors = cip_atom_descriptors_json(mol);
+    let bond_descriptors = cip_bond_descriptors_json(mol);
+    if atom_descriptors.is_empty() && bond_descriptors.is_empty() {
+        return None;
+    }
+    Some(json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "atom_count": mol.atom_count(),
         "bond_count": mol.bond_count(),
-        "atom_descriptors": cip_atom_descriptors_json(mol),
-        "bond_descriptors": cip_bond_descriptors_json(mol),
-    })
+        "atom_descriptors": atom_descriptors,
+        "bond_descriptors": bond_descriptors,
+    }))
 }
 
 pub(crate) fn cip_atom_descriptors_json(mol: &Molecule) -> Vec<Value> {

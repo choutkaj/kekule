@@ -462,6 +462,37 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
 }
 
 #[test]
+fn stereo_cip_validation_compares_only_descriptor_bearing_records() {
+    let root = temp_feature_root("stereo-cip-descriptor-filter");
+    let fixture = root.join("fixture.smi");
+    fs::write(
+        &fixture,
+        [
+            "CC CID:no-stereo",
+            "C(#N)[Hg-2](C#N)(C#N)C#N.[K+].[K+] CID:unsupported-no-stereo",
+            "C[C@H](N)C(=O)O CID:stereo",
+        ]
+        .join("\n"),
+    )
+    .expect("fixture should write");
+
+    let expected =
+        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["title"], "CID:stereo");
+    assert!(!records[0]["atom_descriptors"]
+        .as_array()
+        .expect("atom descriptors should be an array")
+        .is_empty());
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
     let root = temp_feature_root("pack-members");
     let sdf_path = root.join("pack.sdf");

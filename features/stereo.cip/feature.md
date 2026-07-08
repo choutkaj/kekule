@@ -56,13 +56,18 @@ Unit tests cover tetrahedral descriptors, double-bond descriptors, isotope
 priority, Rule 1b duplicate-node ordering, unresolved equivalent ligands,
 bounded resource failures, and descriptor invalidation after mutation.
 
-Smoke, PubChem 100, and PubChem 1k validation use externally supplied PubChem
-isomeric SMILES fixtures. CIP goldens are generated with RDKit and compare atom
-and bond descriptor maps, not bytewise SMILES spelling or internal stereo
-element IDs. Bond descriptors are keyed by endpoint atom indexes and descriptor
-instead of parser-local bond IDs, because SMILES bond insertion order is not a
-portable chemical identity. PubChem 1k is enabled as a parity gate and currently
-records non-passing cases for the documented exact-CIP follow-on rules.
+Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
+supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
+and compare atom and bond descriptor maps, not bytewise SMILES spelling or
+internal stereo element IDs. Validation records include molecules where RDKit or
+the implementation assigns at least one CIP descriptor; no-descriptor molecules
+are filtered out so broad CIP validation is not dominated by unrelated parser or
+sanitizer coverage for structures with no stereochemical labels. Bond
+descriptors are keyed by endpoint atom indexes and descriptor instead of
+parser-local bond IDs, because SMILES bond insertion order is not a portable
+chemical identity. PubChem 100k is enabled as a broad parity gate and currently
+records remaining non-passing descriptor cases for the documented exact-CIP
+follow-on rules.
 
 ## Out Of Scope
 
@@ -90,3 +95,7 @@ semantics, broad RDKit parity, isomeric SMILES emission, and stereo enumeration.
   bond validation by endpoint atoms rather than parser-local bond IDs. Raise
   the default CIP node budget to cover larger fused-ring PubChem parity cases
   while preserving explicit resource-limit failures.
+- v8: Compare descriptor-bearing records in CIP validation and add PubChem 100k
+  as a broad RDKit parity gate. The large gate exposes remaining exact-CIP
+  ligand-ordering mismatches after unrelated no-descriptor parse/sanitize noise
+  is filtered out.
