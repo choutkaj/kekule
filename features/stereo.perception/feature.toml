@@ -1,7 +1,7 @@
 id = "stereo.perception"
 title = "Stereochemistry perception"
 area = "stereo"
-version = 6
+version = 7
 implemented = true
 validated = true
 description = "Validate local stereo elements, detect candidate stereo units, and assign local stereo from supported source marks and coordinates."

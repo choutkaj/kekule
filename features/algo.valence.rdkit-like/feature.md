@@ -14,7 +14,7 @@ Provide conservative valence perception for common organic molecules.
 
 ## Implementation Notes
 
-- The current model covers common organic elements plus selected charged salts, boranes, simple group-1/group-2 counterions, group-13 through group-16 main-group ions and covalent centers, hypervalent halogens, flexible transition-metal coordination centers, radicals, and aromatic donor/acceptor cases exposed by external PubChem validation.
+- The current model covers common organic elements plus selected charged salts, boranes, simple group-1/group-2 counterions, group-13 through group-16 main-group ions and covalent centers, isolated zero-valence unsupported spectator atoms, hypervalent halogens, flexible transition-metal coordination centers, radicals, and aromatic donor/acceptor cases exposed by external PubChem validation.
 - Perception state is marked fresh only after the pass completes.
 
 ## Validation
@@ -37,3 +37,4 @@ Provide conservative valence perception for common organic molecules.
 - v7: Move the public expert API under the `perception::valence` facade.
 - v8: Add PubChem-100k as required broad-corpus validation evidence.
 - v9: Expand RDKit-like simple-ion and main-group valence support for PubChem salts while leaving actinide and coordination-heavy cases as structured unsupported chemistry.
+- v10: Allow isolated unsupported atoms as zero-valence spectators so disconnected PubChem salt fragments do not block sanitization of descriptor-bearing organic components.

@@ -259,10 +259,25 @@ struct LigandTree {
 
 impl LigandTree {
     fn compare(&self, other: &Self) -> Ordering {
-        let priority = self.priority.compare(&other.priority);
+        for rule in [
+            SequenceRule::Rule1a,
+            SequenceRule::Rule1b,
+            SequenceRule::Rule2,
+        ] {
+            let priority = self.recursive_compare(other, rule);
+            if priority != Ordering::Equal {
+                return priority;
+            }
+        }
+        Ordering::Equal
+    }
+
+    fn recursive_compare(&self, other: &Self, rule: SequenceRule) -> Ordering {
+        let priority = self.priority.compare_by_rule(&other.priority, rule);
         if priority != Ordering::Equal {
             return priority;
         }
+
         let mut queue = vec![(self, other)];
         let mut position = 0usize;
         while position < queue.len() {
@@ -271,14 +286,14 @@ impl LigandTree {
 
             let left_shallow = left.children_sorted_by_priority();
             let right_shallow = right.children_sorted_by_priority();
-            let shallow = compare_child_priorities(&left_shallow, &right_shallow);
+            let shallow = compare_child_priorities(&left_shallow, &right_shallow, rule);
             if shallow != Ordering::Equal {
                 return shallow;
             }
 
             let left_deep = left.children_sorted_deep();
             let right_deep = right.children_sorted_deep();
-            let deep = compare_child_priorities(&left_deep, &right_deep);
+            let deep = compare_child_priorities(&left_deep, &right_deep, rule);
             if deep != Ordering::Equal {
                 return deep;
             }
@@ -291,7 +306,7 @@ impl LigandTree {
 
     fn children_sorted_by_priority(&self) -> Vec<&LigandTree> {
         let mut children = self.children.iter().collect::<Vec<_>>();
-        children.sort_by(|left, right| right.priority.compare(&left.priority));
+        children.sort_by(|left, right| right.priority.compare_shallow(&left.priority));
         children
     }
 
@@ -302,14 +317,27 @@ impl LigandTree {
     }
 }
 
-fn compare_child_priorities(left: &[&LigandTree], right: &[&LigandTree]) -> Ordering {
+fn compare_child_priorities(
+    left: &[&LigandTree],
+    right: &[&LigandTree],
+    rule: SequenceRule,
+) -> Ordering {
     for (left_child, right_child) in left.iter().zip(right) {
-        let priority = left_child.priority.compare(&right_child.priority);
+        let priority = left_child
+            .priority
+            .compare_by_rule(&right_child.priority, rule);
         if priority != Ordering::Equal {
             return priority;
         }
     }
     left.len().cmp(&right.len())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SequenceRule {
+    Rule1a,
+    Rule1b,
+    Rule2,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,11 +348,19 @@ struct NodePriority {
 }
 
 impl NodePriority {
-    fn compare(&self, other: &Self) -> Ordering {
+    fn compare_shallow(&self, other: &Self) -> Ordering {
         self.atomic_number
             .cmp(&other.atomic_number)
             .then_with(|| self.rule1b.cmp(&other.rule1b))
             .then_with(|| self.isotope.cmp(&other.isotope))
+    }
+
+    fn compare_by_rule(&self, other: &Self, rule: SequenceRule) -> Ordering {
+        match rule {
+            SequenceRule::Rule1a => self.atomic_number.cmp(&other.atomic_number),
+            SequenceRule::Rule1b => self.rule1b.cmp(&other.rule1b),
+            SequenceRule::Rule2 => self.isotope.cmp(&other.isotope),
+        }
     }
 }
 
@@ -344,6 +380,7 @@ fn carrier_signature(
             terminal: false,
         },
         StereoCarrier::ImplicitHydrogen => LigandNode::Hydrogen,
+        StereoCarrier::ImplicitLonePair => LigandNode::LonePair,
     };
     let mut visited_nodes = 0usize;
     let root = ligand_tree(mol, element, node, options, 0, &mut visited_nodes)?;
@@ -380,7 +417,7 @@ fn ligand_tree(
                 visited_nodes,
             )?);
         }
-        children.sort_by(|left, right| right.priority.compare(&left.priority));
+        children.sort_by(|left, right| right.priority.compare_shallow(&left.priority));
     }
     Ok(LigandTree { priority, children })
 }
@@ -401,6 +438,7 @@ enum LigandNode {
         terminal: bool,
     },
     Hydrogen,
+    LonePair,
 }
 
 impl LigandNode {
@@ -419,6 +457,7 @@ impl LigandNode {
                 .map(|atom| atom.element.atomic_number())
                 .unwrap_or(0),
             Self::Hydrogen => 1,
+            Self::LonePair => 0,
         }
     }
 
@@ -428,7 +467,7 @@ impl LigandNode {
                 duplicate: Some(DuplicateNode::Ring { reference_depth }),
                 ..
             } => ring_duplicate_priority(*reference_depth),
-            Self::Atom { .. } | Self::Hydrogen => 0,
+            Self::Atom { .. } | Self::Hydrogen | Self::LonePair => 0,
         }
     }
 
@@ -446,7 +485,7 @@ impl LigandNode {
                         .unwrap_or(0)
                 }
             }
-            Self::Hydrogen => 0,
+            Self::Hydrogen | Self::LonePair => 0,
         }
     }
 
@@ -476,14 +515,16 @@ impl LigandNode {
             let neighbor = bond.other_atom(*atom);
             let duplicate_count = bond_order_duplicate_count(bond.order);
             if Some(neighbor) == *previous {
-                for _ in 0..duplicate_count {
-                    next.push(LigandNode::Atom {
-                        atom: neighbor,
-                        previous: Some(*atom),
-                        path: Vec::new(),
-                        duplicate: Some(DuplicateNode::Bond),
-                        terminal: true,
-                    });
+                if path.first().copied() != Some(neighbor) {
+                    for _ in 0..duplicate_count {
+                        next.push(LigandNode::Atom {
+                            atom: neighbor,
+                            previous: Some(*atom),
+                            path: Vec::new(),
+                            duplicate: Some(DuplicateNode::Bond),
+                            terminal: true,
+                        });
+                    }
                 }
                 continue;
             }
@@ -580,6 +621,7 @@ fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
     match carrier {
         StereoCarrier::Atom(atom) => (0, atom.raw()),
         StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
+        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
     }
 }
 

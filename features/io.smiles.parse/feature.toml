@@ -1,7 +1,7 @@
 id = "io.smiles.parse"
 title = "SMILES parser"
 area = "io"
-version = 10
+version = 11
 implemented = true
 validated = false
 description = "Parse a practical subset of SMILES, preserving supported local stereo syntax without implicit sanitization."

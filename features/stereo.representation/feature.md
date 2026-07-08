@@ -10,15 +10,15 @@ not atom/bond payload flags.
 
 - `core::stereo` defines stable stereo element IDs, stereo group IDs,
   tetrahedral atom elements, double-bond elements, reserved axis elements,
-  atom or implicit-hydrogen carriers, local orientations, specifiedness, source
-  metadata, optional derived descriptors, source bond marks, stereo groups, and
-  group kinds.
+  atom, implicit-hydrogen, or implicit-lone-pair carriers, local orientations,
+  specifiedness, source metadata, optional derived descriptors, source bond
+  marks, stereo groups, and group kinds.
 - `Molecule` stores stereo elements, stereo groups, and source bond marks with
   focused insertion, lookup, iteration, removal, and topology-aware pruning
   methods.
 - Local stereo is the authoritative representation. `R/S`, `E/Z`, `M/P`, and
   pseudoasymmetric descriptors are optional derived descriptors and must be
-  treated as cacheable views until the CIP feature is implemented.
+  treated as cacheable views over local stereo.
 - Unknown, unspecified, invalid-cleared, and specified stereo are distinct
   states. Missing stereo elements mean absent stereo, not explicit unknown
   stereo.
@@ -26,9 +26,10 @@ not atom/bond payload flags.
   absolute, relative, racemic, AND, and OR group kinds.
 - SMILES `@`/`@@` markers are preserved as tetrahedral elements using SMILES
   local orientation and carrier order. Carrier order follows the SMILES-local
-  sequence, including the incoming atom, bracket hydrogens, branches, and ring
-  digits. SMILES `/` and `\` markers are preserved as source bond marks without
-  double-bond perception.
+  sequence, including the incoming atom, bracket hydrogens, branches, ring
+  digits, and supported implicit lone-pair placeholders for three-neighbor
+  heteroatom centers. SMILES `/` and `\` markers are preserved as source bond
+  marks without double-bond perception.
 - Supported V2000 and V3000 bond stereo fields are preserved as source bond
   marks. Atom `CFG`/parity and enhanced stereo collections remain unsupported
   until explicit format features are implemented.
@@ -49,6 +50,9 @@ not atom/bond payload flags.
 - Source bond marks intentionally preserve parser syntax or Molfile wedge/either
   fields even before perception can assemble them into validated stereo
   elements.
+- Implicit lone-pair carriers are local stereo placeholders only. They preserve
+  supported imported tetrahedral syntax for heteroatom centers without
+  converting lone pairs into graph atoms.
 - Macromolecules may carry stereo metadata through the shared graph, but
   small-molecule stereo perception is a later explicit workflow and should not
   run over whole `MacroMolecule` structures by default.
@@ -79,3 +83,5 @@ not atom/bond payload flags.
   substituents.
 - v4: Preserve SMILES-local tetrahedral carrier order for bracket hydrogens and
   ring-digit closures in smoke semantic validation.
+- v5: Add implicit lone-pair stereo carriers so supported three-neighbor
+  heteroatom tetrahedral markers can be represented without adding graph atoms.

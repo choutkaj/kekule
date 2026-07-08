@@ -37,14 +37,15 @@ The implementation is a descriptor layer over `stereo.representation` and
 or otherwise ensure explicit valence and hydrogen semantics before assignment.
 
 Carrier ranking uses bounded graph expansion with explicit node limits
-(defaulting to a 100,000-node budget),
-sanitized implicit and explicit hydrogens, cycle guards, and terminal duplicate
+(defaulting to a 100,000-node budget), sanitized implicit and explicit
+hydrogens, implicit lone-pair carriers, cycle guards, and terminal duplicate
 nodes for higher-order bonds and ring closures. Ligands are compared as
-branch-preserving paired digraphs: immediate child priorities are compared
-before recursive branch tie-breaks, and tied child pairs are processed
-breadth-first. Per-node priority applies atomic number first, then
-RDKit-aligned Rule 1b ring-duplicate priority, then isotope mass. Duplicate
-nodes do not carry isotope mass.
+branch-preserving paired digraphs using RDKit-like recursive sequence-rule
+ordering: Rule 1a atomic number comparison is exhausted through the digraph
+before Rule 1b duplicate-node priority is considered, and Rule 2 isotope mass
+is considered only after both earlier rules remain tied. Duplicate nodes do not
+carry isotope mass, and duplicate nodes for higher-order bonds back to the
+original stereocenter are suppressed.
 
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
@@ -52,9 +53,11 @@ stereo or when the implemented ranking rules cannot distinguish carriers.
 
 ## Validation
 
-Unit tests cover tetrahedral descriptors, double-bond descriptors, isotope
-priority, Rule 1b duplicate-node ordering, unresolved equivalent ligands,
-bounded resource failures, and descriptor invalidation after mutation.
+Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
+Rule 1a/1b/2 ordering, isotope priority, Rule 1b duplicate-node ordering,
+implicit lone-pair carriers, unsupported double-bond stereo exclusions,
+unresolved equivalent ligands, bounded resource failures, and descriptor
+invalidation after mutation.
 
 Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
 supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
@@ -65,17 +68,18 @@ are filtered out so broad CIP validation is not dominated by unrelated parser or
 sanitizer coverage for structures with no stereochemical labels. Bond
 descriptors are keyed by endpoint atom indexes and descriptor instead of
 parser-local bond IDs, because SMILES bond insertion order is not a portable
-chemical identity. PubChem 100k is enabled as a broad parity gate and currently
-records remaining non-passing descriptor cases for the documented exact-CIP
-follow-on rules.
+chemical identity. Molecules validation maps removable plain explicit
+hydrogens out of descriptor records to match RDKit default atom indexing.
+PubChem 100k is enabled as a broad RDKit parity gate for current
+descriptor-bearing coverage.
 
 ## Out Of Scope
 
-Full exact machine-oriented CIP parity remains out of scope for this version:
-Rule 3/4/5 handling, pseudoasymmetric `r`/`s`, full duplicate-node Rule 1b
-parity across all digraph and mancude cases, mancude and fractional atomic
+Full exact machine-oriented CIP coverage remains out of scope for this version:
+Rule 3/4/5 handling, pseudoasymmetric `r`/`s`, mancude and fractional atomic
 numbers, axial `M`/`P`, non-tetrahedral geometries, enhanced stereo relation
-semantics, broad RDKit parity, isomeric SMILES emission, and stereo enumeration.
+semantics, parity beyond the current descriptor-bearing validation corpora,
+isomeric SMILES emission, and stereo enumeration.
 
 ## Revision Notes
 
@@ -99,3 +103,8 @@ semantics, broad RDKit parity, isomeric SMILES emission, and stereo enumeration.
   as a broad RDKit parity gate. The large gate exposes remaining exact-CIP
   ligand-ordering mismatches after unrelated no-descriptor parse/sanitize noise
   is filtered out.
+- v9: Apply recursive RDKit-like Rule 1a, then Rule 1b, then Rule 2 comparison;
+  add implicit lone-pair carrier support for supported heteroatom centers;
+  suppress root-adjacent multiple-bond duplicates; skip unsupported aromatic
+  and endocyclic hetero double-bond stereo; and align validation output with
+  RDKit default explicit-hydrogen indexing.

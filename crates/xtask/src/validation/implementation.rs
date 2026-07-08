@@ -432,8 +432,9 @@ pub(crate) fn stereo_cip_record_json(record: &mut IndexedSmallRecord) -> Option<
     }
     stereo::assign_cip_descriptors(record.molecule.graph_mut());
     let mol = record.molecule.graph();
-    let atom_descriptors = cip_atom_descriptors_json(mol);
-    let bond_descriptors = cip_bond_descriptors_json(mol);
+    let atom_index = rdkit_default_atom_index(mol);
+    let atom_descriptors = cip_atom_descriptors_json(mol, &atom_index);
+    let bond_descriptors = cip_bond_descriptors_json(mol, &atom_index);
     if atom_descriptors.is_empty() && bond_descriptors.is_empty() {
         return None;
     }
@@ -441,22 +442,26 @@ pub(crate) fn stereo_cip_record_json(record: &mut IndexedSmallRecord) -> Option<
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
-        "atom_count": mol.atom_count(),
-        "bond_count": mol.bond_count(),
+        "atom_count": atom_index.len(),
+        "bond_count": rdkit_default_bond_count(mol, &atom_index),
         "atom_descriptors": atom_descriptors,
         "bond_descriptors": bond_descriptors,
     }))
 }
 
-pub(crate) fn cip_atom_descriptors_json(mol: &Molecule) -> Vec<Value> {
+pub(crate) fn cip_atom_descriptors_json(
+    mol: &Molecule,
+    atom_index: &BTreeMap<AtomId, u32>,
+) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
         .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element.descriptor.map(|descriptor| {
-                json!({
-                    "atom_index": stereo.center.raw(),
+            StereoElementKind::Tetrahedral(stereo) => element.descriptor.and_then(|descriptor| {
+                let atom_index = *atom_index.get(&stereo.center)?;
+                Some(json!({
+                    "atom_index": atom_index,
                     "descriptor": stereo_descriptor_json(descriptor),
-                })
+                }))
             }),
             StereoElementKind::Axis(_) | StereoElementKind::DoubleBond(_) => None,
         })
@@ -470,16 +475,21 @@ pub(crate) fn cip_atom_descriptors_json(mol: &Molecule) -> Vec<Value> {
     descriptors
 }
 
-pub(crate) fn cip_bond_descriptors_json(mol: &Molecule) -> Vec<Value> {
+pub(crate) fn cip_bond_descriptors_json(
+    mol: &Molecule,
+    atom_index: &BTreeMap<AtomId, u32>,
+) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
         .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::DoubleBond(stereo) => element.descriptor.map(|descriptor| {
-                json!({
-                    "begin_atom_index": stereo.left.raw(),
-                    "end_atom_index": stereo.right.raw(),
+            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
+                let begin_atom_index = *atom_index.get(&stereo.left)?;
+                let end_atom_index = *atom_index.get(&stereo.right)?;
+                Some(json!({
+                    "begin_atom_index": begin_atom_index,
+                    "end_atom_index": end_atom_index,
                     "descriptor": stereo_descriptor_json(descriptor),
-                })
+                }))
             }),
             StereoElementKind::Axis(_) | StereoElementKind::Tetrahedral(_) => None,
         })
@@ -516,6 +526,34 @@ pub(crate) fn cip_bond_descriptors_json(mol: &Molecule) -> Vec<Value> {
         })
     });
     descriptors
+}
+
+fn rdkit_default_atom_index(mol: &Molecule) -> BTreeMap<AtomId, u32> {
+    let mut index = BTreeMap::new();
+    for (atom_id, atom) in mol.atoms() {
+        if rdkit_default_removes_hydrogen(atom) {
+            continue;
+        }
+        index.insert(atom_id, index.len() as u32);
+    }
+    index
+}
+
+fn rdkit_default_bond_count(mol: &Molecule, atom_index: &BTreeMap<AtomId, u32>) -> usize {
+    mol.bonds()
+        .filter(|(_, bond)| {
+            atom_index.contains_key(&bond.a()) && atom_index.contains_key(&bond.b())
+        })
+        .count()
+}
+
+fn rdkit_default_removes_hydrogen(atom: &Atom) -> bool {
+    atom.element.symbol() == "H"
+        && atom.isotope.is_none()
+        && atom.formal_charge == 0
+        && atom.radical.is_none()
+        && atom.atom_map.is_none()
+        && atom.props.is_empty()
 }
 
 pub(crate) fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {
@@ -1422,6 +1460,7 @@ pub(crate) fn stereo_carrier_json(carrier: &StereoCarrier) -> Value {
     match carrier {
         StereoCarrier::Atom(atom) => json!({ "atom_index": atom.raw() }),
         StereoCarrier::ImplicitHydrogen => json!({ "implicit_hydrogen": true }),
+        StereoCarrier::ImplicitLonePair => json!({ "implicit_lone_pair": true }),
     }
 }
 

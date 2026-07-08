@@ -295,6 +295,23 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         );
     }
 
+    for symbol in ["Ac", "Cf"] {
+        let mut mol = Molecule::new();
+        let atom_id = mol.add_atom(element_atom(symbol));
+
+        let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+
+        assert!(
+            report.is_ok(),
+            "isolated unsupported spectator {symbol} should be accepted"
+        );
+        assert_eq!(
+            mol.atom(atom_id).expect("atom").implicit_hydrogens,
+            Some(0),
+            "{symbol} implicit hydrogens"
+        );
+    }
+
     let mut covalent_aluminum = Molecule::new();
     let aluminum = covalent_aluminum.add_atom(element_atom("Al"));
     for _ in 0..3 {

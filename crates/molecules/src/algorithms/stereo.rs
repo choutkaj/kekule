@@ -272,6 +272,16 @@ fn validate_tetrahedral(
                     );
                 }
             }
+            StereoCarrier::ImplicitLonePair => {
+                if !implicit_lone_pair_available(mol, stereo.center) {
+                    issues.push(
+                        StereoPerceptionIssue::TetrahedralHydrogenCarrierUnavailable {
+                            element,
+                            center: stereo.center,
+                        },
+                    );
+                }
+            }
         }
     }
 }
@@ -358,6 +368,11 @@ fn validate_double_bond_carrier(
                 );
             }
         }
+        StereoCarrier::ImplicitLonePair => {
+            issues.push(
+                StereoPerceptionIssue::DoubleBondHydrogenCarrierUnavailable { element, endpoint },
+            );
+        }
     }
 }
 
@@ -417,7 +432,7 @@ fn tetrahedral_carriers(mol: &Molecule, center: AtomId) -> Option<Vec<StereoCarr
 fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol.bonds() {
-        if bond.order != BondOrder::Double {
+        if double_bond_stereo_is_unsupported(mol, bond_id, bond) {
             continue;
         }
         let left = bond.a();
@@ -435,6 +450,37 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
         }
     }
     candidates
+}
+
+fn double_bond_stereo_is_unsupported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
+    bond.order != BondOrder::Double
+        || bond.aromatic
+        || double_bond_between_aromatic_atoms(mol, bond)
+        || (double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond))
+}
+
+fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
+    mol.atom(bond.a())
+        .map(|atom| atom.aromatic)
+        .unwrap_or(false)
+        && mol
+            .atom(bond.b())
+            .map(|atom| atom.aromatic)
+            .unwrap_or(false)
+}
+
+fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
+    mol.ring_membership()
+        .map(|membership| membership.bond_in_ring(bond))
+        .unwrap_or(false)
+}
+
+fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
+    [bond.a(), bond.b()].into_iter().any(|atom_id| {
+        mol.atom(atom_id)
+            .map(|atom| atom.element.symbol() != "C")
+            .unwrap_or(true)
+    })
 }
 
 fn double_bond_endpoint_carriers(
@@ -585,7 +631,7 @@ fn assemble_directional_double_bonds(
 ) -> Vec<StereoElement> {
     let mut assembled = Vec::new();
     for (bond_id, bond) in mol.bonds() {
-        if bond.order != BondOrder::Double {
+        if double_bond_stereo_is_unsupported(mol, bond_id, bond) {
             continue;
         }
         let left = bond.a();
@@ -681,7 +727,7 @@ fn redundant_endpoint_directional_marks(
             .into_iter()
             .filter_map(|carrier| match carrier {
                 StereoCarrier::Atom(atom) => Some(atom),
-                StereoCarrier::ImplicitHydrogen => None,
+                StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
             })
             .collect::<Vec<_>>();
     atom_carriers.sort_unstable();
@@ -764,7 +810,7 @@ fn assign_coordinate_tetrahedral(
             .iter()
             .map(|carrier| match carrier {
                 StereoCarrier::Atom(atom) => Some(*atom),
-                StereoCarrier::ImplicitHydrogen => None,
+                StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
             })
             .collect::<Option<Vec<_>>>();
         let Some(atom_carriers) = atom_carriers else {
@@ -857,7 +903,7 @@ fn planned_double_bond(element: &StereoElement) -> Option<BondId> {
 fn only_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
     let mut atoms = carriers.iter().filter_map(|carrier| match carrier {
         StereoCarrier::Atom(atom) => Some(*atom),
-        StereoCarrier::ImplicitHydrogen => None,
+        StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
     });
     let atom = atoms.next()?;
     atoms.next().is_none().then_some(atom)
@@ -1041,10 +1087,22 @@ fn hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
         .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
 }
 
+fn implicit_lone_pair_available(mol: &Molecule, atom: AtomId) -> bool {
+    mol.atom(atom)
+        .map(|atom_payload| {
+            matches!(
+                atom_payload.element.symbol(),
+                "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
+            ) && hydrogen_count(mol, atom) == 0
+        })
+        .unwrap_or(false)
+}
+
 fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
     match carrier {
         StereoCarrier::Atom(atom) => (0, atom.raw()),
         StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
+        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
     }
 }
 

@@ -493,6 +493,26 @@ fn stereo_cip_validation_compares_only_descriptor_bearing_records() {
 }
 
 #[test]
+fn stereo_cip_validation_uses_rdkit_default_hydrogen_indexing() {
+    let root = temp_feature_root("stereo-cip-rdkit-h-index");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "[H][C@](F)(Cl)Br CID:explicit-h\n").expect("fixture should write");
+
+    let expected =
+        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["atom_count"], 4);
+    assert_eq!(records[0]["bond_count"], 3);
+    assert_eq!(records[0]["atom_descriptors"][0]["atom_index"], 0);
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
     let root = temp_feature_root("pack-members");
     let sdf_path = root.join("pack.sdf");

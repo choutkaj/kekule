@@ -20,6 +20,9 @@ and assign local stereo elements from supported source marks and coordinates.
   fresh.
 - Candidate detection uses current graph and hydrogen state. Sanitization or
   valence perception should run first when implicit hydrogens matter.
+- Validation accepts stored implicit lone-pair tetrahedral carriers for
+  supported no-implicit heteroatom centers, but candidate detection does not
+  broadly perceive lone-pair stereocenters.
 - Tetrahedral candidates are local geometry candidates only; no exact ligand
   ranking, symmetry pruning, or CIP descriptor assignment is performed.
 - Double-bond candidates include atom and implicit-hydrogen carriers. Paired
@@ -27,7 +30,10 @@ and assign local stereo elements from supported source marks and coordinates.
   endpoint and can create specified double-bond stereo elements when compatible
   marked single bonds are available on both ends. A substituted alkene endpoint
   may carry two redundant directional marks when they cover both atom carriers
-  with opposite endpoint-normalized directions.
+  with opposite endpoint-normalized directions. Aromatic-focus bonds,
+  double bonds between aromatic atoms, and endocyclic double bonds with a
+  non-carbon endpoint are skipped until those unsupported stereo cases have
+  explicit format/perception semantics.
 - Molfile wedge up/down marks can create specified tetrahedral stereo elements.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
@@ -42,10 +48,11 @@ and assign local stereo elements from supported source marks and coordinates.
 
 This feature identifies candidate tetrahedral atoms and double bonds, validates
 existing local stereo elements against current topology and hydrogen semantics,
-assembles SMILES-style paired directional bond marks with endpoint-relative
-normalization, and assembles supported Molfile tetrahedral wedge/either source
-marks. Coordinate-derived assignment is local and conservative; exact CIP
-descriptors belong to `stereo.cip`.
+including supported implicit lone-pair tetrahedral carriers, assembles
+SMILES-style paired directional bond marks with endpoint-relative normalization,
+and assembles supported Molfile tetrahedral wedge/either source marks.
+Coordinate-derived assignment is local and conservative; exact CIP descriptors
+belong to `stereo.cip`.
 
 Small-molecule perception should run as an explicit staged workflow and may be
 run from the small-molecule sanitizer when `SanitizeOptions::perceive_stereo`
@@ -56,10 +63,10 @@ run over whole `MacroMolecule` structures by default.
 ## Validation
 
 - Unit tests cover read-only validation, candidate detection after sanitization,
-  directional double-bond assembly, Molfile wedge/either assembly, unsupported
-  source-mark diagnostics, coordinate-derived tetrahedral and double-bond
-  assignment, sanitizer integration, transactional rollback, and preservation
-  of explicit unknown versus absent stereo.
+  directional double-bond assembly, unsupported double-bond exclusions, Molfile
+  wedge/either assembly, unsupported source-mark diagnostics, coordinate-derived
+  tetrahedral and double-bond assignment, sanitizer integration, transactional
+  rollback, and preservation of explicit unknown versus absent stereo.
 - Smoke validation records semantic perception JSON for externally pinned
   PubChem fixtures covering absent stereo, stored tetrahedral stereo, and
   directional double-bond source-mark assembly.
@@ -88,3 +95,6 @@ stereo transfer.
 - v6: Normalize SMILES directional bond marks relative to alkene endpoints and
   accept redundant two-mark substituted endpoints when the marks cover both atom
   carriers with opposite normalized directions.
+- v7: Validate supported implicit lone-pair tetrahedral carriers and skip
+  unsupported aromatic or endocyclic hetero double-bond stereo candidates before
+  source-mark assembly.

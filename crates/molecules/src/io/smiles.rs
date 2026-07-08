@@ -322,6 +322,8 @@ fn add_smiles_tetrahedral_elements(
 ) -> std::result::Result<(), SmilesParseError> {
     for pending in centers {
         let carriers = resolve_smiles_tetrahedral_carriers(
+            mol,
+            pending.center,
             carriers_by_center
                 .remove(&pending.center)
                 .unwrap_or_default(),
@@ -403,10 +405,12 @@ fn resolve_tetrahedral_ring_carrier(
 }
 
 fn resolve_smiles_tetrahedral_carriers(
+    mol: &Molecule,
+    center: AtomId,
     carriers: Vec<PendingStereoCarrier>,
     offset: usize,
 ) -> std::result::Result<Vec<StereoCarrier>, SmilesParseError> {
-    carriers
+    let mut carriers = carriers
         .into_iter()
         .map(|carrier| match carrier {
             PendingStereoCarrier::Resolved(carrier) => Ok(carrier),
@@ -415,7 +419,23 @@ fn resolve_smiles_tetrahedral_carriers(
                 "unresolved tetrahedral ring carrier",
             )),
         })
-        .collect()
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if carriers.len() == 3 && smiles_tetrahedral_center_can_have_lone_pair(mol, center) {
+        carriers.push(StereoCarrier::ImplicitLonePair);
+    }
+    Ok(carriers)
+}
+
+fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) -> bool {
+    mol.atom(center)
+        .map(|atom| {
+            matches!(
+                atom.element.symbol(),
+                "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
+            ) && atom.explicit_hydrogens == 0
+                && atom.implicit_hydrogens.unwrap_or(0) == 0
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -16,9 +16,8 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 ## Implementation Notes
 
 - The parser is intentionally non-query and non-reaction.
-- Bracket `@` and `@@` tetrahedral markers are stored as `Molecule` stereo elements with SMILES local orientation, carrier order, source, and specifiedness; they are not assigned CIP descriptors, normalized, or validated against stereogenicity.
+- Bracket `@` and `@@` tetrahedral markers are stored as `Molecule` stereo elements with SMILES local orientation, carrier order, source, and specifiedness; supported three-carrier no-H N/P/As/Sb/O/S/Se/Te centers receive an implicit-lone-pair carrier. Parsed markers are not assigned CIP descriptors, normalized, or validated against stereogenicity.
 - Directional `/` and `\` bond markers are stored as source bond marks on `Molecule`; they are not assembled, normalized, or validated across double-bond stereo systems.
-- Metal-bound organic-subset atoms keep parsed no-implicit-hydrogen state separate from valence perception; sanitization assigns zero implicit hydrogens when bond valence is filled without forcing RDKit-visible no-implicit flags.
 - Cursor offsets remain UTF-8 character boundaries; bracket grammar is consumed strictly as ASCII rather than skipping unknown bytes.
 - Aromatic lowercase atoms set aromatic flags and aromatic omitted bonds, but they do not replace explicit sanitization/perception. Bracketed aromatic element support follows the current RDKit-like aromatic donor set used by perception.
 
@@ -44,3 +43,4 @@ Parse a practical subset of SMILES into `SmallMolecule`.
 - v8: Add PubChem-100k as required broad-corpus validation evidence.
 - v9: Remove parser-side metal-bound organic no-implicit preservation so sanitized SMILES semantics keep RDKit-like no-implicit flags while valence perception still assigns zero implicit hydrogens.
 - v10: Preserve supported local SMILES stereo syntax in the first-class stereo representation instead of atom/bond payload fields.
+- v11: Preserve supported three-carrier heteroatom tetrahedral markers with an implicit-lone-pair carrier rather than dropping the local stereo element.
