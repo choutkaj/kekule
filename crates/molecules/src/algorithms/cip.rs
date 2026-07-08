@@ -243,6 +243,7 @@ fn ranked_carriers(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LigandSignature {
     atomic_spheres: Vec<Vec<u8>>,
+    rule1b_spheres: Vec<Vec<u32>>,
     isotope_spheres: Vec<Vec<u16>>,
 }
 
@@ -252,6 +253,8 @@ impl LigandSignature {
             .atomic_spheres
             .len()
             .max(other.atomic_spheres.len())
+            .max(self.rule1b_spheres.len())
+            .max(other.rule1b_spheres.len())
             .max(self.isotope_spheres.len())
             .max(other.isotope_spheres.len());
         for index in 0..len {
@@ -261,6 +264,13 @@ impl LigandSignature {
             );
             if atomic != Ordering::Equal {
                 return atomic;
+            }
+            let rule1b = compare_sphere(
+                self.rule1b_spheres.get(index).map(Vec::as_slice),
+                other.rule1b_spheres.get(index).map(Vec::as_slice),
+            );
+            if rule1b != Ordering::Equal {
+                return rule1b;
             }
             let isotope = compare_sphere(
                 self.isotope_spheres.get(index).map(Vec::as_slice),
@@ -307,11 +317,13 @@ fn carrier_signature(
             atom,
             previous: Some(root),
             path: vec![root, atom],
+            duplicate: None,
             terminal: false,
         },
         StereoCarrier::ImplicitHydrogen => LigandNode::Hydrogen,
     }];
     let mut atomic_spheres = Vec::new();
+    let mut rule1b_spheres = Vec::new();
     let mut isotope_spheres = Vec::new();
     let mut visited_nodes = nodes.len();
     for depth in 0..=options.max_depth {
@@ -321,6 +333,13 @@ fn carrier_signature(
             .collect::<Vec<_>>();
         atomic.sort_unstable_by(|left, right| right.cmp(left));
         atomic_spheres.push(atomic);
+
+        let mut rule1b = nodes
+            .iter()
+            .map(LigandNode::rule1b_priority)
+            .collect::<Vec<_>>();
+        rule1b.sort_unstable_by(|left, right| right.cmp(left));
+        rule1b_spheres.push(rule1b);
 
         let mut isotopes = nodes
             .iter()
@@ -351,8 +370,15 @@ fn carrier_signature(
     }
     Ok(LigandSignature {
         atomic_spheres,
+        rule1b_spheres,
         isotope_spheres,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DuplicateNode {
+    Bond,
+    Ring { reference_depth: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,6 +387,7 @@ enum LigandNode {
         atom: AtomId,
         previous: Option<AtomId>,
         path: Vec<AtomId>,
+        duplicate: Option<DuplicateNode>,
         terminal: bool,
     },
     Hydrogen,
@@ -377,13 +404,30 @@ impl LigandNode {
         }
     }
 
+    fn rule1b_priority(&self) -> u32 {
+        match self {
+            Self::Atom {
+                duplicate: Some(DuplicateNode::Ring { reference_depth }),
+                ..
+            } => ring_duplicate_priority(*reference_depth),
+            Self::Atom { .. } | Self::Hydrogen => 0,
+        }
+    }
+
     fn isotope(&self, mol: &Molecule) -> u16 {
         match self {
-            Self::Atom { atom, .. } => mol
-                .atom(*atom)
-                .ok()
-                .and_then(|atom| atom.isotope)
-                .unwrap_or(0),
+            Self::Atom {
+                atom, duplicate, ..
+            } => {
+                if duplicate.is_some() {
+                    0
+                } else {
+                    mol.atom(*atom)
+                        .ok()
+                        .and_then(|atom| atom.isotope)
+                        .unwrap_or(0)
+                }
+            }
             Self::Hydrogen => 0,
         }
     }
@@ -393,6 +437,7 @@ impl LigandNode {
             atom,
             previous,
             path,
+            duplicate: _,
             terminal,
         } = self
         else {
@@ -411,22 +456,55 @@ impl LigandNode {
         };
         for (_, bond) in incident {
             let neighbor = bond.other_atom(*atom);
+            let duplicate_count = bond_order_duplicate_count(bond.order);
             if Some(neighbor) == *previous {
+                for _ in 0..duplicate_count {
+                    next.push(LigandNode::Atom {
+                        atom: neighbor,
+                        previous: Some(*atom),
+                        path: Vec::new(),
+                        duplicate: Some(DuplicateNode::Bond),
+                        terminal: true,
+                    });
+                }
                 continue;
             }
-            let count = bond_order_duplicate_count(bond.order);
-            for _ in 0..count {
-                let closes_cycle = path.contains(&neighbor);
-                let mut next_path = path.clone();
-                if !closes_cycle {
-                    next_path.push(neighbor);
+            if let Some(reference_depth) = path.iter().position(|id| *id == neighbor) {
+                next.push(LigandNode::Atom {
+                    atom: neighbor,
+                    previous: Some(*atom),
+                    path: Vec::new(),
+                    duplicate: Some(DuplicateNode::Ring { reference_depth }),
+                    terminal: true,
+                });
+                for _ in 0..duplicate_count {
+                    next.push(LigandNode::Atom {
+                        atom: neighbor,
+                        previous: Some(*atom),
+                        path: Vec::new(),
+                        duplicate: Some(DuplicateNode::Bond),
+                        terminal: true,
+                    });
                 }
+            } else {
+                let mut next_path = path.clone();
+                next_path.push(neighbor);
                 next.push(LigandNode::Atom {
                     atom: neighbor,
                     previous: Some(*atom),
                     path: next_path,
-                    terminal: closes_cycle,
+                    duplicate: None,
+                    terminal: false,
                 });
+                for _ in 0..duplicate_count {
+                    next.push(LigandNode::Atom {
+                        atom: neighbor,
+                        previous: Some(*atom),
+                        path: Vec::new(),
+                        duplicate: Some(DuplicateNode::Bond),
+                        terminal: true,
+                    });
+                }
             }
         }
     }
@@ -439,11 +517,16 @@ fn hydrogen_count(atom: &Atom) -> u8 {
 
 fn bond_order_duplicate_count(order: BondOrder) -> usize {
     match order {
-        BondOrder::Double => 2,
-        BondOrder::Triple => 3,
-        BondOrder::Quadruple => 4,
-        _ => 1,
+        BondOrder::Double => 1,
+        BondOrder::Triple => 2,
+        BondOrder::Quadruple => 3,
+        _ => 0,
     }
+}
+
+fn ring_duplicate_priority(reference_depth: usize) -> u32 {
+    let depth = reference_depth.min(u32::MAX as usize) as u32;
+    u32::MAX.saturating_sub(depth)
 }
 
 fn double_bond_endpoint_carriers(
@@ -499,4 +582,99 @@ fn permutation_is_even(positions: &[usize]) -> bool {
         }
     }
     inversions % 2 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_node_signature(rule1b: u32, isotope: u16) -> LigandSignature {
+        LigandSignature {
+            atomic_spheres: vec![vec![6]],
+            rule1b_spheres: vec![vec![rule1b]],
+            isotope_spheres: vec![vec![isotope]],
+        }
+    }
+
+    #[test]
+    fn rule1b_ring_duplicate_priority_is_applied_before_isotope_priority() {
+        let ring_duplicate = one_node_signature(u32::MAX, 0);
+        let isotope = one_node_signature(0, 13);
+
+        assert_eq!(ring_duplicate.compare(&isotope), Ordering::Greater);
+        assert_eq!(isotope.compare(&ring_duplicate), Ordering::Less);
+    }
+
+    #[test]
+    fn rule1b_prefers_ring_duplicate_whose_reference_is_closer_to_root() {
+        let root_reference = one_node_signature(u32::MAX, 0);
+        let deeper_reference = one_node_signature(u32::MAX - 2, 0);
+
+        assert_eq!(root_reference.compare(&deeper_reference), Ordering::Greater);
+        assert_eq!(deeper_reference.compare(&root_reference), Ordering::Less);
+    }
+
+    #[test]
+    fn duplicate_nodes_have_no_isotope_priority() {
+        let mut mol = Molecule::new();
+        let mut isotope = Atom::new(Element::from_symbol("C").expect("carbon"));
+        isotope.isotope = Some(13);
+        let atom = mol.add_atom(isotope);
+
+        let normal = LigandNode::Atom {
+            atom,
+            previous: None,
+            path: vec![atom],
+            duplicate: None,
+            terminal: false,
+        };
+        let duplicate = LigandNode::Atom {
+            atom,
+            previous: None,
+            path: Vec::new(),
+            duplicate: Some(DuplicateNode::Bond),
+            terminal: true,
+        };
+
+        assert_eq!(normal.isotope(&mol), 13);
+        assert_eq!(duplicate.isotope(&mol), 0);
+    }
+
+    #[test]
+    fn higher_order_bond_expansion_creates_terminal_duplicate_nodes() {
+        let mut mol = Molecule::new();
+        let root = mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")));
+        let carbon = mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")));
+        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("oxygen")));
+        mol.add_bond(root, carbon, BondOrder::Single)
+            .expect("root bond");
+        mol.add_bond(carbon, oxygen, BondOrder::Double)
+            .expect("double bond");
+
+        let node = LigandNode::Atom {
+            atom: carbon,
+            previous: Some(root),
+            path: vec![root, carbon],
+            duplicate: None,
+            terminal: false,
+        };
+        let mut next = Vec::new();
+        node.extend(&mol, &mut next);
+
+        assert_eq!(next.len(), 2);
+        assert!(next.contains(&LigandNode::Atom {
+            atom: oxygen,
+            previous: Some(carbon),
+            path: vec![root, carbon, oxygen],
+            duplicate: None,
+            terminal: false,
+        }));
+        assert!(next.contains(&LigandNode::Atom {
+            atom: oxygen,
+            previous: Some(carbon),
+            path: Vec::new(),
+            duplicate: Some(DuplicateNode::Bond),
+            terminal: true,
+        }));
+    }
 }
