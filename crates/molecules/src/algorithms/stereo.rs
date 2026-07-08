@@ -597,30 +597,23 @@ fn assemble_directional_double_bonds(
             used_marks.extend(right_marks.iter().map(|mark| mark.bond));
             continue;
         }
-        if left_marks.len() > 1 {
-            issues.push(StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
-                double_bond: bond_id,
-                endpoint: left,
-                mark_count: left_marks.len(),
-            });
-        }
-        if right_marks.len() > 1 {
-            issues.push(StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
-                double_bond: bond_id,
-                endpoint: right,
-                mark_count: right_marks.len(),
-            });
-        }
-        let ([left_mark], [right_mark]) = (left_marks.as_slice(), right_marks.as_slice()) else {
+        let Some(left_mark) =
+            select_directional_mark(mol, left, right, bond_id, &left_marks, issues)
+        else {
             continue;
         };
-        let orientation = if left_mark.mark.kind == right_mark.mark.kind {
+        let Some(right_mark) =
+            select_directional_mark(mol, right, left, bond_id, &right_marks, issues)
+        else {
+            continue;
+        };
+        let orientation = if left_mark.direction == right_mark.direction {
             DoubleBondOrientation::Together
         } else {
             DoubleBondOrientation::Opposite
         };
-        used_marks.push(left_mark.bond);
-        used_marks.push(right_mark.bond);
+        used_marks.extend(left_marks.iter().map(|mark| mark.bond));
+        used_marks.extend(right_marks.iter().map(|mark| mark.bond));
         assembled.push(StereoElement::specified(
             StereoElementKind::DoubleBond(DoubleBondStereo {
                 bond: bond_id,
@@ -634,6 +627,65 @@ fn assemble_directional_double_bonds(
         ));
     }
     assembled
+}
+
+fn select_directional_mark<'a>(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    marks: &'a [EndpointMark<'a>],
+    issues: &mut Vec<StereoPerceptionIssue>,
+) -> Option<EndpointMark<'a>> {
+    match marks {
+        [] => None,
+        [mark] => Some(*mark),
+        [first, second]
+            if redundant_endpoint_directional_marks(
+                mol,
+                endpoint,
+                other_endpoint,
+                focus_bond,
+                first,
+                second,
+            ) =>
+        {
+            Some(*first)
+        }
+        _ => {
+            issues.push(StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
+                double_bond: focus_bond,
+                endpoint,
+                mark_count: marks.len(),
+            });
+            None
+        }
+    }
+}
+
+fn redundant_endpoint_directional_marks(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    first: &EndpointMark<'_>,
+    second: &EndpointMark<'_>,
+) -> bool {
+    if first.direction == second.direction {
+        return false;
+    }
+    let mut marked_carriers = [first.carrier, second.carrier];
+    marked_carriers.sort_unstable();
+    let mut atom_carriers =
+        double_bond_endpoint_carriers(mol, endpoint, other_endpoint, focus_bond)
+            .into_iter()
+            .filter_map(|carrier| match carrier {
+                StereoCarrier::Atom(atom) => Some(atom),
+                StereoCarrier::ImplicitHydrogen => None,
+            })
+            .collect::<Vec<_>>();
+    atom_carriers.sort_unstable();
+    marked_carriers.as_slice() == atom_carriers.as_slice()
 }
 
 fn report_unassembled_source_marks(
@@ -908,6 +960,7 @@ struct EndpointMark<'a> {
     bond: BondId,
     carrier: AtomId,
     mark: &'a StereoBondMark,
+    direction: StereoBondMarkKind,
 }
 
 fn directional_marks_for_endpoint(
@@ -934,11 +987,32 @@ fn directional_marks_for_endpoint(
                 bond: bond_id,
                 carrier: bond.other_atom(endpoint),
                 mark,
+                direction: directional_mark_at_endpoint(mark.kind, bond, endpoint),
             });
         }
     }
     marks.sort_by_key(|mark| (mark.bond, mark.carrier));
     marks
+}
+
+fn directional_mark_at_endpoint(
+    kind: StereoBondMarkKind,
+    bond: &Bond,
+    endpoint: AtomId,
+) -> StereoBondMarkKind {
+    if bond.b() == endpoint {
+        invert_directional_mark(kind)
+    } else {
+        kind
+    }
+}
+
+fn invert_directional_mark(kind: StereoBondMarkKind) -> StereoBondMarkKind {
+    match kind {
+        StereoBondMarkKind::DirectionalUp => StereoBondMarkKind::DirectionalDown,
+        StereoBondMarkKind::DirectionalDown => StereoBondMarkKind::DirectionalUp,
+        _ => kind,
+    }
 }
 
 fn has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {

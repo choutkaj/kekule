@@ -862,7 +862,7 @@ fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element
             assert_eq!(stereo.right, AtomId::new(2));
             assert_eq!(stereo.left_carrier, StereoCarrier::Atom(AtomId::new(0)));
             assert_eq!(stereo.right_carrier, StereoCarrier::Atom(AtomId::new(3)));
-            assert_eq!(stereo.orientation, DoubleBondOrientation::Opposite);
+            assert_eq!(stereo.orientation, DoubleBondOrientation::Together);
         }
         other => panic!("expected double-bond stereo, found {other:?}"),
     }

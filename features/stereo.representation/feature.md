@@ -25,8 +25,10 @@ not atom/bond payload flags.
 - Stereo groups model relation semantics separately from local parity, including
   absolute, relative, racemic, AND, and OR group kinds.
 - SMILES `@`/`@@` markers are preserved as tetrahedral elements using SMILES
-  local orientation and carrier order. SMILES `/` and `\` markers are preserved
-  as source bond marks without double-bond perception.
+  local orientation and carrier order. Carrier order follows the SMILES-local
+  sequence, including the incoming atom, bracket hydrogens, branches, and ring
+  digits. SMILES `/` and `\` markers are preserved as source bond marks without
+  double-bond perception.
 - Supported V2000 and V3000 bond stereo fields are preserved as source bond
   marks. Atom `CFG`/parity and enhanced stereo collections remain unsupported
   until explicit format features are implemented.
@@ -75,3 +77,5 @@ not atom/bond payload flags.
 - v3: Generalize double-bond stereo carriers from atom-only IDs to
   `StereoCarrier` so alkene perception can represent implicit-hydrogen
   substituents.
+- v4: Preserve SMILES-local tetrahedral carrier order for bracket hydrogens and
+  ring-digit closures in smoke semantic validation.

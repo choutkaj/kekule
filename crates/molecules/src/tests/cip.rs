@@ -71,6 +71,108 @@ fn cip_matches_rdkit_for_smiles_ring_digit_tetrahedral_order() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_branch_preserving_sugar_ligand_ranking() {
+    let mut molecule =
+        smiles_api::read_str("C1=C2C(=NC=N1)N(C=N2)[C@H]3[C@@H]([C@@H]([C@H](O3)COP(=O)(O)O)O)O")
+            .expect("nucleotide sugar parses");
+    perception_api::sanitize(&mut molecule).expect("nucleotide sugar sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report
+            .assigned
+            .iter()
+            .map(|assignment| assignment.descriptor)
+            .collect::<Vec<_>>(),
+        vec![
+            StereoDescriptor::R,
+            StereoDescriptor::R,
+            StereoDescriptor::S,
+            StereoDescriptor::R,
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_fused_ring_paired_breadth_first_ranking() {
+    let mut molecule =
+        smiles_api::read_str("CC(=O)OC[C@]1([C@@H](CC[C@@]2(C1C[C@@H]([C@]34[C@H]2CC[C@@H](C3)C(=C)C4)OC(=O)C5=CC=C(C=C5)OC)C)OC(=O)C6=CC=C(C=C6)OC)C")
+            .expect("polycycle parses");
+    perception_api::sanitize(&mut molecule).expect("polycycle sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report
+            .assigned
+            .iter()
+            .map(|assignment| assignment.descriptor)
+            .collect::<Vec<_>>(),
+        vec![
+            StereoDescriptor::S,
+            StereoDescriptor::R,
+            StereoDescriptor::S,
+            StereoDescriptor::S,
+            StereoDescriptor::R,
+            StereoDescriptor::S,
+            StereoDescriptor::S,
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_polyene_directional_double_bonds() {
+    let mut molecule =
+        smiles_api::read_str("CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)C=C)/C").expect("polyene parses");
+    perception_api::sanitize(&mut molecule).expect("polyene sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report
+            .assigned
+            .iter()
+            .map(|assignment| assignment.descriptor)
+            .collect::<Vec<_>>(),
+        vec![
+            StereoDescriptor::E,
+            StereoDescriptor::E,
+            StereoDescriptor::E
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_large_fused_ring_with_many_centers() {
+    let mut molecule =
+        smiles_api::read_str("CN1CC[C@@]23[C@H]4[C@H]1CC5=C2C(=C(C=C5)OC)O[C@@H]3[C@]6(C4)C(=O)C7=C8N6CCC9=C8C(=C(C=C9)OC)OC1=C7C=CC(=C1O)OC")
+            .expect("fused ring parses");
+    perception_api::sanitize(&mut molecule).expect("fused ring sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report
+            .assigned
+            .iter()
+            .map(|assignment| assignment.descriptor)
+            .collect::<Vec<_>>(),
+        vec![
+            StereoDescriptor::R,
+            StereoDescriptor::S,
+            StereoDescriptor::R,
+            StereoDescriptor::S,
+            StereoDescriptor::R
+        ]
+    );
+}
+
+#[test]
 fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
     let mut together = smiles_api::read_str("C(=C\\F)\\F").expect("alkene parses");
     perception_api::sanitize(&mut together).expect("alkene sanitizes");

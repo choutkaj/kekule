@@ -1,7 +1,7 @@
 id = "stereo.representation"
 title = "Stereochemistry representation"
 area = "stereo"
-version = 3
+version = 4
 implemented = true
 validated = true
 description = "Store first-class stereo elements, relation groups, source bond marks, and atom or hydrogen stereo carriers adjacent to the molecular graph."

@@ -19,7 +19,7 @@ impl Default for CipAssignmentOptions {
         Self {
             validate_existing: true,
             max_depth: 32,
-            max_nodes: 4096,
+            max_nodes: 100_000,
         }
     }
 }
@@ -242,66 +242,89 @@ fn ranked_carriers(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LigandSignature {
-    atomic_spheres: Vec<Vec<u8>>,
-    rule1b_spheres: Vec<Vec<u32>>,
-    isotope_spheres: Vec<Vec<u16>>,
+    root: LigandTree,
 }
 
 impl LigandSignature {
     fn compare(&self, other: &Self) -> Ordering {
-        let len = self
-            .atomic_spheres
-            .len()
-            .max(other.atomic_spheres.len())
-            .max(self.rule1b_spheres.len())
-            .max(other.rule1b_spheres.len())
-            .max(self.isotope_spheres.len())
-            .max(other.isotope_spheres.len());
-        for index in 0..len {
-            let atomic = compare_sphere(
-                self.atomic_spheres.get(index).map(Vec::as_slice),
-                other.atomic_spheres.get(index).map(Vec::as_slice),
-            );
-            if atomic != Ordering::Equal {
-                return atomic;
+        self.root.compare(&other.root)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LigandTree {
+    priority: NodePriority,
+    children: Vec<LigandTree>,
+}
+
+impl LigandTree {
+    fn compare(&self, other: &Self) -> Ordering {
+        let priority = self.priority.compare(&other.priority);
+        if priority != Ordering::Equal {
+            return priority;
+        }
+        let mut queue = vec![(self, other)];
+        let mut position = 0usize;
+        while position < queue.len() {
+            let (left, right) = queue[position];
+            position += 1;
+
+            let left_shallow = left.children_sorted_by_priority();
+            let right_shallow = right.children_sorted_by_priority();
+            let shallow = compare_child_priorities(&left_shallow, &right_shallow);
+            if shallow != Ordering::Equal {
+                return shallow;
             }
-            let rule1b = compare_sphere(
-                self.rule1b_spheres.get(index).map(Vec::as_slice),
-                other.rule1b_spheres.get(index).map(Vec::as_slice),
-            );
-            if rule1b != Ordering::Equal {
-                return rule1b;
+
+            let left_deep = left.children_sorted_deep();
+            let right_deep = right.children_sorted_deep();
+            let deep = compare_child_priorities(&left_deep, &right_deep);
+            if deep != Ordering::Equal {
+                return deep;
             }
-            let isotope = compare_sphere(
-                self.isotope_spheres.get(index).map(Vec::as_slice),
-                other.isotope_spheres.get(index).map(Vec::as_slice),
-            );
-            if isotope != Ordering::Equal {
-                return isotope;
+            for (left_child, right_child) in left_deep.into_iter().zip(right_deep) {
+                queue.push((left_child, right_child));
             }
         }
         Ordering::Equal
     }
+
+    fn children_sorted_by_priority(&self) -> Vec<&LigandTree> {
+        let mut children = self.children.iter().collect::<Vec<_>>();
+        children.sort_by(|left, right| right.priority.compare(&left.priority));
+        children
+    }
+
+    fn children_sorted_deep(&self) -> Vec<&LigandTree> {
+        let mut children = self.children.iter().collect::<Vec<_>>();
+        children.sort_by(|left, right| right.compare(left));
+        children
+    }
 }
 
-fn compare_sphere<T: Ord>(left: Option<&[T]>, right: Option<&[T]>) -> Ordering {
-    match (left, right) {
-        (Some(left), Some(right)) => left.cmp(right),
-        (Some(left), None) => {
-            if left.is_empty() {
-                Ordering::Equal
-            } else {
-                Ordering::Greater
-            }
+fn compare_child_priorities(left: &[&LigandTree], right: &[&LigandTree]) -> Ordering {
+    for (left_child, right_child) in left.iter().zip(right) {
+        let priority = left_child.priority.compare(&right_child.priority);
+        if priority != Ordering::Equal {
+            return priority;
         }
-        (None, Some(right)) => {
-            if right.is_empty() {
-                Ordering::Equal
-            } else {
-                Ordering::Less
-            }
-        }
-        (None, None) => Ordering::Equal,
+    }
+    left.len().cmp(&right.len())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NodePriority {
+    atomic_number: u8,
+    rule1b: u32,
+    isotope: u16,
+}
+
+impl NodePriority {
+    fn compare(&self, other: &Self) -> Ordering {
+        self.atomic_number
+            .cmp(&other.atomic_number)
+            .then_with(|| self.rule1b.cmp(&other.rule1b))
+            .then_with(|| self.isotope.cmp(&other.isotope))
     }
 }
 
@@ -312,7 +335,7 @@ fn carrier_signature(
     root: AtomId,
     options: CipAssignmentOptions,
 ) -> CipResult<LigandSignature> {
-    let mut nodes = vec![match carrier {
+    let node = match carrier {
         StereoCarrier::Atom(atom) => LigandNode::Atom {
             atom,
             previous: Some(root),
@@ -321,58 +344,45 @@ fn carrier_signature(
             terminal: false,
         },
         StereoCarrier::ImplicitHydrogen => LigandNode::Hydrogen,
-    }];
-    let mut atomic_spheres = Vec::new();
-    let mut rule1b_spheres = Vec::new();
-    let mut isotope_spheres = Vec::new();
-    let mut visited_nodes = nodes.len();
-    for depth in 0..=options.max_depth {
-        let mut atomic = nodes
-            .iter()
-            .map(|node| node.atomic_number(mol))
-            .collect::<Vec<_>>();
-        atomic.sort_unstable_by(|left, right| right.cmp(left));
-        atomic_spheres.push(atomic);
+    };
+    let mut visited_nodes = 0usize;
+    let root = ligand_tree(mol, element, node, options, 0, &mut visited_nodes)?;
+    Ok(LigandSignature { root })
+}
 
-        let mut rule1b = nodes
-            .iter()
-            .map(LigandNode::rule1b_priority)
-            .collect::<Vec<_>>();
-        rule1b.sort_unstable_by(|left, right| right.cmp(left));
-        rule1b_spheres.push(rule1b);
-
-        let mut isotopes = nodes
-            .iter()
-            .map(|node| node.isotope(mol))
-            .collect::<Vec<_>>();
-        isotopes.sort_unstable_by(|left, right| right.cmp(left));
-        isotope_spheres.push(isotopes);
-
-        if depth == options.max_depth {
-            break;
-        }
-
-        let mut next = Vec::new();
-        for node in &nodes {
-            node.extend(mol, &mut next);
-        }
-        if next.is_empty() {
-            break;
-        }
-        visited_nodes = visited_nodes.saturating_add(next.len());
-        if visited_nodes > options.max_nodes {
-            return Err(CipAssignmentIssue::ResourceLimitExceeded {
-                element,
-                max_nodes: options.max_nodes,
-            });
-        }
-        nodes = next;
+fn ligand_tree(
+    mol: &Molecule,
+    element: StereoElementId,
+    node: LigandNode,
+    options: CipAssignmentOptions,
+    depth: usize,
+    visited_nodes: &mut usize,
+) -> CipResult<LigandTree> {
+    *visited_nodes = visited_nodes.saturating_add(1);
+    if *visited_nodes > options.max_nodes {
+        return Err(CipAssignmentIssue::ResourceLimitExceeded {
+            element,
+            max_nodes: options.max_nodes,
+        });
     }
-    Ok(LigandSignature {
-        atomic_spheres,
-        rule1b_spheres,
-        isotope_spheres,
-    })
+    let priority = node.priority(mol);
+    let mut children = Vec::new();
+    if depth < options.max_depth {
+        let mut child_nodes = Vec::new();
+        node.extend(mol, &mut child_nodes);
+        for child in child_nodes {
+            children.push(ligand_tree(
+                mol,
+                element,
+                child,
+                options,
+                depth + 1,
+                visited_nodes,
+            )?);
+        }
+        children.sort_by(|left, right| right.priority.compare(&left.priority));
+    }
+    Ok(LigandTree { priority, children })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,6 +404,14 @@ enum LigandNode {
 }
 
 impl LigandNode {
+    fn priority(&self, mol: &Molecule) -> NodePriority {
+        NodePriority {
+            atomic_number: self.atomic_number(mol),
+            rule1b: self.rule1b_priority(),
+            isotope: self.isotope(mol),
+        }
+    }
+
     fn atomic_number(&self, mol: &Molecule) -> u8 {
         match self {
             Self::Atom { atom, .. } => mol
@@ -588,18 +606,25 @@ fn permutation_is_even(positions: &[usize]) -> bool {
 mod tests {
     use super::*;
 
-    fn one_node_signature(rule1b: u32, isotope: u16) -> LigandSignature {
-        LigandSignature {
-            atomic_spheres: vec![vec![6]],
-            rule1b_spheres: vec![vec![rule1b]],
-            isotope_spheres: vec![vec![isotope]],
+    fn one_node_signature(rule1b: u32, isotope: u16) -> LigandTree {
+        LigandTree {
+            priority: NodePriority {
+                atomic_number: 6,
+                rule1b,
+                isotope,
+            },
+            children: Vec::new(),
         }
+    }
+
+    fn signature(root: LigandTree) -> LigandSignature {
+        LigandSignature { root }
     }
 
     #[test]
     fn rule1b_ring_duplicate_priority_is_applied_before_isotope_priority() {
-        let ring_duplicate = one_node_signature(u32::MAX, 0);
-        let isotope = one_node_signature(0, 13);
+        let ring_duplicate = signature(one_node_signature(u32::MAX, 0));
+        let isotope = signature(one_node_signature(0, 13));
 
         assert_eq!(ring_duplicate.compare(&isotope), Ordering::Greater);
         assert_eq!(isotope.compare(&ring_duplicate), Ordering::Less);
@@ -607,11 +632,149 @@ mod tests {
 
     #[test]
     fn rule1b_prefers_ring_duplicate_whose_reference_is_closer_to_root() {
-        let root_reference = one_node_signature(u32::MAX, 0);
-        let deeper_reference = one_node_signature(u32::MAX - 2, 0);
+        let root_reference = signature(one_node_signature(u32::MAX, 0));
+        let deeper_reference = signature(one_node_signature(u32::MAX - 2, 0));
 
         assert_eq!(root_reference.compare(&deeper_reference), Ordering::Greater);
         assert_eq!(deeper_reference.compare(&root_reference), Ordering::Less);
+    }
+
+    #[test]
+    fn ligand_tree_compares_highest_priority_branch_before_lower_siblings() {
+        let oxygen_to_carbon = LigandTree {
+            priority: NodePriority {
+                atomic_number: 8,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![one_node_signature(0, 0)],
+        };
+        let oxygen_to_hydrogen = LigandTree {
+            priority: NodePriority {
+                atomic_number: 8,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![LigandTree {
+                priority: NodePriority {
+                    atomic_number: 1,
+                    rule1b: 0,
+                    isotope: 0,
+                },
+                children: Vec::new(),
+            }],
+        };
+        let carbon_to_nitrogen = LigandTree {
+            priority: NodePriority {
+                atomic_number: 6,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![LigandTree {
+                priority: NodePriority {
+                    atomic_number: 7,
+                    rule1b: 0,
+                    isotope: 0,
+                },
+                children: Vec::new(),
+            }],
+        };
+        let carbon_to_oxygen = LigandTree {
+            priority: NodePriority {
+                atomic_number: 6,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![LigandTree {
+                priority: NodePriority {
+                    atomic_number: 8,
+                    rule1b: 0,
+                    isotope: 0,
+                },
+                children: Vec::new(),
+            }],
+        };
+
+        let left = signature(LigandTree {
+            priority: NodePriority {
+                atomic_number: 6,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![oxygen_to_carbon, carbon_to_oxygen],
+        });
+        let right = signature(LigandTree {
+            priority: NodePriority {
+                atomic_number: 6,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![oxygen_to_hydrogen, carbon_to_nitrogen],
+        });
+
+        assert_eq!(left.compare(&right), Ordering::Greater);
+    }
+
+    #[test]
+    fn ligand_tree_compares_immediate_sibling_list_before_recursing() {
+        let oxygen_to_hydrogen = LigandTree {
+            priority: NodePriority {
+                atomic_number: 8,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![LigandTree {
+                priority: NodePriority {
+                    atomic_number: 1,
+                    rule1b: 0,
+                    isotope: 0,
+                },
+                children: Vec::new(),
+            }],
+        };
+        let oxygen_to_phosphorus = LigandTree {
+            priority: NodePriority {
+                atomic_number: 8,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![LigandTree {
+                priority: NodePriority {
+                    atomic_number: 15,
+                    rule1b: 0,
+                    isotope: 0,
+                },
+                children: Vec::new(),
+            }],
+        };
+        let carbon = one_node_signature(0, 0);
+        let hydrogen = LigandTree {
+            priority: NodePriority {
+                atomic_number: 1,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: Vec::new(),
+        };
+
+        let left = signature(LigandTree {
+            priority: NodePriority {
+                atomic_number: 6,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![oxygen_to_hydrogen, carbon],
+        });
+        let right = signature(LigandTree {
+            priority: NodePriority {
+                atomic_number: 6,
+                rule1b: 0,
+                isotope: 0,
+            },
+            children: vec![oxygen_to_phosphorus, hydrogen],
+        });
+
+        assert_eq!(left.compare(&right), Ordering::Greater);
     }
 
     #[test]

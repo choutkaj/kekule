@@ -23,8 +23,11 @@ and assign local stereo elements from supported source marks and coordinates.
 - Tetrahedral candidates are local geometry candidates only; no exact ligand
   ranking, symmetry pruning, or CIP descriptor assignment is performed.
 - Double-bond candidates include atom and implicit-hydrogen carriers. Paired
-  directional `/` and `\` source marks can create specified double-bond stereo
-  elements when one marked single bond is available on each end.
+  directional `/` and `\` source marks are normalized relative to each alkene
+  endpoint and can create specified double-bond stereo elements when compatible
+  marked single bonds are available on both ends. A substituted alkene endpoint
+  may carry two redundant directional marks when they cover both atom carriers
+  with opposite endpoint-normalized directions.
 - Molfile wedge up/down marks can create specified tetrahedral stereo elements.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
@@ -39,9 +42,10 @@ and assign local stereo elements from supported source marks and coordinates.
 
 This feature identifies candidate tetrahedral atoms and double bonds, validates
 existing local stereo elements against current topology and hydrogen semantics,
-assembles SMILES-style paired directional bond marks, and assembles supported
-Molfile tetrahedral wedge/either source marks. Coordinate-derived assignment is
-local and conservative; exact CIP descriptors belong to `stereo.cip`.
+assembles SMILES-style paired directional bond marks with endpoint-relative
+normalization, and assembles supported Molfile tetrahedral wedge/either source
+marks. Coordinate-derived assignment is local and conservative; exact CIP
+descriptors belong to `stereo.cip`.
 
 Small-molecule perception should run as an explicit staged workflow and may be
 run from the small-molecule sanitizer when `SanitizeOptions::perceive_stereo`
@@ -81,3 +85,6 @@ stereo transfer.
   transactional rollback on stereo issues.
 - v5: Add conservative coordinate-derived local assignment for explicit-atom
   tetrahedral centers and double bonds using the first conformer.
+- v6: Normalize SMILES directional bond marks relative to alkene endpoints and
+  accept redundant two-mark substituted endpoints when the marks cover both atom
+  carriers with opposite normalized directions.

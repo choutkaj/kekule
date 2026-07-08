@@ -475,7 +475,6 @@ pub(crate) fn cip_bond_descriptors_json(mol: &Molecule) -> Vec<Value> {
         .filter_map(|(_, element)| match &element.kind {
             StereoElementKind::DoubleBond(stereo) => element.descriptor.map(|descriptor| {
                 json!({
-                    "bond_index": stereo.bond.raw(),
                     "begin_atom_index": stereo.left.raw(),
                     "end_atom_index": stereo.right.raw(),
                     "descriptor": stereo_descriptor_json(descriptor),
@@ -484,21 +483,36 @@ pub(crate) fn cip_bond_descriptors_json(mol: &Molecule) -> Vec<Value> {
             StereoElementKind::Axis(_) | StereoElementKind::Tetrahedral(_) => None,
         })
         .collect::<Vec<_>>();
-    descriptors.sort_by_key(|value| {
-        (
-            value
-                .get("bond_index")
+    descriptors.sort_by(|left, right| {
+        let left_key = (
+            left.get("begin_atom_index")
                 .and_then(Value::as_u64)
                 .unwrap_or(u64::MAX),
-            value
+            left.get("end_atom_index")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::MAX),
+        );
+        let right_key = (
+            right
                 .get("begin_atom_index")
                 .and_then(Value::as_u64)
                 .unwrap_or(u64::MAX),
-            value
+            right
                 .get("end_atom_index")
                 .and_then(Value::as_u64)
                 .unwrap_or(u64::MAX),
-        )
+        );
+        left_key.cmp(&right_key).then_with(|| {
+            left.get("descriptor")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .cmp(
+                    right
+                        .get("descriptor")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                )
+        })
     });
     descriptors
 }

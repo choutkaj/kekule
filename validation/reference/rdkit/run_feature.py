@@ -982,7 +982,6 @@ def cip_bond_descriptors(mol: Any) -> list[dict[str, Any]]:
         if bond.HasProp("_CIPCode"):
             descriptors.append(
                 {
-                    "bond_index": bond.GetIdx(),
                     "begin_atom_index": bond.GetBeginAtomIdx(),
                     "end_atom_index": bond.GetEndAtomIdx(),
                     "descriptor": bond.GetProp("_CIPCode"),
@@ -990,9 +989,9 @@ def cip_bond_descriptors(mol: Any) -> list[dict[str, Any]]:
             )
     descriptors.sort(
         key=lambda item: (
-            item["bond_index"],
             item["begin_atom_index"],
             item["end_atom_index"],
+            item["descriptor"],
         )
     )
     return descriptors
