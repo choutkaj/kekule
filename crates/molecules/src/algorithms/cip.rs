@@ -825,7 +825,7 @@ impl LigandComparison {
 struct NodePriority {
     atomic_number: AtomicNumberFraction,
     rule1b: u32,
-    isotope: u16,
+    rule2_mass: Rule2Mass,
     descriptor: Option<StereoDescriptor>,
     rule6_atom: Option<AtomId>,
 }
@@ -835,7 +835,7 @@ impl NodePriority {
         self.atomic_number
             .cmp(&other.atomic_number)
             .then_with(|| self.rule1b.cmp(&other.rule1b))
-            .then_with(|| self.isotope.cmp(&other.isotope))
+            .then_with(|| self.rule2_mass.compare(other.rule2_mass))
     }
 
     fn compare_by_rule(
@@ -847,7 +847,7 @@ impl NodePriority {
         match rule {
             SequenceRule::Rule1a => self.atomic_number.cmp(&other.atomic_number),
             SequenceRule::Rule1b => self.rule1b.cmp(&other.rule1b),
-            SequenceRule::Rule2 => self.isotope.cmp(&other.isotope),
+            SequenceRule::Rule2 => self.rule2_mass.compare(other.rule2_mass),
             SequenceRule::Rule3 => rule3_descriptor_priority(self.descriptor)
                 .cmp(&rule3_descriptor_priority(other.descriptor)),
             SequenceRule::Rule4a => rule4a_descriptor_priority(self.descriptor)
@@ -860,6 +860,63 @@ impl NodePriority {
                 .cmp(&rule6_priority(other.rule6_atom, rule6_reference)),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rule2Mass {
+    scaled_mass: u32,
+    isotope_indicated: bool,
+}
+
+impl Rule2Mass {
+    const ZERO: Self = Self {
+        scaled_mass: 0,
+        isotope_indicated: false,
+    };
+
+    fn natural(atomic_number: u8) -> Self {
+        Self {
+            scaled_mass: natural_atomic_weight_rank(atomic_number),
+            isotope_indicated: false,
+        }
+    }
+
+    fn isotope(mass_number: u16) -> Self {
+        Self {
+            scaled_mass: u32::from(mass_number).saturating_mul(ATOMIC_WEIGHT_SCALE),
+            isotope_indicated: true,
+        }
+    }
+
+    fn compare(self, other: Self) -> Ordering {
+        if !self.isotope_indicated && !other.isotope_indicated {
+            Ordering::Equal
+        } else {
+            self.scaled_mass.cmp(&other.scaled_mass)
+        }
+    }
+}
+
+const ATOMIC_WEIGHT_SCALE: u32 = 1_000;
+
+const STANDARD_ATOMIC_WEIGHTS_MILLI: [u32; 119] = [
+    0, 1008, 4003, 6941, 9012, 10812, 12011, 14007, 15999, 18998, 20180, 22990, 24305, 26982,
+    28086, 30974, 32067, 35453, 39948, 39098, 40078, 44956, 47867, 50944, 51996, 54938, 55845,
+    58933, 58693, 63546, 65390, 69723, 72610, 74922, 78960, 79904, 83800, 85468, 87620, 88906,
+    91224, 92906, 95940, 98000, 101070, 102906, 106420, 107868, 112412, 114818, 118711, 121760,
+    127600, 126904, 131290, 132905, 137328, 138906, 140116, 140908, 144240, 145000, 150360, 151964,
+    157250, 158925, 162500, 164930, 167260, 168934, 173040, 174967, 178490, 180948, 183840, 186207,
+    190230, 192217, 195078, 196967, 200590, 204383, 207200, 208980, 209000, 210000, 222000, 223000,
+    226000, 227000, 232038, 231036, 238029, 237000, 244000, 243000, 247000, 247000, 251000, 252000,
+    257000, 258000, 259000, 262000, 267000, 268000, 269000, 270000, 269000, 278000, 281000, 281000,
+    285000, 284000, 289000, 288000, 293000, 292000, 294000,
+];
+
+fn natural_atomic_weight_rank(atomic_number: u8) -> u32 {
+    STANDARD_ATOMIC_WEIGHTS_MILLI
+        .get(usize::from(atomic_number))
+        .copied()
+        .unwrap_or_else(|| u32::from(atomic_number).saturating_mul(ATOMIC_WEIGHT_SCALE))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1170,7 +1227,7 @@ impl LigandNode {
         NodePriority {
             atomic_number: self.atomic_number(mol, atomic_number_fractions),
             rule1b: self.rule1b_priority(),
-            isotope: self.isotope(mol),
+            rule2_mass: self.rule2_mass(mol),
             descriptor: self.descriptor(mol),
             rule6_atom: self.rule6_atom(),
         }
@@ -1209,21 +1266,25 @@ impl LigandNode {
         }
     }
 
-    fn isotope(&self, mol: &Molecule) -> u16 {
+    fn rule2_mass(&self, mol: &Molecule) -> Rule2Mass {
         match self {
             Self::Atom {
                 atom, duplicate, ..
             } => {
                 if duplicate.is_some() {
-                    0
+                    Rule2Mass::ZERO
                 } else {
-                    mol.atom(*atom)
-                        .ok()
-                        .and_then(|atom| atom.isotope)
-                        .unwrap_or(0)
+                    let Ok(atom) = mol.atom(*atom) else {
+                        return Rule2Mass::ZERO;
+                    };
+                    atom.isotope.map_or_else(
+                        || Rule2Mass::natural(atom.element.atomic_number()),
+                        Rule2Mass::isotope,
+                    )
                 }
             }
-            Self::Hydrogen | Self::LonePair => 0,
+            Self::Hydrogen => Rule2Mass::natural(1),
+            Self::LonePair => Rule2Mass::ZERO,
         }
     }
 
@@ -1762,7 +1823,11 @@ mod tests {
         NodePriority {
             atomic_number: AtomicNumberFraction::element(atomic_number),
             rule1b,
-            isotope,
+            rule2_mass: if isotope == 0 {
+                Rule2Mass::natural(atomic_number)
+            } else {
+                Rule2Mass::isotope(isotope)
+            },
             descriptor: None,
             rule6_atom: None,
         }
@@ -1800,6 +1865,41 @@ mod tests {
 
         assert_eq!(ring_duplicate.compare(&isotope), Ordering::Greater);
         assert_eq!(isotope.compare(&ring_duplicate), Ordering::Less);
+    }
+
+    #[test]
+    fn rule2_compares_indicated_isotopes_against_natural_atomic_weight() {
+        let natural_hydrogen = node_priority(1, 0, 0);
+        let protium = node_priority(1, 0, 1);
+        let deuterium = node_priority(1, 0, 2);
+
+        assert_eq!(
+            natural_hydrogen.compare_by_rule(&protium, SequenceRule::Rule2, None),
+            Ordering::Greater
+        );
+        assert_eq!(
+            deuterium.compare_by_rule(&natural_hydrogen, SequenceRule::Rule2, None),
+            Ordering::Greater
+        );
+
+        let natural_carbon = node_priority(6, 0, 0);
+        let carbon_12 = node_priority(6, 0, 12);
+        let carbon_13 = node_priority(6, 0, 13);
+
+        assert_eq!(
+            natural_carbon.compare_by_rule(&carbon_12, SequenceRule::Rule2, None),
+            Ordering::Greater
+        );
+        assert_eq!(
+            carbon_13.compare_by_rule(&natural_carbon, SequenceRule::Rule2, None),
+            Ordering::Greater
+        );
+
+        let another_natural_hydrogen = node_priority(1, 0, 0);
+        assert_eq!(
+            natural_hydrogen.compare_by_rule(&another_natural_hydrogen, SequenceRule::Rule2, None),
+            Ordering::Equal
+        );
     }
 
     #[test]
@@ -2197,8 +2297,8 @@ mod tests {
             terminal: true,
         };
 
-        assert_eq!(normal.isotope(&mol), 13);
-        assert_eq!(duplicate.isotope(&mol), 0);
+        assert_eq!(normal.rule2_mass(&mol), Rule2Mass::isotope(13));
+        assert_eq!(duplicate.rule2_mass(&mol), Rule2Mass::ZERO);
     }
 
     #[test]
