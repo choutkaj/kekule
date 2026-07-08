@@ -509,6 +509,36 @@ fn cip_marks_middle_center_pseudoasymmetric_in_fused_three_center_system() {
 }
 
 #[test]
+fn cip_bootstraps_enamine_coupled_cyclobutane_pseudoasymmetric_centers() {
+    let mut molecule = smiles_api::read_str(
+        "O=C(CCC(=O)N1CCC(=N1)C=2C=CC=CC2)N[C@@H]3C[C@H](C3)C4=CC=CC(=C4)C=5N=NNN5",
+    )
+    .expect("Enamine coupled pseudoasymmetric scaffold parses");
+    perception_api::sanitize(&mut molecule).expect("Enamine coupled scaffold sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    let descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors,
+        vec![
+            (18, StereoDescriptor::LowerR),
+            (20, StereoDescriptor::LowerR)
+        ]
+    );
+}
+
+#[test]
 fn cip_applies_recursive_rule1a_before_isotope_priority() {
     let mut mol = Molecule::new();
     let mut center_atom = carbon();

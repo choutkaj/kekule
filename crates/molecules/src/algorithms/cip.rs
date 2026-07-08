@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 
 use crate::algorithms::{
     validate_stereo_with_options, RingMembership, StereoPerceptionIssue, StereoPerceptionOptions,
@@ -246,6 +248,14 @@ fn assign_tetrahedral_descriptor_with_deferred_rule6(
         options,
         allow_single_ring_tied_pair_rule6,
     )?;
+    tetrahedral_descriptor_from_ranked(element, stereo, &ranked)
+}
+
+fn tetrahedral_descriptor_from_ranked(
+    element: StereoElementId,
+    stereo: &TetrahedralStereo,
+    ranked: &RankedCarriers,
+) -> CipResult<StereoDescriptor> {
     let mut priority_positions = Vec::new();
     for carrier in &ranked.carriers {
         let Some(position) = stereo
@@ -306,7 +316,7 @@ fn ranked_carriers(
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
 ) -> CipResult<RankedCarriers> {
-    let signatures = carrier_signatures(mol, element, root, carriers, options)?;
+    let signatures = carrier_signatures(mol, element, root, carriers, options, false)?;
     rank_carrier_signatures(element, &signatures, None)
 }
 
@@ -319,7 +329,14 @@ fn ranked_tetrahedral_carriers(
     options: CipAssignmentOptions,
     allow_single_ring_tied_pair_rule6: bool,
 ) -> CipResult<RankedCarriers> {
-    let signatures = carrier_signatures(mol, element, root, carriers, options)?;
+    let signatures = carrier_signatures(
+        mol,
+        element,
+        root,
+        carriers,
+        options,
+        allow_single_ring_tied_pair_rule6,
+    )?;
     match rank_carrier_signatures(element, &signatures, None) {
         Ok(ranked) => Ok(ranked),
         Err(CipAssignmentIssue::UnresolvedPriority { .. }) if carriers.len() == 4 => {
@@ -364,8 +381,10 @@ fn carrier_signatures(
     root: AtomId,
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
+    allow_auxiliary_descriptors: bool,
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
     let atomic_number_fractions = cip_atomic_number_fractions(mol);
+    let descriptor_context = DescriptorContext::new(element, allow_auxiliary_descriptors);
     carriers
         .iter()
         .copied()
@@ -373,6 +392,7 @@ fn carrier_signatures(
             carrier_signature(
                 mol,
                 element,
+                &descriptor_context,
                 carrier,
                 root,
                 options,
@@ -1027,6 +1047,52 @@ struct NodePriority {
     rule6_atom: Option<AtomId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AuxDescriptorKey {
+    skipped: Vec<StereoElementId>,
+    element: StereoElementId,
+    path: Vec<AtomId>,
+}
+
+#[derive(Debug, Clone)]
+struct DescriptorContext {
+    skipped: Vec<StereoElementId>,
+    allow_auxiliary: bool,
+    aux_cache: Rc<RefCell<HashMap<AuxDescriptorKey, Option<StereoDescriptor>>>>,
+}
+
+impl DescriptorContext {
+    fn new(skip: StereoElementId, allow_auxiliary: bool) -> Self {
+        Self {
+            skipped: vec![skip],
+            allow_auxiliary,
+            aux_cache: Rc::new(RefCell::new(HashMap::new())),
+        }
+    }
+
+    fn skips(&self, element: StereoElementId) -> bool {
+        self.skipped.contains(&element)
+    }
+
+    fn with_skip(&self, element: StereoElementId) -> Self {
+        let mut skipped = self.skipped.clone();
+        skipped.push(element);
+        Self {
+            skipped,
+            allow_auxiliary: self.allow_auxiliary,
+            aux_cache: Rc::clone(&self.aux_cache),
+        }
+    }
+}
+
+struct LigandBuildContext<'a> {
+    mol: &'a Molecule,
+    element: StereoElementId,
+    descriptor_context: &'a DescriptorContext,
+    options: CipAssignmentOptions,
+    atomic_number_fractions: &'a [AtomicNumberFraction],
+}
+
 impl NodePriority {
     fn compare_shallow(&self, other: &Self) -> Ordering {
         self.atomic_number
@@ -1326,6 +1392,7 @@ fn rule6_priority(atom: Option<AtomId>, reference: Option<AtomId>) -> u8 {
 fn carrier_signature(
     mol: &Molecule,
     element: StereoElementId,
+    descriptor_context: &DescriptorContext,
     carrier: StereoCarrier,
     root: AtomId,
     options: CipAssignmentOptions,
@@ -1343,49 +1410,41 @@ fn carrier_signature(
         StereoCarrier::ImplicitLonePair => LigandNode::LonePair,
     };
     let mut visited_nodes = 0usize;
-    let root = ligand_tree(
+    let build_context = LigandBuildContext {
         mol,
         element,
-        node,
+        descriptor_context,
         options,
         atomic_number_fractions,
-        0,
-        &mut visited_nodes,
-    )?;
+    };
+    let root = ligand_tree(&build_context, node, 0, &mut visited_nodes)?;
     Ok(LigandSignature { root })
 }
 
 fn ligand_tree(
-    mol: &Molecule,
-    element: StereoElementId,
+    context: &LigandBuildContext<'_>,
     node: LigandNode,
-    options: CipAssignmentOptions,
-    atomic_number_fractions: &[AtomicNumberFraction],
     depth: usize,
     visited_nodes: &mut usize,
 ) -> CipResult<LigandTree> {
     *visited_nodes = visited_nodes.saturating_add(1);
-    if *visited_nodes > options.max_nodes {
+    if *visited_nodes > context.options.max_nodes {
         return Err(CipAssignmentIssue::ResourceLimitExceeded {
-            element,
-            max_nodes: options.max_nodes,
+            element: context.element,
+            max_nodes: context.options.max_nodes,
         });
     }
-    let priority = node.priority(mol, atomic_number_fractions);
+    let priority = node.priority(context);
     let mut children = Vec::new();
-    if depth < options.max_depth {
+    if depth < context.options.max_depth {
         let mut child_nodes = Vec::new();
-        node.extend(mol, atomic_number_fractions, &mut child_nodes);
+        node.extend(
+            context.mol,
+            context.atomic_number_fractions,
+            &mut child_nodes,
+        );
         for child in child_nodes {
-            children.push(ligand_tree(
-                mol,
-                element,
-                child,
-                options,
-                atomic_number_fractions,
-                depth + 1,
-                visited_nodes,
-            )?);
+            children.push(ligand_tree(context, child, depth + 1, visited_nodes)?);
         }
         children.sort_by(|left, right| right.priority.compare_shallow(&left.priority));
     }
@@ -1416,16 +1475,12 @@ enum LigandNode {
 }
 
 impl LigandNode {
-    fn priority(
-        &self,
-        mol: &Molecule,
-        atomic_number_fractions: &[AtomicNumberFraction],
-    ) -> NodePriority {
+    fn priority(&self, context: &LigandBuildContext<'_>) -> NodePriority {
         NodePriority {
-            atomic_number: self.atomic_number(mol, atomic_number_fractions),
+            atomic_number: self.atomic_number(context.mol, context.atomic_number_fractions),
             rule1b: self.rule1b_priority(),
-            rule2_mass: self.rule2_mass(mol),
-            descriptor: self.descriptor(mol),
+            rule2_mass: self.rule2_mass(context.mol),
+            descriptor: self.descriptor(context),
             rule6_atom: self.rule6_atom(),
         }
     }
@@ -1485,7 +1540,7 @@ impl LigandNode {
         }
     }
 
-    fn descriptor(&self, mol: &Molecule) -> Option<StereoDescriptor> {
+    fn descriptor(&self, context: &LigandBuildContext<'_>) -> Option<StereoDescriptor> {
         let Self::Atom {
             atom,
             path,
@@ -1495,7 +1550,7 @@ impl LigandNode {
         else {
             return None;
         };
-        atom_descriptor_for_ligand_node(mol, *atom, path)
+        atom_descriptor_for_ligand_node(context, *atom, path)
     }
 
     fn rule6_atom(&self) -> Option<AtomId> {
@@ -1872,22 +1927,160 @@ fn ring_duplicate_priority(reference_depth: usize) -> u32 {
 }
 
 fn atom_descriptor_for_ligand_node(
-    mol: &Molecule,
+    context: &LigandBuildContext<'_>,
     atom: AtomId,
     path: &[AtomId],
 ) -> Option<StereoDescriptor> {
-    mol.stereo_elements().find_map(|(_, element)| {
-        let descriptor = element.descriptor?;
+    context.mol.stereo_elements().find_map(|(id, element)| {
+        if context.descriptor_context.skips(id) {
+            return None;
+        }
         match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) if stereo.center == atom => Some(descriptor),
-            StereoElementKind::DoubleBond(stereo)
-                if double_bond_descriptor_applies_to_node(stereo, descriptor, atom, path) =>
-            {
-                Some(descriptor)
+            StereoElementKind::Tetrahedral(stereo) if stereo.center == atom => {
+                element.descriptor.or_else(|| {
+                    if !context.descriptor_context.allow_auxiliary {
+                        return None;
+                    }
+                    auxiliary_tetrahedral_descriptor_for_ligand_node(context, id, stereo, path)
+                })
             }
+            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
+                double_bond_descriptor_applies_to_node(stereo, descriptor, atom, path)
+                    .then_some(descriptor)
+            }),
             _ => None,
         }
     })
+}
+
+fn auxiliary_tetrahedral_descriptor_for_ligand_node(
+    context: &LigandBuildContext<'_>,
+    aux_element: StereoElementId,
+    stereo: &TetrahedralStereo,
+    path: &[AtomId],
+) -> Option<StereoDescriptor> {
+    if path.last().copied() != Some(stereo.center) {
+        return None;
+    }
+    let aux_descriptor_context = context.descriptor_context.with_skip(aux_element);
+    let key = AuxDescriptorKey {
+        skipped: aux_descriptor_context.skipped.clone(),
+        element: aux_element,
+        path: path.to_vec(),
+    };
+    if let Some(cached) = context
+        .descriptor_context
+        .aux_cache
+        .borrow()
+        .get(&key)
+        .copied()
+    {
+        return cached;
+    }
+    context
+        .descriptor_context
+        .aux_cache
+        .borrow_mut()
+        .insert(key.clone(), None);
+    let aux_context = LigandBuildContext {
+        mol: context.mol,
+        element: aux_element,
+        descriptor_context: &aux_descriptor_context,
+        options: context.options,
+        atomic_number_fractions: context.atomic_number_fractions,
+    };
+    let signatures = auxiliary_tetrahedral_signatures(&aux_context, stereo, path).ok();
+    let Some(signatures) = signatures else {
+        context
+            .descriptor_context
+            .aux_cache
+            .borrow_mut()
+            .insert(key, None);
+        return None;
+    };
+    let ranked = match rank_carrier_signatures(aux_element, &signatures, None) {
+        Ok(ranked) => ranked,
+        Err(CipAssignmentIssue::UnresolvedPriority { .. }) if stereo.carriers.len() == 4 => {
+            rank_tetrahedral_signatures_with_rule6(
+                context.mol,
+                aux_element,
+                stereo.center,
+                &signatures,
+                stereo.orientation,
+                true,
+            )
+            .ok()?
+        }
+        Err(_) => {
+            context
+                .descriptor_context
+                .aux_cache
+                .borrow_mut()
+                .insert(key, None);
+            return None;
+        }
+    };
+    let descriptor = tetrahedral_descriptor_from_ranked(aux_element, stereo, &ranked).ok();
+    context
+        .descriptor_context
+        .aux_cache
+        .borrow_mut()
+        .insert(key, descriptor);
+    descriptor
+}
+
+fn auxiliary_tetrahedral_signatures(
+    context: &LigandBuildContext<'_>,
+    stereo: &TetrahedralStereo,
+    path: &[AtomId],
+) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+    stereo
+        .carriers
+        .iter()
+        .copied()
+        .map(|carrier| {
+            auxiliary_carrier_signature(context, stereo.center, carrier, path)
+                .map(|signature| (carrier, signature))
+        })
+        .collect()
+}
+
+fn auxiliary_carrier_signature(
+    context: &LigandBuildContext<'_>,
+    center: AtomId,
+    carrier: StereoCarrier,
+    center_path: &[AtomId],
+) -> CipResult<LigandSignature> {
+    let node = match carrier {
+        StereoCarrier::Atom(atom) => LigandNode::Atom {
+            atom,
+            previous: Some(center),
+            path: auxiliary_carrier_path(center_path, center, atom),
+            duplicate: None,
+            terminal: false,
+        },
+        StereoCarrier::ImplicitHydrogen => LigandNode::Hydrogen,
+        StereoCarrier::ImplicitLonePair => LigandNode::LonePair,
+    };
+    let mut visited_nodes = 0usize;
+    let root = ligand_tree(context, node, 0, &mut visited_nodes)?;
+    Ok(LigandSignature { root })
+}
+
+fn auxiliary_carrier_path(center_path: &[AtomId], center: AtomId, carrier: AtomId) -> Vec<AtomId> {
+    if center_path
+        .iter()
+        .rev()
+        .nth(1)
+        .copied()
+        .is_some_and(|parent| parent == carrier)
+    {
+        vec![center, carrier]
+    } else {
+        let mut path = center_path.to_vec();
+        path.push(carrier);
+        path
+    }
 }
 
 fn double_bond_descriptor_applies_to_node(
@@ -2591,13 +2784,22 @@ mod tests {
                 )
             })
             .expect("duplicate nitrogen child");
+        let element = StereoElementId::new(0);
+        let descriptor_context = DescriptorContext::new(element, false);
+        let build_context = LigandBuildContext {
+            mol: &mol,
+            element,
+            descriptor_context: &descriptor_context,
+            options: CipAssignmentOptions::default(),
+            atomic_number_fractions: &fractions,
+        };
 
         assert_eq!(
-            normal_nitrogen.priority(&mol, &fractions).atomic_number,
+            normal_nitrogen.priority(&build_context).atomic_number,
             AtomicNumberFraction::element(7)
         );
         assert_eq!(
-            duplicate_nitrogen.priority(&mol, &fractions).atomic_number,
+            duplicate_nitrogen.priority(&build_context).atomic_number,
             AtomicNumberFraction::new(13, 2)
         );
     }

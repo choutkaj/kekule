@@ -82,8 +82,14 @@ only a prefix of newly assigned neighboring descriptors. Descriptors that are
 unique under constitutional rules are assigned first, then previously
 unresolved elements are retried so embedded E/Z labels and descriptor-pair
 labels can break otherwise equal ligand ties without storing descriptor flags
-on atoms or bonds. Deferred Rule 6 handles selected coupled ring-center ties
-after ordinary descriptor propagation stalls. When Rule 5 supplies the unique
+on atoms or bonds. After ordinary descriptor propagation stalls, deferred
+tetrahedral assignment can compute path-aware auxiliary descriptors for other
+tetrahedral configurations reached in the current ligand tree. These auxiliary
+labels are scoped to the current comparison context, cached to avoid recursive
+explosion, and skipped for the center currently being assigned, matching the
+RDKit-style separation between primary descriptors and local digraph
+auxiliary descriptors. Deferred Rule 6 still handles selected coupled
+ring-center ties in the same retry phase. When Rule 5 supplies the unique
 ordering for a tetrahedral center, assignment emits pseudoasymmetric `r`/`s`
 descriptors.
 
@@ -105,8 +111,10 @@ negative-fraction duplicate expansion, implicit lone-pair carriers, unsupported
 double-bond stereo exclusions, unresolved equivalent ligands, bounded resource
 failures, and descriptor invalidation after mutation. Targeted Rule 6
 regressions cover both parity-stable and parity-unstable symmetric S4-style
-reference retries. Rule 2 regressions cover natural atoms versus indicated
-isotopes and duplicate-node zero mass.
+reference retries. Path-aware auxiliary-descriptor regressions cover coupled
+pseudoasymmetric cyclobutane centers from the Enamine diversity corpus. Rule 2
+regressions cover natural atoms versus indicated isotopes and duplicate-node
+zero mass.
 
 Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
 supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
@@ -180,3 +188,6 @@ and stereo enumeration.
 - v19: Add staged descriptor-assignment rounds and deferred Rule 6 support for
   coupled pseudoasymmetric ring centers, including fused and small-ring
   descriptor timing cases.
+- v20: Add deferred path-aware auxiliary tetrahedral descriptors so coupled
+  pseudoasymmetric ligand paths can use local digraph labels instead of only
+  molecule-level primary descriptors.
