@@ -199,11 +199,11 @@ fn assign_tetrahedral_descriptor(
 ) -> CipResult<StereoDescriptor> {
     let ranked = ranked_carriers(mol, element, stereo.center, &stereo.carriers, options)?;
     let mut priority_positions = Vec::new();
-    for carrier in ranked {
+    for carrier in &ranked.carriers {
         let Some(position) = stereo
             .carriers
             .iter()
-            .position(|candidate| *candidate == carrier)
+            .position(|candidate| candidate == carrier)
         else {
             return Err(CipAssignmentIssue::UnresolvedPriority { element });
         };
@@ -211,10 +211,11 @@ fn assign_tetrahedral_descriptor(
     }
     let even = permutation_is_even(&priority_positions);
     let descriptor_is_r = matches!(stereo.orientation, TetrahedralOrientation::Clockwise) != even;
-    Ok(if descriptor_is_r {
-        StereoDescriptor::R
-    } else {
-        StereoDescriptor::S
+    Ok(match (descriptor_is_r, ranked.pseudo_asymmetric_ordering) {
+        (true, true) => StereoDescriptor::LowerR,
+        (false, true) => StereoDescriptor::LowerS,
+        (true, false) => StereoDescriptor::R,
+        (false, false) => StereoDescriptor::S,
     })
 }
 
@@ -227,10 +228,12 @@ fn assign_double_bond_descriptor(
     let left_carriers = double_bond_endpoint_carriers(mol, stereo.left, stereo.right, stereo.bond);
     let right_carriers = double_bond_endpoint_carriers(mol, stereo.right, stereo.left, stereo.bond);
     let left_top = ranked_carriers(mol, element, stereo.left, &left_carriers, options)?
+        .carriers
         .first()
         .copied()
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let right_top = ranked_carriers(mol, element, stereo.right, &right_carriers, options)?
+        .carriers
         .first()
         .copied()
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
@@ -254,7 +257,7 @@ fn ranked_carriers(
     root: AtomId,
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
-) -> CipResult<Vec<StereoCarrier>> {
+) -> CipResult<RankedCarriers> {
     let mut signatures = carriers
         .iter()
         .copied()
@@ -263,15 +266,29 @@ fn ranked_carriers(
                 .map(|signature| (carrier, signature))
         })
         .collect::<CipResult<Vec<_>>>()?;
+    let mut pseudo_asymmetric_pair_count = 0usize;
     for left in 0..signatures.len() {
         for right in (left + 1)..signatures.len() {
-            if signatures[left].1.compare(&signatures[right].1) == Ordering::Equal {
+            let comparison = signatures[left].1.compare_with_flags(&signatures[right].1);
+            if comparison.ordering == Ordering::Equal {
                 return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            }
+            if comparison.pseudo_asymmetric {
+                pseudo_asymmetric_pair_count += 1;
             }
         }
     }
     signatures.sort_by(|left, right| right.1.compare(&left.1));
-    Ok(signatures.into_iter().map(|(carrier, _)| carrier).collect())
+    Ok(RankedCarriers {
+        carriers: signatures.into_iter().map(|(carrier, _)| carrier).collect(),
+        pseudo_asymmetric_ordering: pseudo_asymmetric_pair_count == 1,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RankedCarriers {
+    carriers: Vec<StereoCarrier>,
+    pseudo_asymmetric_ordering: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,7 +298,11 @@ struct LigandSignature {
 
 impl LigandSignature {
     fn compare(&self, other: &Self) -> Ordering {
-        self.root.compare(&other.root)
+        self.compare_with_flags(other).ordering
+    }
+
+    fn compare_with_flags(&self, other: &Self) -> LigandComparison {
+        self.root.compare_with_flags(&other.root)
     }
 }
 
@@ -292,20 +313,29 @@ struct LigandTree {
 }
 
 impl LigandTree {
-    fn compare(&self, other: &Self) -> Ordering {
+    fn compare_with_flags(&self, other: &Self) -> LigandComparison {
         for rule in [
             SequenceRule::Rule1a,
             SequenceRule::Rule1b,
             SequenceRule::Rule2,
             SequenceRule::Rule3,
             SequenceRule::Rule4a,
+            SequenceRule::Rule4c,
+            SequenceRule::Rule5,
         ] {
-            let priority = self.recursive_compare(other, rule);
-            if priority != Ordering::Equal {
-                return priority;
+            let comparison = self.compare_by_sequence_rule(other, rule);
+            if comparison.ordering != Ordering::Equal {
+                return comparison;
             }
         }
-        Ordering::Equal
+        LigandComparison::equal()
+    }
+
+    fn compare_by_sequence_rule(&self, other: &Self, rule: SequenceRule) -> LigandComparison {
+        match rule {
+            SequenceRule::Rule5 => self.rule5_pair_comparison(other),
+            _ => LigandComparison::from_ordering(self.recursive_compare(other, rule)),
+        }
     }
 
     fn recursive_compare(&self, other: &Self, rule: SequenceRule) -> Ordering {
@@ -338,6 +368,40 @@ impl LigandTree {
             }
         }
         Ordering::Equal
+    }
+
+    fn compare_without_rule5(&self, other: &Self) -> Ordering {
+        for rule in [
+            SequenceRule::Rule1a,
+            SequenceRule::Rule1b,
+            SequenceRule::Rule2,
+            SequenceRule::Rule3,
+            SequenceRule::Rule4a,
+            SequenceRule::Rule4c,
+        ] {
+            let priority = self.recursive_compare(other, rule);
+            if priority != Ordering::Equal {
+                return priority;
+            }
+        }
+        Ordering::Equal
+    }
+
+    fn rule5_pair_comparison(&self, other: &Self) -> LigandComparison {
+        let left_r = DescriptorPairList::collect(self, DescriptorRef::R);
+        let right_r = DescriptorPairList::collect(other, DescriptorRef::R);
+        let left_s = DescriptorPairList::collect(self, DescriptorRef::S);
+        let right_s = DescriptorPairList::collect(other, DescriptorRef::S);
+
+        let cmp_r = left_r.compare_to(&right_r);
+        let cmp_s = left_s.compare_to(&right_s);
+        match cmp_r {
+            Ordering::Less => LigandComparison::new(Ordering::Less, cmp_s != Ordering::Less),
+            Ordering::Greater => {
+                LigandComparison::new(Ordering::Greater, cmp_s != Ordering::Greater)
+            }
+            Ordering::Equal => LigandComparison::equal(),
+        }
     }
 
     fn children_sorted_by_rule(&self, rule: SequenceRule, deep: bool) -> Vec<&LigandTree> {
@@ -379,6 +443,31 @@ enum SequenceRule {
     Rule2,
     Rule3,
     Rule4a,
+    Rule4c,
+    Rule5,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LigandComparison {
+    ordering: Ordering,
+    pseudo_asymmetric: bool,
+}
+
+impl LigandComparison {
+    fn new(ordering: Ordering, pseudo_asymmetric: bool) -> Self {
+        Self {
+            ordering,
+            pseudo_asymmetric,
+        }
+    }
+
+    fn from_ordering(ordering: Ordering) -> Self {
+        Self::new(ordering, false)
+    }
+
+    fn equal() -> Self {
+        Self::from_ordering(Ordering::Equal)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,7 +495,70 @@ impl NodePriority {
                 .cmp(&rule3_descriptor_priority(other.descriptor)),
             SequenceRule::Rule4a => rule4a_descriptor_priority(self.descriptor)
                 .cmp(&rule4a_descriptor_priority(other.descriptor)),
+            SequenceRule::Rule4c => rule4c_descriptor_priority(self.descriptor)
+                .cmp(&rule4c_descriptor_priority(other.descriptor)),
+            SequenceRule::Rule5 => Ordering::Equal,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DescriptorRef {
+    R,
+    S,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DescriptorPairList {
+    reference: DescriptorRef,
+    descriptors: Vec<DescriptorRef>,
+}
+
+impl DescriptorPairList {
+    fn collect(root: &LigandTree, reference: DescriptorRef) -> Self {
+        let mut list = Self {
+            reference,
+            descriptors: vec![reference],
+        };
+        let mut queue = vec![root];
+        let mut position = 0usize;
+        while position < queue.len() {
+            let node = queue[position];
+            position += 1;
+            list.add(node.priority.descriptor);
+
+            let mut children = node.children.iter().collect::<Vec<_>>();
+            children.sort_by(|left, right| right.compare_without_rule5(left));
+            queue.extend(children);
+        }
+        list
+    }
+
+    fn add(&mut self, descriptor: Option<StereoDescriptor>) {
+        if let Some(reference) = descriptor.and_then(descriptor_ref) {
+            self.descriptors.push(reference);
+        }
+    }
+
+    fn compare_to(&self, other: &Self) -> Ordering {
+        if self.descriptors.len() != other.descriptors.len() {
+            return Ordering::Equal;
+        }
+        for (left, right) in self
+            .descriptors
+            .iter()
+            .skip(1)
+            .zip(other.descriptors.iter().skip(1))
+        {
+            let left_like = *left == self.reference;
+            let right_like = *right == other.reference;
+            match (left_like, right_like) {
+                (true, false) => return Ordering::Greater,
+                (false, true) => return Ordering::Less,
+                _ => {}
+            }
+        }
+        Ordering::Equal
     }
 }
 
@@ -708,6 +860,25 @@ fn rule4a_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
     }
 }
 
+fn rule4c_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
+    match descriptor {
+        Some(StereoDescriptor::LowerR) => 2,
+        Some(StereoDescriptor::LowerS) => 1,
+        _ => 0,
+    }
+}
+
+fn descriptor_ref(descriptor: StereoDescriptor) -> Option<DescriptorRef> {
+    match descriptor {
+        StereoDescriptor::R | StereoDescriptor::M => Some(DescriptorRef::R),
+        StereoDescriptor::S | StereoDescriptor::P => Some(DescriptorRef::S),
+        StereoDescriptor::LowerR
+        | StereoDescriptor::LowerS
+        | StereoDescriptor::E
+        | StereoDescriptor::Z => None,
+    }
+}
+
 fn double_bond_endpoint_carriers(
     mol: &Molecule,
     endpoint: AtomId,
@@ -828,6 +999,43 @@ mod tests {
         assert_eq!(uppercase.compare(&pseudo), Ordering::Greater);
         assert_eq!(pseudo.compare(&unlabeled), Ordering::Greater);
         assert_eq!(unlabeled.compare(&uppercase), Ordering::Less);
+    }
+
+    #[test]
+    fn rule4c_prefers_lower_r_over_lower_s() {
+        let lower_r = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::LowerR),
+            children: Vec::new(),
+        });
+        let lower_s = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::LowerS),
+            children: Vec::new(),
+        });
+
+        assert_eq!(lower_r.compare(&lower_s), Ordering::Greater);
+        assert_eq!(lower_s.compare(&lower_r), Ordering::Less);
+    }
+
+    #[test]
+    fn rule5_descriptor_pairing_prefers_like_pairs_and_marks_pseudo_asymmetric_ordering() {
+        let r_ligand = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::R),
+            children: Vec::new(),
+        });
+        let s_ligand = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::S),
+            children: Vec::new(),
+        });
+
+        let comparison = r_ligand.compare_with_flags(&s_ligand);
+
+        assert_eq!(comparison.ordering, Ordering::Greater);
+        assert!(comparison.pseudo_asymmetric);
+
+        let comparison = s_ligand.compare_with_flags(&r_ligand);
+
+        assert_eq!(comparison.ordering, Ordering::Less);
+        assert!(comparison.pseudo_asymmetric);
     }
 
     #[test]

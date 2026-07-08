@@ -266,6 +266,110 @@ fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
 }
 
 #[test]
+fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands() {
+    let mut mol = Molecule::new();
+    let mut center_atom = carbon();
+    center_atom.implicit_hydrogens = Some(0);
+    let center = mol.add_atom(center_atom);
+    let chlorine = mol.add_atom(element_atom("Cl"));
+    let fluorine = mol.add_atom(element_atom("F"));
+
+    let mut child_r_atom = carbon();
+    child_r_atom.implicit_hydrogens = Some(1);
+    let child_r = mol.add_atom(child_r_atom);
+    let child_r_oxygen = mol.add_atom(oxygen());
+    let child_r_nitrogen = mol.add_atom(element_atom("N"));
+
+    let mut child_s_atom = carbon();
+    child_s_atom.implicit_hydrogens = Some(1);
+    let child_s = mol.add_atom(child_s_atom);
+    let child_s_oxygen = mol.add_atom(oxygen());
+    let child_s_nitrogen = mol.add_atom(element_atom("N"));
+
+    for carrier in [chlorine, fluorine, child_r, child_s] {
+        mol.add_bond(center, carrier, BondOrder::Single)
+            .expect("parent carrier bond");
+    }
+    for (child, oxygen, nitrogen) in [
+        (child_r, child_r_oxygen, child_r_nitrogen),
+        (child_s, child_s_oxygen, child_s_nitrogen),
+    ] {
+        mol.add_bond(child, oxygen, BondOrder::Single)
+            .expect("child oxygen bond");
+        mol.add_bond(child, nitrogen, BondOrder::Single)
+            .expect("child nitrogen bond");
+    }
+
+    let child_r_element = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center: child_r,
+                carriers: vec![
+                    StereoCarrier::Atom(center),
+                    StereoCarrier::Atom(child_r_oxygen),
+                    StereoCarrier::Atom(child_r_nitrogen),
+                    StereoCarrier::ImplicitHydrogen,
+                ],
+                orientation: TetrahedralOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("R child stereo element");
+    let child_s_element = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center: child_s,
+                carriers: vec![
+                    StereoCarrier::Atom(center),
+                    StereoCarrier::Atom(child_s_oxygen),
+                    StereoCarrier::Atom(child_s_nitrogen),
+                    StereoCarrier::ImplicitHydrogen,
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("S child stereo element");
+    let parent_element = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(chlorine),
+                    StereoCarrier::Atom(fluorine),
+                    StereoCarrier::Atom(child_r),
+                    StereoCarrier::Atom(child_s),
+                ],
+                orientation: TetrahedralOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("parent pseudoasymmetric stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        mol.stereo_element(child_r_element)
+            .expect("R child stereo")
+            .descriptor,
+        Some(StereoDescriptor::R)
+    );
+    assert_eq!(
+        mol.stereo_element(child_s_element)
+            .expect("S child stereo")
+            .descriptor,
+        Some(StereoDescriptor::S)
+    );
+    assert_eq!(
+        mol.stereo_element(parent_element)
+            .expect("parent stereo")
+            .descriptor,
+        Some(StereoDescriptor::LowerR)
+    );
+}
+
+#[test]
 fn cip_applies_recursive_rule1a_before_isotope_priority() {
     let mut mol = Molecule::new();
     let mut center_atom = carbon();
