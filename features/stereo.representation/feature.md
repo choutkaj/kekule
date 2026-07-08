@@ -62,9 +62,12 @@ not atom/bond payload flags.
 - Unit tests cover stereo element, group, and source bond mark CRUD; invalid
   references; mutation invalidation; topology-aware pruning; and parser/writer
   adapter behavior.
-- Smoke validation records semantic stereo JSON for externally supplied PubChem
-  isomeric SMILES fixtures, including `stereo_elements`, `stereo_groups`,
-  `stereo_bond_marks`, source marks, and specifiedness.
+- Smoke, PubChem 100, and PubChem 1k validation record semantic stereo JSON
+  for externally supplied PubChem isomeric SMILES fixtures, including
+  `stereo_elements`, `stereo_groups`, `stereo_bond_marks`, source marks, and
+  specifiedness. The broader PubChem tiers are implementation-golden semantic
+  regression gates for representation stability, while exact RDKit descriptor
+  parity belongs to `stereo.cip`.
 
 ## Out Of Scope
 
@@ -86,3 +89,5 @@ not atom/bond payload flags.
 - v5: Add implicit lone-pair stereo carriers so supported three-neighbor
   heteroatom tetrahedral markers can be represented without adding graph atoms.
 - v6: Add sequence cis/trans entries to the derived descriptor vocabulary.
+- v7: Add PubChem 100 and PubChem 1k semantic regression requirements for
+  stereo representation over externally supplied isomeric SMILES.

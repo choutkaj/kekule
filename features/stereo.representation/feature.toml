@@ -1,9 +1,9 @@
 id = "stereo.representation"
 title = "Stereochemistry representation"
 area = "stereo"
-version = 6
+version = 7
 implemented = true
 validated = true
-description = "Store first-class stereo elements, relation groups, source bond marks, derived descriptor vocabulary, and atom, hydrogen, or lone-pair stereo carriers adjacent to the molecular graph."
+description = "Store first-class stereo elements, relation groups, source bond marks, derived descriptor vocabulary, and atom, hydrogen, or lone-pair stereo carriers adjacent to the molecular graph, with PubChem semantic regression coverage."
 depends_on = ["core.graph", "core.atom-bond"]
-validation_required = ["smoke"]
+validation_required = ["smoke", "pubchem-100", "pubchem-1k"]
