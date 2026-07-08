@@ -23,11 +23,12 @@ Descriptors are derived cache, not graph truth: assignment clears existing
 descriptors first, and topology or stereo-invalidating mutations clear them
 again.
 
-The implemented contract assigns isotope-, E/Z-descriptor-,
-descriptor-class-, and descriptor-pair-sensitive `R`/`S`/`r`/`s` for specified
-tetrahedral elements and `E`/`Z` for specified double-bond elements when the
-local stereo is valid and carrier priorities are unique under the implemented
-bounded ranking rules. Rule helpers also understand stored `seqCis`/`seqTrans`
+The implemented contract assigns `R`/`S`/`r`/`s` for specified tetrahedral
+elements and `E`/`Z` for specified double-bond elements when the local stereo
+is valid and carrier priorities are unique under the implemented bounded
+ranking rules, including isotope priority, E/Z descriptor priority, descriptor
+class and pair priority, and RDKit-like mancude fractional priority for bond
+duplicate nodes. Rule helpers also understand stored `seqCis`/`seqTrans`
 descriptor values for RDKit-like sequence-rule ordering. Unspecified, unknown,
 or invalid-cleared elements are skipped. Axis elements, invalid local stereo,
 unresolved priorities, and resource-limit exhaustion are reported without
@@ -44,14 +45,15 @@ Carrier ranking uses bounded graph expansion with explicit node limits
 hydrogens, implicit lone-pair carriers, cycle guards, and terminal duplicate
 nodes for higher-order bonds and ring closures. Ligands are compared as
 branch-preserving paired digraphs using RDKit-like recursive sequence-rule
-ordering: Rule 1a atomic number comparison is exhausted through the digraph
-before Rule 1b duplicate-node priority is considered; Rule 2 isotope mass is
-considered only after both earlier rules remain tied; and Rule 3 orders
-embedded `Z` descriptors before embedded `E` descriptors before unlabeled
-double bonds. Rule 4a orders uppercase sequence descriptors (`R`/`S`/`M`/`P`)
-and `seqTrans`/`seqCis` before pseudo or geometric descriptors
-(`r`/`s`/`E`/`Z`) before unlabeled nodes; Rule 4b derives a reference
-descriptor from the first
+ordering: Rule 1a compares integer atomic numbers for normal nodes and
+mancude neighbor-averaged atomic-number fractions for affected bond-duplicate
+nodes, and is exhausted through the digraph before Rule 1b duplicate-node
+priority is considered; Rule 2 isotope mass is considered only after both
+earlier rules remain tied; and Rule 3 orders embedded `Z` descriptors before
+embedded `E` descriptors before unlabeled double bonds. Rule 4a orders
+uppercase sequence descriptors (`R`/`S`/`M`/`P`) and `seqTrans`/`seqCis` before
+pseudo or geometric descriptors (`r`/`s`/`E`/`Z`) before unlabeled nodes; Rule
+4b derives a reference descriptor from the first
 descriptor-bearing equivalent ligand level and compares like versus unlike
 descriptor families relative to that reference; Rule 4c orders
 pseudoasymmetric `r` before `s`; and Rule 5 uses descriptor-pair lists over
@@ -59,8 +61,11 @@ the `R`/`M`/`seqCis` versus `S`/`P`/`seqTrans` descriptor families so like
 descriptor pairs outrank unlike pairs. Rule 6 is a contextual tetrahedral retry
 that selects a reference atom from unresolved equivalent carrier partitions and
 gives priority to ligand nodes that point back to that reference. Duplicate
-nodes do not carry isotope mass, and duplicate nodes for higher-order bonds
-back to the original stereocenter are suppressed.
+nodes do not carry isotope mass, duplicate nodes for higher-order bonds back to
+the original stereocenter are suppressed, bond duplicates carry the parent
+atom's mancude fraction when it is fractional, and negative atoms with
+fractional mancude atomic numbers receive one terminal duplicate child
+following RDKit's digraph expansion rule.
 
 Assignment is descriptor-aware and iterative. Descriptors that are unique under
 constitutional rules are assigned first, then previously unresolved elements
@@ -76,14 +81,16 @@ stereo or when the implemented ranking rules cannot distinguish carriers.
 ## Validation
 
 Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
-Rule 1a/1b/2 ordering, Rule 3 embedded E/Z ordering, Rule 4a descriptor-class
-ordering, Rule 4b reference-descriptor and like/unlike pairing, Rule 4c
-pseudo-descriptor ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric
-tetrahedral `r`/`s` assignment, sequence cis/trans descriptor-family ordering,
-Rule 6 reference-atom tie breaking for tetrahedral retry ranking, isotope
-priority, Rule 1b duplicate-node ordering, implicit lone-pair carriers,
-unsupported double-bond stereo exclusions, unresolved equivalent ligands,
-bounded resource failures, and descriptor invalidation after mutation.
+Rule 1a/1b/2 ordering, mancude fractional atomic-number ordering, Rule 3
+embedded E/Z ordering, Rule 4a descriptor-class ordering, Rule 4b
+reference-descriptor and like/unlike pairing, Rule 4c pseudo-descriptor
+ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric tetrahedral
+`r`/`s` assignment, sequence cis/trans descriptor-family ordering, Rule 6
+reference-atom tie breaking for tetrahedral retry ranking, isotope priority,
+Rule 1b duplicate-node ordering, negative-fraction duplicate expansion,
+implicit lone-pair carriers, unsupported double-bond stereo exclusions,
+unresolved equivalent ligands, bounded resource failures, and descriptor
+invalidation after mutation.
 
 Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
 supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
@@ -102,11 +109,11 @@ descriptor-bearing coverage.
 ## Out Of Scope
 
 Full exact machine-oriented CIP coverage remains out of scope for this version:
-perception or assignment of sequence cis/trans descriptors, mancude and
-fractional atomic numbers, exact symmetric S4-style Rule 6 fallback behavior,
-axial `M`/`P`, non-tetrahedral geometries, enhanced stereo relation semantics,
-parity beyond the current descriptor-bearing validation corpora, isomeric
-SMILES emission, and stereo enumeration.
+perception or assignment of sequence cis/trans descriptors, kekulization of
+aromatic-only inputs for mancude parity, exact symmetric S4-style Rule 6
+fallback behavior, axial `M`/`P`, non-tetrahedral geometries, enhanced stereo
+relation semantics, parity beyond the current descriptor-bearing validation
+corpora, isomeric SMILES emission, and stereo enumeration.
 
 ## Revision Notes
 
@@ -147,3 +154,5 @@ SMILES emission, and stereo enumeration.
   tetrahedral carrier partitions.
 - v15: Add `seqCis`/`seqTrans` descriptor vocabulary to sequence-rule ordering,
   including Rule 4a class and Rule 4b/5 descriptor-family handling.
+- v16: Add RDKit-like mancude fractional atomic-number comparison for Rule 1a
+  and negative-fraction duplicate expansion in the ligand digraph.

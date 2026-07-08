@@ -1,9 +1,11 @@
 use std::cmp::Ordering;
 
 use crate::algorithms::{
-    validate_stereo_with_options, StereoPerceptionIssue, StereoPerceptionOptions,
+    validate_stereo_with_options, RingMembership, StereoPerceptionIssue, StereoPerceptionOptions,
 };
 use crate::core::*;
+
+use super::rings::compute_ring_membership;
 
 type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
 
@@ -287,12 +289,20 @@ fn carrier_signatures(
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+    let atomic_number_fractions = cip_atomic_number_fractions(mol);
     carriers
         .iter()
         .copied()
         .map(|carrier| {
-            carrier_signature(mol, element, carrier, root, options)
-                .map(|signature| (carrier, signature))
+            carrier_signature(
+                mol,
+                element,
+                carrier,
+                root,
+                options,
+                &atomic_number_fractions,
+            )
+            .map(|signature| (carrier, signature))
         })
         .collect::<CipResult<Vec<_>>>()
 }
@@ -813,7 +823,7 @@ impl LigandComparison {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NodePriority {
-    atomic_number: u8,
+    atomic_number: AtomicNumberFraction,
     rule1b: u32,
     isotope: u16,
     descriptor: Option<StereoDescriptor>,
@@ -850,6 +860,65 @@ impl NodePriority {
                 .cmp(&rule6_priority(other.rule6_atom, rule6_reference)),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AtomicNumberFraction {
+    numerator: u32,
+    denominator: u32,
+}
+
+impl AtomicNumberFraction {
+    const ZERO: Self = Self {
+        numerator: 0,
+        denominator: 1,
+    };
+
+    const HYDROGEN: Self = Self {
+        numerator: 1,
+        denominator: 1,
+    };
+
+    fn element(atomic_number: u8) -> Self {
+        Self {
+            numerator: u32::from(atomic_number),
+            denominator: 1,
+        }
+    }
+
+    fn new(numerator: u32, denominator: u32) -> Self {
+        if denominator == 0 {
+            return Self::ZERO;
+        }
+        let divisor = gcd(numerator, denominator);
+        Self {
+            numerator: numerator / divisor,
+            denominator: denominator / divisor,
+        }
+    }
+}
+
+impl Ord for AtomicNumberFraction {
+    fn cmp(&self, other: &Self) -> Ordering {
+        u64::from(self.numerator)
+            .saturating_mul(u64::from(other.denominator))
+            .cmp(&u64::from(other.numerator).saturating_mul(u64::from(self.denominator)))
+    }
+}
+
+impl PartialOrd for AtomicNumberFraction {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn gcd(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left.max(1)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1006,6 +1075,7 @@ fn carrier_signature(
     carrier: StereoCarrier,
     root: AtomId,
     options: CipAssignmentOptions,
+    atomic_number_fractions: &[AtomicNumberFraction],
 ) -> CipResult<LigandSignature> {
     let node = match carrier {
         StereoCarrier::Atom(atom) => LigandNode::Atom {
@@ -1019,7 +1089,15 @@ fn carrier_signature(
         StereoCarrier::ImplicitLonePair => LigandNode::LonePair,
     };
     let mut visited_nodes = 0usize;
-    let root = ligand_tree(mol, element, node, options, 0, &mut visited_nodes)?;
+    let root = ligand_tree(
+        mol,
+        element,
+        node,
+        options,
+        atomic_number_fractions,
+        0,
+        &mut visited_nodes,
+    )?;
     Ok(LigandSignature { root })
 }
 
@@ -1028,6 +1106,7 @@ fn ligand_tree(
     element: StereoElementId,
     node: LigandNode,
     options: CipAssignmentOptions,
+    atomic_number_fractions: &[AtomicNumberFraction],
     depth: usize,
     visited_nodes: &mut usize,
 ) -> CipResult<LigandTree> {
@@ -1038,17 +1117,18 @@ fn ligand_tree(
             max_nodes: options.max_nodes,
         });
     }
-    let priority = node.priority(mol);
+    let priority = node.priority(mol, atomic_number_fractions);
     let mut children = Vec::new();
     if depth < options.max_depth {
         let mut child_nodes = Vec::new();
-        node.extend(mol, &mut child_nodes);
+        node.extend(mol, atomic_number_fractions, &mut child_nodes);
         for child in child_nodes {
             children.push(ligand_tree(
                 mol,
                 element,
                 child,
                 options,
+                atomic_number_fractions,
                 depth + 1,
                 visited_nodes,
             )?);
@@ -1060,8 +1140,12 @@ fn ligand_tree(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DuplicateNode {
-    Bond,
-    Ring { reference_depth: usize },
+    Bond {
+        atomic_number: Option<AtomicNumberFraction>,
+    },
+    Ring {
+        reference_depth: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1078,9 +1162,13 @@ enum LigandNode {
 }
 
 impl LigandNode {
-    fn priority(&self, mol: &Molecule) -> NodePriority {
+    fn priority(
+        &self,
+        mol: &Molecule,
+        atomic_number_fractions: &[AtomicNumberFraction],
+    ) -> NodePriority {
         NodePriority {
-            atomic_number: self.atomic_number(mol),
+            atomic_number: self.atomic_number(mol, atomic_number_fractions),
             rule1b: self.rule1b_priority(),
             isotope: self.isotope(mol),
             descriptor: self.descriptor(mol),
@@ -1088,14 +1176,26 @@ impl LigandNode {
         }
     }
 
-    fn atomic_number(&self, mol: &Molecule) -> u8 {
+    fn atomic_number(
+        &self,
+        mol: &Molecule,
+        _atomic_number_fractions: &[AtomicNumberFraction],
+    ) -> AtomicNumberFraction {
         match self {
+            Self::Atom {
+                duplicate:
+                    Some(DuplicateNode::Bond {
+                        atomic_number: Some(atomic_number),
+                    }),
+                ..
+            } => *atomic_number,
             Self::Atom { atom, .. } => mol
                 .atom(*atom)
-                .map(|atom| atom.element.atomic_number())
-                .unwrap_or(0),
-            Self::Hydrogen => 1,
-            Self::LonePair => 0,
+                .ok()
+                .map(|atom| AtomicNumberFraction::element(atom.element.atomic_number()))
+                .unwrap_or(AtomicNumberFraction::ZERO),
+            Self::Hydrogen => AtomicNumberFraction::HYDROGEN,
+            Self::LonePair => AtomicNumberFraction::ZERO,
         }
     }
 
@@ -1147,7 +1247,12 @@ impl LigandNode {
         }
     }
 
-    fn extend(&self, mol: &Molecule, next: &mut Vec<LigandNode>) {
+    fn extend(
+        &self,
+        mol: &Molecule,
+        atomic_number_fractions: &[AtomicNumberFraction],
+        next: &mut Vec<LigandNode>,
+    ) {
         let Self::Atom {
             atom,
             previous,
@@ -1161,7 +1266,10 @@ impl LigandNode {
         if *terminal {
             return;
         }
-        if let Ok(payload) = mol.atom(*atom) {
+        let Ok(payload) = mol.atom(*atom) else {
+            return;
+        };
+        {
             for _ in 0..hydrogen_count(payload) {
                 next.push(LigandNode::Hydrogen);
             }
@@ -1171,7 +1279,10 @@ impl LigandNode {
         };
         for (_, bond) in incident {
             let neighbor = bond.other_atom(*atom);
-            let duplicate_count = bond_order_duplicate_count(bond.order);
+            let duplicate_count =
+                bond_duplicate_count_for_atom(payload, *atom, bond.order, atomic_number_fractions);
+            let bond_duplicate_atomic_number =
+                bond_duplicate_atomic_number(*atom, atomic_number_fractions);
             if Some(neighbor) == *previous {
                 if path.first().copied() != Some(neighbor) {
                     for _ in 0..duplicate_count {
@@ -1179,7 +1290,9 @@ impl LigandNode {
                             atom: neighbor,
                             previous: Some(*atom),
                             path: Vec::new(),
-                            duplicate: Some(DuplicateNode::Bond),
+                            duplicate: Some(DuplicateNode::Bond {
+                                atomic_number: bond_duplicate_atomic_number,
+                            }),
                             terminal: true,
                         });
                     }
@@ -1199,7 +1312,9 @@ impl LigandNode {
                         atom: neighbor,
                         previous: Some(*atom),
                         path: Vec::new(),
-                        duplicate: Some(DuplicateNode::Bond),
+                        duplicate: Some(DuplicateNode::Bond {
+                            atomic_number: bond_duplicate_atomic_number,
+                        }),
                         terminal: true,
                     });
                 }
@@ -1218,7 +1333,9 @@ impl LigandNode {
                         atom: neighbor,
                         previous: Some(*atom),
                         path: Vec::new(),
-                        duplicate: Some(DuplicateNode::Bond),
+                        duplicate: Some(DuplicateNode::Bond {
+                            atomic_number: bond_duplicate_atomic_number,
+                        }),
                         terminal: true,
                     });
                 }
@@ -1227,16 +1344,266 @@ impl LigandNode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MancudeAtomType {
+    Cv4D3,
+    Nv3D2,
+    Nv4D3Plus,
+    Nv2D2Minus,
+    Cv3D3Minus,
+    Ov3D2Plus,
+    Other,
+}
+
+fn cip_atomic_number_fractions(mol: &Molecule) -> Vec<AtomicNumberFraction> {
+    let mut fractions = vec![AtomicNumberFraction::ZERO; mol.atoms.len()];
+    for (atom_id, atom) in mol.atoms() {
+        fractions[atom_id.index()] = AtomicNumberFraction::element(atom.element.atomic_number());
+    }
+
+    let ring_membership = mol
+        .ring_membership()
+        .cloned()
+        .unwrap_or_else(|| compute_ring_membership(mol).0);
+    let mut types = seed_mancude_atom_types(mol, &ring_membership);
+    if !types.iter().any(|atom_type| {
+        matches!(
+            atom_type,
+            MancudeAtomType::Nv3D2
+                | MancudeAtomType::Nv4D3Plus
+                | MancudeAtomType::Nv2D2Minus
+                | MancudeAtomType::Cv3D3Minus
+                | MancudeAtomType::Ov3D2Plus
+        )
+    }) {
+        return fractions;
+    }
+
+    relax_mancude_atom_types(mol, &mut types);
+    let parts = mancude_parts(mol, &types, &ring_membership);
+    apply_mancude_neighbor_averages(mol, &types, &parts, &mut fractions);
+    fractions
+}
+
+fn seed_mancude_atom_types(
+    mol: &Molecule,
+    ring_membership: &RingMembership,
+) -> Vec<MancudeAtomType> {
+    let mut types = vec![MancudeAtomType::Other; mol.atoms.len()];
+    for (atom_id, atom) in mol.atoms() {
+        let mut bond_types = u32::from(hydrogen_count(atom));
+        let mut in_ring = false;
+        if let Ok(incident) = mol.incident_bonds(atom_id) {
+            for (bond_id, bond) in incident {
+                bond_types += match cip_bond_order(bond.order) {
+                    1 => 0x0000_0001,
+                    2 => 0x0000_0100,
+                    _ => 0x0100_0000,
+                };
+                if ring_membership.bond_in_ring(bond_id) {
+                    in_ring = true;
+                }
+            }
+        }
+        if !in_ring {
+            continue;
+        }
+        types[atom_id.index()] =
+            match (atom.element.atomic_number(), atom.formal_charge, bond_types) {
+                (6 | 14 | 32, 0, 0x0102) => MancudeAtomType::Cv4D3,
+                (6 | 14 | 32, -1, 0x0003) => MancudeAtomType::Cv3D3Minus,
+                (7 | 15 | 33, 0, 0x0101) => MancudeAtomType::Nv3D2,
+                (7 | 15 | 33, -1, 0x0002) => MancudeAtomType::Nv2D2Minus,
+                (7 | 15 | 33, 1, 0x0102) => MancudeAtomType::Nv4D3Plus,
+                (8, 1, 0x0101) => MancudeAtomType::Ov3D2Plus,
+                _ => MancudeAtomType::Other,
+            };
+    }
+    types
+}
+
+fn relax_mancude_atom_types(mol: &Molecule, types: &mut [MancudeAtomType]) {
+    let mut counts = vec![0usize; mol.atoms.len()];
+    let mut queue = Vec::new();
+    for (atom_id, _) in mol.atoms() {
+        for neighbor in atom_neighbors(mol, atom_id) {
+            if types[neighbor.index()] != MancudeAtomType::Other {
+                counts[atom_id.index()] += 1;
+            }
+        }
+        if counts[atom_id.index()] == 1 {
+            queue.push(atom_id);
+        }
+    }
+
+    let mut position = 0usize;
+    while position < queue.len() {
+        let atom_id = queue[position];
+        position += 1;
+        if types[atom_id.index()] == MancudeAtomType::Other {
+            continue;
+        }
+        types[atom_id.index()] = MancudeAtomType::Other;
+        for neighbor in atom_neighbors(mol, atom_id) {
+            counts[neighbor.index()] = counts[neighbor.index()].saturating_sub(1);
+            if counts[neighbor.index()] == 1 {
+                queue.push(neighbor);
+            }
+        }
+    }
+}
+
+fn mancude_parts(
+    mol: &Molecule,
+    types: &[MancudeAtomType],
+    ring_membership: &RingMembership,
+) -> Vec<usize> {
+    let mut parts = vec![0usize; mol.atoms.len()];
+    let mut part = 0usize;
+    for (atom_id, _) in mol.atoms() {
+        if parts[atom_id.index()] != 0 || types[atom_id.index()] == MancudeAtomType::Other {
+            continue;
+        }
+        part += 1;
+        parts[atom_id.index()] = part;
+        let mut stack = vec![atom_id];
+        while let Some(current) = stack.pop() {
+            if let Ok(incident) = mol.incident_bonds(current) {
+                for (bond_id, bond) in incident {
+                    if !ring_membership.bond_in_ring(bond_id) {
+                        continue;
+                    }
+                    let neighbor = bond.other_atom(current);
+                    if parts[neighbor.index()] == 0
+                        && types[neighbor.index()] != MancudeAtomType::Other
+                    {
+                        parts[neighbor.index()] = part;
+                        stack.push(neighbor);
+                    }
+                }
+            }
+        }
+    }
+    parts
+}
+
+fn apply_mancude_neighbor_averages(
+    mol: &Molecule,
+    types: &[MancudeAtomType],
+    parts: &[usize],
+    fractions: &mut [AtomicNumberFraction],
+) {
+    let mut resonance_parts = Vec::<usize>::new();
+    for (atom_id, _) in mol.atoms() {
+        let part = parts[atom_id.index()];
+        if part == 0 {
+            continue;
+        }
+        if matches!(
+            types[atom_id.index()],
+            MancudeAtomType::Cv3D3Minus | MancudeAtomType::Nv2D2Minus
+        ) && !resonance_parts.contains(&part)
+        {
+            resonance_parts.push(part);
+        }
+
+        let mut numerator = 0u32;
+        let mut denominator = 0u32;
+        for neighbor in atom_neighbors(mol, atom_id) {
+            if parts[neighbor.index()] == part {
+                if let Ok(atom) = mol.atom(neighbor) {
+                    numerator += u32::from(atom.element.atomic_number());
+                    denominator += 1;
+                }
+            }
+        }
+        fractions[atom_id.index()] = AtomicNumberFraction::new(numerator, denominator);
+    }
+
+    for part in resonance_parts {
+        let mut numerator = 0u32;
+        let mut denominator = 0u32;
+        for (index, fraction) in fractions.iter_mut().enumerate().take(mol.atoms.len()) {
+            if parts.get(index).copied() != Some(part) {
+                continue;
+            }
+            *fraction = AtomicNumberFraction::new(numerator, denominator);
+            denominator += 1;
+            let atom_id = AtomId::new(index as u32);
+            if let Ok(incident) = mol.incident_bonds(atom_id) {
+                for (_, bond) in incident {
+                    let neighbor = bond.other_atom(atom_id);
+                    if parts[neighbor.index()] == part {
+                        let bond_order = cip_bond_order(bond.order);
+                        if bond_order > 1 {
+                            if let Ok(neighbor_atom) = mol.atom(neighbor) {
+                                numerator += u32::from(bond_order.saturating_sub(1))
+                                    * u32::from(neighbor_atom.element.atomic_number());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn atom_neighbors(mol: &Molecule, atom_id: AtomId) -> Vec<AtomId> {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .map(|(_, bond)| bond.other_atom(atom_id))
+        .collect()
+}
+
 fn hydrogen_count(atom: &Atom) -> u8 {
     atom.explicit_hydrogens
         .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
 }
 
-fn bond_order_duplicate_count(order: BondOrder) -> usize {
+fn bond_duplicate_count_for_atom(
+    atom: &Atom,
+    atom_id: AtomId,
+    order: BondOrder,
+    atomic_number_fractions: &[AtomicNumberFraction],
+) -> usize {
+    if atom.formal_charge < 0
+        && atomic_number_fractions
+            .get(atom_id.index())
+            .is_some_and(|fraction| fraction.denominator > 1)
+    {
+        1
+    } else {
+        bond_order_duplicate_count(cip_bond_order(order))
+    }
+}
+
+fn bond_duplicate_atomic_number(
+    atom: AtomId,
+    atomic_number_fractions: &[AtomicNumberFraction],
+) -> Option<AtomicNumberFraction> {
+    atomic_number_fractions
+        .get(atom.index())
+        .copied()
+        .filter(|fraction| fraction.denominator > 1)
+}
+
+fn cip_bond_order(order: BondOrder) -> u8 {
     match order {
-        BondOrder::Double => 1,
-        BondOrder::Triple => 2,
-        BondOrder::Quadruple => 3,
+        BondOrder::Single | BondOrder::Aromatic => 1,
+        BondOrder::Double => 2,
+        BondOrder::Triple => 3,
+        BondOrder::Quadruple => 4,
+        BondOrder::Zero | BondOrder::Dative => 0,
+    }
+}
+
+fn bond_order_duplicate_count(order: u8) -> usize {
+    match order {
+        2 => 1,
+        3 => 2,
+        4 => 3,
         _ => 0,
     }
 }
@@ -1393,7 +1760,7 @@ mod tests {
 
     fn node_priority(atomic_number: u8, rule1b: u32, isotope: u16) -> NodePriority {
         NodePriority {
-            atomic_number,
+            atomic_number: AtomicNumberFraction::element(atomic_number),
             rule1b,
             isotope,
             descriptor: None,
@@ -1758,12 +2125,97 @@ mod tests {
             atom,
             previous: None,
             path: Vec::new(),
-            duplicate: Some(DuplicateNode::Bond),
+            duplicate: Some(DuplicateNode::Bond {
+                atomic_number: None,
+            }),
             terminal: true,
         };
 
         assert_eq!(normal.isotope(&mol), 13);
         assert_eq!(duplicate.isotope(&mol), 0);
+    }
+
+    #[test]
+    fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
+        let mut mol = Molecule::new();
+        let atoms = (0..6)
+            .map(|index| {
+                let symbol = if index == 3 { "N" } else { "C" };
+                let mut atom = Atom::new(Element::from_symbol(symbol).expect("element"));
+                atom.implicit_hydrogens = Some(if index == 3 { 0 } else { 1 });
+                mol.add_atom(atom)
+            })
+            .collect::<Vec<_>>();
+        for (left, right, order) in [
+            (0, 1, BondOrder::Double),
+            (1, 2, BondOrder::Single),
+            (2, 3, BondOrder::Double),
+            (3, 4, BondOrder::Single),
+            (4, 5, BondOrder::Double),
+            (5, 0, BondOrder::Single),
+        ] {
+            mol.add_bond(atoms[left], atoms[right], order)
+                .expect("ring bond");
+        }
+
+        let fractions = cip_atomic_number_fractions(&mol);
+
+        assert_eq!(
+            fractions[atoms[2].index()],
+            AtomicNumberFraction::new(13, 2)
+        );
+        assert_eq!(fractions[atoms[3].index()], AtomicNumberFraction::new(6, 1));
+        assert_eq!(
+            fractions[atoms[4].index()],
+            AtomicNumberFraction::new(13, 2)
+        );
+        assert_eq!(fractions[atoms[0].index()], AtomicNumberFraction::new(6, 1));
+
+        let node = LigandNode::Atom {
+            atom: atoms[2],
+            previous: Some(atoms[1]),
+            path: vec![atoms[1], atoms[2]],
+            duplicate: None,
+            terminal: false,
+        };
+        let mut next = Vec::new();
+        node.extend(&mol, &fractions, &mut next);
+
+        let normal_nitrogen = next
+            .iter()
+            .find(|child| {
+                matches!(
+                    child,
+                    LigandNode::Atom {
+                        atom,
+                        duplicate: None,
+                        ..
+                    } if *atom == atoms[3]
+                )
+            })
+            .expect("normal nitrogen child");
+        let duplicate_nitrogen = next
+            .iter()
+            .find(|child| {
+                matches!(
+                    child,
+                    LigandNode::Atom {
+                        atom,
+                        duplicate: Some(DuplicateNode::Bond { .. }),
+                        ..
+                    } if *atom == atoms[3]
+                )
+            })
+            .expect("duplicate nitrogen child");
+
+        assert_eq!(
+            normal_nitrogen.priority(&mol, &fractions).atomic_number,
+            AtomicNumberFraction::element(7)
+        );
+        assert_eq!(
+            duplicate_nitrogen.priority(&mol, &fractions).atomic_number,
+            AtomicNumberFraction::new(13, 2)
+        );
     }
 
     #[test]
@@ -1785,7 +2237,8 @@ mod tests {
             terminal: false,
         };
         let mut next = Vec::new();
-        node.extend(&mol, &mut next);
+        let fractions = cip_atomic_number_fractions(&mol);
+        node.extend(&mol, &fractions, &mut next);
 
         assert_eq!(next.len(), 2);
         assert!(next.contains(&LigandNode::Atom {
@@ -1799,8 +2252,58 @@ mod tests {
             atom: oxygen,
             previous: Some(carbon),
             path: Vec::new(),
-            duplicate: Some(DuplicateNode::Bond),
+            duplicate: Some(DuplicateNode::Bond {
+                atomic_number: None,
+            }),
             terminal: true,
         }));
+    }
+
+    #[test]
+    fn negative_fractional_atoms_create_duplicate_nodes() {
+        let mut mol = Molecule::new();
+        let atoms = (0..5)
+            .map(|index| {
+                let mut atom = Atom::new(Element::from_symbol("C").expect("carbon"));
+                atom.implicit_hydrogens = Some(1);
+                if index == 2 {
+                    atom.formal_charge = -1;
+                }
+                mol.add_atom(atom)
+            })
+            .collect::<Vec<_>>();
+        for (left, right, order) in [
+            (0, 1, BondOrder::Double),
+            (1, 2, BondOrder::Single),
+            (2, 3, BondOrder::Single),
+            (3, 4, BondOrder::Double),
+            (4, 0, BondOrder::Single),
+        ] {
+            mol.add_bond(atoms[left], atoms[right], order)
+                .expect("ring bond");
+        }
+
+        let mut fractions = vec![AtomicNumberFraction::element(6); mol.atoms.len()];
+        fractions[atoms[2].index()] = AtomicNumberFraction::new(13, 2);
+
+        let node = LigandNode::Atom {
+            atom: atoms[2],
+            previous: Some(atoms[1]),
+            path: vec![atoms[1], atoms[2]],
+            duplicate: None,
+            terminal: false,
+        };
+        let mut next = Vec::new();
+        node.extend(&mol, &fractions, &mut next);
+
+        assert!(next.iter().any(|child| matches!(
+            child,
+            LigandNode::Atom {
+                atom,
+                duplicate: Some(DuplicateNode::Bond { .. }),
+                terminal: true,
+                ..
+            } if *atom == atoms[3]
+        )));
     }
 }
