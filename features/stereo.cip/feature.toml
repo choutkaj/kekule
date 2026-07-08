@@ -1,9 +1,9 @@
 id = "stereo.cip"
 title = "CIP stereochemistry"
 area = "stereo"
-version = 9
+version = 10
 implemented = true
 validated = true
-description = "Assign bounded RDKit-like Rule 1a/1b/2 R/S and E/Z CIP descriptors for validated local tetrahedral and double-bond stereo elements."
+description = "Assign bounded RDKit-like Rule 1a/1b/2/3 R/S and E/Z CIP descriptors for validated local tetrahedral and double-bond stereo elements."
 depends_on = ["stereo.representation", "stereo.perception", "chem.sanitize.rdkit-like", "algo.canonical-ranking"]
 validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k"]

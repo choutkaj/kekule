@@ -23,12 +23,13 @@ Descriptors are derived cache, not graph truth: assignment clears existing
 descriptors first, and topology or stereo-invalidating mutations clear them
 again.
 
-The implemented contract assigns isotope-sensitive `R`/`S` for specified
-tetrahedral elements and `E`/`Z` for specified double-bond elements when the
-local stereo is valid and carrier priorities are unique under the implemented
-bounded ranking rules. Unspecified, unknown, or invalid-cleared elements are
-skipped. Axis elements, invalid local stereo, unresolved priorities, and
-resource-limit exhaustion are reported without assigning lossy descriptors.
+The implemented contract assigns isotope- and E/Z-descriptor-sensitive `R`/`S`
+for specified tetrahedral elements and `E`/`Z` for specified double-bond
+elements when the local stereo is valid and carrier priorities are unique under
+the implemented bounded ranking rules. Unspecified, unknown, or
+invalid-cleared elements are skipped. Axis elements, invalid local stereo,
+unresolved priorities, and resource-limit exhaustion are reported without
+assigning lossy descriptors.
 
 ## Implementation Notes
 
@@ -42,10 +43,16 @@ hydrogens, implicit lone-pair carriers, cycle guards, and terminal duplicate
 nodes for higher-order bonds and ring closures. Ligands are compared as
 branch-preserving paired digraphs using RDKit-like recursive sequence-rule
 ordering: Rule 1a atomic number comparison is exhausted through the digraph
-before Rule 1b duplicate-node priority is considered, and Rule 2 isotope mass
-is considered only after both earlier rules remain tied. Duplicate nodes do not
-carry isotope mass, and duplicate nodes for higher-order bonds back to the
-original stereocenter are suppressed.
+before Rule 1b duplicate-node priority is considered; Rule 2 isotope mass is
+considered only after both earlier rules remain tied; and Rule 3 orders
+embedded `Z` descriptors before embedded `E` descriptors before unlabeled
+double bonds. Duplicate nodes do not carry isotope mass, and duplicate nodes
+for higher-order bonds back to the original stereocenter are suppressed.
+
+Assignment is descriptor-aware and iterative. Descriptors that are unique under
+constitutional rules are assigned first, then previously unresolved elements
+are retried so embedded E/Z labels can break otherwise equal ligand ties without
+storing descriptor flags on atoms or bonds.
 
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
@@ -54,10 +61,10 @@ stereo or when the implemented ranking rules cannot distinguish carriers.
 ## Validation
 
 Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
-Rule 1a/1b/2 ordering, isotope priority, Rule 1b duplicate-node ordering,
-implicit lone-pair carriers, unsupported double-bond stereo exclusions,
-unresolved equivalent ligands, bounded resource failures, and descriptor
-invalidation after mutation.
+Rule 1a/1b/2 ordering, Rule 3 embedded E/Z ordering, isotope priority, Rule 1b
+duplicate-node ordering, implicit lone-pair carriers, unsupported double-bond
+stereo exclusions, unresolved equivalent ligands, bounded resource failures,
+and descriptor invalidation after mutation.
 
 Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
 supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
@@ -76,10 +83,10 @@ descriptor-bearing coverage.
 ## Out Of Scope
 
 Full exact machine-oriented CIP coverage remains out of scope for this version:
-Rule 3/4/5 handling, pseudoasymmetric `r`/`s`, mancude and fractional atomic
-numbers, axial `M`/`P`, non-tetrahedral geometries, enhanced stereo relation
-semantics, parity beyond the current descriptor-bearing validation corpora,
-isomeric SMILES emission, and stereo enumeration.
+Rule 4/5 handling, pseudoasymmetric `r`/`s`, `seqCis`/`seqTrans`, mancude and
+fractional atomic numbers, axial `M`/`P`, non-tetrahedral geometries, enhanced
+stereo relation semantics, parity beyond the current descriptor-bearing
+validation corpora, isomeric SMILES emission, and stereo enumeration.
 
 ## Revision Notes
 
@@ -108,3 +115,5 @@ isomeric SMILES emission, and stereo enumeration.
   suppress root-adjacent multiple-bond duplicates; skip unsupported aromatic
   and endocyclic hetero double-bond stereo; and align validation output with
   RDKit default explicit-hydrogen indexing.
+- v10: Add descriptor-aware iterative assignment and RDKit-like Rule 3 ordering
+  for embedded `Z` versus `E` double-bond descriptors.

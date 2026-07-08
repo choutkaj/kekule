@@ -100,45 +100,79 @@ pub fn assign_cip_descriptors_with_options(
         }
     }
 
-    let elements = mol
+    let mut pending = mol
         .stereo_elements()
         .map(|(id, element)| (id, element.clone()))
         .collect::<Vec<_>>();
-    for (id, element) in elements {
-        if element.specifiedness != StereoSpecifiedness::Specified {
-            report.skipped.push(CipSkipped {
-                element: id,
-                reason: CipSkippedReason::NotSpecified,
-            });
-            continue;
+
+    while !pending.is_empty() {
+        let mut next_pending = Vec::new();
+        let mut assigned_this_round = false;
+        for (id, element) in pending {
+            match assign_cip_element(mol, id, &element, options) {
+                CipElementAssignment::Assigned(descriptor) => {
+                    set_stereo_descriptor(mol, id, descriptor);
+                    report.assigned.push(CipAssignment {
+                        element: id,
+                        descriptor,
+                    });
+                    assigned_this_round = true;
+                }
+                CipElementAssignment::Skipped(reason) => {
+                    report.skipped.push(CipSkipped {
+                        element: id,
+                        reason,
+                    });
+                }
+                CipElementAssignment::Deferred => next_pending.push((id, element)),
+                CipElementAssignment::Issue(issue) => report.issues.push(issue),
+            }
         }
-        let assignment = match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => {
-                assign_tetrahedral_descriptor(mol, id, stereo, options)
+        if !assigned_this_round {
+            for (id, _) in next_pending {
+                report
+                    .issues
+                    .push(CipAssignmentIssue::UnresolvedPriority { element: id });
             }
-            StereoElementKind::DoubleBond(stereo) => {
-                assign_double_bond_descriptor(mol, id, stereo, options)
-            }
-            StereoElementKind::Axis(_) => {
-                report.skipped.push(CipSkipped {
-                    element: id,
-                    reason: CipSkippedReason::UnsupportedAxis,
-                });
-                continue;
-            }
-        };
-        match assignment {
-            Ok(descriptor) => {
-                set_stereo_descriptor(mol, id, descriptor);
-                report.assigned.push(CipAssignment {
-                    element: id,
-                    descriptor,
-                });
-            }
-            Err(issue) => report.issues.push(issue),
+            break;
         }
+        pending = next_pending;
     }
     report
+}
+
+enum CipElementAssignment {
+    Assigned(StereoDescriptor),
+    Skipped(CipSkippedReason),
+    Deferred,
+    Issue(CipAssignmentIssue),
+}
+
+fn assign_cip_element(
+    mol: &Molecule,
+    id: StereoElementId,
+    element: &StereoElement,
+    options: CipAssignmentOptions,
+) -> CipElementAssignment {
+    if element.specifiedness != StereoSpecifiedness::Specified {
+        return CipElementAssignment::Skipped(CipSkippedReason::NotSpecified);
+    }
+    let assignment = match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            assign_tetrahedral_descriptor(mol, id, stereo, options)
+        }
+        StereoElementKind::DoubleBond(stereo) => {
+            assign_double_bond_descriptor(mol, id, stereo, options)
+        }
+        StereoElementKind::Axis(_) => {
+            return CipElementAssignment::Skipped(CipSkippedReason::UnsupportedAxis);
+        }
+    };
+    match assignment {
+        Ok(descriptor) => CipElementAssignment::Assigned(descriptor),
+        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => CipElementAssignment::Deferred,
+        Err(issue) => CipElementAssignment::Issue(issue),
+    }
 }
 
 fn clear_stereo_descriptors(mol: &mut Molecule) {
@@ -263,6 +297,7 @@ impl LigandTree {
             SequenceRule::Rule1a,
             SequenceRule::Rule1b,
             SequenceRule::Rule2,
+            SequenceRule::Rule3,
         ] {
             let priority = self.recursive_compare(other, rule);
             if priority != Ordering::Equal {
@@ -284,15 +319,15 @@ impl LigandTree {
             let (left, right) = queue[position];
             position += 1;
 
-            let left_shallow = left.children_sorted_by_priority();
-            let right_shallow = right.children_sorted_by_priority();
+            let left_shallow = left.children_sorted_by_rule(rule, false);
+            let right_shallow = right.children_sorted_by_rule(rule, false);
             let shallow = compare_child_priorities(&left_shallow, &right_shallow, rule);
             if shallow != Ordering::Equal {
                 return shallow;
             }
 
-            let left_deep = left.children_sorted_deep();
-            let right_deep = right.children_sorted_deep();
+            let left_deep = left.children_sorted_by_rule(rule, true);
+            let right_deep = right.children_sorted_by_rule(rule, true);
             let deep = compare_child_priorities(&left_deep, &right_deep, rule);
             if deep != Ordering::Equal {
                 return deep;
@@ -304,15 +339,18 @@ impl LigandTree {
         Ordering::Equal
     }
 
-    fn children_sorted_by_priority(&self) -> Vec<&LigandTree> {
+    fn children_sorted_by_rule(&self, rule: SequenceRule, deep: bool) -> Vec<&LigandTree> {
         let mut children = self.children.iter().collect::<Vec<_>>();
-        children.sort_by(|left, right| right.priority.compare_shallow(&left.priority));
-        children
-    }
-
-    fn children_sorted_deep(&self) -> Vec<&LigandTree> {
-        let mut children = self.children.iter().collect::<Vec<_>>();
-        children.sort_by(|left, right| right.compare(left));
+        if deep {
+            children.sort_by(|left, right| right.recursive_compare(left, rule));
+        } else {
+            children.sort_by(|left, right| {
+                right
+                    .priority
+                    .compare_by_rule(&left.priority, rule)
+                    .then_with(|| right.priority.compare_shallow(&left.priority))
+            });
+        }
         children
     }
 }
@@ -338,6 +376,7 @@ enum SequenceRule {
     Rule1a,
     Rule1b,
     Rule2,
+    Rule3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,6 +384,7 @@ struct NodePriority {
     atomic_number: u8,
     rule1b: u32,
     isotope: u16,
+    descriptor: Option<StereoDescriptor>,
 }
 
 impl NodePriority {
@@ -360,6 +400,8 @@ impl NodePriority {
             SequenceRule::Rule1a => self.atomic_number.cmp(&other.atomic_number),
             SequenceRule::Rule1b => self.rule1b.cmp(&other.rule1b),
             SequenceRule::Rule2 => self.isotope.cmp(&other.isotope),
+            SequenceRule::Rule3 => rule3_descriptor_priority(self.descriptor)
+                .cmp(&rule3_descriptor_priority(other.descriptor)),
         }
     }
 }
@@ -447,6 +489,7 @@ impl LigandNode {
             atomic_number: self.atomic_number(mol),
             rule1b: self.rule1b_priority(),
             isotope: self.isotope(mol),
+            descriptor: self.descriptor(mol),
         }
     }
 
@@ -487,6 +530,19 @@ impl LigandNode {
             }
             Self::Hydrogen | Self::LonePair => 0,
         }
+    }
+
+    fn descriptor(&self, mol: &Molecule) -> Option<StereoDescriptor> {
+        let Self::Atom {
+            atom,
+            path,
+            duplicate: None,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        atom_descriptor_for_ligand_node(mol, *atom, path)
     }
 
     fn extend(&self, mol: &Molecule, next: &mut Vec<LigandNode>) {
@@ -588,6 +644,52 @@ fn ring_duplicate_priority(reference_depth: usize) -> u32 {
     u32::MAX.saturating_sub(depth)
 }
 
+fn atom_descriptor_for_ligand_node(
+    mol: &Molecule,
+    atom: AtomId,
+    path: &[AtomId],
+) -> Option<StereoDescriptor> {
+    mol.stereo_elements().find_map(|(_, element)| {
+        let descriptor = element.descriptor?;
+        match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) if stereo.center == atom => Some(descriptor),
+            StereoElementKind::DoubleBond(stereo)
+                if double_bond_descriptor_applies_to_node(stereo, descriptor, atom, path) =>
+            {
+                Some(descriptor)
+            }
+            _ => None,
+        }
+    })
+}
+
+fn double_bond_descriptor_applies_to_node(
+    stereo: &DoubleBondStereo,
+    descriptor: StereoDescriptor,
+    atom: AtomId,
+    path: &[AtomId],
+) -> bool {
+    if !matches!(descriptor, StereoDescriptor::E | StereoDescriptor::Z) {
+        return false;
+    }
+    let other = if stereo.left == atom {
+        stereo.right
+    } else if stereo.right == atom {
+        stereo.left
+    } else {
+        return false;
+    };
+    !path.contains(&other)
+}
+
+fn rule3_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
+    match descriptor {
+        Some(StereoDescriptor::Z) => 2,
+        Some(StereoDescriptor::E) => 1,
+        _ => 0,
+    }
+}
+
 fn double_bond_endpoint_carriers(
     mol: &Molecule,
     endpoint: AtomId,
@@ -648,13 +750,18 @@ fn permutation_is_even(positions: &[usize]) -> bool {
 mod tests {
     use super::*;
 
+    fn node_priority(atomic_number: u8, rule1b: u32, isotope: u16) -> NodePriority {
+        NodePriority {
+            atomic_number,
+            rule1b,
+            isotope,
+            descriptor: None,
+        }
+    }
+
     fn one_node_signature(rule1b: u32, isotope: u16) -> LigandTree {
         LigandTree {
-            priority: NodePriority {
-                atomic_number: 6,
-                rule1b,
-                isotope,
-            },
+            priority: node_priority(6, rule1b, isotope),
             children: Vec::new(),
         }
     }
@@ -684,73 +791,37 @@ mod tests {
     #[test]
     fn ligand_tree_compares_highest_priority_branch_before_lower_siblings() {
         let oxygen_to_carbon = LigandTree {
-            priority: NodePriority {
-                atomic_number: 8,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(8, 0, 0),
             children: vec![one_node_signature(0, 0)],
         };
         let oxygen_to_hydrogen = LigandTree {
-            priority: NodePriority {
-                atomic_number: 8,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(8, 0, 0),
             children: vec![LigandTree {
-                priority: NodePriority {
-                    atomic_number: 1,
-                    rule1b: 0,
-                    isotope: 0,
-                },
+                priority: node_priority(1, 0, 0),
                 children: Vec::new(),
             }],
         };
         let carbon_to_nitrogen = LigandTree {
-            priority: NodePriority {
-                atomic_number: 6,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(6, 0, 0),
             children: vec![LigandTree {
-                priority: NodePriority {
-                    atomic_number: 7,
-                    rule1b: 0,
-                    isotope: 0,
-                },
+                priority: node_priority(7, 0, 0),
                 children: Vec::new(),
             }],
         };
         let carbon_to_oxygen = LigandTree {
-            priority: NodePriority {
-                atomic_number: 6,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(6, 0, 0),
             children: vec![LigandTree {
-                priority: NodePriority {
-                    atomic_number: 8,
-                    rule1b: 0,
-                    isotope: 0,
-                },
+                priority: node_priority(8, 0, 0),
                 children: Vec::new(),
             }],
         };
 
         let left = signature(LigandTree {
-            priority: NodePriority {
-                atomic_number: 6,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(6, 0, 0),
             children: vec![oxygen_to_carbon, carbon_to_oxygen],
         });
         let right = signature(LigandTree {
-            priority: NodePriority {
-                atomic_number: 6,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(6, 0, 0),
             children: vec![oxygen_to_hydrogen, carbon_to_nitrogen],
         });
 
@@ -760,59 +831,31 @@ mod tests {
     #[test]
     fn ligand_tree_compares_immediate_sibling_list_before_recursing() {
         let oxygen_to_hydrogen = LigandTree {
-            priority: NodePriority {
-                atomic_number: 8,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(8, 0, 0),
             children: vec![LigandTree {
-                priority: NodePriority {
-                    atomic_number: 1,
-                    rule1b: 0,
-                    isotope: 0,
-                },
+                priority: node_priority(1, 0, 0),
                 children: Vec::new(),
             }],
         };
         let oxygen_to_phosphorus = LigandTree {
-            priority: NodePriority {
-                atomic_number: 8,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(8, 0, 0),
             children: vec![LigandTree {
-                priority: NodePriority {
-                    atomic_number: 15,
-                    rule1b: 0,
-                    isotope: 0,
-                },
+                priority: node_priority(15, 0, 0),
                 children: Vec::new(),
             }],
         };
         let carbon = one_node_signature(0, 0);
         let hydrogen = LigandTree {
-            priority: NodePriority {
-                atomic_number: 1,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(1, 0, 0),
             children: Vec::new(),
         };
 
         let left = signature(LigandTree {
-            priority: NodePriority {
-                atomic_number: 6,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(6, 0, 0),
             children: vec![oxygen_to_hydrogen, carbon],
         });
         let right = signature(LigandTree {
-            priority: NodePriority {
-                atomic_number: 6,
-                rule1b: 0,
-                isotope: 0,
-            },
+            priority: node_priority(6, 0, 0),
             children: vec![oxygen_to_phosphorus, hydrogen],
         });
 

@@ -229,6 +229,43 @@ fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
 }
 
 #[test]
+fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
+    let mut molecule =
+        smiles_api::read_str("Br[C@H](/C=C/F)/C=C\\F").expect("Rule 3 alkene pair parses");
+    perception_api::sanitize(&mut molecule).expect("Rule 3 alkene pair sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    let atom_descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+    let bond_descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.left.raw(), stereo.right.raw(), descriptor)),
+            StereoElementKind::Tetrahedral(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(atom_descriptors, vec![(1, StereoDescriptor::R)]);
+    assert_eq!(
+        bond_descriptors,
+        vec![(2, 3, StereoDescriptor::E), (5, 6, StereoDescriptor::Z)]
+    );
+}
+
+#[test]
 fn cip_applies_recursive_rule1a_before_isotope_priority() {
     let mut mol = Molecule::new();
     let mut center_atom = carbon();
