@@ -53,8 +53,11 @@ descriptor-bearing equivalent ligand level and compares like versus unlike
 descriptor families relative to that reference; Rule 4c orders
 pseudoasymmetric `r` before `s`; and Rule 5 uses descriptor-pair lists over
 the `R`/`M` versus `S`/`P` descriptor families so like descriptor pairs outrank
-unlike pairs. Duplicate nodes do not carry isotope mass, and duplicate nodes
-for higher-order bonds back to the original stereocenter are suppressed.
+unlike pairs. Rule 6 is a contextual tetrahedral retry that selects a reference
+atom from unresolved equivalent carrier partitions and gives priority to
+ligand nodes that point back to that reference. Duplicate nodes do not carry
+isotope mass, and duplicate nodes for higher-order bonds back to the original
+stereocenter are suppressed.
 
 Assignment is descriptor-aware and iterative. Descriptors that are unique under
 constitutional rules are assigned first, then previously unresolved elements
@@ -73,10 +76,11 @@ Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
 Rule 1a/1b/2 ordering, Rule 3 embedded E/Z ordering, Rule 4a descriptor-class
 ordering, Rule 4b reference-descriptor and like/unlike pairing, Rule 4c
 pseudo-descriptor ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric
-tetrahedral `r`/`s` assignment, isotope priority, Rule 1b duplicate-node
-ordering, implicit lone-pair carriers, unsupported double-bond stereo
-exclusions, unresolved equivalent ligands, bounded resource failures, and
-descriptor invalidation after mutation.
+tetrahedral `r`/`s` assignment, Rule 6 reference-atom tie breaking for
+tetrahedral retry ranking, isotope priority, Rule 1b duplicate-node ordering,
+implicit lone-pair carriers, unsupported double-bond stereo exclusions,
+unresolved equivalent ligands, bounded resource failures, and descriptor
+invalidation after mutation.
 
 Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
 supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
@@ -95,8 +99,8 @@ descriptor-bearing coverage.
 ## Out Of Scope
 
 Full exact machine-oriented CIP coverage remains out of scope for this version:
-`seqCis`/`seqTrans`, mancude and fractional atomic numbers, Rule 6
-duplicate-reference tie breaking, axial `M`/`P`, non-tetrahedral geometries,
+`seqCis`/`seqTrans`, mancude and fractional atomic numbers, exact symmetric
+S4-style Rule 6 fallback behavior, axial `M`/`P`, non-tetrahedral geometries,
 enhanced stereo relation semantics, parity beyond the current
 descriptor-bearing validation corpora, isomeric SMILES emission, and stereo
 enumeration.
@@ -136,3 +140,5 @@ enumeration.
   and pseudoasymmetric tetrahedral `r`/`s` assignment.
 - v13: Add Rule 4b reference-descriptor selection and like/unlike descriptor
   family comparison.
+- v14: Add contextual Rule 6 reference-atom tie breaking for unresolved
+  tetrahedral carrier partitions.

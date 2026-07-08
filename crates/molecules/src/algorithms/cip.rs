@@ -197,7 +197,8 @@ fn assign_tetrahedral_descriptor(
     stereo: &TetrahedralStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<StereoDescriptor> {
-    let ranked = ranked_carriers(mol, element, stereo.center, &stereo.carriers, options)?;
+    let ranked =
+        ranked_tetrahedral_carriers(mol, element, stereo.center, &stereo.carriers, options)?;
     let mut priority_positions = Vec::new();
     for carrier in &ranked.carriers {
         let Some(position) = stereo
@@ -258,18 +259,55 @@ fn ranked_carriers(
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
 ) -> CipResult<RankedCarriers> {
-    let mut signatures = carriers
+    let signatures = carrier_signatures(mol, element, root, carriers, options)?;
+    rank_carrier_signatures(element, &signatures, None)
+}
+
+fn ranked_tetrahedral_carriers(
+    mol: &Molecule,
+    element: StereoElementId,
+    root: AtomId,
+    carriers: &[StereoCarrier],
+    options: CipAssignmentOptions,
+) -> CipResult<RankedCarriers> {
+    let signatures = carrier_signatures(mol, element, root, carriers, options)?;
+    match rank_carrier_signatures(element, &signatures, None) {
+        Ok(ranked) => Ok(ranked),
+        Err(CipAssignmentIssue::UnresolvedPriority { .. }) if carriers.len() == 4 => {
+            rank_tetrahedral_signatures_with_rule6(element, &signatures)
+        }
+        Err(issue) => Err(issue),
+    }
+}
+
+fn carrier_signatures(
+    mol: &Molecule,
+    element: StereoElementId,
+    root: AtomId,
+    carriers: &[StereoCarrier],
+    options: CipAssignmentOptions,
+) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
+    carriers
         .iter()
         .copied()
         .map(|carrier| {
             carrier_signature(mol, element, carrier, root, options)
                 .map(|signature| (carrier, signature))
         })
-        .collect::<CipResult<Vec<_>>>()?;
+        .collect::<CipResult<Vec<_>>>()
+}
+
+fn rank_carrier_signatures(
+    element: StereoElementId,
+    signatures: &[(StereoCarrier, LigandSignature)],
+    rule6_reference: Option<AtomId>,
+) -> CipResult<RankedCarriers> {
     let mut pseudo_asymmetric_pair_count = 0usize;
     for left in 0..signatures.len() {
         for right in (left + 1)..signatures.len() {
-            let comparison = signatures[left].1.compare_with_flags(&signatures[right].1);
+            let comparison = signatures[left]
+                .1
+                .compare_with_rule6_reference(&signatures[right].1, rule6_reference);
             if comparison.ordering == Ordering::Equal {
                 return Err(CipAssignmentIssue::UnresolvedPriority { element });
             }
@@ -278,11 +316,97 @@ fn ranked_carriers(
             }
         }
     }
-    signatures.sort_by(|left, right| right.1.compare(&left.1));
+    let mut signatures = signatures.to_vec();
+    signatures.sort_by(|left, right| {
+        right
+            .1
+            .compare_with_rule6_reference(&left.1, rule6_reference)
+            .ordering
+    });
     Ok(RankedCarriers {
         carriers: signatures.into_iter().map(|(carrier, _)| carrier).collect(),
         pseudo_asymmetric_ordering: pseudo_asymmetric_pair_count == 1,
     })
+}
+
+fn rank_tetrahedral_signatures_with_rule6(
+    element: StereoElementId,
+    signatures: &[(StereoCarrier, LigandSignature)],
+) -> CipResult<RankedCarriers> {
+    let groups = grouped_signature_indices(signatures);
+    match groups.len() {
+        2 => {
+            let Some(reference_index) = groups.iter().flatten().copied().nth(1) else {
+                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            };
+            let Some(reference) = carrier_rule6_atom(signatures[reference_index].0) else {
+                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            };
+            rank_carrier_signatures(element, signatures, Some(reference))
+        }
+        1 => rank_s4_tetrahedral_signatures_with_rule6(element, signatures, &groups[0]),
+        _ => Err(CipAssignmentIssue::UnresolvedPriority { element }),
+    }
+}
+
+fn rank_s4_tetrahedral_signatures_with_rule6(
+    element: StereoElementId,
+    signatures: &[(StereoCarrier, LigandSignature)],
+    group: &[usize],
+) -> CipResult<RankedCarriers> {
+    let Some(first_reference) = group
+        .first()
+        .and_then(|index| carrier_rule6_atom(signatures[*index].0))
+    else {
+        return Err(CipAssignmentIssue::UnresolvedPriority { element });
+    };
+    let Some(second_reference) = group
+        .get(1)
+        .and_then(|index| carrier_rule6_atom(signatures[*index].0))
+    else {
+        return Err(CipAssignmentIssue::UnresolvedPriority { element });
+    };
+    let first = rank_carrier_signatures(element, signatures, Some(first_reference))?;
+    let second = rank_carrier_signatures(element, signatures, Some(second_reference))?;
+    if carrier_permutation_is_odd(&first.carriers, &second.carriers).unwrap_or(true) {
+        Err(CipAssignmentIssue::UnresolvedPriority { element })
+    } else {
+        Ok(second)
+    }
+}
+
+fn grouped_signature_indices(signatures: &[(StereoCarrier, LigandSignature)]) -> Vec<Vec<usize>> {
+    let mut indices = (0..signatures.len()).collect::<Vec<_>>();
+    indices.sort_by(|left, right| signatures[*right].1.compare(&signatures[*left].1));
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for index in indices {
+        if let Some(last) = groups.last_mut() {
+            if signatures[last[0]].1.compare(&signatures[index].1) == Ordering::Equal {
+                last.push(index);
+                continue;
+            }
+        }
+        groups.push(vec![index]);
+    }
+    groups
+}
+
+fn carrier_rule6_atom(carrier: StereoCarrier) -> Option<AtomId> {
+    match carrier {
+        StereoCarrier::Atom(atom) => Some(atom),
+        StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
+    }
+}
+
+fn carrier_permutation_is_odd(left: &[StereoCarrier], right: &[StereoCarrier]) -> Option<bool> {
+    if left.len() != right.len() {
+        return None;
+    }
+    let mut positions = Vec::with_capacity(left.len());
+    for carrier in left {
+        positions.push(right.iter().position(|candidate| candidate == carrier)?);
+    }
+    Some(!permutation_is_even(&positions))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,7 +426,16 @@ impl LigandSignature {
     }
 
     fn compare_with_flags(&self, other: &Self) -> LigandComparison {
-        self.root.compare_with_flags(&other.root)
+        self.compare_with_rule6_reference(other, None)
+    }
+
+    fn compare_with_rule6_reference(
+        &self,
+        other: &Self,
+        rule6_reference: Option<AtomId>,
+    ) -> LigandComparison {
+        self.root
+            .compare_with_rule6_reference(&other.root, rule6_reference)
     }
 }
 
@@ -313,7 +446,11 @@ struct LigandTree {
 }
 
 impl LigandTree {
-    fn compare_with_flags(&self, other: &Self) -> LigandComparison {
+    fn compare_with_rule6_reference(
+        &self,
+        other: &Self,
+        rule6_reference: Option<AtomId>,
+    ) -> LigandComparison {
         for rule in [
             SequenceRule::Rule1a,
             SequenceRule::Rule1b,
@@ -323,8 +460,9 @@ impl LigandTree {
             SequenceRule::Rule4b,
             SequenceRule::Rule4c,
             SequenceRule::Rule5,
+            SequenceRule::Rule6,
         ] {
-            let comparison = self.compare_by_sequence_rule(other, rule);
+            let comparison = self.compare_by_sequence_rule(other, rule, rule6_reference);
             if comparison.ordering != Ordering::Equal {
                 return comparison;
             }
@@ -332,16 +470,32 @@ impl LigandTree {
         LigandComparison::equal()
     }
 
-    fn compare_by_sequence_rule(&self, other: &Self, rule: SequenceRule) -> LigandComparison {
+    fn compare_by_sequence_rule(
+        &self,
+        other: &Self,
+        rule: SequenceRule,
+        rule6_reference: Option<AtomId>,
+    ) -> LigandComparison {
         match rule {
             SequenceRule::Rule4b => self.rule4b_reference_comparison(other),
             SequenceRule::Rule5 => self.rule5_pair_comparison(other),
-            _ => LigandComparison::from_ordering(self.recursive_compare(other, rule)),
+            _ => LigandComparison::from_ordering(self.recursive_compare(
+                other,
+                rule,
+                rule6_reference,
+            )),
         }
     }
 
-    fn recursive_compare(&self, other: &Self, rule: SequenceRule) -> Ordering {
-        let priority = self.priority.compare_by_rule(&other.priority, rule);
+    fn recursive_compare(
+        &self,
+        other: &Self,
+        rule: SequenceRule,
+        rule6_reference: Option<AtomId>,
+    ) -> Ordering {
+        let priority = self
+            .priority
+            .compare_by_rule(&other.priority, rule, rule6_reference);
         if priority != Ordering::Equal {
             return priority;
         }
@@ -352,16 +506,17 @@ impl LigandTree {
             let (left, right) = queue[position];
             position += 1;
 
-            let left_shallow = left.children_sorted_by_rule(rule, false);
-            let right_shallow = right.children_sorted_by_rule(rule, false);
-            let shallow = compare_child_priorities(&left_shallow, &right_shallow, rule);
+            let left_shallow = left.children_sorted_by_rule(rule, false, rule6_reference);
+            let right_shallow = right.children_sorted_by_rule(rule, false, rule6_reference);
+            let shallow =
+                compare_child_priorities(&left_shallow, &right_shallow, rule, rule6_reference);
             if shallow != Ordering::Equal {
                 return shallow;
             }
 
-            let left_deep = left.children_sorted_by_rule(rule, true);
-            let right_deep = right.children_sorted_by_rule(rule, true);
-            let deep = compare_child_priorities(&left_deep, &right_deep, rule);
+            let left_deep = left.children_sorted_by_rule(rule, true, rule6_reference);
+            let right_deep = right.children_sorted_by_rule(rule, true, rule6_reference);
+            let deep = compare_child_priorities(&left_deep, &right_deep, rule, rule6_reference);
             if deep != Ordering::Equal {
                 return deep;
             }
@@ -382,7 +537,7 @@ impl LigandTree {
             SequenceRule::Rule4b,
             SequenceRule::Rule4c,
         ] {
-            let priority = self.compare_by_sequence_rule(other, rule).ordering;
+            let priority = self.compare_by_sequence_rule(other, rule, None).ordering;
             if priority != Ordering::Equal {
                 return priority;
             }
@@ -398,7 +553,7 @@ impl LigandTree {
             SequenceRule::Rule3,
             SequenceRule::Rule4a,
         ] {
-            let priority = self.recursive_compare(other, rule);
+            let priority = self.recursive_compare(other, rule, None);
             if priority != Ordering::Equal {
                 return priority;
             }
@@ -420,7 +575,7 @@ impl LigandTree {
             SequenceRule::Rule4a,
             SequenceRule::Rule4c,
         ] {
-            let priority = self.recursive_compare(other, rule);
+            let priority = self.recursive_compare(other, rule, None);
             if priority != Ordering::Equal {
                 return priority;
             }
@@ -558,15 +713,20 @@ impl LigandTree {
         }
     }
 
-    fn children_sorted_by_rule(&self, rule: SequenceRule, deep: bool) -> Vec<&LigandTree> {
+    fn children_sorted_by_rule(
+        &self,
+        rule: SequenceRule,
+        deep: bool,
+        rule6_reference: Option<AtomId>,
+    ) -> Vec<&LigandTree> {
         let mut children = self.children.iter().collect::<Vec<_>>();
         if deep {
-            children.sort_by(|left, right| right.recursive_compare(left, rule));
+            children.sort_by(|left, right| right.recursive_compare(left, rule, rule6_reference));
         } else {
             children.sort_by(|left, right| {
                 right
                     .priority
-                    .compare_by_rule(&left.priority, rule)
+                    .compare_by_rule(&left.priority, rule, rule6_reference)
                     .then_with(|| right.priority.compare_shallow(&left.priority))
             });
         }
@@ -601,11 +761,13 @@ fn compare_child_priorities(
     left: &[&LigandTree],
     right: &[&LigandTree],
     rule: SequenceRule,
+    rule6_reference: Option<AtomId>,
 ) -> Ordering {
     for (left_child, right_child) in left.iter().zip(right) {
-        let priority = left_child
-            .priority
-            .compare_by_rule(&right_child.priority, rule);
+        let priority =
+            left_child
+                .priority
+                .compare_by_rule(&right_child.priority, rule, rule6_reference);
         if priority != Ordering::Equal {
             return priority;
         }
@@ -623,6 +785,7 @@ enum SequenceRule {
     Rule4b,
     Rule4c,
     Rule5,
+    Rule6,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -654,6 +817,7 @@ struct NodePriority {
     rule1b: u32,
     isotope: u16,
     descriptor: Option<StereoDescriptor>,
+    rule6_atom: Option<AtomId>,
 }
 
 impl NodePriority {
@@ -664,7 +828,12 @@ impl NodePriority {
             .then_with(|| self.isotope.cmp(&other.isotope))
     }
 
-    fn compare_by_rule(&self, other: &Self, rule: SequenceRule) -> Ordering {
+    fn compare_by_rule(
+        &self,
+        other: &Self,
+        rule: SequenceRule,
+        rule6_reference: Option<AtomId>,
+    ) -> Ordering {
         match rule {
             SequenceRule::Rule1a => self.atomic_number.cmp(&other.atomic_number),
             SequenceRule::Rule1b => self.rule1b.cmp(&other.rule1b),
@@ -677,6 +846,8 @@ impl NodePriority {
             SequenceRule::Rule4c => rule4c_descriptor_priority(self.descriptor)
                 .cmp(&rule4c_descriptor_priority(other.descriptor)),
             SequenceRule::Rule5 => Ordering::Equal,
+            SequenceRule::Rule6 => rule6_priority(self.rule6_atom, rule6_reference)
+                .cmp(&rule6_priority(other.rule6_atom, rule6_reference)),
         }
     }
 }
@@ -822,6 +993,13 @@ fn fixed_reference_priority(descriptor: Option<StereoDescriptor>, reference: Des
     }
 }
 
+fn rule6_priority(atom: Option<AtomId>, reference: Option<AtomId>) -> u8 {
+    match (atom, reference) {
+        (Some(atom), Some(reference)) if atom == reference => 1,
+        _ => 0,
+    }
+}
+
 fn carrier_signature(
     mol: &Molecule,
     element: StereoElementId,
@@ -906,6 +1084,7 @@ impl LigandNode {
             rule1b: self.rule1b_priority(),
             isotope: self.isotope(mol),
             descriptor: self.descriptor(mol),
+            rule6_atom: self.rule6_atom(),
         }
     }
 
@@ -959,6 +1138,13 @@ impl LigandNode {
             return None;
         };
         atom_descriptor_for_ligand_node(mol, *atom, path)
+    }
+
+    fn rule6_atom(&self) -> Option<AtomId> {
+        match self {
+            Self::Atom { atom, .. } => Some(*atom),
+            Self::Hydrogen | Self::LonePair => None,
+        }
     }
 
     fn extend(&self, mol: &Molecule, next: &mut Vec<LigandNode>) {
@@ -1205,6 +1391,7 @@ mod tests {
             rule1b,
             isotope,
             descriptor: None,
+            rule6_atom: None,
         }
     }
 
@@ -1212,6 +1399,13 @@ mod tests {
         NodePriority {
             descriptor: Some(descriptor),
             ..node_priority(6, 0, 0)
+        }
+    }
+
+    fn node_priority_with_rule6_atom(atomic_number: u8, atom: AtomId) -> NodePriority {
+        NodePriority {
+            rule6_atom: Some(atom),
+            ..node_priority(atomic_number, 0, 0)
         }
     }
 
@@ -1360,6 +1554,86 @@ mod tests {
 
         assert_eq!(comparison.ordering, Ordering::Less);
         assert!(comparison.pseudo_asymmetric);
+    }
+
+    #[test]
+    fn rule6_prefers_nodes_matching_the_selected_reference_atom() {
+        let reference = AtomId::new(7);
+        let reference_ligand = signature(LigandTree {
+            priority: node_priority_with_rule6_atom(6, reference),
+            children: Vec::new(),
+        });
+        let other_ligand = signature(LigandTree {
+            priority: node_priority_with_rule6_atom(6, AtomId::new(8)),
+            children: Vec::new(),
+        });
+
+        let comparison =
+            reference_ligand.compare_with_rule6_reference(&other_ligand, Some(reference));
+
+        assert_eq!(comparison.ordering, Ordering::Greater);
+        assert!(!comparison.pseudo_asymmetric);
+        assert_eq!(reference_ligand.compare(&other_ligand), Ordering::Equal);
+    }
+
+    #[test]
+    fn rule6_tetrahedral_retry_resolves_two_equivalent_partitions() {
+        let carrier_a = AtomId::new(0);
+        let carrier_b = AtomId::new(1);
+        let carrier_c = AtomId::new(2);
+        let carrier_d = AtomId::new(3);
+        let reference_child = LigandTree {
+            priority: node_priority_with_rule6_atom(1, carrier_b),
+            children: Vec::new(),
+        };
+        let other_child = LigandTree {
+            priority: node_priority_with_rule6_atom(1, AtomId::new(99)),
+            children: Vec::new(),
+        };
+        let signatures = vec![
+            (
+                StereoCarrier::Atom(carrier_a),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(8, carrier_a),
+                    children: Vec::new(),
+                }),
+            ),
+            (
+                StereoCarrier::Atom(carrier_b),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(8, carrier_b),
+                    children: Vec::new(),
+                }),
+            ),
+            (
+                StereoCarrier::Atom(carrier_c),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(6, carrier_c),
+                    children: vec![reference_child],
+                }),
+            ),
+            (
+                StereoCarrier::Atom(carrier_d),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(6, carrier_d),
+                    children: vec![other_child],
+                }),
+            ),
+        ];
+
+        let ranked = rank_tetrahedral_signatures_with_rule6(StereoElementId::new(0), &signatures)
+            .expect("Rule 6 should resolve paired partitions");
+
+        assert_eq!(
+            ranked.carriers,
+            vec![
+                StereoCarrier::Atom(carrier_b),
+                StereoCarrier::Atom(carrier_a),
+                StereoCarrier::Atom(carrier_c),
+                StereoCarrier::Atom(carrier_d),
+            ]
+        );
+        assert!(!ranked.pseudo_asymmetric_ordering);
     }
 
     #[test]
