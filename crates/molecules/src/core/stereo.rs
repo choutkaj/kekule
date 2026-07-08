@@ -142,6 +142,8 @@ pub enum StereoDescriptor {
     S,
     LowerR,
     LowerS,
+    SeqTrans,
+    SeqCis,
     E,
     Z,
     M,

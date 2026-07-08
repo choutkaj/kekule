@@ -1297,7 +1297,9 @@ fn rule4a_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
         Some(StereoDescriptor::R)
         | Some(StereoDescriptor::S)
         | Some(StereoDescriptor::M)
-        | Some(StereoDescriptor::P) => 2,
+        | Some(StereoDescriptor::P)
+        | Some(StereoDescriptor::SeqTrans)
+        | Some(StereoDescriptor::SeqCis) => 2,
         Some(StereoDescriptor::LowerR)
         | Some(StereoDescriptor::LowerS)
         | Some(StereoDescriptor::E)
@@ -1316,8 +1318,12 @@ fn rule4c_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
 
 fn descriptor_ref(descriptor: StereoDescriptor) -> Option<DescriptorRef> {
     match descriptor {
-        StereoDescriptor::R | StereoDescriptor::M => Some(DescriptorRef::R),
-        StereoDescriptor::S | StereoDescriptor::P => Some(DescriptorRef::S),
+        StereoDescriptor::R | StereoDescriptor::M | StereoDescriptor::SeqCis => {
+            Some(DescriptorRef::R)
+        }
+        StereoDescriptor::S | StereoDescriptor::P | StereoDescriptor::SeqTrans => {
+            Some(DescriptorRef::S)
+        }
         StereoDescriptor::LowerR
         | StereoDescriptor::LowerS
         | StereoDescriptor::E
@@ -1444,6 +1450,10 @@ mod tests {
             priority: node_priority_with_descriptor(StereoDescriptor::R),
             children: Vec::new(),
         });
+        let sequence = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::SeqCis),
+            children: Vec::new(),
+        });
         let pseudo = signature(LigandTree {
             priority: node_priority_with_descriptor(StereoDescriptor::LowerR),
             children: Vec::new(),
@@ -1451,6 +1461,8 @@ mod tests {
         let unlabeled = signature(one_node_signature(0, 0));
 
         assert_eq!(uppercase.compare(&pseudo), Ordering::Greater);
+        assert_eq!(sequence.compare(&pseudo), Ordering::Greater);
+        assert_eq!(sequence.compare(&uppercase), Ordering::Equal);
         assert_eq!(pseudo.compare(&unlabeled), Ordering::Greater);
         assert_eq!(unlabeled.compare(&uppercase), Ordering::Less);
     }
@@ -1515,6 +1527,24 @@ mod tests {
         );
         assert_eq!(
             r_ligand.compare_with_reference(&s_ligand, DescriptorRef::S),
+            Ordering::Less
+        );
+
+        let seq_cis = LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::SeqCis),
+            children: Vec::new(),
+        };
+        let seq_trans = LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::SeqTrans),
+            children: Vec::new(),
+        };
+
+        assert_eq!(
+            seq_cis.compare_with_reference(&seq_trans, DescriptorRef::R),
+            Ordering::Greater
+        );
+        assert_eq!(
+            seq_cis.compare_with_reference(&seq_trans, DescriptorRef::S),
             Ordering::Less
         );
     }

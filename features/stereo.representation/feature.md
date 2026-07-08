@@ -16,9 +16,9 @@ not atom/bond payload flags.
 - `Molecule` stores stereo elements, stereo groups, and source bond marks with
   focused insertion, lookup, iteration, removal, and topology-aware pruning
   methods.
-- Local stereo is the authoritative representation. `R/S`, `E/Z`, `M/P`, and
-  pseudoasymmetric descriptors are optional derived descriptors and must be
-  treated as cacheable views over local stereo.
+- Local stereo is the authoritative representation. `R/S`, `E/Z`, `M/P`,
+  sequence cis/trans, and pseudoasymmetric descriptors are optional derived
+  descriptors and must be treated as cacheable views over local stereo.
 - Unknown, unspecified, invalid-cleared, and specified stereo are distinct
   states. Missing stereo elements mean absent stereo, not explicit unknown
   stereo.
@@ -85,3 +85,4 @@ not atom/bond payload flags.
   ring-digit closures in smoke semantic validation.
 - v5: Add implicit lone-pair stereo carriers so supported three-neighbor
   heteroatom tetrahedral markers can be represented without adding graph atoms.
+- v6: Add sequence cis/trans entries to the derived descriptor vocabulary.
