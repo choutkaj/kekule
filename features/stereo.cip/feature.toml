@@ -1,9 +1,9 @@
 id = "stereo.cip"
 title = "CIP stereochemistry"
 area = "stereo"
-version = 18
+version = 19
 implemented = true
 validated = true
-description = "Assign bounded RDKit-like Rule 1a/1b/2/3/4a/4b/4c/5/6 R/S/r/s and E/Z CIP descriptors, with natural-isotope Rule 2 masses, mancude fractional Rule 1a, and parity-stable S4 Rule 6 support."
+description = "Assign bounded RDKit-like Rule 1a/1b/2/3/4a/4b/4c/5/6 R/S/r/s and E/Z CIP descriptors, with natural-isotope Rule 2 masses, mancude fractional Rule 1a, staged descriptor rounds, and deferred ring-pair Rule 6 support."
 depends_on = ["stereo.representation", "stereo.perception", "chem.sanitize.rdkit-like", "algo.canonical-ranking"]
 validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k"]

@@ -75,12 +75,17 @@ preserves the same carrier permutation parity. Natural atomic weights are
 stored as integer-scaled ranking values matching RDKit reference validation,
 while duplicate nodes keep zero Rule 2 mass.
 
-Assignment is descriptor-aware and iterative. Descriptors that are unique under
-constitutional rules are assigned first, then previously unresolved elements
-are retried so embedded E/Z labels and descriptor-pair labels can break
-otherwise equal ligand ties without storing descriptor flags on atoms or bonds.
-When Rule 5 supplies the unique ordering for a tetrahedral center, assignment
-emits pseudoasymmetric `r`/`s` descriptors.
+Assignment is descriptor-aware and iterative. Each assignment round evaluates
+pending elements against a descriptor snapshot and applies successful
+assignments only after the round completes, so a center cannot commit using
+only a prefix of newly assigned neighboring descriptors. Descriptors that are
+unique under constitutional rules are assigned first, then previously
+unresolved elements are retried so embedded E/Z labels and descriptor-pair
+labels can break otherwise equal ligand ties without storing descriptor flags
+on atoms or bonds. Deferred Rule 6 handles selected coupled ring-center ties
+after ordinary descriptor propagation stalls. When Rule 5 supplies the unique
+ordering for a tetrahedral center, assignment emits pseudoasymmetric `r`/`s`
+descriptors.
 
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
@@ -172,3 +177,6 @@ and stereo enumeration.
   atom-reference rankings and reject parity-unstable S4 outcomes.
 - v18: Add RDKit-like Rule 2 mass ranking for natural atoms versus indicated
   isotopes while preserving zero mass for duplicate nodes.
+- v19: Add staged descriptor-assignment rounds and deferred Rule 6 support for
+  coupled pseudoasymmetric ring centers, including fused and small-ring
+  descriptor timing cases.
