@@ -16,9 +16,13 @@ Write noncanonical isomeric SMILES from the first-class stereo representation.
   endpoint can be represented by a printable explicit single bond. Explicit atom
   carriers use their own bond; implicit-hydrogen carriers use the unique
   explicit substituent bond at that endpoint with the local direction inverted.
+- Uses stored-Kekule atom style for components that retain stored Kekule bond
+  orders, so isomeric output does not emit fused aromatic/carbonyl spellings
+  that the parser and sanitizer cannot round-trip semantically.
 - Allows source directional bond marks only when they are covered by stored
   double-bond stereo elements; unassembled source marks are rejected rather than
-  treated as authoritative stereo.
+  treated as authoritative stereo, except for inert directional marks next to
+  double bonds that cannot carry stereochemical truth.
 - Rejects double-bond elements whose implicit-hydrogen carrier lacks a unique
   explicit substituent bond, axial elements, enhanced stereo groups,
   non-directional source bond marks, and
@@ -64,11 +68,11 @@ marks and explicit unknown stereo.
 Smoke validation compares semantic output against externally generated RDKit
 goldens after noncanonical isomeric SMILES write and reparse. The comparison
 includes sanitized graph semantics plus CIP descriptor-bearing stereo semantics,
-not bytewise SMILES spelling. PubChem 100 validation uses the same semantic
-comparison over sanitized records from the externally supplied PubChem SMILES
-pack whose source SMILES contains isomeric stereo syntax, so the broader tier
-exercises stereochemical round-trip behavior without being dominated by
-unrelated non-stereo SMILES valence and aromaticity parity.
+not bytewise SMILES spelling. PubChem 100 and PubChem 1k validation use the
+same semantic comparison over sanitized records from the externally supplied
+PubChem SMILES packs whose source SMILES contains isomeric stereo syntax, so
+the broader tiers exercise stereochemical round-trip behavior without being
+dominated by unrelated non-stereo SMILES valence and aromaticity parity.
 
 ## Out Of Scope
 
@@ -91,3 +95,7 @@ parity validation.
   opposite explicit substituent bond with inverted local direction.
 - v5: Add PubChem 100 RDKit semantic validation over source-stereo isomeric
   SMILES records.
+- v6: Add PubChem 1k RDKit semantic validation over source-stereo isomeric
+  SMILES records, allow inert directional source marks next to non-stereogenic
+  alkenes, and use stored-Kekule atom style for components that retain stored
+  Kekule bond orders.

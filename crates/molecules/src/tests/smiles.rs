@@ -3257,6 +3257,87 @@ fn isomeric_smiles_writes_directional_double_bond_elements() {
 }
 
 #[test]
+fn isomeric_smiles_writes_pubchem_conjugated_directional_polyene() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)C=C)/C",
+        SmilesParseOptions,
+    )
+    .expect("directional polyene should parse");
+    perception_api::sanitize(&mut molecule).expect("directional polyene should sanitize");
+
+    let written = smiles_api::write_isomeric(&molecule).expect("directional polyene should write");
+
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("isomeric polyene output should parse");
+    perception_api::sanitize(&mut reparsed).expect("isomeric polyene output should sanitize");
+    assert!(reparsed.graph().stereo_elements().next().is_some());
+}
+
+#[test]
+fn isomeric_smiles_preserves_pubchem_fused_quaternary_center() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "C[C@]12CCCC(C1CCC3=CC(=C(C=C23)C(=O)OC)C(=O)OC)(C)C",
+        SmilesParseOptions,
+    )
+    .expect("fused quaternary center should parse");
+    perception_api::sanitize(&mut molecule).expect("fused quaternary center should sanitize");
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
+
+    let written =
+        smiles_api::write_isomeric(&molecule).expect("fused quaternary center should write");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("isomeric fused center output should parse");
+    perception_api::sanitize(&mut reparsed).expect("isomeric fused center output should sanitize");
+    let report = stereo_api::assign_cip_descriptors(reparsed.graph_mut());
+    assert!(report.is_ok(), "{:?}", report.issues);
+
+    assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
+}
+
+#[test]
+fn isomeric_smiles_round_trips_pubchem_anthraquinone_aromatic_shape() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "CC1C(C(CC(O1)O[C@H]2C[C@@](CC3=C2C(=C4C(=C3O)C(=O)C5=C(C4=O)C(=CC=C5)OC)O)(C(=O)C)O)N=C(CCSSCCC(=NC6CC(OC(C6O)C)O[C@H]7C[C@@](CC8=C7C(=C9C(=C8O)C(=O)C1=C(C9=O)C(=CC=C1)OC)O)(C(=O)C)O)N)N)O",
+        SmilesParseOptions,
+    )
+    .expect("anthraquinone source should parse");
+    perception_api::sanitize(&mut molecule).expect("anthraquinone source should sanitize");
+    let written = smiles_api::write_isomeric(&molecule).expect("anthraquinone should write");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("anthraquinone isomeric output should parse");
+    perception_api::sanitize(&mut reparsed).expect("anthraquinone isomeric output should sanitize");
+
+    assert_eq!(
+        reparsed
+            .graph()
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count(),
+        molecule
+            .graph()
+            .atoms()
+            .filter(|(_, atom)| atom.aromatic)
+            .count(),
+        "{written}"
+    );
+    assert_eq!(
+        reparsed
+            .graph()
+            .atoms()
+            .filter(|(_, atom)| atom.no_implicit_hydrogens)
+            .count(),
+        molecule
+            .graph()
+            .atoms()
+            .filter(|(_, atom)| atom.no_implicit_hydrogens)
+            .count(),
+        "{written}"
+    );
+}
+
+#[test]
 fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
     for (left_carrier, right_carrier, stored_orientation, expected_orientation) in [
         (

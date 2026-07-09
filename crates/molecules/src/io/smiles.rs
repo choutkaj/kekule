@@ -758,7 +758,14 @@ pub fn write_smiles(
     let plan = plan_smiles_write(mol, StereoWriteMode::Reject)?;
     let mut parts = Vec::new();
     for start in &plan.roots {
-        parts.push(write_smiles_component(mol, *start, None, &plan, None)?);
+        parts.push(write_smiles_component(
+            mol,
+            *start,
+            None,
+            &plan,
+            None,
+            CanonicalAtomStyle::Aromatic,
+        )?);
     }
     Ok(parts.join("."))
 }
@@ -770,14 +777,26 @@ pub fn write_isomeric_smiles(
     let mol = molecule.graph();
     let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
     let stereo = SmilesStereoWriteContext::new(mol)?;
+    let component_styles = smiles_connected_components(mol)?
+        .into_iter()
+        .map(|component| {
+            let style = isomeric_component_atom_style(mol, &component)?;
+            Ok((component.into_iter().collect::<BTreeSet<_>>(), style))
+        })
+        .collect::<std::result::Result<Vec<_>, MolWriteError>>()?;
     let mut parts = Vec::new();
     for start in &plan.roots {
+        let atom_style = component_styles
+            .iter()
+            .find_map(|(component, style)| component.contains(start).then_some(*style))
+            .unwrap_or(CanonicalAtomStyle::Aromatic);
         parts.push(write_smiles_component(
             mol,
             *start,
             None,
             &plan,
             Some(&stereo),
+            atom_style,
         )?);
     }
     Ok(parts.join("."))
@@ -847,6 +866,17 @@ fn canonical_component_atom_style(
     if canonical_component_has_aromatic_shorthand_sensitive_atom(mol, atom_ids)?
         && canonical_component_has_stored_kekule_orders(mol, atom_ids)?
     {
+        Ok(CanonicalAtomStyle::StoredKekule)
+    } else {
+        Ok(CanonicalAtomStyle::Aromatic)
+    }
+}
+
+fn isomeric_component_atom_style(
+    mol: &Molecule,
+    atom_ids: &[AtomId],
+) -> std::result::Result<CanonicalAtomStyle, MolWriteError> {
+    if canonical_component_has_stored_kekule_orders(mol, atom_ids)? {
         Ok(CanonicalAtomStyle::StoredKekule)
     } else {
         Ok(CanonicalAtomStyle::Aromatic)
@@ -1729,12 +1759,132 @@ fn validate_isomeric_source_marks(
             ));
         }
         if !directional.contains_key(&mark.bond) {
+            if !source_directional_mark_needs_perceived_stereo(mol, mark)? {
+                continue;
+            }
             return Err(MolWriteError::new(
                 "isomeric SMILES writer requires perceived double-bond stereo elements for source bond marks",
             ));
         }
     }
     Ok(())
+}
+
+fn source_directional_mark_needs_perceived_stereo(
+    mol: &Molecule,
+    mark: &StereoBondMark,
+) -> std::result::Result<bool, MolWriteError> {
+    let marked_bond = mol
+        .bond(mark.bond)
+        .map_err(|error| MolWriteError::new(error.to_string()))?;
+    let (left, right) = marked_bond.endpoints();
+    for endpoint in [left, right] {
+        let incident = mol
+            .incident_bonds(endpoint)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        for (bond_id, bond) in incident {
+            if bond_id == mark.bond || smiles_has_double_bond_element(mol, bond_id) {
+                continue;
+            }
+            if double_bond_stereo_candidate_is_supported(mol, bond_id, bond)
+                && !double_bond_candidate_endpoint_carriers(mol, bond.a(), bond.b(), bond_id)
+                    .is_empty()
+                && !double_bond_candidate_endpoint_carriers(mol, bond.b(), bond.a(), bond_id)
+                    .is_empty()
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn double_bond_stereo_candidate_is_supported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
+    if bond.order != BondOrder::Double || bond.aromatic {
+        return false;
+    }
+    if double_bond_between_aromatic_atoms(mol, bond) {
+        return false;
+    }
+    if double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond) {
+        return false;
+    }
+    true
+}
+
+fn smiles_has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {
+    mol.stereo_elements().any(|(_, element)| {
+        matches!(
+            &element.kind,
+            StereoElementKind::DoubleBond(stereo) if stereo.bond == bond
+        )
+    })
+}
+
+fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
+    mol.atom(bond.a())
+        .map(|atom| atom.aromatic)
+        .unwrap_or(false)
+        && mol
+            .atom(bond.b())
+            .map(|atom| atom.aromatic)
+            .unwrap_or(false)
+}
+
+fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
+    mol.ring_membership()
+        .map(|membership| membership.bond_in_ring(bond))
+        .unwrap_or(false)
+}
+
+fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
+    [bond.a(), bond.b()].into_iter().any(|atom_id| {
+        mol.atom(atom_id)
+            .map(|atom| atom.element.symbol() != "C")
+            .unwrap_or(true)
+    })
+}
+
+fn double_bond_candidate_endpoint_carriers(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+) -> Vec<StereoCarrier> {
+    let mut carriers = Vec::new();
+    if let Ok(incident) = mol.incident_bonds(endpoint) {
+        for (bond_id, bond) in incident {
+            if bond_id == focus_bond || bond.order != BondOrder::Single {
+                continue;
+            }
+            let other = bond.other_atom(endpoint);
+            if other != other_endpoint {
+                carriers.push(StereoCarrier::Atom(other));
+            }
+        }
+    }
+    carriers.sort_by_key(carrier_key);
+    if atom_hydrogen_count(mol, endpoint) == 1 {
+        carriers.push(StereoCarrier::ImplicitHydrogen);
+    }
+    carriers
+}
+
+fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
+    mol.atom(atom)
+        .map(|atom| {
+            atom.explicit_hydrogens
+                .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+        })
+        .unwrap_or(0)
+}
+
+fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
+    match carrier {
+        StereoCarrier::Atom(atom) => (0, atom.raw()),
+        StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
+        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
+    }
 }
 
 fn add_double_bond_directional_constraints(
@@ -1989,6 +2139,7 @@ fn write_smiles_component(
     parent: Option<AtomId>,
     plan: &SmilesWritePlan,
     stereo: Option<&SmilesStereoWriteContext>,
+    atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<String, MolWriteError> {
     enum Action {
         Node {
@@ -2037,7 +2188,7 @@ fn write_smiles_component(
                     .atom(atom)
                     .map_err(|error| MolWriteError::new(error.to_string()))?;
                 let closures = plan.closures.get(&atom).map(Vec::as_slice);
-                let mut children = smiles_incident_bonds(mol, atom)?
+                let mut children = smiles_incident_bonds_for_style(mol, atom, atom_style)?
                     .into_iter()
                     .filter(|(bond_id, _, neighbor)| {
                         plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
@@ -2057,13 +2208,24 @@ fn write_smiles_component(
                         context.atom_chirality(atom, parent, closures, &children, main_child_index)
                     })
                     .transpose()?;
-                out.push_str(&smiles_atom_with_chirality(
+                out.push_str(&smiles_atom_with_style_and_chirality(
+                    mol,
+                    atom,
                     atom_record,
+                    atom_style,
                     chirality.map(|state| state.orientation),
                     chirality.is_some_and(|state| state.force_hydrogen),
-                ));
+                )?);
                 if let Some(closures) = closures {
                     for closure in closures {
+                        let closure_order = match atom_style {
+                            CanonicalAtomStyle::Aromatic => closure.order,
+                            CanonicalAtomStyle::StoredKekule => {
+                                mol.bond(closure.bond)
+                                    .map_err(|error| MolWriteError::new(error.to_string()))?
+                                    .order
+                            }
+                        };
                         let directional = stereo
                             .map(|context| {
                                 context.directional_bond(closure.bond, atom, closure.other)
@@ -2072,7 +2234,7 @@ fn write_smiles_component(
                             .flatten();
                         out.push_str(smiles_bond_between_with_direction(
                             mol,
-                            closure.order,
+                            closure_order,
                             atom,
                             closure.other,
                             directional,
@@ -2318,6 +2480,34 @@ fn smiles_atom_with_chirality(
         out.push(']');
         out
     }
+}
+
+fn smiles_atom_with_style_and_chirality(
+    _mol: &Molecule,
+    _atom_id: AtomId,
+    atom: &Atom,
+    atom_style: CanonicalAtomStyle,
+    chirality: Option<TetrahedralOrientation>,
+    force_hydrogen: bool,
+) -> std::result::Result<String, MolWriteError> {
+    if matches!(atom_style, CanonicalAtomStyle::StoredKekule) && atom.aromatic {
+        let mut normalized = atom.clone();
+        normalized.isotope = None;
+        normalized.aromatic = false;
+        if !matches!(atom.element.symbol(), "B" | "C") && atom.implicit_hydrogens.unwrap_or(0) > 0 {
+            normalized.explicit_hydrogens = atom
+                .explicit_hydrogens
+                .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+            normalized.implicit_hydrogens = Some(0);
+            normalized.no_implicit_hydrogens = true;
+        }
+        return Ok(smiles_atom_with_chirality(
+            &normalized,
+            chirality,
+            force_hydrogen,
+        ));
+    }
+    Ok(smiles_atom_with_chirality(atom, chirality, force_hydrogen))
 }
 
 fn canonical_smiles_atom(
