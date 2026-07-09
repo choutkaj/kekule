@@ -1345,6 +1345,33 @@ fn stereo_perception_assembles_molfile_atrop_axis_with_one_exocyclic_sp2_endpoin
     }
 }
 
+#[test]
+fn stereo_perception_assembles_ring_internal_molfile_atrop_axis() {
+    for fixture in [
+        rdkit_macrocycle8_ortho_wedge_molblock(),
+        rdkit_macrocycle8_ortho_hash_molblock(),
+    ] {
+        let mut molecule =
+            molfile::read_v3000_str(fixture).expect("RDKit macrocyclic atropisomer fixture parses");
+        perception_api::sanitize_with_options(
+            &mut molecule,
+            SanitizeOptions {
+                perceive_stereo: false,
+                ..SanitizeOptions::default()
+            },
+        )
+        .expect("fixture prepares before stereo perception");
+
+        let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(report.created_elements.len(), 1);
+        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+            matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(15))
+        }));
+    }
+}
+
 fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());

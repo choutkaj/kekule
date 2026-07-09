@@ -24,7 +24,7 @@ descriptors first, and topology or stereo-invalidating mutations clear them
 again.
 
 The implemented contract assigns `R`/`S`/`r`/`s` for specified tetrahedral
-elements, `E`/`Z` for specified double-bond elements, and `M`/`P` for
+elements, `E`/`Z` for specified double-bond elements, and `M`/`P`/`m`/`p` for
 specified stored axis elements when the local stereo is valid and carrier
 priorities are unique under the implemented bounded ranking rules, including
 natural-vs-indicated isotope priority, E/Z descriptor priority, descriptor
@@ -58,7 +58,7 @@ natural atomic weights only after both earlier rules remain tied; and Rule 3
 orders embedded `Z` descriptors before embedded `E` descriptors before
 unlabeled double bonds. Rule 4a orders
 uppercase sequence descriptors (`R`/`S`/`M`/`P`) and `seqTrans`/`seqCis` before
-pseudo or geometric descriptors (`r`/`s`/`E`/`Z`) before unlabeled nodes; Rule
+pseudo or geometric descriptors (`r`/`s`/`m`/`p`/`E`/`Z`) before unlabeled nodes; Rule
 4b derives a reference descriptor from the first
 descriptor-bearing equivalent ligand level and compares like versus unlike
 descriptor families relative to that reference; Rule 4c orders
@@ -112,7 +112,9 @@ adjacent to each axis endpoint; assignment ranks all carriers at each endpoint
 and inverts the stored clockwise/counterclockwise handedness whenever the
 stored reference carrier is not the highest-priority carrier at that endpoint.
 Counterclockwise top-anchor handedness maps to `M`, and clockwise top-anchor
-handedness maps to `P`, matching RDKit's atropisomeric bond convention.
+handedness maps to `P`, matching RDKit's atropisomeric bond convention; when
+either endpoint priority ordering is pseudoasymmetric, the corresponding
+lowercase `m`/`p` pseudo descriptor is assigned.
 Molfile atropisomeric wedge perception, including the conservative exocyclic
 axis subset, remains in `stereo.perception`; this layer only consumes the
 resulting stored axis element. For Molfile-derived axes, perception stores the
@@ -120,7 +122,9 @@ lowest-ID explicit carrier at each endpoint as the local reference pair, so CIP
 priority flips are applied from a stable RDKit-like local axis convention
 instead of from whichever wedge carrier happened to trigger perception.
 The consumed perception subset includes redundant same-axis Molfile atrop
-wedges and exocyclic axes with one ring endpoint plus one locally SP2 endpoint.
+wedges, exocyclic axes with one ring endpoint plus one locally SP2 endpoint,
+and ring-internal macrocyclic axes when no non-ring candidate is available
+from the same Molfile source mark.
 For axis endpoint ranking only, all-carbon aromatic bond components use a
 uniform aromatic duplicate-node count so retained Molfile single/double
 spelling in phenyl-like ligands does not change the `M`/`P` descriptor. This
@@ -137,7 +141,8 @@ stereo or when the implemented ranking rules cannot distinguish carriers.
 
 Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
 Rule 1a/1b/2 ordering, mancude fractional atomic-number ordering, Rule 3
-embedded E/Z ordering, Rule 4a descriptor-class ordering, Rule 4b
+embedded E/Z ordering, Rule 4a descriptor-class ordering including axial
+`m`/`p` pseudo descriptors, Rule 4b
 reference-descriptor and like/unlike pairing, Rule 4c pseudo-descriptor
 ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric tetrahedral
 `r`/`s` assignment, sequence cis/trans descriptor-family ordering, Rule 6
@@ -165,6 +170,9 @@ BMS-986142, redundant same-axis wedge marks, a JDQ443 heteromancude guardrail,
 Mrtx1719 and ZM374979 axes, one-ring-endpoint SP2 axes, plus BMS, Sotorasib,
 and ZM374979 fixtures that combine exocyclic Molfile atrop axes with
 implicit-H tetrahedral centers adjacent to those axes.
+Smoke validation also includes V3000 RDKit macrocycle atropisomer fixtures
+that exercise ring-internal Molfile axis perception and bond-centered `M`/`P`
+assignment.
 PL-REX validation uses externally supplied ligand SDF packs to cover Molfile
 and coordinate-bearing records. CIP goldens are generated with RDKit and
 compare atom and bond
@@ -186,7 +194,7 @@ Full exact machine-oriented CIP coverage remains out of scope for this version:
 perception or assignment of sequence cis/trans descriptors, kekulization of
 aromatic-only inputs for mancude parity, remaining exact Rule 6 edge cases
 beyond the parity-stable tetrahedral fallback, broad axis perception beyond
-the conservative exocyclic Molfile atropisomeric wedge subset, full
+the supported Molfile atropisomeric wedge subsets, full
 RDKit-canonical aromatic kekulization for every alternate aromatic Molfile
 layout, coordinate-only axis assignment, non-tetrahedral geometries beyond
 stored axis descriptors, enhanced
@@ -274,3 +282,5 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v30: Expand Molfile atrop parity coverage with official BMS/JDQ/Mrtx/RP,
   Sotorasib, and ZM374979 variants, including redundant same-axis wedges and
   one-ring-endpoint SP2 axes from the perception layer.
+- v31: Add axial `m`/`p` pseudo descriptor vocabulary and smoke parity coverage
+  for official RDKit ring-internal macrocyclic Molfile atropisomer fixtures.

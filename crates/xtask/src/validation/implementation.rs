@@ -1570,6 +1570,8 @@ pub(crate) fn stereo_descriptor_json(descriptor: StereoDescriptor) -> &'static s
         StereoDescriptor::Z => "Z",
         StereoDescriptor::M => "M",
         StereoDescriptor::P => "P",
+        StereoDescriptor::LowerM => "m",
+        StereoDescriptor::LowerP => "p",
     }
 }
 

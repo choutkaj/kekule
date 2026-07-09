@@ -52,16 +52,19 @@ and assign local stereo elements from supported source marks and coordinates.
   local stereo center and the marked carrier is placed first in carrier order.
 - Molfile wedge up/down marks that cannot support tetrahedral stereo can
   conservatively create specified atropisomeric axis elements when the marked
-  bond is adjacent to a non-ring single-bond axis whose endpoints are
-  SP2-like, have total degree two or three, and have one or two explicit
-  reference bonds each. Ring membership, aromatic flags, aromatic-order bonds,
-  and local double bonds provide the current SP2-like evidence. Redundant wedge
-  marks that define the same axis are consumed as the same local axis evidence
-  instead of becoming hard tetrahedral ambiguity. The stored local reference
-  carriers are the lowest-ID explicit carriers on the two axis endpoints,
-  matching RDKit's documented internal convention. Coordinates determine the
-  stored axis handedness; for 2D Molfiles, the wedge/hash mark supplies a
-  virtual out-of-plane sign used to lift the reference carriers consistently.
+  bond is adjacent to a single-bond axis whose endpoints are SP2-like, have
+  total degree two or three, and have one or two explicit reference bonds each.
+  Ring membership, aromatic flags, aromatic-order bonds, and local double bonds
+  provide the current SP2-like evidence. When a Molfile source mark can support
+  both non-ring and ring-internal axis candidates, non-ring candidates are
+  preferred; ring-internal macrocyclic axes are allowed when no non-ring
+  candidate remains. Redundant wedge marks that define the same axis are
+  consumed as the same local axis evidence instead of becoming hard tetrahedral
+  ambiguity. The stored local reference carriers are the lowest-ID explicit
+  carriers on the two axis endpoints, matching RDKit's documented internal
+  convention. Coordinates determine the stored axis handedness; for 2D
+  Molfiles, the wedge/hash mark supplies a virtual out-of-plane sign used to
+  lift the reference carriers consistently.
 - Coordinate-derived assignment uses the first conformer conservatively. It
   assigns tetrahedral stereo only when all four carriers are explicit atoms
   with nondegenerate 3D coordinates, and assigns double-bond stereo only when
@@ -75,18 +78,20 @@ existing local stereo elements against current topology and hydrogen semantics,
 including supported implicit lone-pair tetrahedral carriers and structurally
 valid stored axis carriers, assembles SMILES-style paired directional bond
 marks with endpoint-relative normalization, and assembles supported Molfile
-tetrahedral wedge/either source marks plus a conservative Molfile
-exocyclic atropisomeric wedge subset. Coordinate-bearing Molfile tetrahedral
+tetrahedral wedge/either source marks plus supported Molfile atropisomeric
+wedge subsets. Coordinate-bearing Molfile tetrahedral
 wedges with one implicit hydrogen use a virtual carrier coordinate derived
 from explicit substituent geometry. Molfile atrop axes store lowest-neighbor
 endpoint references and compute local handedness from coordinates so equivalent
 wedge placements around the same axis collapse to the same local axis state.
-Ring-internal single bonds adjacent to the same wedged endpoint are ignored as
-axis candidates for this Molfile subset so alternate wedged substituent
-placement does not create ambiguous axes. Exocyclic axes may have either two
-ring endpoints or one ring endpoint plus one locally SP2 endpoint, matching
-the official RDKit atropisomer fixtures covered by smoke CIP parity
-validation.
+Ring-internal single bonds adjacent to the same wedged endpoint are ignored
+when a non-ring candidate is available so alternate wedged substituent
+placement does not create ambiguous axes; otherwise ring-internal macrocyclic
+axis candidates are accepted. Exocyclic axes may have either two ring endpoints
+or one ring endpoint plus one locally SP2 endpoint, and macrocyclic
+ring-internal axes follow the same endpoint and reference-carrier structural
+checks, matching the official RDKit atropisomer fixtures covered by smoke CIP
+parity validation.
 Coordinate-derived assignment is local and conservative; exact CIP descriptors
 belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
 shortest-path check around the candidate bond so direct perception and
@@ -108,7 +113,7 @@ run over whole `MacroMolecule` structures by default.
   Molfile atropisomeric axis assembly from official RDKit fixtures, including
   alternate wedged substituent placement around the same exocyclic axis,
   redundant wedge marks around the same atrop axis, one-ring-endpoint SP2
-  exocyclic axes,
+  exocyclic axes, ring-internal macrocyclic axes,
   virtual implicit-H Molfile tetrahedral orientation,
   coordinate-derived tetrahedral and double-bond assignment, sanitizer
   integration, transactional rollback, and preservation of explicit unknown
@@ -124,8 +129,8 @@ run over whole `MacroMolecule` structures by default.
 
 ## Out Of Scope
 
-Exact CIP descriptors, broad axis candidate perception including ring-internal
-macrocyclic atrop axes, coordinate-only axis assignment, CXSMILES
+Exact CIP descriptors, broad axis candidate perception beyond the supported
+Molfile wedge subsets, coordinate-only axis assignment, CXSMILES
 atropisomeric syntax, isomeric SMILES writing, enhanced stereo serialization,
 implicit-hydrogen coordinate reconstruction, stereo enumeration, and reaction
 stereo transfer.
@@ -177,3 +182,6 @@ stereo transfer.
 - v16: Broaden Molfile atrop axis assembly to RDKit-like SP2 endpoint
   eligibility, consume redundant same-axis wedge marks, and cover official
   BMS/ZM atropisomer regressions.
+- v17: Allow ring-internal macrocyclic Molfile atrop axes when no non-ring
+  candidate is available from the same source mark, with official RDKit
+  macrocycle regressions.

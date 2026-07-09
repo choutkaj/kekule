@@ -154,6 +154,18 @@ pub(super) fn rdkit_zm374979_atrop2_molblock() -> &'static str {
     include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/ZM374979_atrop2.mol")
 }
 
+pub(super) fn rdkit_macrocycle8_ortho_wedge_molblock() -> &'static str {
+    include_str!(
+        "../../../../validation/corpora/smoke/data/rdkit_atropisomers/macrocycle-8-ortho-wedge.mol"
+    )
+}
+
+pub(super) fn rdkit_macrocycle8_ortho_hash_molblock() -> &'static str {
+    include_str!(
+        "../../../../validation/corpora/smoke/data/rdkit_atropisomers/macrocycle-8-ortho-hash.mol"
+    )
+}
+
 mod bio;
 mod canonical;
 mod chemistry;

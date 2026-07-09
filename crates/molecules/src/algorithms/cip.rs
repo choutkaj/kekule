@@ -339,30 +339,32 @@ fn assign_axis_descriptor(
     let (left, right) = bond.endpoints();
     let (left_reference, right_reference) =
         axis_reference_carriers(mol, element, stereo, left, right)?;
-    let left_top = ranked_carriers(
+    let left_ranked = ranked_carriers(
         mol,
         element,
         left,
         &axis_endpoint_carriers(mol, left, right, stereo.axis),
         options,
         true,
-    )?
-    .carriers
-    .first()
-    .copied()
-    .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let right_top = ranked_carriers(
+    )?;
+    let left_top = left_ranked
+        .carriers
+        .first()
+        .copied()
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+    let right_ranked = ranked_carriers(
         mol,
         element,
         right,
         &axis_endpoint_carriers(mol, right, left, stereo.axis),
         options,
         true,
-    )?
-    .carriers
-    .first()
-    .copied()
-    .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+    )?;
+    let right_top = right_ranked
+        .carriers
+        .first()
+        .copied()
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let mut top_orientation = stereo.orientation;
     if left_reference != left_top {
         top_orientation = invert_axis_orientation(top_orientation);
@@ -370,9 +372,13 @@ fn assign_axis_descriptor(
     if right_reference != right_top {
         top_orientation = invert_axis_orientation(top_orientation);
     }
-    Ok(match top_orientation {
-        AxisOrientation::CounterClockwise => StereoDescriptor::M,
-        AxisOrientation::Clockwise => StereoDescriptor::P,
+    let pseudo_axis =
+        left_ranked.pseudo_asymmetric_ordering || right_ranked.pseudo_asymmetric_ordering;
+    Ok(match (top_orientation, pseudo_axis) {
+        (AxisOrientation::CounterClockwise, true) => StereoDescriptor::LowerM,
+        (AxisOrientation::Clockwise, true) => StereoDescriptor::LowerP,
+        (AxisOrientation::CounterClockwise, false) => StereoDescriptor::M,
+        (AxisOrientation::Clockwise, false) => StereoDescriptor::P,
     })
 }
 
@@ -772,7 +778,10 @@ fn descriptor_class(descriptor: StereoDescriptor) -> Option<DescriptorClass> {
         | StereoDescriptor::P
         | StereoDescriptor::SeqCis
         | StereoDescriptor::SeqTrans => Some(DescriptorClass::Absolute),
-        StereoDescriptor::LowerR | StereoDescriptor::LowerS => Some(DescriptorClass::Pseudo),
+        StereoDescriptor::LowerR
+        | StereoDescriptor::LowerS
+        | StereoDescriptor::LowerM
+        | StereoDescriptor::LowerP => Some(DescriptorClass::Pseudo),
         StereoDescriptor::E | StereoDescriptor::Z => None,
     }
 }
@@ -2799,6 +2808,8 @@ fn rule4a_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
         | Some(StereoDescriptor::SeqCis) => 2,
         Some(StereoDescriptor::LowerR)
         | Some(StereoDescriptor::LowerS)
+        | Some(StereoDescriptor::LowerM)
+        | Some(StereoDescriptor::LowerP)
         | Some(StereoDescriptor::E)
         | Some(StereoDescriptor::Z) => 1,
         None => 0,
@@ -2807,8 +2818,8 @@ fn rule4a_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
 
 fn rule4c_descriptor_priority(descriptor: Option<StereoDescriptor>) -> u8 {
     match descriptor {
-        Some(StereoDescriptor::LowerR) => 2,
-        Some(StereoDescriptor::LowerS) => 1,
+        Some(StereoDescriptor::LowerR) | Some(StereoDescriptor::LowerM) => 2,
+        Some(StereoDescriptor::LowerS) | Some(StereoDescriptor::LowerP) => 1,
         _ => 0,
     }
 }
@@ -2823,6 +2834,8 @@ fn descriptor_ref(descriptor: StereoDescriptor) -> Option<DescriptorRef> {
         }
         StereoDescriptor::LowerR
         | StereoDescriptor::LowerS
+        | StereoDescriptor::LowerM
+        | StereoDescriptor::LowerP
         | StereoDescriptor::E
         | StereoDescriptor::Z => None,
     }
@@ -2986,6 +2999,10 @@ mod tests {
             priority: node_priority_with_descriptor(StereoDescriptor::R),
             children: Vec::new(),
         });
+        let uppercase_axis = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::M),
+            children: Vec::new(),
+        });
         let sequence = signature(LigandTree {
             priority: node_priority_with_descriptor(StereoDescriptor::SeqCis),
             children: Vec::new(),
@@ -2994,11 +3011,17 @@ mod tests {
             priority: node_priority_with_descriptor(StereoDescriptor::LowerR),
             children: Vec::new(),
         });
+        let pseudo_axis = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::LowerM),
+            children: Vec::new(),
+        });
         let unlabeled = signature(one_node_signature(0, 0));
 
         assert_eq!(uppercase.compare(&pseudo), Ordering::Greater);
+        assert_eq!(uppercase_axis.compare(&pseudo_axis), Ordering::Greater);
         assert_eq!(sequence.compare(&pseudo), Ordering::Greater);
         assert_eq!(sequence.compare(&uppercase), Ordering::Equal);
+        assert_eq!(pseudo_axis.compare(&pseudo), Ordering::Equal);
         assert_eq!(pseudo.compare(&unlabeled), Ordering::Greater);
         assert_eq!(unlabeled.compare(&uppercase), Ordering::Less);
     }
@@ -3086,7 +3109,7 @@ mod tests {
     }
 
     #[test]
-    fn rule4c_prefers_lower_r_over_lower_s() {
+    fn rule4c_prefers_lower_r_and_lower_m_over_lower_s_and_lower_p() {
         let lower_r = signature(LigandTree {
             priority: node_priority_with_descriptor(StereoDescriptor::LowerR),
             children: Vec::new(),
@@ -3095,9 +3118,21 @@ mod tests {
             priority: node_priority_with_descriptor(StereoDescriptor::LowerS),
             children: Vec::new(),
         });
+        let lower_m = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::LowerM),
+            children: Vec::new(),
+        });
+        let lower_p = signature(LigandTree {
+            priority: node_priority_with_descriptor(StereoDescriptor::LowerP),
+            children: Vec::new(),
+        });
 
         assert_eq!(lower_r.compare(&lower_s), Ordering::Greater);
         assert_eq!(lower_s.compare(&lower_r), Ordering::Less);
+        assert_eq!(lower_m.compare(&lower_p), Ordering::Greater);
+        assert_eq!(lower_p.compare(&lower_m), Ordering::Less);
+        assert_eq!(lower_m.compare(&lower_r), Ordering::Equal);
+        assert_eq!(lower_p.compare(&lower_s), Ordering::Equal);
     }
 
     #[test]

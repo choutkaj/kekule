@@ -252,6 +252,27 @@ fn cip_matches_rdkit_for_broader_molfile_atropisomeric_axis_perception() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_ring_internal_molfile_atropisomeric_axis() {
+    for (fixture, expected) in [
+        (
+            rdkit_macrocycle8_ortho_wedge_molblock(),
+            StereoDescriptor::M,
+        ),
+        (rdkit_macrocycle8_ortho_hash_molblock(), StereoDescriptor::P),
+    ] {
+        let mut molecule =
+            molfile::read_v3000_str(fixture).expect("RDKit macrocycle atropisomer fixture parses");
+        perception_api::sanitize(&mut molecule).expect("macrocycle atropisomer fixture sanitizes");
+
+        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(report.assigned.len(), 1);
+        assert_eq!(report.assigned[0].descriptor, expected);
+    }
+}
+
+#[test]
 fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule =
         smiles_api::read_str("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");

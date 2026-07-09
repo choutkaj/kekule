@@ -1,9 +1,9 @@
 id = "stereo.perception"
 title = "Stereochemistry perception"
 area = "stereo"
-version = 16
+version = 17
 implemented = true
 validated = true
-description = "Validate local stereo elements including stored axes, detect candidate stereo units, and assign local stereo from supported source marks and coordinates, including coordinate-aware Molfile tetrahedral orientation with virtual implicit-H carriers, exocyclic Molfile atropisomeric axis orientation using RDKit-style lowest-neighbor references, redundant atrop wedge consumption, one-ring-endpoint SP2 axis support, RDKit-like small-ring alkene exclusions, and broad semantic regression coverage."
+description = "Validate local stereo elements including stored axes, detect candidate stereo units, and assign local stereo from supported source marks and coordinates, including coordinate-aware Molfile tetrahedral orientation with virtual implicit-H carriers, Molfile atropisomeric axis orientation using RDKit-style lowest-neighbor references, redundant atrop wedge consumption, one-ring-endpoint SP2 axis support, ring-internal macrocyclic axis support when no non-ring source-mark candidate exists, RDKit-like small-ring alkene exclusions, and broad semantic regression coverage."
 depends_on = ["stereo.representation", "algo.valence.rdkit-like", "algo.canonical-ranking"]
 validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "enamine-diversity"]

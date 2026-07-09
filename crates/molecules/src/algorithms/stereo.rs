@@ -856,7 +856,8 @@ fn atropisomeric_axis_candidates(
     }
     let near = marked_bond.a();
     let marked_carrier = marked_bond.b();
-    mol.incident_bonds(near)
+    let candidates = mol
+        .incident_bonds(near)
         .ok()
         .into_iter()
         .flatten()
@@ -875,6 +876,13 @@ fn atropisomeric_axis_candidates(
             )
             .map(|element| (axis, element))
         })
+        .collect::<Vec<_>>();
+    let has_non_ring_axis = candidates
+        .iter()
+        .any(|(axis, _)| !ring_membership.bond_in_ring(*axis));
+    candidates
+        .into_iter()
+        .filter(|(axis, _)| !has_non_ring_axis || !ring_membership.bond_in_ring(*axis))
         .collect()
 }
 
@@ -887,10 +895,7 @@ fn atropisomeric_axis_candidate(
     near: AtomId,
     marked_carrier: AtomId,
 ) -> Option<StereoElement> {
-    if axis_bond.order != BondOrder::Single
-        || ring_membership.bond_in_ring(axis)
-        || has_axis_element(mol, axis)
-    {
+    if axis_bond.order != BondOrder::Single || has_axis_element(mol, axis) {
         return None;
     }
     let other = axis_bond.other_atom(near);

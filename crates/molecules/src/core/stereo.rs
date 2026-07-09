@@ -148,6 +148,8 @@ pub enum StereoDescriptor {
     Z,
     M,
     P,
+    LowerM,
+    LowerP,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
