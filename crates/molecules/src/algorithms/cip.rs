@@ -303,12 +303,30 @@ fn assign_double_bond_descriptor(
     }
     let left_carriers = double_bond_endpoint_carriers(mol, stereo.left, stereo.right, stereo.bond);
     let right_carriers = double_bond_endpoint_carriers(mol, stereo.right, stereo.left, stereo.bond);
-    let left_top = ranked_carriers(mol, element, stereo.left, &left_carriers, options, false)?
+    let left_ranked = ranked_carriers(
+        mol,
+        element,
+        stereo.left,
+        &left_carriers,
+        options,
+        true,
+        false,
+    )?;
+    let left_top = left_ranked
         .carriers
         .first()
         .copied()
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let right_top = ranked_carriers(mol, element, stereo.right, &right_carriers, options, false)?
+    let right_ranked = ranked_carriers(
+        mol,
+        element,
+        stereo.right,
+        &right_carriers,
+        options,
+        true,
+        false,
+    )?;
+    let right_top = right_ranked
         .carriers
         .first()
         .copied()
@@ -321,9 +339,13 @@ fn assign_double_bond_descriptor(
     if stereo.right_carrier != right_top {
         top_relation = invert_double_bond_orientation(top_relation);
     }
-    Ok(match top_relation {
-        DoubleBondOrientation::Together => StereoDescriptor::Z,
-        DoubleBondOrientation::Opposite => StereoDescriptor::E,
+    let pseudo_sequence =
+        left_ranked.pseudo_asymmetric_ordering != right_ranked.pseudo_asymmetric_ordering;
+    Ok(match (top_relation, pseudo_sequence) {
+        (DoubleBondOrientation::Together, true) => StereoDescriptor::SeqCis,
+        (DoubleBondOrientation::Opposite, true) => StereoDescriptor::SeqTrans,
+        (DoubleBondOrientation::Together, false) => StereoDescriptor::Z,
+        (DoubleBondOrientation::Opposite, false) => StereoDescriptor::E,
     })
 }
 
@@ -346,6 +368,7 @@ fn assign_axis_descriptor(
         &axis_endpoint_carriers(mol, left, right, stereo.axis),
         options,
         true,
+        true,
     )?;
     let left_top = left_ranked
         .carriers
@@ -358,6 +381,7 @@ fn assign_axis_descriptor(
         right,
         &axis_endpoint_carriers(mol, right, left, stereo.axis),
         options,
+        true,
         true,
     )?;
     let right_top = right_ranked
@@ -451,6 +475,7 @@ fn ranked_carriers(
     root: AtomId,
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
+    allow_auxiliary_descriptors: bool,
     normalize_all_carbon_aromatic: bool,
 ) -> CipResult<RankedCarriers> {
     let signatures = carrier_signatures(
@@ -459,7 +484,7 @@ fn ranked_carriers(
         root,
         carriers,
         options,
-        false,
+        allow_auxiliary_descriptors,
         normalize_all_carbon_aromatic,
     )?;
     rank_carrier_signatures(element, &signatures, None)

@@ -129,6 +129,26 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
 }
 
 #[test]
+fn cip_assigns_pseudo_axis_descriptors_for_pseudoasymmetric_endpoint_ordering() {
+    for (orientation, expected) in [
+        (AxisOrientation::CounterClockwise, StereoDescriptor::LowerM),
+        (AxisOrientation::Clockwise, StereoDescriptor::LowerP),
+    ] {
+        let (mut mol, axis_element) = pseudoasymmetric_axis_graph(orientation);
+
+        let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(
+            mol.stereo_element(axis_element)
+                .expect("axis stereo")
+                .descriptor,
+            Some(expected)
+        );
+    }
+}
+
+#[test]
 fn cip_matches_rdkit_for_molfile_atropisomeric_axis() {
     let mut molecule = molfile::read_v2000_str(rdkit_rp6306_atrop_molblock())
         .expect("RDKit atropisomer fixture parses");
@@ -560,6 +580,26 @@ fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
 }
 
 #[test]
+fn cip_assigns_sequence_descriptors_for_pseudoasymmetric_double_bond_endpoints() {
+    for (orientation, expected) in [
+        (DoubleBondOrientation::Together, StereoDescriptor::SeqCis),
+        (DoubleBondOrientation::Opposite, StereoDescriptor::SeqTrans),
+    ] {
+        let (mut mol, double_bond_element) = pseudoasymmetric_double_bond_graph(orientation);
+
+        let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(
+            mol.stereo_element(double_bond_element)
+                .expect("double-bond stereo")
+                .descriptor,
+            Some(expected)
+        );
+    }
+}
+
+#[test]
 fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
     let mut molecule =
         smiles_api::read_str("Br[C@H](/C=C/F)/C=C\\F").expect("Rule 3 alkene pair parses");
@@ -594,6 +634,128 @@ fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
         bond_descriptors,
         vec![(2, 3, StereoDescriptor::E), (5, 6, StereoDescriptor::Z)]
     );
+}
+
+fn pseudoasymmetric_double_bond_graph(
+    orientation: DoubleBondOrientation,
+) -> (Molecule, StereoElementId) {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let double_bond = mol
+        .add_bond(left, right, BondOrder::Double)
+        .expect("double bond");
+    let (child_r, _) = add_enantiomorphic_tetrahedral_carriers(&mut mol, left);
+
+    let chlorine = mol.add_atom(element_atom("Cl"));
+    let fluorine = mol.add_atom(element_atom("F"));
+
+    for carrier in [chlorine, fluorine] {
+        mol.add_bond(right, carrier, BondOrder::Single)
+            .expect("right carrier bond");
+    }
+    let double_bond_element = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond: double_bond,
+                left,
+                right,
+                left_carrier: StereoCarrier::Atom(child_r),
+                right_carrier: StereoCarrier::Atom(chlorine),
+                orientation,
+            }),
+            StereoSource::User,
+        ))
+        .expect("double-bond stereo element");
+
+    (mol, double_bond_element)
+}
+
+fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, StereoElementId) {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
+    let (child_r, _child_s) = add_enantiomorphic_tetrahedral_carriers(&mut mol, left);
+
+    let chlorine = mol.add_atom(element_atom("Cl"));
+    let fluorine = mol.add_atom(element_atom("F"));
+    for carrier in [chlorine, fluorine] {
+        mol.add_bond(right, carrier, BondOrder::Single)
+            .expect("right carrier bond");
+    }
+
+    let axis_element = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![StereoCarrier::Atom(child_r), StereoCarrier::Atom(chlorine)],
+                orientation,
+            }),
+            StereoSource::User,
+        ))
+        .expect("axis stereo element");
+
+    (mol, axis_element)
+}
+
+fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -> (AtomId, AtomId) {
+    let mut child_r_atom = carbon();
+    child_r_atom.implicit_hydrogens = Some(1);
+    let child_r = mol.add_atom(child_r_atom);
+    let child_r_oxygen = mol.add_atom(oxygen());
+    let child_r_nitrogen = mol.add_atom(element_atom("N"));
+
+    let mut child_s_atom = carbon();
+    child_s_atom.implicit_hydrogens = Some(1);
+    let child_s = mol.add_atom(child_s_atom);
+    let child_s_oxygen = mol.add_atom(oxygen());
+    let child_s_nitrogen = mol.add_atom(element_atom("N"));
+
+    for carrier in [child_r, child_s] {
+        mol.add_bond(parent, carrier, BondOrder::Single)
+            .expect("parent carrier bond");
+    }
+    for (child, oxygen, nitrogen) in [
+        (child_r, child_r_oxygen, child_r_nitrogen),
+        (child_s, child_s_oxygen, child_s_nitrogen),
+    ] {
+        mol.add_bond(child, oxygen, BondOrder::Single)
+            .expect("child oxygen bond");
+        mol.add_bond(child, nitrogen, BondOrder::Single)
+            .expect("child nitrogen bond");
+    }
+
+    mol.add_stereo_element(StereoElement::specified(
+        StereoElementKind::Tetrahedral(TetrahedralStereo {
+            center: child_r,
+            carriers: vec![
+                StereoCarrier::Atom(parent),
+                StereoCarrier::Atom(child_r_oxygen),
+                StereoCarrier::Atom(child_r_nitrogen),
+                StereoCarrier::ImplicitHydrogen,
+            ],
+            orientation: TetrahedralOrientation::CounterClockwise,
+        }),
+        StereoSource::User,
+    ))
+    .expect("R child stereo element");
+    mol.add_stereo_element(StereoElement::specified(
+        StereoElementKind::Tetrahedral(TetrahedralStereo {
+            center: child_s,
+            carriers: vec![
+                StereoCarrier::Atom(parent),
+                StereoCarrier::Atom(child_s_oxygen),
+                StereoCarrier::Atom(child_s_nitrogen),
+                StereoCarrier::ImplicitHydrogen,
+            ],
+            orientation: TetrahedralOrientation::Clockwise,
+        }),
+        StereoSource::User,
+    ))
+    .expect("S child stereo element");
+
+    (child_r, child_s)
 }
 
 #[test]

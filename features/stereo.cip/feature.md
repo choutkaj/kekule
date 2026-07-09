@@ -24,9 +24,9 @@ descriptors first, and topology or stereo-invalidating mutations clear them
 again.
 
 The implemented contract assigns `R`/`S`/`r`/`s` for specified tetrahedral
-elements, `E`/`Z` for specified double-bond elements, and `M`/`P`/`m`/`p` for
-specified stored axis elements when the local stereo is valid and carrier
-priorities are unique under the implemented bounded ranking rules, including
+elements, `E`/`Z` and `seqCis`/`seqTrans` for specified double-bond elements,
+and `M`/`P`/`m`/`p` for specified stored axis elements when the local stereo is
+valid and carrier priorities are unique under the implemented bounded ranking rules, including
 natural-vs-indicated isotope priority, E/Z descriptor priority, descriptor
 class and pair priority, and RDKit-like mancude fractional priority for bond
 duplicate nodes. Rule helpers also understand stored
@@ -102,9 +102,15 @@ when a deferred batch contains any absolute tetrahedral assignments those are
 committed before pseudoasymmetric assignments are retried against the stronger
 descriptor snapshot. When Rule 5 supplies the unique ordering for a
 tetrahedral center, assignment emits pseudoasymmetric `r`/`s` descriptors.
-Double-bond descriptor assignment also applies the small-ring alkene exclusion
-directly from topology, so manually inserted or cache-stale local double-bond
-elements cannot receive lossy E/Z labels.
+Double-bond descriptor assignment ranks both endpoint carrier sets with
+descriptor-aware ligand views. If the ranked top carriers are together it
+assigns `Z`, and if they are opposite it assigns `E`; when exactly one endpoint
+carrier ordering is pseudoasymmetric, the corresponding sequence descriptor
+`seqCis` or `seqTrans` is assigned instead, matching RDKit's sp2-bond CIP
+labeling convention. Double-bond descriptor assignment also applies the
+small-ring alkene exclusion directly from topology, so manually inserted or
+cache-stale local double-bond elements cannot receive lossy E/Z or sequence
+labels.
 
 Stored axis descriptor assignment treats the axis bond endpoints as the two
 ranking roots. The stored axis carriers are local reference carriers, one
@@ -141,8 +147,9 @@ stereo or when the implemented ranking rules cannot distinguish carriers.
 
 Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
 Rule 1a/1b/2 ordering, mancude fractional atomic-number ordering, Rule 3
-embedded E/Z ordering, Rule 4a descriptor-class ordering including axial
-`m`/`p` pseudo descriptors, Rule 4b
+embedded E/Z ordering, sequence cis/trans double-bond assignment for
+pseudoasymmetric endpoint ordering, Rule 4a descriptor-class ordering including
+axial `m`/`p` pseudo descriptors, Rule 4b
 reference-descriptor and like/unlike pairing, Rule 4c pseudo-descriptor
 ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric tetrahedral
 `r`/`s` assignment, sequence cis/trans descriptor-family ordering, Rule 6
@@ -191,7 +198,8 @@ descriptor-bearing coverage.
 ## Out Of Scope
 
 Full exact machine-oriented CIP coverage remains out of scope for this version:
-perception or assignment of sequence cis/trans descriptors, kekulization of
+perception of sequence cis/trans source descriptors outside assigned
+double-bond CIP labels, kekulization of
 aromatic-only inputs for mancude parity, remaining exact Rule 6 edge cases
 beyond the parity-stable tetrahedral fallback, broad axis perception beyond
 the supported Molfile atropisomeric wedge subsets, full
@@ -284,3 +292,7 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
   one-ring-endpoint SP2 axes from the perception layer.
 - v31: Add axial `m`/`p` pseudo descriptor vocabulary and smoke parity coverage
   for official RDKit ring-internal macrocyclic Molfile atropisomer fixtures.
+- v32: Assign RDKit-like `seqCis`/`seqTrans` double-bond CIP descriptors when
+  exactly one endpoint carrier ordering is pseudoasymmetric, and enable
+  descriptor-aware endpoint ranking for stored axes so axial `m`/`p` assignment
+  is exercised by local regressions.
