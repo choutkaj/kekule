@@ -1765,6 +1765,123 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
 }
 
 #[test]
+fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let double_bond = mol
+        .add_bond(left, right, BondOrder::Double)
+        .expect("double bond");
+    let fluorine = mol.add_atom(element_atom("F"));
+    let chlorine = mol.add_atom(element_atom("Cl"));
+    let chain_a = mol.add_atom(carbon());
+    let chain_b = mol.add_atom(carbon());
+    for carrier in [fluorine, chlorine] {
+        mol.add_bond(left, carrier, BondOrder::Single)
+            .expect("left carrier bond");
+    }
+    for carrier in [chain_a, chain_b] {
+        mol.add_bond(right, carrier, BondOrder::Single)
+            .expect("right carrier bond");
+    }
+    for chain in [chain_a, chain_b] {
+        add_carbon_chain(&mut mol, chain, 18);
+    }
+    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
+
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond: double_bond,
+                left,
+                right,
+                left_carrier: StereoCarrier::Atom(fluorine),
+                right_carrier: StereoCarrier::Atom(chain_a),
+                orientation: DoubleBondOrientation::Together,
+            }),
+            StereoSource::User,
+        ))
+        .expect("double-bond stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(stereo).expect("element").descriptor,
+        None
+    );
+}
+
+#[test]
+fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
+    let iodine = mol.add_atom(element_atom("I"));
+    let bromine = mol.add_atom(element_atom("Br"));
+    let chain_a = mol.add_atom(carbon());
+    let chain_b = mol.add_atom(carbon());
+    for carrier in [iodine, bromine] {
+        mol.add_bond(left, carrier, BondOrder::Single)
+            .expect("left carrier bond");
+    }
+    for carrier in [chain_a, chain_b] {
+        mol.add_bond(right, carrier, BondOrder::Single)
+            .expect("right carrier bond");
+    }
+    for chain in [chain_a, chain_b] {
+        add_carbon_chain(&mut mol, chain, 18);
+    }
+    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
+
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![StereoCarrier::Atom(iodine), StereoCarrier::Atom(chain_a)],
+                orientation: AxisOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("axis stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(stereo).expect("element").descriptor,
+        None
+    );
+}
+
+fn add_carbon_chain(mol: &mut Molecule, start: AtomId, length: usize) {
+    let mut previous = start;
+    for _ in 1..length {
+        let next = mol.add_atom(carbon());
+        mol.add_bond(previous, next, BondOrder::Single)
+            .expect("chain bond");
+        previous = next;
+    }
+}
+
+#[test]
 fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());
