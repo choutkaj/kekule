@@ -42,17 +42,21 @@ and assign local stereo elements from supported source marks and coordinates.
 - Molfile wedge up/down marks can create specified tetrahedral stereo elements.
   When conformer coordinates are available, wedge up/down orientation is
   assembled from those coordinates with the marked bond direction treated as
-  the local out-of-plane sense.
+  the local out-of-plane sense. If the local center has exactly one implicit
+  hydrogen carrier, perception synthesizes a virtual implicit-H coordinate from
+  the three explicit substituent vectors after applying the wedge z offset
+  rather than falling back to a fixed up/down orientation.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
   local stereo center and the marked carrier is placed first in carrier order.
 - Molfile wedge up/down marks that cannot support tetrahedral stereo can
   conservatively create specified atropisomeric axis elements when the marked
   bond is adjacent to a non-ring single-bond axis whose endpoints are ring
-  atoms with two explicit atom carriers each. The marked bond supplies one
-  axis reference carrier, 2D coordinates select the opposite-side reference
-  carrier on the other endpoint, and wedge up/down maps to the stored local
-  axis handedness.
+  atoms with two explicit atom carriers each. The stored local reference
+  carriers are the lowest-ID explicit carriers on the two axis endpoints,
+  matching RDKit's documented internal convention. Coordinates determine the
+  stored axis handedness; for 2D Molfiles, the wedge/hash mark supplies a
+  virtual out-of-plane sign used to lift the reference carriers consistently.
 - Coordinate-derived assignment uses the first conformer conservatively. It
   assigns tetrahedral stereo only when all four carriers are explicit atoms
   with nondegenerate 3D coordinates, and assigns double-bond stereo only when
@@ -67,9 +71,14 @@ including supported implicit lone-pair tetrahedral carriers and structurally
 valid stored axis carriers, assembles SMILES-style paired directional bond
 marks with endpoint-relative normalization, and assembles supported Molfile
 tetrahedral wedge/either source marks plus a conservative Molfile
-exocyclic atropisomeric wedge subset. Ring-internal single bonds adjacent to
-the same wedged endpoint are ignored as axis candidates for this Molfile subset
-so alternate wedged substituent placement does not create ambiguous axes.
+exocyclic atropisomeric wedge subset. Coordinate-bearing Molfile tetrahedral
+wedges with one implicit hydrogen use a virtual carrier coordinate derived
+from explicit substituent geometry. Molfile atrop axes store lowest-neighbor
+endpoint references and compute local handedness from coordinates so equivalent
+wedge placements around the same axis collapse to the same local axis state.
+Ring-internal single bonds adjacent to the same wedged endpoint are ignored as
+axis candidates for this Molfile subset so alternate wedged substituent
+placement does not create ambiguous axes.
 Coordinate-derived assignment is local and conservative; exact CIP descriptors
 belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
 shortest-path check around the candidate bond so direct perception and
@@ -90,6 +99,7 @@ run over whole `MacroMolecule` structures by default.
   source-mark diagnostics, structural validation for stored axis elements,
   Molfile atropisomeric axis assembly from official RDKit fixtures, including
   alternate wedged substituent placement around the same exocyclic axis,
+  virtual implicit-H Molfile tetrahedral orientation,
   coordinate-derived tetrahedral and double-bond assignment, sanitizer
   integration, transactional rollback, and preservation of explicit unknown
   versus absent stereo.
@@ -151,3 +161,6 @@ stereo transfer.
 - v14: Restrict Molfile wedge-derived atrop axis candidates to non-ring axis
   bonds, matching the exocyclic subset covered by official RDKit RP-6306
   variants and avoiding ambiguous ring-internal candidates.
+- v15: Use virtual implicit-H geometry for coordinate-bearing Molfile
+  tetrahedral wedges and store Molfile atrop axes with RDKit-style
+  lowest-neighbor endpoint references plus coordinate-derived handedness.

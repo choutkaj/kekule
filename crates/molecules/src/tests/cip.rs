@@ -70,6 +70,24 @@ M  END
 }
 
 #[test]
+fn cip_matches_rdkit_for_molfile_implicit_h_wedge_geometry() {
+    let mut molecule = molfile::read_v2000_str(implicit_h_wedge_geometry_molblock())
+        .expect("implicit-H wedge molfile parses");
+    perception_api::sanitize(&mut molecule).expect("implicit-H wedge molfile sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: StereoElementId::new(0),
+            descriptor: StereoDescriptor::S,
+        }]
+    );
+}
+
+#[test]
 fn cip_assigns_axis_descriptors_from_ranked_anchors() {
     for (left_reference, right_reference, orientation, expected) in [
         (

@@ -954,6 +954,45 @@ M  END
 }
 
 #[test]
+fn stereo_perception_uses_virtual_implicit_h_for_molfile_wedge_geometry() {
+    let mut molecule = molfile::read_v2000_str(implicit_h_wedge_geometry_molblock())
+        .expect("implicit-H wedge molfile should parse");
+    perception_api::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("implicit-H wedge molfile should sanitize");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            assert_eq!(stereo.center, AtomId::new(0));
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(1)),
+                    StereoCarrier::Atom(AtomId::new(2)),
+                    StereoCarrier::Atom(AtomId::new(3)),
+                    StereoCarrier::ImplicitHydrogen,
+                ]
+            );
+            assert_eq!(stereo.orientation, TetrahedralOrientation::CounterClockwise);
+        }
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
+}
+
+#[test]
 fn stereo_perception_assembles_wedge_either_as_explicit_unknown() {
     let (mut mol, center, carriers, marked_bond) = tetrahedral_marked_graph();
     mol.set_stereo_bond_mark(StereoBondMark {
@@ -1241,8 +1280,8 @@ fn stereo_perception_prefers_exocyclic_molfile_atropisomeric_axis() {
             assert_eq!(
                 stereo.carriers,
                 vec![
-                    StereoCarrier::Atom(AtomId::new(12)),
-                    StereoCarrier::Atom(AtomId::new(9)),
+                    StereoCarrier::Atom(AtomId::new(6)),
+                    StereoCarrier::Atom(AtomId::new(11)),
                 ]
             );
             assert_eq!(stereo.orientation, AxisOrientation::Clockwise);

@@ -101,6 +101,23 @@ pub(super) fn assert_all_stale(mol: &Molecule) {
     assert_eq!(mol.perception().stereo, ComputedState::Stale);
 }
 
+pub(super) fn implicit_h_wedge_geometry_molblock() -> &'static str {
+    "\
+implicit H geometry wedge
+molecules
+
+  4  3  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0000   -1.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000   -1.0000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  6  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+M  END
+"
+}
+
 pub(super) fn rdkit_rp6306_atrop_molblock() -> &'static str {
     include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop1.mol")
 }
