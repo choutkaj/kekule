@@ -129,6 +129,52 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
 }
 
 #[test]
+fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let left_high = mol.add_atom(element_atom("I"));
+    let left_low = mol.add_atom(carbon());
+    let right_a = mol.add_atom(carbon());
+    let right_b = mol.add_atom(carbon());
+    let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
+    for carrier in [left_high, left_low] {
+        mol.add_bond(left, carrier, BondOrder::Single)
+            .expect("left carrier bond");
+    }
+    for carrier in [right_a, right_b] {
+        mol.add_bond(right, carrier, BondOrder::Single)
+            .expect("right carrier bond");
+    }
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![StereoCarrier::Atom(left_high), StereoCarrier::Atom(right_a)],
+                orientation: AxisOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("axis stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(stereo).expect("axis element").descriptor,
+        None
+    );
+}
+
+#[test]
 fn cip_assigns_axis_descriptor_from_coordinate_perception() {
     let (mut mol, _axis) = coordinate_axis_graph(true);
     let perception_report = stereo_api::perceive_stereo_with_options(
@@ -552,6 +598,57 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
                 right: atoms[1],
                 left_carrier: StereoCarrier::Atom(atoms[5]),
                 right_carrier: StereoCarrier::Atom(atoms[2]),
+                orientation: DoubleBondOrientation::Together,
+            }),
+            StereoSource::User,
+        ))
+        .expect("double-bond stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(stereo).expect("element").descriptor,
+        None
+    );
+}
+
+#[test]
+fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let double_bond = mol
+        .add_bond(left, right, BondOrder::Double)
+        .expect("double bond");
+    let fluorine = mol.add_atom(element_atom("F"));
+    let chlorine = mol.add_atom(element_atom("Cl"));
+    let methyl_a = mol.add_atom(carbon());
+    let methyl_b = mol.add_atom(carbon());
+    for carrier in [fluorine, chlorine] {
+        mol.add_bond(left, carrier, BondOrder::Single)
+            .expect("left carrier bond");
+    }
+    for carrier in [methyl_a, methyl_b] {
+        mol.add_bond(right, carrier, BondOrder::Single)
+            .expect("right carrier bond");
+    }
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond: double_bond,
+                left,
+                right,
+                left_carrier: StereoCarrier::Atom(fluorine),
+                right_carrier: StereoCarrier::Atom(methyl_a),
                 orientation: DoubleBondOrientation::Together,
             }),
             StereoSource::User,

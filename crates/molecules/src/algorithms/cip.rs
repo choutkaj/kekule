@@ -603,13 +603,20 @@ fn element_is_finally_nonstereogenic(
     stereo_element: &StereoElement,
     options: CipAssignmentOptions,
 ) -> CipResult<bool> {
-    let StereoElementKind::Tetrahedral(stereo) = &stereo_element.kind else {
-        return Ok(false);
-    };
     if stereo_element.specifiedness != StereoSpecifiedness::Specified {
         return Ok(false);
     }
-    tetrahedral_final_tie_is_nonstereogenic(mol, element, stereo, options)
+    match &stereo_element.kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            tetrahedral_final_tie_is_nonstereogenic(mol, element, stereo, options)
+        }
+        StereoElementKind::DoubleBond(stereo) => {
+            double_bond_final_tie_is_nonstereogenic(mol, element, stereo, options)
+        }
+        StereoElementKind::Axis(stereo) => {
+            axis_final_tie_is_nonstereogenic(mol, element, stereo, options)
+        }
+    }
 }
 
 fn tetrahedral_final_tie_is_nonstereogenic(
@@ -640,6 +647,92 @@ fn tetrahedral_final_tie_is_nonstereogenic(
         stereo.orientation,
         true,
     ) {
+        Ok(_) => Ok(false),
+        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
+            Ok(grouped_signature_indices(&signatures)
+                .iter()
+                .any(|group| group.len() > 1))
+        }
+        Err(issue) => Err(issue),
+    }
+}
+
+fn double_bond_final_tie_is_nonstereogenic(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo: &DoubleBondStereo,
+    options: CipAssignmentOptions,
+) -> CipResult<bool> {
+    let left_carriers = double_bond_endpoint_carriers(mol, stereo.left, stereo.right, stereo.bond);
+    let right_carriers = double_bond_endpoint_carriers(mol, stereo.right, stereo.left, stereo.bond);
+    Ok(endpoint_final_tie_is_nonstereogenic(
+        mol,
+        element,
+        stereo.left,
+        &left_carriers,
+        options,
+        false,
+    )? || endpoint_final_tie_is_nonstereogenic(
+        mol,
+        element,
+        stereo.right,
+        &right_carriers,
+        options,
+        false,
+    )?)
+}
+
+fn axis_final_tie_is_nonstereogenic(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo: &AxisStereo,
+    options: CipAssignmentOptions,
+) -> CipResult<bool> {
+    let bond = mol
+        .bond(stereo.axis)
+        .map_err(|_| CipAssignmentIssue::UnresolvedPriority { element })?;
+    let (left, right) = bond.endpoints();
+    axis_reference_carriers(mol, element, stereo, left, right)?;
+    let left_carriers = axis_endpoint_carriers(mol, left, right, stereo.axis);
+    let right_carriers = axis_endpoint_carriers(mol, right, left, stereo.axis);
+    Ok(
+        endpoint_final_tie_is_nonstereogenic(mol, element, left, &left_carriers, options, true)?
+            || endpoint_final_tie_is_nonstereogenic(
+                mol,
+                element,
+                right,
+                &right_carriers,
+                options,
+                true,
+            )?,
+    )
+}
+
+fn endpoint_final_tie_is_nonstereogenic(
+    mol: &Molecule,
+    element: StereoElementId,
+    root: AtomId,
+    carriers: &[StereoCarrier],
+    options: CipAssignmentOptions,
+    normalize_all_carbon_aromatic: bool,
+) -> CipResult<bool> {
+    if carriers.len() < 2 {
+        return Ok(false);
+    }
+    let atom_count = mol.atom_ids().count();
+    if options.max_depth < atom_count {
+        return Ok(false);
+    }
+    let signatures = carrier_signatures(
+        mol,
+        element,
+        root,
+        carriers,
+        options,
+        true,
+        normalize_all_carbon_aromatic,
+    )?;
+    match rank_carrier_signatures(element, &signatures, None) {
         Ok(_) => Ok(false),
         Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
             Ok(grouped_signature_indices(&signatures)

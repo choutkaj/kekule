@@ -36,7 +36,9 @@ parity-stable symmetric S4-style Rule 6 retry for fully equivalent
 tetrahedral carrier sets. Unspecified, unknown, invalid-cleared, or
 non-stereogenic elements are skipped, including RDKit-excluded double-bond
 topologies and tetrahedral centers whose final complete carrier comparison
-still contains equivalent ligand ties. Invalid local stereo,
+still contains equivalent ligand ties. Double-bond and axis elements are also
+skipped when a final complete endpoint comparison cannot identify a unique
+highest-priority carrier. Invalid local stereo,
 unresolved priorities, and resource-limit
 exhaustion are reported without assigning lossy descriptors. Double-bond
 elements in rings smaller than eight atoms do not receive E/Z descriptors,
@@ -119,7 +121,10 @@ tetrahedral Rule 6 retries stall, tetrahedral centers are likewise reported as
 non-stereogenic skips when the configured expansion depth covers the complete
 graph and the final carrier signatures remain tied; truncated bounded
 comparisons continue to report unresolved priority instead of pretending the
-center is non-stereogenic.
+center is non-stereogenic. The same terminal complete-comparison rule applies
+to double-bond and stored-axis endpoint rankings, where a unique
+highest-priority carrier is required on both endpoints before assigning
+`E`/`Z`, `seqCis`/`seqTrans`, or `M`/`P`/`m`/`p`.
 
 Stored axis descriptor assignment treats the axis bond endpoints as the two
 ranking roots. The stored axis carriers are local reference carriers, one
@@ -169,9 +174,10 @@ reference-atom tie breaking for tetrahedral retry ranking,
 natural-vs-indicated isotope priority, Rule 1b duplicate-node ordering,
 negative-fraction duplicate expansion, implicit lone-pair carriers, unsupported
 double-bond stereo exclusions including the ring-size boundary, explicit
-non-stereogenic skip reporting for stored small-ring double-bond elements, unresolved
-equivalent ligands, bounded resource failures, and descriptor invalidation
-after mutation. Axis regressions cover stored local reference carriers,
+non-stereogenic skip reporting for stored small-ring double-bond elements,
+equivalent tetrahedral ligands, equivalent double-bond endpoint ligands,
+equivalent axis endpoint ligands, bounded resource failures, and descriptor
+invalidation after mutation. Axis regressions cover stored local reference carriers,
 endpoint priority flips, `M`/`P` descriptor assignment, and descriptor
 assignment from opt-in conservative 3D coordinate-derived perception. Targeted
 Rule 6 regressions cover both parity-stable and parity-unstable symmetric S4-style
@@ -316,3 +322,9 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
   focused regression.
 - v34: Report specified but RDKit-excluded double-bond topologies as
   `NotStereogenic` CIP skips instead of unresolved priority failures.
+- v35: Report complete final equivalent-ligand tetrahedral ties as
+  `NotStereogenic` CIP skips instead of unresolved priority failures while
+  preserving unresolved reporting for truncated bounded comparisons.
+- v36: Extend complete final equivalent endpoint tie handling to double-bond
+  and stored-axis stereo, where each endpoint needs a unique highest-priority
+  carrier before a descriptor can be assigned.
