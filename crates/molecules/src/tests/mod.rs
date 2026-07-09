@@ -23,10 +23,52 @@ pub(super) fn element_atom(symbol: &str) -> Atom {
     Atom::new(Element::from_symbol(symbol).expect("test element should be available"))
 }
 
+pub(super) fn aromatic_carbon_no_hydrogens() -> Atom {
+    let mut atom = carbon();
+    atom.aromatic = true;
+    atom.implicit_hydrogens = Some(0);
+    atom.no_implicit_hydrogens = true;
+    atom
+}
+
 pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
     let mut atom = element_atom(symbol);
     atom.formal_charge = formal_charge;
     atom
+}
+
+pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondId) {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(aromatic_carbon_no_hydrogens());
+    let right = mol.add_atom(aromatic_carbon_no_hydrogens());
+    let left_reference = mol.add_atom(element_atom("Br"));
+    let left_other = mol.add_atom(element_atom("F"));
+    let right_reference = mol.add_atom(element_atom("Cl"));
+    let right_other = mol.add_atom(element_atom("F"));
+    let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
+    mol.add_bond(left, left_reference, BondOrder::Single)
+        .expect("left reference");
+    mol.add_bond(left, left_other, BondOrder::Single)
+        .expect("left other");
+    mol.add_bond(right, right_reference, BondOrder::Single)
+        .expect("right reference");
+    mol.add_bond(right, right_other, BondOrder::Single)
+        .expect("right other");
+
+    let mut conformer = Conformer::new();
+    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
+    conformer.set_position(left_reference, Point3::new(0.0, 1.0, 0.0));
+    conformer.set_position(left_other, Point3::new(0.0, -1.0, 0.0));
+    if three_dimensional {
+        conformer.set_position(right_reference, Point3::new(1.0, 0.0, 1.0));
+        conformer.set_position(right_other, Point3::new(1.0, 0.0, -1.0));
+    } else {
+        conformer.set_position(right_reference, Point3::new(1.0, 1.0, 0.0));
+        conformer.set_position(right_other, Point3::new(1.0, -1.0, 0.0));
+    }
+    mol.add_conformer(conformer);
+    (mol, axis)
 }
 
 pub(super) fn ring_molecule(

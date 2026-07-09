@@ -1125,6 +1125,68 @@ fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
 }
 
 #[test]
+fn stereo_perception_assigns_axis_from_3d_coordinates() {
+    let (mut mol, axis) = coordinate_axis_graph(true);
+
+    let report = stereo_api::perceive_stereo_with_options(
+        &mut mol,
+        StereoPerceptionOptions {
+            assign_coordinate_axes: true,
+            ..StereoPerceptionOptions::default()
+        },
+    );
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = mol
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert_eq!(element.source, StereoSource::Coordinates3D);
+    match &element.kind {
+        StereoElementKind::Axis(stereo) => {
+            assert_eq!(stereo.axis, axis);
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(2)),
+                    StereoCarrier::Atom(AtomId::new(4)),
+                ]
+            );
+            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+        }
+        other => panic!("expected axis stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_skips_coordinate_axis_without_3d_handedness() {
+    let (mut mol, _axis) = coordinate_axis_graph(false);
+
+    let report = stereo_api::perceive_stereo_with_options(
+        &mut mol,
+        StereoPerceptionOptions {
+            assign_coordinate_axes: true,
+            ..StereoPerceptionOptions::default()
+        },
+    );
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.created_elements.is_empty());
+    assert!(mol.stereo_elements().next().is_none());
+}
+
+#[test]
+fn stereo_perception_leaves_coordinate_axes_opt_in_by_default() {
+    let (mut mol, _axis) = coordinate_axis_graph(true);
+
+    let report = stereo_api::perceive_stereo(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.created_elements.is_empty());
+    assert!(mol.stereo_elements().next().is_none());
+}
+
+#[test]
 fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     let mut marked = Molecule::new();
     let a = marked.add_atom(carbon());

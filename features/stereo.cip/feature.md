@@ -127,6 +127,9 @@ resulting stored axis element. For Molfile-derived axes, perception stores the
 lowest-ID explicit carrier at each endpoint as the local reference pair, so CIP
 priority flips are applied from a stable RDKit-like local axis convention
 instead of from whichever wedge carrier happened to trigger perception.
+Opt-in conservative 3D coordinate-derived axes use the same stored reference
+convention, so this layer consumes them through the ordinary stored-axis
+descriptor path rather than adding coordinate-specific descriptor logic.
 The consumed perception subset includes redundant same-axis Molfile atrop
 wedges, exocyclic axes with one ring endpoint plus one locally SP2 endpoint,
 and ring-internal macrocyclic axes when no non-ring candidate is available
@@ -159,8 +162,9 @@ negative-fraction duplicate expansion, implicit lone-pair carriers, unsupported
 double-bond stereo exclusions including the ring-size boundary, unresolved
 equivalent ligands, bounded resource failures, and descriptor invalidation
 after mutation. Axis regressions cover stored local reference carriers,
-endpoint priority flips, and `M`/`P` descriptor assignment. Targeted Rule 6
-regressions cover both parity-stable and parity-unstable symmetric S4-style
+endpoint priority flips, `M`/`P` descriptor assignment, and descriptor
+assignment from opt-in conservative 3D coordinate-derived perception. Targeted
+Rule 6 regressions cover both parity-stable and parity-unstable symmetric S4-style
 reference retries. Auxiliary occurrence-graph regressions cover coupled
 pseudoasymmetric cyclobutane, fused-ring, spiro-fused, and absolute-neighbor
 bicyclic centers from the Enamine diversity corpus. Rule 2 regressions cover
@@ -202,10 +206,11 @@ perception of sequence cis/trans source descriptors outside assigned
 double-bond CIP labels, kekulization of
 aromatic-only inputs for mancude parity, remaining exact Rule 6 edge cases
 beyond the parity-stable tetrahedral fallback, broad axis perception beyond
-the supported Molfile atropisomeric wedge subsets, full
-RDKit-canonical aromatic kekulization for every alternate aromatic Molfile
-layout, coordinate-only axis assignment, non-tetrahedral geometries beyond
-stored axis descriptors, enhanced
+the supported Molfile atropisomeric wedge subsets and opt-in conservative
+explicit-carrier 3D coordinate axes, full RDKit-canonical aromatic
+kekulization for every alternate aromatic Molfile layout, default
+coordinate-only axis assignment without source marks, non-tetrahedral
+geometries beyond stored axis descriptors, enhanced
 stereo relation semantics, parity beyond the current descriptor-bearing
 validation corpora, isomeric SMILES emission, and stereo enumeration.
 
@@ -296,3 +301,6 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
   exactly one endpoint carrier ordering is pseudoasymmetric, and enable
   descriptor-aware endpoint ranking for stored axes so axial `m`/`p` assignment
   is exercised by local regressions.
+- v33: Consume opt-in conservative 3D coordinate-derived stored axes through the
+  existing axis descriptor path and cover the perception-to-CIP handoff with a
+  focused regression.

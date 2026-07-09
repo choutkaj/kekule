@@ -91,6 +91,7 @@ pub fn assign_cip_descriptors_with_options(
                 detect_candidates: false,
                 assemble_source_marks: false,
                 assign_coordinates: false,
+                assign_coordinate_axes: false,
             },
         );
         report.issues.extend(

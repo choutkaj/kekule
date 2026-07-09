@@ -8,6 +8,7 @@ pub struct StereoPerceptionOptions {
     pub detect_candidates: bool,
     pub assemble_source_marks: bool,
     pub assign_coordinates: bool,
+    pub assign_coordinate_axes: bool,
 }
 
 impl Default for StereoPerceptionOptions {
@@ -17,6 +18,7 @@ impl Default for StereoPerceptionOptions {
             detect_candidates: true,
             assemble_source_marks: true,
             assign_coordinates: true,
+            assign_coordinate_axes: false,
         }
     }
 }
@@ -208,9 +210,11 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
         report_unassembled_source_marks(mol, &used_marks, &mut report.issues);
     }
     if options.assign_coordinates {
-        report
-            .assembled_elements
-            .extend(assign_coordinate_stereo(mol, &report.assembled_elements));
+        report.assembled_elements.extend(assign_coordinate_stereo(
+            mol,
+            &report.assembled_elements,
+            options.assign_coordinate_axes,
+        ));
     }
     report
 }
@@ -1233,6 +1237,7 @@ fn report_unassembled_source_marks(
 fn assign_coordinate_stereo(
     mol: &Molecule,
     planned_elements: &[StereoElement],
+    assign_axes: bool,
 ) -> Vec<StereoElement> {
     let Some((_, conformer)) = mol.first_conformer() else {
         return Vec::new();
@@ -1248,6 +1253,9 @@ fn assign_coordinate_stereo(
         conformer,
         planned_elements,
     ));
+    if assign_axes {
+        assigned.extend(assign_coordinate_axes(mol, conformer, planned_elements));
+    }
     assigned
 }
 
@@ -1348,6 +1356,62 @@ fn assign_coordinate_double_bonds(
     assigned
 }
 
+fn assign_coordinate_axes(
+    mol: &Molecule,
+    conformer: &Conformer,
+    planned_elements: &[StereoElement],
+) -> Vec<StereoElement> {
+    let ring_membership = mol
+        .ring_membership()
+        .cloned()
+        .unwrap_or_else(|| super::rings::compute_ring_membership(mol).0);
+    let mut assigned = Vec::new();
+    for (axis, bond) in mol.bonds() {
+        if bond.order != BondOrder::Single
+            || has_axis_element(mol, axis)
+            || planned_elements
+                .iter()
+                .any(|element| planned_axis(element) == Some(axis))
+        {
+            continue;
+        }
+        let (left, right) = bond.endpoints();
+        if !atom_is_atropisomeric_sp2_endpoint(mol, &ring_membership, left)
+            || !atom_is_atropisomeric_sp2_endpoint(mol, &ring_membership, right)
+        {
+            continue;
+        }
+        let Some(left_carriers) = atom_axis_carriers(mol, left, axis) else {
+            continue;
+        };
+        let Some(right_carriers) = atom_axis_carriers(mol, right, axis) else {
+            continue;
+        };
+        if left_carriers.len() != 2 || right_carriers.len() != 2 {
+            continue;
+        }
+        let left_reference = left_carriers[0];
+        let right_reference = right_carriers[0];
+        let Some(orientation) =
+            axis_orientation_from_3d_coordinates(conformer, bond, left_reference, right_reference)
+        else {
+            continue;
+        };
+        assigned.push(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![
+                    StereoCarrier::Atom(left_reference),
+                    StereoCarrier::Atom(right_reference),
+                ],
+                orientation,
+            }),
+            StereoSource::Coordinates3D,
+        ));
+    }
+    assigned
+}
+
 fn planned_tetrahedral_center(element: &StereoElement) -> Option<AtomId> {
     match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
@@ -1358,6 +1422,13 @@ fn planned_tetrahedral_center(element: &StereoElement) -> Option<AtomId> {
 fn planned_double_bond(element: &StereoElement) -> Option<BondId> {
     match &element.kind {
         StereoElementKind::DoubleBond(stereo) => Some(stereo.bond),
+        _ => None,
+    }
+}
+
+fn planned_axis(element: &StereoElement) -> Option<BondId> {
+    match &element.kind {
+        StereoElementKind::Axis(stereo) => Some(stereo.axis),
         _ => None,
     }
 }
@@ -1428,6 +1499,40 @@ fn double_bond_orientation_from_points(points: [Point3; 4]) -> Option<DoubleBond
         DoubleBondOrientation::Together
     } else {
         DoubleBondOrientation::Opposite
+    })
+}
+
+fn axis_orientation_from_3d_coordinates(
+    conformer: &Conformer,
+    axis_bond: &Bond,
+    left_reference: AtomId,
+    right_reference: AtomId,
+) -> Option<AxisOrientation> {
+    let (left, right) = axis_bond.endpoints();
+    let left_point = conformer.position(left)?;
+    let right_point = conformer.position(right)?;
+    let left_reference_point = conformer.position(left_reference)?;
+    let right_reference_point = conformer.position(right_reference)?;
+    let points = [
+        left_point,
+        right_point,
+        left_reference_point,
+        right_reference_point,
+    ];
+    if !matches!(coordinate_source(&points), StereoSource::Coordinates3D) {
+        return None;
+    }
+    let axis = vector_between(left_point, right_point);
+    let left_vector = vector_between(left_point, left_reference_point);
+    let right_vector = vector_between(right_point, right_reference_point);
+    let handedness = dot(axis, cross(left_vector, right_vector));
+    if handedness.abs() <= COORDINATE_EPSILON {
+        return None;
+    }
+    Some(if handedness > 0.0 {
+        AxisOrientation::Clockwise
+    } else {
+        AxisOrientation::CounterClockwise
     })
 }
 

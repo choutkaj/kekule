@@ -129,6 +129,36 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
 }
 
 #[test]
+fn cip_assigns_axis_descriptor_from_coordinate_perception() {
+    let (mut mol, _axis) = coordinate_axis_graph(true);
+    let perception_report = stereo_api::perceive_stereo_with_options(
+        &mut mol,
+        StereoPerceptionOptions {
+            assign_coordinate_axes: true,
+            ..StereoPerceptionOptions::default()
+        },
+    );
+    assert!(perception_report.is_ok(), "{:?}", perception_report.issues);
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: StereoElementId::new(0),
+            descriptor: StereoDescriptor::P,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(StereoElementId::new(0))
+            .expect("axis element")
+            .descriptor,
+        Some(StereoDescriptor::P)
+    );
+}
+
+#[test]
 fn cip_assigns_pseudo_axis_descriptors_for_pseudoasymmetric_endpoint_ordering() {
     for (orientation, expected) in [
         (AxisOrientation::CounterClockwise, StereoDescriptor::LowerM),

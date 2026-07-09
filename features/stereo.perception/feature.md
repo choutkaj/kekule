@@ -69,7 +69,12 @@ and assign local stereo elements from supported source marks and coordinates.
   assigns tetrahedral stereo only when all four carriers are explicit atoms
   with nondegenerate 3D coordinates, and assigns double-bond stereo only when
   each side has exactly one explicit atom carrier with nondegenerate 2D or 3D
-  geometry. It does not infer coordinates for implicit hydrogens.
+  geometry. `StereoPerceptionOptions::assign_coordinate_axes` is default-off
+  and opt-in; when enabled, it assigns axis stereo only when a single-bond axis
+  has two SP2-like endpoints, exactly two explicit atom carriers per endpoint,
+  no existing or planned stored-axis element, and nondegenerate 3D handedness
+  from the endpoint reference carriers. It does not infer coordinates for
+  implicit hydrogens or assign coordinate-only axes from flat 2D geometry.
 
 ## Implementation Notes
 
@@ -96,7 +101,9 @@ Coordinate-derived assignment is local and conservative; exact CIP descriptors
 belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
 shortest-path check around the candidate bond so direct perception and
 sanitizer-driven perception follow the same RDKit-like stereogenic-bond
-boundary.
+boundary. Opt-in coordinate-derived axes use the same lowest-ID endpoint
+reference carrier convention as supported Molfile atropisomeric axes, leaving
+priority flips and `M`/`P` descriptor assignment to the CIP layer.
 
 Small-molecule perception should run as an explicit staged workflow and may be
 run from the small-molecule sanitizer when `SanitizeOptions::perceive_stereo`
@@ -115,9 +122,10 @@ run over whole `MacroMolecule` structures by default.
   redundant wedge marks around the same atrop axis, one-ring-endpoint SP2
   exocyclic axes, ring-internal macrocyclic axes,
   virtual implicit-H Molfile tetrahedral orientation,
-  coordinate-derived tetrahedral and double-bond assignment, sanitizer
-  integration, transactional rollback, and preservation of explicit unknown
-  versus absent stereo.
+  coordinate-derived tetrahedral and double-bond assignment, opt-in
+  conservative 3D axis assignment, default coordinate-axis non-assignment,
+  flat-coordinate axis rejection, sanitizer integration, transactional
+  rollback, and preservation of explicit unknown versus absent stereo.
 - Smoke, PubChem 100, PubChem 1k, PubChem 100k, Enamine diversity, and PL-REX
   validation record semantic perception JSON for externally pinned isomeric
   SMILES fixtures covering absent stereo, stored tetrahedral stereo, and
@@ -132,8 +140,9 @@ run over whole `MacroMolecule` structures by default.
 
 ## Out Of Scope
 
-Exact CIP descriptors, broad axis candidate perception beyond the supported
-Molfile wedge subsets, coordinate-only axis assignment, CXSMILES
+Exact CIP descriptors, default broad axis candidate perception beyond
+supported Molfile wedge subsets, non-opt-in coordinate-only axis assignment,
+2D coordinate-only axis assignment without source marks, CXSMILES
 atropisomeric syntax, isomeric SMILES writing, enhanced stereo serialization,
 implicit-hydrogen coordinate reconstruction, stereo enumeration, and reaction
 stereo transfer.
@@ -191,3 +200,6 @@ stereo transfer.
 - v18: Add PL-REX ligand SDF packs to the perception validation contract for
   coordinate-bearing Molfile stereo and source-mark assembly regression
   coverage.
+- v19: Add default-off conservative 3D coordinate-derived axis assignment for
+  explicit SP2-like single-bond axes with two atom carriers per endpoint and
+  lowest-neighbor endpoint references.
