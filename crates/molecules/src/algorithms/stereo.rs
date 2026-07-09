@@ -189,6 +189,7 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
     }
     if options.assemble_source_marks {
         let mut used_marks = Vec::<BondId>::new();
+        let axis_elements = assemble_atropisomeric_axes(mol, &mut used_marks);
         report
             .assembled_elements
             .extend(assemble_tetrahedral_wedges(
@@ -196,9 +197,7 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
                 &mut report.issues,
                 &mut used_marks,
             ));
-        report
-            .assembled_elements
-            .extend(assemble_atropisomeric_axes(mol, &mut used_marks));
+        report.assembled_elements.extend(axis_elements);
         report
             .assembled_elements
             .extend(assemble_directional_double_bonds(
@@ -606,6 +605,9 @@ fn assemble_tetrahedral_wedges(
         ) {
             continue;
         }
+        if used_marks.contains(&mark.bond) {
+            continue;
+        }
         let Ok(bond) = mol.bond(mark.bond) else {
             continue;
         };
@@ -820,37 +822,46 @@ fn assemble_atropisomeric_axes(mol: &Molecule, used_marks: &mut Vec<BondId>) -> 
         {
             continue;
         }
-        let Some(element) =
-            atropisomeric_axis_from_wedge(mol, &ring_membership, mark, &assembled_axes)
-        else {
+
+        let candidates = atropisomeric_axis_candidates(mol, &ring_membership, mark);
+        if candidates.len() != 1 {
             continue;
         };
+        let (axis, element) = candidates
+            .into_iter()
+            .next()
+            .expect("one atrop axis candidate");
+        used_marks.push(mark.bond);
+        if assembled_axes.contains(&axis) {
+            continue;
+        }
         if let StereoElementKind::Axis(stereo) = &element.kind {
             assembled_axes.push(stereo.axis);
         }
-        used_marks.push(mark.bond);
         assembled.push(element);
     }
     assembled
 }
 
-fn atropisomeric_axis_from_wedge(
+fn atropisomeric_axis_candidates(
     mol: &Molecule,
     ring_membership: &RingMembership,
     mark: &StereoBondMark,
-    assembled_axes: &[BondId],
-) -> Option<StereoElement> {
-    let marked_bond = mol.bond(mark.bond).ok()?;
+) -> Vec<(BondId, StereoElement)> {
+    let Ok(marked_bond) = mol.bond(mark.bond) else {
+        return Vec::new();
+    };
     if marked_bond.order != BondOrder::Single {
-        return None;
+        return Vec::new();
     }
     let near = marked_bond.a();
     let marked_carrier = marked_bond.b();
-    let candidates = mol
-        .incident_bonds(near)
-        .ok()?
+    mol.incident_bonds(near)
+        .ok()
+        .into_iter()
+        .flatten()
         .filter_map(|(axis, bond)| {
-            if axis == mark.bond || assembled_axes.contains(&axis) {
+            if axis == mark.bond {
                 return None;
             }
             atropisomeric_axis_candidate(
@@ -862,13 +873,9 @@ fn atropisomeric_axis_from_wedge(
                 near,
                 marked_carrier,
             )
+            .map(|element| (axis, element))
         })
-        .collect::<Vec<_>>();
-    if candidates.len() == 1 {
-        candidates.into_iter().next()
-    } else {
-        None
-    }
+        .collect()
 }
 
 fn atropisomeric_axis_candidate(
@@ -887,7 +894,9 @@ fn atropisomeric_axis_candidate(
         return None;
     }
     let other = axis_bond.other_atom(near);
-    if !ring_membership.atom_in_ring(near) || !ring_membership.atom_in_ring(other) {
+    if !atom_is_atropisomeric_sp2_endpoint(mol, ring_membership, near)
+        || !atom_is_atropisomeric_sp2_endpoint(mol, ring_membership, other)
+    {
         return None;
     }
     let left = axis_bond.a();
@@ -1043,6 +1052,33 @@ fn has_axis_element(mol: &Molecule, axis: BondId) -> bool {
             StereoElementKind::Axis(stereo) if stereo.axis == axis
         )
     })
+}
+
+fn atom_is_atropisomeric_sp2_endpoint(
+    mol: &Molecule,
+    ring_membership: &RingMembership,
+    atom_id: AtomId,
+) -> bool {
+    let Ok(atom) = mol.atom(atom_id) else {
+        return false;
+    };
+    let incident = mol
+        .incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let total_degree = incident
+        .len()
+        .saturating_add(usize::from(hydrogen_count(mol, atom_id)));
+    if !(2..=3).contains(&total_degree) {
+        return false;
+    }
+    ring_membership.atom_in_ring(atom_id)
+        || atom.aromatic
+        || incident.iter().any(|(_, bond)| {
+            bond.aromatic || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+        })
 }
 
 fn assemble_directional_double_bonds(

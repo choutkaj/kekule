@@ -1290,6 +1290,61 @@ fn stereo_perception_prefers_exocyclic_molfile_atropisomeric_axis() {
     }
 }
 
+#[test]
+fn stereo_perception_consumes_redundant_molfile_atrop_wedges_before_tetrahedral_marks() {
+    let mut molecule = molfile::read_v2000_str(rdkit_bms986142_atrop5_molblock())
+        .expect("RDKit redundant atropisomer wedge fixture parses");
+    perception_api::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("fixture prepares before stereo perception");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 2);
+    assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+        matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(10))
+    }));
+    assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+        matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(8))
+    }));
+}
+
+#[test]
+fn stereo_perception_assembles_molfile_atrop_axis_with_one_exocyclic_sp2_endpoint() {
+    for fixture in [
+        rdkit_zm374979_atrop1_molblock(),
+        rdkit_zm374979_atrop2_molblock(),
+    ] {
+        let mut molecule = molfile::read_v2000_str(fixture)
+            .expect("RDKit one-ring-endpoint atropisomer fixture parses");
+        perception_api::sanitize_with_options(
+            &mut molecule,
+            SanitizeOptions {
+                perceive_stereo: false,
+                ..SanitizeOptions::default()
+            },
+        )
+        .expect("fixture prepares before stereo perception");
+
+        let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(report.created_elements.len(), 2);
+        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+            matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(3))
+        }));
+        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+            matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(33))
+        }));
+    }
+}
+
 fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());

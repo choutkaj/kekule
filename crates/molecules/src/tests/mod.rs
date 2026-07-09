@@ -136,8 +136,22 @@ pub(super) fn rdkit_bms986142_atrop4_molblock() -> &'static str {
     )
 }
 
+pub(super) fn rdkit_bms986142_atrop5_molblock() -> &'static str {
+    include_str!(
+        "../../../../validation/corpora/smoke/data/rdkit_atropisomers/BMS-986142_atrop5.mol"
+    )
+}
+
 pub(super) fn rdkit_jdq443_atrop1_molblock() -> &'static str {
     include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/JDQ443_atrop1.mol")
+}
+
+pub(super) fn rdkit_zm374979_atrop1_molblock() -> &'static str {
+    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/ZM374979_atrop1.mol")
+}
+
+pub(super) fn rdkit_zm374979_atrop2_molblock() -> &'static str {
+    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/ZM374979_atrop2.mol")
 }
 
 mod bio;

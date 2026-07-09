@@ -119,6 +119,8 @@ resulting stored axis element. For Molfile-derived axes, perception stores the
 lowest-ID explicit carrier at each endpoint as the local reference pair, so CIP
 priority flips are applied from a stable RDKit-like local axis convention
 instead of from whichever wedge carrier happened to trigger perception.
+The consumed perception subset includes redundant same-axis Molfile atrop
+wedges and exocyclic axes with one ring endpoint plus one locally SP2 endpoint.
 For axis endpoint ranking only, all-carbon aromatic bond components use a
 uniform aromatic duplicate-node count so retained Molfile single/double
 spelling in phenyl-like ligands does not change the `M`/`P` descriptor. This
@@ -159,9 +161,10 @@ use externally supplied isomeric SMILES fixtures. Smoke validation also includes
 official RDKit atropisomer Molfile fixtures with bond-centered `P`
 descriptors, including alternate wedged substituent placement around the same
 exocyclic axis, all-carbon aromatic source-Kekule variants for RP-6306 and
-BMS-986142, a JDQ443 heteromancude guardrail, plus BMS and Sotorasib fixtures
-that combine exocyclic Molfile atrop axes with implicit-H tetrahedral centers
-adjacent to those axes.
+BMS-986142, redundant same-axis wedge marks, a JDQ443 heteromancude guardrail,
+Mrtx1719 and ZM374979 axes, one-ring-endpoint SP2 axes, plus BMS, Sotorasib,
+and ZM374979 fixtures that combine exocyclic Molfile atrop axes with
+implicit-H tetrahedral centers adjacent to those axes.
 PL-REX validation uses externally supplied ligand SDF packs to cover Molfile
 and coordinate-bearing records. CIP goldens are generated with RDKit and
 compare atom and bond
@@ -268,3 +271,6 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v29: Normalize all-carbon aromatic duplicate counts during stored-axis
   endpoint ranking and add RP-6306/BMS source-Kekule atrop regressions plus a
   JDQ443 heteromancude guardrail.
+- v30: Expand Molfile atrop parity coverage with official BMS/JDQ/Mrtx/RP,
+  Sotorasib, and ZM374979 variants, including redundant same-axis wedges and
+  one-ring-endpoint SP2 axes from the perception layer.

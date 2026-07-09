@@ -218,6 +218,40 @@ fn cip_axis_ranking_preserves_heteromancude_source_kekule_guardrail() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_broader_molfile_atropisomeric_axis_perception() {
+    for (fixture, expected) in [
+        (
+            rdkit_bms986142_atrop5_molblock(),
+            vec![StereoDescriptor::S, StereoDescriptor::P],
+        ),
+        (
+            rdkit_zm374979_atrop1_molblock(),
+            vec![StereoDescriptor::R, StereoDescriptor::M],
+        ),
+        (
+            rdkit_zm374979_atrop2_molblock(),
+            vec![StereoDescriptor::R, StereoDescriptor::M],
+        ),
+    ] {
+        let mut molecule =
+            molfile::read_v2000_str(fixture).expect("RDKit atropisomer fixture parses");
+        perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
+
+        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(
+            report
+                .assigned
+                .iter()
+                .map(|assignment| assignment.descriptor)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule =
         smiles_api::read_str("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");
