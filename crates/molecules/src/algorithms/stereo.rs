@@ -456,6 +456,7 @@ fn double_bond_stereo_is_unsupported(mol: &Molecule, bond_id: BondId, bond: &Bon
     bond.order != BondOrder::Double
         || bond.aromatic
         || double_bond_between_aromatic_atoms(mol, bond)
+        || super::rings::bond_in_ring_smaller_than(mol, bond_id, 8)
         || (double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond))
 }
 

@@ -35,6 +35,8 @@ parity-stable symmetric S4-style Rule 6 retry for fully equivalent
 tetrahedral carrier sets. Unspecified, unknown, or invalid-cleared elements
 are skipped. Axis elements, invalid local stereo, unresolved priorities, and
 resource-limit exhaustion are reported without assigning lossy descriptors.
+Double-bond elements in rings smaller than eight atoms do not receive E/Z
+descriptors, matching the RDKit-style stereogenic-bond boundary.
 
 ## Implementation Notes
 
@@ -99,6 +101,9 @@ when a deferred batch contains any absolute tetrahedral assignments those are
 committed before pseudoasymmetric assignments are retried against the stronger
 descriptor snapshot. When Rule 5 supplies the unique ordering for a
 tetrahedral center, assignment emits pseudoasymmetric `r`/`s` descriptors.
+Double-bond descriptor assignment also applies the small-ring alkene exclusion
+directly from topology, so manually inserted or cache-stale local double-bond
+elements cannot receive lossy E/Z labels.
 
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
@@ -115,8 +120,9 @@ ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric tetrahedral
 reference-atom tie breaking for tetrahedral retry ranking,
 natural-vs-indicated isotope priority, Rule 1b duplicate-node ordering,
 negative-fraction duplicate expansion, implicit lone-pair carriers, unsupported
-double-bond stereo exclusions, unresolved equivalent ligands, bounded resource
-failures, and descriptor invalidation after mutation. Targeted Rule 6
+double-bond stereo exclusions including the ring-size boundary, unresolved
+equivalent ligands, bounded resource failures, and descriptor invalidation
+after mutation. Targeted Rule 6
 regressions cover both parity-stable and parity-unstable symmetric S4-style
 reference retries. Auxiliary occurrence-graph regressions cover coupled
 pseudoasymmetric cyclobutane, fused-ring, spiro-fused, and absolute-neighbor
@@ -204,3 +210,6 @@ and stereo enumeration.
   auxiliary occurrence graph, virtual local re-rooting, absolute-before-pseudo
   deferred assignment, and Enamine regressions for fused, spiro, and coupled
   absolute/pseudo tetrahedral centers.
+- v23: Apply the RDKit-like rule that double bonds in rings smaller than eight
+  atoms are not E/Z stereogenic while preserving cyclooctene and larger
+  endocyclic alkene assignment.

@@ -31,9 +31,10 @@ and assign local stereo elements from supported source marks and coordinates.
   marked single bonds are available on both ends. A substituted alkene endpoint
   may carry two redundant directional marks when they cover both atom carriers
   with opposite endpoint-normalized directions. Aromatic-focus bonds,
-  double bonds between aromatic atoms, and endocyclic double bonds with a
-  non-carbon endpoint are skipped until those unsupported stereo cases have
-  explicit format/perception semantics.
+  double bonds between aromatic atoms, double bonds in rings smaller than
+  eight atoms, and endocyclic double bonds with a non-carbon endpoint are
+  skipped until those unsupported stereo cases have explicit
+  format/perception semantics.
 - Molfile wedge up/down marks can create specified tetrahedral stereo elements.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
@@ -52,7 +53,10 @@ including supported implicit lone-pair tetrahedral carriers, assembles
 SMILES-style paired directional bond marks with endpoint-relative normalization,
 and assembles supported Molfile tetrahedral wedge/either source marks.
 Coordinate-derived assignment is local and conservative; exact CIP descriptors
-belong to `stereo.cip`.
+belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
+shortest-path check around the candidate bond so direct perception and
+sanitizer-driven perception follow the same RDKit-like stereogenic-bond
+boundary.
 
 Small-molecule perception should run as an explicit staged workflow and may be
 run from the small-molecule sanitizer when `SanitizeOptions::perceive_stereo`
@@ -63,10 +67,11 @@ run over whole `MacroMolecule` structures by default.
 ## Validation
 
 - Unit tests cover read-only validation, candidate detection after sanitization,
-  directional double-bond assembly, unsupported double-bond exclusions, Molfile
-  wedge/either assembly, unsupported source-mark diagnostics, coordinate-derived
-  tetrahedral and double-bond assignment, sanitizer integration, transactional
-  rollback, and preservation of explicit unknown versus absent stereo.
+  directional double-bond assembly, unsupported double-bond exclusions including
+  the small-ring alkene boundary, Molfile wedge/either assembly, unsupported
+  source-mark diagnostics, coordinate-derived tetrahedral and double-bond
+  assignment, sanitizer integration, transactional rollback, and preservation
+  of explicit unknown versus absent stereo.
 - Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity
   validation record semantic perception JSON for externally pinned isomeric
   SMILES fixtures covering absent stereo, stored tetrahedral stereo, and
@@ -108,3 +113,6 @@ stereo transfer.
 - v9: Add PubChem 100k and Enamine diversity semantic regression requirements
   and preserve unsupported-sanitization records as per-record validation output
   instead of aborting broad perception fixtures.
+- v10: Exclude double-bond stereo candidates in rings smaller than eight atoms
+  using the RDKit-like stereogenic-bond boundary while preserving cyclooctene
+  and larger ring alkene candidates.

@@ -8,7 +8,7 @@ use crate::algorithms::{
 };
 use crate::core::*;
 
-use super::rings::compute_ring_membership;
+use super::rings::{bond_in_ring_smaller_than, compute_ring_membership};
 
 type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
 
@@ -301,6 +301,9 @@ fn assign_double_bond_descriptor(
     stereo: &DoubleBondStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<StereoDescriptor> {
+    if bond_in_ring_smaller_than(mol, stereo.bond, 8) {
+        return Err(CipAssignmentIssue::UnresolvedPriority { element });
+    }
     let left_carriers = double_bond_endpoint_carriers(mol, stereo.left, stereo.right, stereo.bond);
     let right_carriers = double_bond_endpoint_carriers(mol, stereo.right, stereo.left, stereo.bond);
     let left_top = ranked_carriers(mol, element, stereo.left, &left_carriers, options)?

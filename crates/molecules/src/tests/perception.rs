@@ -869,6 +869,43 @@ fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element
 }
 
 #[test]
+fn stereo_perception_skips_small_ring_double_bond_stereo_boundary() {
+    let mut cyclohexene = smiles_api::read_str(r"C1/C=C\CCC1").expect("marked cyclohexene parses");
+    perception_api::sanitize_with_options(
+        &mut cyclohexene,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("marked cyclohexene sanitizes without stereo perception");
+    let report = stereo_api::perceive_stereo(cyclohexene.graph_mut_raw());
+
+    assert!(report.created_elements.is_empty());
+    assert!(cyclohexene.graph().stereo_elements().next().is_none());
+
+    let mut cyclooctene =
+        smiles_api::read_str(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
+    perception_api::sanitize_with_options(
+        &mut cyclooctene,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("marked cyclooctene sanitizes without stereo perception");
+    let report = stereo_api::perceive_stereo(cyclooctene.graph_mut_raw());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = cyclooctene
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
+}
+
+#[test]
 fn stereo_perception_assembles_molfile_wedge_into_tetrahedral_element() {
     let input = "\
 wedge

@@ -1,9 +1,9 @@
 id = "stereo.perception"
 title = "Stereochemistry perception"
 area = "stereo"
-version = 9
+version = 10
 implemented = true
 validated = true
-description = "Validate local stereo elements, detect candidate stereo units, and assign local stereo from supported source marks and coordinates, with PubChem and Enamine semantic regression coverage."
+description = "Validate local stereo elements, detect candidate stereo units, and assign local stereo from supported source marks and coordinates with RDKit-like small-ring alkene exclusions and broad semantic regression coverage."
 depends_on = ["stereo.representation", "algo.valence.rdkit-like", "algo.canonical-ranking"]
 validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "enamine-diversity"]

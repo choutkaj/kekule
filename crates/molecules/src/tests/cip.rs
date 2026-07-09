@@ -147,6 +147,46 @@ fn cip_matches_rdkit_for_polyene_directional_double_bonds() {
 }
 
 #[test]
+fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
+    let mut cyclohexene = smiles_api::read_str(r"C1/C=C\CCC1").expect("marked cyclohexene parses");
+    perception_api::sanitize_with_options(
+        &mut cyclohexene,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("marked cyclohexene sanitizes without stereo perception");
+    let stereo_report = stereo_api::perceive_stereo(cyclohexene.graph_mut());
+    assert!(cyclohexene
+        .graph()
+        .stereo_elements()
+        .all(|(_, element)| !matches!(element.kind, StereoElementKind::DoubleBond(_))));
+    assert!(stereo_report.issues.iter().any(|issue| matches!(
+        issue,
+        StereoPerceptionIssue::UnpairedDirectionalBondMark { .. }
+    )));
+
+    let cip_report = stereo_api::assign_cip_descriptors(cyclohexene.graph_mut());
+    assert!(cip_report.assigned.is_empty());
+
+    let mut cyclooctene =
+        smiles_api::read_str(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
+    perception_api::sanitize(&mut cyclooctene).expect("marked cyclooctene sanitizes");
+    let cip_report = stereo_api::assign_cip_descriptors(cyclooctene.graph_mut());
+
+    assert!(cip_report.is_ok(), "{:?}", cip_report.issues);
+    assert_eq!(
+        cip_report
+            .assigned
+            .iter()
+            .map(|assignment| assignment.descriptor)
+            .collect::<Vec<_>>(),
+        vec![StereoDescriptor::Z]
+    );
+}
+
+#[test]
 fn cip_skips_endocyclic_kekule_bond_stereo_after_ring_perception() {
     let mut molecule =
         smiles_api::read_str("CC\\1=C(/C/2=C/C3=C(C(=C(N3)/C=C\\4/[C@@](C(=C(N4)/C=C\\5/[C@@](C(=C(N5)/C=C1\\N2)O)(C)CC(=O)O)O)(C)CC(=O)O)C)CCC(=O)O)CCC(=O)O")
