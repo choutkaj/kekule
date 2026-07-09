@@ -303,12 +303,12 @@ fn assign_double_bond_descriptor(
     }
     let left_carriers = double_bond_endpoint_carriers(mol, stereo.left, stereo.right, stereo.bond);
     let right_carriers = double_bond_endpoint_carriers(mol, stereo.right, stereo.left, stereo.bond);
-    let left_top = ranked_carriers(mol, element, stereo.left, &left_carriers, options)?
+    let left_top = ranked_carriers(mol, element, stereo.left, &left_carriers, options, false)?
         .carriers
         .first()
         .copied()
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let right_top = ranked_carriers(mol, element, stereo.right, &right_carriers, options)?
+    let right_top = ranked_carriers(mol, element, stereo.right, &right_carriers, options, false)?
         .carriers
         .first()
         .copied()
@@ -345,6 +345,7 @@ fn assign_axis_descriptor(
         left,
         &axis_endpoint_carriers(mol, left, right, stereo.axis),
         options,
+        true,
     )?
     .carriers
     .first()
@@ -356,12 +357,12 @@ fn assign_axis_descriptor(
         right,
         &axis_endpoint_carriers(mol, right, left, stereo.axis),
         options,
+        true,
     )?
     .carriers
     .first()
     .copied()
     .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-
     let mut top_orientation = stereo.orientation;
     if left_reference != left_top {
         top_orientation = invert_axis_orientation(top_orientation);
@@ -444,8 +445,17 @@ fn ranked_carriers(
     root: AtomId,
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
+    normalize_all_carbon_aromatic: bool,
 ) -> CipResult<RankedCarriers> {
-    let signatures = carrier_signatures(mol, element, root, carriers, options, false)?;
+    let signatures = carrier_signatures(
+        mol,
+        element,
+        root,
+        carriers,
+        options,
+        false,
+        normalize_all_carbon_aromatic,
+    )?;
     rank_carrier_signatures(element, &signatures, None)
 }
 
@@ -465,6 +475,7 @@ fn ranked_tetrahedral_carriers(
         carriers,
         options,
         allow_single_ring_tied_pair_rule6,
+        false,
     )?;
     match rank_carrier_signatures(element, &signatures, None) {
         Ok(ranked) => Ok(ranked),
@@ -511,12 +522,20 @@ fn carrier_signatures(
     carriers: &[StereoCarrier],
     options: CipAssignmentOptions,
     allow_auxiliary_descriptors: bool,
+    normalize_all_carbon_aromatic: bool,
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
-    let atomic_number_fractions = cip_atomic_number_fractions(mol);
+    let cip_bond_orders = CipBondOrders::new(mol, normalize_all_carbon_aromatic);
+    let atomic_number_fractions = cip_atomic_number_fractions(mol, &cip_bond_orders);
     if allow_auxiliary_descriptors {
         let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Collect);
-        let aux_graph =
-            build_auxiliary_graph(mol, element, root, options, &atomic_number_fractions)?;
+        let aux_graph = build_auxiliary_graph(
+            mol,
+            element,
+            root,
+            options,
+            &atomic_number_fractions,
+            &cip_bond_orders,
+        )?;
         collect_auxiliary_occurrences_from_graph(mol, &descriptor_context, &aux_graph);
         precompute_auxiliary_descriptors(
             mol,
@@ -524,54 +543,42 @@ fn carrier_signatures(
             &aux_graph,
             options,
             &atomic_number_fractions,
+            &cip_bond_orders,
         );
         let descriptor_context = descriptor_context.with_mode(AuxiliaryDescriptorMode::Precomputed);
-        let signatures = build_carrier_signatures(
+        let build_context = LigandBuildContext {
             mol,
             element,
-            &descriptor_context,
-            root,
-            carriers,
+            descriptor_context: &descriptor_context,
             options,
-            &atomic_number_fractions,
-        )?;
+            atomic_number_fractions: &atomic_number_fractions,
+            cip_bond_orders: &cip_bond_orders,
+        };
+        let signatures = build_carrier_signatures(&build_context, root, carriers)?;
         return Ok(signatures);
     }
     let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Disabled);
-    build_carrier_signatures(
+    let build_context = LigandBuildContext {
         mol,
         element,
-        &descriptor_context,
-        root,
-        carriers,
+        descriptor_context: &descriptor_context,
         options,
-        &atomic_number_fractions,
-    )
+        atomic_number_fractions: &atomic_number_fractions,
+        cip_bond_orders: &cip_bond_orders,
+    };
+    build_carrier_signatures(&build_context, root, carriers)
 }
 
 fn build_carrier_signatures(
-    mol: &Molecule,
-    element: StereoElementId,
-    descriptor_context: &DescriptorContext,
+    context: &LigandBuildContext<'_>,
     root: AtomId,
     carriers: &[StereoCarrier],
-    options: CipAssignmentOptions,
-    atomic_number_fractions: &[AtomicNumberFraction],
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
     carriers
         .iter()
         .copied()
         .map(|carrier| {
-            carrier_signature(
-                mol,
-                element,
-                descriptor_context,
-                carrier,
-                root,
-                options,
-                atomic_number_fractions,
-            )
-            .map(|signature| (carrier, signature))
+            carrier_signature(context, carrier, root).map(|signature| (carrier, signature))
         })
         .collect::<CipResult<Vec<_>>>()
 }
@@ -1372,6 +1379,7 @@ struct LigandBuildContext<'a> {
     descriptor_context: &'a DescriptorContext,
     options: CipAssignmentOptions,
     atomic_number_fractions: &'a [AtomicNumberFraction],
+    cip_bond_orders: &'a CipBondOrders,
 }
 
 #[derive(Debug, Clone)]
@@ -1706,13 +1714,9 @@ fn rule6_priority(atom: Option<AtomId>, reference: Option<AtomId>) -> u8 {
 }
 
 fn carrier_signature(
-    mol: &Molecule,
-    element: StereoElementId,
-    descriptor_context: &DescriptorContext,
+    context: &LigandBuildContext<'_>,
     carrier: StereoCarrier,
     root: AtomId,
-    options: CipAssignmentOptions,
-    atomic_number_fractions: &[AtomicNumberFraction],
 ) -> CipResult<LigandSignature> {
     let node = match carrier {
         StereoCarrier::Atom(atom) => LigandNode::Atom {
@@ -1726,14 +1730,7 @@ fn carrier_signature(
         StereoCarrier::ImplicitLonePair => LigandNode::LonePair,
     };
     let mut visited_nodes = 0usize;
-    let build_context = LigandBuildContext {
-        mol,
-        element,
-        descriptor_context,
-        options,
-        atomic_number_fractions,
-    };
-    let root = ligand_tree(&build_context, node, 0, &mut visited_nodes)?;
+    let root = ligand_tree(context, node, 0, &mut visited_nodes)?;
     Ok(LigandSignature { root })
 }
 
@@ -1743,6 +1740,7 @@ fn build_auxiliary_graph(
     root: AtomId,
     options: CipAssignmentOptions,
     atomic_number_fractions: &[AtomicNumberFraction],
+    cip_bond_orders: &CipBondOrders,
 ) -> CipResult<AuxiliaryGraph> {
     let root = LigandNode::Atom {
         atom: root,
@@ -1758,6 +1756,7 @@ fn build_auxiliary_graph(
         element,
         options,
         atomic_number_fractions,
+        cip_bond_orders,
     };
     add_auxiliary_graph_node(&context, &mut graph, root, None, 0, &mut visited_nodes)?;
     Ok(graph)
@@ -1768,6 +1767,7 @@ struct AuxiliaryGraphBuildContext<'a> {
     element: StereoElementId,
     options: CipAssignmentOptions,
     atomic_number_fractions: &'a [AtomicNumberFraction],
+    cip_bond_orders: &'a CipBondOrders,
 }
 
 fn add_auxiliary_graph_node(
@@ -1798,6 +1798,7 @@ fn add_auxiliary_graph_node(
         node.extend(
             context.mol,
             context.atomic_number_fractions,
+            context.cip_bond_orders,
             &mut child_nodes,
         );
         for child in child_nodes {
@@ -1835,6 +1836,7 @@ fn ligand_tree(
         node.extend(
             context.mol,
             context.atomic_number_fractions,
+            context.cip_bond_orders,
             &mut child_nodes,
         );
         for child in child_nodes {
@@ -1958,6 +1960,7 @@ impl LigandNode {
         &self,
         mol: &Molecule,
         atomic_number_fractions: &[AtomicNumberFraction],
+        cip_bond_orders: &CipBondOrders,
         next: &mut Vec<LigandNode>,
     ) {
         let Self::Atom {
@@ -1984,10 +1987,16 @@ impl LigandNode {
         let Ok(incident) = mol.incident_bonds(*atom) else {
             return;
         };
-        for (_, bond) in incident {
+        for (bond_id, bond) in incident {
             let neighbor = bond.other_atom(*atom);
-            let duplicate_count =
-                bond_duplicate_count_for_atom(payload, *atom, bond.order, atomic_number_fractions);
+            let duplicate_count = bond_duplicate_count_for_atom(
+                payload,
+                *atom,
+                bond_id,
+                bond,
+                atomic_number_fractions,
+                cip_bond_orders,
+            );
             let bond_duplicate_atomic_number =
                 bond_duplicate_atomic_number(*atom, atomic_number_fractions);
             if Some(neighbor) == *previous {
@@ -2062,7 +2071,48 @@ enum MancudeAtomType {
     Other,
 }
 
-fn cip_atomic_number_fractions(mol: &Molecule) -> Vec<AtomicNumberFraction> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CipBondOrders {
+    orders: Vec<u8>,
+    uniform_aromatic_duplicates: Vec<bool>,
+}
+
+impl CipBondOrders {
+    fn new(mol: &Molecule, normalize_all_carbon_aromatic: bool) -> Self {
+        let mut orders = vec![0; mol.bonds.len()];
+        for (bond_id, bond) in mol.bonds() {
+            orders[bond_id.index()] = cip_bond_order(bond.order);
+        }
+        let uniform_aromatic_duplicates = if normalize_all_carbon_aromatic {
+            cip_uniform_aromatic_duplicate_bonds(mol)
+        } else {
+            vec![false; mol.bonds.len()]
+        };
+        Self {
+            orders,
+            uniform_aromatic_duplicates,
+        }
+    }
+
+    fn order(&self, bond_id: BondId, bond: &Bond) -> u8 {
+        self.orders
+            .get(bond_id.index())
+            .copied()
+            .unwrap_or_else(|| cip_bond_order(bond.order))
+    }
+
+    fn uses_uniform_aromatic_duplicate_count(&self, bond_id: BondId) -> bool {
+        self.uniform_aromatic_duplicates
+            .get(bond_id.index())
+            .copied()
+            .unwrap_or(false)
+    }
+}
+
+fn cip_atomic_number_fractions(
+    mol: &Molecule,
+    cip_bond_orders: &CipBondOrders,
+) -> Vec<AtomicNumberFraction> {
     let mut fractions = vec![AtomicNumberFraction::ZERO; mol.atoms.len()];
     for (atom_id, atom) in mol.atoms() {
         fractions[atom_id.index()] = AtomicNumberFraction::element(atom.element.atomic_number());
@@ -2072,7 +2122,7 @@ fn cip_atomic_number_fractions(mol: &Molecule) -> Vec<AtomicNumberFraction> {
         .ring_membership()
         .cloned()
         .unwrap_or_else(|| compute_ring_membership(mol).0);
-    let mut types = seed_mancude_atom_types(mol, &ring_membership);
+    let mut types = seed_mancude_atom_types(mol, &ring_membership, cip_bond_orders);
     if !types.iter().any(|atom_type| {
         matches!(
             atom_type,
@@ -2088,13 +2138,14 @@ fn cip_atomic_number_fractions(mol: &Molecule) -> Vec<AtomicNumberFraction> {
 
     relax_mancude_atom_types(mol, &mut types);
     let parts = mancude_parts(mol, &types, &ring_membership);
-    apply_mancude_neighbor_averages(mol, &types, &parts, &mut fractions);
+    apply_mancude_neighbor_averages(mol, &types, &parts, &mut fractions, cip_bond_orders);
     fractions
 }
 
 fn seed_mancude_atom_types(
     mol: &Molecule,
     ring_membership: &RingMembership,
+    cip_bond_orders: &CipBondOrders,
 ) -> Vec<MancudeAtomType> {
     let mut types = vec![MancudeAtomType::Other; mol.atoms.len()];
     for (atom_id, atom) in mol.atoms() {
@@ -2102,7 +2153,7 @@ fn seed_mancude_atom_types(
         let mut in_ring = false;
         if let Ok(incident) = mol.incident_bonds(atom_id) {
             for (bond_id, bond) in incident {
-                bond_types += match cip_bond_order(bond.order) {
+                bond_types += match cip_bond_orders.order(bond_id, bond) {
                     1 => 0x0000_0001,
                     2 => 0x0000_0100,
                     _ => 0x0100_0000,
@@ -2199,6 +2250,7 @@ fn apply_mancude_neighbor_averages(
     types: &[MancudeAtomType],
     parts: &[usize],
     fractions: &mut [AtomicNumberFraction],
+    cip_bond_orders: &CipBondOrders,
 ) {
     let mut resonance_parts = Vec::<usize>::new();
     for (atom_id, _) in mol.atoms() {
@@ -2238,10 +2290,10 @@ fn apply_mancude_neighbor_averages(
             denominator += 1;
             let atom_id = AtomId::new(index as u32);
             if let Ok(incident) = mol.incident_bonds(atom_id) {
-                for (_, bond) in incident {
+                for (bond_id, bond) in incident {
                     let neighbor = bond.other_atom(atom_id);
                     if parts[neighbor.index()] == part {
-                        let bond_order = cip_bond_order(bond.order);
+                        let bond_order = cip_bond_orders.order(bond_id, bond);
                         if bond_order > 1 {
                             if let Ok(neighbor_atom) = mol.atom(neighbor) {
                                 numerator += u32::from(bond_order.saturating_sub(1))
@@ -2253,6 +2305,70 @@ fn apply_mancude_neighbor_averages(
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AromaticBondComponent {
+    atoms: Vec<AtomId>,
+    bonds: Vec<BondId>,
+}
+
+fn cip_uniform_aromatic_duplicate_bonds(mol: &Molecule) -> Vec<bool> {
+    let mut flags = vec![false; mol.bonds.len()];
+    for component in cip_aromatic_bond_components(mol) {
+        let all_carbon = component.atoms.iter().all(|atom| {
+            mol.atom(*atom)
+                .is_ok_and(|atom| atom.element.atomic_number() == 6)
+        });
+        if all_carbon {
+            for bond in component.bonds {
+                if let Some(flag) = flags.get_mut(bond.index()) {
+                    *flag = true;
+                }
+            }
+        }
+    }
+    flags
+}
+
+fn cip_aromatic_bond_components(mol: &Molecule) -> Vec<AromaticBondComponent> {
+    let mut seen_bonds = vec![false; mol.bonds.len()];
+    let mut components = Vec::new();
+    for (start_bond, bond) in mol.bonds() {
+        if !bond.aromatic || seen_bonds[start_bond.index()] {
+            continue;
+        }
+
+        let mut atoms = Vec::new();
+        let mut atom_seen = vec![false; mol.atoms.len()];
+        let mut bonds = Vec::new();
+        let mut stack = vec![start_bond];
+        seen_bonds[start_bond.index()] = true;
+        while let Some(bond_id) = stack.pop() {
+            let Ok(bond) = mol.bond(bond_id) else {
+                continue;
+            };
+            bonds.push(bond_id);
+            for atom in [bond.a(), bond.b()] {
+                if !atom_seen[atom.index()] {
+                    atom_seen[atom.index()] = true;
+                    atoms.push(atom);
+                }
+                if let Ok(incident) = mol.incident_bonds(atom) {
+                    for (next_bond_id, next_bond) in incident {
+                        if next_bond.aromatic && !seen_bonds[next_bond_id.index()] {
+                            seen_bonds[next_bond_id.index()] = true;
+                            stack.push(next_bond_id);
+                        }
+                    }
+                }
+            }
+        }
+        atoms.sort_unstable();
+        bonds.sort_unstable();
+        components.push(AromaticBondComponent { atoms, bonds });
+    }
+    components
 }
 
 fn atom_neighbors(mol: &Molecule, atom_id: AtomId) -> Vec<AtomId> {
@@ -2272,17 +2388,21 @@ fn hydrogen_count(atom: &Atom) -> u8 {
 fn bond_duplicate_count_for_atom(
     atom: &Atom,
     atom_id: AtomId,
-    order: BondOrder,
+    bond_id: BondId,
+    bond: &Bond,
     atomic_number_fractions: &[AtomicNumberFraction],
+    cip_bond_orders: &CipBondOrders,
 ) -> usize {
-    if atom.formal_charge < 0
+    let negative_fractional_atom = atom.formal_charge < 0
         && atomic_number_fractions
             .get(atom_id.index())
-            .is_some_and(|fraction| fraction.denominator > 1)
-    {
+            .is_some_and(|fraction| fraction.denominator > 1);
+    let uniform_aromatic_duplicate =
+        bond.aromatic && cip_bond_orders.uses_uniform_aromatic_duplicate_count(bond_id);
+    if negative_fractional_atom || uniform_aromatic_duplicate {
         1
     } else {
-        bond_order_duplicate_count(cip_bond_order(order))
+        bond_order_duplicate_count(cip_bond_orders.order(bond_id, bond))
     }
 }
 
@@ -2419,6 +2539,7 @@ fn precompute_auxiliary_descriptors(
     graph: &AuxiliaryGraph,
     options: CipAssignmentOptions,
     atomic_number_fractions: &[AtomicNumberFraction],
+    cip_bond_orders: &CipBondOrders,
 ) {
     let mut occurrences = descriptor_context.aux_occurrences.borrow().clone();
     let mut seen = HashSet::new();
@@ -2455,6 +2576,7 @@ fn precompute_auxiliary_descriptors(
                 occurrence,
                 options,
                 atomic_number_fractions,
+                cip_bond_orders,
             );
             batch.push((occurrence.key.clone(), descriptor));
         }
@@ -2473,6 +2595,7 @@ fn auxiliary_tetrahedral_descriptor_for_occurrence(
     occurrence: &AuxOccurrence,
     options: CipAssignmentOptions,
     atomic_number_fractions: &[AtomicNumberFraction],
+    cip_bond_orders: &CipBondOrders,
 ) -> Option<StereoDescriptor> {
     let element = mol.stereo_element(occurrence.key.element).ok()?;
     let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
@@ -2490,6 +2613,7 @@ fn auxiliary_tetrahedral_descriptor_for_occurrence(
         descriptor_context: &aux_descriptor_context,
         options,
         atomic_number_fractions,
+        cip_bond_orders,
     };
     let signatures =
         auxiliary_tetrahedral_signatures(&aux_context, graph, occurrence.node, stereo).ok()?;
@@ -3290,7 +3414,8 @@ mod tests {
                 .expect("ring bond");
         }
 
-        let fractions = cip_atomic_number_fractions(&mol);
+        let cip_bond_orders = CipBondOrders::new(&mol, false);
+        let fractions = cip_atomic_number_fractions(&mol, &cip_bond_orders);
 
         assert_eq!(
             fractions[atoms[2].index()],
@@ -3311,7 +3436,7 @@ mod tests {
             terminal: false,
         };
         let mut next = Vec::new();
-        node.extend(&mol, &fractions, &mut next);
+        node.extend(&mol, &fractions, &cip_bond_orders, &mut next);
 
         let normal_nitrogen = next
             .iter()
@@ -3347,6 +3472,7 @@ mod tests {
             descriptor_context: &descriptor_context,
             options: CipAssignmentOptions::default(),
             atomic_number_fractions: &fractions,
+            cip_bond_orders: &cip_bond_orders,
         };
 
         assert_eq!(
@@ -3378,8 +3504,9 @@ mod tests {
             terminal: false,
         };
         let mut next = Vec::new();
-        let fractions = cip_atomic_number_fractions(&mol);
-        node.extend(&mol, &fractions, &mut next);
+        let cip_bond_orders = CipBondOrders::new(&mol, false);
+        let fractions = cip_atomic_number_fractions(&mol, &cip_bond_orders);
+        node.extend(&mol, &fractions, &cip_bond_orders, &mut next);
 
         assert_eq!(next.len(), 2);
         assert!(next.contains(&LigandNode::Atom {
@@ -3426,6 +3553,7 @@ mod tests {
 
         let mut fractions = vec![AtomicNumberFraction::element(6); mol.atoms.len()];
         fractions[atoms[2].index()] = AtomicNumberFraction::new(13, 2);
+        let cip_bond_orders = CipBondOrders::new(&mol, false);
 
         let node = LigandNode::Atom {
             atom: atoms[2],
@@ -3435,7 +3563,7 @@ mod tests {
             terminal: false,
         };
         let mut next = Vec::new();
-        node.extend(&mol, &fractions, &mut next);
+        node.extend(&mol, &fractions, &cip_bond_orders, &mut next);
 
         assert!(next.iter().any(|child| matches!(
             child,

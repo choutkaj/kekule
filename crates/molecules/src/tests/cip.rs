@@ -173,6 +173,51 @@ fn cip_matches_rdkit_for_alternate_molfile_atropisomeric_wedge() {
 }
 
 #[test]
+fn cip_axis_ranking_is_stable_across_all_carbon_aromatic_source_kekule_variants() {
+    for (fixture, expected) in [
+        (rdkit_rp6306_atrop4_molblock(), vec![StereoDescriptor::P]),
+        (
+            rdkit_bms986142_atrop4_molblock(),
+            vec![StereoDescriptor::S, StereoDescriptor::P],
+        ),
+    ] {
+        let mut molecule =
+            molfile::read_v2000_str(fixture).expect("RDKit atropisomer fixture parses");
+        perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
+
+        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(
+            report
+                .assigned
+                .iter()
+                .map(|assignment| assignment.descriptor)
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn cip_axis_ranking_preserves_heteromancude_source_kekule_guardrail() {
+    let mut molecule = molfile::read_v2000_str(rdkit_jdq443_atrop1_molblock())
+        .expect("RDKit JDQ443 atropisomer fixture parses");
+    perception_api::sanitize(&mut molecule).expect("JDQ443 atropisomer fixture sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: StereoElementId::new(0),
+            descriptor: StereoDescriptor::M,
+        }]
+    );
+}
+
+#[test]
 fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule =
         smiles_api::read_str("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");

@@ -119,6 +119,13 @@ resulting stored axis element. For Molfile-derived axes, perception stores the
 lowest-ID explicit carrier at each endpoint as the local reference pair, so CIP
 priority flips are applied from a stable RDKit-like local axis convention
 instead of from whichever wedge carrier happened to trigger perception.
+For axis endpoint ranking only, all-carbon aromatic bond components use a
+uniform aromatic duplicate-node count so retained Molfile single/double
+spelling in phenyl-like ligands does not change the `M`/`P` descriptor. This
+normalization is deliberately scoped away from tetrahedral and ordinary
+double-bond descriptor assignment, where existing mancude and source-order
+regressions remain the controlling behavior until a full RDKit-style canonical
+kekulizer is implemented.
 
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
@@ -151,8 +158,10 @@ Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity validation
 use externally supplied isomeric SMILES fixtures. Smoke validation also includes
 official RDKit atropisomer Molfile fixtures with bond-centered `P`
 descriptors, including alternate wedged substituent placement around the same
-exocyclic axis, plus BMS and Sotorasib fixtures that combine exocyclic
-Molfile atrop axes with implicit-H tetrahedral centers adjacent to those axes.
+exocyclic axis, all-carbon aromatic source-Kekule variants for RP-6306 and
+BMS-986142, a JDQ443 heteromancude guardrail, plus BMS and Sotorasib fixtures
+that combine exocyclic Molfile atrop axes with implicit-H tetrahedral centers
+adjacent to those axes.
 PL-REX validation uses externally supplied ligand SDF packs to cover Molfile
 and coordinate-bearing records. CIP goldens are generated with RDKit and
 compare atom and bond
@@ -174,9 +183,9 @@ Full exact machine-oriented CIP coverage remains out of scope for this version:
 perception or assignment of sequence cis/trans descriptors, kekulization of
 aromatic-only inputs for mancude parity, remaining exact Rule 6 edge cases
 beyond the parity-stable tetrahedral fallback, broad axis perception beyond
-the conservative exocyclic Molfile atropisomeric wedge subset, remaining
-Kekule-sensitive axis ligand-ranking gaps in alternate aromatic Molfile
-layouts, coordinate-only axis assignment, non-tetrahedral geometries beyond
+the conservative exocyclic Molfile atropisomeric wedge subset, full
+RDKit-canonical aromatic kekulization for every alternate aromatic Molfile
+layout, coordinate-only axis assignment, non-tetrahedral geometries beyond
 stored axis descriptors, enhanced
 stereo relation semantics, parity beyond the current descriptor-bearing
 validation corpora, isomeric SMILES emission, and stereo enumeration.
@@ -256,3 +265,6 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
   centers, store Molfile atrop axes with RDKit-style lowest-neighbor endpoint
   references, and add official BMS/Sotorasib atrop fixtures to smoke parity
   validation.
+- v29: Normalize all-carbon aromatic duplicate counts during stored-axis
+  endpoint ranking and add RP-6306/BMS source-Kekule atrop regressions plus a
+  JDQ443 heteromancude guardrail.
