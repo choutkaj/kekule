@@ -1137,6 +1137,61 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     assert!(absent.stereo_bond_marks().next().is_none());
 }
 
+#[test]
+fn stereo_validation_accepts_structural_axis_elements() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let left_carrier = mol.add_atom(element_atom("I"));
+    let right_carrier = mol.add_atom(element_atom("Br"));
+    let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
+    mol.add_bond(left, left_carrier, BondOrder::Single)
+        .expect("left carrier");
+    mol.add_bond(right, right_carrier, BondOrder::Single)
+        .expect("right carrier");
+    let valid_axis = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![
+                    StereoCarrier::Atom(left_carrier),
+                    StereoCarrier::Atom(right_carrier),
+                ],
+                orientation: AxisOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("axis element");
+
+    let report = stereo_api::validate_stereo(&mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+
+    mol.remove_stereo_element(valid_axis)
+        .expect("remove valid axis");
+    let invalid_axis = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![StereoCarrier::Atom(left_carrier)],
+                orientation: AxisOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("invalid axis element refs are still structurally present");
+
+    let report = stereo_api::validate_stereo(&mol);
+
+    assert_eq!(
+        report.issues,
+        vec![StereoPerceptionIssue::InvalidAxisCarrierCount {
+            element: invalid_axis,
+            axis,
+            carrier_count: 1,
+        }]
+    );
+}
+
 fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());

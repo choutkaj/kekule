@@ -25,6 +25,10 @@ and assign local stereo elements from supported source marks and coordinates.
   broadly perceive lone-pair stereocenters.
 - Tetrahedral candidates are local geometry candidates only; no exact ligand
   ranking, symmetry pruning, or CIP descriptor assignment is performed.
+- Stored axis elements are validated structurally: the axis bond must exist and
+  the local reference carriers must be atom carriers adjacent to opposite
+  endpoints of the axis bond. Axis candidate detection and coordinate/wedge
+  assignment remain out of scope.
 - Double-bond candidates include atom and implicit-hydrogen carriers. Paired
   directional `/` and `\` source marks are normalized relative to each alkene
   endpoint and can create specified double-bond stereo elements when compatible
@@ -52,9 +56,10 @@ and assign local stereo elements from supported source marks and coordinates.
 
 This feature identifies candidate tetrahedral atoms and double bonds, validates
 existing local stereo elements against current topology and hydrogen semantics,
-including supported implicit lone-pair tetrahedral carriers, assembles
-SMILES-style paired directional bond marks with endpoint-relative normalization,
-and assembles supported Molfile tetrahedral wedge/either source marks.
+including supported implicit lone-pair tetrahedral carriers and structurally
+valid stored axis carriers, assembles SMILES-style paired directional bond
+marks with endpoint-relative normalization, and assembles supported Molfile
+tetrahedral wedge/either source marks.
 Coordinate-derived assignment is local and conservative; exact CIP descriptors
 belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
 shortest-path check around the candidate bond so direct perception and
@@ -72,9 +77,10 @@ run over whole `MacroMolecule` structures by default.
 - Unit tests cover read-only validation, candidate detection after sanitization,
   directional double-bond assembly, unsupported double-bond exclusions including
   the small-ring alkene boundary, Molfile wedge/either assembly, unsupported
-  source-mark diagnostics, coordinate-derived tetrahedral and double-bond
-  assignment, sanitizer integration, transactional rollback, and preservation
-  of explicit unknown versus absent stereo.
+  source-mark diagnostics, structural validation for stored axis elements,
+  coordinate-derived tetrahedral and double-bond assignment, sanitizer
+  integration, transactional rollback, and preservation of explicit unknown
+  versus absent stereo.
 - Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity
   validation record semantic perception JSON for externally pinned isomeric
   SMILES fixtures covering absent stereo, stored tetrahedral stereo, and
@@ -86,7 +92,8 @@ run over whole `MacroMolecule` structures by default.
 
 ## Out Of Scope
 
-Exact CIP descriptors, isomeric SMILES writing, enhanced stereo serialization,
+Exact CIP descriptors, axis candidate perception or coordinate/wedge
+assignment, isomeric SMILES writing, enhanced stereo serialization,
 implicit-hydrogen coordinate reconstruction, stereo enumeration, and reaction
 stereo transfer.
 
@@ -122,3 +129,6 @@ stereo transfer.
 - v11: Derive Molfile wedge up/down tetrahedral orientation from conformer
   coordinates when present so coordinate-bearing V2000 records preserve
   RDKit-like local stereo sense.
+- v12: Validate stored axis elements structurally instead of treating every
+  axis element as unsupported, enabling the CIP layer to assign descriptors for
+  explicitly stored axes.

@@ -70,6 +70,47 @@ M  END
 }
 
 #[test]
+fn cip_assigns_axis_descriptors_from_ranked_anchors() {
+    for (left_reference, right_reference, orientation, expected) in [
+        (
+            AxisReference::Low,
+            AxisReference::Low,
+            AxisOrientation::CounterClockwise,
+            StereoDescriptor::M,
+        ),
+        (
+            AxisReference::High,
+            AxisReference::Low,
+            AxisOrientation::CounterClockwise,
+            StereoDescriptor::P,
+        ),
+        (
+            AxisReference::High,
+            AxisReference::High,
+            AxisOrientation::Clockwise,
+            StereoDescriptor::P,
+        ),
+    ] {
+        let (mut mol, stereo) = axis_stereo_graph(left_reference, right_reference, orientation);
+
+        let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(
+            report.assigned,
+            vec![CipAssignment {
+                element: stereo,
+                descriptor: expected,
+            }]
+        );
+        assert_eq!(
+            mol.stereo_element(stereo).expect("axis element").descriptor,
+            Some(expected)
+        );
+    }
+}
+
+#[test]
 fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule =
         smiles_api::read_str("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");
@@ -86,6 +127,58 @@ fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
             .collect::<Vec<_>>(),
         vec![StereoDescriptor::R, StereoDescriptor::R]
     );
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AxisReference {
+    High,
+    Low,
+}
+
+fn axis_stereo_graph(
+    left_reference: AxisReference,
+    right_reference: AxisReference,
+    orientation: AxisOrientation,
+) -> (Molecule, StereoElementId) {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let left_high = mol.add_atom(element_atom("I"));
+    let left_low = mol.add_atom(carbon());
+    let right_high = mol.add_atom(element_atom("Br"));
+    let right_low = mol.add_atom(carbon());
+    let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
+    mol.add_bond(left, left_high, BondOrder::Single)
+        .expect("left high");
+    mol.add_bond(left, left_low, BondOrder::Single)
+        .expect("left low");
+    mol.add_bond(right, right_high, BondOrder::Single)
+        .expect("right high");
+    mol.add_bond(right, right_low, BondOrder::Single)
+        .expect("right low");
+
+    let left_carrier = match left_reference {
+        AxisReference::High => left_high,
+        AxisReference::Low => left_low,
+    };
+    let right_carrier = match right_reference {
+        AxisReference::High => right_high,
+        AxisReference::Low => right_low,
+    };
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![
+                    StereoCarrier::Atom(left_carrier),
+                    StereoCarrier::Atom(right_carrier),
+                ],
+                orientation,
+            }),
+            StereoSource::User,
+        ))
+        .expect("axis stereo element");
+    (mol, stereo)
 }
 
 #[test]

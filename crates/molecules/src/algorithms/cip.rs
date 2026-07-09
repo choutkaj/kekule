@@ -57,7 +57,6 @@ pub struct CipSkipped {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CipSkippedReason {
     NotSpecified,
-    UnsupportedAxis,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,9 +212,7 @@ fn assign_cip_element(
         StereoElementKind::DoubleBond(stereo) => {
             assign_double_bond_descriptor(mol, id, stereo, options)
         }
-        StereoElementKind::Axis(_) => {
-            return CipElementAssignment::Skipped(CipSkippedReason::UnsupportedAxis);
-        }
+        StereoElementKind::Axis(stereo) => assign_axis_descriptor(mol, id, stereo, options),
     };
     match assignment {
         Ok(descriptor) => CipElementAssignment::Assigned(descriptor),
@@ -328,6 +325,117 @@ fn assign_double_bond_descriptor(
         DoubleBondOrientation::Together => StereoDescriptor::Z,
         DoubleBondOrientation::Opposite => StereoDescriptor::E,
     })
+}
+
+fn assign_axis_descriptor(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo: &AxisStereo,
+    options: CipAssignmentOptions,
+) -> CipResult<StereoDescriptor> {
+    let bond = mol
+        .bond(stereo.axis)
+        .map_err(|_| CipAssignmentIssue::UnresolvedPriority { element })?;
+    let (left, right) = bond.endpoints();
+    let (left_reference, right_reference) =
+        axis_reference_carriers(mol, element, stereo, left, right)?;
+    let left_top = ranked_carriers(
+        mol,
+        element,
+        left,
+        &axis_endpoint_carriers(mol, left, right, stereo.axis),
+        options,
+    )?
+    .carriers
+    .first()
+    .copied()
+    .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+    let right_top = ranked_carriers(
+        mol,
+        element,
+        right,
+        &axis_endpoint_carriers(mol, right, left, stereo.axis),
+        options,
+    )?
+    .carriers
+    .first()
+    .copied()
+    .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+
+    let mut top_orientation = stereo.orientation;
+    if left_reference != left_top {
+        top_orientation = invert_axis_orientation(top_orientation);
+    }
+    if right_reference != right_top {
+        top_orientation = invert_axis_orientation(top_orientation);
+    }
+    Ok(match top_orientation {
+        AxisOrientation::CounterClockwise => StereoDescriptor::M,
+        AxisOrientation::Clockwise => StereoDescriptor::P,
+    })
+}
+
+fn axis_reference_carriers(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo: &AxisStereo,
+    left: AtomId,
+    right: AtomId,
+) -> CipResult<(StereoCarrier, StereoCarrier)> {
+    if stereo.carriers.len() != 2 {
+        return Err(CipAssignmentIssue::UnresolvedPriority { element });
+    }
+    let mut left_reference = None;
+    let mut right_reference = None;
+    for carrier in &stereo.carriers {
+        let StereoCarrier::Atom(atom) = carrier else {
+            return Err(CipAssignmentIssue::UnresolvedPriority { element });
+        };
+        let adjacent_left = mol.bond_between(left, *atom).ok().flatten().is_some();
+        let adjacent_right = mol.bond_between(right, *atom).ok().flatten().is_some();
+        match (adjacent_left, adjacent_right) {
+            (true, false) if left_reference.is_none() => left_reference = Some(*carrier),
+            (false, true) if right_reference.is_none() => right_reference = Some(*carrier),
+            _ => return Err(CipAssignmentIssue::UnresolvedPriority { element }),
+        }
+    }
+    match (left_reference, right_reference) {
+        (Some(left), Some(right)) => Ok((left, right)),
+        _ => Err(CipAssignmentIssue::UnresolvedPriority { element }),
+    }
+}
+
+fn axis_endpoint_carriers(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    axis: BondId,
+) -> Vec<StereoCarrier> {
+    let mut carriers = Vec::new();
+    if let Ok(incident) = mol.incident_bonds(endpoint) {
+        for (bond_id, bond) in incident {
+            if bond_id != axis {
+                carriers.push(StereoCarrier::Atom(bond.other_atom(endpoint)));
+            }
+        }
+    }
+    if mol.atom(endpoint).ok().map(hydrogen_count).unwrap_or(0) > 0
+        && mol
+            .bond_between(endpoint, other_endpoint)
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        carriers.push(StereoCarrier::ImplicitHydrogen);
+    }
+    carriers
+}
+
+fn invert_axis_orientation(orientation: AxisOrientation) -> AxisOrientation {
+    match orientation {
+        AxisOrientation::Clockwise => AxisOrientation::CounterClockwise,
+        AxisOrientation::CounterClockwise => AxisOrientation::Clockwise,
+    }
 }
 
 fn ranked_carriers(

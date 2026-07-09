@@ -527,7 +527,18 @@ pub(crate) fn cip_bond_descriptors_json(
                     "descriptor": stereo_descriptor_json(descriptor),
                 }))
             }),
-            StereoElementKind::Axis(_) | StereoElementKind::Tetrahedral(_) => None,
+            StereoElementKind::Axis(stereo) => element.descriptor.and_then(|descriptor| {
+                let bond = mol.bond(stereo.axis).ok()?;
+                let (begin, end) = bond.endpoints();
+                let begin_atom_index = *atom_index.get(&begin)?;
+                let end_atom_index = *atom_index.get(&end)?;
+                Some(json!({
+                    "begin_atom_index": begin_atom_index,
+                    "end_atom_index": end_atom_index,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Tetrahedral(_) => None,
         })
         .collect::<Vec<_>>();
     descriptors.sort_by(|left, right| {
@@ -1333,9 +1344,35 @@ pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Val
                 "endpoint_atom_index": endpoint.raw(),
             })
         }
-        StereoPerceptionIssue::UnsupportedAxisElement { element } => json!({
-            "type": "unsupported_axis_element",
+        StereoPerceptionIssue::InvalidAxisCarrierCount {
+            element,
+            axis,
+            carrier_count,
+        } => json!({
+            "type": "invalid_axis_carrier_count",
             "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
+            "carrier_count": carrier_count,
+        }),
+        StereoPerceptionIssue::AxisCarrierIsFocusAtom {
+            element,
+            axis,
+            carrier,
+        } => json!({
+            "type": "axis_carrier_is_focus_atom",
+            "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
+            "carrier_atom_index": carrier.raw(),
+        }),
+        StereoPerceptionIssue::AxisCarrierNotAdjacent {
+            element,
+            axis,
+            carrier,
+        } => json!({
+            "type": "axis_carrier_not_adjacent",
+            "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
+            "carrier": stereo_carrier_json(carrier),
         }),
         StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks { center, mark_count } => json!({
             "type": "ambiguous_tetrahedral_wedge_marks",

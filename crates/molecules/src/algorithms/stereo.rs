@@ -102,8 +102,20 @@ pub enum StereoPerceptionIssue {
         element: StereoElementId,
         endpoint: AtomId,
     },
-    UnsupportedAxisElement {
+    InvalidAxisCarrierCount {
         element: StereoElementId,
+        axis: BondId,
+        carrier_count: usize,
+    },
+    AxisCarrierIsFocusAtom {
+        element: StereoElementId,
+        axis: BondId,
+        carrier: AtomId,
+    },
+    AxisCarrierNotAdjacent {
+        element: StereoElementId,
+        axis: BondId,
+        carrier: StereoCarrier,
     },
     AmbiguousTetrahedralWedgeMarks {
         center: AtomId,
@@ -204,9 +216,7 @@ fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoPerceptionI
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => validate_tetrahedral(mol, id, stereo, issues),
             StereoElementKind::DoubleBond(stereo) => validate_double_bond(mol, id, stereo, issues),
-            StereoElementKind::Axis(_) => {
-                issues.push(StereoPerceptionIssue::UnsupportedAxisElement { element: id })
-            }
+            StereoElementKind::Axis(stereo) => validate_axis(mol, id, stereo, issues),
         }
     }
 }
@@ -372,6 +382,73 @@ fn validate_double_bond_carrier(
             issues.push(
                 StereoPerceptionIssue::DoubleBondHydrogenCarrierUnavailable { element, endpoint },
             );
+        }
+    }
+}
+
+fn validate_axis(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo: &AxisStereo,
+    issues: &mut Vec<StereoPerceptionIssue>,
+) {
+    let Ok(bond) = mol.bond(stereo.axis) else {
+        issues.push(StereoPerceptionIssue::MissingStereoBond {
+            element,
+            bond: stereo.axis,
+        });
+        return;
+    };
+    if stereo.carriers.len() != 2 {
+        issues.push(StereoPerceptionIssue::InvalidAxisCarrierCount {
+            element,
+            axis: stereo.axis,
+            carrier_count: stereo.carriers.len(),
+        });
+    }
+    let (left, right) = bond.endpoints();
+    for carrier in &stereo.carriers {
+        validate_axis_carrier(mol, element, stereo.axis, left, right, *carrier, issues);
+    }
+}
+
+fn validate_axis_carrier(
+    mol: &Molecule,
+    element: StereoElementId,
+    axis: BondId,
+    left: AtomId,
+    right: AtomId,
+    carrier: StereoCarrier,
+    issues: &mut Vec<StereoPerceptionIssue>,
+) {
+    match carrier {
+        StereoCarrier::Atom(atom) => {
+            if atom == left || atom == right {
+                issues.push(StereoPerceptionIssue::AxisCarrierIsFocusAtom {
+                    element,
+                    axis,
+                    carrier: atom,
+                });
+            } else if mol.atom(atom).is_err() {
+                issues.push(StereoPerceptionIssue::MissingStereoAtom { element, atom });
+            } else {
+                let adjacent_left = mol.bond_between(left, atom).ok().flatten().is_some();
+                let adjacent_right = mol.bond_between(right, atom).ok().flatten().is_some();
+                if adjacent_left == adjacent_right {
+                    issues.push(StereoPerceptionIssue::AxisCarrierNotAdjacent {
+                        element,
+                        axis,
+                        carrier,
+                    });
+                }
+            }
+        }
+        StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
+            issues.push(StereoPerceptionIssue::AxisCarrierNotAdjacent {
+                element,
+                axis,
+                carrier,
+            });
         }
     }
 }

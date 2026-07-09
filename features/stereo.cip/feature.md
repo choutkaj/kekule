@@ -24,19 +24,20 @@ descriptors first, and topology or stereo-invalidating mutations clear them
 again.
 
 The implemented contract assigns `R`/`S`/`r`/`s` for specified tetrahedral
-elements and `E`/`Z` for specified double-bond elements when the local stereo
-is valid and carrier priorities are unique under the implemented bounded
-ranking rules, including natural-vs-indicated isotope priority, E/Z descriptor
-priority, descriptor class and pair priority, and RDKit-like mancude fractional
-priority for bond duplicate nodes. Rule helpers also understand stored
+elements, `E`/`Z` for specified double-bond elements, and `M`/`P` for
+specified stored axis elements when the local stereo is valid and carrier
+priorities are unique under the implemented bounded ranking rules, including
+natural-vs-indicated isotope priority, E/Z descriptor priority, descriptor
+class and pair priority, and RDKit-like mancude fractional priority for bond
+duplicate nodes. Rule helpers also understand stored
 `seqCis`/`seqTrans`
 descriptor values for RDKit-like sequence-rule ordering and use a
 parity-stable symmetric S4-style Rule 6 retry for fully equivalent
 tetrahedral carrier sets. Unspecified, unknown, or invalid-cleared elements
-are skipped. Axis elements, invalid local stereo, unresolved priorities, and
-resource-limit exhaustion are reported without assigning lossy descriptors.
-Double-bond elements in rings smaller than eight atoms do not receive E/Z
-descriptors, matching the RDKit-style stereogenic-bond boundary.
+are skipped. Invalid local stereo, unresolved priorities, and resource-limit
+exhaustion are reported without assigning lossy descriptors. Double-bond
+elements in rings smaller than eight atoms do not receive E/Z descriptors,
+matching the RDKit-style stereogenic-bond boundary.
 
 ## Implementation Notes
 
@@ -105,6 +106,14 @@ Double-bond descriptor assignment also applies the small-ring alkene exclusion
 directly from topology, so manually inserted or cache-stale local double-bond
 elements cannot receive lossy E/Z labels.
 
+Stored axis descriptor assignment treats the axis bond endpoints as the two
+ranking roots. The stored axis carriers are local reference carriers, one
+adjacent to each axis endpoint; assignment ranks all carriers at each endpoint
+and inverts the stored clockwise/counterclockwise handedness whenever the
+stored reference carrier is not the highest-priority carrier at that endpoint.
+Counterclockwise top-anchor handedness maps to `M`, and clockwise top-anchor
+handedness maps to `P`, matching RDKit's atropisomeric bond convention.
+
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
 stereo or when the implemented ranking rules cannot distinguish carriers.
@@ -122,7 +131,8 @@ natural-vs-indicated isotope priority, Rule 1b duplicate-node ordering,
 negative-fraction duplicate expansion, implicit lone-pair carriers, unsupported
 double-bond stereo exclusions including the ring-size boundary, unresolved
 equivalent ligands, bounded resource failures, and descriptor invalidation
-after mutation. Targeted Rule 6
+after mutation. Axis regressions cover stored local reference carriers,
+endpoint priority flips, and `M`/`P` descriptor assignment. Targeted Rule 6
 regressions cover both parity-stable and parity-unstable symmetric S4-style
 reference retries. Auxiliary occurrence-graph regressions cover coupled
 pseudoasymmetric cyclobutane, fused-ring, spiro-fused, and absolute-neighbor
@@ -152,10 +162,11 @@ descriptor-bearing coverage.
 Full exact machine-oriented CIP coverage remains out of scope for this version:
 perception or assignment of sequence cis/trans descriptors, kekulization of
 aromatic-only inputs for mancude parity, remaining exact Rule 6 edge cases
-beyond the parity-stable tetrahedral fallback, axial `M`/`P`,
-non-tetrahedral geometries, enhanced stereo relation semantics, parity beyond
-the current descriptor-bearing validation corpora, isomeric SMILES emission,
-and stereo enumeration.
+beyond the parity-stable tetrahedral fallback, axis perception from
+atropisomeric wedges or coordinates, non-tetrahedral geometries beyond stored
+axis descriptors, enhanced stereo relation semantics, parity beyond the
+current descriptor-bearing validation corpora, isomeric SMILES emission, and
+stereo enumeration.
 
 ## Revision Notes
 
@@ -220,3 +231,6 @@ and stereo enumeration.
 - v24: Add PL-REX ligand SDF packs to the CIP validation contract and compare
   every descriptor-bearing SDF record against RDKit-backed atom and bond
   descriptor maps.
+- v25: Assign `M`/`P` CIP descriptors for structurally valid stored axis
+  elements by ranking endpoint anchors and applying RDKit-like atropisomeric
+  clockwise/counterclockwise handedness.

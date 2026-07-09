@@ -29,6 +29,8 @@ or manually curated external-reference golden data.
 - Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, synchronizes overall `validated`, and regenerates the dashboard.
 - Supports corpus pack member checks using PubChem defaults or corpus-declared SDF member properties and SMILES title prefixes.
 - Preserves all records in SDF pack fixtures for stereo implementation comparisons.
+- Emits structured semantic JSON for stored axis stereo validation issues and
+  includes assigned axis `M`/`P` descriptors in bond descriptor maps.
 
 ## Implementation Notes
 
@@ -82,3 +84,5 @@ or manually curated external-reference golden data.
 - v14: Preserve every record from SDF pack fixtures when running stereo
   implementation comparisons, enabling descriptor-bearing ligand packs such as
   PL-REX to validate CIP behavior.
+- v15: Add semantic output support for stored-axis validation issues and axis
+  bond CIP descriptors.
