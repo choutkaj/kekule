@@ -3257,6 +3257,81 @@ fn isomeric_smiles_writes_directional_double_bond_elements() {
 }
 
 #[test]
+fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
+    for (left_carrier, right_carrier, stored_orientation, expected_orientation) in [
+        (
+            StereoCarrier::ImplicitHydrogen,
+            StereoCarrier::ImplicitHydrogen,
+            DoubleBondOrientation::Together,
+            DoubleBondOrientation::Together,
+        ),
+        (
+            StereoCarrier::ImplicitHydrogen,
+            StereoCarrier::Atom(AtomId::new(3)),
+            DoubleBondOrientation::Together,
+            DoubleBondOrientation::Opposite,
+        ),
+    ] {
+        let mut molecule = SmallMolecule::default();
+        let mut left_atom = carbon();
+        left_atom.implicit_hydrogens = Some(1);
+        let left = molecule.graph_mut().add_atom(left_atom);
+        let mut right_atom = carbon();
+        right_atom.implicit_hydrogens = Some(1);
+        let right = molecule.graph_mut().add_atom(right_atom);
+        let fluorine = molecule.graph_mut().add_atom(element_atom("F"));
+        let chlorine = molecule.graph_mut().add_atom(element_atom("Cl"));
+        molecule
+            .graph_mut()
+            .add_bond(left, fluorine, BondOrder::Single)
+            .expect("left carrier bond");
+        let double_bond = molecule
+            .graph_mut()
+            .add_bond(left, right, BondOrder::Double)
+            .expect("double bond");
+        molecule
+            .graph_mut()
+            .add_bond(right, chlorine, BondOrder::Single)
+            .expect("right carrier bond");
+        molecule
+            .graph_mut()
+            .add_stereo_element(StereoElement::specified(
+                StereoElementKind::DoubleBond(DoubleBondStereo {
+                    bond: double_bond,
+                    left,
+                    right,
+                    left_carrier,
+                    right_carrier,
+                    orientation: stored_orientation,
+                }),
+                StereoSource::User,
+            ))
+            .expect("double-bond stereo");
+
+        let written =
+            smiles_api::write_isomeric(&molecule).expect("implicit-carrier stereo should write");
+        assert!(
+            written.contains('/') || written.contains('\\'),
+            "isomeric output should contain directional marks: {written}"
+        );
+
+        let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+            .expect("isomeric alkene output should parse");
+        perception_api::sanitize(&mut reparsed).expect("isomeric alkene output should sanitize");
+        let stereo = reparsed
+            .graph()
+            .stereo_elements()
+            .filter_map(|(_, element)| match &element.kind {
+                StereoElementKind::DoubleBond(stereo) => Some(stereo),
+                StereoElementKind::Tetrahedral(_) | StereoElementKind::Axis(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(stereo.len(), 1);
+        assert_eq!(stereo[0].orientation, expected_orientation);
+    }
+}
+
+#[test]
 fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
     let mut molecule = SmallMolecule::default();
     let atoms = (0..16)

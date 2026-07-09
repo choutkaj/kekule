@@ -1176,19 +1176,83 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
                 }
             }
             StereoElementKind::DoubleBond(stereo) => {
-                if !matches!(stereo.left_carrier, StereoCarrier::Atom(_))
-                    || !matches!(stereo.right_carrier, StereoCarrier::Atom(_))
-                {
-                    return Err(MolWriteError::new(
-                        "isomeric SMILES writer cannot encode implicit-carrier double-bond stereochemistry yet",
-                    ));
-                }
+                validate_isomeric_double_bond_endpoint(
+                    mol,
+                    stereo.left,
+                    stereo.right,
+                    stereo.bond,
+                    stereo.left_carrier,
+                )?;
+                validate_isomeric_double_bond_endpoint(
+                    mol,
+                    stereo.right,
+                    stereo.left,
+                    stereo.bond,
+                    stereo.right_carrier,
+                )?;
             }
             StereoElementKind::Axis(_) => {
                 return Err(MolWriteError::new(
                     "isomeric SMILES writer cannot encode axial stereochemistry yet",
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_isomeric_double_bond_endpoint(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    carrier: StereoCarrier,
+) -> std::result::Result<(), MolWriteError> {
+    match carrier {
+        StereoCarrier::Atom(atom) => {
+            let bond = mol
+                .bond_between(endpoint, atom)
+                .map_err(|error| MolWriteError::new(error.to_string()))?
+                .ok_or_else(|| MolWriteError::new("double-bond stereo carrier is not bonded"))?;
+            let order = mol
+                .bond(bond)
+                .map_err(|error| MolWriteError::new(error.to_string()))?
+                .order;
+            if order != BondOrder::Single || atom == other_endpoint {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode invalid double-bond stereo carrier",
+                ));
+            }
+        }
+        StereoCarrier::ImplicitHydrogen => {
+            let atom = mol
+                .atom(endpoint)
+                .map_err(|error| MolWriteError::new(error.to_string()))?;
+            let hydrogens = atom
+                .explicit_hydrogens
+                .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+            if hydrogens == 0 {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode unavailable implicit double-bond hydrogen carrier",
+                ));
+            }
+            if implicit_double_bond_printable_carrier_bond(
+                mol,
+                endpoint,
+                other_endpoint,
+                focus_bond,
+            )?
+            .is_none()
+            {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode implicit double-bond carrier without a unique explicit substituent bond",
+                ));
+            }
+        }
+        StereoCarrier::ImplicitLonePair => {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot encode lone-pair double-bond carrier",
+            ));
         }
     }
     Ok(())
@@ -1678,41 +1742,123 @@ fn add_double_bond_directional_constraints(
     stereo: &DoubleBondStereo,
     directional: &mut BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
 ) -> std::result::Result<(), MolWriteError> {
-    let (StereoCarrier::Atom(left_carrier), StereoCarrier::Atom(right_carrier)) =
-        (stereo.left_carrier, stereo.right_carrier)
-    else {
-        return Err(MolWriteError::new(
-            "isomeric SMILES writer cannot encode implicit-carrier double-bond stereochemistry yet",
-        ));
-    };
-    let left_bond = mol
-        .bond_between(stereo.left, left_carrier)
-        .map_err(|error| MolWriteError::new(error.to_string()))?
-        .ok_or_else(|| MolWriteError::new("double-bond stereo left carrier is not bonded"))?;
-    let right_bond = mol
-        .bond_between(stereo.right, right_carrier)
-        .map_err(|error| MolWriteError::new(error.to_string()))?
-        .ok_or_else(|| MolWriteError::new("double-bond stereo right carrier is not bonded"))?;
+    let left_carrier_bond = double_bond_printable_carrier_bond(
+        mol,
+        stereo.left,
+        stereo.right,
+        stereo.bond,
+        stereo.left_carrier,
+    )?;
+    let right_carrier_bond = double_bond_printable_carrier_bond(
+        mol,
+        stereo.right,
+        stereo.left,
+        stereo.bond,
+        stereo.right_carrier,
+    )?;
     let left_direction = StereoBondMarkKind::DirectionalUp;
     let right_direction = match stereo.orientation {
         DoubleBondOrientation::Together => left_direction,
         DoubleBondOrientation::Opposite => invert_directional_mark(left_direction),
     };
     directional
-        .entry(left_bond)
+        .entry(left_carrier_bond.bond)
         .or_default()
         .push(DirectionalSmilesConstraint {
             endpoint: stereo.left,
-            direction_at_endpoint: left_direction,
+            direction_at_endpoint: if left_carrier_bond.invert_direction {
+                invert_directional_mark(left_direction)
+            } else {
+                left_direction
+            },
         });
     directional
-        .entry(right_bond)
+        .entry(right_carrier_bond.bond)
         .or_default()
         .push(DirectionalSmilesConstraint {
             endpoint: stereo.right,
-            direction_at_endpoint: right_direction,
+            direction_at_endpoint: if right_carrier_bond.invert_direction {
+                invert_directional_mark(right_direction)
+            } else {
+                right_direction
+            },
         });
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DoubleBondPrintableCarrierBond {
+    bond: BondId,
+    invert_direction: bool,
+}
+
+fn double_bond_printable_carrier_bond(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    carrier: StereoCarrier,
+) -> std::result::Result<DoubleBondPrintableCarrierBond, MolWriteError> {
+    match carrier {
+        StereoCarrier::Atom(atom) => {
+            let bond = mol
+                .bond_between(endpoint, atom)
+                .map_err(|error| MolWriteError::new(error.to_string()))?
+                .ok_or_else(|| MolWriteError::new("double-bond stereo carrier is not bonded"))?;
+            Ok(DoubleBondPrintableCarrierBond {
+                bond,
+                invert_direction: false,
+            })
+        }
+        StereoCarrier::ImplicitHydrogen => {
+            let Some(bond) = implicit_double_bond_printable_carrier_bond(
+                mol,
+                endpoint,
+                other_endpoint,
+                focus_bond,
+            )?
+            else {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode implicit double-bond carrier without a unique explicit substituent bond",
+                ));
+            };
+            Ok(DoubleBondPrintableCarrierBond {
+                bond,
+                invert_direction: true,
+            })
+        }
+        StereoCarrier::ImplicitLonePair => Err(MolWriteError::new(
+            "isomeric SMILES writer cannot encode lone-pair double-bond carrier",
+        )),
+    }
+}
+
+fn implicit_double_bond_printable_carrier_bond(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+) -> std::result::Result<Option<BondId>, MolWriteError> {
+    let mut candidates = Vec::new();
+    for (bond_id, bond) in mol
+        .incident_bonds(endpoint)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+    {
+        if bond_id == focus_bond || bond.order != BondOrder::Single {
+            continue;
+        }
+        let other = bond.other_atom(endpoint);
+        if other != other_endpoint {
+            candidates.push(bond_id);
+        }
+    }
+    match candidates.as_slice() {
+        [bond] => Ok(Some(*bond)),
+        [] => Ok(None),
+        _ => Err(MolWriteError::new(
+            "isomeric SMILES writer cannot encode implicit double-bond carrier with multiple explicit substituent bonds",
+        )),
+    }
 }
 
 fn directional_mark_for_emitted_bond(
