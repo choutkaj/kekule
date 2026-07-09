@@ -46,6 +46,12 @@ and assign local stereo elements from supported source marks and coordinates.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
   local stereo center and the marked carrier is placed first in carrier order.
+- Molfile wedge up/down marks that cannot support tetrahedral stereo can
+  conservatively create specified atropisomeric axis elements when the marked
+  bond is adjacent to a single-bond axis whose endpoints are ring atoms with
+  two explicit atom carriers each. The marked bond supplies one axis reference
+  carrier, 2D coordinates select the opposite-side reference carrier on the
+  other endpoint, and wedge up/down maps to the stored local axis handedness.
 - Coordinate-derived assignment uses the first conformer conservatively. It
   assigns tetrahedral stereo only when all four carriers are explicit atoms
   with nondegenerate 3D coordinates, and assigns double-bond stereo only when
@@ -59,7 +65,8 @@ existing local stereo elements against current topology and hydrogen semantics,
 including supported implicit lone-pair tetrahedral carriers and structurally
 valid stored axis carriers, assembles SMILES-style paired directional bond
 marks with endpoint-relative normalization, and assembles supported Molfile
-tetrahedral wedge/either source marks.
+tetrahedral wedge/either source marks plus a conservative Molfile
+atropisomeric wedge subset.
 Coordinate-derived assignment is local and conservative; exact CIP descriptors
 belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
 shortest-path check around the candidate bond so direct perception and
@@ -78,6 +85,7 @@ run over whole `MacroMolecule` structures by default.
   directional double-bond assembly, unsupported double-bond exclusions including
   the small-ring alkene boundary, Molfile wedge/either assembly, unsupported
   source-mark diagnostics, structural validation for stored axis elements,
+  Molfile atropisomeric axis assembly from an official RDKit fixture,
   coordinate-derived tetrahedral and double-bond assignment, sanitizer
   integration, transactional rollback, and preservation of explicit unknown
   versus absent stereo.
@@ -92,10 +100,10 @@ run over whole `MacroMolecule` structures by default.
 
 ## Out Of Scope
 
-Exact CIP descriptors, axis candidate perception or coordinate/wedge
-assignment, isomeric SMILES writing, enhanced stereo serialization,
-implicit-hydrogen coordinate reconstruction, stereo enumeration, and reaction
-stereo transfer.
+Exact CIP descriptors, broad axis candidate perception, coordinate-only axis
+assignment, CXSMILES atropisomeric syntax, isomeric SMILES writing, enhanced
+stereo serialization, implicit-hydrogen coordinate reconstruction, stereo
+enumeration, and reaction stereo transfer.
 
 ## Revision Notes
 
@@ -132,3 +140,6 @@ stereo transfer.
 - v12: Validate stored axis elements structurally instead of treating every
   axis element as unsupported, enabling the CIP layer to assign descriptors for
   explicitly stored axes.
+- v13: Assemble a conservative Molfile atropisomeric wedge subset into stored
+  axis elements using ring-atom axis eligibility and 2D opposite-side carrier
+  selection.

@@ -111,6 +111,32 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_molfile_atropisomeric_axis() {
+    let mut molecule = molfile::read_v2000_str(rdkit_rp6306_atrop_molblock())
+        .expect("RDKit atropisomer fixture parses");
+    perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: StereoElementId::new(0),
+            descriptor: StereoDescriptor::P,
+        }]
+    );
+    assert_eq!(
+        molecule
+            .graph()
+            .stereo_element(StereoElementId::new(0))
+            .expect("axis stereo element")
+            .descriptor,
+        Some(StereoDescriptor::P)
+    );
+}
+
+#[test]
 fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule =
         smiles_api::read_str("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");

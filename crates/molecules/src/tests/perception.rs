@@ -1192,6 +1192,36 @@ fn stereo_validation_accepts_structural_axis_elements() {
     );
 }
 
+#[test]
+fn stereo_perception_assembles_molfile_atropisomeric_axis() {
+    let mut molecule = molfile::read_v2000_str(rdkit_rp6306_atrop_molblock())
+        .expect("RDKit atropisomer fixture parses");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created axis element");
+    assert_eq!(element.source, StereoSource::MolfileV2000);
+    match &element.kind {
+        StereoElementKind::Axis(stereo) => {
+            assert_eq!(stereo.axis, BondId::new(3));
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(6)),
+                    StereoCarrier::Atom(AtomId::new(11)),
+                ]
+            );
+            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+        }
+        other => panic!("expected axis stereo, found {other:?}"),
+    }
+}
+
 fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());

@@ -101,6 +101,10 @@ pub(super) fn assert_all_stale(mol: &Molecule) {
     assert_eq!(mol.perception().stereo, ComputedState::Stale);
 }
 
+pub(super) fn rdkit_rp6306_atrop_molblock() -> &'static str {
+    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop1.mol")
+}
+
 mod bio;
 mod canonical;
 mod chemistry;
