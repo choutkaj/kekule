@@ -62,12 +62,14 @@ not atom/bond payload flags.
 - Unit tests cover stereo element, group, and source bond mark CRUD; invalid
   references; mutation invalidation; topology-aware pruning; and parser/writer
   adapter behavior.
-- Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity
+- Smoke, PubChem 100, PubChem 1k, PubChem 100k, Enamine diversity, and PL-REX
   validation record semantic stereo JSON for externally supplied isomeric
   SMILES fixtures, including `stereo_elements`, `stereo_groups`,
-  `stereo_bond_marks`, source marks, and specifiedness. The broader PubChem
-  and Enamine tiers are implementation-golden semantic regression gates for
-  representation stability, while exact RDKit descriptor parity belongs to
+  `stereo_bond_marks`, source marks, and specifiedness. PL-REX adds
+  coordinate-bearing ligand SDF packs so Molfile wedge/either and source-mark
+  preservation stay covered outside SMILES-only fixtures. The broader PubChem,
+  Enamine, and PL-REX tiers are implementation-golden semantic regression gates
+  for representation stability, while exact RDKit descriptor parity belongs to
   `stereo.cip`.
 
 ## Out Of Scope
@@ -94,3 +96,5 @@ not atom/bond payload flags.
   stereo representation over externally supplied isomeric SMILES.
 - v8: Add PubChem 100k and Enamine diversity semantic regression requirements
   for broader drug-like stereo representation preservation coverage.
+- v9: Add PL-REX ligand SDF packs to the representation validation contract for
+  coordinate- and Molfile-stereo source-mark regression coverage.

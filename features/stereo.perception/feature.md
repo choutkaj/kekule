@@ -118,14 +118,17 @@ run over whole `MacroMolecule` structures by default.
   coordinate-derived tetrahedral and double-bond assignment, sanitizer
   integration, transactional rollback, and preservation of explicit unknown
   versus absent stereo.
-- Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity
+- Smoke, PubChem 100, PubChem 1k, PubChem 100k, Enamine diversity, and PL-REX
   validation record semantic perception JSON for externally pinned isomeric
   SMILES fixtures covering absent stereo, stored tetrahedral stereo, and
-  directional double-bond source-mark assembly. The broader PubChem and
-  Enamine tiers are implementation-golden semantic regression gates for
-  perception stability, while exact RDKit descriptor parity belongs to
-  `stereo.cip`. Broad semantic validation records sanitize failures per record
-  when unrelated unsupported valence chemistry prevents stereo perception.
+  directional double-bond source-mark assembly. PL-REX adds coordinate-bearing
+  ligand SDF packs for Molfile wedge/either, conformer-aware tetrahedral
+  orientation, and supported atropisomeric source-mark assembly coverage. The
+  broader PubChem, Enamine, and PL-REX tiers are implementation-golden semantic
+  regression gates for perception stability, while exact RDKit descriptor
+  parity belongs to `stereo.cip`. Broad semantic validation records sanitize
+  failures per record when unrelated unsupported valence chemistry prevents
+  stereo perception.
 
 ## Out Of Scope
 
@@ -185,3 +188,6 @@ stereo transfer.
 - v17: Allow ring-internal macrocyclic Molfile atrop axes when no non-ring
   candidate is available from the same source mark, with official RDKit
   macrocycle regressions.
+- v18: Add PL-REX ligand SDF packs to the perception validation contract for
+  coordinate-bearing Molfile stereo and source-mark assembly regression
+  coverage.
