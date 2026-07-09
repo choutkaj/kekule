@@ -625,11 +625,7 @@ fn tetrahedral_final_tie_is_nonstereogenic(
     stereo: &TetrahedralStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<bool> {
-    let atom_count = mol.atom_ids().count();
-    // A final tie is only semantic when the ligand trees cannot be depth-truncated.
-    if options.max_depth < atom_count {
-        return Ok(false);
-    }
+    let options = complete_final_tie_options(mol, stereo.center, options);
     let signatures = carrier_signatures(
         mol,
         element,
@@ -719,10 +715,7 @@ fn endpoint_final_tie_is_nonstereogenic(
     if carriers.len() < 2 {
         return Ok(false);
     }
-    let atom_count = mol.atom_ids().count();
-    if options.max_depth < atom_count {
-        return Ok(false);
-    }
+    let options = complete_final_tie_options(mol, root, options);
     let signatures = carrier_signatures(
         mol,
         element,
@@ -741,6 +734,37 @@ fn endpoint_final_tie_is_nonstereogenic(
         }
         Err(issue) => Err(issue),
     }
+}
+
+fn complete_final_tie_options(
+    mol: &Molecule,
+    root: AtomId,
+    mut options: CipAssignmentOptions,
+) -> CipAssignmentOptions {
+    options.max_depth = options.max_depth.max(connected_atom_count(mol, root));
+    options
+}
+
+fn connected_atom_count(mol: &Molecule, root: AtomId) -> usize {
+    if mol.atom(root).is_err() {
+        return 0;
+    }
+    let mut seen = HashSet::new();
+    let mut queue = VecDeque::from([root]);
+    while let Some(atom) = queue.pop_front() {
+        if !seen.insert(atom) {
+            continue;
+        }
+        if let Ok(incident) = mol.incident_bonds(atom) {
+            for (_, bond) in incident {
+                let neighbor = bond.other_atom(atom);
+                if !seen.contains(&neighbor) {
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+    }
+    seen.len()
 }
 
 fn carrier_signatures(

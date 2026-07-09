@@ -121,11 +121,11 @@ cache-stale local double-bond elements are reported as non-stereogenic skips
 instead of unresolved priority failures and cannot receive lossy E/Z or
 sequence labels. After staged descriptor propagation and deferred
 tetrahedral Rule 6 retries stall, tetrahedral centers are likewise reported as
-non-stereogenic skips when the configured expansion depth covers the complete
-graph and the final carrier signatures remain tied; truncated bounded
-comparisons continue to report unresolved priority instead of pretending the
-center is non-stereogenic. The same terminal complete-comparison rule applies
-to double-bond and stored-axis endpoint rankings, where a unique
+non-stereogenic skips when connected-component-complete final carrier
+signatures remain tied; bounded node-budget failures continue to report
+resource exhaustion instead of pretending the center is non-stereogenic. The
+same terminal complete-comparison rule applies to double-bond and stored-axis
+endpoint rankings, where a unique
 highest-priority carrier is required on both endpoints before assigning
 `E`/`Z`, `seqCis`/`seqTrans`, or `M`/`P`/`m`/`p`.
 
@@ -180,7 +180,9 @@ double-bond stereo exclusions including the ring-size boundary, explicit
 non-stereogenic skip reporting for stored small-ring double-bond elements,
 equivalent tetrahedral ligands, equivalent double-bond endpoint ligands,
 equivalent axis endpoint ligands, bounded resource failures, and descriptor
-invalidation after mutation. Axis regressions cover stored local reference carriers,
+invalidation after mutation. Equivalent-ligand regressions include a large
+connected component whose complete comparison is deeper than the default
+descriptor assignment depth. Axis regressions cover stored local reference carriers,
 endpoint priority flips, `M`/`P` descriptor assignment, and descriptor
 assignment from opt-in conservative 3D coordinate-derived perception. Targeted
 Rule 6 regressions cover both parity-stable and parity-unstable symmetric S4-style
@@ -334,3 +336,6 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v37: Apply the parity-stable successful-reference guard to Rule 6
   two-partition tetrahedral retries so assignments cannot depend on a single
   odd-permutation reference choice.
+- v38: Retry final equivalent-ligand and endpoint tie classification at
+  connected-component depth before reporting unresolved priority, while still
+  preserving node-budget resource failures.

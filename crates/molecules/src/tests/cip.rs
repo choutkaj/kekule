@@ -1709,6 +1709,62 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
 }
 
 #[test]
+fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon());
+    let fluorine = mol.add_atom(element_atom("F"));
+    let chlorine = mol.add_atom(element_atom("Cl"));
+    let chain_a = mol.add_atom(carbon());
+    let chain_b = mol.add_atom(carbon());
+    for carrier in [fluorine, chlorine, chain_a, chain_b] {
+        mol.add_bond(center, carrier, BondOrder::Single)
+            .expect("carrier bond");
+    }
+    for chain in [chain_a, chain_b] {
+        let mut previous = chain;
+        for _ in 1..18 {
+            let next = mol.add_atom(carbon());
+            mol.add_bond(previous, next, BondOrder::Single)
+                .expect("chain bond");
+            previous = next;
+        }
+    }
+    assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
+
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(fluorine),
+                    StereoCarrier::Atom(chlorine),
+                    StereoCarrier::Atom(chain_a),
+                    StereoCarrier::Atom(chain_b),
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(stereo).expect("element").descriptor,
+        None
+    );
+}
+
+#[test]
 fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());
