@@ -919,6 +919,85 @@ fn cip_bootstraps_coupled_pseudoasymmetric_tetrahedral_centers() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_para_stereochemistry_with_directional_double_bonds() {
+    for (smiles, expected) in [
+        (
+            r"C\C=C/[C@@H](\C=C\O)[C@H](C)[C@H](\C=C/C)\C=C\O",
+            vec![
+                (3, StereoDescriptor::R),
+                (7, StereoDescriptor::LowerR),
+                (9, StereoDescriptor::S),
+            ],
+        ),
+        (
+            r"C\C=C/[C@@H](\C=C\C)[C@H](C)[C@H](\C=C/C)\C=C\C",
+            vec![
+                (3, StereoDescriptor::R),
+                (7, StereoDescriptor::LowerR),
+                (9, StereoDescriptor::S),
+            ],
+        ),
+    ] {
+        let mut molecule =
+            smiles_api::read_str(smiles).expect("RDKit para-stereochemistry scaffold parses");
+        perception_api::sanitize(&mut molecule)
+            .expect("RDKit para-stereochemistry scaffold sanitizes");
+
+        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(tetrahedral_descriptor_map(molecule.graph()), expected);
+    }
+}
+
+#[test]
+fn cip_matches_rdkit_for_auxiliary_stereochemistry_beyond_initial_expansion() {
+    let mut molecule = smiles_api::read_str("CC[C@H](C)CCCCC[C@H]1CC[C@@H](C)CC1")
+        .expect("RDKit auxiliary para-stereochemistry scaffold parses");
+    perception_api::sanitize(&mut molecule)
+        .expect("RDKit auxiliary para-stereochemistry scaffold sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        tetrahedral_descriptor_map(molecule.graph()),
+        vec![
+            (2, StereoDescriptor::S),
+            (9, StereoDescriptor::LowerS),
+            (12, StereoDescriptor::S)
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_cyclohexane_pseudo_symmetry_examples() {
+    for (smiles, expected) in [
+        (
+            "OC(=O)[C@H]1CC[C@@H](CC1)O[C@@H](F)Cl",
+            vec![
+                (3, StereoDescriptor::S),
+                (6, StereoDescriptor::LowerR),
+                (10, StereoDescriptor::S),
+            ],
+        ),
+        (
+            "OC(=O)[C@H]1CC[C@@H](CC1)O[CH](Cl)Cl",
+            vec![(3, StereoDescriptor::LowerR), (6, StereoDescriptor::LowerR)],
+        ),
+    ] {
+        let mut molecule =
+            smiles_api::read_str(smiles).expect("RDKit pseudo-symmetry scaffold parses");
+        perception_api::sanitize(&mut molecule).expect("RDKit pseudo-symmetry scaffold sanitizes");
+
+        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(tetrahedral_descriptor_map(molecule.graph()), expected);
+    }
+}
+
+#[test]
 fn cip_preserves_absolute_centers_next_to_pseudoasymmetric_ring_center() {
     let mut molecule = smiles_api::read_str("CCOC=1C=CC(=CC1OCC)C(C)N[C@H]2CC[C@]3(C[C@H]3C#N)CC2")
         .expect("mixed absolute and pseudoasymmetric scaffold parses");
@@ -1583,4 +1662,15 @@ fn cip_descriptors_are_cleared_by_stereo_invalidating_mutations() {
             .descriptor,
         None
     );
+}
+
+fn tetrahedral_descriptor_map(mol: &Molecule) -> Vec<(u32, StereoDescriptor)> {
+    mol.stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect()
 }
