@@ -3204,7 +3204,7 @@ fn isomeric_smiles_rejects_unencoded_stereo_layers() {
     let directional = smiles_api::read_str_with_options("C/C=C\\C", SmilesParseOptions)
         .expect("directional bond markers should parse");
     assert!(smiles_api::write_isomeric(&directional)
-        .expect_err("source bond marks should be rejected until slash output is implemented")
+        .expect_err("unperceived source bond marks should be rejected")
         .message
         .contains("source bond marks"));
 
@@ -3224,6 +3224,36 @@ fn isomeric_smiles_rejects_unencoded_stereo_layers() {
         .expect_err("unknown stereo should be rejected")
         .message
         .contains("unknown stereo"));
+}
+
+#[test]
+fn isomeric_smiles_writes_directional_double_bond_elements() {
+    for (input, expected_output, expected_orientation) in [
+        ("C/C=C\\C", "C\\C=C/C", DoubleBondOrientation::Together),
+        ("C/C=C/C", "C\\C=C\\C", DoubleBondOrientation::Opposite),
+    ] {
+        let mut molecule = smiles_api::read_str_with_options(input, SmilesParseOptions)
+            .expect("directional alkene should parse");
+        perception_api::sanitize(&mut molecule).expect("directional alkene should sanitize");
+
+        let written =
+            smiles_api::write_isomeric(&molecule).expect("double-bond stereo should write");
+
+        assert_eq!(written, expected_output);
+        let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+            .expect("isomeric alkene output should parse");
+        perception_api::sanitize(&mut reparsed).expect("isomeric alkene output should sanitize");
+        let stereo = reparsed
+            .graph()
+            .stereo_elements()
+            .filter_map(|(_, element)| match &element.kind {
+                StereoElementKind::DoubleBond(stereo) => Some(stereo),
+                StereoElementKind::Tetrahedral(_) | StereoElementKind::Axis(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(stereo.len(), 1);
+        assert_eq!(stereo[0].orientation, expected_orientation);
+    }
 }
 
 #[test]
