@@ -528,6 +528,54 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
 }
 
 #[test]
+fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
+    let mut mol = Molecule::new();
+    let atoms = (0..6).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    let double_bond = mol
+        .add_bond(atoms[0], atoms[1], BondOrder::Double)
+        .expect("double bond");
+    for (left, right) in [
+        (atoms[1], atoms[2]),
+        (atoms[2], atoms[3]),
+        (atoms[3], atoms[4]),
+        (atoms[4], atoms[5]),
+        (atoms[5], atoms[0]),
+    ] {
+        mol.add_bond(left, right, BondOrder::Single)
+            .expect("ring bond");
+    }
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond: double_bond,
+                left: atoms[0],
+                right: atoms[1],
+                left_carrier: StereoCarrier::Atom(atoms[5]),
+                right_carrier: StereoCarrier::Atom(atoms[2]),
+                orientation: DoubleBondOrientation::Together,
+            }),
+            StereoSource::User,
+        ))
+        .expect("double-bond stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(stereo).expect("element").descriptor,
+        None
+    );
+}
+
+#[test]
 fn cip_skips_endocyclic_kekule_bond_stereo_after_ring_perception() {
     let mut molecule =
         smiles_api::read_str("CC\\1=C(/C/2=C/C3=C(C(=C(N3)/C=C\\4/[C@@](C(=C(N4)/C=C\\5/[C@@](C(=C(N5)/C=C1\\N2)O)(C)CC(=O)O)O)(C)CC(=O)O)C)CCC(=O)O)CCC(=O)O")

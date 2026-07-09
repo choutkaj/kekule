@@ -57,6 +57,7 @@ pub struct CipSkipped {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CipSkippedReason {
     NotSpecified,
+    NotStereogenic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,9 +211,10 @@ fn assign_cip_element(
         StereoElementKind::Tetrahedral(stereo) => {
             assign_tetrahedral_descriptor(mol, id, stereo, options)
         }
-        StereoElementKind::DoubleBond(stereo) => {
-            assign_double_bond_descriptor(mol, id, stereo, options)
-        }
+        StereoElementKind::DoubleBond(stereo) => match double_bond_cip_stereogenic(mol, stereo) {
+            Some(false) => return CipElementAssignment::Skipped(CipSkippedReason::NotStereogenic),
+            Some(true) | None => assign_double_bond_descriptor(mol, id, stereo, options),
+        },
         StereoElementKind::Axis(stereo) => assign_axis_descriptor(mol, id, stereo, options),
     };
     match assignment {
@@ -220,6 +222,47 @@ fn assign_cip_element(
         Err(CipAssignmentIssue::UnresolvedPriority { .. }) => CipElementAssignment::Deferred,
         Err(issue) => CipElementAssignment::Issue(issue),
     }
+}
+
+fn double_bond_cip_stereogenic(mol: &Molecule, stereo: &DoubleBondStereo) -> Option<bool> {
+    let bond = mol.bond(stereo.bond).ok()?;
+    if bond.order != BondOrder::Double {
+        return None;
+    }
+    if bond.aromatic || double_bond_between_aromatic_atoms(mol, bond) {
+        return Some(false);
+    }
+    if bond_in_ring_smaller_than(mol, stereo.bond, 8) {
+        return Some(false);
+    }
+    if double_bond_is_in_ring(mol, stereo.bond) && double_bond_has_noncarbon_endpoint(mol, bond) {
+        return Some(false);
+    }
+    Some(true)
+}
+
+fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
+    mol.atom(bond.a())
+        .map(|atom| atom.aromatic)
+        .unwrap_or(false)
+        && mol
+            .atom(bond.b())
+            .map(|atom| atom.aromatic)
+            .unwrap_or(false)
+}
+
+fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
+    mol.ring_membership()
+        .map(|membership| membership.bond_in_ring(bond))
+        .unwrap_or(false)
+}
+
+fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
+    [bond.a(), bond.b()].into_iter().any(|atom_id| {
+        mol.atom(atom_id)
+            .map(|atom| atom.element.symbol() != "C")
+            .unwrap_or(true)
+    })
 }
 
 fn clear_stereo_descriptors(mol: &mut Molecule) {

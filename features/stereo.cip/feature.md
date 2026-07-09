@@ -33,8 +33,9 @@ duplicate nodes. Rule helpers also understand stored
 `seqCis`/`seqTrans`
 descriptor values for RDKit-like sequence-rule ordering and use a
 parity-stable symmetric S4-style Rule 6 retry for fully equivalent
-tetrahedral carrier sets. Unspecified, unknown, or invalid-cleared elements
-are skipped. Invalid local stereo, unresolved priorities, and resource-limit
+tetrahedral carrier sets. Unspecified, unknown, invalid-cleared, or
+topologically non-stereogenic elements are skipped. Invalid local stereo,
+unresolved priorities, and resource-limit
 exhaustion are reported without assigning lossy descriptors. Double-bond
 elements in rings smaller than eight atoms do not receive E/Z descriptors,
 matching the RDKit-style stereogenic-bond boundary.
@@ -109,8 +110,9 @@ carrier ordering is pseudoasymmetric, the corresponding sequence descriptor
 `seqCis` or `seqTrans` is assigned instead, matching RDKit's sp2-bond CIP
 labeling convention. Double-bond descriptor assignment also applies the
 small-ring alkene exclusion directly from topology, so manually inserted or
-cache-stale local double-bond elements cannot receive lossy E/Z or sequence
-labels.
+cache-stale local double-bond elements are reported as non-stereogenic skips
+instead of unresolved priority failures and cannot receive lossy E/Z or
+sequence labels.
 
 Stored axis descriptor assignment treats the axis bond endpoints as the two
 ranking roots. The stored axis carriers are local reference carriers, one
@@ -159,7 +161,8 @@ ordering, Rule 5 descriptor-pair ordering, pseudoasymmetric tetrahedral
 reference-atom tie breaking for tetrahedral retry ranking,
 natural-vs-indicated isotope priority, Rule 1b duplicate-node ordering,
 negative-fraction duplicate expansion, implicit lone-pair carriers, unsupported
-double-bond stereo exclusions including the ring-size boundary, unresolved
+double-bond stereo exclusions including the ring-size boundary, explicit
+non-stereogenic skip reporting for stored small-ring double-bond elements, unresolved
 equivalent ligands, bounded resource failures, and descriptor invalidation
 after mutation. Axis regressions cover stored local reference carriers,
 endpoint priority flips, `M`/`P` descriptor assignment, and descriptor
@@ -304,3 +307,5 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v33: Consume opt-in conservative 3D coordinate-derived stored axes through the
   existing axis descriptor path and cover the perception-to-CIP handoff with a
   focused regression.
+- v34: Report specified but RDKit-excluded double-bond topologies as
+  `NotStereogenic` CIP skips instead of unresolved priority failures.
