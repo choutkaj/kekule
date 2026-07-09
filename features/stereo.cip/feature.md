@@ -34,7 +34,9 @@ duplicate nodes. Rule helpers also understand stored
 descriptor values for RDKit-like sequence-rule ordering and use a
 parity-stable symmetric S4-style Rule 6 retry for fully equivalent
 tetrahedral carrier sets. Unspecified, unknown, invalid-cleared, or
-topologically non-stereogenic elements are skipped. Invalid local stereo,
+non-stereogenic elements are skipped, including RDKit-excluded double-bond
+topologies and tetrahedral centers whose final complete carrier comparison
+still contains equivalent ligand ties. Invalid local stereo,
 unresolved priorities, and resource-limit
 exhaustion are reported without assigning lossy descriptors. Double-bond
 elements in rings smaller than eight atoms do not receive E/Z descriptors,
@@ -112,7 +114,12 @@ labeling convention. Double-bond descriptor assignment also applies the
 small-ring alkene exclusion directly from topology, so manually inserted or
 cache-stale local double-bond elements are reported as non-stereogenic skips
 instead of unresolved priority failures and cannot receive lossy E/Z or
-sequence labels.
+sequence labels. After staged descriptor propagation and deferred
+tetrahedral Rule 6 retries stall, tetrahedral centers are likewise reported as
+non-stereogenic skips when the configured expansion depth covers the complete
+graph and the final carrier signatures remain tied; truncated bounded
+comparisons continue to report unresolved priority instead of pretending the
+center is non-stereogenic.
 
 Stored axis descriptor assignment treats the axis bond endpoints as the two
 ranking roots. The stored axis carriers are local reference carriers, one

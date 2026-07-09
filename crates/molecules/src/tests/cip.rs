@@ -1567,7 +1567,7 @@ fn cip_skips_endocyclic_hetero_double_bond_stereo() {
 }
 
 #[test]
-fn cip_reports_unresolved_equivalent_ligands_without_descriptor() {
+fn cip_skips_equivalent_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());
     let fluorine = mol.add_atom(element_atom("F"));
@@ -1596,11 +1596,15 @@ fn cip_reports_unresolved_equivalent_ligands_without_descriptor() {
 
     let report = stereo_api::assign_cip_descriptors(&mut mol);
 
-    assert_eq!(
-        report.issues,
-        vec![CipAssignmentIssue::UnresolvedPriority { element: stereo }]
-    );
+    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
     assert_eq!(
         mol.stereo_element(stereo).expect("element").descriptor,
         None
@@ -1608,7 +1612,7 @@ fn cip_reports_unresolved_equivalent_ligands_without_descriptor() {
 }
 
 #[test]
-fn cip_does_not_break_equivalent_ring_ligands_by_atom_id() {
+fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon());
     let nitrogen = mol.add_atom(element_atom("N"));
@@ -1647,11 +1651,19 @@ fn cip_does_not_break_equivalent_ring_ligands_by_atom_id() {
 
     let report = stereo_api::assign_cip_descriptors(&mut mol);
 
-    assert_eq!(
-        report.issues,
-        vec![CipAssignmentIssue::UnresolvedPriority { element: stereo }]
-    );
+    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: stereo,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(
+        mol.stereo_element(stereo).expect("element").descriptor,
+        None
+    );
 }
 
 #[test]

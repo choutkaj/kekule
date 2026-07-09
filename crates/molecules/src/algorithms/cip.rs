@@ -175,10 +175,17 @@ pub fn assign_cip_descriptors_with_options(
                     break;
                 }
             }
-            for (id, _) in next_pending {
-                report
-                    .issues
-                    .push(CipAssignmentIssue::UnresolvedPriority { element: id });
+            for (id, element) in next_pending {
+                match element_is_finally_nonstereogenic(mol, id, &element, options) {
+                    Ok(true) => report.skipped.push(CipSkipped {
+                        element: id,
+                        reason: CipSkippedReason::NotStereogenic,
+                    }),
+                    Ok(false) => report
+                        .issues
+                        .push(CipAssignmentIssue::UnresolvedPriority { element: id }),
+                    Err(issue) => report.issues.push(issue),
+                }
             }
             break;
         }
@@ -588,6 +595,59 @@ fn assign_deferred_tetrahedral_rule6(
         }
     }
     Ok(assignments)
+}
+
+fn element_is_finally_nonstereogenic(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo_element: &StereoElement,
+    options: CipAssignmentOptions,
+) -> CipResult<bool> {
+    let StereoElementKind::Tetrahedral(stereo) = &stereo_element.kind else {
+        return Ok(false);
+    };
+    if stereo_element.specifiedness != StereoSpecifiedness::Specified {
+        return Ok(false);
+    }
+    tetrahedral_final_tie_is_nonstereogenic(mol, element, stereo, options)
+}
+
+fn tetrahedral_final_tie_is_nonstereogenic(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo: &TetrahedralStereo,
+    options: CipAssignmentOptions,
+) -> CipResult<bool> {
+    let atom_count = mol.atom_ids().count();
+    // A final tie is only semantic when the ligand trees cannot be depth-truncated.
+    if options.max_depth < atom_count {
+        return Ok(false);
+    }
+    let signatures = carrier_signatures(
+        mol,
+        element,
+        stereo.center,
+        &stereo.carriers,
+        options,
+        true,
+        false,
+    )?;
+    match rank_tetrahedral_signatures_with_rule6(
+        mol,
+        element,
+        stereo.center,
+        &signatures,
+        stereo.orientation,
+        true,
+    ) {
+        Ok(_) => Ok(false),
+        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
+            Ok(grouped_signature_indices(&signatures)
+                .iter()
+                .any(|group| group.len() > 1))
+        }
+        Err(issue) => Err(issue),
+    }
 }
 
 fn carrier_signatures(
