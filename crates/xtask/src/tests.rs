@@ -462,6 +462,41 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
 }
 
 #[test]
+fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
+    let root = temp_feature_root("isomeric-smiles-feature-dispatch");
+    let fixture = root.join("fixture.smi");
+    fs::write(
+        &fixture,
+        [
+            "CCO CID:plain",
+            "C[C@@H](C(=O)O)N CID:tetrahedral",
+            "C(=C\\F)\\F CID:double-bond",
+        ]
+        .join("\n"),
+    )
+    .expect("fixture should write");
+
+    let expected = implementation_expected("io.smiles.isomeric", "smoke", &fixture)
+        .expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 3);
+    assert!(records.iter().all(|record| record["status"] == "ok"));
+    assert!(!records[1]["stereo"]["atom_descriptors"]
+        .as_array()
+        .expect("atom descriptors should be an array")
+        .is_empty());
+    assert!(!records[2]["stereo"]["bond_descriptors"]
+        .as_array()
+        .expect("bond descriptors should be an array")
+        .is_empty());
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn stereo_cip_validation_compares_only_descriptor_bearing_records() {
     let root = temp_feature_root("stereo-cip-descriptor-filter");
     let fixture = root.join("fixture.smi");

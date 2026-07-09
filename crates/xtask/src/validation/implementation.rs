@@ -112,6 +112,15 @@ pub(crate) fn implementation_expected(
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }
+        "io.smiles.isomeric" => {
+            let records = read_canonical_smiles_records(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter()
+                    .map(isomeric_smiles_record_json)
+                    .collect::<Result<Vec<_>, Box<dyn Error>>>()?
+            }))
+        }
         "algo.rings.fast" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(
@@ -806,6 +815,54 @@ pub(crate) fn canonical_smiles_record_json(
     Ok(item)
 }
 
+pub(crate) fn isomeric_smiles_record_json(
+    record: &IndexedSmilesRecord,
+) -> Result<Value, Box<dyn Error>> {
+    let Some(molecule) = &record.molecule else {
+        return Ok(smiles_error_record_json(record));
+    };
+    let mut molecule = molecule.clone();
+    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
+        return Ok(json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "input_smiles": record.input_smiles,
+        }));
+    }
+    let written = match smiles::write_isomeric_with_options(&molecule, Default::default()) {
+        Ok(written) => written,
+        Err(error) => {
+            return Ok(json!({
+                "record_index": record.record_index,
+                "status": "write_error",
+                "title": record.title,
+                "input_smiles": record.input_smiles,
+                "message": error.message,
+            }));
+        }
+    };
+    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
+        Ok(reparsed) => reparsed,
+        Err(_) => {
+            return Ok(json!({
+                "record_index": record.record_index,
+                "status": "write_reparse_error",
+                "title": record.title,
+                "input_smiles": record.input_smiles,
+            }));
+        }
+    };
+    Ok(json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "input_smiles": record.input_smiles,
+        "sanitized": smiles_sanitized_semantic_json(reparsed.clone()),
+        "stereo": smiles_isomeric_stereo_semantic_json(reparsed),
+    }))
+}
+
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
     let Some(molecule) = &record.molecule else {
         return smiles_error_record_json(record);
@@ -861,6 +918,76 @@ pub(crate) fn smiles_sanitized_semantic_json(mut molecule: SmallMolecule) -> Val
         }
         Err(_) => json!({ "status": "sanitize_error" }),
     }
+}
+
+pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) -> Value {
+    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
+        return json!({ "status": "sanitize_error" });
+    }
+    stereo::assign_cip_descriptors(molecule.graph_mut());
+    let mol = molecule.graph();
+    json!({
+        "status": "ok",
+        "atom_descriptors": smiles_cip_atom_descriptor_keys_json(mol),
+        "bond_descriptors": smiles_cip_bond_descriptor_keys_json(mol),
+    })
+}
+
+pub(crate) fn smiles_cip_atom_descriptor_keys_json(mol: &Molecule) -> Vec<Value> {
+    let mut descriptors = mol
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element.descriptor.and_then(|descriptor| {
+                let atom = mol.atom(stereo.center).ok()?;
+                Some(json!({
+                    "center_atom": smiles_sanitized_atom_key(mol, stereo.center, atom),
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Axis(_) | StereoElementKind::DoubleBond(_) => None,
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_by_key(|value| value.to_string());
+    descriptors
+}
+
+pub(crate) fn smiles_cip_bond_descriptor_keys_json(mol: &Molecule) -> Vec<Value> {
+    let mut descriptors = mol
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
+                let left = mol.atom(stereo.left).ok()?;
+                let right = mol.atom(stereo.right).ok()?;
+                let mut endpoint_atoms = [
+                    smiles_sanitized_atom_key(mol, stereo.left, left),
+                    smiles_sanitized_atom_key(mol, stereo.right, right),
+                ];
+                endpoint_atoms.sort();
+                Some(json!({
+                    "endpoint_atoms": endpoint_atoms,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Axis(stereo) => element.descriptor.and_then(|descriptor| {
+                let bond = mol.bond(stereo.axis).ok()?;
+                let (begin, end) = bond.endpoints();
+                let begin_atom = mol.atom(begin).ok()?;
+                let end_atom = mol.atom(end).ok()?;
+                let mut endpoint_atoms = [
+                    smiles_sanitized_atom_key(mol, begin, begin_atom),
+                    smiles_sanitized_atom_key(mol, end, end_atom),
+                ];
+                endpoint_atoms.sort();
+                Some(json!({
+                    "endpoint_atoms": endpoint_atoms,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Tetrahedral(_) => None,
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_by_key(|value| value.to_string());
+    descriptors
 }
 
 pub(crate) fn smiles_sanitized_bonds_json(mol: &Molecule) -> Vec<Value> {

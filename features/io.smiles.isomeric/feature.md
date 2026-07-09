@@ -55,10 +55,12 @@ directional double-bond slash/backslash emission for `Together` and `Opposite`
 elements, semantic round-trip perception of emitted double-bond stereo, and
 rejection of unperceived source bond marks plus explicit unknown stereo.
 
-Broad RDKit parity validation is not enabled for this writer feature yet. The
-next validation step is to add an `io.smiles.isomeric` implementation
-comparison mode plus externally generated RDKit semantic goldens for smoke and
-the existing stereo SMILES corpora.
+Smoke validation compares semantic output against externally generated RDKit
+goldens after noncanonical isomeric SMILES write and reparse. The comparison
+includes sanitized graph semantics plus CIP descriptor-bearing stereo semantics,
+not bytewise SMILES spelling. Broad RDKit parity validation over larger SMILES
+corpora is deferred until the supported stereo writer surface expands beyond
+tetrahedral and explicit-carrier double-bond elements.
 
 ## Out Of Scope
 
@@ -74,3 +76,5 @@ stereochemistry, and broad RDKit isomeric SMILES parity validation.
 - v2: Emit endpoint-normalized slash/backslash marks for explicit-carrier
   double-bond stereo elements while rejecting unassembled source marks and
   unsupported implicit-carrier double-bond output.
+- v3: Add smoke-corpus implementation validation against RDKit semantic goldens
+  for absent, tetrahedral, and double-bond isomeric SMILES cases.
