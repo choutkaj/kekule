@@ -83,6 +83,10 @@ impl SmallMolecule {
         smiles::write(self)
     }
 
+    pub fn to_isomeric_smiles(&self) -> Result<String, MolWriteError> {
+        smiles::write_isomeric(self)
+    }
+
     pub fn to_canonical_smiles(&self) -> Result<String, MolWriteError> {
         smiles::write_canonical(self)
     }

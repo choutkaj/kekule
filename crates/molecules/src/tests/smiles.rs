@@ -3131,6 +3131,102 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
 }
 
 #[test]
+fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
+    let molecule = smiles_api::read_str_with_options("F[C@H](Cl)Br", SmilesParseOptions)
+        .expect("tetrahedral SMILES should parse");
+
+    let written = smiles_api::write_isomeric(&molecule).expect("tetrahedral stereo should write");
+
+    assert_eq!(written, "F[C@H](Cl)Br");
+    let reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("isomeric output should parse");
+    let stereo = reparsed
+        .graph()
+        .stereo_elements()
+        .map(|(_, element)| element)
+        .collect::<Vec<_>>();
+    assert_eq!(stereo.len(), 1);
+    match &stereo[0].kind {
+        StereoElementKind::Tetrahedral(tetrahedral) => {
+            assert_eq!(tetrahedral.center, AtomId::new(1));
+            assert_eq!(tetrahedral.orientation, TetrahedralOrientation::Clockwise);
+            assert_eq!(
+                tetrahedral.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(0)),
+                    StereoCarrier::ImplicitHydrogen,
+                    StereoCarrier::Atom(AtomId::new(2)),
+                    StereoCarrier::Atom(AtomId::new(3)),
+                ]
+            );
+        }
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
+    let mut molecule = smiles_api::read_str_with_options("F[C@H](Cl)Br", SmilesParseOptions)
+        .expect("tetrahedral SMILES should parse");
+    let element = molecule
+        .graph()
+        .stereo_element_ids()
+        .next()
+        .expect("stereo element");
+    molecule
+        .graph_mut()
+        .remove_stereo_element(element)
+        .expect("remove parsed stereo");
+    molecule
+        .graph_mut()
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center: AtomId::new(1),
+                carriers: vec![
+                    StereoCarrier::Atom(AtomId::new(0)),
+                    StereoCarrier::ImplicitHydrogen,
+                    StereoCarrier::Atom(AtomId::new(3)),
+                    StereoCarrier::Atom(AtomId::new(2)),
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("replacement stereo element");
+
+    let written = smiles_api::write_isomeric(&molecule).expect("tetrahedral stereo should write");
+
+    assert_eq!(written, "F[C@@H](Cl)Br");
+}
+
+#[test]
+fn isomeric_smiles_rejects_unencoded_stereo_layers() {
+    let directional = smiles_api::read_str_with_options("C/C=C\\C", SmilesParseOptions)
+        .expect("directional bond markers should parse");
+    assert!(smiles_api::write_isomeric(&directional)
+        .expect_err("source bond marks should be rejected until slash output is implemented")
+        .message
+        .contains("source bond marks"));
+
+    let mut unknown = smiles_api::read_str_with_options("F[C@H](Cl)Br", SmilesParseOptions)
+        .expect("tetrahedral SMILES should parse");
+    let element = unknown
+        .graph()
+        .stereo_element_ids()
+        .next()
+        .expect("stereo element");
+    unknown
+        .graph_mut()
+        .stereo_element_mut(element)
+        .expect("stereo element")
+        .specifiedness = StereoSpecifiedness::Unknown;
+    assert!(smiles_api::write_isomeric(&unknown)
+        .expect_err("unknown stereo should be rejected")
+        .message
+        .contains("unknown stereo"));
+}
+
+#[test]
 fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
     let mut molecule = SmallMolecule::default();
     let atoms = (0..16)

@@ -16,6 +16,10 @@ pub struct SmilesWriteOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
+pub struct IsomericSmilesWriteOptions;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CanonicalSmilesWriteOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -751,10 +755,30 @@ pub fn write_smiles(
     _options: SmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
-    let plan = plan_smiles_write(mol)?;
+    let plan = plan_smiles_write(mol, StereoWriteMode::Reject)?;
     let mut parts = Vec::new();
     for start in &plan.roots {
-        parts.push(write_smiles_component(mol, *start, None, &plan)?);
+        parts.push(write_smiles_component(mol, *start, None, &plan, None)?);
+    }
+    Ok(parts.join("."))
+}
+
+pub fn write_isomeric_smiles(
+    molecule: &SmallMolecule,
+    _options: IsomericSmilesWriteOptions,
+) -> std::result::Result<String, MolWriteError> {
+    let mol = molecule.graph();
+    let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
+    let stereo = SmilesStereoWriteContext::new(mol)?;
+    let mut parts = Vec::new();
+    for start in &plan.roots {
+        parts.push(write_smiles_component(
+            mol,
+            *start,
+            None,
+            &plan,
+            Some(&stereo),
+        )?);
     }
     Ok(parts.join("."))
 }
@@ -1006,8 +1030,11 @@ struct SmilesRingClosure {
     other: AtomId,
 }
 
-fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, MolWriteError> {
-    validate_smiles_writeable(mol, StereoWriteMode::Reject)?;
+fn plan_smiles_write(
+    mol: &Molecule,
+    stereo: StereoWriteMode,
+) -> std::result::Result<SmilesWritePlan, MolWriteError> {
+    validate_smiles_writeable(mol, stereo)?;
     let mut roots = Vec::new();
     let mut visited = BTreeSet::<AtomId>::new();
     let mut tree_bonds = BTreeSet::<BondId>::new();
@@ -1074,21 +1101,26 @@ fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, Mol
 enum StereoWriteMode {
     Reject,
     Ignore,
+    Encode,
 }
 
 fn validate_smiles_writeable(
     mol: &Molecule,
     stereo: StereoWriteMode,
 ) -> std::result::Result<(), MolWriteError> {
-    if stereo == StereoWriteMode::Reject && mol.stereo_elements().next().is_some() {
-        return Err(MolWriteError::new(
-            "SMILES writer cannot encode atom stereochemistry",
-        ));
-    }
-    if stereo == StereoWriteMode::Reject && mol.stereo_bond_marks().next().is_some() {
-        return Err(MolWriteError::new(
-            "SMILES writer cannot encode bond stereochemistry",
-        ));
+    match stereo {
+        StereoWriteMode::Reject if mol.stereo_elements().next().is_some() => {
+            return Err(MolWriteError::new(
+                "SMILES writer cannot encode atom stereochemistry",
+            ));
+        }
+        StereoWriteMode::Reject if mol.stereo_bond_marks().next().is_some() => {
+            return Err(MolWriteError::new(
+                "SMILES writer cannot encode bond stereochemistry",
+            ));
+        }
+        StereoWriteMode::Encode => validate_isomeric_smiles_stereo(mol)?,
+        StereoWriteMode::Reject | StereoWriteMode::Ignore => {}
     }
     for (_, atom) in mol.atoms() {
         if atom.radical.is_some() {
@@ -1103,6 +1135,56 @@ fn validate_smiles_writeable(
             BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => {
                 return Err(MolWriteError::new(
                     "SMILES writer cannot encode zero, dative, or quadruple bonds",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), MolWriteError> {
+    if mol.stereo_bond_marks().next().is_some() {
+        return Err(MolWriteError::new(
+            "isomeric SMILES writer requires perceived stereo elements, not source bond marks",
+        ));
+    }
+    if mol.stereo_groups().next().is_some() {
+        return Err(MolWriteError::new(
+            "isomeric SMILES writer cannot encode enhanced stereo groups",
+        ));
+    }
+    for (_, element) in mol.stereo_elements() {
+        if element.specifiedness != StereoSpecifiedness::Specified {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot encode unspecified or unknown stereo",
+            ));
+        }
+        match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                if stereo.carriers.len() != 4 {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES writer cannot encode invalid tetrahedral stereo",
+                    ));
+                }
+                let hydrogen_count = stereo
+                    .carriers
+                    .iter()
+                    .filter(|carrier| matches!(carrier, StereoCarrier::ImplicitHydrogen))
+                    .count();
+                if hydrogen_count > 1 {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES writer cannot encode tetrahedral stereo with repeated implicit hydrogens",
+                    ));
+                }
+            }
+            StereoElementKind::DoubleBond(_) => {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode double-bond stereochemistry yet",
+                ));
+            }
+            StereoElementKind::Axis(_) => {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode axial stereochemistry yet",
                 ));
             }
         }
@@ -1457,11 +1539,169 @@ fn compute_smiles_subtree_sizes(
     Ok(subtree_sizes.get(&atom_id).copied().unwrap_or_default())
 }
 
+#[derive(Debug, Clone)]
+struct SmilesStereoWriteContext {
+    tetrahedral: BTreeMap<AtomId, TetrahedralSmilesState>,
+}
+
+#[derive(Debug, Clone)]
+struct TetrahedralSmilesState {
+    carriers: Vec<StereoCarrier>,
+    orientation: TetrahedralOrientation,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ChiralAtomWriteState {
+    orientation: TetrahedralOrientation,
+    force_hydrogen: bool,
+}
+
+impl SmilesStereoWriteContext {
+    fn new(mol: &Molecule) -> std::result::Result<Self, MolWriteError> {
+        let mut tetrahedral = BTreeMap::new();
+        for (_, element) in mol.stereo_elements() {
+            if let StereoElementKind::Tetrahedral(stereo) = &element.kind {
+                if tetrahedral
+                    .insert(
+                        stereo.center,
+                        TetrahedralSmilesState {
+                            carriers: stereo.carriers.clone(),
+                            orientation: stereo.orientation,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES writer cannot encode multiple tetrahedral elements on one atom",
+                    ));
+                }
+            }
+        }
+        Ok(Self { tetrahedral })
+    }
+
+    fn atom_chirality(
+        &self,
+        atom: AtomId,
+        parent: Option<AtomId>,
+        closures: Option<&[SmilesRingClosure]>,
+        children: &[(BondId, BondOrder, AtomId)],
+        main_child_index: Option<usize>,
+    ) -> Option<std::result::Result<ChiralAtomWriteState, MolWriteError>> {
+        let stereo = self.tetrahedral.get(&atom)?;
+        Some(tetrahedral_chirality_for_smiles_order(
+            stereo,
+            parent,
+            closures,
+            children,
+            main_child_index,
+        ))
+    }
+}
+
+fn tetrahedral_chirality_for_smiles_order(
+    stereo: &TetrahedralSmilesState,
+    parent: Option<AtomId>,
+    closures: Option<&[SmilesRingClosure]>,
+    children: &[(BondId, BondOrder, AtomId)],
+    main_child_index: Option<usize>,
+) -> std::result::Result<ChiralAtomWriteState, MolWriteError> {
+    let force_hydrogen = stereo
+        .carriers
+        .iter()
+        .any(|carrier| matches!(carrier, StereoCarrier::ImplicitHydrogen));
+    let mut emitted = Vec::with_capacity(stereo.carriers.len());
+    if let Some(parent) = parent {
+        emitted.push(StereoCarrier::Atom(parent));
+    }
+    if force_hydrogen {
+        emitted.push(StereoCarrier::ImplicitHydrogen);
+    }
+    if let Some(closures) = closures {
+        emitted.extend(
+            closures
+                .iter()
+                .map(|closure| StereoCarrier::Atom(closure.other)),
+        );
+    }
+    emitted.extend(
+        children
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != main_child_index)
+            .map(|(_, (_, _, child))| StereoCarrier::Atom(*child)),
+    );
+    if let Some(index) = main_child_index {
+        emitted.push(StereoCarrier::Atom(children[index].2));
+    }
+    if stereo
+        .carriers
+        .iter()
+        .any(|carrier| matches!(carrier, StereoCarrier::ImplicitLonePair))
+    {
+        emitted.push(StereoCarrier::ImplicitLonePair);
+    }
+    if emitted != stereo.carriers {
+        let Some(odd) = carrier_permutation_is_odd(&stereo.carriers, &emitted) else {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot encode tetrahedral carrier order",
+            ));
+        };
+        Ok(ChiralAtomWriteState {
+            orientation: if odd {
+                flip_tetrahedral_orientation(stereo.orientation)
+            } else {
+                stereo.orientation
+            },
+            force_hydrogen,
+        })
+    } else {
+        Ok(ChiralAtomWriteState {
+            orientation: stereo.orientation,
+            force_hydrogen,
+        })
+    }
+}
+
+fn carrier_permutation_is_odd(from: &[StereoCarrier], to: &[StereoCarrier]) -> Option<bool> {
+    if from.len() != to.len() {
+        return None;
+    }
+    let mut positions = Vec::with_capacity(to.len());
+    let mut used = vec![false; to.len()];
+    for carrier in from {
+        let position = to
+            .iter()
+            .enumerate()
+            .find(|(index, candidate)| !used[*index] && *candidate == carrier)
+            .map(|(index, _)| index)?;
+        used[position] = true;
+        positions.push(position);
+    }
+    let mut odd = false;
+    for left in 0..positions.len() {
+        for right in (left + 1)..positions.len() {
+            if positions[left] > positions[right] {
+                odd = !odd;
+            }
+        }
+    }
+    Some(odd)
+}
+
+fn flip_tetrahedral_orientation(orientation: TetrahedralOrientation) -> TetrahedralOrientation {
+    match orientation {
+        TetrahedralOrientation::Clockwise => TetrahedralOrientation::CounterClockwise,
+        TetrahedralOrientation::CounterClockwise => TetrahedralOrientation::Clockwise,
+    }
+}
+
 fn write_smiles_component(
     mol: &Molecule,
     atom_id: AtomId,
     parent: Option<AtomId>,
     plan: &SmilesWritePlan,
+    stereo: Option<&SmilesStereoWriteContext>,
 ) -> std::result::Result<String, MolWriteError> {
     enum Action {
         Node {
@@ -1493,19 +1733,7 @@ fn write_smiles_component(
                 let atom_record = mol
                     .atom(atom)
                     .map_err(|error| MolWriteError::new(error.to_string()))?;
-                out.push_str(&smiles_atom(atom_record));
-                if let Some(closures) = plan.closures.get(&atom) {
-                    for closure in closures {
-                        out.push_str(smiles_bond_between(
-                            mol,
-                            closure.order,
-                            atom,
-                            closure.other,
-                        )?);
-                        out.push_str(&smiles_ring_number(closure.number));
-                    }
-                }
-
+                let closures = plan.closures.get(&atom).map(Vec::as_slice);
                 let mut children = smiles_incident_bonds(mol, atom)?
                     .into_iter()
                     .filter(|(bond_id, _, neighbor)| {
@@ -1521,6 +1749,27 @@ fn write_smiles_component(
                         (plan.subtree_sizes.get(&child).copied().unwrap_or(0), child)
                     })
                     .map(|(index, _)| index);
+                let chirality = stereo
+                    .and_then(|context| {
+                        context.atom_chirality(atom, parent, closures, &children, main_child_index)
+                    })
+                    .transpose()?;
+                out.push_str(&smiles_atom_with_chirality(
+                    atom_record,
+                    chirality.map(|state| state.orientation),
+                    chirality.is_some_and(|state| state.force_hydrogen),
+                ));
+                if let Some(closures) = closures {
+                    for closure in closures {
+                        out.push_str(smiles_bond_between(
+                            mol,
+                            closure.order,
+                            atom,
+                            closure.other,
+                        )?);
+                        out.push_str(&smiles_ring_number(closure.number));
+                    }
+                }
 
                 if let Some(index) = main_child_index {
                     let (_, order, child) = children[index];
@@ -1664,12 +1913,25 @@ fn smiles_bond_between(
 }
 
 fn smiles_atom(atom: &Atom) -> String {
-    let explicit_hydrogens = smiles_atom_explicit_hydrogens(atom);
+    smiles_atom_with_chirality(atom, None, false)
+}
+
+fn smiles_atom_with_chirality(
+    atom: &Atom,
+    chirality: Option<TetrahedralOrientation>,
+    force_hydrogen: bool,
+) -> String {
+    let explicit_hydrogens = if force_hydrogen {
+        smiles_atom_explicit_hydrogens(atom).max(1)
+    } else {
+        smiles_atom_explicit_hydrogens(atom)
+    };
     let organic = atom.isotope.is_none()
         && atom.formal_charge == 0
         && explicit_hydrogens == 0
         && !atom.no_implicit_hydrogens
         && atom.atom_map.is_none()
+        && chirality.is_none()
         && matches!(
             atom.element.symbol(),
             "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
@@ -1689,6 +1951,12 @@ fn smiles_atom(atom: &Atom) -> String {
             out.push_str(&atom.element.symbol().to_ascii_lowercase());
         } else {
             out.push_str(atom.element.symbol());
+        }
+        if let Some(chirality) = chirality {
+            out.push('@');
+            if chirality == TetrahedralOrientation::CounterClockwise {
+                out.push('@');
+            }
         }
         if explicit_hydrogens > 0 {
             out.push('H');

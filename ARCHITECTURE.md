@@ -203,6 +203,7 @@ impl SmallMolecule {
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)>;
 
     pub fn to_smiles(&self) -> Result<String, MolWriteError>;
+    pub fn to_isomeric_smiles(&self) -> Result<String, MolWriteError>;
     pub fn to_canonical_smiles(&self) -> Result<String, MolWriteError>;
 }
 ```
@@ -407,6 +408,7 @@ Preferred naming pattern:
 molecules::smiles::read_str(input)
 molecules::smiles::read_sanitized_str(input)
 molecules::smiles::write(&mol)
+molecules::smiles::write_isomeric(&mol)
 molecules::smiles::write_canonical(&mol)
 
 molecules::molfile::read_v2000_str(input)
