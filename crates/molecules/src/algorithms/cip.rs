@@ -565,7 +565,13 @@ fn rank_single_ring_tied_pair_with_rule6(
         .flatten()
         .filter_map(|index| tree_descriptor_class(&signatures[*index].1.root))
         .max();
+    let tied_pair_descriptor_refs_match =
+        descriptor_ref_counts(&signatures[tied_groups[0][0]].1.root)
+            == descriptor_ref_counts(&signatures[tied_groups[0][1]].1.root);
     let reference = if tied_pair_descriptor_class.is_some() {
+        if tied_pair_descriptor_refs_match {
+            return Err(CipAssignmentIssue::UnresolvedPriority { element });
+        }
         if left.raw() >= right.raw() {
             left
         } else {
@@ -596,6 +602,11 @@ fn rank_single_ring_tied_pair_with_rule6(
                     _ => left,
                 }
             }
+            None if mol.stereo_elements().all(|(id, _)| id == element)
+                && ring_path_is_unsubstituted_bridge(mol, &path, root) =>
+            {
+                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            }
             None if left.raw() >= right.raw() => left,
             None => right,
         }
@@ -609,6 +620,18 @@ fn rank_single_ring_tied_pair_with_rule6(
         (Some(DescriptorClass::Absolute), _) | (None, Some(DescriptorClass::Absolute))
     );
     Ok(ranked)
+}
+
+fn descriptor_ref_counts(tree: &LigandTree) -> (usize, usize) {
+    let own = match tree.priority.descriptor.and_then(descriptor_ref) {
+        Some(DescriptorRef::R) => (1, 0),
+        Some(DescriptorRef::S) => (0, 1),
+        None => (0, 0),
+    };
+    tree.children
+        .iter()
+        .map(descriptor_ref_counts)
+        .fold(own, |left, right| (left.0 + right.0, left.1 + right.1))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -680,6 +703,19 @@ fn shortest_path_excluding_root(
         }
     }
     None
+}
+
+fn ring_path_is_unsubstituted_bridge(mol: &Molecule, path: &[AtomId], root: AtomId) -> bool {
+    path.iter().all(|atom| {
+        mol.incident_bonds(*atom)
+            .map(|incident| {
+                incident.into_iter().all(|(_, bond)| {
+                    let neighbor = bond.other_atom(*atom);
+                    neighbor == root || path.contains(&neighbor)
+                })
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn rank_s4_tetrahedral_signatures_with_rule6(

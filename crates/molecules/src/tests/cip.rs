@@ -34,6 +34,42 @@ fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_molfile_wedge_up_and_down() {
+    for (stereo_code, expected) in [(1, StereoDescriptor::S), (6, StereoDescriptor::R)] {
+        let input = format!(
+            "wedge {stereo_code}
+molecules
+
+  5  4  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000   -1.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  {stereo_code}  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END
+"
+        );
+        let mut molecule = molfile::read_v2000_str(&input).expect("wedge molfile parses");
+        perception_api::sanitize(&mut molecule).expect("wedge molfile sanitizes");
+
+        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(
+            report.assigned,
+            vec![CipAssignment {
+                element: StereoElementId::new(0),
+                descriptor: expected,
+            }]
+        );
+    }
+}
+
+#[test]
 fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule =
         smiles_api::read_str("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");
@@ -995,6 +1031,53 @@ fn cip_reports_unresolved_equivalent_ligands_without_descriptor() {
         mol.stereo_element(stereo).expect("element").descriptor,
         None
     );
+}
+
+#[test]
+fn cip_does_not_break_equivalent_ring_ligands_by_atom_id() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon());
+    let nitrogen = mol.add_atom(element_atom("N"));
+    let hydrogen = mol.add_atom(element_atom("H"));
+    let ring_a = mol.add_atom(carbon());
+    let ring_b = mol.add_atom(carbon());
+    let ring_c = mol.add_atom(carbon());
+    let ring_d = mol.add_atom(carbon());
+
+    for carrier in [nitrogen, hydrogen, ring_a, ring_b] {
+        mol.add_bond(center, carrier, BondOrder::Single)
+            .expect("carrier bond");
+    }
+    mol.add_bond(ring_a, ring_c, BondOrder::Single)
+        .expect("ring bond");
+    mol.add_bond(ring_c, ring_d, BondOrder::Single)
+        .expect("ring bond");
+    mol.add_bond(ring_d, ring_b, BondOrder::Single)
+        .expect("ring bond");
+
+    let stereo = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(hydrogen),
+                    StereoCarrier::Atom(nitrogen),
+                    StereoCarrier::Atom(ring_a),
+                    StereoCarrier::Atom(ring_b),
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("stereo element");
+
+    let report = stereo_api::assign_cip_descriptors(&mut mol);
+
+    assert_eq!(
+        report.issues,
+        vec![CipAssignmentIssue::UnresolvedPriority { element: stereo }]
+    );
+    assert!(report.assigned.is_empty());
 }
 
 #[test]

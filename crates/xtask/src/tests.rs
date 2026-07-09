@@ -513,6 +513,40 @@ fn stereo_cip_validation_uses_rdkit_default_hydrogen_indexing() {
 }
 
 #[test]
+fn stereo_cip_validation_reads_all_sdf_pack_records() {
+    let root = temp_feature_root("stereo-cip-sdf-pack");
+    let fixture = root.join("fixture.sdf");
+    fs::write(
+        &fixture,
+        [
+            chiral_wedge_sdf_record("first"),
+            chiral_wedge_sdf_record("second"),
+        ]
+        .join(""),
+    )
+    .expect("fixture should write");
+
+    let expected =
+        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["title"], "first");
+    assert_eq!(records[1]["title"], "second");
+    assert!(records
+        .iter()
+        .all(|record| record["atom_count"].as_u64() == Some(5)));
+    assert!(records.iter().all(|record| !record["atom_descriptors"]
+        .as_array()
+        .expect("atom descriptors should be an array")
+        .is_empty()));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
     let root = temp_feature_root("pack-members");
     let sdf_path = root.join("pack.sdf");
@@ -1205,6 +1239,27 @@ fn simple_sdf_record_with_property(title: &str, property: &str, value: &str) -> 
     let replacement = format!("M  END\n>  <{property}>  (1)\n{value}\n\n");
     record = record.replacen(marker, &replacement, 1);
     record
+}
+
+fn chiral_wedge_sdf_record(title: &str) -> String {
+    format!(
+        "{title}
+  xtask-test
+
+  5  4  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000   -1.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  1  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END
+$$$$
+"
+    )
 }
 
 fn temp_feature_root(label: &str) -> PathBuf {

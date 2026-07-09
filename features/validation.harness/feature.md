@@ -28,6 +28,7 @@ or manually curated external-reference golden data.
 - Exposes `cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]`.
 - Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, synchronizes overall `validated`, and regenerates the dashboard.
 - Supports corpus pack member checks using PubChem defaults or corpus-declared SDF member properties and SMILES title prefixes.
+- Preserves all records in SDF pack fixtures for stereo implementation comparisons.
 
 ## Implementation Notes
 
@@ -78,3 +79,6 @@ or manually curated external-reference golden data.
 - v13: Generalize manual semantic reference manifests to named
   `*-manual-semantic` sources and let broad stereo perception validation record
   per-record sanitize errors instead of aborting an entire fixture.
+- v14: Preserve every record from SDF pack fixtures when running stereo
+  implementation comparisons, enabling descriptor-bearing ligand packs such as
+  PL-REX to validate CIP behavior.

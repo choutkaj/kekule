@@ -162,10 +162,14 @@ pub(crate) fn implementation_expected(
         }
         "stereo.cip" => {
             let mut records = read_stereo_records_by_suffix(fixture_path)?;
+            let remove_plain_hydrogens = matches!(
+                fixture_path.extension().and_then(|ext| ext.to_str()),
+                Some("txt" | "smi" | "smiles")
+            );
             Ok(json!({
                 "records": records
                     .iter_mut()
-                    .filter_map(stereo_cip_record_json)
+                    .filter_map(|record| stereo_cip_record_json(record, remove_plain_hydrogens))
                     .collect::<Vec<_>>()
             }))
         }
@@ -275,6 +279,12 @@ pub(crate) fn read_stereo_records_by_suffix(
                 })
             })
             .collect());
+    }
+    if !matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("mol" | "mdl")
+    ) {
+        return read_small_records_by_suffix(path);
     }
     let molecule = if input.contains("V3000") {
         molfile::read_v3000_str(&input)?
@@ -432,15 +442,33 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
     })
 }
 
-pub(crate) fn stereo_cip_record_json(record: &mut IndexedSmallRecord) -> Option<Value> {
-    let sanitize =
-        perception::sanitize_with_options(&mut record.molecule, SanitizeOptions::default());
+pub(crate) fn stereo_cip_record_json(
+    record: &mut IndexedSmallRecord,
+    remove_plain_hydrogens: bool,
+) -> Option<Value> {
+    let sanitize = perception::sanitize_with_options(
+        &mut record.molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    );
     if sanitize.is_err() {
+        return None;
+    }
+    let perception_report = stereo::perceive_stereo_with_options(
+        record.molecule.graph_mut(),
+        stereo::StereoPerceptionOptions {
+            assign_coordinates: false,
+            ..stereo::StereoPerceptionOptions::default()
+        },
+    );
+    if !perception_report.is_ok() {
         return None;
     }
     stereo::assign_cip_descriptors(record.molecule.graph_mut());
     let mol = record.molecule.graph();
-    let atom_index = rdkit_default_atom_index(mol);
+    let atom_index = rdkit_default_atom_index(mol, remove_plain_hydrogens);
     let atom_descriptors = cip_atom_descriptors_json(mol, &atom_index);
     let bond_descriptors = cip_bond_descriptors_json(mol, &atom_index);
     if atom_descriptors.is_empty() && bond_descriptors.is_empty() {
@@ -536,10 +564,10 @@ pub(crate) fn cip_bond_descriptors_json(
     descriptors
 }
 
-fn rdkit_default_atom_index(mol: &Molecule) -> BTreeMap<AtomId, u32> {
+fn rdkit_default_atom_index(mol: &Molecule, remove_plain_hydrogens: bool) -> BTreeMap<AtomId, u32> {
     let mut index = BTreeMap::new();
     for (atom_id, atom) in mol.atoms() {
-        if rdkit_default_removes_hydrogen(atom) {
+        if remove_plain_hydrogens && rdkit_default_removes_hydrogen(atom) {
             continue;
         }
         index.insert(atom_id, index.len() as u32);

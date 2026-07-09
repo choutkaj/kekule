@@ -563,7 +563,9 @@ fn assemble_tetrahedral_wedges(
         let mark = center_marks[0];
         if let Some(carriers) = tetrahedral_carriers_from_wedge(mol, center, mark.carrier) {
             used_marks.push(mark.mark.bond);
-            assembled.push(tetrahedral_element_from_wedge(mark.mark, center, carriers));
+            assembled.push(tetrahedral_element_from_wedge(
+                mol, mark.mark, center, carriers,
+            ));
         }
         start = end;
     }
@@ -593,19 +595,21 @@ fn tetrahedral_carriers_from_wedge(
 }
 
 fn tetrahedral_element_from_wedge(
+    mol: &Molecule,
     mark: &StereoBondMark,
     center: AtomId,
     carriers: Vec<StereoCarrier>,
 ) -> StereoElement {
     let (specifiedness, orientation) = match mark.kind {
-        StereoBondMarkKind::WedgeUp => (
-            StereoSpecifiedness::Specified,
-            TetrahedralOrientation::Clockwise,
-        ),
-        StereoBondMarkKind::WedgeDown => (
-            StereoSpecifiedness::Specified,
-            TetrahedralOrientation::CounterClockwise,
-        ),
+        StereoBondMarkKind::WedgeUp | StereoBondMarkKind::WedgeDown => {
+            let orientation = tetrahedral_wedge_orientation(mol, center, &carriers, mark.kind)
+                .unwrap_or_else(|| match mark.kind {
+                    StereoBondMarkKind::WedgeUp => TetrahedralOrientation::CounterClockwise,
+                    StereoBondMarkKind::WedgeDown => TetrahedralOrientation::Clockwise,
+                    _ => unreachable!("wedge orientation branch received non-wedge mark"),
+                });
+            (StereoSpecifiedness::Specified, orientation)
+        }
         StereoBondMarkKind::WedgeEither => (
             StereoSpecifiedness::Unknown,
             TetrahedralOrientation::Clockwise,
@@ -623,6 +627,33 @@ fn tetrahedral_element_from_wedge(
         group: None,
         descriptor: None,
     }
+}
+
+fn tetrahedral_wedge_orientation(
+    mol: &Molecule,
+    center: AtomId,
+    carriers: &[StereoCarrier],
+    kind: StereoBondMarkKind,
+) -> Option<TetrahedralOrientation> {
+    let (_, conformer) = mol.first_conformer()?;
+    let atom_carriers = carriers
+        .iter()
+        .map(|carrier| match carrier {
+            StereoCarrier::Atom(atom) => Some(*atom),
+            StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut points = tetrahedral_points(conformer, center, &atom_carriers)?;
+    if matches!(coordinate_source(&points), StereoSource::Coordinates3D) {
+        return tetrahedral_orientation_from_points(points);
+    }
+    let out_of_plane = match kind {
+        StereoBondMarkKind::WedgeUp => 1.0,
+        StereoBondMarkKind::WedgeDown => -1.0,
+        _ => return None,
+    };
+    points[1].z += out_of_plane;
+    tetrahedral_orientation_from_points(points)
 }
 
 fn assemble_directional_double_bonds(

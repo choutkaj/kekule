@@ -36,6 +36,9 @@ and assign local stereo elements from supported source marks and coordinates.
   skipped until those unsupported stereo cases have explicit
   format/perception semantics.
 - Molfile wedge up/down marks can create specified tetrahedral stereo elements.
+  When conformer coordinates are available, wedge up/down orientation is
+  assembled from those coordinates with the marked bond direction treated as
+  the local out-of-plane sense.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
   local stereo center and the marked carrier is placed first in carrier order.
@@ -116,3 +119,6 @@ stereo transfer.
 - v10: Exclude double-bond stereo candidates in rings smaller than eight atoms
   using the RDKit-like stereogenic-bond boundary while preserving cyclooctene
   and larger ring alkene candidates.
+- v11: Derive Molfile wedge up/down tetrahedral orientation from conformer
+  coordinates when present so coordinate-bearing V2000 records preserve
+  RDKit-like local stereo sense.

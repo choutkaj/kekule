@@ -947,7 +947,7 @@ M  END
                     StereoCarrier::Atom(AtomId::new(4)),
                 ]
             );
-            assert_eq!(stereo.orientation, TetrahedralOrientation::Clockwise);
+            assert_eq!(stereo.orientation, TetrahedralOrientation::CounterClockwise);
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }

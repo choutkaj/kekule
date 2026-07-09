@@ -128,20 +128,24 @@ reference retries. Auxiliary occurrence-graph regressions cover coupled
 pseudoasymmetric cyclobutane, fused-ring, spiro-fused, and absolute-neighbor
 bicyclic centers from the Enamine diversity corpus. Rule 2 regressions cover
 natural atoms versus indicated isotopes and duplicate-node zero mass.
+Equivalent-ring regressions cover isolated unsubstituted ring bridges that
+must not become stereogenic through atom-id tie breaking.
 
 Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity validation
-use externally supplied isomeric SMILES fixtures. CIP goldens are generated
-with RDKit and compare atom and bond descriptor maps, not bytewise SMILES
-spelling or internal stereo element IDs. Validation records include molecules
-where RDKit or the implementation assigns at least one CIP descriptor;
-no-descriptor molecules are filtered out so broad CIP validation is not
-dominated by unrelated parser or sanitizer coverage for structures with no
-stereochemical labels. Bond descriptors are keyed by endpoint atom indexes and
-descriptor instead of parser-local bond IDs, because SMILES bond insertion
-order is not a portable chemical identity. Molecules validation maps removable
-plain explicit hydrogens out of descriptor records to match RDKit default atom
-indexing. PubChem 100k and the Enamine Discovery Diversity Set are enabled as
-broad RDKit parity gates for current descriptor-bearing coverage.
+use externally supplied isomeric SMILES fixtures. PL-REX validation uses
+externally supplied ligand SDF packs to cover Molfile and coordinate-bearing
+records. CIP goldens are generated with RDKit and compare atom and bond
+descriptor maps, not bytewise SMILES spelling or internal stereo element IDs.
+Validation records include molecules where RDKit or the implementation assigns
+at least one CIP descriptor; no-descriptor molecules are filtered out so broad
+CIP validation is not dominated by unrelated parser or sanitizer coverage for
+structures with no stereochemical labels. Bond descriptors are keyed by
+endpoint atom indexes and descriptor instead of parser-local bond IDs, because
+SMILES bond insertion order is not a portable chemical identity. Molecules
+validation maps removable plain explicit hydrogens out of descriptor records
+to match RDKit default atom indexing. PubChem 100k, the Enamine Discovery
+Diversity Set, and PL-REX are enabled as broad RDKit parity gates for current
+descriptor-bearing coverage.
 
 ## Out Of Scope
 
@@ -213,3 +217,6 @@ and stereo enumeration.
 - v23: Apply the RDKit-like rule that double bonds in rings smaller than eight
   atoms are not E/Z stereogenic while preserving cyclooctene and larger
   endocyclic alkene assignment.
+- v24: Add PL-REX ligand SDF packs to the CIP validation contract and compare
+  every descriptor-bearing SDF record against RDKit-backed atom and bond
+  descriptor maps.
