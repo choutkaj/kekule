@@ -860,7 +860,9 @@ fn rank_tetrahedral_signatures_with_rule6(
             let Some(reference) = carrier_rule6_atom(signatures[reference_index].0) else {
                 return Err(CipAssignmentIssue::UnresolvedPriority { element });
             };
-            rank_carrier_signatures(element, signatures, Some(reference))
+            let ranked = rank_carrier_signatures(element, signatures, Some(reference))?;
+            reject_rule6_parity_unstable_references(element, signatures, &ranked)?;
+            Ok(ranked)
         }
         1 => rank_s4_tetrahedral_signatures_with_rule6(element, signatures, &groups[0]),
         _ if allow_single_ring_tied_pair_rule6 => rank_single_ring_tied_pair_with_rule6(
@@ -1088,6 +1090,27 @@ fn rank_s4_tetrahedral_signatures_with_rule6(
         }
     }
     stable_ranking.ok_or(CipAssignmentIssue::UnresolvedPriority { element })
+}
+
+fn reject_rule6_parity_unstable_references(
+    element: StereoElementId,
+    signatures: &[(StereoCarrier, LigandSignature)],
+    stable: &RankedCarriers,
+) -> CipResult<()> {
+    for (carrier, _) in signatures {
+        let Some(reference) = carrier_rule6_atom(*carrier) else {
+            continue;
+        };
+        let ranking = match rank_carrier_signatures(element, signatures, Some(reference)) {
+            Ok(ranking) => ranking,
+            Err(CipAssignmentIssue::UnresolvedPriority { .. }) => continue,
+            Err(issue) => return Err(issue),
+        };
+        if carrier_permutation_is_odd(&stable.carriers, &ranking.carriers).unwrap_or(true) {
+            return Err(CipAssignmentIssue::UnresolvedPriority { element });
+        }
+    }
+    Ok(())
 }
 
 fn grouped_signature_indices(signatures: &[(StereoCarrier, LigandSignature)]) -> Vec<Vec<usize>> {
@@ -3464,6 +3487,57 @@ mod tests {
             ]
         );
         assert!(!ranked.pseudo_asymmetric_ordering);
+    }
+
+    #[test]
+    fn rule6_tetrahedral_retry_rejects_parity_unstable_two_partition_rankings() {
+        let carrier_a = AtomId::new(0);
+        let carrier_b = AtomId::new(1);
+        let carrier_c = AtomId::new(2);
+        let carrier_d = AtomId::new(3);
+        let signatures = vec![
+            (
+                StereoCarrier::Atom(carrier_a),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(8, carrier_a),
+                    children: Vec::new(),
+                }),
+            ),
+            (
+                StereoCarrier::Atom(carrier_b),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(8, carrier_b),
+                    children: Vec::new(),
+                }),
+            ),
+            (
+                StereoCarrier::Atom(carrier_c),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(7, carrier_c),
+                    children: Vec::new(),
+                }),
+            ),
+            (
+                StereoCarrier::Atom(carrier_d),
+                signature(LigandTree {
+                    priority: node_priority_with_rule6_atom(6, carrier_d),
+                    children: Vec::new(),
+                }),
+            ),
+        ];
+        let element = StereoElementId::new(0);
+
+        let issue = rank_tetrahedral_signatures_with_rule6(
+            &Molecule::new(),
+            element,
+            AtomId::new(0),
+            &signatures,
+            TetrahedralOrientation::Clockwise,
+            false,
+        )
+        .expect_err("odd successful reference permutations must remain unresolved");
+
+        assert_eq!(issue, CipAssignmentIssue::UnresolvedPriority { element });
     }
 
     fn s4_rule6_signatures(

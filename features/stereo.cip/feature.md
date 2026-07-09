@@ -71,7 +71,10 @@ pseudoasymmetric `r` before `s`; and Rule 5 uses descriptor-pair lists over
 the `R`/`M`/`seqCis` versus `S`/`P`/`seqTrans` descriptor families so like
 descriptor pairs outrank unlike pairs. Rule 6 is a contextual tetrahedral retry
 that selects a reference atom from unresolved equivalent carrier partitions and
-gives priority to ligand nodes that point back to that reference. Duplicate
+gives priority to ligand nodes that point back to that reference. Two-partition
+and fully equivalent Rule 6 retries reject assignments when successful
+reference choices produce odd carrier permutations relative to each other, so
+the result cannot depend on a single arbitrary reference atom. Duplicate
 nodes do not carry isotope mass, duplicate nodes for higher-order bonds back to
 the original stereocenter are suppressed, bond duplicates carry the parent
 atom's mancude fraction when it is fractional, and negative atoms with
@@ -181,7 +184,7 @@ invalidation after mutation. Axis regressions cover stored local reference carri
 endpoint priority flips, `M`/`P` descriptor assignment, and descriptor
 assignment from opt-in conservative 3D coordinate-derived perception. Targeted
 Rule 6 regressions cover both parity-stable and parity-unstable symmetric S4-style
-reference retries. Auxiliary occurrence-graph regressions cover coupled
+reference retries plus parity-unstable two-partition retries. Auxiliary occurrence-graph regressions cover coupled
 pseudoasymmetric cyclobutane, fused-ring, spiro-fused, and absolute-neighbor
 bicyclic centers from the Enamine diversity corpus. Rule 2 regressions cover
 natural atoms versus indicated isotopes and duplicate-node zero mass.
@@ -328,3 +331,6 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v36: Extend complete final equivalent endpoint tie handling to double-bond
   and stored-axis stereo, where each endpoint needs a unique highest-priority
   carrier before a descriptor can be assigned.
+- v37: Apply the parity-stable successful-reference guard to Rule 6
+  two-partition tetrahedral retries so assignments cannot depend on a single
+  odd-permutation reference choice.
