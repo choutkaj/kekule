@@ -539,6 +539,161 @@ fn cip_bootstraps_enamine_coupled_cyclobutane_pseudoasymmetric_centers() {
 }
 
 #[test]
+fn cip_matches_rdkit_for_enamine_quaternary_ring_center() {
+    let mut molecule =
+        smiles_api::read_str("C[C@]1(O)C[C@H](C1)C(=O)N2CC[C@H](CCNC(=O)C[C@@H]3CCCC[C@H]3O)C2")
+            .expect("Enamine quaternary ring-center scaffold parses");
+    perception_api::sanitize(&mut molecule).expect("Enamine quaternary scaffold sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    let descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors,
+        vec![
+            (1, StereoDescriptor::S),
+            (4, StereoDescriptor::LowerS),
+            (11, StereoDescriptor::S),
+            (18, StereoDescriptor::S),
+            (23, StereoDescriptor::R)
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_enamine_fused_three_center_pseudoasymmetry() {
+    let mut molecule =
+        smiles_api::read_str("CC1=CSC=C1C(=O)N2C[C@H]3[C@H](CNC(=O)CN4CCC(C)CC4)[C@H]3C2")
+            .expect("Enamine fused three-center scaffold parses");
+    perception_api::sanitize(&mut molecule).expect("Enamine fused three-center scaffold sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    let descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors,
+        vec![
+            (10, StereoDescriptor::S),
+            (11, StereoDescriptor::LowerR),
+            (24, StereoDescriptor::R)
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_enamine_fused_ring_dual_pseudoasymmetry() {
+    let mut molecule = smiles_api::read_str(
+        "CC(C)(C)C(=O)N[C@H]1C[C@H]2C[C@H](C[C@H]2C1)NC(=O)C=3C=CC=CC3N4C=NC=N4",
+    )
+    .expect("Enamine fused-ring dual pseudoasymmetric scaffold parses");
+    perception_api::sanitize(&mut molecule)
+        .expect("Enamine fused-ring dual pseudoasymmetric scaffold sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    let descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors,
+        vec![
+            (7, StereoDescriptor::LowerR),
+            (9, StereoDescriptor::S),
+            (11, StereoDescriptor::LowerR),
+            (13, StereoDescriptor::R)
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_enamine_spiro_fused_pseudoasymmetry() {
+    let mut molecule =
+        smiles_api::read_str("O=C(NS(=O)(=O)C=1C=NN(C1)C=2C=CC=CC2F)[C@@]34CCC[C@H]4CCC3")
+            .expect("Enamine spiro-fused pseudoasymmetric scaffold parses");
+    perception_api::sanitize(&mut molecule)
+        .expect("Enamine spiro-fused pseudoasymmetric scaffold sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    let descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors,
+        vec![
+            (18, StereoDescriptor::LowerR),
+            (22, StereoDescriptor::LowerR)
+        ]
+    );
+}
+
+#[test]
+fn cip_matches_rdkit_for_enamine_absolute_center_in_coupled_bicycle() {
+    let mut molecule =
+        smiles_api::read_str("CN1N=CN=C1C=2C=CC(=CC2)C(=O)N3[C@H](C(=O)O)[C@@H]4CC[C@H]3CC4")
+            .expect("Enamine coupled bicyclic scaffold parses");
+    perception_api::sanitize(&mut molecule).expect("Enamine coupled bicyclic scaffold sanitizes");
+
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    let descriptors = molecule
+        .graph()
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element
+                .descriptor
+                .map(|descriptor| (stereo.center.raw(), descriptor)),
+            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descriptors,
+        vec![
+            (15, StereoDescriptor::S),
+            (19, StereoDescriptor::R),
+            (22, StereoDescriptor::R)
+        ]
+    );
+}
+
+#[test]
 fn cip_applies_recursive_rule1a_before_isotope_priority() {
     let mut mol = Molecule::new();
     let mut center_atom = carbon();

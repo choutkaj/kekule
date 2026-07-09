@@ -83,15 +83,22 @@ unique under constitutional rules are assigned first, then previously
 unresolved elements are retried so embedded E/Z labels and descriptor-pair
 labels can break otherwise equal ligand ties without storing descriptor flags
 on atoms or bonds. After ordinary descriptor propagation stalls, deferred
-tetrahedral assignment can compute path-aware auxiliary descriptors for other
-tetrahedral configurations reached in the current ligand tree. These auxiliary
-labels are scoped to the current comparison context, cached to avoid recursive
-explosion, and skipped for the center currently being assigned, matching the
-RDKit-style separation between primary descriptors and local digraph
-auxiliary descriptors. Deferred Rule 6 still handles selected coupled
-ring-center ties in the same retry phase. When Rule 5 supplies the unique
-ordering for a tetrahedral center, assignment emits pseudoasymmetric `r`/`s`
-descriptors.
+tetrahedral assignment builds a root-centered auxiliary occurrence graph for
+the current center. Tetrahedral occurrences in that graph are labeled by
+virtually re-rooting their local ligand view within the same occurrence graph,
+so ring-duplicate paths and repeated visits keep their local identity instead
+of collapsing to a molecule-level atom descriptor. These auxiliary labels are
+scoped to the current comparison context, cached to avoid recursive explosion,
+and skipped for the center currently being assigned, matching the RDKit-style
+separation between primary descriptors and local digraph auxiliary
+descriptors. Precomputed auxiliary lookups fall back to already assigned
+primary tetrahedral descriptors when no local occurrence label exists, allowing
+absolute neighboring centers to resolve later coupled ties. Deferred Rule 6
+still handles selected coupled ring-center ties in the same retry phase, and
+when a deferred batch contains any absolute tetrahedral assignments those are
+committed before pseudoasymmetric assignments are retried against the stronger
+descriptor snapshot. When Rule 5 supplies the unique ordering for a
+tetrahedral center, assignment emits pseudoasymmetric `r`/`s` descriptors.
 
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
@@ -111,24 +118,24 @@ negative-fraction duplicate expansion, implicit lone-pair carriers, unsupported
 double-bond stereo exclusions, unresolved equivalent ligands, bounded resource
 failures, and descriptor invalidation after mutation. Targeted Rule 6
 regressions cover both parity-stable and parity-unstable symmetric S4-style
-reference retries. Path-aware auxiliary-descriptor regressions cover coupled
-pseudoasymmetric cyclobutane centers from the Enamine diversity corpus. Rule 2
-regressions cover natural atoms versus indicated isotopes and duplicate-node
-zero mass.
+reference retries. Auxiliary occurrence-graph regressions cover coupled
+pseudoasymmetric cyclobutane, fused-ring, spiro-fused, and absolute-neighbor
+bicyclic centers from the Enamine diversity corpus. Rule 2 regressions cover
+natural atoms versus indicated isotopes and duplicate-node zero mass.
 
-Smoke, PubChem 100, PubChem 1k, and PubChem 100k validation use externally
-supplied PubChem isomeric SMILES fixtures. CIP goldens are generated with RDKit
-and compare atom and bond descriptor maps, not bytewise SMILES spelling or
-internal stereo element IDs. Validation records include molecules where RDKit or
-the implementation assigns at least one CIP descriptor; no-descriptor molecules
-are filtered out so broad CIP validation is not dominated by unrelated parser or
-sanitizer coverage for structures with no stereochemical labels. Bond
-descriptors are keyed by endpoint atom indexes and descriptor instead of
-parser-local bond IDs, because SMILES bond insertion order is not a portable
-chemical identity. Molecules validation maps removable plain explicit
-hydrogens out of descriptor records to match RDKit default atom indexing.
-PubChem 100k is enabled as a broad RDKit parity gate for current
-descriptor-bearing coverage.
+Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity validation
+use externally supplied isomeric SMILES fixtures. CIP goldens are generated
+with RDKit and compare atom and bond descriptor maps, not bytewise SMILES
+spelling or internal stereo element IDs. Validation records include molecules
+where RDKit or the implementation assigns at least one CIP descriptor;
+no-descriptor molecules are filtered out so broad CIP validation is not
+dominated by unrelated parser or sanitizer coverage for structures with no
+stereochemical labels. Bond descriptors are keyed by endpoint atom indexes and
+descriptor instead of parser-local bond IDs, because SMILES bond insertion
+order is not a portable chemical identity. Molecules validation maps removable
+plain explicit hydrogens out of descriptor records to match RDKit default atom
+indexing. PubChem 100k and the Enamine Discovery Diversity Set are enabled as
+broad RDKit parity gates for current descriptor-bearing coverage.
 
 ## Out Of Scope
 
@@ -191,3 +198,9 @@ and stereo enumeration.
 - v20: Add deferred path-aware auxiliary tetrahedral descriptors so coupled
   pseudoasymmetric ligand paths can use local digraph labels instead of only
   molecule-level primary descriptors.
+- v21: Promote Enamine diversity SMILES packs into the CIP validation contract
+  as a broad RDKit parity gate for drug-like descriptor-bearing molecules.
+- v22: Replace path-only auxiliary descriptor lookup with a root-centered
+  auxiliary occurrence graph, virtual local re-rooting, absolute-before-pseudo
+  deferred assignment, and Enamine regressions for fused, spiro, and coupled
+  absolute/pseudo tetrahedral centers.

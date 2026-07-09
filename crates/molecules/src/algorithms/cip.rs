@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use crate::algorithms::{
@@ -141,8 +141,21 @@ pub fn assign_cip_descriptors_with_options(
         if !assigned_this_round {
             match assign_deferred_tetrahedral_rule6(mol, &next_pending, options) {
                 Ok(assignments) if !assignments.is_empty() => {
-                    let assigned_ids = assignments.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-                    for (id, descriptor) in assignments {
+                    let has_absolute_assignment = assignments
+                        .iter()
+                        .any(|(_, descriptor)| descriptor_is_absolute_tetrahedral(*descriptor));
+                    let assignments_to_apply = assignments
+                        .into_iter()
+                        .filter(|(_, descriptor)| {
+                            !has_absolute_assignment
+                                || descriptor_is_absolute_tetrahedral(*descriptor)
+                        })
+                        .collect::<Vec<_>>();
+                    let assigned_ids = assignments_to_apply
+                        .iter()
+                        .map(|(id, _)| *id)
+                        .collect::<Vec<_>>();
+                    for (id, descriptor) in assignments_to_apply {
                         set_stereo_descriptor(mol, id, descriptor);
                         report.assigned.push(CipAssignment {
                             element: id,
@@ -171,6 +184,10 @@ pub fn assign_cip_descriptors_with_options(
         pending = next_pending;
     }
     report
+}
+
+fn descriptor_is_absolute_tetrahedral(descriptor: StereoDescriptor) -> bool {
+    matches!(descriptor, StereoDescriptor::R | StereoDescriptor::S)
 }
 
 enum CipElementAssignment {
@@ -269,12 +286,13 @@ fn tetrahedral_descriptor_from_ranked(
     }
     let even = permutation_is_even(&priority_positions);
     let descriptor_is_r = matches!(stereo.orientation, TetrahedralOrientation::Clockwise) != even;
-    Ok(match (descriptor_is_r, ranked.pseudo_asymmetric_ordering) {
+    let descriptor = match (descriptor_is_r, ranked.pseudo_asymmetric_ordering) {
         (true, true) => StereoDescriptor::LowerR,
         (false, true) => StereoDescriptor::LowerS,
         (true, false) => StereoDescriptor::R,
         (false, false) => StereoDescriptor::S,
-    })
+    };
+    Ok(descriptor)
 }
 
 fn assign_double_bond_descriptor(
@@ -384,7 +402,51 @@ fn carrier_signatures(
     allow_auxiliary_descriptors: bool,
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
     let atomic_number_fractions = cip_atomic_number_fractions(mol);
-    let descriptor_context = DescriptorContext::new(element, allow_auxiliary_descriptors);
+    if allow_auxiliary_descriptors {
+        let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Collect);
+        let aux_graph =
+            build_auxiliary_graph(mol, element, root, options, &atomic_number_fractions)?;
+        collect_auxiliary_occurrences_from_graph(mol, &descriptor_context, &aux_graph);
+        precompute_auxiliary_descriptors(
+            mol,
+            &descriptor_context,
+            &aux_graph,
+            options,
+            &atomic_number_fractions,
+        );
+        let descriptor_context = descriptor_context.with_mode(AuxiliaryDescriptorMode::Precomputed);
+        let signatures = build_carrier_signatures(
+            mol,
+            element,
+            &descriptor_context,
+            root,
+            carriers,
+            options,
+            &atomic_number_fractions,
+        )?;
+        return Ok(signatures);
+    }
+    let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Disabled);
+    build_carrier_signatures(
+        mol,
+        element,
+        &descriptor_context,
+        root,
+        carriers,
+        options,
+        &atomic_number_fractions,
+    )
+}
+
+fn build_carrier_signatures(
+    mol: &Molecule,
+    element: StereoElementId,
+    descriptor_context: &DescriptorContext,
+    root: AtomId,
+    carriers: &[StereoCarrier],
+    options: CipAssignmentOptions,
+    atomic_number_fractions: &[AtomicNumberFraction],
+) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
     carriers
         .iter()
         .copied()
@@ -392,11 +454,11 @@ fn carrier_signatures(
             carrier_signature(
                 mol,
                 element,
-                &descriptor_context,
+                descriptor_context,
                 carrier,
                 root,
                 options,
-                &atomic_number_fractions,
+                atomic_number_fractions,
             )
             .map(|signature| (carrier, signature))
         })
@@ -490,47 +552,88 @@ fn rank_single_ring_tied_pair_with_rule6(
         return Err(CipAssignmentIssue::UnresolvedPriority { element });
     };
     let path_length = path.len().saturating_sub(1);
-    let tied_pair_has_sequence_descriptor = tied_groups[0]
+    let tied_pair_descriptor_class = tied_groups[0]
         .iter()
-        .any(|index| tree_contains_sequence_descriptor(&signatures[*index].1.root));
-    let outside_tied_pair_has_sequence_descriptor = groups
+        .filter_map(|index| tree_descriptor_class(&signatures[*index].1.root))
+        .max();
+    let outside_tied_pair_descriptor_class = groups
         .iter()
         .filter(|group| !std::ptr::eq(*group, tied_groups[0]))
         .flatten()
-        .any(|index| tree_contains_sequence_descriptor(&signatures[*index].1.root));
-    let reference = if tied_pair_has_sequence_descriptor {
+        .filter_map(|index| tree_descriptor_class(&signatures[*index].1.root))
+        .max();
+    let reference = if tied_pair_descriptor_class.is_some() {
         if left.raw() >= right.raw() {
             left
         } else {
             right
         }
-    } else if outside_tied_pair_has_sequence_descriptor {
-        if left.raw() <= right.raw() {
-            left
-        } else {
-            right
-        }
-    } else if path_length == 2 {
-        match path
-            .get(1)
-            .and_then(|center| tetrahedral_orientation_for_center(mol, *center))
-        {
-            Some(other_orientation) if other_orientation != orientation => right,
-            _ => left,
-        }
-    } else if left.raw() >= right.raw() {
-        left
     } else {
-        right
+        match outside_tied_pair_descriptor_class {
+            Some(DescriptorClass::Absolute) => {
+                if left.raw() >= right.raw() {
+                    left
+                } else {
+                    right
+                }
+            }
+            Some(DescriptorClass::Pseudo) => {
+                if left.raw() <= right.raw() {
+                    left
+                } else {
+                    right
+                }
+            }
+            None if path_length == 2 => {
+                match path
+                    .get(1)
+                    .and_then(|center| tetrahedral_orientation_for_center(mol, *center))
+                {
+                    Some(other_orientation) if other_orientation != orientation => right,
+                    _ => left,
+                }
+            }
+            None if left.raw() >= right.raw() => left,
+            None => right,
+        }
     };
     let mut ranked = rank_carrier_signatures(element, signatures, Some(reference))?;
-    ranked.pseudo_asymmetric_ordering = !tied_pair_has_sequence_descriptor;
+    ranked.pseudo_asymmetric_ordering = !matches!(
+        (
+            tied_pair_descriptor_class,
+            outside_tied_pair_descriptor_class,
+        ),
+        (Some(DescriptorClass::Absolute), _) | (None, Some(DescriptorClass::Absolute))
+    );
     Ok(ranked)
 }
 
-fn tree_contains_sequence_descriptor(tree: &LigandTree) -> bool {
-    tree.priority.descriptor.and_then(descriptor_ref).is_some()
-        || tree.children.iter().any(tree_contains_sequence_descriptor)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DescriptorClass {
+    Pseudo,
+    Absolute,
+}
+
+fn tree_descriptor_class(tree: &LigandTree) -> Option<DescriptorClass> {
+    let own = tree.priority.descriptor.and_then(descriptor_class);
+    tree.children
+        .iter()
+        .filter_map(tree_descriptor_class)
+        .chain(own)
+        .max()
+}
+
+fn descriptor_class(descriptor: StereoDescriptor) -> Option<DescriptorClass> {
+    match descriptor {
+        StereoDescriptor::R
+        | StereoDescriptor::S
+        | StereoDescriptor::M
+        | StereoDescriptor::P
+        | StereoDescriptor::SeqCis
+        | StereoDescriptor::SeqTrans => Some(DescriptorClass::Absolute),
+        StereoDescriptor::LowerR | StereoDescriptor::LowerS => Some(DescriptorClass::Pseudo),
+        StereoDescriptor::E | StereoDescriptor::Z => None,
+    }
 }
 
 fn tetrahedral_orientation_for_center(
@@ -754,7 +857,7 @@ impl LigandTree {
         Ordering::Equal
     }
 
-    fn compare_without_rule5(&self, other: &Self) -> Ordering {
+    fn compare_for_rule5_pairlist(&self, other: &Self, reference: DescriptorRef) -> Ordering {
         for rule in [
             SequenceRule::Rule1a,
             SequenceRule::Rule1b,
@@ -763,24 +866,30 @@ impl LigandTree {
             SequenceRule::Rule4a,
             SequenceRule::Rule4b,
             SequenceRule::Rule4c,
+            SequenceRule::Rule6,
         ] {
             let priority = self.compare_by_sequence_rule(other, rule, None).ordering;
             if priority != Ordering::Equal {
                 return priority;
             }
         }
-        Ordering::Equal
+        rule5_reference_compare(
+            self.priority.descriptor,
+            other.priority.descriptor,
+            reference,
+        )
     }
 
-    fn compare_before_rule4b(&self, other: &Self) -> Ordering {
+    fn compare_through_rule4b(&self, other: &Self) -> Ordering {
         for rule in [
             SequenceRule::Rule1a,
             SequenceRule::Rule1b,
             SequenceRule::Rule2,
             SequenceRule::Rule3,
             SequenceRule::Rule4a,
+            SequenceRule::Rule4b,
         ] {
-            let priority = self.recursive_compare(other, rule, None);
+            let priority = self.compare_by_sequence_rule(other, rule, None).ordering;
             if priority != Ordering::Equal {
                 return priority;
             }
@@ -966,14 +1075,14 @@ impl LigandTree {
         children
     }
 
-    fn children_grouped_before_rule4b(&self) -> Vec<Vec<&LigandTree>> {
+    fn children_grouped_through_rule4b(&self) -> Vec<Vec<&LigandTree>> {
         let mut children = self.children.iter().collect::<Vec<_>>();
-        children.sort_by(|left, right| right.compare_before_rule4b(left));
+        children.sort_by(|left, right| right.compare_through_rule4b(left));
 
         let mut groups: Vec<Vec<&LigandTree>> = Vec::new();
         for child in children {
             if let Some(last) = groups.last_mut() {
-                if last[0].compare_before_rule4b(child) == Ordering::Equal {
+                if last[0].compare_through_rule4b(child) == Ordering::Equal {
                     last.push(child);
                     continue;
                 }
@@ -1049,24 +1158,39 @@ struct NodePriority {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AuxDescriptorKey {
-    skipped: Vec<StereoElementId>,
     element: StereoElementId,
     path: Vec<AtomId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AuxOccurrence {
+    key: AuxDescriptorKey,
+    node: usize,
+    distance: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuxiliaryDescriptorMode {
+    Disabled,
+    Collect,
+    Precomputed,
 }
 
 #[derive(Debug, Clone)]
 struct DescriptorContext {
     skipped: Vec<StereoElementId>,
-    allow_auxiliary: bool,
-    aux_cache: Rc<RefCell<HashMap<AuxDescriptorKey, Option<StereoDescriptor>>>>,
+    auxiliary_mode: AuxiliaryDescriptorMode,
+    aux_labels: Rc<RefCell<HashMap<AuxDescriptorKey, Option<StereoDescriptor>>>>,
+    aux_occurrences: Rc<RefCell<Vec<AuxOccurrence>>>,
 }
 
 impl DescriptorContext {
-    fn new(skip: StereoElementId, allow_auxiliary: bool) -> Self {
+    fn new(skip: StereoElementId, auxiliary_mode: AuxiliaryDescriptorMode) -> Self {
         Self {
             skipped: vec![skip],
-            allow_auxiliary,
-            aux_cache: Rc::new(RefCell::new(HashMap::new())),
+            auxiliary_mode,
+            aux_labels: Rc::new(RefCell::new(HashMap::new())),
+            aux_occurrences: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -1079,8 +1203,18 @@ impl DescriptorContext {
         skipped.push(element);
         Self {
             skipped,
-            allow_auxiliary: self.allow_auxiliary,
-            aux_cache: Rc::clone(&self.aux_cache),
+            auxiliary_mode: self.auxiliary_mode,
+            aux_labels: Rc::clone(&self.aux_labels),
+            aux_occurrences: Rc::clone(&self.aux_occurrences),
+        }
+    }
+
+    fn with_mode(&self, auxiliary_mode: AuxiliaryDescriptorMode) -> Self {
+        Self {
+            skipped: self.skipped.clone(),
+            auxiliary_mode,
+            aux_labels: Rc::clone(&self.aux_labels),
+            aux_occurrences: Rc::clone(&self.aux_occurrences),
         }
     }
 }
@@ -1091,6 +1225,19 @@ struct LigandBuildContext<'a> {
     descriptor_context: &'a DescriptorContext,
     options: CipAssignmentOptions,
     atomic_number_fractions: &'a [AtomicNumberFraction],
+}
+
+#[derive(Debug, Clone)]
+struct AuxiliaryGraph {
+    nodes: Vec<AuxiliaryGraphNode>,
+}
+
+#[derive(Debug, Clone)]
+struct AuxiliaryGraphNode {
+    node: LigandNode,
+    parent: Option<usize>,
+    children: Vec<usize>,
+    depth: usize,
 }
 
 impl NodePriority {
@@ -1267,7 +1414,7 @@ impl DescriptorPairList {
             list.add(node.priority.descriptor);
 
             let mut children = node.children.iter().collect::<Vec<_>>();
-            children.sort_by(|left, right| right.compare_without_rule5(left));
+            children.sort_by(|left, right| right.compare_for_rule5_pairlist(left, reference));
             queue.extend(children);
         }
         list
@@ -1341,7 +1488,7 @@ fn next_reference_level<'a>(previous: &[Vec<&'a LigandTree>]) -> Vec<Vec<&'a Lig
         let mut grouped_children = Vec::new();
         let mut group_count = None;
         for node in group {
-            let children = node.children_grouped_before_rule4b();
+            let children = node.children_grouped_through_rule4b();
             if children.is_empty() {
                 continue;
             }
@@ -1382,6 +1529,28 @@ fn fixed_reference_priority(descriptor: Option<StereoDescriptor>, reference: Des
     }
 }
 
+fn rule5_reference_compare(
+    left: Option<StereoDescriptor>,
+    right: Option<StereoDescriptor>,
+    reference: DescriptorRef,
+) -> Ordering {
+    match (
+        left.and_then(descriptor_ref),
+        right.and_then(descriptor_ref),
+    ) {
+        (Some(left), Some(right)) => {
+            let left_like = left == reference;
+            let right_like = right == reference;
+            match (left_like, right_like) {
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                _ => Ordering::Equal,
+            }
+        }
+        _ => Ordering::Equal,
+    }
+}
+
 fn rule6_priority(atom: Option<AtomId>, reference: Option<AtomId>) -> u8 {
     match (atom, reference) {
         (Some(atom), Some(reference)) if atom == reference => 1,
@@ -1419,6 +1588,84 @@ fn carrier_signature(
     };
     let root = ligand_tree(&build_context, node, 0, &mut visited_nodes)?;
     Ok(LigandSignature { root })
+}
+
+fn build_auxiliary_graph(
+    mol: &Molecule,
+    element: StereoElementId,
+    root: AtomId,
+    options: CipAssignmentOptions,
+    atomic_number_fractions: &[AtomicNumberFraction],
+) -> CipResult<AuxiliaryGraph> {
+    let root = LigandNode::Atom {
+        atom: root,
+        previous: None,
+        path: vec![root],
+        duplicate: None,
+        terminal: false,
+    };
+    let mut graph = AuxiliaryGraph { nodes: Vec::new() };
+    let mut visited_nodes = 0usize;
+    let context = AuxiliaryGraphBuildContext {
+        mol,
+        element,
+        options,
+        atomic_number_fractions,
+    };
+    add_auxiliary_graph_node(&context, &mut graph, root, None, 0, &mut visited_nodes)?;
+    Ok(graph)
+}
+
+struct AuxiliaryGraphBuildContext<'a> {
+    mol: &'a Molecule,
+    element: StereoElementId,
+    options: CipAssignmentOptions,
+    atomic_number_fractions: &'a [AtomicNumberFraction],
+}
+
+fn add_auxiliary_graph_node(
+    context: &AuxiliaryGraphBuildContext<'_>,
+    graph: &mut AuxiliaryGraph,
+    node: LigandNode,
+    parent: Option<usize>,
+    depth: usize,
+    visited_nodes: &mut usize,
+) -> CipResult<usize> {
+    *visited_nodes = visited_nodes.saturating_add(1);
+    if *visited_nodes > context.options.max_nodes {
+        return Err(CipAssignmentIssue::ResourceLimitExceeded {
+            element: context.element,
+            max_nodes: context.options.max_nodes,
+        });
+    }
+
+    let index = graph.nodes.len();
+    graph.nodes.push(AuxiliaryGraphNode {
+        node: node.clone(),
+        parent,
+        children: Vec::new(),
+        depth,
+    });
+    if depth < context.options.max_depth.saturating_add(1) {
+        let mut child_nodes = Vec::new();
+        node.extend(
+            context.mol,
+            context.atomic_number_fractions,
+            &mut child_nodes,
+        );
+        for child in child_nodes {
+            let child_index = add_auxiliary_graph_node(
+                context,
+                graph,
+                child,
+                Some(index),
+                depth + 1,
+                visited_nodes,
+            )?;
+            graph.nodes[index].children.push(child_index);
+        }
+    }
+    Ok(index)
 }
 
 fn ligand_tree(
@@ -1937,12 +2184,27 @@ fn atom_descriptor_for_ligand_node(
         }
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) if stereo.center == atom => {
-                element.descriptor.or_else(|| {
-                    if !context.descriptor_context.allow_auxiliary {
-                        return None;
+                match context.descriptor_context.auxiliary_mode {
+                    AuxiliaryDescriptorMode::Disabled => None,
+                    AuxiliaryDescriptorMode::Collect => {
+                        if path.last().copied() == Some(stereo.center) {
+                            record_auxiliary_occurrence(context.descriptor_context, id, path);
+                        }
+                        None
                     }
-                    auxiliary_tetrahedral_descriptor_for_ligand_node(context, id, stereo, path)
-                })
+                    AuxiliaryDescriptorMode::Precomputed => {
+                        let key = AuxDescriptorKey {
+                            element: id,
+                            path: path.to_vec(),
+                        };
+                        let aux_labels = context.descriptor_context.aux_labels.borrow();
+                        aux_labels
+                            .get(&key)
+                            .copied()
+                            .flatten()
+                            .or(element.descriptor)
+                    }
+                }
             }
             StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
                 double_bond_descriptor_applies_to_node(stereo, descriptor, atom, path)
@@ -1953,57 +2215,143 @@ fn atom_descriptor_for_ligand_node(
     })
 }
 
-fn auxiliary_tetrahedral_descriptor_for_ligand_node(
-    context: &LigandBuildContext<'_>,
-    aux_element: StereoElementId,
-    stereo: &TetrahedralStereo,
+fn record_auxiliary_occurrence(
+    context: &DescriptorContext,
+    element: StereoElementId,
     path: &[AtomId],
+) {
+    context.aux_occurrences.borrow_mut().push(AuxOccurrence {
+        key: AuxDescriptorKey {
+            element,
+            path: path.to_vec(),
+        },
+        node: 0,
+        distance: path.len().saturating_sub(1),
+    });
+}
+
+fn collect_auxiliary_occurrences_from_graph(
+    mol: &Molecule,
+    context: &DescriptorContext,
+    graph: &AuxiliaryGraph,
+) {
+    for (node_index, graph_node) in graph.nodes.iter().enumerate() {
+        let LigandNode::Atom {
+            atom,
+            path,
+            duplicate: None,
+            ..
+        } = &graph_node.node
+        else {
+            continue;
+        };
+        for (element, stereo_element) in mol.stereo_elements() {
+            if context.skips(element) {
+                continue;
+            }
+            let StereoElementKind::Tetrahedral(stereo) = &stereo_element.kind else {
+                continue;
+            };
+            if stereo.center == *atom {
+                context.aux_occurrences.borrow_mut().push(AuxOccurrence {
+                    key: AuxDescriptorKey {
+                        element,
+                        path: path.clone(),
+                    },
+                    node: node_index,
+                    distance: graph_node.depth,
+                });
+            }
+        }
+    }
+}
+
+fn precompute_auxiliary_descriptors(
+    mol: &Molecule,
+    descriptor_context: &DescriptorContext,
+    graph: &AuxiliaryGraph,
+    options: CipAssignmentOptions,
+    atomic_number_fractions: &[AtomicNumberFraction],
+) {
+    let mut occurrences = descriptor_context.aux_occurrences.borrow().clone();
+    let mut seen = HashSet::new();
+    occurrences.retain(|occurrence| seen.insert(occurrence.key.clone()));
+    occurrences.sort_by(|left, right| {
+        right
+            .distance
+            .cmp(&left.distance)
+            .then_with(|| left.key.element.cmp(&right.key.element))
+            .then_with(|| left.key.path.cmp(&right.key.path))
+    });
+
+    let mut position = 0usize;
+    while position < occurrences.len() {
+        let distance = occurrences[position].distance;
+        let start = position;
+        while position < occurrences.len() && occurrences[position].distance == distance {
+            position += 1;
+        }
+
+        let mut batch = Vec::new();
+        for occurrence in &occurrences[start..position] {
+            if descriptor_context
+                .aux_labels
+                .borrow()
+                .contains_key(&occurrence.key)
+            {
+                continue;
+            }
+            let descriptor = auxiliary_tetrahedral_descriptor_for_occurrence(
+                mol,
+                descriptor_context,
+                graph,
+                occurrence,
+                options,
+                atomic_number_fractions,
+            );
+            batch.push((occurrence.key.clone(), descriptor));
+        }
+
+        let mut aux_labels = descriptor_context.aux_labels.borrow_mut();
+        for (key, descriptor) in batch {
+            aux_labels.insert(key, descriptor);
+        }
+    }
+}
+
+fn auxiliary_tetrahedral_descriptor_for_occurrence(
+    mol: &Molecule,
+    descriptor_context: &DescriptorContext,
+    graph: &AuxiliaryGraph,
+    occurrence: &AuxOccurrence,
+    options: CipAssignmentOptions,
+    atomic_number_fractions: &[AtomicNumberFraction],
 ) -> Option<StereoDescriptor> {
-    if path.last().copied() != Some(stereo.center) {
+    let element = mol.stereo_element(occurrence.key.element).ok()?;
+    let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
+        return None;
+    };
+    if occurrence.key.path.last().copied() != Some(stereo.center) {
         return None;
     }
-    let aux_descriptor_context = context.descriptor_context.with_skip(aux_element);
-    let key = AuxDescriptorKey {
-        skipped: aux_descriptor_context.skipped.clone(),
-        element: aux_element,
-        path: path.to_vec(),
-    };
-    if let Some(cached) = context
-        .descriptor_context
-        .aux_cache
-        .borrow()
-        .get(&key)
-        .copied()
-    {
-        return cached;
-    }
-    context
-        .descriptor_context
-        .aux_cache
-        .borrow_mut()
-        .insert(key.clone(), None);
+    let aux_descriptor_context = descriptor_context
+        .with_skip(occurrence.key.element)
+        .with_mode(AuxiliaryDescriptorMode::Precomputed);
     let aux_context = LigandBuildContext {
-        mol: context.mol,
-        element: aux_element,
+        mol,
+        element: occurrence.key.element,
         descriptor_context: &aux_descriptor_context,
-        options: context.options,
-        atomic_number_fractions: context.atomic_number_fractions,
+        options,
+        atomic_number_fractions,
     };
-    let signatures = auxiliary_tetrahedral_signatures(&aux_context, stereo, path).ok();
-    let Some(signatures) = signatures else {
-        context
-            .descriptor_context
-            .aux_cache
-            .borrow_mut()
-            .insert(key, None);
-        return None;
-    };
-    let ranked = match rank_carrier_signatures(aux_element, &signatures, None) {
+    let signatures =
+        auxiliary_tetrahedral_signatures(&aux_context, graph, occurrence.node, stereo).ok()?;
+    let ranked = match rank_carrier_signatures(occurrence.key.element, &signatures, None) {
         Ok(ranked) => ranked,
         Err(CipAssignmentIssue::UnresolvedPriority { .. }) if stereo.carriers.len() == 4 => {
             rank_tetrahedral_signatures_with_rule6(
-                context.mol,
-                aux_element,
+                mol,
+                occurrence.key.element,
                 stereo.center,
                 &signatures,
                 stereo.orientation,
@@ -2011,35 +2359,23 @@ fn auxiliary_tetrahedral_descriptor_for_ligand_node(
             )
             .ok()?
         }
-        Err(_) => {
-            context
-                .descriptor_context
-                .aux_cache
-                .borrow_mut()
-                .insert(key, None);
-            return None;
-        }
+        Err(_) => return None,
     };
-    let descriptor = tetrahedral_descriptor_from_ranked(aux_element, stereo, &ranked).ok();
-    context
-        .descriptor_context
-        .aux_cache
-        .borrow_mut()
-        .insert(key, descriptor);
-    descriptor
+    tetrahedral_descriptor_from_ranked(occurrence.key.element, stereo, &ranked).ok()
 }
 
 fn auxiliary_tetrahedral_signatures(
     context: &LigandBuildContext<'_>,
+    graph: &AuxiliaryGraph,
+    root: usize,
     stereo: &TetrahedralStereo,
-    path: &[AtomId],
 ) -> CipResult<Vec<(StereoCarrier, LigandSignature)>> {
     stereo
         .carriers
         .iter()
         .copied()
         .map(|carrier| {
-            auxiliary_carrier_signature(context, stereo.center, carrier, path)
+            auxiliary_carrier_signature(context, graph, root, carrier)
                 .map(|signature| (carrier, signature))
         })
         .collect()
@@ -2047,39 +2383,111 @@ fn auxiliary_tetrahedral_signatures(
 
 fn auxiliary_carrier_signature(
     context: &LigandBuildContext<'_>,
-    center: AtomId,
+    graph: &AuxiliaryGraph,
+    root: usize,
     carrier: StereoCarrier,
-    center_path: &[AtomId],
 ) -> CipResult<LigandSignature> {
-    let node = match carrier {
-        StereoCarrier::Atom(atom) => LigandNode::Atom {
-            atom,
-            previous: Some(center),
-            path: auxiliary_carrier_path(center_path, center, atom),
-            duplicate: None,
-            terminal: false,
+    let root = match carrier {
+        StereoCarrier::Atom(atom) => {
+            let Some(node) = outgoing_auxiliary_graph_nodes(graph, root, root)
+                .into_iter()
+                .find(|node| auxiliary_graph_node_matches_atom(graph, *node, atom))
+            else {
+                return Err(CipAssignmentIssue::UnresolvedPriority {
+                    element: context.element,
+                });
+            };
+            let mut visited_nodes = 0usize;
+            ligand_tree_from_auxiliary_graph(context, graph, root, node, 0, &mut visited_nodes)?
+        }
+        StereoCarrier::ImplicitHydrogen => {
+            let Some(node) = outgoing_auxiliary_graph_nodes(graph, root, root)
+                .into_iter()
+                .find(|node| matches!(graph.nodes[*node].node, LigandNode::Hydrogen))
+            else {
+                return Err(CipAssignmentIssue::UnresolvedPriority {
+                    element: context.element,
+                });
+            };
+            let mut visited_nodes = 0usize;
+            ligand_tree_from_auxiliary_graph(context, graph, root, node, 0, &mut visited_nodes)?
+        }
+        StereoCarrier::ImplicitLonePair => LigandTree {
+            priority: LigandNode::LonePair.priority(context),
+            children: Vec::new(),
         },
-        StereoCarrier::ImplicitHydrogen => LigandNode::Hydrogen,
-        StereoCarrier::ImplicitLonePair => LigandNode::LonePair,
     };
-    let mut visited_nodes = 0usize;
-    let root = ligand_tree(context, node, 0, &mut visited_nodes)?;
     Ok(LigandSignature { root })
 }
 
-fn auxiliary_carrier_path(center_path: &[AtomId], center: AtomId, carrier: AtomId) -> Vec<AtomId> {
-    if center_path
-        .iter()
-        .rev()
-        .nth(1)
-        .copied()
-        .is_some_and(|parent| parent == carrier)
-    {
-        vec![center, carrier]
+fn ligand_tree_from_auxiliary_graph(
+    context: &LigandBuildContext<'_>,
+    graph: &AuxiliaryGraph,
+    root: usize,
+    node: usize,
+    depth: usize,
+    visited_nodes: &mut usize,
+) -> CipResult<LigandTree> {
+    *visited_nodes = visited_nodes.saturating_add(1);
+    if *visited_nodes > context.options.max_nodes {
+        return Err(CipAssignmentIssue::ResourceLimitExceeded {
+            element: context.element,
+            max_nodes: context.options.max_nodes,
+        });
+    }
+    let priority = graph.nodes[node].node.priority(context);
+    let mut children = Vec::new();
+    if depth < context.options.max_depth {
+        for child in outgoing_auxiliary_graph_nodes(graph, root, node) {
+            children.push(ligand_tree_from_auxiliary_graph(
+                context,
+                graph,
+                root,
+                child,
+                depth + 1,
+                visited_nodes,
+            )?);
+        }
+        children.sort_by(|left, right| right.priority.compare_shallow(&left.priority));
+    }
+    Ok(LigandTree { priority, children })
+}
+
+fn auxiliary_graph_node_matches_atom(graph: &AuxiliaryGraph, node: usize, atom: AtomId) -> bool {
+    matches!(
+        &graph.nodes[node].node,
+        LigandNode::Atom {
+            atom: node_atom,
+            duplicate: None,
+            ..
+        } if *node_atom == atom
+    )
+}
+
+fn outgoing_auxiliary_graph_nodes(graph: &AuxiliaryGraph, root: usize, node: usize) -> Vec<usize> {
+    let mut path = Vec::new();
+    let mut cursor = Some(root);
+    while let Some(current) = cursor {
+        path.push(current);
+        cursor = graph.nodes[current].parent;
+    }
+    let path_position = path.iter().position(|candidate| *candidate == node);
+    if let Some(position) = path_position {
+        let child_toward_root = position.checked_sub(1).map(|index| path[index]);
+        let mut outgoing = Vec::new();
+        if let Some(parent) = graph.nodes[node].parent {
+            outgoing.push(parent);
+        }
+        outgoing.extend(
+            graph.nodes[node]
+                .children
+                .iter()
+                .copied()
+                .filter(|child| Some(*child) != child_toward_root),
+        );
+        outgoing
     } else {
-        let mut path = center_path.to_vec();
-        path.push(carrier);
-        path
+        graph.nodes[node].children.clone()
     }
 }
 
@@ -2785,7 +3193,7 @@ mod tests {
             })
             .expect("duplicate nitrogen child");
         let element = StereoElementId::new(0);
-        let descriptor_context = DescriptorContext::new(element, false);
+        let descriptor_context = DescriptorContext::new(element, AuxiliaryDescriptorMode::Disabled);
         let build_context = LigandBuildContext {
             mol: &mol,
             element,
