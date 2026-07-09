@@ -67,12 +67,14 @@ run over whole `MacroMolecule` structures by default.
   wedge/either assembly, unsupported source-mark diagnostics, coordinate-derived
   tetrahedral and double-bond assignment, sanitizer integration, transactional
   rollback, and preservation of explicit unknown versus absent stereo.
-- Smoke, PubChem 100, and PubChem 1k validation record semantic perception
-  JSON for externally pinned PubChem fixtures covering absent stereo, stored
-  tetrahedral stereo, and directional double-bond source-mark assembly. The
-  broader PubChem tiers are implementation-golden semantic regression gates for
+- Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity
+  validation record semantic perception JSON for externally pinned isomeric
+  SMILES fixtures covering absent stereo, stored tetrahedral stereo, and
+  directional double-bond source-mark assembly. The broader PubChem and
+  Enamine tiers are implementation-golden semantic regression gates for
   perception stability, while exact RDKit descriptor parity belongs to
-  `stereo.cip`.
+  `stereo.cip`. Broad semantic validation records sanitize failures per record
+  when unrelated unsupported valence chemistry prevents stereo perception.
 
 ## Out Of Scope
 
@@ -103,3 +105,6 @@ stereo transfer.
   source-mark assembly.
 - v8: Add PubChem 100 and PubChem 1k semantic regression requirements for
   stereo perception over externally supplied isomeric SMILES.
+- v9: Add PubChem 100k and Enamine diversity semantic regression requirements
+  and preserve unsupported-sanitization records as per-record validation output
+  instead of aborting broad perception fixtures.

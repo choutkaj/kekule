@@ -663,7 +663,7 @@ fn manual_semantic_reference_evidence_does_not_require_generator_files() {
     let (_, _, manifest_path) = write_evidence_test_repo(&root);
     fs::write(
         &manifest_path,
-        "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"pubchem-manual-semantic\"\nreference_version = \"PubChem PUG REST 2026-07-05\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
+        "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"enamine-manual-semantic\"\nreference_version = \"Enamine Discovery Diversity Set 2026-07-05\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
     )
     .expect("manual manifest should write");
     fs::remove_dir_all(root.join("validation/reference")).ok();
@@ -909,6 +909,25 @@ fn validation_comparison_counts_multiple_fixture_failures() {
         .as_deref()
         .is_some_and(|failure| failure.contains("data/one.smi")));
     fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_perception_validation_records_sanitize_errors_per_record() {
+    let molecule = smiles::read_str("C(#N)[Hg-2](C#N)(C#N)C#N.[K+].[K+]")
+        .expect("unsupported valence molecule should parse");
+    let mut record = IndexedSmallRecord {
+        record_index: 0,
+        title: "unsupported element".to_owned(),
+        molecule,
+    };
+
+    let value = stereo_perception_record_json(&mut record);
+
+    assert_eq!(
+        value.get("status").and_then(Value::as_str),
+        Some("sanitize_error")
+    );
+    assert!(value.get("report").is_none());
 }
 
 #[test]

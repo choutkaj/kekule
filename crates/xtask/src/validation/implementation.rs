@@ -153,15 +153,6 @@ pub(crate) fn implementation_expected(
         }
         "stereo.perception" => {
             let mut records = read_stereo_records_by_suffix(fixture_path)?;
-            for record in &mut records {
-                perception::sanitize_with_options(
-                    &mut record.molecule,
-                    SanitizeOptions {
-                        perceive_stereo: false,
-                        ..SanitizeOptions::default()
-                    },
-                )?;
-            }
             Ok(json!({
                 "records": records
                     .iter_mut()
@@ -409,6 +400,23 @@ pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let sanitize = perception::sanitize_with_options(
+        &mut record.molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    );
+    if sanitize.is_err() {
+        let mol = record.molecule.graph();
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "atom_count": mol.atom_count(),
+            "bond_count": mol.bond_count(),
+        });
+    }
     let report = stereo::perceive_stereo(record.molecule.graph_mut());
     let mol = record.molecule.graph();
     json!({
