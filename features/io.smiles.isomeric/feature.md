@@ -64,9 +64,11 @@ marks and explicit unknown stereo.
 Smoke validation compares semantic output against externally generated RDKit
 goldens after noncanonical isomeric SMILES write and reparse. The comparison
 includes sanitized graph semantics plus CIP descriptor-bearing stereo semantics,
-not bytewise SMILES spelling. Broad RDKit parity validation over larger SMILES
-corpora is deferred until the supported stereo writer surface expands beyond
-tetrahedral and explicit-carrier double-bond elements.
+not bytewise SMILES spelling. PubChem 100 validation uses the same semantic
+comparison over sanitized records from the externally supplied PubChem SMILES
+pack whose source SMILES contains isomeric stereo syntax, so the broader tier
+exercises stereochemical round-trip behavior without being dominated by
+unrelated non-stereo SMILES valence and aromaticity parity.
 
 ## Out Of Scope
 
@@ -87,3 +89,5 @@ parity validation.
   for absent, tetrahedral, and double-bond isomeric SMILES cases.
 - v4: Encode implicit-hydrogen double-bond carriers by marking the unique
   opposite explicit substituent bond with inverted local direction.
+- v5: Add PubChem 100 RDKit semantic validation over source-stereo isomeric
+  SMILES records.

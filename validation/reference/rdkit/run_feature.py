@@ -192,6 +192,12 @@ def generate_document(
         }
     elif feature_id == "io.smiles.isomeric":
         records = read_isomeric_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
+        if corpus_id != "smoke":
+            records = [
+                record
+                for record in records
+                if isomeric_smiles_record_is_stereo_bearing(record, rdkit["Chem"])
+            ]
         expected = {"records": [isomeric_smiles_record(record) for record in records]}
     elif feature_id == "algo.rings.fast":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
@@ -892,6 +898,16 @@ def isomeric_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
         "sanitized": smiles_sanitized_semantic_record(isomeric_mol),
         "stereo": smiles_isomeric_stereo_semantic_record(isomeric_mol),
     }
+
+
+def isomeric_smiles_record_is_stereo_bearing(record: dict[str, Any], Chem: Any) -> bool:
+    smiles = record["smiles"]
+    if "@" not in smiles and "/" not in smiles and "\\" not in smiles:
+        return False
+    mol = record["mol"]
+    if mol is None:
+        return False
+    return clone_and_sanitize(mol) is not None
 
 
 def smiles_raw_semantic_record(mol: Any) -> dict[str, Any]:

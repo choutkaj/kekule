@@ -114,9 +114,13 @@ pub(crate) fn implementation_expected(
         }
         "io.smiles.isomeric" => {
             let records = read_canonical_smiles_records(fixture_path)?;
+            let stereo_only = corpus != "smoke";
             Ok(json!({
                 "records": records
                     .iter()
+                    .filter(|record| {
+                        !stereo_only || isomeric_smiles_record_is_stereo_bearing(record)
+                    })
                     .map(isomeric_smiles_record_json)
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
@@ -861,6 +865,20 @@ pub(crate) fn isomeric_smiles_record_json(
         "sanitized": smiles_sanitized_semantic_json(reparsed.clone()),
         "stereo": smiles_isomeric_stereo_semantic_json(reparsed),
     }))
+}
+
+pub(crate) fn isomeric_smiles_record_is_stereo_bearing(record: &IndexedSmilesRecord) -> bool {
+    if !record.input_smiles.contains('@')
+        && !record.input_smiles.contains('/')
+        && !record.input_smiles.contains('\\')
+    {
+        return false;
+    }
+    let Some(molecule) = &record.molecule else {
+        return false;
+    };
+    let mut molecule = molecule.clone();
+    perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_ok()
 }
 
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
