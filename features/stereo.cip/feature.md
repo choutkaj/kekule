@@ -113,8 +113,9 @@ and inverts the stored clockwise/counterclockwise handedness whenever the
 stored reference carrier is not the highest-priority carrier at that endpoint.
 Counterclockwise top-anchor handedness maps to `M`, and clockwise top-anchor
 handedness maps to `P`, matching RDKit's atropisomeric bond convention.
-Molfile atropisomeric wedge perception remains in `stereo.perception`; this
-layer only consumes the resulting stored axis element.
+Molfile atropisomeric wedge perception, including the conservative exocyclic
+axis subset, remains in `stereo.perception`; this layer only consumes the
+resulting stored axis element.
 
 The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
@@ -145,8 +146,9 @@ must not become stereogenic through atom-id tie breaking.
 
 Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity validation
 use externally supplied isomeric SMILES fixtures. Smoke validation also includes
-an official RDKit atropisomer Molfile fixture with a bond-centered `P`
-descriptor. PL-REX validation uses externally supplied ligand SDF packs to
+official RDKit atropisomer Molfile fixtures with bond-centered `P`
+descriptors, including alternate wedged substituent placement around the same
+exocyclic axis. PL-REX validation uses externally supplied ligand SDF packs to
 cover Molfile and coordinate-bearing records. CIP goldens are generated with
 RDKit and compare atom and bond
 descriptor maps, not bytewise SMILES spelling or internal stereo element IDs.
@@ -167,7 +169,7 @@ Full exact machine-oriented CIP coverage remains out of scope for this version:
 perception or assignment of sequence cis/trans descriptors, kekulization of
 aromatic-only inputs for mancude parity, remaining exact Rule 6 edge cases
 beyond the parity-stable tetrahedral fallback, broad axis perception beyond
-the conservative Molfile atropisomeric wedge subset, coordinate-only axis
+the conservative exocyclic Molfile atropisomeric wedge subset, coordinate-only axis
 assignment, non-tetrahedral geometries beyond stored axis descriptors, enhanced
 stereo relation semantics, parity beyond the current descriptor-bearing
 validation corpora, isomeric SMILES emission, and stereo enumeration.
@@ -240,3 +242,6 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
   clockwise/counterclockwise handedness.
 - v26: Validate Molfile wedge-derived atropisomeric axes against RDKit smoke
   goldens using the official RP-6306 atropisomer fixture.
+- v27: Add an official RP-6306 alternate wedged substituent fixture to smoke
+  parity validation, covering exocyclic-axis selection when ring-internal
+  single bonds are also adjacent to the marked endpoint.

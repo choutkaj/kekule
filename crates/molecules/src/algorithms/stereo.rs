@@ -814,7 +814,10 @@ fn atropisomeric_axis_candidate(
     near: AtomId,
     marked_carrier: AtomId,
 ) -> Option<StereoElement> {
-    if axis_bond.order != BondOrder::Single || has_axis_element(mol, axis) {
+    if axis_bond.order != BondOrder::Single
+        || ring_membership.bond_in_ring(axis)
+        || has_axis_element(mol, axis)
+    {
         return None;
     }
     let other = axis_bond.other_atom(near);

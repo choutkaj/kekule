@@ -944,7 +944,9 @@ def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any] | Non
     mol = record["mol"]
     if mol is None:
         return None
-    prepared = Chem.Mol(mol)
+    prepared = clone_and_sanitize(mol)
+    if prepared is None:
+        return None
     try:
         Chem.AssignCIPLabels(prepared)
     except Exception:

@@ -105,6 +105,10 @@ pub(super) fn rdkit_rp6306_atrop_molblock() -> &'static str {
     include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop1.mol")
 }
 
+pub(super) fn rdkit_rp6306_atrop3_molblock() -> &'static str {
+    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop3.mol")
+}
+
 mod bio;
 mod canonical;
 mod chemistry;
