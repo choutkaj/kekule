@@ -28,6 +28,8 @@ SUPPORTED_FEATURES = {
     "io.smiles.parse",
     "io.smiles.write",
     "io.smiles.canonical",
+    "io.smiles.isomeric",
+    "stereo.cip",
 }
 
 
@@ -188,6 +190,15 @@ def generate_document(
                 for record in records
             ]
         }
+    elif feature_id == "io.smiles.isomeric":
+        records = read_isomeric_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
+        if corpus_id != "smoke":
+            records = [
+                record
+                for record in records
+                if isomeric_smiles_record_is_stereo_bearing(record, rdkit["Chem"])
+            ]
+        expected = {"records": [isomeric_smiles_record(record) for record in records]}
     elif feature_id == "algo.rings.fast":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_record(record) for record in records]}
@@ -203,6 +214,15 @@ def generate_document(
     elif feature_id == "algo.aromaticity.rdkit-like":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [aromaticity_record(record) for record in records]}
+    elif feature_id == "stereo.cip":
+        records = read_stereo_cip_records(fixture_path, rdkit["Chem"])
+        expected = {
+            "records": [
+                expected_record
+                for record in records
+                if (expected_record := stereo_cip_record(record, rdkit["Chem"])) is not None
+            ]
+        }
     else:
         raise SystemExit(f"unsupported feature for RDKit generator: {feature_id}")
 
@@ -319,6 +339,43 @@ def read_smiles_records(fixture_path: Path, Chem: Any, sanitize: bool) -> list[d
     return records
 
 
+def read_stereo_cip_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
+    if fixture_path.suffix.lower() in {".smi", ".smiles", ".txt"}:
+        return read_stereo_cip_smiles_records(fixture_path, Chem)
+    return read_records_by_suffix(fixture_path, Chem)
+
+
+def read_stereo_cip_smiles_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=1)
+        smiles = parts[0]
+        title = parts[1] if len(parts) > 1 else ""
+        unsupported = "*" in smiles
+        mol = None if unsupported else Chem.MolFromSmiles(smiles, sanitize=True)
+        records.append(
+            {
+                "record_index": index,
+                "status": (
+                    "unsupported"
+                    if unsupported
+                    else "ok"
+                    if mol is not None
+                    else "parse_error"
+                ),
+                "title": title,
+                "smiles": smiles,
+                "mol": mol,
+                "radicals": {},
+                "bond_stereo": {},
+            }
+        )
+    return records
+
+
 def read_canonical_smiles_records(
     fixture_path: Path, Chem: Any, sanitize: bool
 ) -> list[dict[str, Any]]:
@@ -335,6 +392,39 @@ def read_canonical_smiles_records(
             {
                 "record_index": index,
                 "status": "ok" if mol is not None else "parse_error",
+                "title": title,
+                "smiles": smiles,
+                "mol": mol,
+                "radicals": {},
+                "bond_stereo": {},
+            }
+        )
+    return records
+
+
+def read_isomeric_smiles_records(
+    fixture_path: Path, Chem: Any, sanitize: bool
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=1)
+        smiles = parts[0]
+        title = parts[1].strip() if len(parts) > 1 else ""
+        unsupported = "*" in smiles
+        mol = None if unsupported else Chem.MolFromSmiles(smiles, sanitize=sanitize)
+        records.append(
+            {
+                "record_index": index,
+                "status": (
+                    "unsupported"
+                    if unsupported
+                    else "ok"
+                    if mol is not None
+                    else "parse_error"
+                ),
                 "title": title,
                 "smiles": smiles,
                 "mol": mol,
@@ -776,6 +866,50 @@ def canonical_smiles_record(record: dict[str, Any], exact_smiles: bool) -> dict[
     return item
 
 
+def isomeric_smiles_record(record: dict[str, Any]) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+            "title": record["title"],
+            "input_smiles": record["smiles"],
+        }
+    isomeric = Chem.MolToSmiles(
+        mol,
+        canonical=False,
+        isomericSmiles=True,
+    )
+    isomeric_mol = Chem.MolFromSmiles(isomeric, sanitize=False)
+    if isomeric_mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": "write_reparse_error",
+            "title": record["title"],
+            "input_smiles": record["smiles"],
+        }
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "input_smiles": record["smiles"],
+        "sanitized": smiles_sanitized_semantic_record(isomeric_mol),
+        "stereo": smiles_isomeric_stereo_semantic_record(isomeric_mol),
+    }
+
+
+def isomeric_smiles_record_is_stereo_bearing(record: dict[str, Any], Chem: Any) -> bool:
+    smiles = record["smiles"]
+    if "@" not in smiles and "/" not in smiles and "\\" not in smiles:
+        return False
+    mol = record["mol"]
+    if mol is None:
+        return False
+    return clone_and_sanitize(mol) is not None
+
+
 def smiles_raw_semantic_record(mol: Any) -> dict[str, Any]:
     return {
         "atom_count": mol.GetNumAtoms(),
@@ -796,6 +930,57 @@ def smiles_sanitized_semantic_record(mol: Any) -> dict[str, Any]:
         "atoms": smiles_sanitized_atoms_json(sanitized),
         "bonds": smiles_sanitized_bonds_json(sanitized),
     }
+
+
+def smiles_isomeric_stereo_semantic_record(mol: Any) -> dict[str, Any]:
+    from rdkit import Chem
+
+    sanitized = clone_and_sanitize(mol)
+    if sanitized is None:
+        return {"status": "sanitize_error"}
+    try:
+        Chem.AssignStereochemistry(sanitized, force=True, cleanIt=True)
+        Chem.AssignCIPLabels(sanitized)
+    except Exception:
+        return {"status": "cip_error"}
+    return {
+        "status": "ok",
+        "atom_descriptors": smiles_cip_atom_descriptor_keys(sanitized),
+        "bond_descriptors": smiles_cip_bond_descriptor_keys(sanitized),
+    }
+
+
+def smiles_cip_atom_descriptor_keys(mol: Any) -> list[dict[str, Any]]:
+    descriptors = []
+    for atom in mol.GetAtoms():
+        if atom.HasProp("_CIPCode"):
+            descriptors.append(
+                {
+                    "center_atom": smiles_sanitized_atom_key(atom),
+                    "descriptor": atom.GetProp("_CIPCode"),
+                }
+            )
+    descriptors.sort(key=lambda item: json.dumps(item, sort_keys=True))
+    return descriptors
+
+
+def smiles_cip_bond_descriptor_keys(mol: Any) -> list[dict[str, Any]]:
+    descriptors = []
+    for bond in mol.GetBonds():
+        if bond.HasProp("_CIPCode"):
+            descriptors.append(
+                {
+                    "endpoint_atoms": sorted(
+                        [
+                            smiles_sanitized_atom_key(bond.GetBeginAtom()),
+                            smiles_sanitized_atom_key(bond.GetEndAtom()),
+                        ]
+                    ),
+                    "descriptor": bond.GetProp("_CIPCode"),
+                }
+            )
+    descriptors.sort(key=lambda item: json.dumps(item, sort_keys=True))
+    return descriptors
 
 
 def smiles_sanitized_atoms_json(mol: Any) -> list[dict[str, Any]]:
@@ -891,6 +1076,67 @@ def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
         "atom_aromatic": [atom.GetIsAromatic() for atom in sanitized.GetAtoms()],
         "bond_aromatic": [bond.GetIsAromatic() for bond in sanitized.GetBonds()],
     }
+
+
+def stereo_cip_record(record: dict[str, Any], Chem: Any) -> dict[str, Any] | None:
+    mol = record["mol"]
+    if mol is None:
+        return None
+    prepared = clone_and_sanitize(mol)
+    if prepared is None:
+        return None
+    try:
+        Chem.AssignCIPLabels(prepared)
+    except Exception:
+        return None
+    atom_descriptors = cip_atom_descriptors(prepared)
+    bond_descriptors = cip_bond_descriptors(prepared)
+    if not atom_descriptors and not bond_descriptors:
+        return None
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atom_count": prepared.GetNumAtoms(),
+        "bond_count": prepared.GetNumBonds(),
+        "atom_descriptors": atom_descriptors,
+        "bond_descriptors": bond_descriptors,
+    }
+
+
+def cip_atom_descriptors(mol: Any) -> list[dict[str, Any]]:
+    descriptors = []
+    for atom in mol.GetAtoms():
+        if atom.HasProp("_CIPCode"):
+            descriptors.append(
+                {
+                    "atom_index": atom.GetIdx(),
+                    "descriptor": atom.GetProp("_CIPCode"),
+                }
+            )
+    descriptors.sort(key=lambda item: item["atom_index"])
+    return descriptors
+
+
+def cip_bond_descriptors(mol: Any) -> list[dict[str, Any]]:
+    descriptors = []
+    for bond in mol.GetBonds():
+        if bond.HasProp("_CIPCode"):
+            descriptors.append(
+                {
+                    "begin_atom_index": bond.GetBeginAtomIdx(),
+                    "end_atom_index": bond.GetEndAtomIdx(),
+                    "descriptor": bond.GetProp("_CIPCode"),
+                }
+            )
+    descriptors.sort(
+        key=lambda item: (
+            item["begin_atom_index"],
+            item["end_atom_index"],
+            item["descriptor"],
+        )
+    )
+    return descriptors
 
 
 def clone_and_sanitize(mol: Any) -> Any | None:

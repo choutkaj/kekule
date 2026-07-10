@@ -9,8 +9,8 @@ pub mod small;
 
 pub mod smiles {
     pub use crate::io::{
-        CanonicalSmilesWriteOptions, MolWriteError, SmilesParseError, SmilesParseOptions,
-        SmilesWriteOptions,
+        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, MolWriteError, SmilesParseError,
+        SmilesParseOptions, SmilesWriteOptions,
     };
     pub use crate::small::SmallMoleculeReadError;
 
@@ -42,6 +42,17 @@ pub mod smiles {
         options: SmilesWriteOptions,
     ) -> Result<String, MolWriteError> {
         crate::io::write_smiles(molecule, options)
+    }
+
+    pub fn write_isomeric(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
+        crate::io::write_isomeric_smiles(molecule, IsomericSmilesWriteOptions)
+    }
+
+    pub fn write_isomeric_with_options(
+        molecule: &SmallMolecule,
+        options: IsomericSmilesWriteOptions,
+    ) -> Result<String, MolWriteError> {
+        crate::io::write_isomeric_smiles(molecule, options)
     }
 
     pub fn write_canonical(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
@@ -140,8 +151,10 @@ pub mod perception {
 
     pub mod stereo {
         pub use crate::algorithms::{
-            perceive_stereo, perceive_stereo_with_options, validate_stereo,
-            validate_stereo_with_options, StereoCandidate, StereoPerceptionIssue,
+            assign_cip_descriptors, assign_cip_descriptors_with_options, perceive_stereo,
+            perceive_stereo_with_options, validate_stereo, validate_stereo_with_options,
+            CipAssignment, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
+            CipSkipped, CipSkippedReason, StereoCandidate, StereoPerceptionIssue,
             StereoPerceptionOptions, StereoPerceptionReport,
         };
     }
@@ -180,7 +193,10 @@ pub mod prelude {
     pub use crate::bio::{BioHierarchy, MacroMolecule};
     pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
     pub use crate::small::{SanitizeOptions, SanitizeReport, SmallMolecule};
-    pub use crate::smiles::{CanonicalSmilesWriteOptions, SmilesParseOptions, SmilesWriteOptions};
+    pub use crate::smiles::{
+        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, SmilesParseOptions,
+        SmilesWriteOptions,
+    };
 }
 
 #[cfg(test)]

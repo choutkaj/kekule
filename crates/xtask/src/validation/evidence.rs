@@ -50,7 +50,7 @@ pub(crate) fn build_validation_evidence(
             paths.insert(reference_root.join("run_feature.py"));
             paths.insert(reference_root.join("environment.yml"));
         }
-        "pubchem-manual-semantic" => {}
+        value if is_manual_semantic_reference_tool(value) => {}
         value => {
             return Err(boxed_error(format!(
                 "{} uses unsupported reference_tool `{value}`",
@@ -465,6 +465,10 @@ pub(crate) fn validate_golden_metadata(
         )));
     }
     Ok(())
+}
+
+pub(crate) fn is_manual_semantic_reference_tool(tool: &str) -> bool {
+    tool.ends_with("-manual-semantic")
 }
 
 pub(crate) fn reference_version_label(tool: &str, version: &str) -> String {

@@ -159,9 +159,11 @@ The perception cache and freshness flags are implementation details. Users shoul
 Stereochemistry is a graph-adjacent layer on `Molecule`, not payload flags on
 `Atom` or `Bond`. Local stereo elements and relation groups are stored truth;
 source bond marks preserve parser or Molfile wedge/either syntax before
-perception; CIP descriptors are derived cache. Missing stereo elements mean
-absent stereo, while explicit unknown or invalid-cleared stereo must be modeled
-with stereo specifiedness instead of being collapsed into absence.
+perception; atom, implicit-hydrogen, and implicit-lone-pair carriers identify
+the local stereo participants; CIP descriptors are derived cache. Missing
+stereo elements mean absent stereo, while explicit unknown or invalid-cleared
+stereo must be modeled with stereo specifiedness instead of being collapsed
+into absence.
 
 ## SmallMolecule
 
@@ -201,6 +203,7 @@ impl SmallMolecule {
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)>;
 
     pub fn to_smiles(&self) -> Result<String, MolWriteError>;
+    pub fn to_isomeric_smiles(&self) -> Result<String, MolWriteError>;
     pub fn to_canonical_smiles(&self) -> Result<String, MolWriteError>;
 }
 ```
@@ -405,6 +408,7 @@ Preferred naming pattern:
 molecules::smiles::read_str(input)
 molecules::smiles::read_sanitized_str(input)
 molecules::smiles::write(&mol)
+molecules::smiles::write_isomeric(&mol)
 molecules::smiles::write_canonical(&mol)
 
 molecules::molfile::read_v2000_str(input)

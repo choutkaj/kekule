@@ -96,6 +96,7 @@ pub struct AxisStereo {
 pub enum StereoCarrier {
     Atom(AtomId),
     ImplicitHydrogen,
+    ImplicitLonePair,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -141,10 +142,14 @@ pub enum StereoDescriptor {
     S,
     LowerR,
     LowerS,
+    SeqTrans,
+    SeqCis,
     E,
     Z,
     M,
     P,
+    LowerM,
+    LowerP,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

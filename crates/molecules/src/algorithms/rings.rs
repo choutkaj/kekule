@@ -47,6 +47,40 @@ pub(super) fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize)
     (membership, stack_peak)
 }
 
+pub(super) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
+    let Ok(bond) = mol.bond(bond_id) else {
+        return false;
+    };
+    if ring_size <= 1 {
+        return false;
+    }
+    let max_path_edges = ring_size - 2;
+    let mut seen = vec![false; mol.atoms.len()];
+    let mut queue = VecDeque::from([(bond.a(), 0usize)]);
+    seen[bond.a().index()] = true;
+    while let Some((atom, depth)) = queue.pop_front() {
+        if atom == bond.b() {
+            return true;
+        }
+        if depth == max_path_edges {
+            continue;
+        }
+        let Ok(incident) = mol.incident_bonds(atom) else {
+            continue;
+        };
+        for (next_bond, next) in
+            incident.map(|(next_bond, edge)| (next_bond, edge.other_atom(atom)))
+        {
+            if next_bond == bond_id || seen.get(next.index()).copied().unwrap_or(true) {
+                continue;
+            }
+            seen[next.index()] = true;
+            queue.push_back((next, depth + 1));
+        }
+    }
+    false
+}
+
 fn ring_dfs_iterative(
     start: AtomId,
     graph: &[Vec<(AtomId, BondId)>],

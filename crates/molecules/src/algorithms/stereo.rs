@@ -1,11 +1,14 @@
 use crate::core::*;
 
+use super::RingMembership;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StereoPerceptionOptions {
     pub validate_existing: bool,
     pub detect_candidates: bool,
     pub assemble_source_marks: bool,
     pub assign_coordinates: bool,
+    pub assign_coordinate_axes: bool,
 }
 
 impl Default for StereoPerceptionOptions {
@@ -15,6 +18,7 @@ impl Default for StereoPerceptionOptions {
             detect_candidates: true,
             assemble_source_marks: true,
             assign_coordinates: true,
+            assign_coordinate_axes: false,
         }
     }
 }
@@ -102,8 +106,20 @@ pub enum StereoPerceptionIssue {
         element: StereoElementId,
         endpoint: AtomId,
     },
-    UnsupportedAxisElement {
+    InvalidAxisCarrierCount {
         element: StereoElementId,
+        axis: BondId,
+        carrier_count: usize,
+    },
+    AxisCarrierIsFocusAtom {
+        element: StereoElementId,
+        axis: BondId,
+        carrier: AtomId,
+    },
+    AxisCarrierNotAdjacent {
+        element: StereoElementId,
+        axis: BondId,
+        carrier: StereoCarrier,
     },
     AmbiguousTetrahedralWedgeMarks {
         center: AtomId,
@@ -175,6 +191,7 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
     }
     if options.assemble_source_marks {
         let mut used_marks = Vec::<BondId>::new();
+        let axis_elements = assemble_atropisomeric_axes(mol, &mut used_marks);
         report
             .assembled_elements
             .extend(assemble_tetrahedral_wedges(
@@ -182,6 +199,7 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
                 &mut report.issues,
                 &mut used_marks,
             ));
+        report.assembled_elements.extend(axis_elements);
         report
             .assembled_elements
             .extend(assemble_directional_double_bonds(
@@ -192,9 +210,11 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
         report_unassembled_source_marks(mol, &used_marks, &mut report.issues);
     }
     if options.assign_coordinates {
-        report
-            .assembled_elements
-            .extend(assign_coordinate_stereo(mol, &report.assembled_elements));
+        report.assembled_elements.extend(assign_coordinate_stereo(
+            mol,
+            &report.assembled_elements,
+            options.assign_coordinate_axes,
+        ));
     }
     report
 }
@@ -204,9 +224,7 @@ fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoPerceptionI
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => validate_tetrahedral(mol, id, stereo, issues),
             StereoElementKind::DoubleBond(stereo) => validate_double_bond(mol, id, stereo, issues),
-            StereoElementKind::Axis(_) => {
-                issues.push(StereoPerceptionIssue::UnsupportedAxisElement { element: id })
-            }
+            StereoElementKind::Axis(stereo) => validate_axis(mol, id, stereo, issues),
         }
     }
 }
@@ -264,6 +282,16 @@ fn validate_tetrahedral(
             }
             StereoCarrier::ImplicitHydrogen => {
                 if hydrogen_count(mol, stereo.center) == 0 {
+                    issues.push(
+                        StereoPerceptionIssue::TetrahedralHydrogenCarrierUnavailable {
+                            element,
+                            center: stereo.center,
+                        },
+                    );
+                }
+            }
+            StereoCarrier::ImplicitLonePair => {
+                if !implicit_lone_pair_available(mol, stereo.center) {
                     issues.push(
                         StereoPerceptionIssue::TetrahedralHydrogenCarrierUnavailable {
                             element,
@@ -358,6 +386,78 @@ fn validate_double_bond_carrier(
                 );
             }
         }
+        StereoCarrier::ImplicitLonePair => {
+            issues.push(
+                StereoPerceptionIssue::DoubleBondHydrogenCarrierUnavailable { element, endpoint },
+            );
+        }
+    }
+}
+
+fn validate_axis(
+    mol: &Molecule,
+    element: StereoElementId,
+    stereo: &AxisStereo,
+    issues: &mut Vec<StereoPerceptionIssue>,
+) {
+    let Ok(bond) = mol.bond(stereo.axis) else {
+        issues.push(StereoPerceptionIssue::MissingStereoBond {
+            element,
+            bond: stereo.axis,
+        });
+        return;
+    };
+    if stereo.carriers.len() != 2 {
+        issues.push(StereoPerceptionIssue::InvalidAxisCarrierCount {
+            element,
+            axis: stereo.axis,
+            carrier_count: stereo.carriers.len(),
+        });
+    }
+    let (left, right) = bond.endpoints();
+    for carrier in &stereo.carriers {
+        validate_axis_carrier(mol, element, stereo.axis, left, right, *carrier, issues);
+    }
+}
+
+fn validate_axis_carrier(
+    mol: &Molecule,
+    element: StereoElementId,
+    axis: BondId,
+    left: AtomId,
+    right: AtomId,
+    carrier: StereoCarrier,
+    issues: &mut Vec<StereoPerceptionIssue>,
+) {
+    match carrier {
+        StereoCarrier::Atom(atom) => {
+            if atom == left || atom == right {
+                issues.push(StereoPerceptionIssue::AxisCarrierIsFocusAtom {
+                    element,
+                    axis,
+                    carrier: atom,
+                });
+            } else if mol.atom(atom).is_err() {
+                issues.push(StereoPerceptionIssue::MissingStereoAtom { element, atom });
+            } else {
+                let adjacent_left = mol.bond_between(left, atom).ok().flatten().is_some();
+                let adjacent_right = mol.bond_between(right, atom).ok().flatten().is_some();
+                if adjacent_left == adjacent_right {
+                    issues.push(StereoPerceptionIssue::AxisCarrierNotAdjacent {
+                        element,
+                        axis,
+                        carrier,
+                    });
+                }
+            }
+        }
+        StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
+            issues.push(StereoPerceptionIssue::AxisCarrierNotAdjacent {
+                element,
+                axis,
+                carrier,
+            });
+        }
     }
 }
 
@@ -417,7 +517,7 @@ fn tetrahedral_carriers(mol: &Molecule, center: AtomId) -> Option<Vec<StereoCarr
 fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol.bonds() {
-        if bond.order != BondOrder::Double {
+        if double_bond_stereo_is_unsupported(mol, bond_id, bond) {
             continue;
         }
         let left = bond.a();
@@ -435,6 +535,38 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
         }
     }
     candidates
+}
+
+fn double_bond_stereo_is_unsupported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
+    bond.order != BondOrder::Double
+        || bond.aromatic
+        || double_bond_between_aromatic_atoms(mol, bond)
+        || super::rings::bond_in_ring_smaller_than(mol, bond_id, 8)
+        || (double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond))
+}
+
+fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
+    mol.atom(bond.a())
+        .map(|atom| atom.aromatic)
+        .unwrap_or(false)
+        && mol
+            .atom(bond.b())
+            .map(|atom| atom.aromatic)
+            .unwrap_or(false)
+}
+
+fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
+    mol.ring_membership()
+        .map(|membership| membership.bond_in_ring(bond))
+        .unwrap_or(false)
+}
+
+fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
+    [bond.a(), bond.b()].into_iter().any(|atom_id| {
+        mol.atom(atom_id)
+            .map(|atom| atom.element.symbol() != "C")
+            .unwrap_or(true)
+    })
 }
 
 fn double_bond_endpoint_carriers(
@@ -477,6 +609,9 @@ fn assemble_tetrahedral_wedges(
         ) {
             continue;
         }
+        if used_marks.contains(&mark.bond) {
+            continue;
+        }
         let Ok(bond) = mol.bond(mark.bond) else {
             continue;
         };
@@ -516,7 +651,9 @@ fn assemble_tetrahedral_wedges(
         let mark = center_marks[0];
         if let Some(carriers) = tetrahedral_carriers_from_wedge(mol, center, mark.carrier) {
             used_marks.push(mark.mark.bond);
-            assembled.push(tetrahedral_element_from_wedge(mark.mark, center, carriers));
+            assembled.push(tetrahedral_element_from_wedge(
+                mol, mark.mark, center, carriers,
+            ));
         }
         start = end;
     }
@@ -546,19 +683,21 @@ fn tetrahedral_carriers_from_wedge(
 }
 
 fn tetrahedral_element_from_wedge(
+    mol: &Molecule,
     mark: &StereoBondMark,
     center: AtomId,
     carriers: Vec<StereoCarrier>,
 ) -> StereoElement {
     let (specifiedness, orientation) = match mark.kind {
-        StereoBondMarkKind::WedgeUp => (
-            StereoSpecifiedness::Specified,
-            TetrahedralOrientation::Clockwise,
-        ),
-        StereoBondMarkKind::WedgeDown => (
-            StereoSpecifiedness::Specified,
-            TetrahedralOrientation::CounterClockwise,
-        ),
+        StereoBondMarkKind::WedgeUp | StereoBondMarkKind::WedgeDown => {
+            let orientation = tetrahedral_wedge_orientation(mol, center, &carriers, mark.kind)
+                .unwrap_or_else(|| match mark.kind {
+                    StereoBondMarkKind::WedgeUp => TetrahedralOrientation::CounterClockwise,
+                    StereoBondMarkKind::WedgeDown => TetrahedralOrientation::Clockwise,
+                    _ => unreachable!("wedge orientation branch received non-wedge mark"),
+                });
+            (StereoSpecifiedness::Specified, orientation)
+        }
         StereoBondMarkKind::WedgeEither => (
             StereoSpecifiedness::Unknown,
             TetrahedralOrientation::Clockwise,
@@ -578,6 +717,379 @@ fn tetrahedral_element_from_wedge(
     }
 }
 
+fn tetrahedral_wedge_orientation(
+    mol: &Molecule,
+    center: AtomId,
+    carriers: &[StereoCarrier],
+    kind: StereoBondMarkKind,
+) -> Option<TetrahedralOrientation> {
+    let (_, conformer) = mol.first_conformer()?;
+    let out_of_plane = match kind {
+        StereoBondMarkKind::WedgeUp => 1.0,
+        StereoBondMarkKind::WedgeDown => -1.0,
+        _ => return None,
+    };
+    if let Some(atom_carriers) = carriers
+        .iter()
+        .map(|carrier| match carrier {
+            StereoCarrier::Atom(atom) => Some(*atom),
+            StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    {
+        let mut points = tetrahedral_points(conformer, center, &atom_carriers)?;
+        if matches!(coordinate_source(&points), StereoSource::Coordinates3D) {
+            return tetrahedral_orientation_from_points(points);
+        }
+        points[1].z += out_of_plane;
+        return tetrahedral_orientation_from_points(points);
+    }
+    let points =
+        tetrahedral_points_with_virtual_implicit_h(conformer, center, carriers, out_of_plane)?;
+    tetrahedral_orientation_from_points(points)
+}
+
+fn tetrahedral_points_with_virtual_implicit_h(
+    conformer: &Conformer,
+    center: AtomId,
+    carriers: &[StereoCarrier],
+    out_of_plane: f64,
+) -> Option<[Point3; 5]> {
+    (carriers.len() == 4).then_some(())?;
+    let missing_hydrogen = carriers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, carrier)| {
+            matches!(carrier, StereoCarrier::ImplicitHydrogen).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if missing_hydrogen.len() != 1
+        || carriers
+            .iter()
+            .any(|carrier| matches!(carrier, StereoCarrier::ImplicitLonePair))
+    {
+        return None;
+    }
+
+    let center_point = conformer.position(center)?;
+    let mut carrier_points = [None; 4];
+    for (index, carrier) in carriers.iter().enumerate() {
+        if let StereoCarrier::Atom(atom) = carrier {
+            carrier_points[index] = Some(conformer.position(*atom)?);
+        }
+    }
+
+    let mut explicit_points = vec![center_point];
+    explicit_points.extend(carrier_points.iter().filter_map(|point| *point));
+    if matches!(
+        coordinate_source(&explicit_points),
+        StereoSource::Coordinates2D
+    ) {
+        carrier_points[0].as_mut()?.z += out_of_plane;
+    }
+
+    let mut vector_sum = Point3::new(0.0, 0.0, 0.0);
+    for point in carrier_points.iter().filter_map(|point| *point) {
+        let vector = vector_between(center_point, point);
+        vector_sum.x += vector.x;
+        vector_sum.y += vector.y;
+        vector_sum.z += vector.z;
+    }
+    carrier_points[missing_hydrogen[0]] = Some(Point3::new(
+        center_point.x - vector_sum.x,
+        center_point.y - vector_sum.y,
+        center_point.z - vector_sum.z,
+    ));
+
+    Some([
+        center_point,
+        carrier_points[0]?,
+        carrier_points[1]?,
+        carrier_points[2]?,
+        carrier_points[3]?,
+    ])
+}
+
+fn assemble_atropisomeric_axes(mol: &Molecule, used_marks: &mut Vec<BondId>) -> Vec<StereoElement> {
+    let ring_membership = mol
+        .ring_membership()
+        .cloned()
+        .unwrap_or_else(|| super::rings::compute_ring_membership(mol).0);
+    let mut assembled = Vec::new();
+    let mut assembled_axes = Vec::<BondId>::new();
+    for mark in mol.stereo_bond_marks() {
+        if used_marks.contains(&mark.bond)
+            || !matches!(
+                mark.kind,
+                StereoBondMarkKind::WedgeUp | StereoBondMarkKind::WedgeDown
+            )
+        {
+            continue;
+        }
+
+        let candidates = atropisomeric_axis_candidates(mol, &ring_membership, mark);
+        if candidates.len() != 1 {
+            continue;
+        };
+        let (axis, element) = candidates
+            .into_iter()
+            .next()
+            .expect("one atrop axis candidate");
+        used_marks.push(mark.bond);
+        if assembled_axes.contains(&axis) {
+            continue;
+        }
+        if let StereoElementKind::Axis(stereo) = &element.kind {
+            assembled_axes.push(stereo.axis);
+        }
+        assembled.push(element);
+    }
+    assembled
+}
+
+fn atropisomeric_axis_candidates(
+    mol: &Molecule,
+    ring_membership: &RingMembership,
+    mark: &StereoBondMark,
+) -> Vec<(BondId, StereoElement)> {
+    let Ok(marked_bond) = mol.bond(mark.bond) else {
+        return Vec::new();
+    };
+    if marked_bond.order != BondOrder::Single {
+        return Vec::new();
+    }
+    let near = marked_bond.a();
+    let marked_carrier = marked_bond.b();
+    let candidates = mol
+        .incident_bonds(near)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|(axis, bond)| {
+            if axis == mark.bond {
+                return None;
+            }
+            atropisomeric_axis_candidate(
+                mol,
+                ring_membership,
+                mark,
+                axis,
+                bond,
+                near,
+                marked_carrier,
+            )
+            .map(|element| (axis, element))
+        })
+        .collect::<Vec<_>>();
+    let has_non_ring_axis = candidates
+        .iter()
+        .any(|(axis, _)| !ring_membership.bond_in_ring(*axis));
+    candidates
+        .into_iter()
+        .filter(|(axis, _)| !has_non_ring_axis || !ring_membership.bond_in_ring(*axis))
+        .collect()
+}
+
+fn atropisomeric_axis_candidate(
+    mol: &Molecule,
+    ring_membership: &RingMembership,
+    mark: &StereoBondMark,
+    axis: BondId,
+    axis_bond: &Bond,
+    near: AtomId,
+    marked_carrier: AtomId,
+) -> Option<StereoElement> {
+    if axis_bond.order != BondOrder::Single || has_axis_element(mol, axis) {
+        return None;
+    }
+    let other = axis_bond.other_atom(near);
+    if !atom_is_atropisomeric_sp2_endpoint(mol, ring_membership, near)
+        || !atom_is_atropisomeric_sp2_endpoint(mol, ring_membership, other)
+    {
+        return None;
+    }
+    let left = axis_bond.a();
+    let right = axis_bond.b();
+    let left_carriers = atom_axis_carriers(mol, left, axis)?;
+    let right_carriers = atom_axis_carriers(mol, right, axis)?;
+    let marked_endpoint_carriers = if near == left {
+        &left_carriers
+    } else {
+        &right_carriers
+    };
+    if left_carriers.len() != 2
+        || right_carriers.len() != 2
+        || !marked_endpoint_carriers.contains(&marked_carrier)
+    {
+        return None;
+    }
+    let left_reference = left_carriers[0];
+    let right_reference = right_carriers[0];
+    let orientation = axis_orientation_from_wedge(
+        mol,
+        axis_bond,
+        left_reference,
+        right_reference,
+        near,
+        marked_carrier,
+        mark.kind,
+    )?;
+    Some(StereoElement {
+        kind: StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![
+                StereoCarrier::Atom(left_reference),
+                StereoCarrier::Atom(right_reference),
+            ],
+            orientation,
+        }),
+        specifiedness: StereoSpecifiedness::Specified,
+        source: mark.source,
+        group: None,
+        descriptor: None,
+    })
+}
+
+fn atom_axis_carriers(mol: &Molecule, endpoint: AtomId, axis: BondId) -> Option<Vec<AtomId>> {
+    let mut carriers = Vec::new();
+    for (bond_id, bond) in mol.incident_bonds(endpoint).ok()? {
+        if bond_id != axis {
+            carriers.push(bond.other_atom(endpoint));
+        }
+    }
+    carriers.sort();
+    Some(carriers)
+}
+
+fn axis_orientation_from_wedge(
+    mol: &Molecule,
+    axis_bond: &Bond,
+    left_reference: AtomId,
+    right_reference: AtomId,
+    marked_endpoint: AtomId,
+    marked_carrier: AtomId,
+    kind: StereoBondMarkKind,
+) -> Option<AxisOrientation> {
+    let (_, conformer) = mol.first_conformer()?;
+    let (left, right) = axis_bond.endpoints();
+    let left_point = conformer.position(left)?;
+    let right_point = conformer.position(right)?;
+    let mut left_reference_point = conformer.position(left_reference)?;
+    let mut right_reference_point = conformer.position(right_reference)?;
+    let marked_endpoint_point = conformer.position(marked_endpoint)?;
+    let marked_point = conformer.position(marked_carrier)?;
+    let coordinate_points = [
+        left_point,
+        right_point,
+        left_reference_point,
+        right_reference_point,
+        marked_endpoint_point,
+        marked_point,
+    ];
+    let axis = vector_between(left_point, right_point);
+    if matches!(
+        coordinate_source(&coordinate_points),
+        StereoSource::Coordinates2D
+    ) {
+        let z_sign = match kind {
+            StereoBondMarkKind::WedgeUp => 1.0,
+            StereoBondMarkKind::WedgeDown => -1.0,
+            _ => return None,
+        };
+        let marked_side = planar_cross(axis, vector_between(marked_endpoint_point, marked_point));
+        if marked_side.abs() <= COORDINATE_EPSILON {
+            return None;
+        }
+        left_reference_point.z += axis_reference_z_offset(
+            axis,
+            left_point,
+            left_reference_point,
+            left == marked_endpoint,
+            marked_side,
+            z_sign,
+        )?;
+        right_reference_point.z += axis_reference_z_offset(
+            axis,
+            right_point,
+            right_reference_point,
+            right == marked_endpoint,
+            marked_side,
+            z_sign,
+        )?;
+    } else if !matches!(
+        kind,
+        StereoBondMarkKind::WedgeUp | StereoBondMarkKind::WedgeDown
+    ) {
+        return None;
+    }
+
+    let left_vector = vector_between(left_point, left_reference_point);
+    let right_vector = vector_between(right_point, right_reference_point);
+    let handedness = dot(axis, cross(left_vector, right_vector));
+    if handedness.abs() <= COORDINATE_EPSILON {
+        return None;
+    }
+    Some(if handedness > 0.0 {
+        AxisOrientation::Clockwise
+    } else {
+        AxisOrientation::CounterClockwise
+    })
+}
+
+fn axis_reference_z_offset(
+    axis: Point3,
+    endpoint_point: Point3,
+    reference_point: Point3,
+    same_endpoint_as_mark: bool,
+    marked_side: f64,
+    marked_z: f64,
+) -> Option<f64> {
+    let side = planar_cross(axis, vector_between(endpoint_point, reference_point));
+    if side.abs() <= COORDINATE_EPSILON {
+        return None;
+    }
+    let same_side_as_mark = side.signum() == marked_side.signum();
+    let side_factor = if same_side_as_mark { 1.0 } else { -1.0 };
+    let endpoint_factor = if same_endpoint_as_mark { 1.0 } else { -1.0 };
+    Some(marked_z * side_factor * endpoint_factor)
+}
+
+fn has_axis_element(mol: &Molecule, axis: BondId) -> bool {
+    mol.stereo_elements().any(|(_, element)| {
+        matches!(
+            &element.kind,
+            StereoElementKind::Axis(stereo) if stereo.axis == axis
+        )
+    })
+}
+
+fn atom_is_atropisomeric_sp2_endpoint(
+    mol: &Molecule,
+    ring_membership: &RingMembership,
+    atom_id: AtomId,
+) -> bool {
+    let Ok(atom) = mol.atom(atom_id) else {
+        return false;
+    };
+    let incident = mol
+        .incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let total_degree = incident
+        .len()
+        .saturating_add(usize::from(hydrogen_count(mol, atom_id)));
+    if !(2..=3).contains(&total_degree) {
+        return false;
+    }
+    ring_membership.atom_in_ring(atom_id)
+        || atom.aromatic
+        || incident.iter().any(|(_, bond)| {
+            bond.aromatic || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+        })
+}
+
 fn assemble_directional_double_bonds(
     mol: &Molecule,
     issues: &mut Vec<StereoPerceptionIssue>,
@@ -585,7 +1097,7 @@ fn assemble_directional_double_bonds(
 ) -> Vec<StereoElement> {
     let mut assembled = Vec::new();
     for (bond_id, bond) in mol.bonds() {
-        if bond.order != BondOrder::Double {
+        if double_bond_stereo_is_unsupported(mol, bond_id, bond) {
             continue;
         }
         let left = bond.a();
@@ -597,30 +1109,23 @@ fn assemble_directional_double_bonds(
             used_marks.extend(right_marks.iter().map(|mark| mark.bond));
             continue;
         }
-        if left_marks.len() > 1 {
-            issues.push(StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
-                double_bond: bond_id,
-                endpoint: left,
-                mark_count: left_marks.len(),
-            });
-        }
-        if right_marks.len() > 1 {
-            issues.push(StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
-                double_bond: bond_id,
-                endpoint: right,
-                mark_count: right_marks.len(),
-            });
-        }
-        let ([left_mark], [right_mark]) = (left_marks.as_slice(), right_marks.as_slice()) else {
+        let Some(left_mark) =
+            select_directional_mark(mol, left, right, bond_id, &left_marks, issues)
+        else {
             continue;
         };
-        let orientation = if left_mark.mark.kind == right_mark.mark.kind {
+        let Some(right_mark) =
+            select_directional_mark(mol, right, left, bond_id, &right_marks, issues)
+        else {
+            continue;
+        };
+        let orientation = if left_mark.direction == right_mark.direction {
             DoubleBondOrientation::Together
         } else {
             DoubleBondOrientation::Opposite
         };
-        used_marks.push(left_mark.bond);
-        used_marks.push(right_mark.bond);
+        used_marks.extend(left_marks.iter().map(|mark| mark.bond));
+        used_marks.extend(right_marks.iter().map(|mark| mark.bond));
         assembled.push(StereoElement::specified(
             StereoElementKind::DoubleBond(DoubleBondStereo {
                 bond: bond_id,
@@ -634,6 +1139,65 @@ fn assemble_directional_double_bonds(
         ));
     }
     assembled
+}
+
+fn select_directional_mark<'a>(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    marks: &'a [EndpointMark<'a>],
+    issues: &mut Vec<StereoPerceptionIssue>,
+) -> Option<EndpointMark<'a>> {
+    match marks {
+        [] => None,
+        [mark] => Some(*mark),
+        [first, second]
+            if redundant_endpoint_directional_marks(
+                mol,
+                endpoint,
+                other_endpoint,
+                focus_bond,
+                first,
+                second,
+            ) =>
+        {
+            Some(*first)
+        }
+        _ => {
+            issues.push(StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
+                double_bond: focus_bond,
+                endpoint,
+                mark_count: marks.len(),
+            });
+            None
+        }
+    }
+}
+
+fn redundant_endpoint_directional_marks(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    first: &EndpointMark<'_>,
+    second: &EndpointMark<'_>,
+) -> bool {
+    if first.direction == second.direction {
+        return false;
+    }
+    let mut marked_carriers = [first.carrier, second.carrier];
+    marked_carriers.sort_unstable();
+    let mut atom_carriers =
+        double_bond_endpoint_carriers(mol, endpoint, other_endpoint, focus_bond)
+            .into_iter()
+            .filter_map(|carrier| match carrier {
+                StereoCarrier::Atom(atom) => Some(atom),
+                StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
+            })
+            .collect::<Vec<_>>();
+    atom_carriers.sort_unstable();
+    marked_carriers.as_slice() == atom_carriers.as_slice()
 }
 
 fn report_unassembled_source_marks(
@@ -673,6 +1237,7 @@ fn report_unassembled_source_marks(
 fn assign_coordinate_stereo(
     mol: &Molecule,
     planned_elements: &[StereoElement],
+    assign_axes: bool,
 ) -> Vec<StereoElement> {
     let Some((_, conformer)) = mol.first_conformer() else {
         return Vec::new();
@@ -688,6 +1253,9 @@ fn assign_coordinate_stereo(
         conformer,
         planned_elements,
     ));
+    if assign_axes {
+        assigned.extend(assign_coordinate_axes(mol, conformer, planned_elements));
+    }
     assigned
 }
 
@@ -712,7 +1280,7 @@ fn assign_coordinate_tetrahedral(
             .iter()
             .map(|carrier| match carrier {
                 StereoCarrier::Atom(atom) => Some(*atom),
-                StereoCarrier::ImplicitHydrogen => None,
+                StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
             })
             .collect::<Option<Vec<_>>>();
         let Some(atom_carriers) = atom_carriers else {
@@ -788,6 +1356,62 @@ fn assign_coordinate_double_bonds(
     assigned
 }
 
+fn assign_coordinate_axes(
+    mol: &Molecule,
+    conformer: &Conformer,
+    planned_elements: &[StereoElement],
+) -> Vec<StereoElement> {
+    let ring_membership = mol
+        .ring_membership()
+        .cloned()
+        .unwrap_or_else(|| super::rings::compute_ring_membership(mol).0);
+    let mut assigned = Vec::new();
+    for (axis, bond) in mol.bonds() {
+        if bond.order != BondOrder::Single
+            || has_axis_element(mol, axis)
+            || planned_elements
+                .iter()
+                .any(|element| planned_axis(element) == Some(axis))
+        {
+            continue;
+        }
+        let (left, right) = bond.endpoints();
+        if !atom_is_atropisomeric_sp2_endpoint(mol, &ring_membership, left)
+            || !atom_is_atropisomeric_sp2_endpoint(mol, &ring_membership, right)
+        {
+            continue;
+        }
+        let Some(left_carriers) = atom_axis_carriers(mol, left, axis) else {
+            continue;
+        };
+        let Some(right_carriers) = atom_axis_carriers(mol, right, axis) else {
+            continue;
+        };
+        if left_carriers.len() != 2 || right_carriers.len() != 2 {
+            continue;
+        }
+        let left_reference = left_carriers[0];
+        let right_reference = right_carriers[0];
+        let Some(orientation) =
+            axis_orientation_from_3d_coordinates(conformer, bond, left_reference, right_reference)
+        else {
+            continue;
+        };
+        assigned.push(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![
+                    StereoCarrier::Atom(left_reference),
+                    StereoCarrier::Atom(right_reference),
+                ],
+                orientation,
+            }),
+            StereoSource::Coordinates3D,
+        ));
+    }
+    assigned
+}
+
 fn planned_tetrahedral_center(element: &StereoElement) -> Option<AtomId> {
     match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
@@ -802,10 +1426,17 @@ fn planned_double_bond(element: &StereoElement) -> Option<BondId> {
     }
 }
 
+fn planned_axis(element: &StereoElement) -> Option<BondId> {
+    match &element.kind {
+        StereoElementKind::Axis(stereo) => Some(stereo.axis),
+        _ => None,
+    }
+}
+
 fn only_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
     let mut atoms = carriers.iter().filter_map(|carrier| match carrier {
         StereoCarrier::Atom(atom) => Some(*atom),
-        StereoCarrier::ImplicitHydrogen => None,
+        StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => None,
     });
     let atom = atoms.next()?;
     atoms.next().is_none().then_some(atom)
@@ -871,6 +1502,40 @@ fn double_bond_orientation_from_points(points: [Point3; 4]) -> Option<DoubleBond
     })
 }
 
+fn axis_orientation_from_3d_coordinates(
+    conformer: &Conformer,
+    axis_bond: &Bond,
+    left_reference: AtomId,
+    right_reference: AtomId,
+) -> Option<AxisOrientation> {
+    let (left, right) = axis_bond.endpoints();
+    let left_point = conformer.position(left)?;
+    let right_point = conformer.position(right)?;
+    let left_reference_point = conformer.position(left_reference)?;
+    let right_reference_point = conformer.position(right_reference)?;
+    let points = [
+        left_point,
+        right_point,
+        left_reference_point,
+        right_reference_point,
+    ];
+    if !matches!(coordinate_source(&points), StereoSource::Coordinates3D) {
+        return None;
+    }
+    let axis = vector_between(left_point, right_point);
+    let left_vector = vector_between(left_point, left_reference_point);
+    let right_vector = vector_between(right_point, right_reference_point);
+    let handedness = dot(axis, cross(left_vector, right_vector));
+    if handedness.abs() <= COORDINATE_EPSILON {
+        return None;
+    }
+    Some(if handedness > 0.0 {
+        AxisOrientation::Clockwise
+    } else {
+        AxisOrientation::CounterClockwise
+    })
+}
+
 fn coordinate_source(points: &[Point3]) -> StereoSource {
     let Some(first) = points.first() else {
         return StereoSource::Coordinates3D;
@@ -887,6 +1552,10 @@ fn coordinate_source(points: &[Point3]) -> StereoSource {
 
 fn vector_between(origin: Point3, point: Point3) -> Point3 {
     Point3::new(point.x - origin.x, point.y - origin.y, point.z - origin.z)
+}
+
+fn planar_cross(a: Point3, b: Point3) -> f64 {
+    a.x * b.y - a.y * b.x
 }
 
 fn cross(a: Point3, b: Point3) -> Point3 {
@@ -908,6 +1577,7 @@ struct EndpointMark<'a> {
     bond: BondId,
     carrier: AtomId,
     mark: &'a StereoBondMark,
+    direction: StereoBondMarkKind,
 }
 
 fn directional_marks_for_endpoint(
@@ -934,11 +1604,32 @@ fn directional_marks_for_endpoint(
                 bond: bond_id,
                 carrier: bond.other_atom(endpoint),
                 mark,
+                direction: directional_mark_at_endpoint(mark.kind, bond, endpoint),
             });
         }
     }
     marks.sort_by_key(|mark| (mark.bond, mark.carrier));
     marks
+}
+
+fn directional_mark_at_endpoint(
+    kind: StereoBondMarkKind,
+    bond: &Bond,
+    endpoint: AtomId,
+) -> StereoBondMarkKind {
+    if bond.b() == endpoint {
+        invert_directional_mark(kind)
+    } else {
+        kind
+    }
+}
+
+fn invert_directional_mark(kind: StereoBondMarkKind) -> StereoBondMarkKind {
+    match kind {
+        StereoBondMarkKind::DirectionalUp => StereoBondMarkKind::DirectionalDown,
+        StereoBondMarkKind::DirectionalDown => StereoBondMarkKind::DirectionalUp,
+        _ => kind,
+    }
 }
 
 fn has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {
@@ -967,10 +1658,22 @@ fn hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
         .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
 }
 
+fn implicit_lone_pair_available(mol: &Molecule, atom: AtomId) -> bool {
+    mol.atom(atom)
+        .map(|atom_payload| {
+            matches!(
+                atom_payload.element.symbol(),
+                "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
+            ) && hydrogen_count(mol, atom) == 0
+        })
+        .unwrap_or(false)
+}
+
 fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
     match carrier {
         StereoCarrier::Atom(atom) => (0, atom.raw()),
         StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
+        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
     }
 }
 

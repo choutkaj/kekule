@@ -862,10 +862,47 @@ fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element
             assert_eq!(stereo.right, AtomId::new(2));
             assert_eq!(stereo.left_carrier, StereoCarrier::Atom(AtomId::new(0)));
             assert_eq!(stereo.right_carrier, StereoCarrier::Atom(AtomId::new(3)));
-            assert_eq!(stereo.orientation, DoubleBondOrientation::Opposite);
+            assert_eq!(stereo.orientation, DoubleBondOrientation::Together);
         }
         other => panic!("expected double-bond stereo, found {other:?}"),
     }
+}
+
+#[test]
+fn stereo_perception_skips_small_ring_double_bond_stereo_boundary() {
+    let mut cyclohexene = smiles_api::read_str(r"C1/C=C\CCC1").expect("marked cyclohexene parses");
+    perception_api::sanitize_with_options(
+        &mut cyclohexene,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("marked cyclohexene sanitizes without stereo perception");
+    let report = stereo_api::perceive_stereo(cyclohexene.graph_mut_raw());
+
+    assert!(report.created_elements.is_empty());
+    assert!(cyclohexene.graph().stereo_elements().next().is_none());
+
+    let mut cyclooctene =
+        smiles_api::read_str(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
+    perception_api::sanitize_with_options(
+        &mut cyclooctene,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("marked cyclooctene sanitizes without stereo perception");
+    let report = stereo_api::perceive_stereo(cyclooctene.graph_mut_raw());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = cyclooctene
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
 }
 
 #[test]
@@ -910,7 +947,46 @@ M  END
                     StereoCarrier::Atom(AtomId::new(4)),
                 ]
             );
-            assert_eq!(stereo.orientation, TetrahedralOrientation::Clockwise);
+            assert_eq!(stereo.orientation, TetrahedralOrientation::CounterClockwise);
+        }
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_uses_virtual_implicit_h_for_molfile_wedge_geometry() {
+    let mut molecule = molfile::read_v2000_str(implicit_h_wedge_geometry_molblock())
+        .expect("implicit-H wedge molfile should parse");
+    perception_api::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("implicit-H wedge molfile should sanitize");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => {
+            assert_eq!(stereo.center, AtomId::new(0));
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(1)),
+                    StereoCarrier::Atom(AtomId::new(2)),
+                    StereoCarrier::Atom(AtomId::new(3)),
+                    StereoCarrier::ImplicitHydrogen,
+                ]
+            );
+            assert_eq!(stereo.orientation, TetrahedralOrientation::CounterClockwise);
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
@@ -1049,6 +1125,68 @@ fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
 }
 
 #[test]
+fn stereo_perception_assigns_axis_from_3d_coordinates() {
+    let (mut mol, axis) = coordinate_axis_graph(true);
+
+    let report = stereo_api::perceive_stereo_with_options(
+        &mut mol,
+        StereoPerceptionOptions {
+            assign_coordinate_axes: true,
+            ..StereoPerceptionOptions::default()
+        },
+    );
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = mol
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert_eq!(element.source, StereoSource::Coordinates3D);
+    match &element.kind {
+        StereoElementKind::Axis(stereo) => {
+            assert_eq!(stereo.axis, axis);
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(2)),
+                    StereoCarrier::Atom(AtomId::new(4)),
+                ]
+            );
+            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+        }
+        other => panic!("expected axis stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_skips_coordinate_axis_without_3d_handedness() {
+    let (mut mol, _axis) = coordinate_axis_graph(false);
+
+    let report = stereo_api::perceive_stereo_with_options(
+        &mut mol,
+        StereoPerceptionOptions {
+            assign_coordinate_axes: true,
+            ..StereoPerceptionOptions::default()
+        },
+    );
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.created_elements.is_empty());
+    assert!(mol.stereo_elements().next().is_none());
+}
+
+#[test]
+fn stereo_perception_leaves_coordinate_axes_opt_in_by_default() {
+    let (mut mol, _axis) = coordinate_axis_graph(true);
+
+    let report = stereo_api::perceive_stereo(&mut mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(report.created_elements.is_empty());
+    assert!(mol.stereo_elements().next().is_none());
+}
+
+#[test]
 fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     let mut marked = Molecule::new();
     let a = marked.add_atom(carbon());
@@ -1098,6 +1236,202 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     assert!(absent_report.is_ok());
     assert!(absent.stereo_elements().next().is_none());
     assert!(absent.stereo_bond_marks().next().is_none());
+}
+
+#[test]
+fn stereo_validation_accepts_structural_axis_elements() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon());
+    let right = mol.add_atom(carbon());
+    let left_carrier = mol.add_atom(element_atom("I"));
+    let right_carrier = mol.add_atom(element_atom("Br"));
+    let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
+    mol.add_bond(left, left_carrier, BondOrder::Single)
+        .expect("left carrier");
+    mol.add_bond(right, right_carrier, BondOrder::Single)
+        .expect("right carrier");
+    let valid_axis = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![
+                    StereoCarrier::Atom(left_carrier),
+                    StereoCarrier::Atom(right_carrier),
+                ],
+                orientation: AxisOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("axis element");
+
+    let report = stereo_api::validate_stereo(&mol);
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+
+    mol.remove_stereo_element(valid_axis)
+        .expect("remove valid axis");
+    let invalid_axis = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis,
+                carriers: vec![StereoCarrier::Atom(left_carrier)],
+                orientation: AxisOrientation::CounterClockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("invalid axis element refs are still structurally present");
+
+    let report = stereo_api::validate_stereo(&mol);
+
+    assert_eq!(
+        report.issues,
+        vec![StereoPerceptionIssue::InvalidAxisCarrierCount {
+            element: invalid_axis,
+            axis,
+            carrier_count: 1,
+        }]
+    );
+}
+
+#[test]
+fn stereo_perception_assembles_molfile_atropisomeric_axis() {
+    let mut molecule = molfile::read_v2000_str(rdkit_rp6306_atrop_molblock())
+        .expect("RDKit atropisomer fixture parses");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created axis element");
+    assert_eq!(element.source, StereoSource::MolfileV2000);
+    match &element.kind {
+        StereoElementKind::Axis(stereo) => {
+            assert_eq!(stereo.axis, BondId::new(3));
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(6)),
+                    StereoCarrier::Atom(AtomId::new(11)),
+                ]
+            );
+            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+        }
+        other => panic!("expected axis stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_prefers_exocyclic_molfile_atropisomeric_axis() {
+    let mut molecule = molfile::read_v2000_str(rdkit_rp6306_atrop3_molblock())
+        .expect("RDKit alternate atropisomer fixture parses");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_elements[0])
+        .expect("created axis element");
+    match &element.kind {
+        StereoElementKind::Axis(stereo) => {
+            assert_eq!(stereo.axis, BondId::new(3));
+            assert_eq!(
+                stereo.carriers,
+                vec![
+                    StereoCarrier::Atom(AtomId::new(6)),
+                    StereoCarrier::Atom(AtomId::new(11)),
+                ]
+            );
+            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+        }
+        other => panic!("expected axis stereo, found {other:?}"),
+    }
+}
+
+#[test]
+fn stereo_perception_consumes_redundant_molfile_atrop_wedges_before_tetrahedral_marks() {
+    let mut molecule = molfile::read_v2000_str(rdkit_bms986142_atrop5_molblock())
+        .expect("RDKit redundant atropisomer wedge fixture parses");
+    perception_api::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("fixture prepares before stereo perception");
+
+    let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.created_elements.len(), 2);
+    assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+        matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(10))
+    }));
+    assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+        matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(8))
+    }));
+}
+
+#[test]
+fn stereo_perception_assembles_molfile_atrop_axis_with_one_exocyclic_sp2_endpoint() {
+    for fixture in [
+        rdkit_zm374979_atrop1_molblock(),
+        rdkit_zm374979_atrop2_molblock(),
+    ] {
+        let mut molecule = molfile::read_v2000_str(fixture)
+            .expect("RDKit one-ring-endpoint atropisomer fixture parses");
+        perception_api::sanitize_with_options(
+            &mut molecule,
+            SanitizeOptions {
+                perceive_stereo: false,
+                ..SanitizeOptions::default()
+            },
+        )
+        .expect("fixture prepares before stereo perception");
+
+        let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(report.created_elements.len(), 2);
+        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+            matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(3))
+        }));
+        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+            matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(33))
+        }));
+    }
+}
+
+#[test]
+fn stereo_perception_assembles_ring_internal_molfile_atrop_axis() {
+    for fixture in [
+        rdkit_macrocycle8_ortho_wedge_molblock(),
+        rdkit_macrocycle8_ortho_hash_molblock(),
+    ] {
+        let mut molecule =
+            molfile::read_v3000_str(fixture).expect("RDKit macrocyclic atropisomer fixture parses");
+        perception_api::sanitize_with_options(
+            &mut molecule,
+            SanitizeOptions {
+                perceive_stereo: false,
+                ..SanitizeOptions::default()
+            },
+        )
+        .expect("fixture prepares before stereo perception");
+
+        let report = stereo_api::perceive_stereo(molecule.graph_mut());
+
+        assert!(report.is_ok(), "{:?}", report.issues);
+        assert_eq!(report.created_elements.len(), 1);
+        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+            matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(15))
+        }));
+    }
 }
 
 fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {

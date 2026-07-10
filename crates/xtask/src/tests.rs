@@ -462,6 +462,126 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
 }
 
 #[test]
+fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
+    let root = temp_feature_root("isomeric-smiles-feature-dispatch");
+    let fixture = root.join("fixture.smi");
+    fs::write(
+        &fixture,
+        [
+            "CCO CID:plain",
+            "C[C@@H](C(=O)O)N CID:tetrahedral",
+            "C(=C\\F)\\F CID:double-bond",
+        ]
+        .join("\n"),
+    )
+    .expect("fixture should write");
+
+    let expected = implementation_expected("io.smiles.isomeric", "smoke", &fixture)
+        .expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 3);
+    assert!(records.iter().all(|record| record["status"] == "ok"));
+    assert!(!records[1]["stereo"]["atom_descriptors"]
+        .as_array()
+        .expect("atom descriptors should be an array")
+        .is_empty());
+    assert!(!records[2]["stereo"]["bond_descriptors"]
+        .as_array()
+        .expect("bond descriptors should be an array")
+        .is_empty());
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_cip_validation_compares_only_descriptor_bearing_records() {
+    let root = temp_feature_root("stereo-cip-descriptor-filter");
+    let fixture = root.join("fixture.smi");
+    fs::write(
+        &fixture,
+        [
+            "CC CID:no-stereo",
+            "C(#N)[Hg-2](C#N)(C#N)C#N.[K+].[K+] CID:unsupported-no-stereo",
+            "C[C@H](N)C(=O)O CID:stereo",
+        ]
+        .join("\n"),
+    )
+    .expect("fixture should write");
+
+    let expected =
+        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["title"], "CID:stereo");
+    assert!(!records[0]["atom_descriptors"]
+        .as_array()
+        .expect("atom descriptors should be an array")
+        .is_empty());
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_cip_validation_uses_rdkit_default_hydrogen_indexing() {
+    let root = temp_feature_root("stereo-cip-rdkit-h-index");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "[H][C@](F)(Cl)Br CID:explicit-h\n").expect("fixture should write");
+
+    let expected =
+        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["atom_count"], 4);
+    assert_eq!(records[0]["bond_count"], 3);
+    assert_eq!(records[0]["atom_descriptors"][0]["atom_index"], 0);
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_cip_validation_reads_all_sdf_pack_records() {
+    let root = temp_feature_root("stereo-cip-sdf-pack");
+    let fixture = root.join("fixture.sdf");
+    fs::write(
+        &fixture,
+        [
+            chiral_wedge_sdf_record("first"),
+            chiral_wedge_sdf_record("second"),
+        ]
+        .join(""),
+    )
+    .expect("fixture should write");
+
+    let expected =
+        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let records = expected["records"]
+        .as_array()
+        .expect("records should be an array");
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["title"], "first");
+    assert_eq!(records[1]["title"], "second");
+    assert!(records
+        .iter()
+        .all(|record| record["atom_count"].as_u64() == Some(5)));
+    assert!(records.iter().all(|record| !record["atom_descriptors"]
+        .as_array()
+        .expect("atom descriptors should be an array")
+        .is_empty()));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
     let root = temp_feature_root("pack-members");
     let sdf_path = root.join("pack.sdf");
@@ -612,7 +732,7 @@ fn manual_semantic_reference_evidence_does_not_require_generator_files() {
     let (_, _, manifest_path) = write_evidence_test_repo(&root);
     fs::write(
         &manifest_path,
-        "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"pubchem-manual-semantic\"\nreference_version = \"PubChem PUG REST 2026-07-05\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
+        "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"enamine-manual-semantic\"\nreference_version = \"Enamine Discovery Diversity Set 2026-07-05\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
     )
     .expect("manual manifest should write");
     fs::remove_dir_all(root.join("validation/reference")).ok();
@@ -858,6 +978,25 @@ fn validation_comparison_counts_multiple_fixture_failures() {
         .as_deref()
         .is_some_and(|failure| failure.contains("data/one.smi")));
     fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn stereo_perception_validation_records_sanitize_errors_per_record() {
+    let molecule = smiles::read_str("C(#N)[Hg-2](C#N)(C#N)C#N.[K+].[K+]")
+        .expect("unsupported valence molecule should parse");
+    let mut record = IndexedSmallRecord {
+        record_index: 0,
+        title: "unsupported element".to_owned(),
+        molecule,
+    };
+
+    let value = stereo_perception_record_json(&mut record);
+
+    assert_eq!(
+        value.get("status").and_then(Value::as_str),
+        Some("sanitize_error")
+    );
+    assert!(value.get("report").is_none());
 }
 
 #[test]
@@ -1135,6 +1274,27 @@ fn simple_sdf_record_with_property(title: &str, property: &str, value: &str) -> 
     let replacement = format!("M  END\n>  <{property}>  (1)\n{value}\n\n");
     record = record.replacen(marker, &replacement, 1);
     record
+}
+
+fn chiral_wedge_sdf_record(title: &str) -> String {
+    format!(
+        "{title}
+  xtask-test
+
+  5  4  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000   -1.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  1  0  0  0
+  1  3  1  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END
+$$$$
+"
+    )
 }
 
 fn temp_feature_root(label: &str) -> PathBuf {

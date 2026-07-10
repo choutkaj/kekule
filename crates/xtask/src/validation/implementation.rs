@@ -112,6 +112,19 @@ pub(crate) fn implementation_expected(
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }
+        "io.smiles.isomeric" => {
+            let records = read_canonical_smiles_records(fixture_path)?;
+            let stereo_only = corpus != "smoke";
+            Ok(json!({
+                "records": records
+                    .iter()
+                    .filter(|record| {
+                        !stereo_only || isomeric_smiles_record_is_stereo_bearing(record)
+                    })
+                    .map(isomeric_smiles_record_json)
+                    .collect::<Result<Vec<_>, Box<dyn Error>>>()?
+            }))
+        }
         "algo.rings.fast" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(
@@ -153,19 +166,23 @@ pub(crate) fn implementation_expected(
         }
         "stereo.perception" => {
             let mut records = read_stereo_records_by_suffix(fixture_path)?;
-            for record in &mut records {
-                perception::sanitize_with_options(
-                    &mut record.molecule,
-                    SanitizeOptions {
-                        perceive_stereo: false,
-                        ..SanitizeOptions::default()
-                    },
-                )?;
-            }
             Ok(json!({
                 "records": records
                     .iter_mut()
                     .map(stereo_perception_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
+        "stereo.cip" => {
+            let mut records = read_stereo_records_by_suffix(fixture_path)?;
+            let remove_plain_hydrogens = matches!(
+                fixture_path.extension().and_then(|ext| ext.to_str()),
+                Some("txt" | "smi" | "smiles")
+            );
+            Ok(json!({
+                "records": records
+                    .iter_mut()
+                    .filter_map(|record| stereo_cip_record_json(record, remove_plain_hydrogens))
                     .collect::<Vec<_>>()
             }))
         }
@@ -275,6 +292,12 @@ pub(crate) fn read_stereo_records_by_suffix(
                 })
             })
             .collect());
+    }
+    if !matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("mol" | "mdl")
+    ) {
+        return read_small_records_by_suffix(path);
     }
     let molecule = if input.contains("V3000") {
         molfile::read_v3000_str(&input)?
@@ -400,6 +423,23 @@ pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let sanitize = perception::sanitize_with_options(
+        &mut record.molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    );
+    if sanitize.is_err() {
+        let mol = record.molecule.graph();
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "atom_count": mol.atom_count(),
+            "bond_count": mol.bond_count(),
+        });
+    }
     let report = stereo::perceive_stereo(record.molecule.graph_mut());
     let mol = record.molecule.graph();
     json!({
@@ -413,6 +453,167 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
         "stereo_groups": stereo_groups_json(mol),
         "stereo_bond_marks": stereo_bond_marks_json(mol),
     })
+}
+
+pub(crate) fn stereo_cip_record_json(
+    record: &mut IndexedSmallRecord,
+    remove_plain_hydrogens: bool,
+) -> Option<Value> {
+    let sanitize = perception::sanitize_with_options(
+        &mut record.molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    );
+    if sanitize.is_err() {
+        return None;
+    }
+    let perception_report = stereo::perceive_stereo_with_options(
+        record.molecule.graph_mut(),
+        stereo::StereoPerceptionOptions {
+            assign_coordinates: false,
+            ..stereo::StereoPerceptionOptions::default()
+        },
+    );
+    if !perception_report.is_ok() {
+        return None;
+    }
+    stereo::assign_cip_descriptors(record.molecule.graph_mut());
+    let mol = record.molecule.graph();
+    let atom_index = rdkit_default_atom_index(mol, remove_plain_hydrogens);
+    let atom_descriptors = cip_atom_descriptors_json(mol, &atom_index);
+    let bond_descriptors = cip_bond_descriptors_json(mol, &atom_index);
+    if atom_descriptors.is_empty() && bond_descriptors.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count": atom_index.len(),
+        "bond_count": rdkit_default_bond_count(mol, &atom_index),
+        "atom_descriptors": atom_descriptors,
+        "bond_descriptors": bond_descriptors,
+    }))
+}
+
+pub(crate) fn cip_atom_descriptors_json(
+    mol: &Molecule,
+    atom_index: &BTreeMap<AtomId, u32>,
+) -> Vec<Value> {
+    let mut descriptors = mol
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element.descriptor.and_then(|descriptor| {
+                let atom_index = *atom_index.get(&stereo.center)?;
+                Some(json!({
+                    "atom_index": atom_index,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Axis(_) | StereoElementKind::DoubleBond(_) => None,
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_by_key(|value| {
+        value
+            .get("atom_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX)
+    });
+    descriptors
+}
+
+pub(crate) fn cip_bond_descriptors_json(
+    mol: &Molecule,
+    atom_index: &BTreeMap<AtomId, u32>,
+) -> Vec<Value> {
+    let mut descriptors = mol
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
+                let begin_atom_index = *atom_index.get(&stereo.left)?;
+                let end_atom_index = *atom_index.get(&stereo.right)?;
+                Some(json!({
+                    "begin_atom_index": begin_atom_index,
+                    "end_atom_index": end_atom_index,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Axis(stereo) => element.descriptor.and_then(|descriptor| {
+                let bond = mol.bond(stereo.axis).ok()?;
+                let (begin, end) = bond.endpoints();
+                let begin_atom_index = *atom_index.get(&begin)?;
+                let end_atom_index = *atom_index.get(&end)?;
+                Some(json!({
+                    "begin_atom_index": begin_atom_index,
+                    "end_atom_index": end_atom_index,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Tetrahedral(_) => None,
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_by(|left, right| {
+        let left_key = (
+            left.get("begin_atom_index")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::MAX),
+            left.get("end_atom_index")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::MAX),
+        );
+        let right_key = (
+            right
+                .get("begin_atom_index")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::MAX),
+            right
+                .get("end_atom_index")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::MAX),
+        );
+        left_key.cmp(&right_key).then_with(|| {
+            left.get("descriptor")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .cmp(
+                    right
+                        .get("descriptor")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                )
+        })
+    });
+    descriptors
+}
+
+fn rdkit_default_atom_index(mol: &Molecule, remove_plain_hydrogens: bool) -> BTreeMap<AtomId, u32> {
+    let mut index = BTreeMap::new();
+    for (atom_id, atom) in mol.atoms() {
+        if remove_plain_hydrogens && rdkit_default_removes_hydrogen(atom) {
+            continue;
+        }
+        index.insert(atom_id, index.len() as u32);
+    }
+    index
+}
+
+fn rdkit_default_bond_count(mol: &Molecule, atom_index: &BTreeMap<AtomId, u32>) -> usize {
+    mol.bonds()
+        .filter(|(_, bond)| {
+            atom_index.contains_key(&bond.a()) && atom_index.contains_key(&bond.b())
+        })
+        .count()
+}
+
+fn rdkit_default_removes_hydrogen(atom: &Atom) -> bool {
+    atom.element.symbol() == "H"
+        && atom.isotope.is_none()
+        && atom.formal_charge == 0
+        && atom.radical.is_none()
+        && atom.atom_map.is_none()
+        && atom.props.is_empty()
 }
 
 pub(crate) fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {
@@ -618,6 +819,68 @@ pub(crate) fn canonical_smiles_record_json(
     Ok(item)
 }
 
+pub(crate) fn isomeric_smiles_record_json(
+    record: &IndexedSmilesRecord,
+) -> Result<Value, Box<dyn Error>> {
+    let Some(molecule) = &record.molecule else {
+        return Ok(smiles_error_record_json(record));
+    };
+    let mut molecule = molecule.clone();
+    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
+        return Ok(json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "input_smiles": record.input_smiles,
+        }));
+    }
+    let written = match smiles::write_isomeric_with_options(&molecule, Default::default()) {
+        Ok(written) => written,
+        Err(error) => {
+            return Ok(json!({
+                "record_index": record.record_index,
+                "status": "write_error",
+                "title": record.title,
+                "input_smiles": record.input_smiles,
+                "message": error.message,
+            }));
+        }
+    };
+    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
+        Ok(reparsed) => reparsed,
+        Err(_) => {
+            return Ok(json!({
+                "record_index": record.record_index,
+                "status": "write_reparse_error",
+                "title": record.title,
+                "input_smiles": record.input_smiles,
+            }));
+        }
+    };
+    Ok(json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "input_smiles": record.input_smiles,
+        "sanitized": smiles_sanitized_semantic_json(reparsed.clone()),
+        "stereo": smiles_isomeric_stereo_semantic_json(reparsed),
+    }))
+}
+
+pub(crate) fn isomeric_smiles_record_is_stereo_bearing(record: &IndexedSmilesRecord) -> bool {
+    if !record.input_smiles.contains('@')
+        && !record.input_smiles.contains('/')
+        && !record.input_smiles.contains('\\')
+    {
+        return false;
+    }
+    let Some(molecule) = &record.molecule else {
+        return false;
+    };
+    let mut molecule = molecule.clone();
+    perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_ok()
+}
+
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
     let Some(molecule) = &record.molecule else {
         return smiles_error_record_json(record);
@@ -673,6 +936,76 @@ pub(crate) fn smiles_sanitized_semantic_json(mut molecule: SmallMolecule) -> Val
         }
         Err(_) => json!({ "status": "sanitize_error" }),
     }
+}
+
+pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) -> Value {
+    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
+        return json!({ "status": "sanitize_error" });
+    }
+    stereo::assign_cip_descriptors(molecule.graph_mut());
+    let mol = molecule.graph();
+    json!({
+        "status": "ok",
+        "atom_descriptors": smiles_cip_atom_descriptor_keys_json(mol),
+        "bond_descriptors": smiles_cip_bond_descriptor_keys_json(mol),
+    })
+}
+
+pub(crate) fn smiles_cip_atom_descriptor_keys_json(mol: &Molecule) -> Vec<Value> {
+    let mut descriptors = mol
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => element.descriptor.and_then(|descriptor| {
+                let atom = mol.atom(stereo.center).ok()?;
+                Some(json!({
+                    "center_atom": smiles_sanitized_atom_key(mol, stereo.center, atom),
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Axis(_) | StereoElementKind::DoubleBond(_) => None,
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_by_key(|value| value.to_string());
+    descriptors
+}
+
+pub(crate) fn smiles_cip_bond_descriptor_keys_json(mol: &Molecule) -> Vec<Value> {
+    let mut descriptors = mol
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
+                let left = mol.atom(stereo.left).ok()?;
+                let right = mol.atom(stereo.right).ok()?;
+                let mut endpoint_atoms = [
+                    smiles_sanitized_atom_key(mol, stereo.left, left),
+                    smiles_sanitized_atom_key(mol, stereo.right, right),
+                ];
+                endpoint_atoms.sort();
+                Some(json!({
+                    "endpoint_atoms": endpoint_atoms,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Axis(stereo) => element.descriptor.and_then(|descriptor| {
+                let bond = mol.bond(stereo.axis).ok()?;
+                let (begin, end) = bond.endpoints();
+                let begin_atom = mol.atom(begin).ok()?;
+                let end_atom = mol.atom(end).ok()?;
+                let mut endpoint_atoms = [
+                    smiles_sanitized_atom_key(mol, begin, begin_atom),
+                    smiles_sanitized_atom_key(mol, end, end_atom),
+                ];
+                endpoint_atoms.sort();
+                Some(json!({
+                    "endpoint_atoms": endpoint_atoms,
+                    "descriptor": stereo_descriptor_json(descriptor),
+                }))
+            }),
+            StereoElementKind::Tetrahedral(_) => None,
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_by_key(|value| value.to_string());
+    descriptors
 }
 
 pub(crate) fn smiles_sanitized_bonds_json(mol: &Molecule) -> Vec<Value> {
@@ -1156,9 +1489,35 @@ pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Val
                 "endpoint_atom_index": endpoint.raw(),
             })
         }
-        StereoPerceptionIssue::UnsupportedAxisElement { element } => json!({
-            "type": "unsupported_axis_element",
+        StereoPerceptionIssue::InvalidAxisCarrierCount {
+            element,
+            axis,
+            carrier_count,
+        } => json!({
+            "type": "invalid_axis_carrier_count",
             "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
+            "carrier_count": carrier_count,
+        }),
+        StereoPerceptionIssue::AxisCarrierIsFocusAtom {
+            element,
+            axis,
+            carrier,
+        } => json!({
+            "type": "axis_carrier_is_focus_atom",
+            "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
+            "carrier_atom_index": carrier.raw(),
+        }),
+        StereoPerceptionIssue::AxisCarrierNotAdjacent {
+            element,
+            axis,
+            carrier,
+        } => json!({
+            "type": "axis_carrier_not_adjacent",
+            "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
+            "carrier": stereo_carrier_json(carrier),
         }),
         StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks { center, mark_count } => json!({
             "type": "ambiguous_tetrahedral_wedge_marks",
@@ -1319,6 +1678,7 @@ pub(crate) fn stereo_carrier_json(carrier: &StereoCarrier) -> Value {
     match carrier {
         StereoCarrier::Atom(atom) => json!({ "atom_index": atom.raw() }),
         StereoCarrier::ImplicitHydrogen => json!({ "implicit_hydrogen": true }),
+        StereoCarrier::ImplicitLonePair => json!({ "implicit_lone_pair": true }),
     }
 }
 
@@ -1349,10 +1709,14 @@ pub(crate) fn stereo_descriptor_json(descriptor: StereoDescriptor) -> &'static s
         StereoDescriptor::S => "S",
         StereoDescriptor::LowerR => "r",
         StereoDescriptor::LowerS => "s",
+        StereoDescriptor::SeqTrans => "seqTrans",
+        StereoDescriptor::SeqCis => "seqCis",
         StereoDescriptor::E => "E",
         StereoDescriptor::Z => "Z",
         StereoDescriptor::M => "M",
         StereoDescriptor::P => "P",
+        StereoDescriptor::LowerM => "m",
+        StereoDescriptor::LowerP => "p",
     }
 }
 

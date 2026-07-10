@@ -16,6 +16,10 @@ pub struct SmilesWriteOptions;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
+pub struct IsomericSmilesWriteOptions;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CanonicalSmilesWriteOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +62,8 @@ pub fn read_smiles_str(
             usize,
         ),
     >::new();
-    let mut pending_tetrahedral = Vec::<(AtomId, TetrahedralOrientation)>::new();
+    let mut pending_tetrahedral = Vec::<PendingTetrahedral>::new();
+    let mut tetrahedral_carriers = BTreeMap::<AtomId, Vec<PendingStereoCarrier>>::new();
     let mut component = 0usize;
     let mut previous = SmilesTokenKind::Start;
     let mut cursor = 0;
@@ -173,17 +178,43 @@ pub fn read_smiles_str(
                         None => (default_smiles_bond_order(&mol, other, atom, offset)?, None),
                     };
                     add_smiles_bond(&mut mol, other, atom, order, stereo, offset)?;
+                    resolve_tetrahedral_ring_carrier(
+                        &mut tetrahedral_carriers,
+                        other,
+                        label,
+                        component,
+                        atom,
+                    );
+                    push_tetrahedral_carrier(
+                        &mut tetrahedral_carriers,
+                        atom,
+                        StereoCarrier::Atom(other),
+                    );
                 } else {
                     rings.insert(label, (atom, close_bond, component));
+                    push_tetrahedral_ring_carrier(
+                        &mut tetrahedral_carriers,
+                        atom,
+                        label,
+                        component,
+                    );
                 }
                 previous = SmilesTokenKind::Ring;
                 cursor = next_cursor;
             }
             '[' => {
                 let (atom, chirality, next_cursor) = parse_bracket_atom(&chars, cursor)?;
+                let explicit_hydrogens = atom.explicit_hydrogens;
                 let atom_id = mol.add_atom(atom);
                 if let Some(orientation) = chirality {
-                    pending_tetrahedral.push((atom_id, orientation));
+                    pending_tetrahedral.push(PendingTetrahedral {
+                        center: atom_id,
+                        orientation,
+                    });
+                    tetrahedral_carriers.insert(
+                        atom_id,
+                        initial_tetrahedral_carriers(current, explicit_hydrogens),
+                    );
                 }
                 if let Some(previous) = current {
                     let (order, stereo) = match pending_bond
@@ -197,6 +228,11 @@ pub fn read_smiles_str(
                         ),
                     };
                     add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
+                    push_tetrahedral_carrier(
+                        &mut tetrahedral_carriers,
+                        previous,
+                        StereoCarrier::Atom(atom_id),
+                    );
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
@@ -225,6 +261,11 @@ pub fn read_smiles_str(
                         ),
                     };
                     add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
+                    push_tetrahedral_carrier(
+                        &mut tetrahedral_carriers,
+                        previous,
+                        StereoCarrier::Atom(atom_id),
+                    );
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
@@ -246,7 +287,12 @@ pub fn read_smiles_str(
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
-    add_smiles_tetrahedral_elements(&mut mol, pending_tetrahedral, input.len())?;
+    add_smiles_tetrahedral_elements(
+        &mut mol,
+        pending_tetrahedral,
+        tetrahedral_carriers,
+        input.len(),
+    )?;
     Ok(SmallMolecule::from_graph(mol))
 }
 
@@ -274,16 +320,24 @@ fn add_smiles_bond(
 
 fn add_smiles_tetrahedral_elements(
     mol: &mut Molecule,
-    centers: Vec<(AtomId, TetrahedralOrientation)>,
+    centers: Vec<PendingTetrahedral>,
+    mut carriers_by_center: BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
     offset: usize,
 ) -> std::result::Result<(), SmilesParseError> {
-    for (center, orientation) in centers {
-        let carriers = smiles_tetrahedral_carriers(mol, center, offset)?;
+    for pending in centers {
+        let carriers = resolve_smiles_tetrahedral_carriers(
+            mol,
+            pending.center,
+            carriers_by_center
+                .remove(&pending.center)
+                .unwrap_or_default(),
+            offset,
+        )?;
         mol.add_stereo_element(StereoElement::specified(
             StereoElementKind::Tetrahedral(TetrahedralStereo {
-                center,
+                center: pending.center,
                 carriers,
-                orientation,
+                orientation: pending.orientation,
             }),
             StereoSource::Smiles,
         ))
@@ -292,23 +346,112 @@ fn add_smiles_tetrahedral_elements(
     Ok(())
 }
 
-fn smiles_tetrahedral_carriers(
+fn initial_tetrahedral_carriers(
+    previous: Option<AtomId>,
+    explicit_hydrogens: u8,
+) -> Vec<PendingStereoCarrier> {
+    let mut carriers = Vec::new();
+    if let Some(previous) = previous {
+        carriers.push(PendingStereoCarrier::Resolved(StereoCarrier::Atom(
+            previous,
+        )));
+    }
+    for _ in 0..explicit_hydrogens {
+        carriers.push(PendingStereoCarrier::Resolved(
+            StereoCarrier::ImplicitHydrogen,
+        ));
+    }
+    carriers
+}
+
+fn push_tetrahedral_carrier(
+    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+    center: AtomId,
+    carrier: StereoCarrier,
+) {
+    if let Some(carriers) = carriers_by_center.get_mut(&center) {
+        carriers.push(PendingStereoCarrier::Resolved(carrier));
+    }
+}
+
+fn push_tetrahedral_ring_carrier(
+    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+    center: AtomId,
+    label: usize,
+    component: usize,
+) {
+    if let Some(carriers) = carriers_by_center.get_mut(&center) {
+        carriers.push(PendingStereoCarrier::Ring { label, component });
+    }
+}
+
+fn resolve_tetrahedral_ring_carrier(
+    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+    center: AtomId,
+    label: usize,
+    component: usize,
+    carrier: AtomId,
+) {
+    let Some(carriers) = carriers_by_center.get_mut(&center) else {
+        return;
+    };
+    if let Some(pending) = carriers.iter_mut().find(|pending| {
+        matches!(
+            pending,
+            PendingStereoCarrier::Ring {
+                label: pending_label,
+                component: pending_component,
+            } if *pending_label == label && *pending_component == component
+        )
+    }) {
+        *pending = PendingStereoCarrier::Resolved(StereoCarrier::Atom(carrier));
+    }
+}
+
+fn resolve_smiles_tetrahedral_carriers(
     mol: &Molecule,
     center: AtomId,
+    carriers: Vec<PendingStereoCarrier>,
     offset: usize,
 ) -> std::result::Result<Vec<StereoCarrier>, SmilesParseError> {
-    let atom = mol
-        .atom(center)
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-    let mut carriers = mol
-        .incident_bonds(center)
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
-        .map(|(_, bond)| StereoCarrier::Atom(bond.other_atom(center)))
-        .collect::<Vec<_>>();
-    for _ in 0..atom.explicit_hydrogens {
-        carriers.push(StereoCarrier::ImplicitHydrogen);
+    let mut carriers = carriers
+        .into_iter()
+        .map(|carrier| match carrier {
+            PendingStereoCarrier::Resolved(carrier) => Ok(carrier),
+            PendingStereoCarrier::Ring { .. } => Err(SmilesParseError::new(
+                offset,
+                "unresolved tetrahedral ring carrier",
+            )),
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if carriers.len() == 3 && smiles_tetrahedral_center_can_have_lone_pair(mol, center) {
+        carriers.push(StereoCarrier::ImplicitLonePair);
     }
     Ok(carriers)
+}
+
+fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) -> bool {
+    mol.atom(center)
+        .map(|atom| {
+            matches!(
+                atom.element.symbol(),
+                "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
+            ) && atom.explicit_hydrogens == 0
+                && atom.implicit_hydrogens.unwrap_or(0) == 0
+        })
+        .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingTetrahedral {
+    center: AtomId,
+    orientation: TetrahedralOrientation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingStereoCarrier {
+    Resolved(StereoCarrier),
+    Ring { label: usize, component: usize },
 }
 
 fn default_smiles_bond_order(
@@ -612,10 +755,49 @@ pub fn write_smiles(
     _options: SmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
-    let plan = plan_smiles_write(mol)?;
+    let plan = plan_smiles_write(mol, StereoWriteMode::Reject)?;
     let mut parts = Vec::new();
     for start in &plan.roots {
-        parts.push(write_smiles_component(mol, *start, None, &plan)?);
+        parts.push(write_smiles_component(
+            mol,
+            *start,
+            None,
+            &plan,
+            None,
+            CanonicalAtomStyle::Aromatic,
+        )?);
+    }
+    Ok(parts.join("."))
+}
+
+pub fn write_isomeric_smiles(
+    molecule: &SmallMolecule,
+    _options: IsomericSmilesWriteOptions,
+) -> std::result::Result<String, MolWriteError> {
+    let mol = molecule.graph();
+    let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
+    let stereo = SmilesStereoWriteContext::new(mol)?;
+    let component_styles = smiles_connected_components(mol)?
+        .into_iter()
+        .map(|component| {
+            let style = isomeric_component_atom_style(mol, &component)?;
+            Ok((component.into_iter().collect::<BTreeSet<_>>(), style))
+        })
+        .collect::<std::result::Result<Vec<_>, MolWriteError>>()?;
+    let mut parts = Vec::new();
+    for start in &plan.roots {
+        let atom_style = component_styles
+            .iter()
+            .find_map(|(component, style)| component.contains(start).then_some(*style))
+            .unwrap_or(CanonicalAtomStyle::Aromatic);
+        parts.push(write_smiles_component(
+            mol,
+            *start,
+            None,
+            &plan,
+            Some(&stereo),
+            atom_style,
+        )?);
     }
     Ok(parts.join("."))
 }
@@ -684,6 +866,17 @@ fn canonical_component_atom_style(
     if canonical_component_has_aromatic_shorthand_sensitive_atom(mol, atom_ids)?
         && canonical_component_has_stored_kekule_orders(mol, atom_ids)?
     {
+        Ok(CanonicalAtomStyle::StoredKekule)
+    } else {
+        Ok(CanonicalAtomStyle::Aromatic)
+    }
+}
+
+fn isomeric_component_atom_style(
+    mol: &Molecule,
+    atom_ids: &[AtomId],
+) -> std::result::Result<CanonicalAtomStyle, MolWriteError> {
+    if canonical_component_has_stored_kekule_orders(mol, atom_ids)? {
         Ok(CanonicalAtomStyle::StoredKekule)
     } else {
         Ok(CanonicalAtomStyle::Aromatic)
@@ -862,13 +1055,17 @@ struct SmilesWritePlan {
 
 #[derive(Debug, Clone, Copy)]
 struct SmilesRingClosure {
+    bond: BondId,
     number: usize,
     order: BondOrder,
     other: AtomId,
 }
 
-fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, MolWriteError> {
-    validate_smiles_writeable(mol, StereoWriteMode::Reject)?;
+fn plan_smiles_write(
+    mol: &Molecule,
+    stereo: StereoWriteMode,
+) -> std::result::Result<SmilesWritePlan, MolWriteError> {
+    validate_smiles_writeable(mol, stereo)?;
     let mut roots = Vec::new();
     let mut visited = BTreeSet::<AtomId>::new();
     let mut tree_bonds = BTreeSet::<BondId>::new();
@@ -904,14 +1101,16 @@ fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, Mol
     }
 
     let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (index, (_, first, second, order)) in ring_bonds.into_iter().enumerate() {
+    for (index, (bond_id, first, second, order)) in ring_bonds.into_iter().enumerate() {
         let number = index + 1;
         closures.entry(first).or_default().push(SmilesRingClosure {
+            bond: bond_id,
             number,
             order,
             other: second,
         });
         closures.entry(second).or_default().push(SmilesRingClosure {
+            bond: bond_id,
             number,
             order,
             other: first,
@@ -935,21 +1134,26 @@ fn plan_smiles_write(mol: &Molecule) -> std::result::Result<SmilesWritePlan, Mol
 enum StereoWriteMode {
     Reject,
     Ignore,
+    Encode,
 }
 
 fn validate_smiles_writeable(
     mol: &Molecule,
     stereo: StereoWriteMode,
 ) -> std::result::Result<(), MolWriteError> {
-    if stereo == StereoWriteMode::Reject && mol.stereo_elements().next().is_some() {
-        return Err(MolWriteError::new(
-            "SMILES writer cannot encode atom stereochemistry",
-        ));
-    }
-    if stereo == StereoWriteMode::Reject && mol.stereo_bond_marks().next().is_some() {
-        return Err(MolWriteError::new(
-            "SMILES writer cannot encode bond stereochemistry",
-        ));
+    match stereo {
+        StereoWriteMode::Reject if mol.stereo_elements().next().is_some() => {
+            return Err(MolWriteError::new(
+                "SMILES writer cannot encode atom stereochemistry",
+            ));
+        }
+        StereoWriteMode::Reject if mol.stereo_bond_marks().next().is_some() => {
+            return Err(MolWriteError::new(
+                "SMILES writer cannot encode bond stereochemistry",
+            ));
+        }
+        StereoWriteMode::Encode => validate_isomeric_smiles_stereo(mol)?,
+        StereoWriteMode::Reject | StereoWriteMode::Ignore => {}
     }
     for (_, atom) in mol.atoms() {
         if atom.radical.is_some() {
@@ -966,6 +1170,119 @@ fn validate_smiles_writeable(
                     "SMILES writer cannot encode zero, dative, or quadruple bonds",
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), MolWriteError> {
+    if mol.stereo_groups().next().is_some() {
+        return Err(MolWriteError::new(
+            "isomeric SMILES writer cannot encode enhanced stereo groups",
+        ));
+    }
+    for (_, element) in mol.stereo_elements() {
+        if element.specifiedness != StereoSpecifiedness::Specified {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot encode unspecified or unknown stereo",
+            ));
+        }
+        match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                if stereo.carriers.len() != 4 {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES writer cannot encode invalid tetrahedral stereo",
+                    ));
+                }
+                let hydrogen_count = stereo
+                    .carriers
+                    .iter()
+                    .filter(|carrier| matches!(carrier, StereoCarrier::ImplicitHydrogen))
+                    .count();
+                if hydrogen_count > 1 {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES writer cannot encode tetrahedral stereo with repeated implicit hydrogens",
+                    ));
+                }
+            }
+            StereoElementKind::DoubleBond(stereo) => {
+                validate_isomeric_double_bond_endpoint(
+                    mol,
+                    stereo.left,
+                    stereo.right,
+                    stereo.bond,
+                    stereo.left_carrier,
+                )?;
+                validate_isomeric_double_bond_endpoint(
+                    mol,
+                    stereo.right,
+                    stereo.left,
+                    stereo.bond,
+                    stereo.right_carrier,
+                )?;
+            }
+            StereoElementKind::Axis(_) => {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode axial stereochemistry yet",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_isomeric_double_bond_endpoint(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    carrier: StereoCarrier,
+) -> std::result::Result<(), MolWriteError> {
+    match carrier {
+        StereoCarrier::Atom(atom) => {
+            let bond = mol
+                .bond_between(endpoint, atom)
+                .map_err(|error| MolWriteError::new(error.to_string()))?
+                .ok_or_else(|| MolWriteError::new("double-bond stereo carrier is not bonded"))?;
+            let order = mol
+                .bond(bond)
+                .map_err(|error| MolWriteError::new(error.to_string()))?
+                .order;
+            if order != BondOrder::Single || atom == other_endpoint {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode invalid double-bond stereo carrier",
+                ));
+            }
+        }
+        StereoCarrier::ImplicitHydrogen => {
+            let atom = mol
+                .atom(endpoint)
+                .map_err(|error| MolWriteError::new(error.to_string()))?;
+            let hydrogens = atom
+                .explicit_hydrogens
+                .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+            if hydrogens == 0 {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode unavailable implicit double-bond hydrogen carrier",
+                ));
+            }
+            if implicit_double_bond_printable_carrier_bond(
+                mol,
+                endpoint,
+                other_endpoint,
+                focus_bond,
+            )?
+            .is_none()
+            {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode implicit double-bond carrier without a unique explicit substituent bond",
+                ));
+            }
+        }
+        StereoCarrier::ImplicitLonePair => {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot encode lone-pair double-bond carrier",
+            ));
         }
     }
     Ok(())
@@ -1137,14 +1454,16 @@ fn plan_canonical_smiles_component(
     }
 
     let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (index, (_, first, second, order)) in ring_bonds.into_iter().enumerate() {
+    for (index, (bond_id, first, second, order)) in ring_bonds.into_iter().enumerate() {
         let number = index + 1;
         closures.entry(first).or_default().push(SmilesRingClosure {
+            bond: bond_id,
             number,
             order,
             other: second,
         });
         closures.entry(second).or_default().push(SmilesRingClosure {
+            bond: bond_id,
             number,
             order,
             other: first,
@@ -1318,11 +1637,509 @@ fn compute_smiles_subtree_sizes(
     Ok(subtree_sizes.get(&atom_id).copied().unwrap_or_default())
 }
 
+#[derive(Debug, Clone)]
+struct SmilesStereoWriteContext {
+    tetrahedral: BTreeMap<AtomId, TetrahedralSmilesState>,
+    directional: BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
+}
+
+#[derive(Debug, Clone)]
+struct TetrahedralSmilesState {
+    carriers: Vec<StereoCarrier>,
+    orientation: TetrahedralOrientation,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ChiralAtomWriteState {
+    orientation: TetrahedralOrientation,
+    force_hydrogen: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DirectionalSmilesConstraint {
+    endpoint: AtomId,
+    direction_at_endpoint: StereoBondMarkKind,
+}
+
+impl SmilesStereoWriteContext {
+    fn new(mol: &Molecule) -> std::result::Result<Self, MolWriteError> {
+        let mut tetrahedral = BTreeMap::new();
+        let mut directional = BTreeMap::<BondId, Vec<DirectionalSmilesConstraint>>::new();
+        for (_, element) in mol.stereo_elements() {
+            match &element.kind {
+                StereoElementKind::Tetrahedral(stereo) => {
+                    if tetrahedral
+                        .insert(
+                            stereo.center,
+                            TetrahedralSmilesState {
+                                carriers: stereo.carriers.clone(),
+                                orientation: stereo.orientation,
+                            },
+                        )
+                        .is_some()
+                    {
+                        return Err(MolWriteError::new(
+                            "isomeric SMILES writer cannot encode multiple tetrahedral elements on one atom",
+                        ));
+                    }
+                }
+                StereoElementKind::DoubleBond(stereo) => {
+                    add_double_bond_directional_constraints(mol, stereo, &mut directional)?;
+                }
+                StereoElementKind::Axis(_) => {}
+            }
+        }
+        validate_isomeric_source_marks(mol, &directional)?;
+        Ok(Self {
+            tetrahedral,
+            directional,
+        })
+    }
+
+    fn atom_chirality(
+        &self,
+        atom: AtomId,
+        parent: Option<AtomId>,
+        closures: Option<&[SmilesRingClosure]>,
+        children: &[(BondId, BondOrder, AtomId)],
+        main_child_index: Option<usize>,
+    ) -> Option<std::result::Result<ChiralAtomWriteState, MolWriteError>> {
+        let stereo = self.tetrahedral.get(&atom)?;
+        Some(tetrahedral_chirality_for_smiles_order(
+            stereo,
+            parent,
+            closures,
+            children,
+            main_child_index,
+        ))
+    }
+
+    fn directional_bond(
+        &self,
+        bond: BondId,
+        left: AtomId,
+        right: AtomId,
+    ) -> std::result::Result<Option<StereoBondMarkKind>, MolWriteError> {
+        let Some(constraints) = self.directional.get(&bond) else {
+            return Ok(None);
+        };
+        let mut concrete = None;
+        for constraint in constraints {
+            let mark = directional_mark_for_emitted_bond(
+                constraint.direction_at_endpoint,
+                constraint.endpoint,
+                left,
+                right,
+            )?;
+            if let Some(previous) = concrete {
+                if previous != mark {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES writer cannot encode conflicting double-bond stereo constraints",
+                    ));
+                }
+            } else {
+                concrete = Some(mark);
+            }
+        }
+        Ok(concrete)
+    }
+}
+
+fn validate_isomeric_source_marks(
+    mol: &Molecule,
+    directional: &BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
+) -> std::result::Result<(), MolWriteError> {
+    for mark in mol.stereo_bond_marks() {
+        if !matches!(
+            mark.kind,
+            StereoBondMarkKind::DirectionalUp | StereoBondMarkKind::DirectionalDown
+        ) {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot encode non-directional source bond marks",
+            ));
+        }
+        if !directional.contains_key(&mark.bond) {
+            if !source_directional_mark_needs_perceived_stereo(mol, mark)? {
+                continue;
+            }
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer requires perceived double-bond stereo elements for source bond marks",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn source_directional_mark_needs_perceived_stereo(
+    mol: &Molecule,
+    mark: &StereoBondMark,
+) -> std::result::Result<bool, MolWriteError> {
+    let marked_bond = mol
+        .bond(mark.bond)
+        .map_err(|error| MolWriteError::new(error.to_string()))?;
+    let (left, right) = marked_bond.endpoints();
+    for endpoint in [left, right] {
+        let incident = mol
+            .incident_bonds(endpoint)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        for (bond_id, bond) in incident {
+            if bond_id == mark.bond || smiles_has_double_bond_element(mol, bond_id) {
+                continue;
+            }
+            if double_bond_stereo_candidate_is_supported(mol, bond_id, bond)
+                && !double_bond_candidate_endpoint_carriers(mol, bond.a(), bond.b(), bond_id)
+                    .is_empty()
+                && !double_bond_candidate_endpoint_carriers(mol, bond.b(), bond.a(), bond_id)
+                    .is_empty()
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn double_bond_stereo_candidate_is_supported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
+    if bond.order != BondOrder::Double || bond.aromatic {
+        return false;
+    }
+    if double_bond_between_aromatic_atoms(mol, bond) {
+        return false;
+    }
+    if double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond) {
+        return false;
+    }
+    true
+}
+
+fn smiles_has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {
+    mol.stereo_elements().any(|(_, element)| {
+        matches!(
+            &element.kind,
+            StereoElementKind::DoubleBond(stereo) if stereo.bond == bond
+        )
+    })
+}
+
+fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
+    mol.atom(bond.a())
+        .map(|atom| atom.aromatic)
+        .unwrap_or(false)
+        && mol
+            .atom(bond.b())
+            .map(|atom| atom.aromatic)
+            .unwrap_or(false)
+}
+
+fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
+    mol.ring_membership()
+        .map(|membership| membership.bond_in_ring(bond))
+        .unwrap_or(false)
+}
+
+fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
+    [bond.a(), bond.b()].into_iter().any(|atom_id| {
+        mol.atom(atom_id)
+            .map(|atom| atom.element.symbol() != "C")
+            .unwrap_or(true)
+    })
+}
+
+fn double_bond_candidate_endpoint_carriers(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+) -> Vec<StereoCarrier> {
+    let mut carriers = Vec::new();
+    if let Ok(incident) = mol.incident_bonds(endpoint) {
+        for (bond_id, bond) in incident {
+            if bond_id == focus_bond || bond.order != BondOrder::Single {
+                continue;
+            }
+            let other = bond.other_atom(endpoint);
+            if other != other_endpoint {
+                carriers.push(StereoCarrier::Atom(other));
+            }
+        }
+    }
+    carriers.sort_by_key(carrier_key);
+    if atom_hydrogen_count(mol, endpoint) == 1 {
+        carriers.push(StereoCarrier::ImplicitHydrogen);
+    }
+    carriers
+}
+
+fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
+    mol.atom(atom)
+        .map(|atom| {
+            atom.explicit_hydrogens
+                .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+        })
+        .unwrap_or(0)
+}
+
+fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
+    match carrier {
+        StereoCarrier::Atom(atom) => (0, atom.raw()),
+        StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
+        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
+    }
+}
+
+fn add_double_bond_directional_constraints(
+    mol: &Molecule,
+    stereo: &DoubleBondStereo,
+    directional: &mut BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
+) -> std::result::Result<(), MolWriteError> {
+    let left_carrier_bond = double_bond_printable_carrier_bond(
+        mol,
+        stereo.left,
+        stereo.right,
+        stereo.bond,
+        stereo.left_carrier,
+    )?;
+    let right_carrier_bond = double_bond_printable_carrier_bond(
+        mol,
+        stereo.right,
+        stereo.left,
+        stereo.bond,
+        stereo.right_carrier,
+    )?;
+    let left_direction = StereoBondMarkKind::DirectionalUp;
+    let right_direction = match stereo.orientation {
+        DoubleBondOrientation::Together => left_direction,
+        DoubleBondOrientation::Opposite => invert_directional_mark(left_direction),
+    };
+    directional
+        .entry(left_carrier_bond.bond)
+        .or_default()
+        .push(DirectionalSmilesConstraint {
+            endpoint: stereo.left,
+            direction_at_endpoint: if left_carrier_bond.invert_direction {
+                invert_directional_mark(left_direction)
+            } else {
+                left_direction
+            },
+        });
+    directional
+        .entry(right_carrier_bond.bond)
+        .or_default()
+        .push(DirectionalSmilesConstraint {
+            endpoint: stereo.right,
+            direction_at_endpoint: if right_carrier_bond.invert_direction {
+                invert_directional_mark(right_direction)
+            } else {
+                right_direction
+            },
+        });
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DoubleBondPrintableCarrierBond {
+    bond: BondId,
+    invert_direction: bool,
+}
+
+fn double_bond_printable_carrier_bond(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+    carrier: StereoCarrier,
+) -> std::result::Result<DoubleBondPrintableCarrierBond, MolWriteError> {
+    match carrier {
+        StereoCarrier::Atom(atom) => {
+            let bond = mol
+                .bond_between(endpoint, atom)
+                .map_err(|error| MolWriteError::new(error.to_string()))?
+                .ok_or_else(|| MolWriteError::new("double-bond stereo carrier is not bonded"))?;
+            Ok(DoubleBondPrintableCarrierBond {
+                bond,
+                invert_direction: false,
+            })
+        }
+        StereoCarrier::ImplicitHydrogen => {
+            let Some(bond) = implicit_double_bond_printable_carrier_bond(
+                mol,
+                endpoint,
+                other_endpoint,
+                focus_bond,
+            )?
+            else {
+                return Err(MolWriteError::new(
+                    "isomeric SMILES writer cannot encode implicit double-bond carrier without a unique explicit substituent bond",
+                ));
+            };
+            Ok(DoubleBondPrintableCarrierBond {
+                bond,
+                invert_direction: true,
+            })
+        }
+        StereoCarrier::ImplicitLonePair => Err(MolWriteError::new(
+            "isomeric SMILES writer cannot encode lone-pair double-bond carrier",
+        )),
+    }
+}
+
+fn implicit_double_bond_printable_carrier_bond(
+    mol: &Molecule,
+    endpoint: AtomId,
+    other_endpoint: AtomId,
+    focus_bond: BondId,
+) -> std::result::Result<Option<BondId>, MolWriteError> {
+    let mut candidates = Vec::new();
+    for (bond_id, bond) in mol
+        .incident_bonds(endpoint)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+    {
+        if bond_id == focus_bond || bond.order != BondOrder::Single {
+            continue;
+        }
+        let other = bond.other_atom(endpoint);
+        if other != other_endpoint {
+            candidates.push(bond_id);
+        }
+    }
+    match candidates.as_slice() {
+        [bond] => Ok(Some(*bond)),
+        [] => Ok(None),
+        _ => Err(MolWriteError::new(
+            "isomeric SMILES writer cannot encode implicit double-bond carrier with multiple explicit substituent bonds",
+        )),
+    }
+}
+
+fn directional_mark_for_emitted_bond(
+    direction_at_endpoint: StereoBondMarkKind,
+    endpoint: AtomId,
+    left: AtomId,
+    right: AtomId,
+) -> std::result::Result<StereoBondMarkKind, MolWriteError> {
+    if endpoint == left {
+        Ok(direction_at_endpoint)
+    } else if endpoint == right {
+        Ok(invert_directional_mark(direction_at_endpoint))
+    } else {
+        Err(MolWriteError::new(
+            "double-bond stereo endpoint is not on emitted directional bond",
+        ))
+    }
+}
+
+fn invert_directional_mark(kind: StereoBondMarkKind) -> StereoBondMarkKind {
+    match kind {
+        StereoBondMarkKind::DirectionalUp => StereoBondMarkKind::DirectionalDown,
+        StereoBondMarkKind::DirectionalDown => StereoBondMarkKind::DirectionalUp,
+        _ => kind,
+    }
+}
+
+fn tetrahedral_chirality_for_smiles_order(
+    stereo: &TetrahedralSmilesState,
+    parent: Option<AtomId>,
+    closures: Option<&[SmilesRingClosure]>,
+    children: &[(BondId, BondOrder, AtomId)],
+    main_child_index: Option<usize>,
+) -> std::result::Result<ChiralAtomWriteState, MolWriteError> {
+    let force_hydrogen = stereo
+        .carriers
+        .iter()
+        .any(|carrier| matches!(carrier, StereoCarrier::ImplicitHydrogen));
+    let mut emitted = Vec::with_capacity(stereo.carriers.len());
+    if let Some(parent) = parent {
+        emitted.push(StereoCarrier::Atom(parent));
+    }
+    if force_hydrogen {
+        emitted.push(StereoCarrier::ImplicitHydrogen);
+    }
+    if let Some(closures) = closures {
+        emitted.extend(
+            closures
+                .iter()
+                .map(|closure| StereoCarrier::Atom(closure.other)),
+        );
+    }
+    emitted.extend(
+        children
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != main_child_index)
+            .map(|(_, (_, _, child))| StereoCarrier::Atom(*child)),
+    );
+    if let Some(index) = main_child_index {
+        emitted.push(StereoCarrier::Atom(children[index].2));
+    }
+    if stereo
+        .carriers
+        .iter()
+        .any(|carrier| matches!(carrier, StereoCarrier::ImplicitLonePair))
+    {
+        emitted.push(StereoCarrier::ImplicitLonePair);
+    }
+    if emitted != stereo.carriers {
+        let Some(odd) = carrier_permutation_is_odd(&stereo.carriers, &emitted) else {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot encode tetrahedral carrier order",
+            ));
+        };
+        Ok(ChiralAtomWriteState {
+            orientation: if odd {
+                flip_tetrahedral_orientation(stereo.orientation)
+            } else {
+                stereo.orientation
+            },
+            force_hydrogen,
+        })
+    } else {
+        Ok(ChiralAtomWriteState {
+            orientation: stereo.orientation,
+            force_hydrogen,
+        })
+    }
+}
+
+fn carrier_permutation_is_odd(from: &[StereoCarrier], to: &[StereoCarrier]) -> Option<bool> {
+    if from.len() != to.len() {
+        return None;
+    }
+    let mut positions = Vec::with_capacity(to.len());
+    let mut used = vec![false; to.len()];
+    for carrier in from {
+        let position = to
+            .iter()
+            .enumerate()
+            .find(|(index, candidate)| !used[*index] && *candidate == carrier)
+            .map(|(index, _)| index)?;
+        used[position] = true;
+        positions.push(position);
+    }
+    let mut odd = false;
+    for left in 0..positions.len() {
+        for right in (left + 1)..positions.len() {
+            if positions[left] > positions[right] {
+                odd = !odd;
+            }
+        }
+    }
+    Some(odd)
+}
+
+fn flip_tetrahedral_orientation(orientation: TetrahedralOrientation) -> TetrahedralOrientation {
+    match orientation {
+        TetrahedralOrientation::Clockwise => TetrahedralOrientation::CounterClockwise,
+        TetrahedralOrientation::CounterClockwise => TetrahedralOrientation::Clockwise,
+    }
+}
+
 fn write_smiles_component(
     mol: &Molecule,
     atom_id: AtomId,
     parent: Option<AtomId>,
     plan: &SmilesWritePlan,
+    stereo: Option<&SmilesStereoWriteContext>,
+    atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<String, MolWriteError> {
     enum Action {
         Node {
@@ -1330,6 +2147,7 @@ fn write_smiles_component(
             parent: Option<AtomId>,
         },
         Bond {
+            bond: BondId,
             order: BondOrder,
             left: AtomId,
             right: AtomId,
@@ -1347,27 +2165,30 @@ fn write_smiles_component(
         match action {
             Action::OpenBranch => out.push('('),
             Action::CloseBranch => out.push(')'),
-            Action::Bond { order, left, right } => {
-                out.push_str(smiles_bond_between(mol, order, left, right)?);
+            Action::Bond {
+                bond,
+                order,
+                left,
+                right,
+            } => {
+                let directional = stereo
+                    .map(|context| context.directional_bond(bond, left, right))
+                    .transpose()?
+                    .flatten();
+                out.push_str(smiles_bond_between_with_direction(
+                    mol,
+                    order,
+                    left,
+                    right,
+                    directional,
+                )?);
             }
             Action::Node { atom, parent } => {
                 let atom_record = mol
                     .atom(atom)
                     .map_err(|error| MolWriteError::new(error.to_string()))?;
-                out.push_str(&smiles_atom(atom_record));
-                if let Some(closures) = plan.closures.get(&atom) {
-                    for closure in closures {
-                        out.push_str(smiles_bond_between(
-                            mol,
-                            closure.order,
-                            atom,
-                            closure.other,
-                        )?);
-                        out.push_str(&smiles_ring_number(closure.number));
-                    }
-                }
-
-                let mut children = smiles_incident_bonds(mol, atom)?
+                let closures = plan.closures.get(&atom).map(Vec::as_slice);
+                let mut children = smiles_incident_bonds_for_style(mol, atom, atom_style)?
                     .into_iter()
                     .filter(|(bond_id, _, neighbor)| {
                         plan.tree_bonds.contains(bond_id) && Some(*neighbor) != parent
@@ -1382,20 +2203,60 @@ fn write_smiles_component(
                         (plan.subtree_sizes.get(&child).copied().unwrap_or(0), child)
                     })
                     .map(|(index, _)| index);
+                let chirality = stereo
+                    .and_then(|context| {
+                        context.atom_chirality(atom, parent, closures, &children, main_child_index)
+                    })
+                    .transpose()?;
+                out.push_str(&smiles_atom_with_style_and_chirality(
+                    mol,
+                    atom,
+                    atom_record,
+                    atom_style,
+                    chirality.map(|state| state.orientation),
+                    chirality.is_some_and(|state| state.force_hydrogen),
+                )?);
+                if let Some(closures) = closures {
+                    for closure in closures {
+                        let closure_order = match atom_style {
+                            CanonicalAtomStyle::Aromatic => closure.order,
+                            CanonicalAtomStyle::StoredKekule => {
+                                mol.bond(closure.bond)
+                                    .map_err(|error| MolWriteError::new(error.to_string()))?
+                                    .order
+                            }
+                        };
+                        let directional = stereo
+                            .map(|context| {
+                                context.directional_bond(closure.bond, atom, closure.other)
+                            })
+                            .transpose()?
+                            .flatten();
+                        out.push_str(smiles_bond_between_with_direction(
+                            mol,
+                            closure_order,
+                            atom,
+                            closure.other,
+                            directional,
+                        )?);
+                        out.push_str(&smiles_ring_number(closure.number));
+                    }
+                }
 
                 if let Some(index) = main_child_index {
-                    let (_, order, child) = children[index];
+                    let (bond, order, child) = children[index];
                     actions.push(Action::Node {
                         atom: child,
                         parent: Some(atom),
                     });
                     actions.push(Action::Bond {
+                        bond,
                         order,
                         left: atom,
                         right: child,
                     });
                 }
-                for (index, (_, order, child)) in children.into_iter().enumerate().rev() {
+                for (index, (bond, order, child)) in children.into_iter().enumerate().rev() {
                     if Some(index) == main_child_index {
                         continue;
                     }
@@ -1405,6 +2266,7 @@ fn write_smiles_component(
                         parent: Some(atom),
                     });
                     actions.push(Action::Bond {
+                        bond,
                         order,
                         left: atom,
                         right: child,
@@ -1524,13 +2386,50 @@ fn smiles_bond_between(
     Ok(smiles_bond(order))
 }
 
+fn smiles_bond_between_with_direction(
+    mol: &Molecule,
+    order: BondOrder,
+    left: AtomId,
+    right: AtomId,
+    directional: Option<StereoBondMarkKind>,
+) -> std::result::Result<&'static str, MolWriteError> {
+    if let Some(directional) = directional {
+        if order != BondOrder::Single {
+            return Err(MolWriteError::new(
+                "isomeric SMILES writer cannot place directional stereo on a non-single bond",
+            ));
+        }
+        return match directional {
+            StereoBondMarkKind::DirectionalUp => Ok("/"),
+            StereoBondMarkKind::DirectionalDown => Ok("\\"),
+            _ => Err(MolWriteError::new(
+                "isomeric SMILES writer received a non-directional stereo mark",
+            )),
+        };
+    }
+    smiles_bond_between(mol, order, left, right)
+}
+
 fn smiles_atom(atom: &Atom) -> String {
-    let explicit_hydrogens = smiles_atom_explicit_hydrogens(atom);
+    smiles_atom_with_chirality(atom, None, false)
+}
+
+fn smiles_atom_with_chirality(
+    atom: &Atom,
+    chirality: Option<TetrahedralOrientation>,
+    force_hydrogen: bool,
+) -> String {
+    let explicit_hydrogens = if force_hydrogen {
+        smiles_atom_explicit_hydrogens(atom).max(1)
+    } else {
+        smiles_atom_explicit_hydrogens(atom)
+    };
     let organic = atom.isotope.is_none()
         && atom.formal_charge == 0
         && explicit_hydrogens == 0
         && !atom.no_implicit_hydrogens
         && atom.atom_map.is_none()
+        && chirality.is_none()
         && matches!(
             atom.element.symbol(),
             "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
@@ -1550,6 +2449,12 @@ fn smiles_atom(atom: &Atom) -> String {
             out.push_str(&atom.element.symbol().to_ascii_lowercase());
         } else {
             out.push_str(atom.element.symbol());
+        }
+        if let Some(chirality) = chirality {
+            out.push('@');
+            if chirality == TetrahedralOrientation::CounterClockwise {
+                out.push('@');
+            }
         }
         if explicit_hydrogens > 0 {
             out.push('H');
@@ -1575,6 +2480,34 @@ fn smiles_atom(atom: &Atom) -> String {
         out.push(']');
         out
     }
+}
+
+fn smiles_atom_with_style_and_chirality(
+    _mol: &Molecule,
+    _atom_id: AtomId,
+    atom: &Atom,
+    atom_style: CanonicalAtomStyle,
+    chirality: Option<TetrahedralOrientation>,
+    force_hydrogen: bool,
+) -> std::result::Result<String, MolWriteError> {
+    if matches!(atom_style, CanonicalAtomStyle::StoredKekule) && atom.aromatic {
+        let mut normalized = atom.clone();
+        normalized.isotope = None;
+        normalized.aromatic = false;
+        if !matches!(atom.element.symbol(), "B" | "C") && atom.implicit_hydrogens.unwrap_or(0) > 0 {
+            normalized.explicit_hydrogens = atom
+                .explicit_hydrogens
+                .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+            normalized.implicit_hydrogens = Some(0);
+            normalized.no_implicit_hydrogens = true;
+        }
+        return Ok(smiles_atom_with_chirality(
+            &normalized,
+            chirality,
+            force_hydrogen,
+        ));
+    }
+    Ok(smiles_atom_with_chirality(atom, chirality, force_hydrogen))
 }
 
 fn canonical_smiles_atom(

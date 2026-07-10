@@ -65,6 +65,7 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule) -> ValenceReport {
                     }
                 }
             }
+            None if explicit == 0 => assignments.push((atom_id, 0)),
             None => issues.push(ValenceIssue::UnsupportedElement(atom_id)),
         }
     }

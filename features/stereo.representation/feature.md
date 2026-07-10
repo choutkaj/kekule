@@ -10,23 +10,26 @@ not atom/bond payload flags.
 
 - `core::stereo` defines stable stereo element IDs, stereo group IDs,
   tetrahedral atom elements, double-bond elements, reserved axis elements,
-  atom or implicit-hydrogen carriers, local orientations, specifiedness, source
-  metadata, optional derived descriptors, source bond marks, stereo groups, and
-  group kinds.
+  atom, implicit-hydrogen, or implicit-lone-pair carriers, local orientations,
+  specifiedness, source metadata, optional derived descriptors, source bond
+  marks, stereo groups, and group kinds.
 - `Molecule` stores stereo elements, stereo groups, and source bond marks with
   focused insertion, lookup, iteration, removal, and topology-aware pruning
   methods.
-- Local stereo is the authoritative representation. `R/S`, `E/Z`, `M/P`, and
-  pseudoasymmetric descriptors are optional derived descriptors and must be
-  treated as cacheable views until the CIP feature is implemented.
+- Local stereo is the authoritative representation. `R/S`, `E/Z`, `M/P`,
+  sequence cis/trans, and pseudoasymmetric descriptors are optional derived
+  descriptors and must be treated as cacheable views over local stereo.
 - Unknown, unspecified, invalid-cleared, and specified stereo are distinct
   states. Missing stereo elements mean absent stereo, not explicit unknown
   stereo.
 - Stereo groups model relation semantics separately from local parity, including
   absolute, relative, racemic, AND, and OR group kinds.
 - SMILES `@`/`@@` markers are preserved as tetrahedral elements using SMILES
-  local orientation and carrier order. SMILES `/` and `\` markers are preserved
-  as source bond marks without double-bond perception.
+  local orientation and carrier order. Carrier order follows the SMILES-local
+  sequence, including the incoming atom, bracket hydrogens, branches, ring
+  digits, and supported implicit lone-pair placeholders for three-neighbor
+  heteroatom centers. SMILES `/` and `\` markers are preserved as source bond
+  marks without double-bond perception.
 - Supported V2000 and V3000 bond stereo fields are preserved as source bond
   marks. Atom `CFG`/parity and enhanced stereo collections remain unsupported
   until explicit format features are implemented.
@@ -47,6 +50,9 @@ not atom/bond payload flags.
 - Source bond marks intentionally preserve parser syntax or Molfile wedge/either
   fields even before perception can assemble them into validated stereo
   elements.
+- Implicit lone-pair carriers are local stereo placeholders only. They preserve
+  supported imported tetrahedral syntax for heteroatom centers without
+  converting lone pairs into graph atoms.
 - Macromolecules may carry stereo metadata through the shared graph, but
   small-molecule stereo perception is a later explicit workflow and should not
   run over whole `MacroMolecule` structures by default.
@@ -56,9 +62,15 @@ not atom/bond payload flags.
 - Unit tests cover stereo element, group, and source bond mark CRUD; invalid
   references; mutation invalidation; topology-aware pruning; and parser/writer
   adapter behavior.
-- Smoke validation records semantic stereo JSON for externally supplied PubChem
-  isomeric SMILES fixtures, including `stereo_elements`, `stereo_groups`,
-  `stereo_bond_marks`, source marks, and specifiedness.
+- Smoke, PubChem 100, PubChem 1k, PubChem 100k, Enamine diversity, and PL-REX
+  validation record semantic stereo JSON for externally supplied isomeric
+  SMILES fixtures, including `stereo_elements`, `stereo_groups`,
+  `stereo_bond_marks`, source marks, and specifiedness. PL-REX adds
+  coordinate-bearing ligand SDF packs so Molfile wedge/either and source-mark
+  preservation stay covered outside SMILES-only fixtures. The broader PubChem,
+  Enamine, and PL-REX tiers are implementation-golden semantic regression gates
+  for representation stability, while exact RDKit descriptor parity belongs to
+  `stereo.cip`.
 
 ## Out Of Scope
 
@@ -75,3 +87,14 @@ not atom/bond payload flags.
 - v3: Generalize double-bond stereo carriers from atom-only IDs to
   `StereoCarrier` so alkene perception can represent implicit-hydrogen
   substituents.
+- v4: Preserve SMILES-local tetrahedral carrier order for bracket hydrogens and
+  ring-digit closures in smoke semantic validation.
+- v5: Add implicit lone-pair stereo carriers so supported three-neighbor
+  heteroatom tetrahedral markers can be represented without adding graph atoms.
+- v6: Add sequence cis/trans entries to the derived descriptor vocabulary.
+- v7: Add PubChem 100 and PubChem 1k semantic regression requirements for
+  stereo representation over externally supplied isomeric SMILES.
+- v8: Add PubChem 100k and Enamine diversity semantic regression requirements
+  for broader drug-like stereo representation preservation coverage.
+- v9: Add PL-REX ligand SDF packs to the representation validation contract for
+  coordinate- and Molfile-stereo source-mark regression coverage.
