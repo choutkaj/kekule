@@ -48,6 +48,8 @@ pub enum AtomRadical {
     Singlet,
     Doublet,
     Triplet,
+    Quartet,
+    Quintet,
 }
 
 impl AtomRadical {
@@ -56,6 +58,8 @@ impl AtomRadical {
             Self::Singlet => 0,
             Self::Doublet => 1,
             Self::Triplet => 2,
+            Self::Quartet => 3,
+            Self::Quintet => 4,
         }
     }
 }

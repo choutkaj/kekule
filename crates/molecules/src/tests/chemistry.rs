@@ -110,6 +110,39 @@ fn sanitization_perceives_stereo_by_default_and_can_skip_it() {
 }
 
 #[test]
+fn sanitization_preserves_unknown_double_bond_stereo() {
+    let mut molecule = smiles_api::read_str("CC=CC").expect("alkene should parse");
+    let double_bond = molecule
+        .graph()
+        .bonds()
+        .find_map(|(bond_id, bond)| (bond.order == BondOrder::Double).then_some(bond_id))
+        .expect("double bond");
+    molecule
+        .graph_mut()
+        .set_stereo_bond_mark(StereoBondMark {
+            bond: double_bond,
+            kind: StereoBondMarkKind::DoubleBondEither,
+            source: StereoSource::MolfileV2000,
+        })
+        .expect("double bond either mark");
+
+    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("unknown double-bond stereo should sanitize");
+
+    assert!(report.stereo.expect("stereo report").is_ok());
+    let (_, element) = molecule
+        .graph()
+        .stereo_elements()
+        .next()
+        .expect("unknown stereo element");
+    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
+    assert!(matches!(
+        &element.kind,
+        StereoElementKind::DoubleBond(stereo) if stereo.bond == double_bond
+    ));
+}
+
+#[test]
 fn sanitization_does_not_assign_coordinate_only_stereo() {
     let mut mol = Molecule::new();
     let left = mol.add_atom(carbon());
@@ -165,6 +198,46 @@ fn failed_stereo_sanitization_is_transactional() {
 }
 
 #[test]
+fn sanitization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon());
+    let mut marked_bonds = Vec::new();
+    for symbol in ["F", "Cl", "Br", "I"] {
+        let carrier = mol.add_atom(element_atom(symbol));
+        marked_bonds.push(
+            mol.add_bond(center, carrier, BondOrder::Single)
+                .expect("carrier bond"),
+        );
+    }
+    for (index, bond) in marked_bonds.into_iter().enumerate() {
+        mol.set_stereo_bond_mark(StereoBondMark {
+            bond,
+            kind: if index % 2 == 0 {
+                StereoBondMarkKind::WedgeUp
+            } else {
+                StereoBondMarkKind::WedgeDown
+            },
+            source: StereoSource::MolfileV2000,
+        })
+        .expect("wedge mark");
+    }
+    let mut molecule = SmallMolecule::from_graph(mol);
+
+    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("ambiguous drawing wedges should not reject valid chemistry");
+    let stereo = report.stereo.expect("stereo report");
+
+    assert!(stereo
+        .issues
+        .contains(&StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks {
+            center,
+            mark_count: 4,
+        }));
+    assert_eq!(stereo.issues.len(), 1);
+    assert!(molecule.graph().stereo_elements().next().is_none());
+}
+
+#[test]
 fn failed_valence_sanitization_is_transactional() {
     let mut mol = Molecule::new();
     let carbon = mol.add_atom(carbon());
@@ -186,12 +259,12 @@ fn failed_valence_sanitization_is_transactional() {
 
 #[test]
 fn failed_aromaticity_sanitization_is_transactional() {
-    let (mol, _, _) = ring_molecule(&["Si", "C", "C", "C", "C", "C"], &[BondOrder::Aromatic; 6]);
-    let mut molecule = SmallMolecule::from_graph(mol);
+    let mut molecule = smiles_api::read_str_with_options("c1cccc1", SmilesParseOptions)
+        .expect("raw invalid aromatic representation parses");
     let before = molecule.clone();
 
     let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect_err("unsupported explicitly aromatic silicon should fail");
+        .expect_err("unmatchable aromatic representation should fail");
 
     assert!(matches!(error, SanitizeError::Aromaticity(_)));
     assert_eq!(molecule, before);
@@ -215,9 +288,12 @@ fn successful_sanitization_is_idempotent() {
 fn sanitize_cleanup_invalidates_preexisting_perception() {
     let mut mol = Molecule::new();
     let chlorine = mol.add_atom(Atom::new(Element::from_symbol("Cl").expect("chlorine")));
-    let oxygen = mol.add_atom(oxygen());
-    mol.add_bond(chlorine, oxygen, BondOrder::Double)
+    let oxo = mol.add_atom(oxygen());
+    let hydroxyl = mol.add_atom(oxygen());
+    mol.add_bond(chlorine, oxo, BondOrder::Double)
         .expect("bond");
+    mol.add_bond(chlorine, hydroxyl, BondOrder::Single)
+        .expect("hydroxyl bond");
     mark_all_fresh(&mut mol);
     let mut molecule = SmallMolecule::from_graph(mol);
 
@@ -242,8 +318,16 @@ fn sanitize_cleanup_invalidates_preexisting_perception() {
         1
     );
     assert_eq!(
-        molecule.graph().atom(oxygen).expect("oxygen").formal_charge,
+        molecule.graph().atom(oxo).expect("oxygen").formal_charge,
         -1
+    );
+    assert_eq!(
+        molecule
+            .graph()
+            .atom(hydroxyl)
+            .expect("hydroxyl oxygen")
+            .formal_charge,
+        0
     );
     assert_eq!(
         molecule.graph().bond(BondId::new(0)).expect("bond").order,
@@ -264,6 +348,14 @@ fn valence_reports_excess_common_valence() {
 
     assert_eq!(report.issues.len(), 1);
     assert!(!report.is_ok());
+
+    let report = valence_api::perceive_valence_with_options(
+        &mut mol,
+        ValenceModel::RdkitLike,
+        ValenceOptions { strict: false },
+    );
+    assert!(report.is_ok());
+    assert_eq!(mol.atom(c).expect("carbon").implicit_hydrogens, Some(0));
 }
 
 #[test]
@@ -312,6 +404,28 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         );
     }
 
+    let mut mercury_cyanide = Molecule::new();
+    let mercury = mercury_cyanide.add_atom(charged_atom("Hg", -2));
+    for _ in 0..4 {
+        let carbon = mercury_cyanide.add_atom(element_atom("C"));
+        let nitrogen = mercury_cyanide.add_atom(element_atom("N"));
+        mercury_cyanide
+            .add_bond(mercury, carbon, BondOrder::Single)
+            .expect("mercury-carbon bond");
+        mercury_cyanide
+            .add_bond(carbon, nitrogen, BondOrder::Triple)
+            .expect("cyanide bond");
+    }
+    let report = valence_api::perceive_valence(&mut mercury_cyanide, ValenceModel::RdkitLike);
+    assert!(report.is_ok(), "tetracyanomercurate should be supported");
+    assert_eq!(
+        mercury_cyanide
+            .atom(mercury)
+            .expect("mercury")
+            .implicit_hydrogens,
+        Some(0)
+    );
+
     let mut covalent_aluminum = Molecule::new();
     let aluminum = covalent_aluminum.add_atom(element_atom("Al"));
     for _ in 0..3 {
@@ -357,4 +471,76 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             .implicit_hydrogens,
         Some(0)
     );
+}
+
+#[test]
+fn molfile_wedge_assembles_tetrahedral_p_with_a_double_bond() {
+    let input = r#"tetrahedral phosphorus
+  molecules
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 P   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000   -1.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  1  0  0  0
+  1  3  2  0  0  0  0
+  1  4  1  0  0  0  0
+  1  5  1  0  0  0  0
+M  END
+$$$$
+"#;
+    let mut molecule = sdf::read_v2000_str(input, SdfParseOptions::default())
+        .expect("compact phosphorus regression parses")
+        .into_iter()
+        .next()
+        .expect("one molecule");
+
+    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("tetracoordinate phosphorus should sanitize");
+    let stereo = report.stereo.expect("stereo report");
+
+    assert!(stereo.issues.is_empty());
+    assert_eq!(stereo.assembled_elements.len(), 1);
+    assert!(matches!(
+        &stereo.assembled_elements[0].kind,
+        StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(0)
+    ));
+}
+
+#[test]
+fn molfile_wedge_assembles_pyramidal_s_with_a_lone_pair() {
+    let input = r#"pyramidal sulfur
+  molecules
+
+  4  3  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 S   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  1  0  0  0
+  1  3  2  0  0  0  0
+  1  4  1  0  0  0  0
+M  END
+$$$$
+"#;
+    let mut molecule = sdf::read_v2000_str(input, SdfParseOptions::default())
+        .expect("compact sulfur regression parses")
+        .into_iter()
+        .next()
+        .expect("one molecule");
+
+    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("pyramidal sulfur should sanitize");
+    let stereo = report.stereo.expect("stereo report");
+
+    assert!(stereo.issues.is_empty());
+    assert_eq!(stereo.assembled_elements.len(), 1);
+    assert!(matches!(
+        &stereo.assembled_elements[0].kind,
+        StereoElementKind::Tetrahedral(stereo)
+            if stereo.center == AtomId::new(0)
+                && stereo.carriers.contains(&StereoCarrier::ImplicitLonePair)
+    ));
 }

@@ -132,7 +132,10 @@ pub mod perception {
     use crate::small::SmallMolecule;
 
     pub mod valence {
-        pub use crate::algorithms::{perceive_valence, ValenceIssue, ValenceModel, ValenceReport};
+        pub use crate::algorithms::{
+            perceive_valence, perceive_valence_with_options, ValenceIssue, ValenceModel,
+            ValenceOptions, ValenceReport,
+        };
     }
 
     pub mod rings {

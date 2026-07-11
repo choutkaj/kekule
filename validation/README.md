@@ -15,6 +15,14 @@ cargo xtask corpus check --corpus all --require-data
 cargo xtask validate --feature all --corpus smoke
 ```
 
+To diagnose one declared fixture without changing generated status, use
+`--fixture`. If an implementation-semantic contract has changed and the new
+behavior has been independently reviewed, its snapshot can be accepted with
+`--accept-implementation-goldens`. Acceptance is restricted to one concrete
+feature/corpus using a `*-manual-semantic` reference and is deliberately
+separate from `--update`; generator-backed RDKit and Biopython goldens cannot be
+replaced this way.
+
 The following command will run a full validation of all features on all corpora, and update the feature dashboard.
 ```bash
 cargo xtask validate --feature all --corpus all --update

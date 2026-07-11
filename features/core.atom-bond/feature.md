@@ -7,7 +7,8 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 ## Behavior/API
 
 - Provides `Atom`, `AtomRadical`, `Bond`, `Element`, `BondOrder`, property maps, and simple chemistry annotations.
-- Stores radicals as one authoritative multiplicity (`Singlet`, `Doublet`, or `Triplet`) with a helper for unpaired-electron count.
+- Stores radicals as one authoritative multiplicity (`Singlet`, `Doublet`,
+  `Triplet`, `Quartet`, or `Quintet`) with a helper for unpaired-electron count.
 - Stores whether an atom suppresses implicit hydrogen assignment, matching bracket-atom and explicit-valence workflows.
 - Does not store authoritative atom or bond stereochemistry payload flags; stereo state lives in the graph-adjacent `core::stereo` model on `Molecule`.
 - Atom and bond endpoint mutation stays controlled by `Molecule` topology operations.
@@ -36,3 +37,5 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 - v3: Replace lossy radical electron counts with authoritative radical multiplicity and re-export `AtomRadical`.
 - v4: Add `Atom::no_implicit_hydrogens` so parsers can preserve explicit no-implicit-hydrogen atom semantics.
 - v5: Remove atom/bond stereo payloads from the authoritative public model in favor of graph-adjacent stereo elements and source marks.
+- v6: Extend authoritative radical multiplicity through quartet and quintet so
+  bracket-SMILES high-spin states are not collapsed to triplets.

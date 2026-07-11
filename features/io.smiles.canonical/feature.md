@@ -11,6 +11,10 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 - Chooses a deterministic representation by ranking atoms, trying every atom in each connected component as a root, rendering rank-ordered branches and ring closures, and selecting the smallest rank-guided component string using SMILES syntax tie-breakers.
 - Sorts disconnected component strings before joining with `.`.
 - Does not sanitize or perceive chemistry before writing.
+- Applies non-isomeric normalization on a clone: isotope labels are suppressed,
+  ordinary explicit hydrogen atoms are collapsed into parent hydrogen counts
+  when safe, isotopic hydrogen atoms remain graph atoms but lose their isotope
+  label, and the caller's molecule and perception caches are unchanged.
 
 ## Implementation Notes
 
@@ -20,6 +24,9 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 - Canonical candidate ranking is derived from the graph and emitted SMILES syntax only; it does not reparse candidates, run sanitization, or switch to motif-specific stored-Kekule fallback spellings.
 - Uses stored Kekule atom/bond spelling when a mixed aromatic/aliphatic pi component has non-aromatic multiple-bonded framework atoms that aromatic shorthand cannot represent without seeding a different aromaticity partition on reparse, and only when concrete stored single/double bond orders are available.
 - Preserves explicit hydrogens and no-implicit organic atoms when organic shorthand cannot represent the stored atom state, including metal/main-group neighbor cases handled by the shared SMILES parse/write fidelity rules.
+- Uses the shared charge-adjusted valence rules to choose organic shorthand and
+  bracket hydrogens, and retains stored triple/quadruple orders even on bonds
+  that belong to an aromaticized framework.
 - The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; first-class stereo elements and source bond marks are ignored only in this explicit canonical non-isomeric output mode.
 
 ## Validation
@@ -30,7 +37,10 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 
 ## Out Of Scope
 
-Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query atoms/bonds, radicals, unsupported bond orders, and full RDKit canonicalization parity for every symmetry edge case.
+Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions,
+query atoms/bonds, radical states that are not implied by bracket valence,
+unsupported bond orders, and full RDKit canonicalization parity for every
+symmetry edge case.
 
 ## Revision Notes
 
@@ -61,3 +71,7 @@ Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions, query
 - v25: Complete pubchem-1k canonical validation by broadening graph-derived representability rules for aromatic carbonyls, charged aromatic carbon components, and zero-hydrogen metal/main-group-bound organic atoms, plus aligning validation semantics for anionic aromatic nitrogen and charged aromatic carbon hydrogens.
 - v26: Add PubChem-100k as required broad-corpus validation evidence.
 - v27: Document that canonical non-isomeric output ignores first-class stereo elements and source bond marks by policy, rather than reading removed atom/bond stereo metadata.
+- v28: Complete PubChem-100k non-isomeric semantics by normalizing isotope and
+  explicit-hydrogen representation on a clone, using periodic-table valence for
+  bracket/organic spelling, preserving high-order aromatic-framework bonds, and
+  writing valence-implied radical states.

@@ -11,8 +11,13 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - Clears existing aromatic flags at the start of perception, then assigns new flags from the selected model.
 - Marks supported aromatic atoms and bonds and sets aromaticity perception state to fresh.
 - Can be run directly or through the explicit sanitization pipeline.
-- Returns `UnsupportedElement` for an explicitly aromatic ring containing an unsupported element.
-- Returns `InvalidAromaticRepresentation` when imported aromatic bonds cannot be perceived back onto every participating atom.
+- Treats unsupported ring elements as non-candidates, allowing a supported
+  aromatic subring to remain aromatic when fused or attached to a nonaromatic
+  unsupported-element ring.
+- Converts an imported aromatic-order component that has no valid aromatic
+  atoms to deterministic localized single/double bonds when a bounded
+  valence-demand matching exists; otherwise returns
+  `InvalidAromaticRepresentation` transactionally.
 - Propagates bounded ring-perception failures as `AromaticityError::RingPerception`.
 
 ## Implementation Notes
@@ -38,6 +43,8 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - Does not run a post-Huckel molecule-specific cleanup pass. Carbonyl, imide, lactam, lactone, amidine, chalcogen-oxo, terminal-imine, and orphan-atom corrections are expected to emerge from the general donor/candidate/fused rules rather than separate motif clearing.
 - Keeps parsing separate from aromaticity perception. Canonical SMILES normalization issues exposed by these flags belong to `io.smiles.canonical`, not hidden aromaticity cleanup.
 - Treats unsupported or ambiguous systems conservatively rather than claiming full RDKit parity.
+- Uses the source-faithful localized donor path directly when the input has no
+  imported aromatic-order bonds, avoiding legacy ring-local motif gates.
 
 ## Validation
 
@@ -61,3 +68,7 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
 - v88: Localize fused-system bond suppression to accepted simple rings and fused subsets, and admit exocyclic-pi chalcogen fused candidates into the subset Huckel evaluator.
 - v89: Add fused-topology handling for ring-local exocyclic pi links: veto lone-pair-rescued six-member rings that RDKit keeps aliphatic, admit lone-pair five-member macrocycle partners that RDKit keeps aromatic, and allow accepted fused subsets to mark shared bonds through candidate-compatible four-electron dione partners.
 - v90: Split fused support from perimeter assignment so hetero five-electron support rings fused to a large accepted member can contribute to accepted fused systems without marking their non-shared outer perimeter.
+- v91: Replace localized motif gates with global RDKit-style donor
+  classification and connected fused-subset marking, keep unsupported ring
+  atoms as non-candidates, and add bounded valence-demand localization for
+  imported aromatic components that are valid chemistry but not aromatic.

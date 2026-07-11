@@ -8,6 +8,9 @@ pub(super) fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize)
     let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.atoms.len()];
     let mut live_bonds = Vec::new();
     for (bond_id, bond) in mol.bonds() {
+        if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
+            continue;
+        }
         graph[bond.a.index()].push((bond.b, bond_id));
         graph[bond.b.index()].push((bond.a, bond_id));
         live_bonds.push(bond_id);
@@ -242,6 +245,561 @@ pub fn perceive_ring_set_with_options(
     let mut tracker = RingWorkTracker::new(options, mol.atom_count(), mol.bond_count())?;
     let (membership, bridge_stack_peak) = compute_ring_membership(mol);
     tracker.observe_stack(bridge_stack_peak);
+    let (mut rings, extras, expected_rings) =
+        figueras_sssr_candidates(mol, &membership, &mut tracker)?;
+    if rings.len() < expected_rings {
+        rings = complete_ring_basis(mol, &membership, rings, expected_rings, &mut tracker)?;
+    }
+    if !rings.is_empty() {
+        let bond_counts = sssr_bond_counts(&rings, mol.bonds.len());
+        let mut selected_bonds = rings
+            .iter()
+            .map(|ring| ring.bonds.clone())
+            .collect::<BTreeSet<_>>();
+        for ring in extras {
+            if can_replace_sssr_ring(&ring, &rings, &bond_counts)
+                && selected_bonds.insert(ring.bonds.clone())
+            {
+                rings.push(ring);
+            }
+        }
+    }
+    let ring_set = RingSet {
+        rings,
+        work: tracker.work,
+    };
+    mol.ring_membership = Some(membership);
+    mol.ring_set = Some(ring_set.clone());
+    mol.perception.rings = ComputedState::Fresh;
+    Ok(ring_set)
+}
+
+#[derive(Clone)]
+struct ActiveRingGraph {
+    adjacency: Vec<Vec<(AtomId, BondId)>>,
+    active_bonds: Vec<bool>,
+    atom_degrees: Vec<usize>,
+}
+
+impl ActiveRingGraph {
+    fn new(mol: &Molecule) -> Self {
+        let mut adjacency = vec![Vec::new(); mol.atoms.len()];
+        let mut active_bonds = vec![false; mol.bonds.len()];
+        let mut atom_degrees = vec![0usize; mol.atoms.len()];
+        for (bond_id, bond) in mol.bonds() {
+            if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
+                continue;
+            }
+            adjacency[bond.a.index()].push((bond.b, bond_id));
+            adjacency[bond.b.index()].push((bond.a, bond_id));
+            active_bonds[bond_id.index()] = true;
+            atom_degrees[bond.a.index()] += 1;
+            atom_degrees[bond.b.index()] += 1;
+        }
+        Self {
+            adjacency,
+            active_bonds,
+            atom_degrees,
+        }
+    }
+
+    fn active_neighbors(&self, atom: AtomId) -> impl Iterator<Item = (AtomId, BondId)> + '_ {
+        self.adjacency[atom.index()]
+            .iter()
+            .copied()
+            .filter(|(_, bond)| self.active_bonds[bond.index()])
+    }
+
+    fn trim_atom(&mut self, atom: AtomId, changed: &mut VecDeque<AtomId>) {
+        let incident = self.adjacency[atom.index()].clone();
+        for (other, bond) in incident {
+            if !self.active_bonds[bond.index()] {
+                continue;
+            }
+            if self.atom_degrees[other.index()] <= 2 {
+                changed.push_back(other);
+            }
+            self.active_bonds[bond.index()] = false;
+            self.atom_degrees[other.index()] = self.atom_degrees[other.index()].saturating_sub(1);
+            self.atom_degrees[atom.index()] = self.atom_degrees[atom.index()].saturating_sub(1);
+        }
+    }
+}
+
+fn figueras_sssr_candidates(
+    mol: &Molecule,
+    membership: &RingMembership,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<(Vec<Ring>, Vec<Ring>, usize), RingPerceptionError> {
+    let mut graph = ActiveRingGraph::new(mol);
+    let fragments = active_fragments(mol, &graph);
+    let mut seen_invariants = BTreeSet::<Vec<AtomId>>::new();
+    let mut all_sssr = Vec::new();
+    let mut all_extras = Vec::new();
+    let mut expected_total = 0usize;
+
+    for fragment in fragments {
+        if fragment.len() < 3 {
+            continue;
+        }
+        let active_degree_sum = fragment
+            .iter()
+            .map(|atom| graph.atom_degrees[atom.index()])
+            .sum::<usize>();
+        let expected = (active_degree_sum / 2 + 1).saturating_sub(fragment.len());
+        if expected == 0 {
+            continue;
+        }
+        expected_total = expected_total.saturating_add(expected);
+
+        let mut changed = fragment
+            .iter()
+            .copied()
+            .filter(|atom| graph.atom_degrees[atom.index()] < 2)
+            .collect::<VecDeque<_>>();
+        let mut done = vec![false; mol.atoms.len()];
+        let mut atoms_done = 0usize;
+        let mut fragment_candidates = Vec::<Ring>::new();
+
+        while atoms_done <= fragment.len().saturating_sub(3) {
+            while let Some(atom) = changed.pop_front() {
+                if done[atom.index()] {
+                    continue;
+                }
+                done[atom.index()] = true;
+                atoms_done += 1;
+                graph.trim_atom(atom, &mut changed);
+            }
+
+            let d2_nodes = pick_degree_two_nodes(&fragment, &graph);
+            if !d2_nodes.is_empty() {
+                find_rings_from_degree_two_nodes(
+                    &d2_nodes,
+                    &mut graph,
+                    &mut fragment_candidates,
+                    &mut seen_invariants,
+                    tracker,
+                )?;
+                for atom in d2_nodes {
+                    if !done[atom.index()] {
+                        done[atom.index()] = true;
+                        atoms_done += 1;
+                    }
+                    graph.trim_atom(atom, &mut changed);
+                }
+            } else if atoms_done <= fragment.len().saturating_sub(3) {
+                let Some(root) = fragment
+                    .iter()
+                    .copied()
+                    .find(|atom| graph.atom_degrees[atom.index()] == 3)
+                else {
+                    break;
+                };
+                find_rings_from_degree_three_node(
+                    root,
+                    &graph,
+                    &mut fragment_candidates,
+                    &mut seen_invariants,
+                    tracker,
+                )?;
+                if !done[root.index()] {
+                    done[root.index()] = true;
+                    atoms_done += 1;
+                }
+                graph.trim_atom(root, &mut changed);
+            }
+        }
+
+        let (kept, extras) = remove_extra_rings(fragment_candidates, mol.bonds.len());
+        all_sssr.extend(kept);
+        all_extras.extend(extras);
+    }
+
+    // Candidate search uses the full active graph like RDKit. Ring membership is
+    // still the authoritative filter for the bounded recovery path below.
+    debug_assert!(all_sssr
+        .iter()
+        .flat_map(|ring| &ring.bonds)
+        .all(|bond| membership.bond_in_ring(*bond)));
+    Ok((all_sssr, all_extras, expected_total))
+}
+
+fn active_fragments(mol: &Molecule, graph: &ActiveRingGraph) -> Vec<Vec<AtomId>> {
+    let mut seen = vec![false; mol.atoms.len()];
+    let mut fragments = Vec::new();
+    for start in mol.atom_ids() {
+        if seen[start.index()] {
+            continue;
+        }
+        seen[start.index()] = true;
+        let mut stack = vec![start];
+        let mut fragment = Vec::new();
+        while let Some(atom) = stack.pop() {
+            fragment.push(atom);
+            for (neighbor, _) in graph.active_neighbors(atom) {
+                if !seen[neighbor.index()] {
+                    seen[neighbor.index()] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+        fragment.sort();
+        fragments.push(fragment);
+    }
+    fragments
+}
+
+fn pick_degree_two_nodes(fragment: &[AtomId], graph: &ActiveRingGraph) -> Vec<AtomId> {
+    let mut forbidden = vec![false; graph.atom_degrees.len()];
+    let mut roots = Vec::new();
+    while let Some(root) = fragment
+        .iter()
+        .copied()
+        .find(|atom| graph.atom_degrees[atom.index()] == 2 && !forbidden[atom.index()])
+    {
+        roots.push(root);
+        forbidden[root.index()] = true;
+        let mut stack = vec![root];
+        while let Some(atom) = stack.pop() {
+            for (neighbor, _) in graph.active_neighbors(atom) {
+                if !forbidden[neighbor.index()] && graph.atom_degrees[neighbor.index()] == 2 {
+                    forbidden[neighbor.index()] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+    }
+    roots
+}
+
+fn find_rings_from_degree_two_nodes(
+    roots: &[AtomId],
+    graph: &mut ActiveRingGraph,
+    candidates: &mut Vec<Ring>,
+    seen_invariants: &mut BTreeSet<Vec<AtomId>>,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<(), RingPerceptionError> {
+    let mut duplicate_roots = BTreeMap::<Vec<AtomId>, Vec<AtomId>>::new();
+    let mut duplicate_map = BTreeMap::<AtomId, Vec<AtomId>>::new();
+
+    for root in roots {
+        let atom_rings = smallest_rings_bfs(*root, graph, &BTreeSet::new(), tracker)?;
+        for atoms in &atom_rings {
+            let invariant = ring_invariant(atoms);
+            let prior_roots = duplicate_roots.entry(invariant.clone()).or_default();
+            if seen_invariants.insert(invariant) {
+                candidates.push(atom_ring_to_ring(atoms, graph, tracker)?);
+            } else {
+                for other in prior_roots.iter().copied() {
+                    duplicate_map.entry(*root).or_default().push(other);
+                    duplicate_map.entry(other).or_default().push(*root);
+                }
+            }
+            prior_roots.push(*root);
+        }
+        if atom_rings.is_empty() {
+            let mut changed = VecDeque::from([*root]);
+            while let Some(atom) = changed.pop_front() {
+                graph.trim_atom(atom, &mut changed);
+            }
+        }
+    }
+
+    recover_duplicate_degree_two_candidates(
+        graph,
+        &duplicate_roots,
+        &duplicate_map,
+        candidates,
+        seen_invariants,
+        tracker,
+    )
+}
+
+fn recover_duplicate_degree_two_candidates(
+    graph: &ActiveRingGraph,
+    duplicate_roots: &BTreeMap<Vec<AtomId>, Vec<AtomId>>,
+    duplicate_map: &BTreeMap<AtomId, Vec<AtomId>>,
+    candidates: &mut Vec<Ring>,
+    seen_invariants: &mut BTreeSet<Vec<AtomId>>,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<(), RingPerceptionError> {
+    for roots in duplicate_roots.values() {
+        if roots.len() <= 1 {
+            continue;
+        }
+        let mut recovered = Vec::<Vec<AtomId>>::new();
+        let mut minimum_size = usize::MAX;
+        for root in roots {
+            let mut reduced = graph.clone();
+            let mut changed = VecDeque::new();
+            for duplicate in duplicate_map.get(root).into_iter().flatten().copied() {
+                reduced.trim_atom(duplicate, &mut changed);
+            }
+            let atom_rings = smallest_rings_bfs(*root, &reduced, &BTreeSet::new(), tracker)?;
+            for atoms in atom_rings {
+                minimum_size = minimum_size.min(atoms.len());
+                recovered.push(atoms);
+            }
+        }
+        for atoms in recovered
+            .into_iter()
+            .filter(|atoms| atoms.len() == minimum_size)
+        {
+            if seen_invariants.insert(ring_invariant(&atoms)) {
+                candidates.push(atom_ring_to_ring(&atoms, graph, tracker)?);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_rings_from_degree_three_node(
+    root: AtomId,
+    graph: &ActiveRingGraph,
+    candidates: &mut Vec<Ring>,
+    seen_invariants: &mut BTreeSet<Vec<AtomId>>,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<(), RingPerceptionError> {
+    let smallest = smallest_rings_bfs(root, graph, &BTreeSet::new(), tracker)?;
+    store_unique_atom_rings(&smallest, graph, candidates, seen_invariants, tracker)?;
+    if smallest.len() >= 3 {
+        return Ok(());
+    }
+    let neighbors = graph
+        .active_neighbors(root)
+        .map(|(atom, _)| atom)
+        .take(3)
+        .collect::<Vec<_>>();
+    if neighbors.len() < 3 {
+        return Ok(());
+    }
+
+    if smallest.len() == 2 {
+        if let Some(common) = neighbors
+            .iter()
+            .copied()
+            .find(|neighbor| smallest[0].contains(neighbor) && smallest[1].contains(neighbor))
+        {
+            let forbidden = BTreeSet::from([common]);
+            let rings = smallest_rings_bfs(root, graph, &forbidden, tracker)?;
+            store_unique_atom_rings(&rings, graph, candidates, seen_invariants, tracker)?;
+        }
+    } else if smallest.len() == 1 {
+        let absent = neighbors
+            .iter()
+            .copied()
+            .filter(|neighbor| !smallest[0].contains(neighbor))
+            .collect::<Vec<_>>();
+        if absent.len() == 1 {
+            let included = neighbors
+                .iter()
+                .copied()
+                .filter(|neighbor| *neighbor != absent[0])
+                .collect::<Vec<_>>();
+            for forbidden_neighbor in included {
+                let forbidden = BTreeSet::from([forbidden_neighbor]);
+                let rings = smallest_rings_bfs(root, graph, &forbidden, tracker)?;
+                store_unique_atom_rings(&rings, graph, candidates, seen_invariants, tracker)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn store_unique_atom_rings(
+    rings: &[Vec<AtomId>],
+    graph: &ActiveRingGraph,
+    candidates: &mut Vec<Ring>,
+    seen_invariants: &mut BTreeSet<Vec<AtomId>>,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<(), RingPerceptionError> {
+    for atoms in rings {
+        if seen_invariants.insert(ring_invariant(atoms)) {
+            candidates.push(atom_ring_to_ring(atoms, graph, tracker)?);
+        }
+    }
+    Ok(())
+}
+
+fn smallest_rings_bfs(
+    root: AtomId,
+    graph: &ActiveRingGraph,
+    forbidden: &BTreeSet<AtomId>,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<Vec<Vec<AtomId>>, RingPerceptionError> {
+    const WHITE: u8 = 0;
+    const GRAY: u8 = 1;
+    const BLACK: u8 = 2;
+    let mut colors = vec![WHITE; graph.atom_degrees.len()];
+    for atom in forbidden {
+        colors[atom.index()] = BLACK;
+    }
+    let mut parents = vec![None; graph.atom_degrees.len()];
+    let mut depths = vec![0usize; graph.atom_degrees.len()];
+    let mut queue = VecDeque::from([root]);
+    let mut rings = Vec::new();
+    let mut current_size = usize::MAX;
+    tracker.observe_queue(queue.len());
+
+    while let Some(current) = queue.pop_front() {
+        colors[current.index()] = BLACK;
+        let depth = depths[current.index()].saturating_add(1);
+        if depth > current_size {
+            break;
+        }
+        for (neighbor, _) in graph.active_neighbors(current) {
+            tracker.record_path_expansion()?;
+            if colors[neighbor.index()] == BLACK || parents[current.index()] == Some(neighbor) {
+                continue;
+            }
+            if colors[neighbor.index()] == WHITE {
+                parents[neighbor.index()] = Some(current);
+                colors[neighbor.index()] = GRAY;
+                depths[neighbor.index()] = depth;
+                queue.push_back(neighbor);
+                tracker.observe_queue(queue.len());
+                continue;
+            }
+
+            let mut ring = vec![neighbor];
+            let mut parent = parents[neighbor.index()];
+            while let Some(atom) = parent {
+                if atom == root {
+                    break;
+                }
+                ring.push(atom);
+                parent = parents[atom.index()];
+            }
+            ring.insert(0, current);
+            parent = parents[current.index()];
+            while let Some(atom) = parent {
+                if ring.contains(&atom) {
+                    ring.clear();
+                    break;
+                }
+                ring.insert(0, atom);
+                parent = parents[atom.index()];
+            }
+            if ring.len() > 1 {
+                if ring.len() <= current_size {
+                    tracker.check("cycle size", ring.len(), tracker.options.max_cycle_size)?;
+                    tracker.record_shortest_path()?;
+                    current_size = ring.len();
+                    rings.push(ring);
+                } else {
+                    return Ok(rings);
+                }
+            }
+        }
+    }
+    Ok(rings)
+}
+
+fn ring_invariant(atoms: &[AtomId]) -> Vec<AtomId> {
+    let mut invariant = atoms.to_vec();
+    invariant.sort();
+    invariant.dedup();
+    invariant
+}
+
+fn atom_ring_to_ring(
+    atoms: &[AtomId],
+    graph: &ActiveRingGraph,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<Ring, RingPerceptionError> {
+    let mut bonds = Vec::with_capacity(atoms.len());
+    for index in 0..atoms.len() {
+        let left = atoms[index];
+        let right = atoms[(index + 1) % atoms.len()];
+        let bond = graph.adjacency[left.index()]
+            .iter()
+            .find_map(|(neighbor, bond)| (*neighbor == right).then_some(*bond))
+            .expect("BFS ring edges must exist in the molecular graph");
+        bonds.push(bond);
+    }
+    bonds.sort();
+    tracker.record_candidate()?;
+    Ok(Ring {
+        atoms: atoms.to_vec(),
+        bonds,
+    })
+}
+
+fn remove_extra_rings(mut rings: Vec<Ring>, bond_slots: usize) -> (Vec<Ring>, Vec<Ring>) {
+    rings.sort_by_key(|ring| ring.bonds.len());
+    let mut available = vec![true; rings.len()];
+    let mut keep = vec![false; rings.len()];
+    let mut union = vec![false; bond_slots];
+
+    for index in 0..rings.len() {
+        if ring_is_subset_of(&rings[index], &union) {
+            available[index] = false;
+        }
+        if !available[index] {
+            continue;
+        }
+        add_ring_to_union(&rings[index], &mut union);
+        keep[index] = true;
+        let mut consider = ((index + 1)..rings.len())
+            .filter(|other| {
+                available[*other] && rings[*other].bonds.len() == rings[index].bonds.len()
+            })
+            .collect::<BTreeSet<_>>();
+        while !consider.is_empty() {
+            let mut best = None;
+            let mut best_overlap = None;
+            for other in consider.iter().copied() {
+                let overlap = rings[other]
+                    .bonds
+                    .iter()
+                    .filter(|bond| union[bond.index()])
+                    .count();
+                if best_overlap.map_or(true, |current| overlap > current) {
+                    best = Some(other);
+                    best_overlap = Some(overlap);
+                }
+            }
+            let best = best.expect("nonempty candidate set has a best overlap");
+            consider.remove(&best);
+            if ring_is_subset_of(&rings[best], &union) {
+                available[best] = false;
+            } else {
+                keep[best] = true;
+                available[best] = false;
+                add_ring_to_union(&rings[best], &mut union);
+            }
+        }
+    }
+
+    let mut kept = Vec::new();
+    let mut extras = Vec::new();
+    for (index, ring) in rings.into_iter().enumerate() {
+        if keep[index] {
+            kept.push(ring);
+        } else {
+            extras.push(ring);
+        }
+    }
+    (kept, extras)
+}
+
+fn ring_is_subset_of(ring: &Ring, union: &[bool]) -> bool {
+    ring.bonds.iter().all(|bond| union[bond.index()])
+}
+
+fn add_ring_to_union(ring: &Ring, union: &mut [bool]) {
+    for bond in &ring.bonds {
+        union[bond.index()] = true;
+    }
+}
+
+fn complete_ring_basis(
+    mol: &Molecule,
+    membership: &RingMembership,
+    mut rings: Vec<Ring>,
+    expected: usize,
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
     let mut graph = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
     let mut ring_bonds = Vec::new();
     for (bond_id, bond) in mol.bonds() {
@@ -255,54 +813,36 @@ pub fn perceive_ring_set_with_options(
         edges.sort_by_key(|(atom, bond)| (*atom, *bond));
     }
 
-    let mut candidates = Vec::<Ring>::new();
-    let mut seen_candidate_bonds = BTreeSet::<Vec<BondId>>::new();
-    for (closing_bond, a, b) in ring_bonds {
-        for mut ring in shortest_cycles_excluding(&graph, a, b, closing_bond, &mut tracker)? {
-            ring.bonds.push(closing_bond);
-            let mut bond_key = ring.bonds.clone();
-            bond_key.sort();
-            bond_key.dedup();
-            ring.bonds = bond_key.clone();
-            if seen_candidate_bonds.insert(bond_key) {
-                tracker.record_candidate()?;
-                candidates.push(ring);
-            }
-        }
-    }
-
-    candidates.sort_by_key(|ring| (ring.bonds.len(), ring.atoms.clone(), ring.bonds.clone()));
-    let symmetric_extra_allowed = symmetric_extra_candidates(&candidates);
-    let cyclomatic = mol.bond_count().saturating_add(connected_components(mol)) - mol.atom_count();
     let bit_len = mol.bonds.len().div_ceil(64);
     let mut basis_rows = BTreeMap::<usize, Vec<u64>>::new();
-    let mut rings = Vec::new();
-    let mut selected_bonds = BTreeSet::<Vec<BondId>>::new();
-    for ring in &candidates {
-        let bits = cycle_bond_bits(&ring.bonds, bit_len);
-        if add_independent_cycle(bits, &mut basis_rows) {
-            selected_bonds.insert(ring.bonds.clone());
-            rings.push(ring.clone());
-            if rings.len() == cyclomatic {
-                break;
-            }
+    let mut selected = BTreeSet::<Vec<BondId>>::new();
+    rings.retain(|ring| {
+        let independent =
+            add_independent_cycle(cycle_bond_bits(&ring.bonds, bit_len), &mut basis_rows);
+        if independent {
+            selected.insert(ring.bonds.clone());
         }
-    }
-    if !rings.is_empty() {
-        for (index, ring) in candidates.into_iter().enumerate() {
-            if symmetric_extra_allowed[index] && selected_bonds.insert(ring.bonds.clone()) {
+        independent
+    });
+    for (closing_bond, a, b) in ring_bonds {
+        for mut ring in shortest_cycles_excluding(&graph, a, b, closing_bond, tracker)? {
+            ring.bonds.push(closing_bond);
+            ring.bonds.sort();
+            ring.bonds.dedup();
+            if selected.contains(&ring.bonds) {
+                continue;
+            }
+            tracker.record_candidate()?;
+            if add_independent_cycle(cycle_bond_bits(&ring.bonds, bit_len), &mut basis_rows) {
+                selected.insert(ring.bonds.clone());
                 rings.push(ring);
+                if rings.len() == expected {
+                    return Ok(rings);
+                }
             }
         }
     }
-    let ring_set = RingSet {
-        rings,
-        work: tracker.work,
-    };
-    mol.ring_membership = Some(membership);
-    mol.ring_set = Some(ring_set.clone());
-    mol.perception.rings = ComputedState::Fresh;
-    Ok(ring_set)
+    Ok(rings)
 }
 
 struct RingWorkTracker {
@@ -395,42 +935,34 @@ impl RingWorkTracker {
     }
 }
 
-fn symmetric_extra_candidates(candidates: &[Ring]) -> Vec<bool> {
-    let mut components = (0..candidates.len()).collect::<Vec<_>>();
-    for left in 0..candidates.len() {
-        for right in (left + 1)..candidates.len() {
-            if rings_share_atom(&candidates[left], &candidates[right]) {
-                union_components(&mut components, left, right);
-            }
+fn sssr_bond_counts(sssr: &[Ring], bond_slots: usize) -> Vec<usize> {
+    let mut bond_counts = vec![0usize; bond_slots];
+    for ring in sssr {
+        for bond in &ring.bonds {
+            bond_counts[bond.index()] = bond_counts[bond.index()].saturating_add(1);
         }
     }
-
-    let mut component_candidates = BTreeMap::<usize, Vec<usize>>::new();
-    for index in 0..candidates.len() {
-        let root = find_component(&mut components, index);
-        component_candidates.entry(root).or_default().push(index);
-    }
-
-    let mut allowed = vec![false; candidates.len()];
-    for indexes in component_candidates.values() {
-        let mut atoms = BTreeSet::new();
-        let mut bonds = BTreeSet::new();
-        for index in indexes {
-            atoms.extend(candidates[*index].atoms.iter().copied());
-            bonds.extend(candidates[*index].bonds.iter().copied());
-        }
-        let rank = bonds.len().saturating_add(1).saturating_sub(atoms.len());
-        if indexes.len() == rank + 1 {
-            for index in indexes {
-                allowed[*index] = true;
-            }
-        }
-    }
-    allowed
+    bond_counts
 }
 
-fn rings_share_atom(left: &Ring, right: &Ring) -> bool {
-    left.atoms.iter().any(|atom| right.atoms.contains(atom))
+fn can_replace_sssr_ring(extra: &Ring, sssr: &[Ring], bond_counts: &[usize]) -> bool {
+    sssr.iter()
+        .any(|ring| can_replace_one_sssr_ring(extra, ring, bond_counts))
+}
+
+fn can_replace_one_sssr_ring(extra: &Ring, ring: &Ring, bond_counts: &[usize]) -> bool {
+    if ring.bonds.len() != extra.bonds.len() {
+        return false;
+    }
+    let mut shares_bond = false;
+    for bond in &ring.bonds {
+        let included = extra.bonds.contains(bond);
+        shares_bond |= included;
+        if bond_counts[bond.index()] == 1 && !included {
+            return false;
+        }
+    }
+    shares_bond
 }
 
 pub(super) fn union_components(components: &mut [usize], left: usize, right: usize) {
@@ -580,27 +1112,4 @@ pub(crate) fn ordered_atom_pair(a: AtomId, b: AtomId) -> (AtomId, AtomId) {
     } else {
         (b, a)
     }
-}
-
-fn connected_components(mol: &Molecule) -> usize {
-    let mut seen = BTreeMap::<AtomId, ()>::new();
-    let mut count = 0;
-    for start in mol.atom_ids() {
-        if seen.contains_key(&start) {
-            continue;
-        }
-        count += 1;
-        let mut stack = vec![start];
-        seen.insert(start, ());
-        while let Some(atom) = stack.pop() {
-            if let Ok(neighbors) = mol.neighbors(atom) {
-                for neighbor in neighbors {
-                    if seen.insert(neighbor, ()).is_none() {
-                        stack.push(neighbor);
-                    }
-                }
-            }
-        }
-    }
-    count
 }

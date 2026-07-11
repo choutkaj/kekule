@@ -26,10 +26,20 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - The pipeline is conservative and returns reports for caller inspection.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
 - The public facade is `perception`; lower-level sanitizer internals are not root-level API.
-- Applies sanitization-only charge cleanup for hypervalent oxyhalogen patterns before valence perception.
+- Applies sanitization-only charge cleanup for hypervalent oxyhalogen patterns
+  before valence perception only when a terminal single-bond oxygen establishes
+  the charge-separated representation; it does not rewrite arbitrary neutral
+  halogen oxides by motif alone.
 - Performs the aromatic nitrogen hydrogen normalization after both valence and aromaticity perception succeed, preserving total hydrogen count while exposing RDKit-like sanitized atom fields.
 - Runs stereo perception after aromaticity so local stereo validation and
   source-mark assembly can use sanitized valence and hydrogen semantics.
+- Preserves representable Molfile double-bond either marks as explicit unknown
+  stereo elements instead of rejecting the whole molecule.
+- Retains conflicting multi-wedge input as a stereo ambiguity diagnostic while
+  allowing otherwise valid chemistry to sanitize; lone unassemblable marks and
+  structural stereo errors remain fatal and transactional.
+- Retains valence-implied explicit hydrogen carriers established by Molfile
+  wedge parsing so tetrahedral local stereo survives the full pipeline.
 - Its valence, ring, aromaticity, and stereo passes are compared together against each required corpus.
 - Inherits the current valence and aromaticity improvements, including radical implicit-hydrogen handling, imported aromatic SMILES handling, and conservative unsupported-ring behavior.
 
@@ -62,3 +72,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v11: Add stereo perception as an explicit sanitizer stage with options,
   reporting, freshness-state handling, and transactional rollback on stereo
   perception issues.
+- v12: Accept representable Molfile double-bond either marks by assembling
+  explicit unknown double-bond stereo, align conflicting multi-wedge handling
+  with RDKit's non-fatal warning semantics, and gate oxyhalogen charge cleanup
+  on a general terminal-oxygen valence pattern.

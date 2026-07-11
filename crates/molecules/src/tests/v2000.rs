@@ -318,6 +318,27 @@ fn v2000_supported_bond_stereo_codes_round_trip_exactly() {
 }
 
 #[test]
+fn v2000_preserves_valence_implied_tetrahedral_hydrogen_carriers() {
+    for (symbol, expected_hydrogens) in [("C", 1), ("N", 0), ("S", 1)] {
+        let input = format!(
+            "stereo hydrogen\nmolecules\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  0  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
+        );
+
+        let parsed = molfile::read_v2000_str(&input).expect("stereo record should parse");
+
+        assert_eq!(
+            parsed
+                .graph()
+                .atom(AtomId::new(0))
+                .expect("stereo center")
+                .explicit_hydrogens,
+            expected_hydrogens,
+            "{symbol}"
+        );
+    }
+}
+
+#[test]
 fn v2000_rejects_unsupported_stereo_and_bond_representations() {
     for bond_line in ["  1  2  1  3  0  0  0", "  1  2  2  4  0  0  0"] {
         let input = format!(

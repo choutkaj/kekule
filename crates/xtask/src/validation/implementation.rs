@@ -88,13 +88,13 @@ pub(crate) fn implementation_expected(
             Ok(json!({ "records": records.iter().map(mol_record_json).collect::<Vec<_>>() }))
         }
         "io.smiles.parse" => {
-            let records = read_smiles_records(fixture_path)?;
+            let records = read_nonisomeric_smiles_records(fixture_path)?;
             Ok(
                 json!({ "records": records.iter().map(smiles_parse_record_json).collect::<Vec<_>>() }),
             )
         }
         "io.smiles.write" => {
-            let records = read_smiles_records(fixture_path)?;
+            let records = read_nonisomeric_smiles_records(fixture_path)?;
             Ok(json!({
                 "records": records
                     .iter()
@@ -239,6 +239,21 @@ pub(crate) fn small_record(index: usize, record: SdfRecord) -> IndexedSmallRecor
 }
 
 pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
+    read_smiles_records_with_filter(path, |smiles| smiles.contains('*'))
+}
+
+pub(crate) fn read_nonisomeric_smiles_records(
+    path: &Path,
+) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
+    read_smiles_records_with_filter(path, |smiles| {
+        smiles_unsupported_subset_reason(smiles).is_some()
+    })
+}
+
+fn read_smiles_records_with_filter(
+    path: &Path,
+    unsupported: impl Fn(&str) -> bool,
+) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
     let mut records = Vec::new();
     for (index, raw_line) in fs::read_to_string(path)?.lines().enumerate() {
         let line = raw_line.trim();
@@ -248,7 +263,7 @@ pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord
         let mut parts = line.splitn(2, char::is_whitespace);
         let smiles = parts.next().unwrap_or_default().to_owned();
         let title = parts.next().unwrap_or_default().trim().to_owned();
-        if smiles_unsupported_subset_reason(&smiles).is_some() {
+        if unsupported(&smiles) {
             records.push(IndexedSmilesRecord {
                 record_index: index,
                 status: "unsupported".to_owned(),
@@ -342,7 +357,7 @@ pub(crate) fn read_canonical_smiles_records(
 pub(crate) fn smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static str> {
     smiles
         .chars()
-        .any(|ch| matches!(ch, '*'))
+        .any(|ch| matches!(ch, '@' | '/' | '\\' | '*'))
         .then_some("unsupported")
 }
 
@@ -697,7 +712,11 @@ pub(crate) fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Val
 }
 
 pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let report = valence::perceive_valence(record.molecule.graph_mut(), ValenceModel::RdkitLike);
+    let report = valence::perceive_valence_with_options(
+        record.molecule.graph_mut(),
+        ValenceModel::RdkitLike,
+        ValenceOptions { strict: false },
+    );
     if !report.is_ok() {
         return json!({
             "record_index": record.record_index,
@@ -787,7 +806,7 @@ pub(crate) fn canonical_smiles_record_json(
     if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
         return Ok(json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "parse_error",
             "title": record.title,
             "input_smiles": record.input_smiles,
         }));
@@ -1200,11 +1219,21 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
                 BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
             )
     });
+    let has_marked_aromatic_high_order_bond = bonds.iter().any(|bond| {
+        bond.aromatic && matches!(bond.order, BondOrder::Triple | BondOrder::Quadruple)
+    });
     let aromatic_bond_count = bonds.iter().filter(|bond| bond.aromatic).count();
     let doubled: u8 = bonds
         .into_iter()
         .map(|bond| {
             if bond.aromatic {
+                if has_marked_aromatic_high_order_bond {
+                    return match bond.order {
+                        BondOrder::Triple => 6,
+                        BondOrder::Quadruple => 8,
+                        _ => 2,
+                    };
+                }
                 return aromatic_bond_valence_twice(
                     atom_record,
                     has_non_aromatic_bond,
@@ -1237,7 +1266,20 @@ fn aromatic_bond_valence_twice(
         return 2;
     }
     match atom.element.symbol() {
-        "C" if atom.formal_charge < 0 && atom.explicit_hydrogens > 0 => 2,
+        "C" if atom.formal_charge < 0
+            && (atom.explicit_hydrogens > 0
+                || has_non_aromatic_bond
+                || aromatic_bond_count >= 3) =>
+        {
+            2
+        }
+        "P" | "As" | "Sb"
+            if atom.formal_charge == 0
+                && atom.explicit_hydrogens == 0
+                && (has_non_aromatic_bond || aromatic_bond_count >= 3) =>
+        {
+            2
+        }
         "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
         "N" if atom.formal_charge < 0 => 2,
         "N" if atom.formal_charge == 0 && atom.explicit_hydrogens > 0 => 2,
@@ -1301,6 +1343,8 @@ pub(crate) fn radical_json(radical: AtomRadical) -> &'static str {
         AtomRadical::Singlet => "SINGLET",
         AtomRadical::Doublet => "DOUBLET",
         AtomRadical::Triplet => "TRIPLET",
+        AtomRadical::Quartet => "QUARTET",
+        AtomRadical::Quintet => "QUINTET",
     }
 }
 

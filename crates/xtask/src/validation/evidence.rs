@@ -179,6 +179,105 @@ pub(crate) fn read_gzip_string(path: &Path) -> Result<String, Box<dyn Error>> {
     Ok(text)
 }
 
+pub(crate) fn accept_implementation_goldens(
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+    jobs: usize,
+) -> Result<(), Box<dyn Error>> {
+    if !is_manual_semantic_reference_tool(&manifest.reference_tool) {
+        return Err(boxed_error(format!(
+            "{} uses generator-backed reference tool `{}`; only *-manual-semantic implementation goldens can be accepted from the Rust implementation",
+            manifest_path.display(),
+            manifest.reference_tool
+        )));
+    }
+    let corpus_root = manifest_path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| boxed_error(format!("{} has no corpus root", manifest_path.display())))?;
+    let worker_count = validation_worker_count(jobs, manifest.fixtures.len());
+    if worker_count == 1 {
+        for fixture in &manifest.fixtures {
+            accept_one_implementation_golden(corpus_root, manifest, fixture)?;
+        }
+        return Ok(());
+    }
+
+    let next_fixture = std::sync::Mutex::new(0usize);
+    let results = std::sync::Mutex::new(vec![None; manifest.fixtures.len()]);
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| loop {
+                let index = {
+                    let mut next = next_fixture
+                        .lock()
+                        .expect("implementation golden queue lock should not be poisoned");
+                    if *next >= manifest.fixtures.len() {
+                        break;
+                    }
+                    let index = *next;
+                    *next += 1;
+                    index
+                };
+                let result = accept_one_implementation_golden(
+                    corpus_root,
+                    manifest,
+                    &manifest.fixtures[index],
+                )
+                .map_err(|error| error.to_string());
+                results
+                    .lock()
+                    .expect("implementation golden result lock should not be poisoned")[index] =
+                    Some(result);
+            });
+        }
+    });
+    for result in results
+        .into_inner()
+        .expect("implementation golden result lock should not be poisoned")
+    {
+        result
+            .ok_or_else(|| boxed_error("implementation golden worker recorded no result"))?
+            .map_err(boxed_error)?;
+    }
+    Ok(())
+}
+
+fn accept_one_implementation_golden(
+    corpus_root: &Path,
+    manifest: &ValidationManifest,
+    fixture: &str,
+) -> Result<(), Box<dyn Error>> {
+    let fixture_path = corpus_root.join(fixture);
+    let expected =
+        implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path)?;
+    let document = json!({
+        "schema_version": GOLDEN_SCHEMA_VERSION,
+        "feature_id": manifest.feature_id,
+        "corpus_id": manifest.corpus_id,
+        "fixture_id": slugify_fixture(fixture),
+        "fixture_path": fixture,
+        "input_sha256": hash_file(&fixture_path)?,
+        "reference": {
+            "tool": manifest.reference_tool,
+            "version": manifest.reference_version,
+            "runtime_dependency": false,
+        },
+        "expected": expected,
+    });
+    let mut encoder = GzBuilder::new()
+        .mtime(0)
+        .write(Vec::new(), Compression::default());
+    serde_json::to_writer_pretty(&mut encoder, &document)?;
+    encoder.write_all(b"\n")?;
+    let compressed = encoder.finish()?;
+    let golden_path = corpus_root
+        .join("golden")
+        .join(&manifest.feature_id)
+        .join(format!("{}.json.gz", slugify_fixture(fixture)));
+    write_atomic_bytes(&golden_path, &compressed)
+}
+
 pub(crate) fn validate_manifest_paths(
     manifest_path: &Path,
     manifest: &ValidationManifest,
@@ -341,6 +440,7 @@ fn record_fixture_comparison(
     match fixture_result {
         FixtureComparison::Passed => comparison.compared_count += 1,
         FixtureComparison::Failed(failure) => {
+            eprintln!("fixture comparison failure: {failure}");
             comparison.failed_count += 1;
             comparison.first_failure.get_or_insert(failure);
         }

@@ -8,7 +8,9 @@ Assign deterministic non-stereo atom symmetry ranks for later canonical SMILES a
 
 - Exposes `canon::{CanonicalAtomRanking, atom_ranking(&Molecule)}`.
 - Returns one rank per live atom. Atoms in the same unresolved symmetry class share a rank.
-- Uses atom identity fields, hydrogen counts, aromaticity flags, atom-map numbers, graph degree, bond order/aromaticity, and iterative neighbor refinement.
+- Uses atom identity fields, hydrogen counts, aromaticity flags, atom-map
+  numbers, singlet-through-quintet radical multiplicity, graph degree, bond
+  order/aromaticity, and iterative neighbor refinement.
 - Does not mutate the molecule or require a particular input atom order.
 
 ## Implementation Notes
@@ -31,3 +33,5 @@ Stereochemistry-sensitive ranking, total canonical atom ordering, canonical SMIL
 - v1: Feature contract reserved.
 - v2: Implement non-stereo atom symmetry ranking.
 - v3: Move the public ranking API under the `canon` facade.
+- v4: Give quartet and quintet radicals distinct atom invariants rather than
+  collapsing newly representable high-spin states.

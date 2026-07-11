@@ -1,9 +1,9 @@
 id = "validation.harness"
 title = "Reference validation harness"
 area = "infrastructure"
-version = 15
+version = 17
 implemented = true
 validated = false
-description = "Provide commands and conventions for comparing molecules against generated or manually curated external-reference golden data, including named manual semantic reference sources, stereo SDF-pack fixtures, and axis stereo validation output."
+description = "Provide parallel, fixture-isolatable comparisons against generated or manually curated goldens, with guarded acceptance of reviewed manual-semantic snapshots."
 depends_on = []
 validation_required = []

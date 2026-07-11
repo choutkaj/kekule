@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::core::*;
-use crate::io::{MolWriteError, SdfParseError};
+use crate::io::{preserve_molfile_tetrahedral_hydrogens, MolWriteError, SdfParseError};
 use crate::small::SmallMolecule;
 
 pub fn read_mol_v3000_str(input: &str) -> std::result::Result<SmallMolecule, SdfParseError> {
@@ -64,7 +64,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
             out.push_str(&format!(" MASS={isotope}"));
         }
         if let Some(radical) = atom.radical {
-            out.push_str(&format!(" RAD={}", v3000_radical_code(radical)));
+            out.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
         out.push('\n');
     }
@@ -207,6 +207,8 @@ fn parse_mol_v3000_lines(
             .expect("newly added bond should accept a stereo mark");
         }
     }
+
+    preserve_molfile_tetrahedral_hydrogens(&mut mol);
 
     if conformer.positions().next().is_some() {
         mol.add_conformer(conformer);
@@ -490,11 +492,14 @@ fn v3000_bond_cfg(
     }
 }
 
-fn v3000_radical_code(radical: AtomRadical) -> u8 {
+fn v3000_radical_code(radical: AtomRadical) -> std::result::Result<u8, MolWriteError> {
     match radical {
-        AtomRadical::Singlet => 1,
-        AtomRadical::Doublet => 2,
-        AtomRadical::Triplet => 3,
+        AtomRadical::Singlet => Ok(1),
+        AtomRadical::Doublet => Ok(2),
+        AtomRadical::Triplet => Ok(3),
+        AtomRadical::Quartet | AtomRadical::Quintet => Err(MolWriteError::new(
+            "V3000 writer cannot encode radical multiplicity above triplet",
+        )),
     }
 }
 

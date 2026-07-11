@@ -20,6 +20,9 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 - Supported bond orders match the parser subset: zero, single, double, triple, aromatic, and dative.
 - Supported V3000 bond `CFG` output is read from source bond marks, not from atom or bond payload fields.
 - Unsupported chemistry is rejected instead of silently being coerced into a different representation.
+- `RAD=1`, `RAD=2`, and `RAD=3` preserve singlet, doublet, and triplet;
+  quartet/quintet radicals return a structured error because V3000 defines no
+  lossless code for them.
 
 ## Validation
 
@@ -38,3 +41,5 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
 - v4: Move the public writer API under the `molfile` facade.
 - v5: Add PubChem-100k as required broad-corpus validation evidence.
 - v6: Read supported V3000 bond `CFG` output from source bond marks and reject stored stereo elements.
+- v7: Reject quartet/quintet radical multiplicity explicitly instead of
+  silently mapping an unrepresentable high-spin state.

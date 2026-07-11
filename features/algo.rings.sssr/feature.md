@@ -15,8 +15,13 @@ Compute a compact ring basis for downstream small-molecule perception.
 
 ## Implementation Notes
 
-- Enumerates deterministic shortest-cycle candidates with bounded iterative path reconstruction and greedily keeps linearly independent cycles.
-- Adds RDKit-like symmetric extra rings when a ring component has exactly one more shortest-cycle candidate than its cycle rank.
+- Uses the Figueras/RDKit degree-trimming workflow: prune acyclic atoms,
+  search one representative per degree-two chain with deterministic
+  single-parent BFS, recover candidates hidden by duplicate roots, and handle
+  degree-three cores before bounded basis completion.
+- Adds RDKit-like symmetric extra rings only when an unselected candidate can
+  replace one same-sized basis ring without removing any bond uniquely supplied
+  by that basis ring and the candidate shares at least one bond with it.
 - Defaults allow 1,000,000 atoms, 2,000,000 bonds, 100,000 candidates, 2,000,000 path expansions, 100,000 equivalent shortest paths, cycles up to 4,096 atoms, and 5,000,000 total work units.
 - The graph limits accommodate large sparse molecular inputs; candidate/path limits bound symmetric-cycle growth well above observed required corpora.
 
@@ -39,3 +44,6 @@ Compute a compact ring basis for downstream small-molecule perception.
 - v5: Add bounded work instrumentation, structured resource errors, configurable limits, and iterative shortest-path reconstruction.
 - v6: Move the public expert API under the `perception::rings` facade.
 - v7: Add PubChem-100k as required broad-corpus validation evidence.
+- v8: Replace per-bond shortest-path enumeration with RDKit's degree-trimming
+  candidate discovery and exact same-size, shared-bond,
+  unique-bond-preserving SSSR replacement rule.

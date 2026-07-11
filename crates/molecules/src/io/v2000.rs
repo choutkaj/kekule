@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::algorithms::explicit_valence;
 use crate::core::*;
+use crate::io::preserve_molfile_tetrahedral_hydrogens;
 use crate::small::SmallMolecule;
 
 const V2000_MAX_ATOMS: usize = 999;
@@ -274,6 +276,7 @@ fn parse_mol_v2000_lines(
         &atom_ids,
         &lines[property_start..end_index],
     )?;
+    preserve_molfile_tetrahedral_hydrogens(&mut mol);
     if conformer.positions().next().is_some() {
         mol.add_conformer(conformer);
     }
@@ -345,6 +348,13 @@ fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
             7 => -3,
             _ => 0,
         };
+    }
+    if fields
+        .get(9)
+        .and_then(|value| value.parse::<u8>().ok())
+        .is_some_and(|valence| (1..=15).contains(&valence))
+    {
+        atom.no_implicit_hydrogens = true;
     }
     if let Some(atom_map) = fields
         .get(13)
@@ -638,14 +648,16 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
         let point = conformer
             .and_then(|conformer| conformer.position(*atom_id))
             .unwrap_or_default();
+        let valence_code = v2000_valence_code(mol, *atom_id, atom)?;
         out.push_str(&format!(
-            "{:>10.4}{:>10.4}{:>10.4} {:<3}{:>2}{:>3}  0  0  0  0  0  0  0{:>3}  0  0\n",
+            "{:>10.4}{:>10.4}{:>10.4} {:<3}{:>2}{:>3}  0  0  0{:>3}  0  0  0{:>3}  0  0\n",
             point.x,
             point.y,
             point.z,
             atom.element.symbol(),
             0,
             v2000_charge_code(atom.formal_charge),
+            valence_code,
             atom.atom_map.unwrap_or(0)
         ));
     }
@@ -696,19 +708,20 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
             })
             .collect(),
     );
-    push_m_record(
-        &mut out,
-        "RAD",
-        atoms
-            .iter()
-            .filter_map(|id| {
-                let atom = mol.atom(*id).ok()?;
-                let index = *atom_index.get(id)?;
-                atom.radical
-                    .map(|radical| (index as i32, v2000_radical_code(radical)))
-            })
-            .collect(),
-    );
+    let mut radical_records = Vec::new();
+    for id in &atoms {
+        let atom = mol
+            .atom(*id)
+            .map_err(|error| MolWriteError::new(error.to_string()))?;
+        let Some(radical) = atom.radical else {
+            continue;
+        };
+        let index = *atom_index
+            .get(id)
+            .ok_or_else(|| MolWriteError::new("atom missing from V2000 atom table"))?;
+        radical_records.push((index as i32, v2000_radical_code(radical)?));
+    }
+    push_m_record(&mut out, "RAD", radical_records);
     out.push_str("M  END\n");
     Ok(out)
 }
@@ -746,6 +759,25 @@ fn v2000_charge_code(charge: i8) -> i8 {
     }
 }
 
+fn v2000_valence_code(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> std::result::Result<u8, MolWriteError> {
+    if !atom.no_implicit_hydrogens {
+        return Ok(0);
+    }
+    let valence = explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens);
+    match valence {
+        0 => Ok(15),
+        1..=14 => Ok(valence),
+        _ => Err(MolWriteError::new(format!(
+            "V2000 cannot encode explicit valence {valence} for atom {}",
+            atom_id.index()
+        ))),
+    }
+}
+
 fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
     match order {
         BondOrder::Zero => Ok(0),
@@ -776,11 +808,14 @@ fn v2000_bond_stereo_code(
     }
 }
 
-fn v2000_radical_code(radical: AtomRadical) -> i32 {
+fn v2000_radical_code(radical: AtomRadical) -> std::result::Result<i32, MolWriteError> {
     match radical {
-        AtomRadical::Singlet => 1,
-        AtomRadical::Doublet => 2,
-        AtomRadical::Triplet => 3,
+        AtomRadical::Singlet => Ok(1),
+        AtomRadical::Doublet => Ok(2),
+        AtomRadical::Triplet => Ok(3),
+        AtomRadical::Quartet | AtomRadical::Quintet => Err(MolWriteError::new(
+            "V2000 writer cannot encode radical multiplicity above triplet",
+        )),
     }
 }
 

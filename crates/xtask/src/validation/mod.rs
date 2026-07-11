@@ -19,7 +19,29 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let feature_selector = value_after_flag(&args, "--feature")
         .ok_or_else(|| boxed_error("missing required flag: --feature FEATURE_ID"))?;
     let corpus_selector = value_after_flag(&args, "--corpus").unwrap_or("smoke");
+    let fixture_selector = value_after_flag(&args, "--fixture");
     let update = args.iter().any(|arg| arg == "--update");
+    let accept_goldens = args
+        .iter()
+        .any(|arg| arg == "--accept-implementation-goldens");
+    if update && accept_goldens {
+        return Err(boxed_error(
+            "--update cannot be combined with --accept-implementation-goldens",
+        ));
+    }
+    if fixture_selector.is_some() && update {
+        return Err(boxed_error("--fixture cannot be combined with --update"));
+    }
+    if fixture_selector.is_some() && (feature_selector == "all" || corpus_selector == "all") {
+        return Err(boxed_error(
+            "--fixture requires one concrete --feature and --corpus",
+        ));
+    }
+    if accept_goldens && (feature_selector == "all" || corpus_selector == "all") {
+        return Err(boxed_error(
+            "--accept-implementation-goldens requires one concrete --feature and --corpus",
+        ));
+    }
     let features = read_features()?;
     if feature_selector != "all"
         && !features
@@ -70,7 +92,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 .remove(&corpus);
         }
         let result = (|| -> Result<ValidationOutcome, Box<dyn Error>> {
-            let manifest = read_validation_manifest(&manifest_path)?;
+            let mut manifest = read_validation_manifest(&manifest_path)?;
             if manifest.feature_id != feature.id {
                 return Err(boxed_error(format!(
                     "{} declares feature_id `{}`, expected `{}`",
@@ -86,6 +108,19 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     manifest.corpus_id
                 )));
             }
+            if let Some(fixture) = fixture_selector {
+                if !manifest
+                    .fixtures
+                    .iter()
+                    .any(|candidate| candidate == fixture)
+                {
+                    return Err(boxed_error(format!(
+                        "{} does not declare fixture `{fixture}`",
+                        manifest_path.display()
+                    )));
+                }
+                manifest.fixtures.retain(|candidate| candidate == fixture);
+            }
             progress.manifest(&manifest.reference_tool, &manifest.reference_version);
             validate_comparison_mode(&manifest_path, &manifest)?;
             if manifest.fixtures.is_empty() {
@@ -95,6 +130,13 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 )));
             }
             validate_manifest_paths(&manifest_path, &manifest)?;
+            if accept_goldens {
+                accept_implementation_goldens(&manifest_path, &manifest, jobs)?;
+                println!(
+                    "  accepted {} reviewed implementation golden(s)",
+                    manifest.fixtures.len()
+                );
+            }
             let worker_count = validation_worker_count(jobs, manifest.fixtures.len());
             let fixture_progress = FixtureProgress::start(manifest.fixtures.len(), worker_count);
             let comparison_result =

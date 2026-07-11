@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use flate2::read::GzDecoder;
+use flate2::{read::GzDecoder, Compression, GzBuilder};
 use molecules::{
     bio::{self, MacroMolecule, MmcifParseOptions, Residue},
     core::{
@@ -22,7 +22,7 @@ use molecules::{
         aromaticity::{self, AromaticityModel},
         rings,
         stereo::{self, StereoCandidate, StereoPerceptionIssue, StereoPerceptionReport},
-        valence::{self, ValenceModel},
+        valence::{self, ValenceModel, ValenceOptions},
         SanitizeError, SanitizeOptions,
     },
     sdf::{self, SdfParseOptions, SdfRecord},

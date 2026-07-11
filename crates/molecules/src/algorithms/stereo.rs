@@ -202,6 +202,9 @@ fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerc
         report.assembled_elements.extend(axis_elements);
         report
             .assembled_elements
+            .extend(assemble_unknown_double_bonds(mol, &mut used_marks));
+        report
+            .assembled_elements
             .extend(assemble_directional_double_bonds(
                 mol,
                 &mut report.issues,
@@ -498,13 +501,23 @@ fn tetrahedral_carriers(mol: &Molecule, center: AtomId) -> Option<Vec<StereoCarr
     }
     let mut carriers = Vec::new();
     for (_, bond) in mol.incident_bonds(center).ok()? {
-        if bond.order != BondOrder::Single {
+        if matches!(
+            bond.order,
+            BondOrder::Zero | BondOrder::Aromatic | BondOrder::Dative
+        ) {
             return None;
         }
         carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
     }
     carriers.sort_by_key(carrier_key);
     let hydrogens = hydrogen_count(mol, center);
+    if hydrogens == 0
+        && carriers.len() == 3
+        && stable_tetrahedral_lone_pair_center(atom.element.symbol())
+    {
+        carriers.push(StereoCarrier::ImplicitLonePair);
+        return Some(carriers);
+    }
     if hydrogens > 1 || carriers.len() + usize::from(hydrogens) != 4 {
         return None;
     }
@@ -512,6 +525,10 @@ fn tetrahedral_carriers(mol: &Molecule, center: AtomId) -> Option<Vec<StereoCarr
         carriers.push(StereoCarrier::ImplicitHydrogen);
     }
     Some(carriers)
+}
+
+fn stable_tetrahedral_lone_pair_center(symbol: &str) -> bool {
+    matches!(symbol, "P" | "As" | "Sb" | "S" | "Se" | "Te")
 }
 
 fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
@@ -641,6 +658,7 @@ fn assemble_tetrahedral_wedges(
             continue;
         }
         if center_marks.len() > 1 {
+            used_marks.extend(center_marks.iter().map(|mark| mark.mark.bond));
             issues.push(StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks {
                 center,
                 mark_count: center_marks.len(),
@@ -1141,6 +1159,60 @@ fn assemble_directional_double_bonds(
     assembled
 }
 
+fn assemble_unknown_double_bonds(
+    mol: &Molecule,
+    used_marks: &mut Vec<BondId>,
+) -> Vec<StereoElement> {
+    let mut assembled = Vec::new();
+    for mark in mol.stereo_bond_marks() {
+        if mark.kind != StereoBondMarkKind::DoubleBondEither {
+            continue;
+        }
+        let Ok(bond) = mol.bond(mark.bond) else {
+            continue;
+        };
+        if bond.order != BondOrder::Double || bond.aromatic {
+            continue;
+        }
+        if has_double_bond_element(mol, mark.bond) {
+            used_marks.push(mark.bond);
+            continue;
+        }
+
+        let left = bond.a();
+        let right = bond.b();
+        let Some(left_carrier) = double_bond_endpoint_carriers(mol, left, right, mark.bond)
+            .into_iter()
+            .next()
+        else {
+            continue;
+        };
+        let Some(right_carrier) = double_bond_endpoint_carriers(mol, right, left, mark.bond)
+            .into_iter()
+            .next()
+        else {
+            continue;
+        };
+
+        used_marks.push(mark.bond);
+        assembled.push(StereoElement {
+            kind: StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond: mark.bond,
+                left,
+                right,
+                left_carrier,
+                right_carrier,
+                orientation: DoubleBondOrientation::Together,
+            }),
+            specifiedness: StereoSpecifiedness::Unknown,
+            source: mark.source,
+            group: None,
+            descriptor: None,
+        });
+    }
+    assembled
+}
+
 fn select_directional_mark<'a>(
     mol: &Molecule,
     endpoint: AtomId,
@@ -1225,10 +1297,12 @@ fn report_unassembled_source_marks(
                 }
             }
             StereoBondMarkKind::DoubleBondEither => {
-                issues.push(StereoPerceptionIssue::UnsupportedSourceBondMark {
-                    bond: mark.bond,
-                    kind: mark.kind,
-                });
+                if !used_marks.contains(&mark.bond) {
+                    issues.push(StereoPerceptionIssue::UnsupportedSourceBondMark {
+                        bond: mark.bond,
+                        kind: mark.kind,
+                    });
+                }
             }
         }
     }
