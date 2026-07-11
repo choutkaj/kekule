@@ -118,7 +118,7 @@ pub fn sanitize_small_molecule_with_ring_options(
                 ..StereoPerceptionOptions::default()
             },
         );
-        if !report.is_ok() {
+        if stereo_report_has_fatal_issues(&report) {
             return Err(SanitizeError::Stereo(report));
         }
         Some(report)
@@ -130,6 +130,15 @@ pub fn sanitize_small_molecule_with_ring_options(
         valence,
         ring_count,
         stereo,
+    })
+}
+
+fn stereo_report_has_fatal_issues(report: &StereoPerceptionReport) -> bool {
+    report.issues.iter().any(|issue| {
+        !matches!(
+            issue,
+            StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks { .. }
+        )
     })
 }
 
@@ -177,8 +186,8 @@ fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {
         .filter_map(|(atom_id, atom)| {
             (atom.formal_charge == 0
                 && matches!(atom.element.symbol(), "Cl" | "Br" | "I")
-                && explicit_valence(mol, atom_id) > 1)
-                .then_some(atom_id)
+                && has_terminal_single_bond_oxygen_neighbor(mol, atom_id))
+            .then_some(atom_id)
         })
         .collect::<Vec<_>>();
 
@@ -209,6 +218,29 @@ fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {
     if changed {
         mol.invalidate_topology();
     }
+}
+
+fn has_terminal_single_bond_oxygen_neighbor(mol: &Molecule, atom_id: AtomId) -> bool {
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|(_, bond)| {
+            let oxygen_id = bond.other_atom(atom_id);
+            bond.order == BondOrder::Single
+                && mol
+                    .atom(oxygen_id)
+                    .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
+                && mol.incident_bonds(oxygen_id).is_ok_and(|mut bonds| {
+                    bonds.all(|(_, oxygen_bond)| {
+                        let neighbor_id = oxygen_bond.other_atom(oxygen_id);
+                        neighbor_id == atom_id
+                            || mol
+                                .atom(neighbor_id)
+                                .is_ok_and(|neighbor| neighbor.element.symbol() == "H")
+                    })
+                })
+        })
 }
 
 fn oxo_bonds_to_neutral_oxygen(mol: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {

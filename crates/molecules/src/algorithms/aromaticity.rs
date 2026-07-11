@@ -107,6 +107,12 @@ fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
+    if !mol
+        .bonds()
+        .any(|(_, bond)| matches!(bond.order, BondOrder::Aromatic))
+    {
+        return perceive_rdkit_like_localized_aromaticity(mol, ring_options);
+    }
     mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
     mol.perception.stereo = invalidate(mol.perception.stereo);
     let imported_aromatic_components = imported_aromatic_bond_components(mol);
@@ -226,6 +232,9 @@ fn perceive_rdkit_like_aromaticity(
                 .map(|atom| atom.aromatic)
                 .unwrap_or(false)
         }) {
+            if try_kekulize_non_aromatic_imported_component(mol, &component) {
+                continue;
+            }
             return Err(AromaticityError::InvalidAromaticRepresentation(
                 component[0],
             ));
@@ -235,6 +244,393 @@ fn perceive_rdkit_like_aromaticity(
 
     mol.perception.aromaticity = ComputedState::Fresh;
     Ok(())
+}
+
+fn try_kekulize_non_aromatic_imported_component(mol: &mut Molecule, component: &[AtomId]) -> bool {
+    const MAX_MATCHING_STATES: usize = 100_000;
+
+    let component_atoms = component.iter().copied().collect::<BTreeSet<_>>();
+    let mut demand = BTreeSet::new();
+    for atom_id in component {
+        let Ok(atom) = mol.atom(*atom_id) else {
+            return false;
+        };
+        let Some(default_valence) = rdkit_charge_adjusted_default_valence(atom) else {
+            return false;
+        };
+        let target_valence = default_valence
+            .saturating_sub(atom.radical.map_or(0, AtomRadical::unpaired_electron_count));
+        let bond_valence = mol
+            .incident_bonds(*atom_id)
+            .ok()
+            .into_iter()
+            .flatten()
+            .map(|(_, bond)| match bond.order {
+                BondOrder::Zero | BondOrder::Dative => 0,
+                BondOrder::Single | BondOrder::Aromatic => 1,
+                BondOrder::Double => 2,
+                BondOrder::Triple => 3,
+                BondOrder::Quadruple => 4,
+            })
+            .sum::<u8>();
+        let occupied_valence = bond_valence
+            .saturating_add(atom.explicit_hydrogens)
+            .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+        let required_double_bonds = target_valence.checked_sub(occupied_valence);
+        match required_double_bonds {
+            Some(0) => {}
+            Some(1) => {
+                demand.insert(*atom_id);
+            }
+            _ => return false,
+        }
+    }
+    if demand.len() % 2 != 0 {
+        return false;
+    }
+
+    let mut adjacency = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
+    for (bond_id, bond) in mol.bonds().filter(|(_, bond)| {
+        bond.order == BondOrder::Aromatic
+            && component_atoms.contains(&bond.a())
+            && component_atoms.contains(&bond.b())
+    }) {
+        if demand.contains(&bond.a()) && demand.contains(&bond.b()) {
+            adjacency
+                .entry(bond.a())
+                .or_default()
+                .push((bond.b(), bond_id));
+            adjacency
+                .entry(bond.b())
+                .or_default()
+                .push((bond.a(), bond_id));
+        }
+    }
+    for neighbors in adjacency.values_mut() {
+        neighbors.sort();
+    }
+
+    let mut stack = vec![(demand, Vec::<BondId>::new())];
+    let mut examined_states = 0usize;
+    let selected_double_bonds = loop {
+        let Some((unmatched, selected)) = stack.pop() else {
+            return false;
+        };
+        examined_states += 1;
+        if examined_states > MAX_MATCHING_STATES {
+            return false;
+        }
+        if unmatched.is_empty() {
+            break selected;
+        }
+        let Some(atom_id) = unmatched.iter().copied().min_by_key(|atom_id| {
+            adjacency
+                .get(atom_id)
+                .map(|neighbors| {
+                    neighbors
+                        .iter()
+                        .filter(|(neighbor, _)| unmatched.contains(neighbor))
+                        .count()
+                })
+                .unwrap_or(0)
+        }) else {
+            return false;
+        };
+        let candidates = adjacency
+            .get(&atom_id)
+            .into_iter()
+            .flatten()
+            .filter(|(neighbor, _)| unmatched.contains(neighbor))
+            .copied()
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            continue;
+        }
+        for (neighbor, bond_id) in candidates.into_iter().rev() {
+            let mut next_unmatched = unmatched.clone();
+            next_unmatched.remove(&atom_id);
+            next_unmatched.remove(&neighbor);
+            let mut next_selected = selected.clone();
+            next_selected.push(bond_id);
+            stack.push((next_unmatched, next_selected));
+        }
+    };
+
+    let selected_double_bonds = selected_double_bonds.into_iter().collect::<BTreeSet<_>>();
+    for atom_id in component {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.aromatic = false;
+        }
+    }
+    for (bond_id, bond) in mol
+        .bonds
+        .iter_mut()
+        .enumerate()
+        .filter_map(|(index, bond)| bond.as_mut().map(|bond| (BondId::new(index as u32), bond)))
+    {
+        if bond.order == BondOrder::Aromatic
+            && component_atoms.contains(&bond.a())
+            && component_atoms.contains(&bond.b())
+        {
+            bond.order = if selected_double_bonds.contains(&bond_id) {
+                BondOrder::Double
+            } else {
+                BondOrder::Single
+            };
+            bond.aromatic = false;
+        }
+    }
+    true
+}
+
+fn perceive_rdkit_like_localized_aromaticity(
+    mol: &mut Molecule,
+    ring_options: RingPerceptionOptions,
+) -> std::result::Result<(), AromaticityError> {
+    mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
+    mol.perception.stereo = invalidate(mol.perception.stereo);
+    let ring_set = perceive_ring_set_with_options(mol, ring_options)
+        .map_err(AromaticityError::RingPerception)?;
+    for atom in mol.atoms.iter_mut().flatten() {
+        atom.aromatic = false;
+    }
+    for bond in mol.bonds.iter_mut().flatten() {
+        bond.aromatic = false;
+    }
+
+    let mut donors = vec![AromaticElectronDonorType::None; mol.atoms.len()];
+    let mut atom_candidates = vec![false; mol.atoms.len()];
+    for (atom_id, atom) in mol.atoms() {
+        let donor = rdkit_localized_atom_donor_type(mol, atom_id, atom);
+        donors[atom_id.index()] = donor;
+        atom_candidates[atom_id.index()] = atom_is_rdkit_aromatic_candidate_for_donor(
+            mol,
+            atom_id,
+            atom,
+            donor,
+            RdkitAromaticCandidateOptions::default(),
+        );
+    }
+
+    let candidates = ring_set
+        .rings()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, ring)| {
+            ring.atoms
+                .iter()
+                .all(|atom| atom_candidates[atom.index()])
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let components = rdkit_fused_ring_components(ring_set.rings(), &candidates);
+    for component in components {
+        apply_rdkit_huckel_to_fused_component(mol, ring_set.rings(), &component, &donors);
+    }
+
+    mol.perception.aromaticity = ComputedState::Fresh;
+    Ok(())
+}
+
+fn rdkit_localized_atom_donor_type(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> AromaticElectronDonorType {
+    let Some(mut electrons) = count_rdkit_like_atom_pi_electrons(mol, atom_id, atom) else {
+        return AromaticElectronDonorType::None;
+    };
+    let noncyclic_pi_neighbor = atom_noncyclic_pi_neighbor(mol, atom_id);
+    let has_cyclic_pi_bond = atom_has_cyclic_pi_bond(mol, atom_id);
+    let has_multiple_bond = atom_explicit_pi_bond_count(mol, atom_id) > 0;
+
+    if electrons == 0 {
+        if noncyclic_pi_neighbor.is_some() {
+            AromaticElectronDonorType::None
+        } else if has_cyclic_pi_bond {
+            AromaticElectronDonorType::One
+        } else {
+            AromaticElectronDonorType::None
+        }
+    } else if electrons == 1 {
+        if let Some(neighbor) = noncyclic_pi_neighbor {
+            if atom_is_more_electronegative_than(mol, neighbor, atom) {
+                AromaticElectronDonorType::Vacant
+            } else {
+                AromaticElectronDonorType::One
+            }
+        } else if has_multiple_bond {
+            AromaticElectronDonorType::One
+        } else if atom.formal_charge == 1 {
+            AromaticElectronDonorType::Vacant
+        } else {
+            AromaticElectronDonorType::None
+        }
+    } else {
+        if noncyclic_pi_neighbor
+            .is_some_and(|neighbor| atom_is_more_electronegative_than(mol, neighbor, atom))
+        {
+            electrons -= 1;
+        }
+        if electrons % 2 == 1 {
+            AromaticElectronDonorType::One
+        } else {
+            AromaticElectronDonorType::Two
+        }
+    }
+}
+
+fn atom_noncyclic_pi_neighbor(mol: &Molecule, atom_id: AtomId) -> Option<AtomId> {
+    let membership = mol
+        .ring_membership()
+        .expect("ring membership is computed before aromatic donor assignment");
+    mol.incident_bonds(atom_id)
+        .ok()?
+        .find_map(|(bond_id, bond)| {
+            (!membership.bond_in_ring(bond_id)
+                && matches!(
+                    bond.order,
+                    BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
+                ))
+            .then_some(bond.other_atom(atom_id))
+        })
+}
+
+fn atom_has_cyclic_pi_bond(mol: &Molecule, atom_id: AtomId) -> bool {
+    let membership = mol
+        .ring_membership()
+        .expect("ring membership is computed before aromatic donor assignment");
+    mol.incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|(bond_id, bond)| {
+            membership.bond_in_ring(bond_id)
+                && matches!(
+                    bond.order,
+                    BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
+                )
+        })
+}
+
+fn rdkit_rings_are_fused(left: &Ring, right: &Ring) -> bool {
+    if left.bonds.len() > MAX_FUSED_AROMATIC_RING_SIZE
+        || right.bonds.len() > MAX_FUSED_AROMATIC_RING_SIZE
+    {
+        return false;
+    }
+    left.bonds
+        .iter()
+        .filter(|bond| right.bonds.contains(bond))
+        .count()
+        == 1
+}
+
+fn rdkit_fused_ring_components(rings: &[Ring], candidates: &[usize]) -> Vec<Vec<usize>> {
+    let mut components = (0..candidates.len()).collect::<Vec<_>>();
+    for left in 0..candidates.len() {
+        for right in (left + 1)..candidates.len() {
+            if rdkit_rings_are_fused(&rings[candidates[left]], &rings[candidates[right]]) {
+                union_components(&mut components, left, right);
+            }
+        }
+    }
+    let mut grouped = BTreeMap::<usize, Vec<usize>>::new();
+    for (position, ring_index) in candidates.iter().copied().enumerate() {
+        let root = find_component(&mut components, position);
+        grouped.entry(root).or_default().push(ring_index);
+    }
+    grouped.into_values().collect()
+}
+
+fn apply_rdkit_huckel_to_fused_component(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    component: &[usize],
+    donors: &[AromaticElectronDonorType],
+) {
+    let component_bonds = component
+        .iter()
+        .flat_map(|index| rings[*index].bonds.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let mut done_bonds = BTreeSet::new();
+    let max_subset_size = component.len().min(MAX_FUSED_AROMATIC_COMBINATION_RINGS);
+    for subset_size in 1..=max_subset_size {
+        if subset_size > 2 && component.len() > LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT {
+            break;
+        }
+        for subset in connected_ring_subsets(rings, component, subset_size) {
+            if !rdkit_ring_subset_is_connected(rings, &subset) {
+                continue;
+            }
+            let mut atom_counts = BTreeMap::<AtomId, usize>::new();
+            for ring_index in &subset {
+                for atom in &rings[*ring_index].atoms {
+                    *atom_counts.entry(*atom).or_default() += 1;
+                }
+            }
+            let subset_donors = atom_counts
+                .into_iter()
+                .filter_map(|(atom, count)| (count <= 2).then_some(donors[atom.index()]))
+                .collect::<Vec<_>>();
+            if huckel_electron_count_for_donors(&subset_donors).is_none() {
+                continue;
+            }
+            mark_rdkit_aromatic_subset(mol, rings, &subset, &mut done_bonds);
+            if done_bonds.len() >= component_bonds.len() {
+                return;
+            }
+        }
+    }
+}
+
+fn rdkit_ring_subset_is_connected(rings: &[Ring], indexes: &[usize]) -> bool {
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![indexes[0]];
+    while let Some(index) = stack.pop() {
+        if !visited.insert(index) {
+            continue;
+        }
+        for other in indexes {
+            if !visited.contains(other) && rdkit_rings_are_fused(&rings[index], &rings[*other]) {
+                stack.push(*other);
+            }
+        }
+    }
+    visited.len() == indexes.len()
+}
+
+fn mark_rdkit_aromatic_subset(
+    mol: &mut Molecule,
+    rings: &[Ring],
+    indexes: &[usize],
+    done_bonds: &mut BTreeSet<BondId>,
+) {
+    let mut bond_counts = BTreeMap::<BondId, usize>::new();
+    for index in indexes {
+        for bond in &rings[*index].bonds {
+            *bond_counts.entry(*bond).or_default() += 1;
+        }
+    }
+    for (bond_id, count) in bond_counts {
+        if count != 1 {
+            continue;
+        }
+        done_bonds.insert(bond_id);
+        let Some(bond) = mol.bonds[bond_id.index()].as_mut() else {
+            continue;
+        };
+        bond.aromatic = true;
+        if matches!(bond.order, BondOrder::Single | BondOrder::Double) {
+            let (left, right) = bond.endpoints();
+            if let Some(atom) = mol.atoms[left.index()].as_mut() {
+                atom.aromatic = true;
+            }
+            if let Some(atom) = mol.atoms[right.index()].as_mut() {
+                atom.aromatic = true;
+            }
+        }
+    }
 }
 
 fn mark_aromatic_atoms_and_bonds(
@@ -931,60 +1327,7 @@ fn aromatic_ring_donor_analysis(
     if ring_has_aromatic_order(mol, ring) {
         return aromatic_order_ring_donor_analysis(mol, ring, localized);
     }
-    let active_hetero_donors = localized.active_hetero_donor_count(mol);
-    let has_active_chalcogen_donor = localized.has_active_chalcogen_donor(mol);
-    let has_active_nitrogen_donor = localized.has_active_element_donor(mol, "N");
-    if ring.atoms.len() == 5
-        && has_active_nitrogen_donor
-        && ring_exocyclic_pi_bond_count(mol, ring) > 0
-        && !ring_is_lone_pair_five_member_fused_partner(mol, ring, localized)
-        && ((active_hetero_donors < 2 && !has_active_chalcogen_donor)
-            || (has_active_chalcogen_donor
-                && !ring_has_candidate_carbon_electronegative_exocyclic_pi_bond(
-                    mol, ring, localized,
-                )))
-    {
-        return Ok(AromaticRingDonorAnalysis::non_aromatic());
-    }
-    if ring.atoms.len() > 5
-        && ring_pi_bond_count(mol, ring) + ring_terminal_exocyclic_pi_bond_count(mol, ring) < 2
-        && active_hetero_donors > 1
-        && has_active_chalcogen_donor
-    {
-        return Ok(AromaticRingDonorAnalysis::non_aromatic());
-    }
-    if ring.atoms.len() > 5
-        && ring_exocyclic_pi_bond_count(mol, ring) == 0
-        && has_active_chalcogen_donor
-        && has_active_nitrogen_donor
-        && active_hetero_donors > 1
-    {
-        return Ok(AromaticRingDonorAnalysis::non_aromatic());
-    }
-    if ring.atoms.len() == 6
-        && ring_pi_bond_count(mol, ring) == 2
-        && localized.all_atoms_are_candidates()
-        && localized.is_huckel_aromatic()
-        && localized.has_nitrogen_lone_pair_donor(mol)
-        && ring_has_fused_exocyclic_pi_bond(mol, ring)
-    {
-        return Ok(AromaticRingDonorAnalysis::non_aromatic());
-    }
-
     Ok(localized.clone())
-}
-
-fn ring_is_lone_pair_five_member_fused_partner(
-    mol: &Molecule,
-    ring: &Ring,
-    analysis: &AromaticRingDonorAnalysis,
-) -> bool {
-    ring.atoms.len() == 5
-        && ring_pi_bond_count(mol, ring) >= 1
-        && ring_fused_exocyclic_pi_bond_count(mol, ring) >= 2
-        && analysis.all_atoms_are_candidates()
-        && analysis.is_huckel_aromatic()
-        && analysis.has_nitrogen_lone_pair_donor(mol)
 }
 
 fn localized_ring_donor_analysis(
@@ -1070,13 +1413,6 @@ impl RingAromaticityAnalysis {
 }
 
 impl AromaticRingDonorAnalysis {
-    fn non_aromatic() -> Self {
-        Self {
-            atoms: Vec::new(),
-            fixed_electron_count: Some(0),
-        }
-    }
-
     fn all_atoms_are_candidates(&self) -> bool {
         self.atoms
             .iter()
@@ -1167,17 +1503,9 @@ fn localized_ring_atom_donor_type(
 ) -> std::result::Result<AromaticElectronDonorType, AromaticityError> {
     let atom = mol.atom(atom_id).expect("ring atom should be live");
     if !aromaticity_supported_element(atom) {
-        return if ring_has_aromatic_order(mol, ring) {
-            Err(AromaticityError::UnsupportedElement(atom_id))
-        } else {
-            Ok(AromaticElectronDonorType::None)
-        };
+        return Ok(AromaticElectronDonorType::None);
     }
-    let donor = if ring_atom_has_pi_bond(mol, ring, atom_id) {
-        AromaticElectronDonorType::One
-    } else {
-        rdkit_like_atom_donor_type(mol, ring, atom_id, atom, true)
-    };
+    let donor = rdkit_like_atom_donor_type(mol, ring, atom_id, atom, true);
     if !atom_is_rdkit_aromatic_candidate_for_donor(
         mol,
         atom_id,
@@ -1358,7 +1686,7 @@ fn aromatic_order_atom_donor_type(
     exocyclic_pi_steals_electrons: bool,
 ) -> std::result::Result<AromaticElectronDonorType, AromaticityError> {
     if !aromaticity_supported_element(atom) {
-        return Err(AromaticityError::UnsupportedElement(atom_id));
+        return Ok(AromaticElectronDonorType::None);
     }
     let donor = if exocyclic_pi_steals_electrons
         && atom_has_electronegative_exocyclic_pi_bond(mol, ring, atom_id, atom)
@@ -1368,17 +1696,34 @@ fn aromatic_order_atom_donor_type(
         match atom.element.symbol() {
             "B" | "C" => AromaticElectronDonorType::One,
             "N" => {
-                if atom.explicit_hydrogens > 0
+                let total_hydrogens = atom
+                    .explicit_hydrogens
+                    .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom));
+                if atom.formal_charge < 0
                     || atom.formal_charge == 0
-                        && aromatic_order_nitrogen_is_pyrrole_like(mol, atom_id)
+                        && (total_hydrogens > 0
+                            || aromatic_order_nitrogen_is_pyrrole_like(mol, atom_id))
                 {
-                    AromaticElectronDonorType::OneOrTwo
+                    AromaticElectronDonorType::Two
                 } else {
                     AromaticElectronDonorType::One
                 }
             }
-            "O" | "S" | "Se" | "Te" | "P" => AromaticElectronDonorType::Two,
-            _ => return Err(AromaticityError::UnsupportedElement(atom_id)),
+            "P" => {
+                if atom_aromatic_candidate_degree(mol, atom_id, atom) <= 2 {
+                    AromaticElectronDonorType::One
+                } else {
+                    AromaticElectronDonorType::Two
+                }
+            }
+            "O" | "S" | "Se" | "Te" => {
+                if atom.formal_charge > 0 {
+                    AromaticElectronDonorType::One
+                } else {
+                    AromaticElectronDonorType::Two
+                }
+            }
+            _ => AromaticElectronDonorType::None,
         }
     };
     if !atom_is_rdkit_aromatic_candidate_for_donor(
@@ -1470,26 +1815,6 @@ fn count_rdkit_like_atom_pi_electrons(mol: &Molecule, atom_id: AtomId, atom: &At
         electrons = 1;
     }
     u8::try_from(electrons).ok()
-}
-
-fn rdkit_default_valence(atom: &Atom) -> Option<u8> {
-    rdkit_default_valence_for_element(atom.element)
-}
-
-fn rdkit_charge_adjusted_default_valence(atom: &Atom) -> Option<u8> {
-    let atomic_number = i16::from(atom.element.atomic_number()) - i16::from(atom.formal_charge);
-    let atomic_number = u8::try_from(atomic_number).ok()?;
-    rdkit_default_valence_for_element(Element::from_atomic_number(atomic_number)?)
-}
-
-fn rdkit_default_valence_for_element(element: Element) -> Option<u8> {
-    match element.symbol() {
-        "B" => Some(3),
-        "C" => Some(4),
-        "N" | "P" => Some(3),
-        "O" | "S" | "Se" | "Te" => Some(2),
-        _ => None,
-    }
 }
 
 fn rdkit_outer_electrons(atom: &Atom) -> Option<u8> {
@@ -1685,22 +2010,14 @@ fn atom_exocyclic_pi_neighbor(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> O
 
 fn atom_is_more_electronegative_than(mol: &Molecule, left: AtomId, right: &Atom) -> bool {
     mol.atom(left).is_ok_and(|left| {
-        atom_electronegativity(left)
-            .zip(atom_electronegativity(right))
-            .is_some_and(|(left, right)| left > right)
+        rdkit_outer_electrons(left)
+            .zip(rdkit_outer_electrons(right))
+            .is_some_and(|(left_electrons, right_electrons)| {
+                left_electrons > right_electrons
+                    || left_electrons == right_electrons
+                        && left.element.atomic_number() < right.element.atomic_number()
+            })
     })
-}
-
-fn atom_electronegativity(atom: &Atom) -> Option<u16> {
-    match atom.element.symbol() {
-        "B" => Some(204),
-        "C" | "Se" => Some(255),
-        "N" => Some(304),
-        "O" => Some(344),
-        "P" | "Te" => Some(219),
-        "S" => Some(258),
-        _ => None,
-    }
 }
 
 fn atom_has_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -1713,36 +2030,6 @@ fn atom_has_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> b
                 && !ring.atoms.contains(&bond.other_atom(atom_id))
                 && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
         })
-}
-
-fn ring_has_fused_exocyclic_pi_bond(mol: &Molecule, ring: &Ring) -> bool {
-    ring_fused_exocyclic_pi_bond_count(mol, ring) > 0
-}
-
-fn ring_fused_exocyclic_pi_bond_count(mol: &Molecule, ring: &Ring) -> usize {
-    let computed_membership;
-    let membership = if let Some(membership) = mol.ring_membership() {
-        membership
-    } else {
-        computed_membership = super::rings::compute_ring_membership(mol).0;
-        &computed_membership
-    };
-
-    ring.atoms
-        .iter()
-        .filter(|atom_id| {
-            mol.incident_bonds(**atom_id)
-                .ok()
-                .into_iter()
-                .flatten()
-                .any(|(bond_id, bond)| {
-                    !ring.bonds.contains(&bond_id)
-                        && !ring.atoms.contains(&bond.other_atom(**atom_id))
-                        && membership.bond_in_ring(bond_id)
-                        && matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
-                })
-        })
-        .count()
 }
 
 fn atom_has_terminal_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: AtomId) -> bool {
@@ -1767,6 +2054,117 @@ fn atom_has_terminal_exocyclic_pi_bond(mol: &Molecule, ring: &Ring, atom_id: Ato
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fused_ten_electron_perimeter_preserves_explicit_aromatic_fusion_single() {
+        let mut molecule = crate::smiles::read_str("On2c1-c(ccc2)ccn1").expect("parses");
+        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
+        assert!(valence.is_ok(), "{:#?}", valence.issues);
+        perceive_ring_set(molecule.graph_mut()).expect("rings");
+        let protected_single = molecule
+            .graph()
+            .bonds()
+            .find_map(|(bond_id, bond)| {
+                (bond.order == BondOrder::Single
+                    && molecule
+                        .graph()
+                        .atom(bond.a())
+                        .is_ok_and(|atom| atom.aromatic)
+                    && molecule
+                        .graph()
+                        .atom(bond.b())
+                        .is_ok_and(|atom| atom.aromatic))
+                .then_some(bond_id)
+            })
+            .expect("explicit aromatic fusion single");
+
+        perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+            .expect("fused aromaticity");
+
+        let protected = molecule
+            .graph()
+            .bond(protected_single)
+            .expect("protected fusion bond");
+        assert_eq!(protected.order, BondOrder::Single);
+        assert!(!protected.aromatic);
+        assert_eq!(
+            molecule
+                .graph()
+                .atoms()
+                .filter(|(_, atom)| atom.element.symbol() != "O" && atom.aromatic)
+                .count(),
+            9
+        );
+    }
+
+    #[test]
+    fn imported_aromatic_bonds_keep_implicit_hydrogen_nitrogen_pyrrole_like() {
+        let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
+        let mut molecule = crate::smiles::read_str(input).expect("dye parses");
+        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
+        assert!(valence.is_ok(), "{:#?}", valence.issues);
+        perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+            .expect("aromaticity");
+
+        let nitrogens = molecule
+            .graph()
+            .atoms()
+            .filter(|(_, atom)| atom.element.symbol() == "N")
+            .map(|(_, atom)| (atom.aromatic, atom.implicit_hydrogens))
+            .collect::<Vec<_>>();
+        assert_eq!(nitrogens, vec![(false, Some(1)), (false, Some(1))]);
+    }
+
+    #[test]
+    fn neutral_carbon_radical_can_complete_an_aromatic_sextet() {
+        let mut molecule =
+            crate::smiles::read_str("C1=CC(=CC=[C]1)N").expect("aminophenyl radical parses");
+        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
+        assert!(valence.is_ok(), "{:#?}", valence.issues);
+        perceive_ring_set(molecule.graph_mut()).expect("ring perception");
+        let radical = molecule
+            .graph()
+            .atoms()
+            .find_map(|(id, atom)| atom.radical.is_some().then_some(id))
+            .expect("radical carbon");
+        let radical_atom = molecule.graph().atom(radical).expect("radical atom");
+        let donor = rdkit_localized_atom_donor_type(molecule.graph(), radical, radical_atom);
+        assert_eq!(donor, AromaticElectronDonorType::One);
+        assert!(atom_is_rdkit_aromatic_candidate_for_donor(
+            molecule.graph(),
+            radical,
+            radical_atom,
+            donor,
+            RdkitAromaticCandidateOptions::default(),
+        ));
+
+        perceive_rdkit_like_localized_aromaticity(
+            molecule.graph_mut(),
+            RingPerceptionOptions::default(),
+        )
+        .expect("aromaticity perception");
+
+        assert_eq!(
+            molecule
+                .graph()
+                .atoms()
+                .filter(|(_, atom)| atom.element.symbol() == "C" && atom.aromatic)
+                .count(),
+            6
+        );
+    }
+
+    #[test]
+    fn charge_adjusted_candidate_valence_does_not_change_carbocation_electron_count() {
+        for smiles in ["C1=C[C+]=CC(=C1)N", "C1=C[C+]=CC(=C1)C=O"] {
+            let mut molecule = crate::smiles::read_str(smiles).expect("carbocation parses");
+            crate::perception::sanitize(&mut molecule).expect("carbocation sanitizes");
+            assert!(
+                molecule.graph().atoms().all(|(_, atom)| !atom.aromatic),
+                "{smiles}"
+            );
+        }
+    }
 
     #[test]
     fn localized_ring_analysis_feeds_simple_huckel_path() {
@@ -2245,7 +2643,7 @@ mod tests {
         assert_eq!(ring_pi_bond_count(&mol, &ring), 6);
         assert_eq!(analysis.fixed_electron_count, None);
         assert_eq!(analysis.atoms.len(), ring.atoms.len());
-        assert!(analysis.is_huckel_aromatic());
+        assert!(!analysis.is_huckel_aromatic());
     }
 
     #[test]
@@ -2355,7 +2753,7 @@ mod tests {
     }
 
     #[test]
-    fn exocyclic_pi_stealing_requires_electronegative_neighbor() {
+    fn exocyclic_pi_stealing_uses_rdkit_outer_electron_order() {
         let mut mol = Molecule::new();
         let carbon = mol.add_atom(aromatic_carbon());
         let nitrogen = mol.add_atom(aromatic_atom("N"));
@@ -2388,16 +2786,16 @@ mod tests {
 
         assert!(localized.has_active_element_donor(&mol, "N"));
         assert!(localized.has_active_chalcogen_donor(&mol));
-        assert!(!ring_has_carbon_electronegative_exocyclic_pi_bond(
+        assert!(ring_has_carbon_electronegative_exocyclic_pi_bond(
             &mol, &ring
         ));
         assert!(
-            !aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(&mol, &ring, &localized)
+            aromatic_order_ring_allows_exocyclic_carbon_zero_contribution(&mol, &ring, &localized)
         );
         assert_eq!(
             aromatic_order_atom_donor_type(&mol, &ring, carbon, mol.atom(carbon).unwrap(), true)
                 .expect("donor type"),
-            AromaticElectronDonorType::One
+            AromaticElectronDonorType::Vacant
         );
     }
 
@@ -2449,7 +2847,8 @@ mod tests {
 
         let aromatic =
             aromatic_ring_donor_analysis(&mol, &ring, &localized).expect("aromatic analysis");
-        assert_eq!(aromatic.fixed_electron_count, Some(0));
+        assert!(!aromatic.all_atoms_are_candidates());
+        assert_eq!(aromatic.electron_count(), None);
     }
 
     #[test]

@@ -1228,6 +1228,38 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
         }
     ));
 
+    let mut unknown = Molecule::new();
+    let left = unknown.add_atom(carbon());
+    let right = unknown.add_atom(carbon());
+    let left_carrier = unknown.add_atom(carbon());
+    let right_carrier = unknown.add_atom(carbon());
+    let unknown_bond = unknown
+        .add_bond(left, right, BondOrder::Double)
+        .expect("double bond");
+    unknown
+        .add_bond(left, left_carrier, BondOrder::Single)
+        .expect("left carrier");
+    unknown
+        .add_bond(right, right_carrier, BondOrder::Single)
+        .expect("right carrier");
+    unknown
+        .set_stereo_bond_mark(StereoBondMark {
+            bond: unknown_bond,
+            kind: StereoBondMarkKind::DoubleBondEither,
+            source: StereoSource::MolfileV2000,
+        })
+        .expect("double bond either mark");
+
+    let unknown_report = stereo_api::perceive_stereo(&mut unknown);
+    assert!(unknown_report.is_ok(), "{:?}", unknown_report.issues);
+    assert_eq!(unknown_report.created_elements.len(), 1);
+    let (_, element) = unknown.stereo_elements().next().expect("unknown element");
+    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
+    assert!(matches!(
+        &element.kind,
+        StereoElementKind::DoubleBond(stereo) if stereo.bond == unknown_bond
+    ));
+
     let mut absent = Molecule::new();
     let x = absent.add_atom(carbon());
     let y = absent.add_atom(carbon());

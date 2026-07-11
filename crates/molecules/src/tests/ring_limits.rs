@@ -129,6 +129,50 @@ fn theta_graph_and_disconnected_mixture_are_deterministic() {
 }
 
 #[test]
+fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
+    let mut mol = Molecule::new();
+    let atoms = (0..9).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    for (left, right) in [
+        (0, 2),
+        (2, 1),
+        (0, 3),
+        (3, 1),
+        (0, 4),
+        (4, 5),
+        (5, 6),
+        (6, 1),
+        (2, 7),
+        (7, 8),
+        (8, 2),
+    ] {
+        mol.add_bond(atoms[left], atoms[right], BondOrder::Single)
+            .expect("decorated theta edge");
+    }
+
+    let ring_set = rings_api::perceive_ring_set(&mut mol)
+        .expect("decorated theta graph should perceive rings");
+    let mut atom_sets = ring_set
+        .rings()
+        .iter()
+        .map(|ring| {
+            let mut atoms = ring
+                .atoms
+                .iter()
+                .map(|atom| atom.index())
+                .collect::<Vec<_>>();
+            atoms.sort_unstable();
+            atoms
+        })
+        .collect::<Vec<_>>();
+    atom_sets.sort();
+
+    assert_eq!(
+        atom_sets,
+        vec![vec![0, 1, 2, 3], vec![0, 1, 2, 4, 5, 6], vec![2, 7, 8]]
+    );
+}
+
+#[test]
 fn cycle_size_limit_returns_structured_error() {
     let (mut mol, _, _) = ring_molecule(
         &["C", "C", "C", "C", "C", "C", "C", "C", "C", "C"],

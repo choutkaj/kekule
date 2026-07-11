@@ -104,6 +104,8 @@ fn radical_multiplicity_reports_unpaired_electrons() {
     assert_eq!(AtomRadical::Singlet.unpaired_electron_count(), 0);
     assert_eq!(AtomRadical::Doublet.unpaired_electron_count(), 1);
     assert_eq!(AtomRadical::Triplet.unpaired_electron_count(), 2);
+    assert_eq!(AtomRadical::Quartet.unpaired_electron_count(), 3);
+    assert_eq!(AtomRadical::Quintet.unpaired_electron_count(), 4);
 }
 
 #[test]

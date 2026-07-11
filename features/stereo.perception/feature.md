@@ -50,6 +50,17 @@ and assign local stereo elements from supported source marks and coordinates.
   Molfile wedge/either marks can create explicit unknown tetrahedral stereo
   elements. In both cases the marked bond's first endpoint is treated as the
   local stereo center and the marked carrier is placed first in carrier order.
+  Explicit source-mark centers may use single through quadruple carrier bonds
+  (but not aromatic, zero, or dative bonds); supported three-coordinate
+  P/As/Sb/S/Se/Te centers receive an implicit-lone-pair carrier. This is
+  deliberately broader than conservative unmarked candidate detection.
+  Conflicting multi-wedge input is consumed as an ambiguity diagnostic without
+  inventing a stereo element; sanitization treats that diagnostic as non-fatal,
+  matching RDKit's warning-and-ignore behavior.
+- Molfile double-bond either marks create explicit unknown double-bond stereo
+  elements when both endpoints have valid carriers. Their stored orientation is
+  non-semantic while specifiedness is unknown. Marks on bonds without a valid
+  local double-bond stereo representation remain structured diagnostics.
 - Molfile wedge up/down marks that cannot support tetrahedral stereo can
   conservatively create specified atropisomeric axis elements when the marked
   bond is adjacent to a single-bond axis whose endpoints are SP2-like, have
@@ -203,3 +214,9 @@ stereo transfer.
 - v19: Add default-off conservative 3D coordinate-derived axis assignment for
   explicit SP2-like single-bond axes with two atom carriers per endpoint and
   lowest-neighbor endpoint references.
+- v20: Assemble Molfile double-bond either marks into explicit unknown
+  double-bond stereo elements when both endpoints have valid carriers, and
+  treat consumed conflicting multi-wedge input as a non-fatal sanitization
+  ambiguity rather than rejecting valid chemistry. Preserve explicit
+  hypervalent and pyramidal heteroatom wedge centers without broadening
+  unmarked candidate detection.

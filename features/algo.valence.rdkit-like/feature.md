@@ -6,15 +6,24 @@ Provide conservative valence perception for common organic molecules.
 
 ## Behavior/API
 
-- Exposes `perception::valence::{ValenceModel, ValenceReport, ValenceIssue, perceive_valence}`.
+- Exposes `perception::valence::{ValenceModel, ValenceOptions, ValenceReport,
+  ValenceIssue, perceive_valence, perceive_valence_with_options}`.
 - Computes explicit valence from bond order and explicit hydrogens.
 - Assigns implicit hydrogens when a common allowed valence can be selected.
 - Handles imported aromatic atoms without counting each aromatic bond as a localized double bond.
 - Reports unsupported elements or valence excesses instead of silently accepting them.
+- Defaults to strict reporting. `ValenceOptions { strict: false }` still
+  computes assignments but suppresses unsupported-element and valence-excess
+  issues for inspection workflows; sanitization continues to use strict mode.
 
 ## Implementation Notes
 
-- The current model covers common organic elements plus selected charged salts, boranes, simple group-1/group-2 counterions, group-13 through group-16 main-group ions and covalent centers, isolated zero-valence unsupported spectator atoms, hypervalent halogens, flexible transition-metal coordination centers, radicals, and aromatic donor/acceptor cases exposed by external PubChem validation.
+- The current model uses charge-adjusted isoelectronic neutral valence tables
+  for main-group ions, suppresses implicit hydrogens on alkali/alkaline-earth
+  centers, and follows RDKit's unrestricted-valence treatment for transition,
+  lanthanide, actinide, and heavier coordination centers.
+- Its allowed-valence table is also the single source of truth for preserving
+  valence-implied tetrahedral hydrogen carriers during Molfile parsing.
 - Perception state is marked fresh only after the pass completes.
 
 ## Validation
@@ -24,7 +33,8 @@ Provide conservative valence perception for common organic molecules.
 
 ## Out Of Scope
 
-- Full RDKit valence tables, organometallics, query atoms, valence tautomer handling, and sanitization orchestration.
+- Query atoms, bond-order-dependent organometallic interpretation, valence
+  tautomer handling, and sanitization orchestration.
 
 ## Revision Notes
 
@@ -38,3 +48,7 @@ Provide conservative valence perception for common organic molecules.
 - v8: Add PubChem-100k as required broad-corpus validation evidence.
 - v9: Expand RDKit-like simple-ion and main-group valence support for PubChem salts while leaving actinide and coordination-heavy cases as structured unsupported chemistry.
 - v10: Allow isolated unsupported atoms as zero-valence spectators so disconnected PubChem salt fragments do not block sanitization of descriptor-bearing organic components.
+- v11: Add strict/permissive options, charge-adjusted isoelectronic valence
+  lookup, unrestricted-valence elements, implicit-hydrogen suppression for
+  electropositive centers, and reuse the same allowed-valence table for
+  Molfile tetrahedral hydrogen-carrier preservation.
