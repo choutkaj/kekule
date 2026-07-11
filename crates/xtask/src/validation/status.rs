@@ -247,6 +247,10 @@ pub(crate) fn sync_feature_validation_flags_at(
 }
 
 pub(crate) fn write_atomic_text(path: &Path, text: &str) -> Result<(), Box<dyn Error>> {
+    write_atomic_bytes(path, text.as_bytes())
+}
+
+pub(crate) fn write_atomic_bytes(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
     let parent = path
         .parent()
         .ok_or_else(|| boxed_error(format!("{} has no parent", path.display())))?;
@@ -257,7 +261,7 @@ pub(crate) fn write_atomic_text(path: &Path, text: &str) -> Result<(), Box<dyn E
         .ok_or_else(|| boxed_error(format!("{} has no file name", path.display())))?;
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let tmp = parent.join(format!(".{file_name}.{nonce}.tmp"));
-    fs::write(&tmp, text)?;
+    fs::write(&tmp, bytes)?;
     match fs::rename(&tmp, path) {
         Ok(()) => Ok(()),
         Err(error) if path.exists() => {

@@ -7,7 +7,7 @@ or manually curated external-reference golden data.
 
 ## Behavior/API
 
-- Exposes `cargo xtask validate --feature FEATURE_ID|all --corpus CORPUS_ID|all [--update] [--jobs N]`.
+- Exposes `cargo xtask validate --feature FEATURE_ID|all --corpus CORPUS_ID|all [--fixture PATH] [--update] [--jobs N]`.
 - Defaults omitted `--corpus` to `smoke`.
 - Discovers corpus manifests under `validation/corpora/<corpus-id>/features/<feature-id>.toml`.
 - Verifies listed fixture paths exist.
@@ -27,10 +27,20 @@ or manually curated external-reference golden data.
 - Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
 - Exposes `cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]`.
 - Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, synchronizes overall `validated`, and regenerates the dashboard.
+- Allows an independently reviewed implementation-semantic change to be
+  accepted explicitly with `--accept-implementation-goldens`, but only for one
+  concrete feature/corpus whose reference tool is `*-manual-semantic`. This
+  mode cannot replace RDKit- or Biopython-generated goldens and does not update
+  validation status or the dashboard.
+- Allows `--fixture PATH` to isolate one declared fixture for diagnosis or
+  reviewed manual-golden acceptance without changing status evidence.
 - Supports corpus pack member checks using PubChem defaults or corpus-declared SDF member properties and SMILES title prefixes.
 - Preserves all records in SDF pack fixtures for stereo implementation comparisons.
 - Emits structured semantic JSON for stored axis stereo validation issues and
   includes assigned axis `M`/`P` descriptors in bond descriptor maps.
+- Keeps non-isomeric SMILES parse/write comparison filtering synchronized with
+  the RDKit reference generator; stereo-bearing syntax is validated by the
+  dedicated representation, perception, CIP, and isomeric-SMILES features.
 
 ## Implementation Notes
 
@@ -49,6 +59,11 @@ or manually curated external-reference golden data.
 - Evidence schema v2 includes cross-platform text line-ending normalization.
 - Repeated `--update` runs preserve timestamps when the evidence hash is unchanged.
 - The validation command uses the Rust implementation only; RDKit, Biopython, or manually pinned external sources are used to generate or curate goldens, not to run validation.
+- Manual-semantic golden acceptance is an explicit review operation, not a way
+  to make an unexplained failure pass; the motivating chemistry or file-format
+  behavior must be independently checked before accepting the snapshot.
+- Manual-semantic acceptance uses the same bounded worker-count policy as
+  comparison and writes deterministic gzip streams with zero timestamps.
 - Fixture comparison uses a bounded worker pool while status writes and dashboard regeneration remain single-threaded.
 - Progress output uses plain ASCII bars and throttled checkpoint updates so it stays readable in terminals and captured logs.
 - Reference tools are never Rust runtime dependencies.
@@ -86,3 +101,8 @@ or manually curated external-reference golden data.
   PL-REX to validate CIP behavior.
 - v15: Add semantic output support for stored-axis validation issues and axis
   bond CIP descriptors.
+- v16: Restore RDKit-generator parity for the non-isomeric SMILES validation
+  subset after the stereo validation expansion.
+- v17: Add fixture-isolated validation, report every failing fixture, and add a
+  guarded acceptance command for independently reviewed `*-manual-semantic`
+  implementation goldens.

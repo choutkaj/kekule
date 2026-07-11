@@ -17,7 +17,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
 
 pub(crate) fn print_help() {
     eprintln!(
-        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all] [--update] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
+        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all] [--fixture PATH] [--update] [--accept-implementation-goldens] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
     );
 }
 
@@ -31,13 +31,13 @@ pub(crate) fn validate_args(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--feature" | "--corpus" | "--jobs" => {
+            "--feature" | "--corpus" | "--fixture" | "--jobs" => {
                 if index + 1 >= args.len() {
                     return Err(boxed_error(format!("missing value after {}", args[index])));
                 }
                 index += 2;
             }
-            "--update" => index += 1,
+            "--update" | "--accept-implementation-goldens" => index += 1,
             arg => return Err(boxed_error(format!("unknown validate argument: {arg}"))),
         }
     }

@@ -389,6 +389,58 @@ fn validate_jobs_defaults_to_available_parallelism_and_accepts_override() {
         "--jobs".to_owned()
     ])
     .is_err());
+    assert!(validate_args(&[
+        "--feature".to_owned(),
+        "io.smiles.canonical".to_owned(),
+        "--corpus".to_owned(),
+        "pubchem-100k".to_owned(),
+        "--fixture".to_owned(),
+        "data/packs/pack_001.smi".to_owned(),
+    ])
+    .is_ok());
+    assert!(validate_args(&[
+        "--feature".to_owned(),
+        "stereo.perception".to_owned(),
+        "--corpus".to_owned(),
+        "pubchem-100k".to_owned(),
+        "--accept-implementation-goldens".to_owned(),
+    ])
+    .is_ok());
+}
+
+#[test]
+fn implementation_golden_acceptance_is_limited_to_manual_semantic_references() {
+    let root = temp_feature_root("accept-implementation-goldens");
+    let corpus_root = root.join("validation/corpora/smoke");
+    let manifest_path = corpus_root.join("features/stereo.perception.toml");
+    fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
+        .expect("features directory");
+    fs::create_dir_all(corpus_root.join("data")).expect("data directory");
+    fs::write(corpus_root.join("data/example.smi"), "CC CID:1\n").expect("fixture should write");
+    let mut manifest = ValidationManifest {
+        feature_id: "stereo.perception".to_owned(),
+        corpus_id: "smoke".to_owned(),
+        reference_tool: "rdkit".to_owned(),
+        reference_version: "RDKit 2026.03.3".to_owned(),
+        comparison_mode: COMPARISON_MODE_IMPLEMENTATION_GOLDEN.to_owned(),
+        fixtures: vec!["data/example.smi".to_owned()],
+        _notes: Vec::new(),
+    };
+    assert!(accept_implementation_goldens(&manifest_path, &manifest, 2).is_err());
+
+    manifest.reference_tool = "pubchem-manual-semantic".to_owned();
+    manifest.reference_version = "PubChem PUG REST 2026-07-05".to_owned();
+    accept_implementation_goldens(&manifest_path, &manifest, 2)
+        .expect("manual semantic golden should be accepted");
+    let golden_path = corpus_root.join("golden/stereo.perception/data_example.smi.json.gz");
+    let golden: Value =
+        serde_json::from_str(&read_gzip_string(&golden_path).expect("golden should decompress"))
+            .expect("golden should be JSON");
+    assert_eq!(golden["feature_id"], "stereo.perception");
+    assert_eq!(golden["reference"]["runtime_dependency"], false);
+    assert!(golden["expected"]["records"].is_array());
+
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
@@ -492,6 +544,36 @@ fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
         .as_array()
         .expect("bond descriptors should be an array")
         .is_empty());
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn nonisomeric_smiles_validation_excludes_stereo_syntax() {
+    for smiles in ["C[C@H](N)C", "C/C=C/C", "C\\C=C\\C", "C*"] {
+        assert_eq!(
+            smiles_unsupported_subset_reason(smiles),
+            Some("unsupported"),
+            "{smiles}"
+        );
+    }
+    assert_eq!(smiles_unsupported_subset_reason("CCO"), None);
+}
+
+#[test]
+fn stereo_and_nonisomeric_validation_use_distinct_smiles_subsets() {
+    let root = temp_feature_root("smiles-validation-subsets");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "C[C@H](N)C CID:stereo\n").expect("fixture should write");
+
+    let stereo_records = read_smiles_records(&fixture).expect("stereo records");
+    assert_eq!(stereo_records[0].status, "ok");
+    assert!(stereo_records[0].molecule.is_some());
+
+    let nonisomeric_records =
+        read_nonisomeric_smiles_records(&fixture).expect("nonisomeric records");
+    assert_eq!(nonisomeric_records[0].status, "unsupported");
+    assert!(nonisomeric_records[0].molecule.is_none());
 
     fs::remove_dir_all(root).ok();
 }
@@ -982,11 +1064,10 @@ fn validation_comparison_counts_multiple_fixture_failures() {
 
 #[test]
 fn stereo_perception_validation_records_sanitize_errors_per_record() {
-    let molecule = smiles::read_str("C(#N)[Hg-2](C#N)(C#N)C#N.[K+].[K+]")
-        .expect("unsupported valence molecule should parse");
+    let molecule = smiles::read_str("c1cccc1").expect("invalid aromatic molecule should parse");
     let mut record = IndexedSmallRecord {
         record_index: 0,
-        title: "unsupported element".to_owned(),
+        title: "invalid aromatic representation".to_owned(),
         molecule,
     };
 
@@ -1044,6 +1125,26 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(sanitized_aromatic.graph(), AtomId::new(0)),
         3
     );
+    let mut aromatic_cyclohexyne =
+        smiles::read_str_with_options("C1=CC#CC=C1", SmilesParseOptions::default())
+            .expect("cyclohexyne parses");
+    perception::sanitize_with_options(&mut aromatic_cyclohexyne, SanitizeOptions::default())
+        .expect("cyclohexyne should sanitize");
+    let alkyne_atoms = aromatic_cyclohexyne
+        .graph()
+        .bonds()
+        .find_map(|(_, bond)| {
+            (bond.aromatic && bond.order == BondOrder::Triple).then_some(bond.endpoints())
+        })
+        .expect("aromaticized triple bond is retained");
+    assert_eq!(
+        explicit_valence_json(aromatic_cyclohexyne.graph(), alkyne_atoms.0),
+        4
+    );
+    assert_eq!(
+        explicit_valence_json(aromatic_cyclohexyne.graph(), alkyne_atoms.1),
+        4
+    );
     let mut thiophene = smiles::read_str_with_options("c1ccsc1", SmilesParseOptions::default())
         .expect("thiophene parses");
     perception::sanitize_with_options(&mut thiophene, SanitizeOptions::default())
@@ -1054,6 +1155,38 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .find_map(|(id, atom)| (atom.element.symbol() == "S").then_some(id))
         .expect("sulfur atom");
     assert_eq!(explicit_valence_json(thiophene.graph(), sulfur_id), 2);
+    let mut phosphorus_ring = smiles::read_str_with_options(
+        "C(F)(F)(F)P1P(P(P(P1C(F)(F)F)C(F)(F)F)C(F)(F)F)C(F)(F)F",
+        SmilesParseOptions::default(),
+    )
+    .expect("phosphorus ring parses");
+    perception::sanitize_with_options(&mut phosphorus_ring, SanitizeOptions::default())
+        .expect("phosphorus ring should sanitize");
+    for (phosphorus_id, phosphorus) in phosphorus_ring
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "P")
+    {
+        assert!(phosphorus.aromatic);
+        assert_eq!(
+            explicit_valence_json(phosphorus_ring.graph(), phosphorus_id),
+            3
+        );
+    }
+    let mut phosphinine =
+        smiles::read_str_with_options("C1=CC=PC=C1", SmilesParseOptions::default())
+            .expect("phosphinine parses");
+    perception::sanitize_with_options(&mut phosphinine, SanitizeOptions::default())
+        .expect("phosphinine should sanitize");
+    let phosphinine_phosphorus = phosphinine
+        .graph()
+        .atoms()
+        .find_map(|(id, atom)| (atom.element.symbol() == "P").then_some(id))
+        .expect("phosphinine phosphorus");
+    assert_eq!(
+        explicit_valence_json(phosphinine.graph(), phosphinine_phosphorus),
+        3
+    );
     let mut anionic_macrocycle = smiles::read_str_with_options(
         "CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]",
         SmilesParseOptions::default(),
@@ -1095,6 +1228,34 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     assert_eq!(
         explicit_valence_json(cyclopentadienyl.graph(), anionic_carbon_with_h)
             + anionic_carbon.explicit_hydrogens,
+        3
+    );
+    let mut substituted_cyclopentadienyl =
+        smiles::read_str_with_options("C[C-]1[C-]=[C-][C-]=[C-]1", SmilesParseOptions::default())
+            .expect("substituted cyclopentadienyl parses");
+    perception::sanitize_with_options(
+        &mut substituted_cyclopentadienyl,
+        SanitizeOptions::default(),
+    )
+    .expect("substituted cyclopentadienyl should sanitize");
+    let substituted_anionic_carbon = substituted_cyclopentadienyl
+        .graph()
+        .atoms()
+        .find_map(|(id, atom)| {
+            let degree = substituted_cyclopentadienyl
+                .graph()
+                .incident_bonds(id)
+                .ok()?
+                .count();
+            (atom.element.symbol() == "C" && atom.formal_charge < 0 && atom.aromatic && degree == 3)
+                .then_some(id)
+        })
+        .expect("substituted anionic carbon");
+    assert_eq!(
+        explicit_valence_json(
+            substituted_cyclopentadienyl.graph(),
+            substituted_anionic_carbon,
+        ),
         3
     );
     let mut fused_triazine = smiles::read_str_with_options(
@@ -1161,6 +1322,19 @@ fn canonical_smiles_validation_sanitizes_before_writing() {
 
     assert_eq!(item["status"], "ok");
     assert_eq!(item["canonical_smiles"], "c1ccccc1");
+}
+
+#[test]
+fn canonical_smiles_validation_matches_rdkit_parse_status_for_unsanitizable_input() {
+    let root = temp_feature_root("canonical-unsanitizable-input");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "[Cl-](Br)Br CID:invalid\n").expect("fixture should write");
+
+    let records = read_canonical_smiles_records(&fixture).expect("records should load");
+    let item =
+        canonical_smiles_record_json(&records[0], false).expect("canonical record should render");
+
+    assert_eq!(item["status"], "parse_error");
 }
 
 #[test]
