@@ -18,6 +18,8 @@ Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 
 - Delegates Molfile block parsing to `io.mol.v2000.parse`.
 - Preserves common V2000 `M  CHG`, `M  ISO`, and exact `M  RAD` metadata.
 - Inherits exact V2000 single-/double-bond source mark parsing from the Molfile parser.
+- Inherits V2000 atom-block valence/no-implicit semantics and valence-implied
+  tetrahedral hydrogen-carrier preservation.
 - Inherits fixed-width V2000 count and bond parsing from the Molfile parser.
 - Uses checked record/block offsets and validates declared M-record pair counts before mutation.
 - Treats raw parsing as separate from chemistry interpretation.
@@ -43,3 +45,5 @@ Parse multi-record SDF V2000 input into small molecules using the Molfile V2000 
 - v6: Move the public parser API under the `sdf` facade.
 - v7: Add PubChem-100k as required broad-corpus validation evidence.
 - v8: Inherit first-class source bond stereo marks from Molfile V2000 parsing.
+- v9: Inherit atom-block valence/no-implicit semantics and valence-implied
+  tetrahedral hydrogen-carrier preservation from Molfile V2000 parsing.

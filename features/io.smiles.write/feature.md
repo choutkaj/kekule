@@ -10,7 +10,11 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - Emits graph-order-based noncanonical SMILES with branches, ring closures, dot fragments, common bond symbols, and bracket atoms when needed.
 - Emits `[nH]` for sanitized aromatic donor nitrogen when the perceived hydrogen must survive reparse.
 - Preserves bracket-only no-implicit-hydrogen semantics.
-- Rejects zero, dative, quadruple, stored stereo elements, source bond stereo marks, radicals, and graphs requiring more than 99 ring labels instead of silently coercing them.
+- Rejects zero, dative, quadruple, stored stereo elements, source bond stereo
+  marks, and graphs requiring more than 99 ring labels instead of silently
+  coercing them. Radical atoms are writeable only when reparsing the emitted
+  bracket atom will infer the same multiplicity from its valence; arbitrary
+  stored radical/valence combinations are rejected.
 - Does not canonicalize or sanitize before writing.
 
 ## Implementation Notes
@@ -19,6 +23,9 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - A deterministic DFS tree is rendered with preassigned ring closures at both endpoints and branch children before the selected continuation path.
 - Tree collection, subtree sizing, and component emission use explicit stacks so graph depth does not consume the Rust call stack.
 - Unsupported stereo/query details are read from the first-class stereo representation and return structured write errors until isomeric SMILES support can encode them faithfully.
+- Representable radicals need no nonstandard token: bracket atom syntax carries
+  the valence state and the parser reconstructs doublet through quintet
+  multiplicity deterministically.
 
 ## Validation
 
@@ -38,3 +45,5 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - v5: Move the public noncanonical writer API under the `smiles` facade.
 - v6: Add PubChem-100k as required broad-corpus validation evidence.
 - v7: Reject first-class stereo elements and source bond marks instead of reading removed atom/bond payload flags.
+- v8: Round-trip valence-implied bracket radicals through quintet while
+  rejecting radical multiplicities that the emitted atom valence cannot encode.

@@ -313,6 +313,30 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
             .expect("non-isomeric canonical SMILES should ignore isotope labels"),
         "COC"
     );
+
+    let mut aromatic_isotope =
+        smiles_api::read_str_with_options("C1=CC=[14CH]C=C1", SmilesParseOptions)
+            .expect("aromatic isotope parses");
+    perception_api::sanitize_with_options(&mut aromatic_isotope, SanitizeOptions::default())
+        .expect("aromatic isotope sanitizes");
+    assert_eq!(
+        smiles_api::write_canonical_with_options(&aromatic_isotope, CanonicalSmilesWriteOptions,)
+            .expect("aromatic isotope canonicalizes"),
+        "c1ccccc1"
+    );
+
+    let mut explicit_hydrogens =
+        smiles_api::read_str_with_options("[H]C([3H])(F)Cl", SmilesParseOptions)
+            .expect("explicit hydrogen isotopologue parses");
+    perception_api::sanitize_with_options(&mut explicit_hydrogens, SanitizeOptions::default())
+        .expect("explicit hydrogen isotopologue sanitizes");
+    let written =
+        smiles_api::write_canonical_with_options(&explicit_hydrogens, CanonicalSmilesWriteOptions)
+            .expect("explicit hydrogen isotopologue canonicalizes");
+    assert_eq!(written.matches("[H]").count(), 1, "{written}");
+    let reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("normalized explicit hydrogen output reparses");
+    assert_eq!(reparsed.graph().atom_count(), 4, "{written}");
 }
 
 #[test]
@@ -367,6 +391,25 @@ fn canonical_smiles_converges_after_aromaticity_perception() {
 }
 
 #[test]
+fn canonical_smiles_preserves_aromatic_high_order_bonds() {
+    let mut molecule = smiles_api::read_str_with_options("C1=CC#CC=C1", SmilesParseOptions)
+        .expect("cyclohexyne parses");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("cyclohexyne sanitizes");
+
+    let written = smiles_api::write_canonical(&molecule).expect("cyclohexyne canonicalizes");
+    assert!(written.contains('#'), "{written}");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("cyclohexyne canonical output reparses");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .expect("cyclohexyne canonical output sanitizes");
+    assert!(reparsed
+        .graph()
+        .bonds()
+        .any(|(_, bond)| bond.order == BondOrder::Triple && bond.aromatic));
+}
+
+#[test]
 fn canonical_smiles_implementation_avoids_sanitizer_feedback() {
     let source = include_str!("../io/smiles.rs");
 
@@ -406,9 +449,19 @@ fn aromatic_smiles_omitted_bonds_sanitize_with_expected_hydrogens() {
     perception_api::sanitize_with_options(&mut pyridinium, SanitizeOptions::default())
         .expect("pyridinium should sanitize");
     let nitrogen = pyridinium.graph().atom(AtomId::new(0)).expect("nitrogen");
-    assert!(nitrogen.aromatic);
+    assert!(!nitrogen.aromatic);
     assert_eq!(nitrogen.formal_charge, 1);
+    assert_eq!(nitrogen.radical, Some(AtomRadical::Doublet));
     assert_eq!(nitrogen.implicit_hydrogens, Some(0));
+    assert!(pyridinium.graph().bonds().all(|(_, bond)| !bond.aromatic));
+    assert_eq!(
+        pyridinium
+            .graph()
+            .bonds()
+            .filter(|(_, bond)| bond.order == BondOrder::Double)
+            .count(),
+        3
+    );
 
     for smiles in [
         "[nH]1cccc1",
@@ -1422,6 +1475,72 @@ fn periodate_cleanup_sanitizes_iodine_plus_three() {
 }
 
 #[test]
+fn sodium_chlorate_sanitizes_without_aromaticity() {
+    let mut molecule = smiles_api::read_str_with_options("[O-]Cl(=O)=O.[Na+]", SmilesParseOptions)
+        .expect("sodium chlorate should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("sodium chlorate should sanitize");
+    assert!(
+        molecule.graph().atoms().all(|(_, atom)| !atom.aromatic)
+            && molecule.graph().bonds().all(|(_, bond)| !bond.aromatic)
+    );
+}
+
+#[test]
+fn oxohalogen_cleanup_distinguishes_oxyacids_from_carbon_substituents() {
+    let mut iodous_acid = smiles_api::read_str_with_options("OI=O", SmilesParseOptions)
+        .expect("iodous acid should parse");
+    perception_api::sanitize_with_options(&mut iodous_acid, SanitizeOptions::default())
+        .expect("iodous acid should sanitize");
+    let iodine = iodous_acid
+        .graph()
+        .atoms()
+        .find(|(_, atom)| atom.element.symbol() == "I")
+        .expect("iodine")
+        .1;
+    assert_eq!(iodine.formal_charge, 1);
+    assert!(iodous_acid
+        .graph()
+        .atoms()
+        .any(|(_, atom)| atom.element.symbol() == "O" && atom.formal_charge == -1));
+
+    let mut iodyl_methane = smiles_api::read_str_with_options("CI(=O)=O", SmilesParseOptions)
+        .expect("iodyl methane should parse");
+    perception_api::sanitize_with_options(&mut iodyl_methane, SanitizeOptions::default())
+        .expect("iodyl methane should sanitize");
+    let iodine = iodyl_methane
+        .graph()
+        .atoms()
+        .find(|(_, atom)| atom.element.symbol() == "I")
+        .expect("iodine")
+        .1;
+    assert_eq!(iodine.formal_charge, 0);
+    assert!(iodyl_methane
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "O")
+        .all(|(_, atom)| atom.formal_charge == 0));
+
+    let mut cyclic_iodane_fragment =
+        smiles_api::read_str_with_options("COI(=O)(N)C", SmilesParseOptions)
+            .expect("iodane with a bridging oxygen should parse");
+    perception_api::sanitize_with_options(&mut cyclic_iodane_fragment, SanitizeOptions::default())
+        .expect("neutral lambda-five iodane should sanitize");
+    let iodine = cyclic_iodane_fragment
+        .graph()
+        .atoms()
+        .find(|(_, atom)| atom.element.symbol() == "I")
+        .expect("iodine")
+        .1;
+    assert_eq!(iodine.formal_charge, 0);
+    assert!(cyclic_iodane_fragment
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.element.symbol() == "O")
+        .all(|(_, atom)| atom.formal_charge == 0));
+}
+
+#[test]
 fn uranyl_beta_diketonate_salt_sanitizes() {
     let mut molecule = smiles_api::read_str_with_options(
         "C1=CC=C(C=C1)C(=O)[CH-]C(=O)C2=CC=CC=C2.C1=CC=C(C=C1)C(=O)[CH-]C(=O)C2=CC=CC=C2.O=[U+2]=O",
@@ -2377,6 +2496,61 @@ fn large_conjugated_macrocycle_aromatic_core_is_not_size_skipped() {
 }
 
 #[test]
+fn tetrahydroporphyrin_marks_each_conjugated_pyrrole_ring_aromatic() {
+    let mut molecule = smiles_api::read_str_with_options(
+        "CC=C1C(=C2C=C3C(=CC)C(=C(N3)C=C4C(=C(C(=CC5=C(C(=C(N5)C=C1N2)C)CCC(=O)O)N4)CCC(=O)O)C)C)C",
+        SmilesParseOptions,
+    )
+    .expect("tetrahydroporphyrin should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("tetrahydroporphyrin should sanitize");
+
+    let aromatic_atoms = molecule
+        .graph()
+        .atoms()
+        .filter(|(_, atom)| atom.aromatic)
+        .map(|(atom_id, atom)| (atom_id.index(), atom.element.symbol()))
+        .collect::<Vec<_>>();
+    let rings = molecule
+        .graph()
+        .ring_set()
+        .expect("sanitization should retain the ring set")
+        .rings()
+        .iter()
+        .map(|ring| {
+            ring.atoms
+                .iter()
+                .map(|atom| {
+                    let payload = molecule
+                        .graph()
+                        .atom(*atom)
+                        .expect("ring atom should exist");
+                    (
+                        atom.index(),
+                        payload.element.symbol(),
+                        payload.explicit_hydrogens,
+                        payload.implicit_hydrogens,
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        aromatic_atoms.len(),
+        20,
+        "atoms={aromatic_atoms:?} rings={rings:?}"
+    );
+    assert_eq!(
+        aromatic_atoms
+            .iter()
+            .filter(|(_, symbol)| *symbol == "N")
+            .count(),
+        4,
+        "{aromatic_atoms:?}"
+    );
+}
+
+#[test]
 fn fused_lone_pair_five_ring_with_macrocycle_pi_links_stays_aromatic() {
     let mut molecule = smiles_api::read_str_with_options(
         "CC1=C(C2=CC3=NC(=CC4=NC(=CC5=C(C(=C(N5)C=C1N2)C=C)C)C(=C4CCC(=O)O)C)C(=C3C)CCC(=O)O)C=C",
@@ -2709,6 +2883,24 @@ fn aromatic_pyridinium_smiles_sanitizes() {
         .expect("pyridinium nitrogen should exist")
         .1;
     assert!(cationic_nitrogen.aromatic);
+
+    let mut protonated = smiles_api::read_str_with_options("Nc1ccc[nH+]c1", SmilesParseOptions)
+        .expect("protonated pyridinium should parse");
+    perception_api::sanitize_with_options(&mut protonated, SanitizeOptions::default())
+        .expect("protonated pyridinium should sanitize");
+    assert!(protonated
+        .graph()
+        .atoms()
+        .any(|(_, atom)| atom.element.symbol() == "N" && atom.formal_charge > 0 && atom.aromatic));
+
+    let mut anionic = smiles_api::read_str_with_options("c1[n-]cnn1", SmilesParseOptions)
+        .expect("anionic aromatic nitrogen should parse");
+    perception_api::sanitize_with_options(&mut anionic, SanitizeOptions::default())
+        .expect("anionic aromatic nitrogen should sanitize");
+    assert!(anionic
+        .graph()
+        .atoms()
+        .any(|(_, atom)| atom.element.symbol() == "N" && atom.formal_charge < 0 && atom.aromatic));
 }
 
 #[test]
@@ -2770,6 +2962,91 @@ fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
         3,
         "{thallium_written}"
     );
+
+    let mut antimony = smiles_api::read_str_with_options("C[Sb](C)C", SmilesParseOptions)
+        .expect("organoantimony SMILES parses");
+    perception_api::sanitize_with_options(&mut antimony, SanitizeOptions::default())
+        .expect("organoantimony SMILES sanitizes");
+    let antimony_written = smiles_api::write_canonical(&antimony)
+        .expect("organoantimony canonical SMILES should write");
+    assert_eq!(
+        antimony_written.matches("[CH3]").count(),
+        3,
+        "{antimony_written}"
+    );
+}
+
+#[test]
+fn canonical_smiles_materializes_hydrogen_on_bracketed_hypervalent_phosphorus() {
+    let mut molecule = smiles_api::read_str_with_options("OP(=O)O", SmilesParseOptions)
+        .expect("phosphorous acid should parse");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("phosphorous acid should sanitize");
+
+    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+        .expect("canonical phosphorous acid should write");
+    assert!(written.contains("[PH]"), "{written}");
+
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("canonical phosphorous acid should reparse");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .expect("canonical phosphorous acid should resanitize");
+    let phosphorus = reparsed
+        .graph()
+        .atoms()
+        .find(|(_, atom)| atom.element.symbol() == "P")
+        .expect("phosphorus should remain")
+        .1;
+    assert_eq!(phosphorus.explicit_hydrogens, 1);
+    assert_eq!(phosphorus.implicit_hydrogens, Some(0));
+    assert!(phosphorus.no_implicit_hydrogens);
+}
+
+#[test]
+fn canonical_substituted_pyridinium_round_trip_sanitizes() {
+    let input = "CCCCCC(=O)C[N+]1=CC=CC=C1.C1(C(=O)NC(=O)NC1=O)[N+](=O)[O-]";
+    let mut molecule = smiles_api::read_str_with_options(input, SmilesParseOptions)
+        .expect("pyridinium regression parses");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("pyridinium regression sanitizes");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES writes");
+    let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+        .expect("canonical SMILES reparses");
+    let result = perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default());
+    assert!(result.is_ok(), "{written}: {result:#?}");
+}
+
+#[test]
+fn canonical_pubchem_100k_main_group_regressions_resanitize() {
+    for input in [
+        "C1=CC=C2C(=C1)NC3=CC=CC=C3[As]2O[As]4C5=CC=CC=C5NC6=CC=CC=C64",
+        "C1=CC2=C(C=C1Cl)[I+]C3=C(O2)C=CC(=C3)Cl.OS(=O)(=O)[O-]",
+        "CC(C)CC(=O)OCC1=COC=C2C1=CC=C2C=O",
+        "C1=CC=C(C=C1)C2=CC(=[O+]C(=C2)C3=CC=CC=C3)C4=CC=CC=C4.[O-]Cl(=O)(=O)=O",
+        "C1=CC=PC=C1",
+        "C1=C(C2=COC=C(C2=C1)CO)C=O",
+        "CC(=O)OCC1=COC=C2C1=CC=C2C=O",
+        "CC1=CC(=CC(=[O+]1)C)SCC=C",
+        "C1=CC=C2C(=C1)C3=CC=CC=C3[Si]2(C4=CC(=CC=C4)Br)F",
+        "CSC1=C(C(=[S+]S1)SC)O",
+        "C[Si](C)(C)C1=CC=C(S1)C2=C3C[Si]4(CC3=C(S2)C5=CC=C(S5)[Si](C)(C)C)CC6=C(SC(=C6C4)C7=CC=C(S7)[Si](C)(C)C)C8=CC=C(S8)[Si](C)(C)C",
+        "C1C2=CC=CC=C2[Sn]3(C4=CC=CC=C4CN1CC5=CC=CC=C53)Br",
+        "C1=CC=C2C(=C1)NC3=CC=CC=C3[AsH]2(N)Cl",
+        "C[N+](C)(C)C.C[Si-]12(C3=CC=CC=C3C(O1)(C(F)(F)F)C(F)(F)F)C4=CC=CC=C4C(O2)(C(F)(F)F)C(F)(F)F",
+        "C1=CC2=C3C(=C1)[I+]C4=CC=CC(=C43)[I+]2",
+        "C[Si]1(CC2=CC=CC=C2C1)[Si](C)(C)C",
+    ] {
+        let mut molecule = smiles_api::read_str_with_options(input, SmilesParseOptions)
+            .unwrap_or_else(|error| panic!("input should parse: {input}: {error}"));
+        perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+            .unwrap_or_else(|error| panic!("input should sanitize: {input}: {error:#?}"));
+        let written = smiles_api::write_canonical(&molecule)
+            .unwrap_or_else(|error| panic!("canonical output should write: {input}: {error}"));
+        let mut reparsed = smiles_api::read_str_with_options(&written, SmilesParseOptions)
+            .unwrap_or_else(|error| panic!("canonical output should parse: {written}: {error}"));
+        perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+            .unwrap_or_else(|error| panic!("canonical output should sanitize: {written}: {error:#?}"));
+    }
 }
 
 #[test]
@@ -3105,20 +3382,28 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .graph_mut()
         .remove_stereo_element(element)
         .expect("remove atom stereo");
-    molecule.graph_mut().atom_mut(a).expect("atom").radical = Some(AtomRadical::Doublet);
-    assert!(
-        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-            .expect_err("radical should be rejected")
-            .message
-            .contains("radicals")
-    );
+    {
+        let mut atom = molecule.graph_mut().atom_mut(a).expect("atom");
+        atom.radical = Some(AtomRadical::Doublet);
+        atom.explicit_hydrogens = 2;
+        atom.no_implicit_hydrogens = true;
+    }
+    let radical_smiles = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
+        .expect("valence-consistent radical should write");
+    assert!(radical_smiles.contains("[CH2]"));
+    let radical_reparsed = smiles_api::read_str_with_options(&radical_smiles, SmilesParseOptions)
+        .expect("radical writer output should parse");
+    assert!(radical_reparsed
+        .graph()
+        .atoms()
+        .any(|(_, atom)| atom.radical == Some(AtomRadical::Doublet)));
 
-    molecule.graph_mut().atom_mut(a).expect("atom").radical = None;
-    molecule
-        .graph_mut()
-        .atom_mut(a)
-        .expect("atom")
-        .no_implicit_hydrogens = true;
+    {
+        let mut atom = molecule.graph_mut().atom_mut(a).expect("atom");
+        atom.radical = None;
+        atom.explicit_hydrogens = 0;
+        atom.no_implicit_hydrogens = true;
+    }
     let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
         .expect("no-implicit-hydrogen atom should write");
     assert!(written.contains("[C]"));
@@ -3128,6 +3413,52 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .graph()
         .atoms()
         .any(|(_, atom)| atom.no_implicit_hydrogens));
+}
+
+#[test]
+fn bracket_atoms_infer_rdkit_radical_multiplicity_from_valence_deficit() {
+    for (smiles, atom_index, expected) in [
+        ("[C]", 0, AtomRadical::Quintet),
+        ("[C]C", 0, AtomRadical::Quartet),
+        ("C=[C]", 1, AtomRadical::Triplet),
+        ("C#[C]", 1, AtomRadical::Doublet),
+        ("[N]", 0, AtomRadical::Quartet),
+        ("[O]", 0, AtomRadical::Triplet),
+    ] {
+        let molecule = smiles_api::read_str_with_options(smiles, SmilesParseOptions)
+            .expect("radical SMILES should parse");
+        assert_eq!(
+            molecule
+                .graph()
+                .atom(AtomId::new(atom_index))
+                .expect("bracket atom")
+                .radical,
+            Some(expected),
+            "{smiles}"
+        );
+    }
+
+    let aromatic_radical = smiles_api::read_str_with_options("[c]1ccccc1", SmilesParseOptions)
+        .expect("aromatic carbon radical parses");
+    assert_eq!(
+        aromatic_radical
+            .graph()
+            .atom(AtomId::new(0))
+            .expect("aromatic radical")
+            .radical,
+        Some(AtomRadical::Doublet)
+    );
+    let substituted_pyridinium =
+        smiles_api::read_str_with_options("C[n+]1ccccc1", SmilesParseOptions)
+            .expect("substituted pyridinium parses");
+    assert_eq!(
+        substituted_pyridinium
+            .graph()
+            .atom(AtomId::new(1))
+            .expect("pyridinium nitrogen")
+            .radical,
+        None
+    );
 }
 
 #[test]

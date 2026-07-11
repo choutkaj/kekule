@@ -1,9 +1,9 @@
 id = "io.smiles.write"
 title = "Noncanonical SMILES writer"
 area = "io"
-version = 7
+version = 8
 implemented = true
-validated = false
-description = "Write deterministic noncanonical SMILES that reparse locally or reject unsupported chemistry and lossy stereo explicitly."
+validated = true
+description = "Write deterministic noncanonical SMILES that reparse locally, including valence-implied radicals, or reject lossy chemistry and stereo explicitly."
 depends_on = ["io.smiles.parse", "stereo.representation"]
 validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "enamine-diversity"]

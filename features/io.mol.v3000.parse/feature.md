@@ -9,6 +9,8 @@ Parse a single Molfile V3000 CTAB into `SmallMolecule` using raw parsing semanti
 - Exposes `molfile::read_v3000_str`.
 - Parses three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND` sections, and line continuations.
 - Preserves title/program/comment properties, atom coordinates, bond orders, atom map numbers, formal charges, isotopes via `MASS`, radical multiplicities, and supported V3000 bond `CFG` stereo as source bond marks.
+- Preserves valence-implied hydrogen carriers on degree-three tetrahedral `CFG`
+  centers as explicit atom hydrogens using the same rule as V2000 parsing.
 - Rejects malformed sections, count mismatches, duplicate atom indices, out-of-range bond endpoints, unknown elements, non-finite coordinates, unsupported bond orders, atom stereochemistry, and enhanced stereo collections with structured parse errors.
 - Does not run sanitization, valence perception, ring perception, aromaticity, or stereochemistry perception.
 
@@ -36,3 +38,5 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 - v4: Move the public parser API under the `molfile` facade.
 - v5: Add PubChem-100k as required broad-corpus validation evidence.
 - v6: Store supported V3000 bond `CFG` values as first-class source bond marks.
+- v7: Preserve valence-implied tetrahedral hydrogen carriers from V3000 `CFG`
+  syntax using the shared RDKit-like allowed-valence table.

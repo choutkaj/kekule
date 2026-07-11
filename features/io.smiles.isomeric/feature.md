@@ -29,6 +29,9 @@ Write noncanonical isomeric SMILES from the first-class stereo representation.
   unknown/unspecified/invalid-cleared stereo until those layers have explicit
   writer support.
 - Does not sanitize, perceive stereo, or assign CIP descriptors before writing.
+- Inherits valence-implied singlet-through-quintet bracket-radical output from
+  the underlying noncanonical writer and rejects non-representable stored
+  radical/valence combinations.
 
 ## Implementation Notes
 
@@ -99,3 +102,5 @@ parity validation.
   SMILES records, allow inert directional source marks next to non-stereogenic
   alkenes, and use stored-Kekule atom style for components that retain stored
   Kekule bond orders.
+- v7: Inherit lossless valence-implied bracket-radical output through quintet
+  from the noncanonical SMILES writer.

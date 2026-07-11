@@ -141,6 +141,8 @@ fn radical_code(radical: Option<AtomRadical>) -> u8 {
         Some(AtomRadical::Singlet) => 1,
         Some(AtomRadical::Doublet) => 2,
         Some(AtomRadical::Triplet) => 3,
+        Some(AtomRadical::Quartet) => 4,
+        Some(AtomRadical::Quintet) => 5,
     }
 }
 
