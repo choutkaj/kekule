@@ -452,14 +452,11 @@ fn active_fragments(mol: &Molecule, graph: &ActiveRingGraph) -> Vec<Vec<AtomId>>
 fn pick_degree_two_nodes(fragment: &[AtomId], graph: &ActiveRingGraph) -> Vec<AtomId> {
     let mut forbidden = vec![false; graph.atom_degrees.len()];
     let mut roots = Vec::new();
-    loop {
-        let Some(root) = fragment
-            .iter()
-            .copied()
-            .find(|atom| graph.atom_degrees[atom.index()] == 2 && !forbidden[atom.index()])
-        else {
-            break;
-        };
+    while let Some(root) = fragment
+        .iter()
+        .copied()
+        .find(|atom| graph.atom_degrees[atom.index()] == 2 && !forbidden[atom.index()])
+    {
         roots.push(root);
         forbidden[root.index()] = true;
         let mut stack = vec![root];
