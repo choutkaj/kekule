@@ -6,7 +6,6 @@ use crate::bio::{AtomSiteMetadata, BioHierarchy, MacroMolecule, MolecularContent
 use crate::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3, PropValue};
 use crate::small::SmallMolecule;
 
-use super::mmcif::canonical_mmcif_element_symbol;
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -468,6 +467,16 @@ fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> MmcifEntityKind 
     } else {
         MmcifEntityKind::NonPolymer
     }
+}
+
+fn canonical_mmcif_element_symbol(symbol: &str) -> String {
+    let mut chars = symbol.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut canonical = first.to_ascii_uppercase().to_string();
+    canonical.extend(chars.flat_map(char::to_lowercase));
+    canonical
 }
 
 fn select_alt_locations(

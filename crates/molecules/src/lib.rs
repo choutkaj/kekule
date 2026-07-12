@@ -122,8 +122,6 @@ pub mod mmcif {
         MmcifValue,
     };
 
-    use crate::bio::MacroMolecule;
-
     /// Parses a structural mmCIF data document without assigning molecular meaning.
     pub fn parse_str(
         input: &str,
@@ -138,17 +136,6 @@ pub mod mmcif {
         options: MmcifInterpretOptions,
     ) -> Result<MmcifInterpretation, MmcifInterpretError> {
         crate::io::interpret_mmcif(document, options)
-    }
-
-    /// Reads the historical single-`MacroMolecule` representation.
-    ///
-    /// New code should use [`parse_str`] followed by [`interpret`]. This compatibility
-    /// entry point cannot represent ligands, ions, and solvent as separate molecules.
-    pub fn read_str(
-        input: &str,
-        options: MmcifParseOptions,
-    ) -> Result<MacroMolecule, MmcifParseError> {
-        crate::io::read_mmcif_str(input, options)
     }
 }
 

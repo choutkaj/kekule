@@ -4,6 +4,8 @@ use crate::mmcif::{
     MmcifParseOptions,
 };
 
+use super::deterministic_text_mutations;
+
 fn interpret(source: &str) -> mmcif::MmcifInterpretation {
     let document = mmcif::parse_str(source, MmcifParseOptions::default()).expect("parse mmCIF");
     mmcif::interpret(&document, MmcifInterpretOptions::default()).expect("interpret mmCIF")
@@ -101,6 +103,45 @@ fn mmcif_document_rejects_malformed_structure() {
     .is_err());
 }
 
+#[test]
+fn mmcif_document_resource_limits_cover_the_canonical_reader() {
+    let input = "data_x\nloop_\n_atom_site.type_symbol\nC\n";
+
+    for options in [
+        MmcifParseOptions {
+            max_input_bytes: input.len() - 1,
+            ..MmcifParseOptions::default()
+        },
+        MmcifParseOptions {
+            max_tokens: 2,
+            ..MmcifParseOptions::default()
+        },
+        MmcifParseOptions {
+            max_token_bytes: 2,
+            ..MmcifParseOptions::default()
+        },
+        MmcifParseOptions {
+            max_atom_site_rows: 0,
+            ..MmcifParseOptions::default()
+        },
+    ] {
+        assert!(mmcif::parse_str(input, options).is_err());
+    }
+}
+
+#[test]
+fn deterministic_mmcif_document_mutations_are_panic_free() {
+    let seed = "data_tiny\nloop_\n_entity.id\n_entity.type\n1 non-polymer\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_entity_id\nC C1 LIG A 1\n";
+    for input in deterministic_text_mutations(seed) {
+        std::panic::catch_unwind(|| {
+            if let Ok(document) = mmcif::parse_str(&input, MmcifParseOptions::default()) {
+                let _ = mmcif::interpret(&document, MmcifInterpretOptions::default());
+            }
+        })
+        .expect("mmCIF parse-then-interpret mutation panicked");
+    }
+}
+
 const MIXED_CONTENTS: &str = r#"
 data_mixed
 loop_
@@ -182,6 +223,71 @@ fn interpretation_separates_macro_small_ion_and_solvent_molecules() {
     assert_eq!(owned_macro.len(), 1);
     assert_eq!(owned_solvent.into_molecules().len(), 2);
     assert_eq!(owned_report, *report);
+}
+
+#[test]
+fn interpretation_preserves_macromolecular_hierarchy_metadata() {
+    let interpretation = interpret(
+        r#"
+data_metadata
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.auth_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 C CA CAY . GLY GLY A X 1 10 42 A 0.50 12.25 1.25 2.50 3.75 7
+ATOM 2 O O O . GLY GLY A X 1 10 42 A 1.00 10.00 4.25 5.50 6.75 7
+"#,
+    );
+    let molecule = interpretation
+        .contents()
+        .macromolecules()
+        .next()
+        .expect("macromolecule");
+
+    let (_, chain) = molecule.hierarchy().chains().next().expect("chain");
+    assert_eq!(chain.label_id, "A");
+    assert_eq!(chain.author_id.as_deref(), Some("X"));
+    let (_, residue) = molecule.hierarchy().residues().next().expect("residue");
+    assert_eq!(residue.label_comp_id.as_deref(), Some("GLY"));
+    assert_eq!(residue.author_comp_id.as_deref(), Some("GLY"));
+    assert_eq!(residue.label_seq_id, Some(10));
+    assert_eq!(residue.author_seq_id.as_deref(), Some("42"));
+    assert_eq!(residue.insertion_code.as_deref(), Some("A"));
+    let (_, site) = molecule.hierarchy().atom_sites().next().expect("atom site");
+    assert_eq!(site.metadata.label_atom_id.as_deref(), Some("CA"));
+    assert_eq!(site.metadata.auth_atom_id.as_deref(), Some("CAY"));
+    assert_eq!(site.metadata.occupancy, Some(0.5));
+    assert_eq!(site.metadata.b_factor, Some(12.25));
+    let (_, conformer) = molecule.graph().first_conformer().expect("conformer");
+    assert_eq!(
+        conformer.props().get("mmcif.model_id"),
+        Some(&PropValue::String("7".into()))
+    );
+    assert_eq!(
+        conformer.position(site.atom),
+        Some(crate::core::Point3::new(1.25, 2.5, 3.75))
+    );
 }
 
 #[test]
@@ -445,4 +551,31 @@ C C1 LIG L 1 1 2 1
     let error = mmcif::interpret(&document, MmcifInterpretOptions::default())
         .expect_err("inconsistent charge");
     assert!(error.message.contains("inconsistent topology payload"));
+}
+
+#[test]
+fn interpretation_rejects_invalid_atom_site_payloads() {
+    for (source, expected) in [
+        (
+            "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\nC C1 LIG A 1 2",
+            "partial atom-site coordinate",
+        ),
+        (
+            "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\nXx C1 LIG A",
+            "unknown atom-site element",
+        ),
+        (
+            "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_seq_id\nC C1 LIG A 999999999999999999",
+            "invalid integer",
+        ),
+        (
+            "data_x\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nC C1 LIG A 1e999 0 0",
+            "non-finite float",
+        ),
+    ] {
+        let document = mmcif::parse_str(source, MmcifParseOptions::default()).expect("document");
+        let error = mmcif::interpret(&document, MmcifInterpretOptions::default())
+            .expect_err("invalid atom-site payload");
+        assert!(error.message.contains(expected), "{error}");
+    }
 }

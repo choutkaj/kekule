@@ -16,31 +16,7 @@ C C2 GLY A 1 1
 "#;
 
 #[test]
-fn mmcif_read_str_public_facade() -> Result<(), Box<dyn std::error::Error>> {
-    use molecules::mmcif::{self, MmcifParseOptions};
-
-    let macro_mol = mmcif::read_str(MINIMAL_MMCIF, MmcifParseOptions::default())?;
-
-    assert_eq!(macro_mol.graph().atom_count(), 2);
-    assert_eq!(macro_mol.graph().bond_count(), 0);
-    macro_mol.validate()?;
-
-    Ok(())
-}
-
-#[test]
-fn bio_mmcif_reexport_remains_available() -> Result<(), Box<dyn std::error::Error>> {
-    use molecules::bio::{read_mmcif_str, MmcifParseOptions};
-
-    let macro_mol = read_mmcif_str(MINIMAL_MMCIF, MmcifParseOptions::default())?;
-
-    assert_eq!(macro_mol.graph().atom_count(), 2);
-
-    Ok(())
-}
-
-#[test]
-fn mmcif_document_and_interpretation_public_facade() -> Result<(), Box<dyn std::error::Error>> {
+fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use molecules::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions};
 
     let document = mmcif::parse_str(MINIMAL_MMCIF, MmcifParseOptions::default())?;
