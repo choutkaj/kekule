@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use crate::core::{
     AtomId, AxisStereo, BondId, ConformerId, DoubleBondStereo, Molecule, MoleculeError, Point3,
@@ -38,6 +40,42 @@ pub struct Component {
     id: ComponentId,
     atoms: Vec<AtomId>,
     props: PropMap,
+}
+
+#[derive(Debug, PartialEq)]
+struct ModelDefinition {
+    topology: Molecule,
+    components: Vec<Component>,
+    component_by_atom: Vec<ComponentId>,
+}
+
+/// Opaque identity of a model's immutable topology and component definition.
+///
+/// The key is preserved by [`MolecularModel::clone`] and coordinate updates.
+/// Separately built models receive distinct keys even when their contents are
+/// structurally equal. Prepared potentials use this identity to reject models
+/// other than the definition against which they were constructed.
+#[derive(Clone)]
+pub struct ModelDefinitionKey(Arc<ModelDefinition>);
+
+impl fmt::Debug for ModelDefinitionKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ModelDefinitionKey(..)")
+    }
+}
+
+impl PartialEq for ModelDefinitionKey {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ModelDefinitionKey {}
+
+impl Hash for ModelDefinitionKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.0).hash(state);
+    }
 }
 
 impl Component {
@@ -84,16 +122,32 @@ impl ComponentMapping {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 /// A fixed topology with exactly one complete Cartesian coordinate set.
 ///
 /// Positions use angstroms. The topology contains no conformers; coordinates
 /// are owned exclusively by this type and may be updated without changing
 /// topology or component membership.
 pub struct MolecularModel {
-    topology: Molecule,
+    definition: ModelDefinitionKey,
     positions: Vec<Point3>,
-    components: Vec<Component>,
+}
+
+impl fmt::Debug for MolecularModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MolecularModel")
+            .field("topology", &self.definition.0.topology)
+            .field("positions", &self.positions)
+            .field("components", &self.definition.0.components)
+            .finish()
+    }
+}
+
+impl PartialEq for MolecularModel {
+    fn eq(&self, other: &Self) -> bool {
+        self.definition.0.as_ref() == other.definition.0.as_ref()
+            && self.positions == other.positions
+    }
 }
 
 impl MolecularModel {
@@ -111,7 +165,12 @@ impl MolecularModel {
     }
 
     pub fn topology(&self) -> &Molecule {
-        &self.topology
+        &self.definition.0.topology
+    }
+
+    /// Returns the identity of this model's immutable definition.
+    pub fn definition_key(&self) -> &ModelDefinitionKey {
+        &self.definition
     }
 
     pub fn atom_count(&self) -> usize {
@@ -123,14 +182,14 @@ impl MolecularModel {
     }
 
     pub fn position(&self, atom: AtomId) -> Result<Point3, PositionError> {
-        self.topology
+        self.topology()
             .atom(atom)
             .map_err(|_| PositionError::InvalidAtomId(atom))?;
         Ok(self.positions[atom.index()])
     }
 
     pub fn set_position(&mut self, atom: AtomId, position: Point3) -> Result<(), PositionError> {
-        self.topology
+        self.topology()
             .atom(atom)
             .map_err(|_| PositionError::InvalidAtomId(atom))?;
         if !point_is_finite(position) {
@@ -159,21 +218,24 @@ impl MolecularModel {
     }
 
     pub fn component(&self, id: ComponentId) -> Result<&Component, ModelError> {
-        self.components
+        self.definition
+            .0
+            .components
             .get(id.index())
             .ok_or(ModelError::InvalidComponentId(id))
     }
 
     pub fn components(&self) -> impl Iterator<Item = (ComponentId, &Component)> {
-        self.components
+        self.definition
+            .0
+            .components
             .iter()
             .map(|component| (component.id, component))
     }
 
     pub fn component_for_atom(&self, atom: AtomId) -> Option<&Component> {
-        self.components
-            .iter()
-            .find(|component| component.atoms.contains(&atom))
+        let component = *self.definition.0.component_by_atom.get(atom.index())?;
+        self.definition.0.components.get(component.index())
     }
 }
 
@@ -183,6 +245,7 @@ pub struct MolecularModelBuilder {
     topology: Molecule,
     positions: Vec<Point3>,
     components: Vec<Component>,
+    component_by_atom: Vec<ComponentId>,
 }
 
 impl MolecularModelBuilder {
@@ -205,10 +268,18 @@ impl MolecularModelBuilder {
         if self.components.is_empty() {
             return Err(ModelBuildError::EmptyModel);
         }
+        if self.positions.len() != self.component_by_atom.len() {
+            return Err(ModelBuildError::InvalidSourceTopology(
+                "model component membership is incomplete",
+            ));
+        }
         Ok(MolecularModel {
-            topology: self.topology,
+            definition: ModelDefinitionKey(Arc::new(ModelDefinition {
+                topology: self.topology,
+                components: self.components,
+                component_by_atom: self.component_by_atom,
+            })),
             positions: self.positions,
-            components: self.components,
         })
     }
 
@@ -243,6 +314,7 @@ impl MolecularModelBuilder {
             let model_id = self.topology.add_atom(atom.clone());
             debug_assert_eq!(model_id.index(), self.positions.len());
             self.positions.push(source_positions[&source_id]);
+            self.component_by_atom.push(component);
             atom_map.insert(source_id, model_id);
             component_atoms.push(model_id);
         }
