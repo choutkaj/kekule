@@ -26,7 +26,7 @@ Decipher a parsed mmCIF structure document into clean molecule objects without t
 
 ## Validation
 
-- Unit tests cover mixed polymers, ligands, ions, repeated waters, multiple coordinate models, alternate locations, entity inference, strict metadata, and declared covalent links.
+- Unit tests cover mixed polymers, ligands, ions, repeated waters, multiple coordinate models, alternate locations, entity inference, strict metadata, and declared covalent links. Successful fuzzed documents are also passed through the public interpretation boundary.
 - A downstream-style integration test compiles the public parse-then-interpret workflow.
 - No corpus-backed molecule-boundary evidence exists yet, so the feature remains unvalidated.
 
