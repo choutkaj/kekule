@@ -6,7 +6,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Behavior/API
 
-- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, and `canon`.
+- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, `canon`, and `modeling`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -14,6 +14,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and separate macro validation/sanitization APIs.
 - SMILES, Molfile, SDF, mmCIF, perception, and canonicalization expose namespaced functions matching the staged architecture.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
+- Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
 
 ## Implementation Notes
 
@@ -38,3 +39,4 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v1: Introduce architecture-aligned facade modules, a small prelude, and non-public wrapper graph fields.
 - v2: Move expert perception APIs under focused facade modules and add separate macro validation/sanitization surface.
 - v3: Add downstream-style integration tests for the architecture-level public API.
+- v4: Add the focused SmallMolecule modelling, potential, and minimization namespace without expanding the prelude.

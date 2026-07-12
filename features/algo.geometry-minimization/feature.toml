@@ -1,0 +1,9 @@
+id = "algo.geometry-minimization"
+title = "Geometry minimization"
+area = "algorithms"
+version = 1
+implemented = true
+validated = false
+description = "Minimize fixed-topology molecular-model coordinates with deterministic normalized steepest descent and Armijo backtracking."
+depends_on = ["model.potential"]
+validation_required = []

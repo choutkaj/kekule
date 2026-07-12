@@ -14,6 +14,7 @@ The most important architectural rule is that the public API is not allowed to b
 Molecule        // raw graph kernel: topology, payloads, conformers, properties, caches
 SmallMolecule   // chemistry-aware small-molecule wrapper around Molecule
 MacroMolecule   // structure-biology wrapper around Molecule plus BioHierarchy
+MolecularModel  // fixed topology plus one complete coordinate set and components
 ```
 
 `Molecule` is not an RDKit-style fully interpreted chemical object. It is a graph and payload container. It may be incomplete, unsanitized, chemically invalid, or freshly parsed from a lossy file format. Chemical interpretation belongs to explicit perception/sanitization steps and to domain wrappers.
@@ -40,6 +41,7 @@ molecules
   mmcif        mmCIF parsing facade for macromolecular structures
   perception   sanitization, valence, rings, aromaticity, stereo perception
   canon        canonical ranking, identity, canonical graph utilities
+  modeling     fixed-topology physical models, potentials, and minimization
   prelude      small set of common user-facing imports
 ```
 
@@ -213,6 +215,39 @@ impl SmallMolecule {
 The public API should avoid requiring users to write `molecule.mol.atom_count()`. Prefer `molecule.atom_count()` and `molecule.graph().atom_count()`.
 
 Long term, the raw graph field should not be public. Use `graph()`, `graph_mut()`, and `into_graph()` instead.
+
+## Molecular modelling
+
+`MolecularModel` is the foundational modelling-layer snapshot. Its initial scope
+is deliberately restricted to fixed-topology `SmallMolecule` components:
+
+```text
+MolecularModel
+  Molecule       read-only global reference topology without conformers
+  positions      exactly one finite Point3 per live global AtomId
+  components     stable source-molecule partitions over global AtomIds
+```
+
+Construction clones a selected conformer from each source molecule into a fresh,
+contiguous global ID space. Atom and bond payloads, component properties, stored
+stereo elements/groups, and source bond marks are remapped; other conformers and
+derived perception caches are not copied. Construction never sanitizes or
+prepares a source molecule implicitly.
+
+Built models expose read-only topology and component membership. Only positions
+may change, through methods that preserve completeness and finiteness. Model
+coordinates use angstroms. Potentials use kJ/mol energies and kJ/mol/angstrom
+Cartesian gradients.
+
+The minimal potential interface evaluates energy and a complete gradient from a
+model. Geometry minimization is a namespaced function that clones its input and
+returns a model plus explicit convergence diagnostics. Potentials are not stored
+inside `MolecularModel`, and minimization never changes topology or component
+membership.
+
+Macromolecular selection/preparation, periodic cells, electronic state,
+constraints, topology mutation, reactive workflows, automatic force-field
+typing, and dynamics remain separate future capabilities.
 
 ## MacroMolecule and BioHierarchy
 
@@ -500,6 +535,9 @@ Prefer domain-specific error types at module boundaries:
 - `BioHierarchyError`
 - `MacroValidateError`
 - `MacroSanitizeError`
+- `ModelBuildError`
+- `PotentialError`
+- `MinimizationError`
 
 A future preparation API should use its own error type, for example `MacroPrepareError`, rather than overloading sanitization errors.
 
