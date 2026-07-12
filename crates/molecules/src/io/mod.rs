@@ -1,4 +1,6 @@
 mod mmcif;
+mod mmcif_document;
+mod mmcif_interpret;
 mod smiles;
 mod v2000;
 mod v3000;
@@ -7,6 +9,8 @@ use crate::algorithms::{allowed_valences, explicit_valence};
 use crate::core::{BondOrder, Molecule, StereoBondMarkKind};
 
 pub use mmcif::*;
+pub use mmcif_document::*;
+pub use mmcif_interpret::*;
 pub use smiles::*;
 pub use v2000::*;
 pub use v3000::*;

@@ -32,7 +32,7 @@ pub struct MmcifParseError {
 }
 
 impl MmcifParseError {
-    fn new(line: usize, message: impl Into<String>) -> Self {
+    pub(super) fn new(line: usize, message: impl Into<String>) -> Self {
         Self {
             line,
             message: message.into(),
@@ -63,9 +63,10 @@ pub fn read_mmcif_str(
 }
 
 #[derive(Debug, Clone)]
-struct MmcifToken {
-    text: String,
-    line: usize,
+pub(super) struct MmcifToken {
+    pub(super) text: String,
+    pub(super) line: usize,
+    pub(super) bare: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +75,7 @@ struct MmcifLoop<'a> {
     values: Vec<&'a MmcifToken>,
 }
 
-fn tokenize_mmcif(
+pub(super) fn tokenize_mmcif(
     input: &str,
     options: MmcifParseOptions,
 ) -> std::result::Result<Vec<MmcifToken>, MmcifParseError> {
@@ -118,7 +119,7 @@ fn tokenize_mmcif(
                     "unterminated semicolon text",
                 ));
             }
-            push_mmcif_token(&mut tokens, text, line_number, options)?;
+            push_mmcif_token(&mut tokens, text, line_number, false, options)?;
             line_index += 1;
             continue;
         }
@@ -133,7 +134,7 @@ fn tokenize_mmcif(
                 break;
             }
             let start = column;
-            let text = if bytes[column] == b'\'' || bytes[column] == b'"' {
+            let (text, bare) = if bytes[column] == b'\'' || bytes[column] == b'"' {
                 let quote = bytes[column];
                 column += 1;
                 let value_start = column;
@@ -148,7 +149,7 @@ fn tokenize_mmcif(
                 }
                 let value = &line[value_start..column];
                 column += 1;
-                value.to_owned()
+                (value.to_owned(), false)
             } else {
                 while column < bytes.len()
                     && !bytes[column].is_ascii_whitespace()
@@ -156,9 +157,9 @@ fn tokenize_mmcif(
                 {
                     column += 1;
                 }
-                line[start..column].to_owned()
+                (line[start..column].to_owned(), true)
             };
-            push_mmcif_token(&mut tokens, text, line_number, options)?;
+            push_mmcif_token(&mut tokens, text, line_number, bare, options)?;
         }
         line_index += 1;
     }
@@ -170,6 +171,7 @@ fn push_mmcif_token(
     tokens: &mut Vec<MmcifToken>,
     text: String,
     line: usize,
+    bare: bool,
     options: MmcifParseOptions,
 ) -> std::result::Result<(), MmcifParseError> {
     if text.len() > options.max_token_bytes {
@@ -184,7 +186,7 @@ fn push_mmcif_token(
             "input exceeds configured token count",
         ));
     }
-    tokens.push(MmcifToken { text, line });
+    tokens.push(MmcifToken { text, line, bare });
     Ok(())
 }
 
@@ -575,7 +577,7 @@ fn optional_mmcif_value<'a>(
     (!matches!(value, "." | "?")).then_some(value)
 }
 
-fn canonical_mmcif_element_symbol(symbol: &str) -> String {
+pub(super) fn canonical_mmcif_element_symbol(symbol: &str) -> String {
     let mut chars = symbol.chars();
     let Some(first) = chars.next() else {
         return String::new();

@@ -16,6 +16,7 @@ impl Point3 {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Conformer {
     pub(crate) positions: Vec<Option<Point3>>,
+    pub(crate) props: PropMap,
 }
 
 impl Conformer {
@@ -26,6 +27,7 @@ impl Conformer {
     pub fn with_atom_capacity(atom_capacity: usize) -> Self {
         Self {
             positions: vec![None; atom_capacity],
+            props: PropMap::new(),
         }
     }
 
@@ -51,5 +53,13 @@ impl Conformer {
             .iter()
             .enumerate()
             .filter_map(|(index, point)| point.map(|point| (AtomId::new(index as u32), point)))
+    }
+
+    pub fn props(&self) -> &PropMap {
+        &self.props
+    }
+
+    pub fn props_mut(&mut self) -> &mut PropMap {
+        &mut self.props
     }
 }

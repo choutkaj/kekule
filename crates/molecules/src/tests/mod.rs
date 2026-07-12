@@ -214,6 +214,7 @@ mod chemistry;
 mod cip;
 mod core_payload;
 mod graph;
+mod mmcif_contents;
 mod perception;
 mod public_api;
 mod ring_limits;
