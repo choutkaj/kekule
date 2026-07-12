@@ -7,6 +7,9 @@ use molecules::modeling::ComponentId;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DreidingPrepareError {
+    UnresolvedImplicitHydrogens {
+        atom: AtomId,
+    },
     CountedHydrogens {
         atom: AtomId,
         explicit: u8,
@@ -52,6 +55,10 @@ pub enum DreidingPrepareError {
 impl fmt::Display for DreidingPrepareError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnresolvedImplicitHydrogens { atom } => write!(
+                f,
+                "atom {atom} has an unresolved implicit-hydrogen count; DREIDING preparation requires an explicit zero count or no-implicit-hydrogens assertion"
+            ),
             Self::CountedHydrogens {
                 atom,
                 explicit,

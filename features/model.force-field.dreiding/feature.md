@@ -12,6 +12,8 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 - Prepares a potential with `DreidingPotential::prepare(&MolecularModel)` and implements
   the core `Potential` evaluation contract.
 - Exposes read-only per-atom type and partial-charge diagnostics.
+- Rejects unresolved implicit-hydrogen state; every atom must carry an explicit zero
+  implicit-hydrogen count or a no-implicit-hydrogens assertion.
 - Uses angstrom coordinates, kJ/mol energies, and kJ/mol/angstrom gradients.
 
 ## Implementation Notes

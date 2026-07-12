@@ -151,13 +151,16 @@ struct PreparedComponent {
 
 fn validate_atoms(model: &MolecularModel) -> Result<(), DreidingPrepareError> {
     for (atom_id, atom) in model.topology().atoms() {
-        let implicit = atom.implicit_hydrogens.unwrap_or(0);
-        if atom.explicit_hydrogens != 0 || implicit != 0 {
+        let implicit = atom.implicit_hydrogens;
+        if atom.explicit_hydrogens != 0 || implicit.is_some_and(|count| count != 0) {
             return Err(DreidingPrepareError::CountedHydrogens {
                 atom: atom_id,
                 explicit: atom.explicit_hydrogens,
-                implicit,
+                implicit: implicit.unwrap_or(0),
             });
+        }
+        if implicit.is_none() && !atom.no_implicit_hydrogens {
+            return Err(DreidingPrepareError::UnresolvedImplicitHydrogens { atom: atom_id });
         }
         if atom.radical.is_some() {
             return Err(DreidingPrepareError::RadicalAtom { atom: atom_id });
@@ -586,6 +589,7 @@ impl TopologySignature {
                     radical: atom.radical,
                     explicit_hydrogens: atom.explicit_hydrogens,
                     implicit_hydrogens: atom.implicit_hydrogens,
+                    no_implicit_hydrogens: atom.no_implicit_hydrogens,
                     aromatic: atom.aromatic,
                 })
                 .collect(),
@@ -616,6 +620,7 @@ struct AtomSignature {
     radical: Option<molecules::core::AtomRadical>,
     explicit_hydrogens: u8,
     implicit_hydrogens: Option<u8>,
+    no_implicit_hydrogens: bool,
     aromatic: bool,
 }
 

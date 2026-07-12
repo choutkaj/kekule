@@ -10,7 +10,9 @@ use molecules::small::SmallMolecule;
 use crate::{DreidingPotential, DreidingPrepareError};
 
 fn atom(symbol: &str) -> Atom {
-    Atom::new(Element::from_symbol(symbol).unwrap())
+    let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
+    atom.implicit_hydrogens = Some(0);
+    atom
 }
 
 fn component(
@@ -242,6 +244,18 @@ fn preparation_rejects_unrepresented_hydrogens_radicals_and_bond_orders() {
         .graph_mut()
         .atom_mut(AtomId::new(0))
         .unwrap()
+        .implicit_hydrogens = None;
+    let model = model_of(&source, conformer);
+    assert!(matches!(
+        DreidingPotential::prepare(&model),
+        Err(DreidingPrepareError::UnresolvedImplicitHydrogens { .. })
+    ));
+
+    let (mut source, conformer) = water([0.0, 0.0, 0.0]);
+    source
+        .graph_mut()
+        .atom_mut(AtomId::new(0))
+        .unwrap()
         .implicit_hydrogens = Some(1);
     let model = model_of(&source, conformer);
     assert!(matches!(
@@ -283,6 +297,19 @@ fn preparation_rejects_unrepresented_hydrogens_radicals_and_bond_orders() {
         DreidingPotential::prepare(&model),
         Err(DreidingPrepareError::InconsistentAromaticBond { .. })
     ));
+}
+
+#[test]
+fn no_implicit_hydrogens_assertion_resolves_an_unset_count() {
+    let (mut source, conformer) = water([0.0, 0.0, 0.0]);
+    {
+        let mut oxygen = source.graph_mut().atom_mut(AtomId::new(0)).unwrap();
+        oxygen.implicit_hydrogens = None;
+        oxygen.no_implicit_hydrogens = true;
+    }
+    let model = model_of(&source, conformer);
+
+    DreidingPotential::prepare(&model).unwrap();
 }
 
 #[test]

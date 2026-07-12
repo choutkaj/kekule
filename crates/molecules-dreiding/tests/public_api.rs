@@ -7,9 +7,14 @@ use molecules_dreiding::DreidingPotential;
 #[test]
 fn downstream_preparation_and_evaluation() {
     let mut graph = Molecule::new();
-    let oxygen = graph.add_atom(Atom::new(Element::from_symbol("O").unwrap()));
-    let first_hydrogen = graph.add_atom(Atom::new(Element::from_symbol("H").unwrap()));
-    let second_hydrogen = graph.add_atom(Atom::new(Element::from_symbol("H").unwrap()));
+    let explicit_atom = |symbol: &str| {
+        let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
+        atom.implicit_hydrogens = Some(0);
+        atom
+    };
+    let oxygen = graph.add_atom(explicit_atom("O"));
+    let first_hydrogen = graph.add_atom(explicit_atom("H"));
+    let second_hydrogen = graph.add_atom(explicit_atom("H"));
     graph
         .add_bond(oxygen, first_hydrogen, BondOrder::Single)
         .unwrap();
