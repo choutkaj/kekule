@@ -2,12 +2,13 @@
 
 ## Summary
 
-Write small molecules as SDF V2000 records while preserving molecule data fields.
+Write canonical `SdfRecord` values as ordered SDF V2000 records.
 
 ## Behavior/API
 
 - Exposes `sdf::write_v2000`.
-- Writes Molfile V2000 blocks followed by `sdf.field.*` properties as SDF data fields.
+- Accepts `&[SdfRecord]`, writes each record title and ordered `SdfDataField`
+  values, and never reads SDF metadata from molecule properties.
 - Inherits exact radical and supported source bond-stereo mark handling from the Molfile V2000 writer.
 - Inherits V2000 atom-block valence/no-implicit output and structured rejection
   of quartet/quintet radical multiplicity.
@@ -15,7 +16,7 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 
 ## Implementation Notes
 
-- The writer uses existing molecule properties for title/program/comment and SDF fields.
+- Molfile headers and SDF fields remain record/document concerns.
 - Records are emitted in input slice order.
 - Unsupported Molfile representations in any record return a structured error and no SDF text is returned.
 
@@ -37,3 +38,4 @@ Write small molecules as SDF V2000 records while preserving molecule data fields
 - v5: Inherit first-class source bond stereo marks from Molfile V2000 writing.
 - v6: Inherit atom-block valence/no-implicit output and lossless high-spin
   radical rejection from Molfile V2000 writing.
+- v7: Hard break to canonical `SdfRecord` input and record-owned metadata.

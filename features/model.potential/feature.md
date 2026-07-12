@@ -8,7 +8,9 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
 
 - Exposes `Potential`, `PotentialEvaluation`, `PotentialError`, and `Vector3` under `molecules::modeling::potential`.
 - Requires one finite Cartesian gradient vector per model atom and rejects non-finite energy or gradients.
-- Exposes `HarmonicBondParameter` and `HarmonicBondPotential` for explicit model `BondId` parameters.
+- Exposes `HarmonicBondParameter` and `HarmonicBondPotential` for explicit
+  `InstanceBondId` parameters; atom errors use `InstanceAtomId` and gradients
+  remain dense in `ModelAtomIndex` order.
 - Uses angstroms, kJ/mol energies, kJ/mol/angstrom gradients, and kJ/mol/angstrom-squared force constants.
 
 ## Implementation Notes
@@ -31,3 +33,5 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
 ## Revision Notes
 
 - v1: Add the potential contract, validated evaluation container, and explicit harmonic bond potential.
+- v2: Qualify topology references by molecule instance and include ownership in
+  mismatch detection.

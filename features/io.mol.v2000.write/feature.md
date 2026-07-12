@@ -18,6 +18,8 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Implementation Notes
 
 - Writer preserves current graph iteration order.
+- Writes neutral generated header lines; parsed record headers are owned by
+  `MolfileDocument`/`SdfRecord`, not `Molecule::props`.
 - Unsupported bond-order and source-mark combinations are rejected rather than silently downgraded.
 - Stored stereo elements are rejected until atom stereo and enhanced stereo writing are explicitly implemented.
 - Radical and stereo code tables are pinned to BIOVIA CTfile Formats 2020 V2000 CTAB bond-block and properties-block definitions.
@@ -45,3 +47,4 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 - v7: Preserve explicit no-implicit valence through the atom-block valence
   field and return a structured error for quartet/quintet radicals rather than
   coercing them to a CTfile radical code.
+- v8: Remove molecule-property coupling for format headers.

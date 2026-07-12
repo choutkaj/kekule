@@ -2,39 +2,47 @@
 
 ## Summary
 
-Decipher a parsed mmCIF structure document into clean molecule objects without treating the entire experimental structure as one graph.
+Interpret one selected coordinate model from a loss-preserving `MmcifDocument`
+into a `MolecularModel` with distinct molecule instances and a report.
 
 ## Behavior/API
 
-- Exposes `mmcif::interpret` with explicit options, structured errors, and an interpretation report.
-- Selects exactly one coordinate-containing data block per call.
-- Uses `_entity`, `_struct_asym`, and `_atom_site` metadata to classify and partition structural instances.
-- Produces polymer and branched instances as `MacroMolecule`, non-polymers and ions as `SmallMolecule`, and each water as an individual solvent molecule.
-- Deduplicates atom identity across coordinate models and stores coordinates as conformers carrying the source model ID.
-- Applies an explicit alternate-location policy; the default selects highest occupancy deterministically.
-- Declared covalent `_struct_conn` links merge molecular instances and add single bonds. Non-covalent, unresolved, and unsupported links are reported without topology changes.
-- Strict mode rejects missing entity classification; default mode makes conservative inferences and reports them.
-- Never sanitizes, prepares, adds hydrogens, or infers missing template bonds.
+- `mmcif::interpret` returns `MmcifInterpretation { model, report }` and never
+  sanitizes or prepares chemistry.
+- `MmcifModelSelection::RequireSingle` is the default and rejects multiple model
+  IDs; `Select(String)` and `First` are explicit alternatives.
+- Requires one complete finite position per interpreted atom after deterministic
+  alternate-location selection.
+- Uses entity, structural-instance, atom-site, and declared-connection metadata
+  to build Small/Macro instances. Only declared covalent links merge boundaries.
+- Assigns conservative evidence-backed roles and exposes exact source
+  classifications through graph properties/report data.
+- Reports selected and ignored models, altloc omissions, inferred entity kinds,
+  applied/ignored/unresolved connections, and pending template connectivity.
 
 ## Implementation Notes
 
-- Polymer/branched structural instances establish provisional molecule boundaries while CCD and polymer template connectivity remain unavailable.
-- Non-polymer and water occurrences are separated by residue identity, including conservative occurrence grouping when sequence identifiers are absent.
-- Source atom/component/asym identifiers remain on atom and graph properties; macromolecular hierarchy metadata remains in `BioHierarchy`.
-- The report counts coordinate models, output categories, applied connections, inferred classifications, ignored/unresolved connections, and multi-atom graphs still awaiting template bonds.
-- The parse-then-interpret pipeline is the only mmCIF molecular import path; no direct whole-file molecule reader or compatibility alias exists.
+- `BioHierarchy` maps labels to local `AtomId`; model insertion provides the
+  instance-qualified view.
+- Polymer/branched instances establish conservative macro boundaries; nonpolymer
+  and water occurrences remain distinct unless a declared covalent link joins
+  them.
+- The document remains the loss-preserving source representation.
 
 ## Validation
 
-- Unit tests cover mixed polymers, ligands, ions, repeated waters, multiple coordinate models, alternate locations, entity inference, strict metadata, and declared covalent links.
-- A downstream-style integration test compiles the public parse-then-interpret workflow.
-- No corpus-backed molecule-boundary evidence exists yet, so the feature remains unvalidated.
+- Tests cover mixed typed instances and roles, complete positions, default
+  multi-model rejection, explicit selection, altloc policy/reporting, missing
+  coordinates, covalent merging, and noncovalent separation.
 
 ## Out Of Scope
 
-- CCD/template bond lookup, polymer bond construction, ligand sanitization, PDB input, coordination chemistry, assembly generation, model conversion, preparation, and serialization.
+- CCD/template lookup, inferred polymer bonds, assembly generation, sanitization,
+  force-field preparation, and serialization.
 
 ## Revision Notes
 
-- v1: Add conservative staged interpretation of structural mmCIF documents into clean molecular contents.
-- v2: Remove the historical direct reader and make parse-then-interpret the exclusive mmCIF molecular import path.
+- v1: Staged interpretation into molecular-content containers.
+- v2: Remove direct whole-file molecule reader.
+- v3: Hard break to selected-model `MolecularModel` output and remove
+  `MolecularContents`/`Solvent`.

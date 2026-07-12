@@ -1,7 +1,7 @@
 id = "algo.rings.fast"
 title = "Fast ring membership detection"
 area = "algorithms"
-version = 6
+version = 7
 implemented = true
 validated = true
 description = "Detect whether atoms and bonds are members of any cycle without computing a canonical ring basis."

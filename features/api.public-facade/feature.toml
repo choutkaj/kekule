@@ -1,7 +1,7 @@
 id = "api.public-facade"
 title = "Public API facade"
 area = "api"
-version = 6
+version = 7
 implemented = true
 validated = false
 description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."
@@ -10,7 +10,6 @@ depends_on = [
   "core.atom-bond",
   "core.conformer-properties",
   "bio.hierarchy.smcra",
-  "bio.molecular-contents",
   "bio.mmcif.interpret",
   "io.mmcif.parse",
   "chem.sanitize.rdkit-like",

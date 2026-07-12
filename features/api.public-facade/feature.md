@@ -12,16 +12,19 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
 - `MacroMolecule` hides its raw graph and hierarchy fields behind `graph()`, `graph_mut()`, `hierarchy()`, and `hierarchy_mut()`.
 - `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and separate macro validation/sanitization APIs.
-- SMILES, Molfile, SDF, mmCIF, perception, and canonicalization expose namespaced functions matching the staged architecture.
-- The `mmcif` facade separates whole-document parsing from molecular interpretation and exposes reports/options without expanding the prelude.
-- `bio::{MolecularContents, Solvent}` represent clean multi-entity import results while retaining individual molecule objects.
+- SMILES, Molfile, SDF, and mmCIF expose format-specific Documents and explicit
+  interpretation; superseded direct reader APIs are absent.
+- `Molecule` is one asserted entity and may have disconnected graph topology.
+- `mmcif::interpret` returns a selected-coordinate `MolecularModel` plus report;
+  `MolecularContents` and `Solvent` are removed.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 - Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
 
 ## Implementation Notes
 
 - Existing algorithm and I/O internals remain available through focused facade modules rather than root aliases.
-- `SmallMolecule::from_smiles` parses without sanitizing; `from_smiles_sanitized` and `smiles::read_sanitized_str` make sanitization explicit in the name.
+- `SmallMolecule::from_smiles` orchestrates parse/interpret without sanitizing;
+  `from_smiles_sanitized` names the additional operation explicitly.
 - `graph_mut()` conservatively invalidates topology-derived perception state before handing out mutable graph access.
 - Macro validation is read-only; macro sanitization is conservative and rejects unsupported preparation-like options instead of silently guessing.
 - Internal validation tooling uses the same public namespaces as user code.
@@ -44,3 +47,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v4: Add the focused SmallMolecule modelling, potential, and minimization namespace without expanding the prelude.
 - v5: Add staged mmCIF document interpretation and molecular-content containers without expanding the prelude.
 - v6: Hard-break the historical direct mmCIF reader and all compatibility re-exports.
+- v7: Molecule-first hard break: format Documents, private `PerceptionState`,
+  instance-based `ModelTopology`, mmCIF model output, and deletion of all
+  superseded readers/components/content containers.
