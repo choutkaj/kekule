@@ -23,7 +23,7 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     assert!(!chain_membership.atom_in_ring(b));
     assert!(!chain_membership.bond_in_ring(ab));
     assert!(!chain_membership.bond_in_ring(bc));
-    assert_eq!(chain.perception().rings, ComputedState::Fresh);
+    assert!(chain.perception().has_rings());
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
     assert!(!membership.bond_in_ring(ca));
 
     mol.add_bond(c, a, BondOrder::Single).expect("bond");
-    assert_eq!(mol.perception().rings, ComputedState::Stale);
+    assert!(!mol.perception().has_rings());
     assert!(mol.ring_membership().is_none());
     assert!(mol.ring_set().is_none());
 }
@@ -138,7 +138,7 @@ fn aromaticity_marks_benzene_like_ring() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("benzene should be supported");
 
-    assert_eq!(mol.perception().aromaticity, ComputedState::Fresh);
+    assert!(mol.perception().has_aromaticity());
     assert!(atoms
         .iter()
         .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
@@ -753,7 +753,7 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
         .expect("benzene should be supported");
 
     mol.add_atom(oxygen());
-    assert_eq!(mol.perception().aromaticity, ComputedState::Stale);
+    assert!(!mol.perception().has_aromaticity());
     assert!(atoms
         .iter()
         .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
@@ -788,7 +788,7 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
 
     let report = stereo_api::validate_stereo(&mol);
 
-    assert_eq!(mol.perception().stereo, ComputedState::Fresh);
+    assert!(mol.stereo_elements().next().is_some());
     assert!(report
         .issues
         .contains(&StereoPerceptionIssue::InvalidTetrahedralCarrierCount {
@@ -817,7 +817,7 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
 
 #[test]
 fn stereo_candidates_use_sanitized_hydrogen_state_without_cip_assignment() {
-    let mut molecule = smiles_api::read_str("CC(F)(Cl)Br").expect("smiles should parse");
+    let mut molecule = read_smiles("CC(F)(Cl)Br").expect("smiles should parse");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("molecule should sanitize");
 
@@ -836,7 +836,7 @@ fn stereo_candidates_use_sanitized_hydrogen_state_without_cip_assignment() {
 
 #[test]
 fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element() {
-    let mut molecule = smiles_api::read_str("C/C=C\\F").expect("directional smiles should parse");
+    let mut molecule = read_smiles("C/C=C\\F").expect("directional smiles should parse");
     perception_api::sanitize_with_options(
         &mut molecule,
         SanitizeOptions {
@@ -850,7 +850,7 @@ fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element
 
     assert!(report.is_ok());
     assert_eq!(report.created_elements.len(), 1);
-    assert_eq!(molecule.graph().perception().stereo, ComputedState::Fresh);
+    assert!(molecule.graph().stereo_elements().next().is_some());
     let element = molecule
         .graph()
         .stereo_element(report.created_elements[0])
@@ -870,7 +870,7 @@ fn stereo_perception_assembles_paired_directional_marks_into_double_bond_element
 
 #[test]
 fn stereo_perception_skips_small_ring_double_bond_stereo_boundary() {
-    let mut cyclohexene = smiles_api::read_str(r"C1/C=C\CCC1").expect("marked cyclohexene parses");
+    let mut cyclohexene = read_smiles(r"C1/C=C\CCC1").expect("marked cyclohexene parses");
     perception_api::sanitize_with_options(
         &mut cyclohexene,
         SanitizeOptions {
@@ -884,8 +884,7 @@ fn stereo_perception_skips_small_ring_double_bond_stereo_boundary() {
     assert!(report.created_elements.is_empty());
     assert!(cyclohexene.graph().stereo_elements().next().is_none());
 
-    let mut cyclooctene =
-        smiles_api::read_str(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
+    let mut cyclooctene = read_smiles(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
     perception_api::sanitize_with_options(
         &mut cyclooctene,
         SanitizeOptions {
@@ -923,7 +922,7 @@ molecules
   1  5  1  0  0  0  0
 M  END
 ";
-    let mut molecule = molfile::read_v2000_str(input).expect("wedge molfile should parse");
+    let mut molecule = read_molfile(input).expect("wedge molfile should parse");
 
     let report = stereo_api::perceive_stereo(molecule.graph_mut());
 
@@ -955,7 +954,7 @@ M  END
 
 #[test]
 fn stereo_perception_uses_virtual_implicit_h_for_molfile_wedge_geometry() {
-    let mut molecule = molfile::read_v2000_str(implicit_h_wedge_geometry_molblock())
+    let mut molecule = read_molfile(implicit_h_wedge_geometry_molblock())
         .expect("implicit-H wedge molfile should parse");
     perception_api::sanitize_with_options(
         &mut molecule,
@@ -1327,8 +1326,8 @@ fn stereo_validation_accepts_structural_axis_elements() {
 
 #[test]
 fn stereo_perception_assembles_molfile_atropisomeric_axis() {
-    let mut molecule = molfile::read_v2000_str(rdkit_rp6306_atrop_molblock())
-        .expect("RDKit atropisomer fixture parses");
+    let mut molecule =
+        read_molfile(rdkit_rp6306_atrop_molblock()).expect("RDKit atropisomer fixture parses");
 
     let report = stereo_api::perceive_stereo(molecule.graph_mut());
 
@@ -1357,7 +1356,7 @@ fn stereo_perception_assembles_molfile_atropisomeric_axis() {
 
 #[test]
 fn stereo_perception_prefers_exocyclic_molfile_atropisomeric_axis() {
-    let mut molecule = molfile::read_v2000_str(rdkit_rp6306_atrop3_molblock())
+    let mut molecule = read_molfile(rdkit_rp6306_atrop3_molblock())
         .expect("RDKit alternate atropisomer fixture parses");
 
     let report = stereo_api::perceive_stereo(molecule.graph_mut());
@@ -1386,7 +1385,7 @@ fn stereo_perception_prefers_exocyclic_molfile_atropisomeric_axis() {
 
 #[test]
 fn stereo_perception_consumes_redundant_molfile_atrop_wedges_before_tetrahedral_marks() {
-    let mut molecule = molfile::read_v2000_str(rdkit_bms986142_atrop5_molblock())
+    let mut molecule = read_molfile(rdkit_bms986142_atrop5_molblock())
         .expect("RDKit redundant atropisomer wedge fixture parses");
     perception_api::sanitize_with_options(
         &mut molecule,
@@ -1415,8 +1414,8 @@ fn stereo_perception_assembles_molfile_atrop_axis_with_one_exocyclic_sp2_endpoin
         rdkit_zm374979_atrop1_molblock(),
         rdkit_zm374979_atrop2_molblock(),
     ] {
-        let mut molecule = molfile::read_v2000_str(fixture)
-            .expect("RDKit one-ring-endpoint atropisomer fixture parses");
+        let mut molecule =
+            read_molfile(fixture).expect("RDKit one-ring-endpoint atropisomer fixture parses");
         perception_api::sanitize_with_options(
             &mut molecule,
             SanitizeOptions {
@@ -1446,7 +1445,7 @@ fn stereo_perception_assembles_ring_internal_molfile_atrop_axis() {
         rdkit_macrocycle8_ortho_hash_molblock(),
     ] {
         let mut molecule =
-            molfile::read_v3000_str(fixture).expect("RDKit macrocyclic atropisomer fixture parses");
+            read_molfile(fixture).expect("RDKit macrocyclic atropisomer fixture parses");
         perception_api::sanitize_with_options(
             &mut molecule,
             SanitizeOptions {

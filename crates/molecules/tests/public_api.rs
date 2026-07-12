@@ -13,7 +13,8 @@ fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
-    let mut mol = molecules::smiles::read_str("CC(=O)O")?;
+    let document = molecules::smiles::parse_str("CC(=O)O")?;
+    let mut mol = molecules::smiles::interpret(&document)?;
     molecules::perception::sanitize(&mut mol)?;
     let smiles = molecules::smiles::write_canonical(&mol)?;
     assert!(!smiles.is_empty());
@@ -84,9 +85,9 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let molecule = SmallMolecule::from_graph(graph);
 
     let mut builder = MolecularModel::builder();
-    let mapping = builder.add_component(&molecule, conformer)?;
+    let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
-    let model_bond = mapping.bond(bond).expect("source bond is mapped");
+    let model_bond = molecules::modeling::InstanceBondId::new(instance, bond);
     let mut potential =
         HarmonicBondPotential::new(&model, [HarmonicBondParameter::new(model_bond, 1.2, 100.0)])?;
     let result = minimize(&model, &mut potential, MinimizeOptions::default())?;

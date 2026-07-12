@@ -1,39 +1,97 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
-use crate::algorithms::{RingMembership, RingSet};
+use crate::algorithms::{AromaticityModel, RingMembership, RingSet, ValenceModel};
 
 use super::*;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub(crate) enum ComputedState {
-    #[default]
-    Absent,
-    Stale,
-    Fresh,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AromaticityProvenance {
+    Imported,
+    Perceived(AromaticityModel),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct PerceptionState {
-    pub valence: ComputedState,
-    pub rings: ComputedState,
-    pub aromaticity: ComputedState,
-    pub stereo: ComputedState,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ValencePerception {
+    model: ValenceModel,
+    implicit_hydrogens: BTreeMap<AtomId, u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RingPerception {
+    membership: RingMembership,
+    rings: Option<RingSet>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AromaticityPerception {
+    provenance: AromaticityProvenance,
+    atoms: BTreeSet<AtomId>,
+    bonds: BTreeSet<BondId>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PerceptionState {
+    valence: Option<ValencePerception>,
+    rings: Option<RingPerception>,
+    aromaticity: Option<AromaticityPerception>,
+    cip_descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
 }
 
 impl PerceptionState {
-    pub(crate) fn invalidate_all(&mut self) {
-        self.valence = invalidate(self.valence);
-        self.rings = invalidate(self.rings);
-        self.aromaticity = invalidate(self.aromaticity);
-        self.stereo = invalidate(self.stereo);
+    pub fn has_valence(&self) -> bool {
+        self.valence.is_some()
     }
-}
 
-pub(crate) fn invalidate(state: ComputedState) -> ComputedState {
-    match state {
-        ComputedState::Fresh => ComputedState::Stale,
-        ComputedState::Stale | ComputedState::Absent => state,
+    pub fn has_rings(&self) -> bool {
+        self.rings.is_some()
+    }
+
+    pub fn has_aromaticity(&self) -> bool {
+        self.aromaticity.is_some()
+    }
+
+    pub fn has_cip_descriptors(&self) -> bool {
+        !self.cip_descriptors.is_empty()
+    }
+
+    pub fn valence_model(&self) -> Option<ValenceModel> {
+        self.valence.as_ref().map(|state| state.model)
+    }
+
+    pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<u8> {
+        self.valence
+            .as_ref()
+            .and_then(|state| state.implicit_hydrogens.get(&atom).copied())
+    }
+
+    pub fn ring_membership(&self) -> Option<&RingMembership> {
+        self.rings.as_ref().map(|state| &state.membership)
+    }
+
+    pub fn ring_set(&self) -> Option<&RingSet> {
+        self.rings.as_ref().and_then(|state| state.rings.as_ref())
+    }
+
+    pub fn aromaticity_provenance(&self) -> Option<AromaticityProvenance> {
+        self.aromaticity.as_ref().map(|state| state.provenance)
+    }
+
+    pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
+        self.aromaticity
+            .as_ref()
+            .map(|state| state.atoms.contains(&atom))
+    }
+
+    pub fn bond_is_aromatic(&self, bond: BondId) -> Option<bool> {
+        self.aromaticity
+            .as_ref()
+            .map(|state| state.bonds.contains(&bond))
+    }
+
+    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
+        self.cip_descriptors.get(&element).copied()
     }
 }
 
@@ -48,8 +106,6 @@ pub struct Molecule {
     pub(crate) stereo_bond_marks: Vec<StereoBondMark>,
     pub(crate) props: PropMap,
     pub(crate) perception: PerceptionState,
-    pub(crate) ring_membership: Option<RingMembership>,
-    pub(crate) ring_set: Option<RingSet>,
 }
 
 pub struct AtomMut<'a> {
@@ -123,9 +179,7 @@ struct AtomChemistry {
     formal_charge: i8,
     radical: Option<AtomRadical>,
     explicit_hydrogens: u8,
-    implicit_hydrogens: Option<u8>,
     no_implicit_hydrogens: bool,
-    aromatic: bool,
 }
 
 impl From<&Atom> for AtomChemistry {
@@ -136,9 +190,7 @@ impl From<&Atom> for AtomChemistry {
             formal_charge: atom.formal_charge,
             radical: atom.radical,
             explicit_hydrogens: atom.explicit_hydrogens,
-            implicit_hydrogens: atom.implicit_hydrogens,
             no_implicit_hydrogens: atom.no_implicit_hydrogens,
-            aromatic: atom.aromatic,
         }
     }
 }
@@ -146,15 +198,11 @@ impl From<&Atom> for AtomChemistry {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct BondChemistry {
     order: BondOrder,
-    aromatic: bool,
 }
 
 impl From<&Bond> for BondChemistry {
     fn from(bond: &Bond) -> Self {
-        Self {
-            order: bond.order,
-            aromatic: bond.aromatic,
-        }
+        Self { order: bond.order }
     }
 }
 
@@ -296,6 +344,37 @@ impl Molecule {
             .map(move |bond| bond.other_atom(id)))
     }
 
+    pub fn connected_components(&self) -> Vec<Vec<AtomId>> {
+        let mut seen = vec![false; self.atoms.len()];
+        let mut components = Vec::new();
+        for start in self.atom_ids() {
+            if seen[start.index()] {
+                continue;
+            }
+            seen[start.index()] = true;
+            let mut stack = vec![start];
+            let mut component = Vec::new();
+            while let Some(atom) = stack.pop() {
+                component.push(atom);
+                let mut neighbors = self
+                    .neighbors(atom)
+                    .expect("live atom must have valid adjacency")
+                    .filter(|neighbor| !seen[neighbor.index()])
+                    .collect::<Vec<_>>();
+                neighbors.sort_unstable_by(|left, right| right.cmp(left));
+                for neighbor in neighbors {
+                    if !seen[neighbor.index()] {
+                        seen[neighbor.index()] = true;
+                        stack.push(neighbor);
+                    }
+                }
+            }
+            component.sort_unstable();
+            components.push(component);
+        }
+        components
+    }
+
     pub fn incident_bonds(&self, id: AtomId) -> Result<impl Iterator<Item = (BondId, &Bond)> + '_> {
         self.atom(id)?;
         Ok(self.adjacency[id.index()]
@@ -321,25 +400,52 @@ impl Molecule {
         &mut self.props
     }
 
-    #[cfg(test)]
-    pub(crate) fn perception(&self) -> &PerceptionState {
+    pub fn perception(&self) -> &PerceptionState {
         &self.perception
     }
 
+    pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
+        self.atom(atom)?;
+        let perceived = self.perception.implicit_hydrogens(atom);
+        #[cfg(test)]
+        return Ok(perceived.or(self.atom(atom)?.implicit_hydrogens));
+        #[cfg(not(test))]
+        Ok(perceived)
+    }
+
+    pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {
+        self.atom(atom)?;
+        let perceived = self.perception.atom_is_aromatic(atom);
+        #[cfg(test)]
+        return Ok(perceived.or(self.atom(atom)?.aromatic.then_some(true)));
+        #[cfg(not(test))]
+        Ok(perceived)
+    }
+
+    pub fn bond_is_aromatic(&self, bond: BondId) -> Result<Option<bool>> {
+        self.bond(bond)?;
+        let perceived = self.perception.bond_is_aromatic(bond);
+        #[cfg(test)]
+        return Ok(perceived.or(self.bond(bond)?.aromatic.then_some(true)));
+        #[cfg(not(test))]
+        Ok(perceived)
+    }
+
+    pub fn cip_descriptor(&self, element: StereoElementId) -> Result<Option<StereoDescriptor>> {
+        self.stereo_element(element)?;
+        let perceived = self.perception.cip_descriptor(element);
+        #[cfg(test)]
+        return Ok(perceived.or(self.stereo_element(element)?.descriptor));
+        #[cfg(not(test))]
+        Ok(perceived)
+    }
+
     pub fn ring_membership(&self) -> Option<&RingMembership> {
-        if self.perception.rings == ComputedState::Fresh {
-            self.ring_membership.as_ref()
-        } else {
-            None
-        }
+        self.perception.ring_membership()
     }
 
     pub fn ring_set(&self) -> Option<&RingSet> {
-        if self.perception.rings == ComputedState::Fresh {
-            self.ring_set.as_ref()
-        } else {
-            None
-        }
+        self.perception.ring_set()
     }
 
     pub fn add_conformer(&mut self, mut conformer: Conformer) -> ConformerId {
@@ -533,10 +639,7 @@ impl Molecule {
     }
 
     pub fn invalidate_topology(&mut self) {
-        self.perception.invalidate_all();
-        self.clear_stereo_descriptors();
-        self.ring_membership = None;
-        self.ring_set = None;
+        self.perception = PerceptionState::default();
     }
 
     fn remove_incident_bond(&mut self, atom: AtomId, bond: BondId) {
@@ -546,14 +649,162 @@ impl Molecule {
     }
 
     pub(crate) fn invalidate_stereo(&mut self) {
-        self.perception.stereo = invalidate(self.perception.stereo);
-        self.clear_stereo_descriptors();
+        self.perception.cip_descriptors.clear();
     }
 
-    fn clear_stereo_descriptors(&mut self) {
+    pub(crate) fn install_valence(
+        &mut self,
+        model: ValenceModel,
+        implicit_hydrogens: BTreeMap<AtomId, u8>,
+    ) {
+        #[cfg(test)]
+        for (index, atom) in self.atoms.iter_mut().enumerate() {
+            if let Some(atom) = atom {
+                atom.implicit_hydrogens =
+                    implicit_hydrogens.get(&AtomId::new(index as u32)).copied();
+            }
+        }
+        self.perception.valence = Some(ValencePerception {
+            model,
+            implicit_hydrogens,
+        });
+        self.perception.aromaticity = None;
+        self.perception.cip_descriptors.clear();
+    }
+
+    pub(crate) fn set_implicit_hydrogens(&mut self, atom: AtomId, count: u8) {
+        if let Some(state) = self.perception.valence.as_mut() {
+            state.implicit_hydrogens.insert(atom, count);
+        }
+        #[cfg(test)]
+        if let Some(payload) = self.atoms.get_mut(atom.index()).and_then(Option::as_mut) {
+            payload.implicit_hydrogens = Some(count);
+        }
+    }
+
+    pub(crate) fn clear_valence(&mut self) {
+        self.perception.valence = None;
+        self.perception.aromaticity = None;
+        self.perception.cip_descriptors.clear();
+        #[cfg(test)]
+        for atom in self.atoms.iter_mut().flatten() {
+            atom.implicit_hydrogens = None;
+        }
+    }
+
+    pub(crate) fn install_ring_membership(&mut self, membership: RingMembership) {
+        self.perception.rings = Some(RingPerception {
+            membership,
+            rings: None,
+        });
+    }
+
+    pub(crate) fn install_rings(&mut self, membership: RingMembership, rings: RingSet) {
+        self.perception.rings = Some(RingPerception {
+            membership,
+            rings: Some(rings),
+        });
+    }
+
+    pub(crate) fn clear_rings(&mut self) {
+        self.perception.rings = None;
+        self.perception.aromaticity = None;
+        self.perception.cip_descriptors.clear();
+    }
+
+    pub(crate) fn discard_ring_results(&mut self) {
+        self.perception.rings = None;
+    }
+
+    pub(crate) fn begin_aromaticity(&mut self, provenance: AromaticityProvenance) {
+        self.perception.aromaticity = Some(AromaticityPerception {
+            provenance,
+            atoms: BTreeSet::new(),
+            bonds: BTreeSet::new(),
+        });
+        self.perception.cip_descriptors.clear();
+        #[cfg(test)]
+        {
+            for atom in self.atoms.iter_mut().flatten() {
+                atom.aromatic = false;
+            }
+            for bond in self.bonds.iter_mut().flatten() {
+                bond.aromatic = false;
+            }
+        }
+    }
+
+    pub(crate) fn clear_aromaticity(&mut self) {
+        self.perception.aromaticity = None;
+        self.perception.cip_descriptors.clear();
+        #[cfg(test)]
+        {
+            for atom in self.atoms.iter_mut().flatten() {
+                atom.aromatic = false;
+            }
+            for bond in self.bonds.iter_mut().flatten() {
+                bond.aromatic = false;
+            }
+        }
+    }
+
+    pub(crate) fn set_atom_aromatic(&mut self, atom: AtomId, aromatic: bool) {
+        let Some(state) = self.perception.aromaticity.as_mut() else {
+            return;
+        };
+        if aromatic {
+            state.atoms.insert(atom);
+        } else {
+            state.atoms.remove(&atom);
+        }
+        #[cfg(test)]
+        if let Some(payload) = self.atoms.get_mut(atom.index()).and_then(Option::as_mut) {
+            payload.aromatic = aromatic;
+        }
+    }
+
+    pub(crate) fn set_bond_aromatic(&mut self, bond: BondId, aromatic: bool) {
+        let Some(state) = self.perception.aromaticity.as_mut() else {
+            return;
+        };
+        if aromatic {
+            state.bonds.insert(bond);
+        } else {
+            state.bonds.remove(&bond);
+        }
+        #[cfg(test)]
+        if let Some(payload) = self.bonds.get_mut(bond.index()).and_then(Option::as_mut) {
+            payload.aromatic = aromatic;
+        }
+    }
+
+    pub(crate) fn install_cip_descriptor(
+        &mut self,
+        element: StereoElementId,
+        descriptor: StereoDescriptor,
+    ) {
+        self.perception.cip_descriptors.insert(element, descriptor);
+        #[cfg(test)]
+        if let Some(payload) = self
+            .stereo_elements
+            .get_mut(element.index())
+            .and_then(Option::as_mut)
+        {
+            payload.descriptor = Some(descriptor);
+        }
+    }
+
+    pub(crate) fn clear_cip_descriptors(&mut self) {
+        self.perception.cip_descriptors.clear();
+        #[cfg(test)]
         for element in self.stereo_elements.iter_mut().flatten() {
             element.descriptor = None;
         }
+    }
+
+    pub(crate) fn without_conformers(mut self) -> Self {
+        self.conformers.clear();
+        self
     }
 
     fn validate_stereo_element_refs(&self, element: &StereoElement) -> Result<()> {

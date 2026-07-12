@@ -6,18 +6,14 @@ use crate::core::*;
 use crate::io::preserve_molfile_tetrahedral_hydrogens;
 use crate::small::SmallMolecule;
 
+use super::sdf_document::SdfRecord;
+
 const V2000_MAX_ATOMS: usize = 999;
 const V2000_MAX_BONDS: usize = 999;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfParseOptions {
     pub allow_missing_final_delimiter: bool,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct SdfRecord {
-    pub title: String,
-    pub molecule: SmallMolecule,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,77 +51,6 @@ pub fn read_mol_v2000_str(input: &str) -> std::result::Result<SmallMolecule, Sdf
     parse_mol_v2000_lines(1, 1, &lines)
 }
 
-pub fn read_sdf_v2000_str(
-    input: &str,
-    options: SdfParseOptions,
-) -> std::result::Result<Vec<SmallMolecule>, SdfParseError> {
-    read_sdf_v2000_records(input, options)
-        .map(|records| records.into_iter().map(|record| record.molecule).collect())
-}
-
-pub fn read_sdf_v2000_records(
-    input: &str,
-    options: SdfParseOptions,
-) -> std::result::Result<Vec<SdfRecord>, SdfParseError> {
-    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
-    let mut records = Vec::new();
-    let mut current = Vec::new();
-    let mut start_line = 1usize;
-    let mut saw_delimiter = false;
-
-    for (offset, line) in normalized.lines().enumerate() {
-        let line_number = offset + 1;
-        if line.trim() == "$$$$" {
-            saw_delimiter = true;
-            if current.iter().any(|line: &&str| !line.trim().is_empty()) {
-                records.push(parse_sdf_record(records.len() + 1, start_line, &current)?);
-            }
-            current.clear();
-            start_line = line_number + 1;
-        } else {
-            current.push(line);
-        }
-    }
-
-    if current.iter().any(|line| !line.trim().is_empty()) {
-        if saw_delimiter || options.allow_missing_final_delimiter {
-            records.push(parse_sdf_record(records.len() + 1, start_line, &current)?);
-        } else {
-            let final_offset = current.len().saturating_sub(1);
-            return Err(SdfParseError::new(
-                records.len() + 1,
-                checked_line_number(records.len() + 1, start_line, final_offset)?,
-                "missing final $$$$ record delimiter",
-            ));
-        }
-    }
-
-    Ok(records)
-}
-
-fn parse_sdf_record(
-    record: usize,
-    start_line: usize,
-    lines: &[&str],
-) -> std::result::Result<SdfRecord, SdfParseError> {
-    let title = lines.first().copied().unwrap_or_default().to_owned();
-    let end_index = lines
-        .iter()
-        .position(|line| line.trim() == "M  END")
-        .ok_or_else(|| SdfParseError::new(record, start_line, "missing M  END"))?;
-    let mut molecule = parse_mol_v2000_lines(record, start_line, &lines[..=end_index])?;
-    let data_start = end_index
-        .checked_add(1)
-        .ok_or_else(|| SdfParseError::new(record, start_line, "SDF data offset overflow"))?;
-    parse_sdf_data_fields(
-        record,
-        checked_line_number(record, start_line, data_start)?,
-        molecule.graph_mut_raw(),
-        &lines[data_start..],
-    )?;
-    Ok(SdfRecord { title, molecule })
-}
-
 fn parse_mol_v2000_lines(
     record: usize,
     start_line: usize,
@@ -138,7 +63,6 @@ fn parse_mol_v2000_lines(
             "record must contain three header lines and a counts line",
         ));
     }
-    let title = lines[0].to_owned();
     let counts = lines[3];
     let counts_line = checked_line_number(record, start_line, 3)?;
     if counts.contains("V3000") {
@@ -166,16 +90,6 @@ fn parse_mol_v2000_lines(
     }
 
     let mut mol = Molecule::new();
-    mol.props_mut()
-        .insert("sdf.title".to_owned(), PropValue::String(title.clone()));
-    mol.props_mut().insert(
-        "sdf.program".to_owned(),
-        PropValue::String(lines[1].to_owned()),
-    );
-    mol.props_mut().insert(
-        "sdf.comment".to_owned(),
-        PropValue::String(lines[2].to_owned()),
-    );
 
     let atom_start = 4usize;
     let bond_start = atom_start.checked_add(atom_count).ok_or_else(|| {
@@ -429,40 +343,6 @@ fn checked_line_number(
         .ok_or_else(|| SdfParseError::new(record, start_line, "line number overflow"))
 }
 
-fn parse_sdf_data_fields(
-    record: usize,
-    start_line: usize,
-    mol: &mut Molecule,
-    lines: &[&str],
-) -> std::result::Result<(), SdfParseError> {
-    let mut index = 0;
-    while index < lines.len() {
-        let line = lines[index];
-        if !line.trim_start().starts_with('>') {
-            index += 1;
-            continue;
-        }
-        let field_name = sdf_field_name(line).ok_or_else(|| {
-            SdfParseError::new(record, start_line + index, "invalid SDF data field header")
-        })?;
-        index += 1;
-        let mut values = Vec::new();
-        while index < lines.len() && !lines[index].trim_start().starts_with('>') {
-            if lines[index].is_empty() {
-                index += 1;
-                break;
-            }
-            values.push(lines[index]);
-            index += 1;
-        }
-        mol.props_mut().insert(
-            format!("sdf.field.{field_name}"),
-            PropValue::String(values.join("\n")),
-        );
-    }
-    Ok(())
-}
-
 fn parse_m_records(
     record: usize,
     start_line: usize,
@@ -578,17 +458,6 @@ where
     Ok(())
 }
 
-fn sdf_field_name(line: &str) -> Option<String> {
-    let start = line.find('<')?;
-    let end = line[start + 1..].find('>')? + start + 1;
-    let name = line[start + 1..end].trim();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name.to_owned())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MolWriteError {
     pub message: String,
@@ -629,9 +498,9 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
         atom_index.insert(*atom_id, index + 1);
     }
 
-    let title = prop_string(mol, "sdf.title").unwrap_or_default();
-    let program = prop_string(mol, "sdf.program").unwrap_or_else(|| "molecules".to_owned());
-    let comment = prop_string(mol, "sdf.comment").unwrap_or_default();
+    let title = "";
+    let program = "molecules";
+    let comment = "";
     let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
     let mut out = String::new();
     out.push_str(&format!("{title}\n{program}\n{comment}\n"));
@@ -726,25 +595,24 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
     Ok(out)
 }
 
-pub fn write_sdf_v2000(molecules: &[SmallMolecule]) -> std::result::Result<String, MolWriteError> {
+pub fn write_sdf_v2000(records: &[SdfRecord]) -> std::result::Result<String, MolWriteError> {
     let mut out = String::new();
-    for molecule in molecules {
-        out.push_str(&write_mol_v2000(molecule)?);
-        for (key, value) in molecule.graph().props() {
-            if let (Some(name), PropValue::String(text)) = (key.strip_prefix("sdf.field."), value) {
-                out.push_str(&format!(">  <{name}>\n{text}\n\n"));
-            }
+    for record in records {
+        let written = write_mol_v2000(record.molecule())?;
+        let mut lines = written.lines();
+        let _generated_title = lines.next();
+        out.push_str(record.title());
+        out.push('\n');
+        for line in lines {
+            out.push_str(line);
+            out.push('\n');
+        }
+        for field in record.data_fields() {
+            out.push_str(&format!(">  <{}>\n{}\n\n", field.name(), field.value()));
         }
         out.push_str("$$$$\n");
     }
     Ok(out)
-}
-
-fn prop_string(mol: &Molecule, key: &str) -> Option<String> {
-    match mol.props().get(key) {
-        Some(PropValue::String(value)) => Some(value.clone()),
-        _ => None,
-    }
 }
 
 fn v2000_charge_code(charge: i8) -> i8 {

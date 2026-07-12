@@ -2,8 +2,7 @@ use super::*;
 
 #[test]
 fn canonical_ranking_groups_symmetric_atoms() {
-    let mut molecule =
-        smiles_api::read_str_with_options("CC(C)C", SmilesParseOptions).expect("isobutane parses");
+    let mut molecule = read_smiles("CC(C)C").expect("isobutane parses");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("isobutane sanitizes");
 
@@ -75,8 +74,7 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
 
 #[test]
 fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
-    let mut molecule = smiles_api::read_str_with_options("[13CH3:7][CH3]", SmilesParseOptions)
-        .expect("mapped isotope molecule parses");
+    let mut molecule = read_smiles("[13CH3:7][CH3]").expect("mapped isotope molecule parses");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("mapped isotope molecule sanitizes");
 

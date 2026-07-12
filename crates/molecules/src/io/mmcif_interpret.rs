@@ -2,8 +2,13 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::bio::{AtomSiteMetadata, BioHierarchy, MacroMolecule, MolecularContents};
-use crate::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3, PropValue};
+use crate::bio::{AtomSiteMetadata, BioHierarchy, MacroMolecule};
+use crate::core::{
+    Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Molecule, Point3, PropValue,
+};
+use crate::modeling::{
+    MolecularModel, MolecularModelBuilder, MoleculeInstanceMetadata, MoleculeRole,
+};
 use crate::small::SmallMolecule;
 
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
@@ -16,9 +21,17 @@ pub enum MmcifAltLocPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MmcifModelSelection {
+    RequireSingle,
+    Select(String),
+    First,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifInterpretOptions {
     pub strict_entity_metadata: bool,
     pub altloc_policy: MmcifAltLocPolicy,
+    pub model_selection: MmcifModelSelection,
 }
 
 impl Default for MmcifInterpretOptions {
@@ -26,6 +39,7 @@ impl Default for MmcifInterpretOptions {
         Self {
             strict_entity_metadata: false,
             altloc_policy: MmcifAltLocPolicy::HighestOccupancy,
+            model_selection: MmcifModelSelection::RequireSingle,
         }
     }
 }
@@ -77,6 +91,14 @@ pub enum MmcifInterpretIssue {
     ConnectionUnresolved {
         connection_type: String,
     },
+    CoordinateModelIgnored {
+        model_id: String,
+        atom_site_rows: usize,
+    },
+    AlternateLocationOmitted {
+        atom_name: String,
+        alt_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -84,6 +106,8 @@ pub struct MmcifInterpretationReport {
     pub data_block: String,
     pub entity_definitions: usize,
     pub coordinate_models: usize,
+    pub selected_model: Option<String>,
+    pub ignored_coordinate_models: Vec<String>,
     pub macromolecules: usize,
     pub small_molecules: usize,
     pub solvent_molecules: usize,
@@ -94,21 +118,21 @@ pub struct MmcifInterpretationReport {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MmcifInterpretation {
-    contents: MolecularContents,
+    model: MolecularModel,
     report: MmcifInterpretationReport,
 }
 
 impl MmcifInterpretation {
-    pub fn contents(&self) -> &MolecularContents {
-        &self.contents
+    pub fn model(&self) -> &MolecularModel {
+        &self.model
     }
 
     pub fn report(&self) -> &MmcifInterpretationReport {
         &self.report
     }
 
-    pub fn into_parts(self) -> (MolecularContents, MmcifInterpretationReport) {
-        (self.contents, self.report)
+    pub fn into_parts(self) -> (MolecularModel, MmcifInterpretationReport) {
+        (self.model, self.report)
     }
 }
 
@@ -187,29 +211,52 @@ fn interpret_block(
         ..MmcifInterpretationReport::default()
     };
     let rows = read_atom_rows(atom_table, &entities, &asym_entities, &options, &mut report)?;
-    let selected = select_alt_locations(rows, &options.altloc_policy)?;
+    let selected = select_alt_locations(rows, &options.altloc_policy, &mut report)?;
+    let selected = select_coordinate_model(selected, &options.model_selection, &mut report)?;
     let mut union = InstanceUnion::new(selected.iter().map(|row| row.instance_key.clone()));
     let connections = read_connections(block, &selected, &mut union, &mut report)?;
     let groups = group_rows(selected, &mut union);
-    let model_ids = groups
-        .values()
-        .flat_map(|group| group.rows.iter().map(|row| row.model_id.clone()))
-        .collect::<BTreeSet<_>>();
-    report.coordinate_models = model_ids.len();
-
-    let mut contents = MolecularContents::new();
+    let mut builder = MolecularModelBuilder::new();
     for (_, group) in groups {
         let built = build_molecule(group, &connections, &mut report)?;
         match built {
-            BuiltMolecule::Macro(molecule) => contents.push_macro(molecule),
-            BuiltMolecule::Small(molecule) => contents.push_small(molecule),
-            BuiltMolecule::Water(molecule) => contents.solvent_mut().push(molecule),
+            BuiltMolecule::Macro {
+                molecule,
+                conformer,
+                metadata,
+            } => {
+                builder
+                    .add_macro_molecule_with_metadata(&molecule, conformer, metadata)
+                    .map_err(graph_error)?;
+            }
+            BuiltMolecule::Small {
+                molecule,
+                conformer,
+                metadata,
+            } => {
+                builder
+                    .add_small_molecule_with_metadata(&molecule, conformer, metadata)
+                    .map_err(graph_error)?;
+            }
         }
     }
-    report.macromolecules = contents.macromolecules().count();
-    report.small_molecules = contents.small_molecules().count();
-    report.solvent_molecules = contents.solvent().len();
-    Ok(MmcifInterpretation { contents, report })
+    let model = builder.build().map_err(graph_error)?;
+    report.macromolecules = model
+        .topology()
+        .molecules()
+        .filter(|(_, molecule)| molecule.macro_molecule().is_some())
+        .count();
+    report.small_molecules = model
+        .topology()
+        .molecules()
+        .filter(|(_, molecule)| molecule.small_molecule().is_some())
+        .count();
+    report.solvent_molecules = model
+        .topology()
+        .molecules()
+        .filter(|(_, molecule)| molecule.has_role(MoleculeRole::Solvent))
+        .count();
+    Ok(MmcifInterpretation { model, report })
 }
 
 fn read_entity_types(
@@ -482,6 +529,7 @@ fn canonical_mmcif_element_symbol(symbol: &str) -> String {
 fn select_alt_locations(
     rows: Vec<AtomRow>,
     policy: &MmcifAltLocPolicy,
+    report: &mut MmcifInterpretationReport,
 ) -> Result<Vec<AtomRow>, MmcifInterpretError> {
     let mut grouped = BTreeMap::<(String, String, String), Vec<AtomRow>>::new();
     for row in rows {
@@ -524,19 +572,22 @@ fn select_alt_locations(
             ));
         }
         let chosen = match policy {
-            MmcifAltLocPolicy::HighestOccupancy => candidates.into_iter().max_by(|left, right| {
-                left.occupancy
-                    .unwrap_or(0.0)
-                    .partial_cmp(&right.occupancy.unwrap_or(0.0))
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| right.alt_id.cmp(&left.alt_id))
-            }),
+            MmcifAltLocPolicy::HighestOccupancy => candidates
+                .iter()
+                .max_by(|left, right| {
+                    left.occupancy
+                        .unwrap_or(0.0)
+                        .partial_cmp(&right.occupancy.unwrap_or(0.0))
+                        .unwrap_or(Ordering::Equal)
+                        .then_with(|| right.alt_id.cmp(&left.alt_id))
+                })
+                .cloned(),
             MmcifAltLocPolicy::SelectLabel(label) => candidates
                 .iter()
                 .find(|row| row.alt_id.as_deref() == Some(label.as_str()))
                 .cloned()
                 .or_else(|| candidates.iter().find(|row| row.alt_id.is_none()).cloned()),
-            MmcifAltLocPolicy::ErrorOnAlternateLocations => candidates.into_iter().next(),
+            MmcifAltLocPolicy::ErrorOnAlternateLocations => candidates.first().cloned(),
         };
         let Some(chosen) = chosen else {
             return Err(MmcifInterpretError::new(
@@ -544,10 +595,84 @@ fn select_alt_locations(
                 "requested alternate-location label is unavailable",
             ));
         };
+        for omitted in candidates
+            .iter()
+            .filter(|candidate| candidate.row_index != chosen.row_index)
+        {
+            report
+                .issues
+                .push(MmcifInterpretIssue::AlternateLocationOmitted {
+                    atom_name: omitted.atom_name.clone(),
+                    alt_id: omitted.alt_id.clone(),
+                });
+        }
         selected.push(chosen);
     }
     selected.sort_by_key(|row| row.row_index);
     Ok(selected)
+}
+
+fn select_coordinate_model(
+    rows: Vec<AtomRow>,
+    selection: &MmcifModelSelection,
+    report: &mut MmcifInterpretationReport,
+) -> Result<Vec<AtomRow>, MmcifInterpretError> {
+    let mut model_ids = Vec::new();
+    let mut seen = BTreeSet::new();
+    for row in &rows {
+        if seen.insert(row.model_id.clone()) {
+            model_ids.push(row.model_id.clone());
+        }
+    }
+    report.coordinate_models = model_ids.len();
+    let selected = match selection {
+        MmcifModelSelection::RequireSingle if model_ids.len() == 1 => model_ids[0].clone(),
+        MmcifModelSelection::RequireSingle => {
+            return Err(MmcifInterpretError::new(
+                None,
+                format!(
+                    "coordinate data contains {} models; select one explicitly",
+                    model_ids.len()
+                ),
+            ));
+        }
+        MmcifModelSelection::Select(id) if seen.contains(id) => id.clone(),
+        MmcifModelSelection::Select(id) => {
+            return Err(MmcifInterpretError::new(
+                None,
+                format!("coordinate model `{id}` is unavailable"),
+            ));
+        }
+        MmcifModelSelection::First => model_ids
+            .first()
+            .cloned()
+            .ok_or_else(|| MmcifInterpretError::new(None, "coordinate data contains no models"))?,
+    };
+    report.selected_model = Some(selected.clone());
+    for ignored in model_ids.iter().filter(|id| **id != selected) {
+        let atom_site_rows = rows.iter().filter(|row| row.model_id == *ignored).count();
+        report.ignored_coordinate_models.push(ignored.clone());
+        report
+            .issues
+            .push(MmcifInterpretIssue::CoordinateModelIgnored {
+                model_id: ignored.clone(),
+                atom_site_rows,
+            });
+    }
+    let selected_rows = rows
+        .into_iter()
+        .filter(|row| row.model_id == selected)
+        .collect::<Vec<_>>();
+    if let Some(row) = selected_rows.iter().find(|row| row.point.is_none()) {
+        return Err(MmcifInterpretError::new(
+            Some(row.line),
+            format!(
+                "selected coordinate model `{selected}` has no complete position for atom `{}`",
+                row.atom_name
+            ),
+        ));
+    }
+    Ok(selected_rows)
 }
 
 #[derive(Debug, Clone)]
@@ -651,9 +776,16 @@ fn group_rows(rows: Vec<AtomRow>, union: &mut InstanceUnion) -> BTreeMap<String,
 }
 
 enum BuiltMolecule {
-    Small(SmallMolecule),
-    Macro(MacroMolecule),
-    Water(SmallMolecule),
+    Small {
+        molecule: SmallMolecule,
+        conformer: ConformerId,
+        metadata: MoleculeInstanceMetadata,
+    },
+    Macro {
+        molecule: MacroMolecule,
+        conformer: ConformerId,
+        metadata: MoleculeInstanceMetadata,
+    },
 }
 
 fn build_molecule(
@@ -662,10 +794,6 @@ fn build_molecule(
     report: &mut MmcifInterpretationReport,
 ) -> Result<BuiltMolecule, MmcifInterpretError> {
     let is_macro = group.kinds.iter().any(MmcifEntityKind::is_macro);
-    let is_water = group
-        .kinds
-        .iter()
-        .all(|kind| *kind == MmcifEntityKind::Water);
     let mut graph = Molecule::new();
     let mut atoms = BTreeMap::new();
     let mut representative = Vec::<(String, AtomRow)>::new();
@@ -709,28 +837,26 @@ fn build_molecule(
         );
         atoms.insert(key.clone(), graph.add_atom(atom));
     }
-    let mut seen_models = BTreeSet::new();
-    let model_ids = group
+    let model_id = group
         .rows
-        .iter()
-        .filter(|row| seen_models.insert(row.model_id.clone()))
+        .first()
         .map(|row| row.model_id.clone())
-        .collect::<Vec<_>>();
-    for model_id in model_ids {
-        let mut conformer = Conformer::new();
-        conformer
-            .props_mut()
-            .insert("mmcif.model_id".into(), PropValue::String(model_id.clone()));
-        let mut has_positions = false;
-        for row in group.rows.iter().filter(|row| row.model_id == model_id) {
-            if let Some(point) = row.point {
-                conformer.set_position(atoms[&row.atom_key()], point);
-                has_positions = true;
-            }
-        }
-        if has_positions {
-            graph.add_conformer(conformer);
-        }
+        .ok_or_else(|| MmcifInterpretError::new(None, "empty molecule group"))?;
+    let mut conformer = Conformer::new();
+    conformer
+        .props_mut()
+        .insert("mmcif.model_id".into(), PropValue::String(model_id));
+    for row in &group.rows {
+        let point = row.point.ok_or_else(|| {
+            MmcifInterpretError::new(
+                Some(row.line),
+                format!(
+                    "missing selected-model position for atom `{}`",
+                    row.atom_name
+                ),
+            )
+        })?;
+        conformer.set_position(atoms[&row.atom_key()], point);
     }
     for connection in connections {
         let Some(&left) = atoms.get(&connection.left_atom) else {
@@ -788,18 +914,47 @@ fn build_molecule(
         report.template_bonds_pending += 1;
     }
 
+    let mut metadata = MoleculeInstanceMetadata::default();
+    for kind in &group.kinds {
+        match kind {
+            MmcifEntityKind::Polymer => {
+                metadata.insert_role(MoleculeRole::Polymer);
+            }
+            MmcifEntityKind::Branched => {
+                metadata.insert_role(MoleculeRole::Branched);
+            }
+            MmcifEntityKind::NonPolymer => {
+                metadata.insert_role(MoleculeRole::NonPolymer);
+            }
+            MmcifEntityKind::Water => {
+                metadata.insert_role(MoleculeRole::Solvent);
+            }
+            MmcifEntityKind::Other(_) => {}
+        }
+    }
+    if graph.atom_count() == 1
+        && graph
+            .atoms()
+            .next()
+            .is_some_and(|(_, atom)| atom.formal_charge != 0)
+    {
+        metadata.insert_role(MoleculeRole::Ion);
+    }
+    let conformer = graph.add_conformer(conformer);
     if is_macro {
         let hierarchy = build_hierarchy(&graph, &representative, &atoms)?;
-        Ok(BuiltMolecule::Macro(MacroMolecule::from_parts(
-            graph, hierarchy,
-        )))
+        Ok(BuiltMolecule::Macro {
+            molecule: MacroMolecule::from_parts(graph, hierarchy),
+            conformer,
+            metadata,
+        })
     } else {
         let molecule = SmallMolecule::from_graph(graph);
-        if is_water {
-            Ok(BuiltMolecule::Water(molecule))
-        } else {
-            Ok(BuiltMolecule::Small(molecule))
-        }
+        Ok(BuiltMolecule::Small {
+            molecule,
+            conformer,
+            metadata,
+        })
     }
 }
 

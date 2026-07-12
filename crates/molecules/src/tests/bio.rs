@@ -335,9 +335,9 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
     let mol_seed = "Methane\n  molecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
     for input in deterministic_text_mutations(mol_seed) {
         std::panic::catch_unwind(|| {
-            if let Ok(molecule) = molfile::read_v2000_str(&input) {
+            if let Ok(molecule) = read_molfile(&input) {
                 if let Ok(output) = molfile::write_v2000(&molecule) {
-                    let _ = molfile::read_v2000_str(&output);
+                    let _ = read_molfile(&output);
                 }
             }
         })
@@ -347,18 +347,14 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
     let sdf_seed = format!("{mol_seed}$$$$\n");
     for input in deterministic_text_mutations(&sdf_seed) {
         std::panic::catch_unwind(|| {
-            if let Ok(records) = sdf::read_v2000_records(
+            if let Ok(records) = read_sdf_records_with_options(
                 &input,
                 SdfParseOptions {
                     allow_missing_final_delimiter: true,
                 },
             ) {
-                let molecules = records
-                    .into_iter()
-                    .map(|record| record.molecule)
-                    .collect::<Vec<_>>();
-                if let Ok(output) = sdf::write_v2000(&molecules) {
-                    let _ = sdf::read_v2000_records(&output, SdfParseOptions::default());
+                if let Ok(output) = sdf::write_v2000(&records) {
+                    let _ = read_sdf_records(&output);
                 }
             }
         })
@@ -367,9 +363,9 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
 
     for input in deterministic_text_mutations("CC(=O)O") {
         std::panic::catch_unwind(|| {
-            if let Ok(molecule) = smiles_api::read_str_with_options(&input, SmilesParseOptions) {
+            if let Ok(molecule) = read_smiles(&input) {
                 if let Ok(output) = smiles_api::write_with_options(&molecule, SmilesWriteOptions) {
-                    let _ = smiles_api::read_str_with_options(&output, SmilesParseOptions);
+                    let _ = read_smiles(&output);
                 }
             }
         })

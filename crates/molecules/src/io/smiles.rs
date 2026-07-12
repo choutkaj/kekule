@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::Range;
 
 use crate::algorithms::{
     allowed_valences, canonical_atom_ranking, explicit_valence, ordered_atom_pair,
@@ -9,9 +10,53 @@ use crate::core::*;
 use crate::io::MolWriteError;
 use crate::small::SmallMolecule;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct SmilesParseOptions;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmilesDocument {
+    source: String,
+    tokens: Vec<SmilesDocumentToken>,
+    components: Vec<Range<usize>>,
+}
+
+impl SmilesDocument {
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub fn tokens(&self) -> &[SmilesDocumentToken] {
+        &self.tokens
+    }
+
+    pub fn component_token_ranges(&self) -> &[Range<usize>] {
+        &self.components
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmilesDocumentToken {
+    kind: SmilesDocumentTokenKind,
+    span: Range<usize>,
+}
+
+impl SmilesDocumentToken {
+    pub const fn kind(&self) -> SmilesDocumentTokenKind {
+        self.kind
+    }
+
+    pub fn span(&self) -> Range<usize> {
+        self.span.clone()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmilesDocumentTokenKind {
+    Atom,
+    Bond,
+    BranchOpen,
+    BranchClose,
+    Ring,
+    ComponentSeparator,
+    Unsupported,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -48,12 +93,138 @@ impl fmt::Display for SmilesParseError {
 
 impl std::error::Error for SmilesParseError {}
 
-pub fn read_smiles_str(
-    input: &str,
-    _options: SmilesParseOptions,
-) -> std::result::Result<SmallMolecule, SmilesParseError> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmilesInterpretError {
+    pub offset: usize,
+    pub message: String,
+}
+
+impl fmt::Display for SmilesInterpretError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "SMILES interpretation error at {}: {}",
+            self.offset, self.message
+        )
+    }
+}
+
+impl std::error::Error for SmilesInterpretError {}
+
+pub fn parse_smiles_document(input: &str) -> std::result::Result<SmilesDocument, SmilesParseError> {
+    if input.is_empty() {
+        return Err(SmilesParseError::new(0, "empty SMILES document"));
+    }
+    let chars = input.char_indices().collect::<Vec<_>>();
+    let mut tokens = Vec::new();
+    let mut components = Vec::new();
+    let mut component_start = 0usize;
+    let mut cursor = 0usize;
+    let mut branch_depth = 0usize;
+    while cursor < chars.len() {
+        let (start, ch) = chars[cursor];
+        let (kind, next) = match ch {
+            '[' => {
+                let mut end = cursor + 1;
+                while end < chars.len() && chars[end].1 != ']' {
+                    end += 1;
+                }
+                if end == chars.len() {
+                    return Err(SmilesParseError::new(start, "unclosed bracket atom"));
+                }
+                (SmilesDocumentTokenKind::Atom, end + 1)
+            }
+            '(' => {
+                branch_depth += 1;
+                (SmilesDocumentTokenKind::BranchOpen, cursor + 1)
+            }
+            ')' => {
+                if branch_depth == 0 {
+                    return Err(SmilesParseError::new(start, "unmatched branch close"));
+                }
+                branch_depth -= 1;
+                (SmilesDocumentTokenKind::BranchClose, cursor + 1)
+            }
+            '.' => {
+                if component_start == tokens.len() {
+                    return Err(SmilesParseError::new(start, "empty SMILES component"));
+                }
+                components.push(component_start..tokens.len());
+                component_start = tokens.len() + 1;
+                (SmilesDocumentTokenKind::ComponentSeparator, cursor + 1)
+            }
+            '-' | '=' | '#' | ':' | '/' | '\\' => (SmilesDocumentTokenKind::Bond, cursor + 1),
+            '0'..='9' => (SmilesDocumentTokenKind::Ring, cursor + 1),
+            '%' => {
+                let mut next = cursor + 1;
+                while next < chars.len() && chars[next].1.is_ascii_digit() {
+                    next += 1;
+                }
+                if next == cursor + 1 {
+                    return Err(SmilesParseError::new(start, "invalid ring label"));
+                }
+                (SmilesDocumentTokenKind::Ring, next)
+            }
+            '*' | '@' => (SmilesDocumentTokenKind::Unsupported, cursor + 1),
+            ch if ch.is_ascii_alphabetic() => {
+                let next = if matches!(ch, 'C' | 'B')
+                    && chars
+                        .get(cursor + 1)
+                        .is_some_and(|(_, next)| matches!((ch, *next), ('C', 'l') | ('B', 'r')))
+                {
+                    cursor + 2
+                } else {
+                    cursor + 1
+                };
+                (SmilesDocumentTokenKind::Atom, next)
+            }
+            _ => {
+                return Err(SmilesParseError::new(
+                    start,
+                    format!("invalid SMILES syntax character `{ch}`"),
+                ));
+            }
+        };
+        let end = chars
+            .get(next)
+            .map(|(offset, _)| *offset)
+            .unwrap_or(input.len());
+        tokens.push(SmilesDocumentToken {
+            kind,
+            span: start..end,
+        });
+        cursor = next;
+    }
+    if branch_depth != 0 {
+        return Err(SmilesParseError::new(input.len(), "unclosed branch"));
+    }
+    if component_start == tokens.len() {
+        return Err(SmilesParseError::new(
+            input.len(),
+            "empty trailing SMILES component",
+        ));
+    }
+    components.push(component_start..tokens.len());
+    Ok(SmilesDocument {
+        source: input.to_owned(),
+        tokens,
+        components,
+    })
+}
+
+pub fn interpret_smiles_document(
+    document: &SmilesDocument,
+) -> std::result::Result<SmallMolecule, SmilesInterpretError> {
+    interpret_smiles_source(&document.source).map_err(|error| SmilesInterpretError {
+        offset: error.offset,
+        message: error.message,
+    })
+}
+
+fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, SmilesParseError> {
     let chars = input.char_indices().collect::<Vec<_>>();
     let mut mol = Molecule::new();
+    let mut imported_aromatic_atoms = BTreeSet::new();
     let mut current: Option<AtomId> = None;
     let mut stack = Vec::<AtomId>::new();
     let mut pending_bond = None::<(BondOrder, Option<StereoBondMarkKind>, usize)>;
@@ -179,7 +350,16 @@ pub fn read_smiles_str(
                     }
                     let (order, stereo) = match close_bond.or(open_bond) {
                         Some((order, stereo)) => (order, stereo),
-                        None => (default_smiles_bond_order(&mol, other, atom, offset)?, None),
+                        None => (
+                            default_smiles_bond_order(
+                                &mol,
+                                &imported_aromatic_atoms,
+                                other,
+                                atom,
+                                offset,
+                            )?,
+                            None,
+                        ),
                     };
                     add_smiles_bond(&mut mol, other, atom, order, stereo, offset)?;
                     resolve_tetrahedral_ring_carrier(
@@ -207,9 +387,12 @@ pub fn read_smiles_str(
                 cursor = next_cursor;
             }
             '[' => {
-                let (atom, chirality, next_cursor) = parse_bracket_atom(&chars, cursor)?;
+                let (atom, aromatic, chirality, next_cursor) = parse_bracket_atom(&chars, cursor)?;
                 let explicit_hydrogens = atom.explicit_hydrogens;
                 let atom_id = mol.add_atom(atom);
+                if aromatic {
+                    imported_aromatic_atoms.insert(atom_id);
+                }
                 bracket_atoms.push(atom_id);
                 if let Some(orientation) = chirality {
                     pending_tetrahedral.push(PendingTetrahedral {
@@ -228,7 +411,13 @@ pub fn read_smiles_str(
                     {
                         Some((order, stereo)) => (order, stereo),
                         None => (
-                            default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                            default_smiles_bond_order(
+                                &mol,
+                                &imported_aromatic_atoms,
+                                previous,
+                                atom_id,
+                                offset,
+                            )?,
                             None,
                         ),
                     };
@@ -252,8 +441,11 @@ pub fn read_smiles_str(
                 ));
             }
             _ => {
-                let (atom, next_cursor) = parse_organic_atom(&chars, cursor)?;
+                let (atom, aromatic, next_cursor) = parse_organic_atom(&chars, cursor)?;
                 let atom_id = mol.add_atom(atom);
+                if aromatic {
+                    imported_aromatic_atoms.insert(atom_id);
+                }
                 if let Some(previous) = current {
                     let (order, stereo) = match pending_bond
                         .take()
@@ -261,7 +453,13 @@ pub fn read_smiles_str(
                     {
                         Some((order, stereo)) => (order, stereo),
                         None => (
-                            default_smiles_bond_order(&mol, previous, atom_id, offset)?,
+                            default_smiles_bond_order(
+                                &mol,
+                                &imported_aromatic_atoms,
+                                previous,
+                                atom_id,
+                                offset,
+                            )?,
                             None,
                         ),
                     };
@@ -292,6 +490,17 @@ pub fn read_smiles_str(
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
+    mol.begin_aromaticity(AromaticityProvenance::Imported);
+    for atom_id in imported_aromatic_atoms {
+        mol.set_atom_aromatic(atom_id, true);
+    }
+    let imported_aromatic_bonds = mol
+        .bonds()
+        .filter_map(|(bond_id, bond)| (bond.order == BondOrder::Aromatic).then_some(bond_id))
+        .collect::<Vec<_>>();
+    for bond_id in imported_aromatic_bonds {
+        mol.set_bond_aromatic(bond_id, true);
+    }
     infer_smiles_bracket_radicals(&mut mol, &bracket_atoms, input.len())?;
     add_smiles_tetrahedral_elements(
         &mut mol,
@@ -310,9 +519,12 @@ fn infer_smiles_bracket_radicals(
     for atom_id in bracket_atoms {
         let radical = inferred_smiles_bracket_radical(mol, *atom_id)
             .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-        mol.atom_mut(*atom_id)
-            .map_err(|error| SmilesParseError::new(offset, error.to_string()))?
-            .radical = radical;
+        let atom = mol
+            .atoms
+            .get_mut(atom_id.index())
+            .and_then(Option::as_mut)
+            .ok_or_else(|| SmilesParseError::new(offset, format!("invalid atom id: {atom_id}")))?;
+        atom.radical = radical;
     }
     Ok(())
 }
@@ -337,7 +549,7 @@ fn inferred_smiles_bracket_radical(
 }
 
 fn smiles_bracket_occupied_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
-    if !atom.aromatic {
+    if mol.atom_is_aromatic(atom_id).ok().flatten() != Some(true) {
         return explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens);
     }
     let bond_valence_twice = mol
@@ -498,7 +710,7 @@ fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) 
                 atom.element.symbol(),
                 "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
             ) && atom.explicit_hydrogens == 0
-                && atom.implicit_hydrogens.unwrap_or(0) == 0
+                && mol.implicit_hydrogens(center).ok().flatten().unwrap_or(0) == 0
         })
         .unwrap_or(false)
 }
@@ -517,17 +729,16 @@ enum PendingStereoCarrier {
 
 fn default_smiles_bond_order(
     mol: &Molecule,
+    imported_aromatic_atoms: &BTreeSet<AtomId>,
     left: AtomId,
     right: AtomId,
     offset: usize,
 ) -> std::result::Result<BondOrder, SmilesParseError> {
-    let left = mol
-        .atom(left)
+    mol.atom(left)
         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-    let right = mol
-        .atom(right)
+    mol.atom(right)
         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-    if left.aromatic && right.aromatic {
+    if imported_aromatic_atoms.contains(&left) && imported_aromatic_atoms.contains(&right) {
         Ok(BondOrder::Aromatic)
     } else {
         Ok(BondOrder::Single)
@@ -575,7 +786,7 @@ fn parse_smiles_ring_label(
 fn parse_organic_atom(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(Atom, usize), SmilesParseError> {
+) -> std::result::Result<(Atom, bool, usize), SmilesParseError> {
     let (offset, ch) = chars[cursor];
     let mut symbol = ch.to_string();
     let mut aromatic = false;
@@ -595,15 +806,13 @@ fn parse_organic_atom(
     }
     let element = Element::from_symbol(&symbol)
         .ok_or_else(|| SmilesParseError::new(offset, format!("unsupported atom `{ch}`")))?;
-    let mut atom = Atom::new(element);
-    atom.aromatic = aromatic;
-    Ok((atom, next))
+    Ok((Atom::new(element), aromatic, next))
 }
 
 fn parse_bracket_atom(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(Atom, Option<TetrahedralOrientation>, usize), SmilesParseError> {
+) -> std::result::Result<(Atom, bool, Option<TetrahedralOrientation>, usize), SmilesParseError> {
     let start = chars[cursor].0;
     let mut end = cursor + 1;
     while end < chars.len() && chars[end].1 != ']' {
@@ -671,7 +880,6 @@ fn parse_bracket_atom(
         SmilesParseError::new(start + 1 + symbol_start, "unsupported bracket element")
     })?;
     let mut atom = Atom::new(element);
-    atom.aromatic = aromatic;
     atom.isotope = isotope;
     atom.no_implicit_hydrogens = true;
     let mut saw_chirality = false;
@@ -787,7 +995,7 @@ fn parse_bracket_atom(
             }
         }
     }
-    Ok((atom, chirality, end + 1))
+    Ok((atom, aromatic, chirality, end + 1))
 }
 
 fn parse_aromatic_bracket_element(bytes: &[u8], index: usize) -> Option<(&'static str, usize)> {
@@ -903,8 +1111,6 @@ pub fn write_canonical_smiles(
 fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, MolWriteError> {
     let mut normalized = mol.clone();
     let perception = normalized.perception.clone();
-    let ring_membership = normalized.ring_membership.clone();
-    let ring_set = normalized.ring_set.clone();
     let collapsible_hydrogens = mol
         .atoms()
         .filter_map(|(atom_id, atom)| {
@@ -922,27 +1128,28 @@ fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, 
         })
         .collect::<Vec<_>>();
 
+    let mut implicit_by_parent = BTreeMap::new();
     for (hydrogen, parent) in collapsible_hydrogens {
+        let implicit = mol
+            .implicit_hydrogens(parent)
+            .map_err(|error| MolWriteError::new(error.to_string()))?
+            .unwrap_or(0);
+        let count = implicit_by_parent.entry(parent).or_insert(implicit);
+        *count = count.saturating_add(1);
         let parent_atom = normalized
             .atoms
             .get_mut(parent.index())
             .and_then(Option::as_mut)
             .ok_or_else(|| MolWriteError::new(format!("invalid hydrogen parent atom {parent}")))?;
-        parent_atom.implicit_hydrogens = Some(
-            parent_atom
-                .implicit_hydrogens
-                .unwrap_or(0)
-                .saturating_add(1),
-        );
         parent_atom.no_implicit_hydrogens = false;
         normalized
             .delete_atom(hydrogen)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
     }
-
     normalized.perception = perception;
-    normalized.ring_membership = ring_membership;
-    normalized.ring_set = ring_set;
+    for (parent, implicit) in implicit_by_parent {
+        normalized.set_implicit_hydrogens(parent, implicit);
+    }
     Ok(normalized)
 }
 
@@ -996,11 +1203,9 @@ fn canonical_component_has_aromatic_shorthand_sensitive_atom(
     atom_ids: &[AtomId],
 ) -> std::result::Result<bool, MolWriteError> {
     let atom_set = atom_ids.iter().copied().collect::<BTreeSet<_>>();
-    let component_has_aromatic_atom = atom_ids.iter().any(|atom_id| {
-        mol.atom(*atom_id)
-            .map(|atom| atom.aromatic)
-            .unwrap_or(false)
-    });
+    let component_has_aromatic_atom = atom_ids
+        .iter()
+        .any(|atom_id| mol.atom_is_aromatic(*atom_id).ok().flatten() == Some(true));
     if !component_has_aromatic_atom {
         return Ok(false);
     }
@@ -1008,13 +1213,14 @@ fn canonical_component_has_aromatic_shorthand_sensitive_atom(
         let atom = mol
             .atom(*atom_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
-        if atom.aromatic && atom.formal_charge != 0 && matches!(atom.element.symbol(), "B" | "C") {
+        let aromatic = mol.atom_is_aromatic(*atom_id).ok().flatten() == Some(true);
+        if aromatic && atom.formal_charge != 0 && matches!(atom.element.symbol(), "B" | "C") {
             return Ok(true);
         }
-        if atom.aromatic && atom_has_exocyclic_hetero_multiple_bond(mol, *atom_id, &atom_set)? {
+        if aromatic && atom_has_exocyclic_hetero_multiple_bond(mol, *atom_id, &atom_set)? {
             return Ok(true);
         }
-        if atom.aromatic {
+        if aromatic {
             continue;
         }
         let mut aromatic_neighbors = 0usize;
@@ -1028,7 +1234,8 @@ fn canonical_component_has_aromatic_shorthand_sensitive_atom(
             let neighbor = mol
                 .atom(neighbor_id)
                 .map_err(|error| MolWriteError::new(error.to_string()))?;
-            if atom_set.contains(&neighbor_id) && neighbor.aromatic {
+            let neighbor_aromatic = mol.atom_is_aromatic(neighbor_id).ok().flatten() == Some(true);
+            if atom_set.contains(&neighbor_id) && neighbor_aromatic {
                 aromatic_neighbors += 1;
             }
             if atom_set.contains(&neighbor_id)
@@ -1036,7 +1243,7 @@ fn canonical_component_has_aromatic_shorthand_sensitive_atom(
             {
                 pi_framework_neighbors += 1;
             }
-            if matches!(bond.order, BondOrder::Double | BondOrder::Triple) && !neighbor.aromatic {
+            if matches!(bond.order, BondOrder::Double | BondOrder::Triple) && !neighbor_aromatic {
                 multiple_bond_to_non_aromatic_neighbor = true;
             }
         }
@@ -1079,7 +1286,8 @@ fn atom_has_exocyclic_hetero_multiple_bond(
             .atom(neighbor_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
         if !atom_set.contains(&neighbor_id)
-            || !neighbor.aromatic && !matches!(neighbor.element.symbol(), "B" | "C")
+            || mol.atom_is_aromatic(neighbor_id).ok().flatten() != Some(true)
+                && !matches!(neighbor.element.symbol(), "B" | "C")
         {
             return Ok(true);
         }
@@ -1093,14 +1301,14 @@ fn canonical_component_has_stored_kekule_orders(
 ) -> std::result::Result<bool, MolWriteError> {
     let atom_set = atom_ids.iter().copied().collect::<BTreeSet<_>>();
     for atom_id in atom_ids {
-        for (_, bond) in mol
+        for (bond_id, bond) in mol
             .incident_bonds(*atom_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?
         {
             let neighbor_id = bond.other_atom(*atom_id);
             if *atom_id < neighbor_id
                 && atom_set.contains(&neighbor_id)
-                && bond.aromatic
+                && mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
                 && matches!(bond.order, BondOrder::Aromatic)
             {
                 return Ok(false);
@@ -1384,7 +1592,7 @@ fn validate_isomeric_double_bond_endpoint(
                 .map_err(|error| MolWriteError::new(error.to_string()))?;
             let hydrogens = atom
                 .explicit_hydrogens
-                .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+                .saturating_add(mol.implicit_hydrogens(endpoint).ok().flatten().unwrap_or(0));
             if hydrogens == 0 {
                 return Err(MolWriteError::new(
                     "isomeric SMILES writer cannot encode unavailable implicit double-bond hydrogen carrier",
@@ -1721,8 +1929,8 @@ fn canonical_smiles_aromatic_continuation(
     order: BondOrder,
 ) -> bool {
     matches!(order, BondOrder::Aromatic)
-        && mol.atom(left).is_ok_and(|atom| atom.aromatic)
-        && mol.atom(right).is_ok_and(|atom| atom.aromatic)
+        && mol.atom_is_aromatic(left).ok().flatten() == Some(true)
+        && mol.atom_is_aromatic(right).ok().flatten() == Some(true)
 }
 
 fn compute_smiles_subtree_sizes(
@@ -1924,7 +2132,8 @@ fn source_directional_mark_needs_perceived_stereo(
 }
 
 fn double_bond_stereo_candidate_is_supported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
-    if bond.order != BondOrder::Double || bond.aromatic {
+    if bond.order != BondOrder::Double || mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
+    {
         return false;
     }
     if double_bond_between_aromatic_atoms(mol, bond) {
@@ -1946,13 +2155,8 @@ fn smiles_has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {
 }
 
 fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
-    mol.atom(bond.a())
-        .map(|atom| atom.aromatic)
-        .unwrap_or(false)
-        && mol
-            .atom(bond.b())
-            .map(|atom| atom.aromatic)
-            .unwrap_or(false)
+    mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
+        && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true)
 }
 
 fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
@@ -1995,10 +2199,11 @@ fn double_bond_candidate_endpoint_carriers(
 }
 
 fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
-    mol.atom(atom)
+    let atom_id = atom;
+    mol.atom(atom_id)
         .map(|atom| {
             atom.explicit_hydrogens
-                .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+                .saturating_add(mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0))
         })
         .unwrap_or(0)
 }
@@ -2422,7 +2627,7 @@ fn smiles_incident_bonds_for_style(
     {
         let order = match atom_style {
             CanonicalAtomStyle::Aromatic
-                if bond.aromatic
+                if mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
                     && !matches!(bond.order, BondOrder::Triple | BondOrder::Quadruple) =>
             {
                 BondOrder::Aromatic
@@ -2502,13 +2707,13 @@ fn smiles_bond_between(
     right: AtomId,
 ) -> std::result::Result<&'static str, MolWriteError> {
     if matches!(order, BondOrder::Single | BondOrder::Aromatic) {
-        let left = mol
-            .atom(left)
+        mol.atom(left)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let right = mol
-            .atom(right)
+        mol.atom(right)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
-        if left.aromatic && right.aromatic {
+        if mol.atom_is_aromatic(left).ok().flatten() == Some(true)
+            && mol.atom_is_aromatic(right).ok().flatten() == Some(true)
+        {
             return Ok(if order == BondOrder::Single { "-" } else { "" });
         }
     }
@@ -2539,19 +2744,21 @@ fn smiles_bond_between_with_direction(
     smiles_bond_between(mol, order, left, right)
 }
 
-fn smiles_atom(atom: &Atom) -> String {
-    smiles_atom_with_chirality(atom, None, false)
+fn smiles_atom(atom: &Atom, aromatic: bool, implicit_hydrogens: u8) -> String {
+    smiles_atom_with_chirality(atom, aromatic, implicit_hydrogens, None, false)
 }
 
 fn smiles_atom_with_chirality(
     atom: &Atom,
+    aromatic: bool,
+    implicit_hydrogens: u8,
     chirality: Option<TetrahedralOrientation>,
     force_hydrogen: bool,
 ) -> String {
     let explicit_hydrogens = if force_hydrogen {
-        smiles_atom_explicit_hydrogens(atom).max(1)
+        smiles_atom_explicit_hydrogens(atom, aromatic, implicit_hydrogens).max(1)
     } else {
-        smiles_atom_explicit_hydrogens(atom)
+        smiles_atom_explicit_hydrogens(atom, aromatic, implicit_hydrogens)
     };
     let organic = atom.isotope.is_none()
         && atom.formal_charge == 0
@@ -2564,7 +2771,7 @@ fn smiles_atom_with_chirality(
             "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
         );
     if organic {
-        if atom.aromatic {
+        if aromatic {
             atom.element.symbol().to_ascii_lowercase()
         } else {
             atom.element.symbol().to_owned()
@@ -2574,7 +2781,7 @@ fn smiles_atom_with_chirality(
         if let Some(isotope) = atom.isotope {
             out.push_str(&isotope.to_string());
         }
-        if atom.aromatic {
+        if aromatic {
             out.push_str(&atom.element.symbol().to_ascii_lowercase());
         } else {
             out.push_str(atom.element.symbol());
@@ -2612,31 +2819,43 @@ fn smiles_atom_with_chirality(
 }
 
 fn smiles_atom_with_style_and_chirality(
-    _mol: &Molecule,
-    _atom_id: AtomId,
+    mol: &Molecule,
+    atom_id: AtomId,
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
     chirality: Option<TetrahedralOrientation>,
     force_hydrogen: bool,
 ) -> std::result::Result<String, MolWriteError> {
-    if matches!(atom_style, CanonicalAtomStyle::StoredKekule) && atom.aromatic {
+    let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
+    let implicit_hydrogens = mol
+        .implicit_hydrogens(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+        .unwrap_or(0);
+    if matches!(atom_style, CanonicalAtomStyle::StoredKekule) && aromatic {
         let mut normalized = atom.clone();
         normalized.isotope = None;
-        normalized.aromatic = false;
-        if !matches!(atom.element.symbol(), "B" | "C") && atom.implicit_hydrogens.unwrap_or(0) > 0 {
-            normalized.explicit_hydrogens = atom
-                .explicit_hydrogens
-                .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
-            normalized.implicit_hydrogens = Some(0);
+        let mut normalized_implicit = implicit_hydrogens;
+        if !matches!(atom.element.symbol(), "B" | "C") && implicit_hydrogens > 0 {
+            normalized.explicit_hydrogens =
+                atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
+            normalized_implicit = 0;
             normalized.no_implicit_hydrogens = true;
         }
         return Ok(smiles_atom_with_chirality(
             &normalized,
+            false,
+            normalized_implicit,
             chirality,
             force_hydrogen,
         ));
     }
-    Ok(smiles_atom_with_chirality(atom, chirality, force_hydrogen))
+    Ok(smiles_atom_with_chirality(
+        atom,
+        aromatic,
+        implicit_hydrogens,
+        chirality,
+        force_hydrogen,
+    ))
 }
 
 fn canonical_smiles_atom(
@@ -2646,22 +2865,23 @@ fn canonical_smiles_atom(
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<String, MolWriteError> {
     let mut normalized = atom.clone();
+    let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
+    let mut implicit_hydrogens = mol
+        .implicit_hydrogens(atom_id)
+        .map_err(|error| MolWriteError::new(error.to_string()))?
+        .unwrap_or(0);
     normalized.isotope = None;
     if atom.isotope.is_some() && atom.explicit_hydrogens > 0 {
-        normalized.implicit_hydrogens = Some(
-            atom.explicit_hydrogens
-                .saturating_add(atom.implicit_hydrogens.unwrap_or(0)),
-        );
+        implicit_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
         normalized.explicit_hydrogens = 0;
         normalized.no_implicit_hydrogens = false;
-    }
-    if matches!(atom_style, CanonicalAtomStyle::StoredKekule) && atom.aromatic {
-        normalized.aromatic = false;
     }
     canonical_smiles_atom_normalized(
         mol,
         atom_id,
         &normalized,
+        aromatic && !matches!(atom_style, CanonicalAtomStyle::StoredKekule),
+        implicit_hydrogens,
         matches!(atom_style, CanonicalAtomStyle::StoredKekule),
     )
 }
@@ -2670,52 +2890,67 @@ fn canonical_smiles_atom_normalized(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
+    aromatic: bool,
+    implicit_hydrogens: u8,
     stored_kekule: bool,
 ) -> std::result::Result<String, MolWriteError> {
-    if canonical_smiles_should_bracket_metal_bound_hydrogens(mol, atom_id, atom)? {
+    if canonical_smiles_should_bracket_metal_bound_hydrogens(
+        mol,
+        atom_id,
+        atom,
+        aromatic,
+        implicit_hydrogens,
+    )? {
         let mut normalized = atom.clone();
-        normalized.explicit_hydrogens = atom
-            .explicit_hydrogens
-            .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
-        normalized.implicit_hydrogens = Some(0);
+        normalized.explicit_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
         normalized.no_implicit_hydrogens = true;
-        return Ok(smiles_atom(&normalized));
+        return Ok(smiles_atom(&normalized, aromatic, 0));
     }
-    if canonical_smiles_should_bracket_metal_bound_zero_hydrogens(mol, atom_id, atom)? {
+    if canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
+        mol,
+        atom_id,
+        atom,
+        implicit_hydrogens,
+    )? {
         let mut normalized = atom.clone();
-        normalized.implicit_hydrogens = Some(0);
         normalized.no_implicit_hydrogens = true;
-        return Ok(smiles_atom(&normalized));
+        return Ok(smiles_atom(&normalized, aromatic, 0));
     }
-    if canonical_smiles_can_use_organic_form(mol, atom_id, atom, stored_kekule)? {
+    if canonical_smiles_can_use_organic_form(
+        mol,
+        atom_id,
+        atom,
+        aromatic,
+        implicit_hydrogens,
+        stored_kekule,
+    )? {
         let mut normalized = atom.clone();
         normalized.explicit_hydrogens = 0;
         normalized.no_implicit_hydrogens = false;
-        return Ok(smiles_atom(&normalized));
+        return Ok(smiles_atom(&normalized, aromatic, implicit_hydrogens));
     }
     let mut normalized = atom.clone();
-    if atom.implicit_hydrogens.unwrap_or(0) > 0 {
-        normalized.explicit_hydrogens = atom
-            .explicit_hydrogens
-            .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
-        normalized.implicit_hydrogens = Some(0);
+    if implicit_hydrogens > 0 {
+        normalized.explicit_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
         normalized.no_implicit_hydrogens = true;
     }
-    Ok(smiles_atom(&normalized))
+    Ok(smiles_atom(&normalized, aromatic, 0))
 }
 
 fn canonical_smiles_should_bracket_metal_bound_hydrogens(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
+    aromatic: bool,
+    implicit_hydrogens: u8,
 ) -> std::result::Result<bool, MolWriteError> {
     Ok(atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
-        && !atom.aromatic
+        && !aromatic
         && !atom.no_implicit_hydrogens
         && atom.explicit_hydrogens == 0
-        && atom.implicit_hydrogens.unwrap_or(0) > 0
+        && implicit_hydrogens > 0
         && matches!(atom.element.symbol(), "B" | "C" | "N" | "O" | "P" | "S")
         && atom_has_metal_neighbor(mol, atom_id)?)
 }
@@ -2724,12 +2959,13 @@ fn canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
+    implicit_hydrogens: u8,
 ) -> std::result::Result<bool, MolWriteError> {
     Ok(atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
         && atom.explicit_hydrogens == 0
-        && atom.implicit_hydrogens == Some(0)
+        && implicit_hydrogens == 0
         && matches!(
             atom.element.symbol(),
             "B" | "C" | "N" | "O" | "P" | "S" | "F" | "Cl" | "Br" | "I"
@@ -2753,12 +2989,14 @@ fn canonical_smiles_can_use_organic_form(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
+    aromatic: bool,
+    implicit_hydrogens: u8,
     stored_kekule: bool,
 ) -> std::result::Result<bool, MolWriteError> {
     if atom.formal_charge != 0
         || atom.radical.is_some()
         || atom.atom_map.is_some()
-        || (atom.aromatic && atom.explicit_hydrogens > 0)
+        || (aromatic && atom.explicit_hydrogens > 0)
     {
         return Ok(false);
     }
@@ -2768,24 +3006,20 @@ fn canonical_smiles_can_use_organic_form(
     ) {
         return Ok(false);
     }
-    if (atom.no_implicit_hydrogens || atom.implicit_hydrogens == Some(0))
+    if (atom.no_implicit_hydrogens || implicit_hydrogens == 0)
         && atom_has_metal_neighbor(mol, atom_id)?
     {
         return Ok(false);
     }
     let bond_valence = smiles_bond_valence_sum(mol, atom_id, stored_kekule)?;
-    if atom.aromatic {
-        let Some(target) = canonical_organic_valence_target(atom) else {
+    if aromatic {
+        let Some(target) = canonical_organic_valence_target(atom, true) else {
             return Ok(false);
         };
-        let total_hydrogens = atom
-            .explicit_hydrogens
-            .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+        let total_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
         return Ok(bond_valence.saturating_add(total_hydrogens) == target);
     }
-    let total_hydrogens = atom
-        .explicit_hydrogens
-        .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+    let total_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
     let occupied_valence = bond_valence.saturating_add(total_hydrogens);
     Ok(
         allowed_valences(atom).is_some_and(|allowed| allowed.contains(&occupied_valence))
@@ -2897,8 +3131,8 @@ fn is_smiles_metal_like(symbol: &str) -> bool {
     )
 }
 
-fn canonical_organic_valence_target(atom: &Atom) -> Option<u8> {
-    match (atom.element.symbol(), atom.aromatic) {
+fn canonical_organic_valence_target(atom: &Atom, aromatic: bool) -> Option<u8> {
+    match (atom.element.symbol(), aromatic) {
         ("B", false) => Some(3),
         ("C", false) => Some(4),
         ("N", false) | ("P", false) => Some(3),
@@ -2917,8 +3151,8 @@ fn smiles_bond_valence_sum(
 ) -> std::result::Result<u8, MolWriteError> {
     mol.incident_bonds(atom_id)
         .map_err(|error| MolWriteError::new(error.to_string()))?
-        .map(|(_, bond)| {
-            if bond.aromatic && !stored_kekule {
+        .map(|(bond_id, bond)| {
+            if mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true) && !stored_kekule {
                 return Ok(1);
             }
             Ok(match bond.order {
@@ -2934,11 +3168,11 @@ fn smiles_bond_valence_sum(
         })
 }
 
-fn smiles_atom_explicit_hydrogens(atom: &Atom) -> u8 {
+fn smiles_atom_explicit_hydrogens(atom: &Atom, aromatic: bool, implicit_hydrogens: u8) -> u8 {
     if atom.element.symbol() == "N"
-        && atom.aromatic
+        && aromatic
         && atom.explicit_hydrogens == 0
-        && atom.implicit_hydrogens == Some(1)
+        && implicit_hydrogens == 1
     {
         1
     } else {

@@ -161,7 +161,7 @@ fn stereo_elements_groups_and_bond_marks_live_on_molecule() {
             StereoSource::User,
         ))
         .expect("stereo element should be stored");
-    assert_eq!(mol.perception().stereo, ComputedState::Stale);
+    assert!(!mol.perception().has_cip_descriptors());
 
     let stored = mol.stereo_element(element).expect("stored element");
     assert_eq!(stored.source, StereoSource::User);
@@ -291,10 +291,10 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     let report = valence_api::perceive_valence(&mut methane, ValenceModel::RdkitLike);
 
     assert!(report.is_ok());
-    assert_eq!(methane.perception().valence, ComputedState::Fresh);
-    assert_eq!(methane.perception().rings, ComputedState::Fresh);
-    assert_eq!(methane.perception().aromaticity, ComputedState::Stale);
-    assert_eq!(methane.perception().stereo, ComputedState::Stale);
+    assert!(methane.perception().has_valence());
+    assert!(methane.perception().has_rings());
+    assert!(!methane.perception().has_aromaticity());
+    assert!(!methane.perception().has_cip_descriptors());
 
     let (mut benzene, _, _) = ring_molecule(
         &["C", "C", "C", "C", "C", "C"],
@@ -312,8 +312,8 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     aromaticity_api::perceive_aromaticity(&mut benzene, AromaticityModel::RdkitLike)
         .expect("benzene should be supported");
 
-    assert_eq!(benzene.perception().valence, ComputedState::Fresh);
-    assert_eq!(benzene.perception().rings, ComputedState::Fresh);
-    assert_eq!(benzene.perception().aromaticity, ComputedState::Fresh);
-    assert_eq!(benzene.perception().stereo, ComputedState::Stale);
+    assert!(benzene.perception().has_valence());
+    assert!(benzene.perception().has_rings());
+    assert!(benzene.perception().has_aromaticity());
+    assert!(!benzene.perception().has_cip_descriptors());
 }

@@ -34,7 +34,6 @@ impl RingMembership {
 
 pub fn perceive_ring_membership(mol: &mut Molecule) -> RingMembership {
     let (membership, _) = compute_ring_membership(mol);
-    mol.ring_membership = Some(membership.clone());
-    mol.perception.rings = ComputedState::Fresh;
+    mol.install_ring_membership(membership.clone());
     membership
 }

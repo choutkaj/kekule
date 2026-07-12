@@ -1,4 +1,5 @@
 use crate::core::*;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValenceModel {
@@ -77,7 +78,11 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule, options: ValenceOptions) -> V
                             || rdkit_suppresses_implicit_hydrogens(atom)
                         {
                             explicit
-                        } else if let Some(target) = aromatic_valence_target(atom, explicit) {
+                        } else if let Some(target) = aromatic_valence_target(
+                            atom,
+                            mol.atom_is_aromatic(atom_id).ok().flatten(),
+                            explicit,
+                        ) {
                             target
                         } else if atom.radical.is_some() {
                             explicit
@@ -101,19 +106,15 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule, options: ValenceOptions) -> V
             }
         }
     }
-    let mut changed = false;
-    for (atom_id, hydrogens) in assignments {
-        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            changed |= atom.implicit_hydrogens != Some(hydrogens);
-            atom.implicit_hydrogens = Some(hydrogens);
-        }
-    }
-    if changed {
-        mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
-        mol.perception.stereo = invalidate(mol.perception.stereo);
-    }
-    mol.perception.valence = ComputedState::Fresh;
+    mol.install_valence(
+        model_from_options(),
+        assignments.into_iter().collect::<BTreeMap<_, _>>(),
+    );
     ValenceReport { issues }
+}
+
+fn model_from_options() -> ValenceModel {
+    ValenceModel::RdkitLike
 }
 
 fn rdkit_suppresses_implicit_hydrogens(atom: &Atom) -> bool {
@@ -135,8 +136,8 @@ fn rdkit_atomic_number_has_unrestricted_valence(atomic_number: u8) -> bool {
     matches!(atomic_number, 21..=30 | 39..=48 | 57..=81 | 89..=118)
 }
 
-fn aromatic_valence_target(atom: &Atom, explicit: u8) -> Option<u8> {
-    if !atom.aromatic {
+fn aromatic_valence_target(atom: &Atom, aromatic: Option<bool>, explicit: u8) -> Option<u8> {
+    if aromatic != Some(true) {
         return None;
     }
     let target = match atom.element.symbol() {

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::core::{Atom, AtomId, AtomRadical, Bond, BondOrder, Molecule};
+use crate::core::{Atom, AtomId, AtomRadical, Bond, BondId, BondOrder, Molecule};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalAtomRanking {
@@ -54,7 +54,10 @@ fn initial_ranks(mol: &Molecule, atoms: &[AtomId]) -> Vec<u32> {
             let payload = mol
                 .atom(*atom)
                 .expect("atom_ids should only yield live atoms");
-            (*atom, atom_signature(payload, degree(mol, *atom)))
+            (
+                *atom,
+                atom_signature(mol, *atom, payload, degree(mol, *atom)),
+            )
         })
         .collect::<Vec<_>>();
     compress_signatures(mol, signatures)
@@ -67,9 +70,9 @@ fn refine_ranks(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) -> Vec<u32> {
             let mut neighbors = mol
                 .incident_bonds(*atom)
                 .expect("atom_ids should only yield live atoms")
-                .map(|(_, bond)| {
+                .map(|(bond_id, bond)| {
                     let neighbor = bond.other_atom(*atom);
-                    (bond_code(bond), ranks[neighbor.index()])
+                    (bond_code(mol, bond_id, bond), ranks[neighbor.index()])
                 })
                 .collect::<Vec<_>>();
             neighbors.sort_unstable();
@@ -114,16 +117,20 @@ struct AtomSignature {
     degree: u16,
 }
 
-fn atom_signature(atom: &Atom, degree: usize) -> AtomSignature {
+fn atom_signature(mol: &Molecule, atom_id: AtomId, atom: &Atom, degree: usize) -> AtomSignature {
     AtomSignature {
         atomic_number: atom.element.atomic_number(),
         isotope: atom.isotope.unwrap_or(0),
         formal_charge: atom.formal_charge,
         radical: radical_code(atom.radical),
         explicit_hydrogens: atom.explicit_hydrogens,
-        implicit_hydrogens: atom.implicit_hydrogens.unwrap_or(u8::MAX),
+        implicit_hydrogens: mol
+            .implicit_hydrogens(atom_id)
+            .ok()
+            .flatten()
+            .unwrap_or(u8::MAX),
         no_implicit_hydrogens: atom.no_implicit_hydrogens,
-        aromatic: atom.aromatic,
+        aromatic: mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true),
         atom_map: atom.atom_map.unwrap_or(0),
         degree: degree as u16,
     }
@@ -146,7 +153,7 @@ fn radical_code(radical: Option<AtomRadical>) -> u8 {
     }
 }
 
-fn bond_code(bond: &Bond) -> (u8, bool) {
+fn bond_code(mol: &Molecule, bond_id: BondId, bond: &Bond) -> (u8, bool) {
     let order = match bond.order {
         BondOrder::Zero => 0,
         BondOrder::Single => 1,
@@ -156,5 +163,8 @@ fn bond_code(bond: &Bond) -> (u8, bool) {
         BondOrder::Aromatic => 5,
         BondOrder::Dative => 6,
     };
-    (order, bond.aromatic)
+    (
+        order,
+        mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true),
+    )
 }

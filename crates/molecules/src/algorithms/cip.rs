@@ -236,7 +236,9 @@ fn double_bond_cip_stereogenic(mol: &Molecule, stereo: &DoubleBondStereo) -> Opt
     if bond.order != BondOrder::Double {
         return None;
     }
-    if bond.aromatic || double_bond_between_aromatic_atoms(mol, bond) {
+    if mol.bond_is_aromatic(stereo.bond).ok().flatten() == Some(true)
+        || double_bond_between_aromatic_atoms(mol, bond)
+    {
         return Some(false);
     }
     if bond_in_ring_smaller_than(mol, stereo.bond, 8) {
@@ -249,13 +251,8 @@ fn double_bond_cip_stereogenic(mol: &Molecule, stereo: &DoubleBondStereo) -> Opt
 }
 
 fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
-    mol.atom(bond.a())
-        .map(|atom| atom.aromatic)
-        .unwrap_or(false)
-        && mol
-            .atom(bond.b())
-            .map(|atom| atom.aromatic)
-            .unwrap_or(false)
+    mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
+        && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true)
 }
 
 fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
@@ -273,19 +270,11 @@ fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
 }
 
 fn clear_stereo_descriptors(mol: &mut Molecule) {
-    for element in mol.stereo_elements.iter_mut().flatten() {
-        element.descriptor = None;
-    }
+    mol.clear_cip_descriptors();
 }
 
 fn set_stereo_descriptor(mol: &mut Molecule, id: StereoElementId, descriptor: StereoDescriptor) {
-    if let Some(element) = mol
-        .stereo_elements
-        .get_mut(id.index())
-        .and_then(Option::as_mut)
-    {
-        element.descriptor = Some(descriptor);
-    }
+    mol.install_cip_descriptor(id, descriptor);
 }
 
 fn assign_tetrahedral_descriptor(
@@ -501,7 +490,12 @@ fn axis_endpoint_carriers(
             }
         }
     }
-    if mol.atom(endpoint).ok().map(hydrogen_count).unwrap_or(0) > 0
+    if mol
+        .atom(endpoint)
+        .ok()
+        .map(|atom| hydrogen_count(mol, endpoint, atom))
+        .unwrap_or(0)
+        > 0
         && mol
             .bond_between(endpoint, other_endpoint)
             .ok()
@@ -2258,7 +2252,7 @@ impl LigandNode {
             return;
         };
         {
-            for _ in 0..hydrogen_count(payload) {
+            for _ in 0..hydrogen_count(mol, *atom, payload) {
                 next.push(LigandNode::Hydrogen);
             }
         }
@@ -2268,6 +2262,7 @@ impl LigandNode {
         for (bond_id, bond) in incident {
             let neighbor = bond.other_atom(*atom);
             let duplicate_count = bond_duplicate_count_for_atom(
+                mol,
                 payload,
                 *atom,
                 bond_id,
@@ -2427,7 +2422,7 @@ fn seed_mancude_atom_types(
 ) -> Vec<MancudeAtomType> {
     let mut types = vec![MancudeAtomType::Other; mol.atoms.len()];
     for (atom_id, atom) in mol.atoms() {
-        let mut bond_types = u32::from(hydrogen_count(atom));
+        let mut bond_types = u32::from(hydrogen_count(mol, atom_id, atom));
         let mut in_ring = false;
         if let Ok(incident) = mol.incident_bonds(atom_id) {
             for (bond_id, bond) in incident {
@@ -2612,8 +2607,10 @@ fn cip_uniform_aromatic_duplicate_bonds(mol: &Molecule) -> Vec<bool> {
 fn cip_aromatic_bond_components(mol: &Molecule) -> Vec<AromaticBondComponent> {
     let mut seen_bonds = vec![false; mol.bonds.len()];
     let mut components = Vec::new();
-    for (start_bond, bond) in mol.bonds() {
-        if !bond.aromatic || seen_bonds[start_bond.index()] {
+    for (start_bond, _bond) in mol.bonds() {
+        if mol.bond_is_aromatic(start_bond).ok().flatten() != Some(true)
+            || seen_bonds[start_bond.index()]
+        {
             continue;
         }
 
@@ -2633,8 +2630,10 @@ fn cip_aromatic_bond_components(mol: &Molecule) -> Vec<AromaticBondComponent> {
                     atoms.push(atom);
                 }
                 if let Ok(incident) = mol.incident_bonds(atom) {
-                    for (next_bond_id, next_bond) in incident {
-                        if next_bond.aromatic && !seen_bonds[next_bond_id.index()] {
+                    for (next_bond_id, _next_bond) in incident {
+                        if mol.bond_is_aromatic(next_bond_id).ok().flatten() == Some(true)
+                            && !seen_bonds[next_bond_id.index()]
+                        {
                             seen_bonds[next_bond_id.index()] = true;
                             stack.push(next_bond_id);
                         }
@@ -2658,12 +2657,13 @@ fn atom_neighbors(mol: &Molecule, atom_id: AtomId) -> Vec<AtomId> {
         .collect()
 }
 
-fn hydrogen_count(atom: &Atom) -> u8 {
+fn hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
     atom.explicit_hydrogens
-        .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+        .saturating_add(mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0))
 }
 
 fn bond_duplicate_count_for_atom(
+    mol: &Molecule,
     atom: &Atom,
     atom_id: AtomId,
     bond_id: BondId,
@@ -2675,8 +2675,8 @@ fn bond_duplicate_count_for_atom(
         && atomic_number_fractions
             .get(atom_id.index())
             .is_some_and(|fraction| fraction.denominator > 1);
-    let uniform_aromatic_duplicate =
-        bond.aromatic && cip_bond_orders.uses_uniform_aromatic_duplicate_count(bond_id);
+    let uniform_aromatic_duplicate = mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
+        && cip_bond_orders.uses_uniform_aromatic_duplicate_count(bond_id);
     if negative_fractional_atom || uniform_aromatic_duplicate {
         1
     } else {
@@ -2747,14 +2747,19 @@ fn atom_descriptor_for_ligand_node(
                             .get(&key)
                             .copied()
                             .flatten()
-                            .or(element.descriptor)
+                            .or_else(|| context.mol.cip_descriptor(id).ok().flatten())
                     }
                 }
             }
-            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
-                double_bond_descriptor_applies_to_node(stereo, descriptor, atom, path)
-                    .then_some(descriptor)
-            }),
+            StereoElementKind::DoubleBond(stereo) => context
+                .mol
+                .cip_descriptor(id)
+                .ok()
+                .flatten()
+                .and_then(|descriptor| {
+                    double_bond_descriptor_applies_to_node(stereo, descriptor, atom, path)
+                        .then_some(descriptor)
+                }),
             _ => None,
         }
     })
@@ -3131,7 +3136,7 @@ fn double_bond_endpoint_carriers(
     carriers.sort_by_key(carrier_key);
     if mol
         .atom(endpoint)
-        .map(|atom| hydrogen_count(atom) == 1)
+        .map(|atom| hydrogen_count(mol, endpoint, atom) == 1)
         .unwrap_or(false)
     {
         carriers.push(StereoCarrier::ImplicitHydrogen);

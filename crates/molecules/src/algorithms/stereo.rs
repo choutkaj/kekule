@@ -176,7 +176,6 @@ pub fn perceive_stereo_with_options(
                 }),
         }
     }
-    mol.perception.stereo = ComputedState::Fresh;
     report
 }
 
@@ -556,20 +555,15 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 
 fn double_bond_stereo_is_unsupported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
     bond.order != BondOrder::Double
-        || bond.aromatic
+        || mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
         || double_bond_between_aromatic_atoms(mol, bond)
         || super::rings::bond_in_ring_smaller_than(mol, bond_id, 8)
         || (double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond))
 }
 
 fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
-    mol.atom(bond.a())
-        .map(|atom| atom.aromatic)
-        .unwrap_or(false)
-        && mol
-            .atom(bond.b())
-            .map(|atom| atom.aromatic)
-            .unwrap_or(false)
+    mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
+        && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true)
 }
 
 fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
@@ -731,6 +725,7 @@ fn tetrahedral_element_from_wedge(
         specifiedness,
         source: mark.source,
         group: None,
+        #[cfg(test)]
         descriptor: None,
     }
 }
@@ -964,6 +959,7 @@ fn atropisomeric_axis_candidate(
         specifiedness: StereoSpecifiedness::Specified,
         source: mark.source,
         group: None,
+        #[cfg(test)]
         descriptor: None,
     })
 }
@@ -1086,9 +1082,9 @@ fn atom_is_atropisomeric_sp2_endpoint(
     ring_membership: &RingMembership,
     atom_id: AtomId,
 ) -> bool {
-    let Ok(atom) = mol.atom(atom_id) else {
+    if mol.atom(atom_id).is_err() {
         return false;
-    };
+    }
     let incident = mol
         .incident_bonds(atom_id)
         .ok()
@@ -1102,9 +1098,10 @@ fn atom_is_atropisomeric_sp2_endpoint(
         return false;
     }
     ring_membership.atom_in_ring(atom_id)
-        || atom.aromatic
-        || incident.iter().any(|(_, bond)| {
-            bond.aromatic || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+        || mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true)
+        || incident.iter().any(|(bond_id, bond)| {
+            mol.bond_is_aromatic(*bond_id).ok().flatten() == Some(true)
+                || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
         })
 }
 
@@ -1171,7 +1168,9 @@ fn assemble_unknown_double_bonds(
         let Ok(bond) = mol.bond(mark.bond) else {
             continue;
         };
-        if bond.order != BondOrder::Double || bond.aromatic {
+        if bond.order != BondOrder::Double
+            || mol.bond_is_aromatic(mark.bond).ok().flatten() == Some(true)
+        {
             continue;
         }
         if has_double_bond_element(mol, mark.bond) {
@@ -1207,6 +1206,7 @@ fn assemble_unknown_double_bonds(
             specifiedness: StereoSpecifiedness::Unknown,
             source: mark.source,
             group: None,
+            #[cfg(test)]
             descriptor: None,
         });
     }
@@ -1725,11 +1725,12 @@ fn has_tetrahedral_element(mol: &Molecule, center: AtomId) -> bool {
 }
 
 fn hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
-    let Ok(atom) = mol.atom(atom) else {
+    let atom_id = atom;
+    let Ok(atom) = mol.atom(atom_id) else {
         return 0;
     };
     atom.explicit_hydrogens
-        .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+        .saturating_add(mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0))
 }
 
 fn implicit_lone_pair_available(mol: &Molecule, atom: AtomId) -> bool {

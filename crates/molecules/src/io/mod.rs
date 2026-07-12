@@ -1,6 +1,8 @@
 mod mmcif_document;
 mod mmcif_interpret;
+mod sdf_document;
 mod smiles;
+mod structure_documents;
 mod v2000;
 mod v3000;
 
@@ -9,7 +11,9 @@ use crate::core::{BondOrder, Molecule, StereoBondMarkKind};
 
 pub use mmcif_document::*;
 pub use mmcif_interpret::*;
+pub use sdf_document::*;
 pub use smiles::*;
+pub use structure_documents::*;
 pub use v2000::*;
 pub use v3000::*;
 

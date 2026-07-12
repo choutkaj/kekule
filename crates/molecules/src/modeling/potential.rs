@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use crate::core::{AtomId, BondId, BondOrder};
+use crate::core::BondOrder;
 
-use super::MolecularModel;
+use super::{InstanceAtomId, InstanceBondId, MolecularModel};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 /// Three-dimensional Cartesian vector used for energy gradients.
@@ -68,7 +68,7 @@ impl PotentialEvaluation {
         for (index, vector) in gradient.iter().copied().enumerate() {
             if !vector.is_finite() {
                 return Err(PotentialError::NonFiniteGradient {
-                    atom: AtomId::new(index as u32),
+                    atom: model.topology().atom_ids()[index],
                 });
             }
         }
@@ -83,8 +83,9 @@ impl PotentialEvaluation {
         &self.gradient
     }
 
-    pub fn gradient_for(&self, atom: AtomId) -> Option<Vector3> {
-        self.gradient.get(atom.index()).copied()
+    pub fn gradient_for(&self, model: &MolecularModel, atom: InstanceAtomId) -> Option<Vector3> {
+        let index = model.topology().atom_index(atom)?;
+        self.gradient.get(index.index()).copied()
     }
 }
 
@@ -100,7 +101,7 @@ pub trait Potential {
 /// Explicit parameter for one harmonic bond term.
 pub struct HarmonicBondParameter {
     /// Bond in the model topology.
-    pub bond: BondId,
+    pub bond: InstanceBondId,
     /// Equilibrium bond length in angstroms.
     pub equilibrium_length: f64,
     /// Harmonic force constant in kJ/mol/angstrom squared.
@@ -108,7 +109,7 @@ pub struct HarmonicBondParameter {
 }
 
 impl HarmonicBondParameter {
-    pub const fn new(bond: BondId, equilibrium_length: f64, force_constant: f64) -> Self {
+    pub const fn new(bond: InstanceBondId, equilibrium_length: f64, force_constant: f64) -> Self {
         Self {
             bond,
             equilibrium_length,
@@ -128,11 +129,10 @@ pub struct HarmonicBondPotential {
 
 #[derive(Debug, Clone, PartialEq)]
 struct HarmonicBondTerm {
-    bond: BondId,
-    a: AtomId,
-    b: AtomId,
+    bond: InstanceBondId,
+    a: InstanceAtomId,
+    b: InstanceAtomId,
     order: BondOrder,
-    aromatic: bool,
     equilibrium_length: f64,
     force_constant: f64,
 }
@@ -165,12 +165,13 @@ impl HarmonicBondPotential {
                 .bond(parameter.bond)
                 .map_err(|_| PotentialError::InvalidBondId(parameter.bond))?;
             let (a, b) = bond.endpoints();
+            let a = InstanceAtomId::new(parameter.bond.molecule(), a);
+            let b = InstanceAtomId::new(parameter.bond.molecule(), b);
             terms.push(HarmonicBondTerm {
                 bond: parameter.bond,
                 a,
                 b,
                 order: bond.order,
-                aromatic: bond.aromatic,
                 equilibrium_length: parameter.equilibrium_length,
                 force_constant: parameter.force_constant,
             });
@@ -188,10 +189,7 @@ impl Potential for HarmonicBondPotential {
                 .topology()
                 .bond(term.bond)
                 .map_err(|_| PotentialError::ModelTopologyMismatch(term.bond))?;
-            if bond.endpoints() != (term.a, term.b)
-                || bond.order != term.order
-                || bond.aromatic != term.aromatic
-            {
+            if bond.endpoints() != (term.a.atom(), term.b.atom()) || bond.order != term.order {
                 return Err(PotentialError::ModelTopologyMismatch(term.bond));
             }
             let a = model
@@ -208,8 +206,16 @@ impl Potential for HarmonicBondPotential {
             let extension = distance - term.equilibrium_length;
             energy += 0.5 * term.force_constant * extension * extension;
             let scale = term.force_constant * extension / distance;
-            gradient[term.a.index()].add_scaled(displacement, scale);
-            gradient[term.b.index()].add_scaled(displacement, -scale);
+            let a_index = model
+                .topology()
+                .atom_index(term.a)
+                .expect("validated harmonic atom");
+            let b_index = model
+                .topology()
+                .atom_index(term.b)
+                .expect("validated harmonic atom");
+            gradient[a_index.index()].add_scaled(displacement, scale);
+            gradient[b_index.index()].add_scaled(displacement, -scale);
         }
         PotentialEvaluation::new(model, energy, gradient)
     }
@@ -217,21 +223,21 @@ impl Potential for HarmonicBondPotential {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PotentialError {
-    InvalidBondId(BondId),
-    DuplicateBondParameter(BondId),
+    InvalidBondId(InstanceBondId),
+    DuplicateBondParameter(InstanceBondId),
     InvalidBondParameter {
-        bond: BondId,
+        bond: InstanceBondId,
         parameter: &'static str,
     },
-    ModelTopologyMismatch(BondId),
-    CoincidentBondAtoms(BondId),
+    ModelTopologyMismatch(InstanceBondId),
+    CoincidentBondAtoms(InstanceBondId),
     NonFiniteEnergy,
     GradientLengthMismatch {
         expected: usize,
         actual: usize,
     },
     NonFiniteGradient {
-        atom: AtomId,
+        atom: InstanceAtomId,
     },
     Custom(String),
 }

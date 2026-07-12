@@ -2,16 +2,15 @@ use super::*;
 
 #[test]
 fn valence_and_sanitization_are_explicit() {
-    let mut small =
-        smiles_api::read_str_with_options("CCO", SmilesParseOptions).expect("smiles should parse");
-    assert_eq!(small.graph().perception().valence, ComputedState::Absent);
+    let mut small = read_smiles("CCO").expect("smiles should parse");
+    assert!(!small.graph().perception().has_valence());
 
     let report = perception_api::sanitize_with_options(&mut small, SanitizeOptions::default())
         .expect("ethanol should sanitize");
 
     assert!(report.valence.expect("valence report").is_ok());
-    assert_eq!(small.graph().perception().valence, ComputedState::Fresh);
-    assert_eq!(small.graph().perception().rings, ComputedState::Fresh);
+    assert!(small.graph().perception().has_valence());
+    assert!(small.graph().perception().has_rings());
     assert_eq!(
         small
             .graph()
@@ -24,8 +23,7 @@ fn valence_and_sanitization_are_explicit() {
 
 #[test]
 fn sanitize_options_do_not_leave_skipped_passes_fresh() {
-    let mut baseline = smiles_api::read_str_with_options("C1=CC=CC=C1", SmilesParseOptions)
-        .expect("benzene should parse");
+    let mut baseline = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
     perception_api::sanitize_with_options(&mut baseline, SanitizeOptions::default())
         .expect("benzene should sanitize");
 
@@ -41,40 +39,19 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
             .unwrap_or_else(|error| panic!("options {mask:04b} should succeed: {error}"));
 
         assert_eq!(
-            molecule.graph().perception().valence,
-            if options.perceive_valence {
-                ComputedState::Fresh
-            } else {
-                ComputedState::Stale
-            },
+            molecule.graph().perception().has_valence(),
+            options.perceive_valence,
             "valence state for options {mask:04b}"
         );
         assert_eq!(
-            molecule.graph().perception().rings,
-            if options.perceive_rings {
-                ComputedState::Fresh
-            } else {
-                ComputedState::Stale
-            },
+            molecule.graph().perception().has_rings(),
+            options.perceive_rings,
             "ring state for options {mask:04b}"
         );
         assert_eq!(
-            molecule.graph().perception().aromaticity,
-            if options.perceive_aromaticity {
-                ComputedState::Fresh
-            } else {
-                ComputedState::Stale
-            },
+            molecule.graph().perception().has_aromaticity(),
+            options.perceive_aromaticity,
             "aromaticity state for options {mask:04b}"
-        );
-        assert_eq!(
-            molecule.graph().perception().stereo,
-            if options.perceive_stereo {
-                ComputedState::Fresh
-            } else {
-                ComputedState::Stale
-            },
-            "stereo state for options {mask:04b}"
         );
         assert_eq!(
             molecule.graph().ring_set().is_some(),
@@ -86,16 +63,15 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
 
 #[test]
 fn sanitization_perceives_stereo_by_default_and_can_skip_it() {
-    let mut molecule = smiles_api::read_str("C/C=C\\F").expect("directional smiles should parse");
+    let mut molecule = read_smiles("C/C=C\\F").expect("directional smiles should parse");
 
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("directional molecule should sanitize");
 
     assert!(report.stereo.expect("stereo report").is_ok());
-    assert_eq!(molecule.graph().perception().stereo, ComputedState::Fresh);
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
 
-    let mut skipped = smiles_api::read_str("C/C=C\\F").expect("directional smiles should parse");
+    let mut skipped = read_smiles("C/C=C\\F").expect("directional smiles should parse");
     perception_api::sanitize_with_options(
         &mut skipped,
         SanitizeOptions {
@@ -105,13 +81,13 @@ fn sanitization_perceives_stereo_by_default_and_can_skip_it() {
     )
     .expect("stereo-skipped molecule should sanitize");
 
-    assert_eq!(skipped.graph().perception().stereo, ComputedState::Absent);
+    assert!(!skipped.graph().perception().has_cip_descriptors());
     assert_eq!(skipped.graph().stereo_elements().count(), 0);
 }
 
 #[test]
 fn sanitization_preserves_unknown_double_bond_stereo() {
-    let mut molecule = smiles_api::read_str("CC=CC").expect("alkene should parse");
+    let mut molecule = read_smiles("CC=CC").expect("alkene should parse");
     let double_bond = molecule
         .graph()
         .bonds()
@@ -166,7 +142,6 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
         .expect("coordinate-only molecule should sanitize");
 
     assert!(report.stereo.expect("stereo report").is_ok());
-    assert_eq!(molecule.graph().perception().stereo, ComputedState::Fresh);
     assert_eq!(molecule.graph().stereo_elements().count(), 0);
 
     let direct_report = stereo_api::perceive_stereo(molecule.graph_mut());
@@ -259,8 +234,7 @@ fn failed_valence_sanitization_is_transactional() {
 
 #[test]
 fn failed_aromaticity_sanitization_is_transactional() {
-    let mut molecule = smiles_api::read_str_with_options("c1cccc1", SmilesParseOptions)
-        .expect("raw invalid aromatic representation parses");
+    let mut molecule = read_smiles("c1cccc1").expect("raw invalid aromatic representation parses");
     let before = molecule.clone();
 
     let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
@@ -272,8 +246,7 @@ fn failed_aromaticity_sanitization_is_transactional() {
 
 #[test]
 fn successful_sanitization_is_idempotent() {
-    let mut molecule =
-        smiles_api::read_str_with_options("CCO", SmilesParseOptions).expect("ethanol should parse");
+    let mut molecule = read_smiles("CCO").expect("ethanol should parse");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("first sanitize should succeed");
     let once = molecule.clone();
@@ -491,7 +464,7 @@ fn molfile_wedge_assembles_tetrahedral_p_with_a_double_bond() {
 M  END
 $$$$
 "#;
-    let mut molecule = sdf::read_v2000_str(input, SdfParseOptions::default())
+    let mut molecule = read_sdf_molecules(input)
         .expect("compact phosphorus regression parses")
         .into_iter()
         .next()
@@ -525,7 +498,7 @@ fn molfile_wedge_assembles_pyramidal_s_with_a_lone_pair() {
 M  END
 $$$$
 "#;
-    let mut molecule = sdf::read_v2000_str(input, SdfParseOptions::default())
+    let mut molecule = read_sdf_molecules(input)
         .expect("compact sulfur regression parses")
         .into_iter()
         .next()

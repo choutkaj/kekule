@@ -23,16 +23,16 @@ fn happy_path_small_molecule_api_matches_architecture() {
 
 #[test]
 fn namespaced_small_molecule_api_keeps_parsing_and_sanitization_separate() {
-    let mut molecule = smiles_api::read_str("CC(=O)O").expect("acetic acid parses");
-    assert_eq!(molecule.graph().perception().valence, ComputedState::Absent);
+    let mut molecule = read_smiles("CC(=O)O").expect("acetic acid parses");
+    assert!(!molecule.graph().perception().has_valence());
 
     perception_api::sanitize(&mut molecule).expect("acetic acid sanitizes");
-    assert_eq!(molecule.graph().perception().valence, ComputedState::Fresh);
+    assert!(molecule.graph().perception().has_valence());
 
     let canonical = smiles_api::write_canonical(&molecule).expect("canonical SMILES writes");
     assert!(!canonical.is_empty());
 
-    let chiral = smiles_api::read_str("F[C@H](Cl)Br").expect("chiral molecule parses");
+    let chiral = read_smiles("F[C@H](Cl)Br").expect("chiral molecule parses");
     assert_eq!(
         smiles_api::write_isomeric(&chiral).expect("isomeric SMILES writes"),
         "F[C@H](Cl)Br"
