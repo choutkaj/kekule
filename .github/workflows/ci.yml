@@ -11,6 +11,14 @@ on:
       - main
 
 jobs:
+  msrv:
+    name: MSRV (Rust 1.89)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - run: cargo check --workspace --all-targets --locked
+
   rust:
     name: Rust
     runs-on: ubuntu-latest
