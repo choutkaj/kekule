@@ -1,0 +1,13 @@
+[package]
+name = "molecules-dreiding"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+repository.workspace = true
+description = "DREIDING force-field adapter for molecules MolecularModel values."
+publish = false
+
+[dependencies]
+dreid-forge = { version = "=0.4.2", default-features = false }
+dreid-kernel = { version = "=0.4.2" }
+molecules = { path = "../molecules" }
