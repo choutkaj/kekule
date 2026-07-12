@@ -61,6 +61,8 @@ pub struct MinimizationResult {
 /// Minimize a cloned model while leaving the input unchanged.
 ///
 /// Uses normalized steepest descent with an Armijo backtracking line search.
+/// Trial evaluations with [`PotentialError::InvalidGeometry`] are rejected and
+/// backtracked; other potential failures abort the minimization.
 pub fn minimize(
     model: &MolecularModel,
     potential: &mut dyn Potential,
@@ -126,14 +128,20 @@ pub fn minimize(
             }
             let trial_positions = displaced_positions(&current_positions, &direction, step);
             working.set_positions(&trial_positions)?;
-            let trial = match potential.evaluate(&working) {
+            let trial_result = potential.evaluate(&working);
+            evaluations += 1;
+            let trial = match trial_result {
                 Ok(trial) => trial,
+                Err(error) if error.is_invalid_geometry() => {
+                    working.set_positions(&current_positions)?;
+                    step *= options.backtracking_factor;
+                    continue;
+                }
                 Err(error) => {
                     working.set_positions(&current_positions)?;
                     return Err(MinimizationError::Potential(error));
                 }
             };
-            evaluations += 1;
             let armijo_limit =
                 current_energy + options.armijo_coefficient * step * directional_derivative;
             if trial.energy() <= armijo_limit {

@@ -232,9 +232,8 @@ is deliberately restricted to fixed-topology `SmallMolecule` components:
 
 ```text
 MolecularModel
-  Molecule       read-only global reference topology without conformers
+  definition     shared immutable topology, components, and atom membership
   positions      exactly one finite Point3 per live global AtomId
-  components     stable source-molecule partitions over global AtomIds
 ```
 
 Construction clones a selected conformer from each source molecule into a fresh,
@@ -248,11 +247,19 @@ may change, through methods that preserve completeness and finiteness. Model
 coordinates use angstroms. Potentials use kJ/mol energies and kJ/mol/angstrom
 Cartesian gradients.
 
+Every built model has an opaque definition identity shared by its clones and
+preserved across coordinate updates. Prepared potentials bind to that identity,
+so independently built models are incompatible even when structurally equal.
+Static topology and component data are shared between clones, while coordinates
+remain independently owned.
+
 The minimal potential interface evaluates energy and a complete gradient from a
 model. Geometry minimization is a namespaced function that clones its input and
 returns a model plus explicit convergence diagnostics. Potentials are not stored
 inside `MolecularModel`, and minimization never changes topology or component
-membership.
+membership. Evaluation errors distinguish incompatible models, coordinate-only
+geometry singularities, malformed outputs, and backend failures. Line searches
+may backtrack coordinate-only geometry failures; other failures remain fatal.
 
 Automatic force-field preparation belongs in focused adapter crates layered on
 this contract. The first such adapter, `molecules-dreiding`, converts a

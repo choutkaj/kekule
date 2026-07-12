@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use crate::core::{AtomId, BondId, BondOrder};
+use crate::core::{AtomId, BondId};
 
-use super::MolecularModel;
+use super::{ModelDefinitionKey, MolecularModel};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 /// Three-dimensional Cartesian vector used for energy gradients.
@@ -91,7 +91,9 @@ impl PotentialEvaluation {
 /// Energy-and-gradient evaluator for a fixed-topology molecular model.
 ///
 /// Implementations may retain mutable caches between calls. Every returned
-/// evaluation must contain one finite gradient vector per model atom.
+/// evaluation must contain one finite gradient vector per model atom. Prepared
+/// implementations should bind to [`MolecularModel::definition_key`] and return
+/// [`PotentialError::IncompatibleModel`] for a different definition.
 pub trait Potential {
     fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError>;
 }
@@ -123,16 +125,14 @@ impl HarmonicBondParameter {
 /// Each term contributes `0.5 * k * (r - r0)^2`. No parameters are inferred,
 /// and angle, torsion, and nonbonded interactions are intentionally absent.
 pub struct HarmonicBondPotential {
+    definition: ModelDefinitionKey,
     terms: Vec<HarmonicBondTerm>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct HarmonicBondTerm {
-    bond: BondId,
     a: AtomId,
     b: AtomId,
-    order: BondOrder,
-    aromatic: bool,
     equilibrium_length: f64,
     force_constant: f64,
 }
@@ -166,44 +166,41 @@ impl HarmonicBondPotential {
                 .map_err(|_| PotentialError::InvalidBondId(parameter.bond))?;
             let (a, b) = bond.endpoints();
             terms.push(HarmonicBondTerm {
-                bond: parameter.bond,
                 a,
                 b,
-                order: bond.order,
-                aromatic: bond.aromatic,
                 equilibrium_length: parameter.equilibrium_length,
                 force_constant: parameter.force_constant,
             });
         }
-        Ok(Self { terms })
+        Ok(Self {
+            definition: model.definition_key().clone(),
+            terms,
+        })
     }
 }
 
 impl Potential for HarmonicBondPotential {
     fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError> {
+        if &self.definition != model.definition_key() {
+            return Err(PotentialError::IncompatibleModel);
+        }
         let mut energy = 0.0;
         let mut gradient = vec![Vector3::zero(); model.atom_count()];
         for term in &self.terms {
-            let bond = model
-                .topology()
-                .bond(term.bond)
-                .map_err(|_| PotentialError::ModelTopologyMismatch(term.bond))?;
-            if bond.endpoints() != (term.a, term.b)
-                || bond.order != term.order
-                || bond.aromatic != term.aromatic
-            {
-                return Err(PotentialError::ModelTopologyMismatch(term.bond));
-            }
             let a = model
                 .position(term.a)
-                .map_err(|_| PotentialError::ModelTopologyMismatch(term.bond))?;
+                .map_err(|_| PotentialError::IncompatibleModel)?;
             let b = model
                 .position(term.b)
-                .map_err(|_| PotentialError::ModelTopologyMismatch(term.bond))?;
+                .map_err(|_| PotentialError::IncompatibleModel)?;
             let displacement = Vector3::new(a.x - b.x, a.y - b.y, a.z - b.z);
             let distance = displacement.norm();
             if distance == 0.0 {
-                return Err(PotentialError::CoincidentBondAtoms(term.bond));
+                return Err(PotentialError::invalid_geometry(
+                    "harmonic bond",
+                    [term.a, term.b],
+                    PotentialGeometryError::CoincidentAtoms,
+                ));
             }
             let extension = distance - term.equilibrium_length;
             energy += 0.5 * term.force_constant * extension * extension;
@@ -215,7 +212,29 @@ impl Potential for HarmonicBondPotential {
     }
 }
 
+/// Coordinate singularity reported by a potential evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PotentialGeometryError {
+    CoincidentAtoms,
+    DegenerateAngle,
+    DegenerateDihedral,
+    DegenerateInversion,
+}
+
+impl fmt::Display for PotentialGeometryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CoincidentAtoms => f.write_str("coincident atoms"),
+            Self::DegenerateAngle => f.write_str("a degenerate angle"),
+            Self::DegenerateDihedral => f.write_str("a degenerate dihedral"),
+            Self::DegenerateInversion => f.write_str("a degenerate inversion"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PotentialError {
     InvalidBondId(BondId),
     DuplicateBondParameter(BondId),
@@ -223,8 +242,12 @@ pub enum PotentialError {
         bond: BondId,
         parameter: &'static str,
     },
-    ModelTopologyMismatch(BondId),
-    CoincidentBondAtoms(BondId),
+    IncompatibleModel,
+    InvalidGeometry {
+        interaction: &'static str,
+        atoms: Vec<AtomId>,
+        kind: PotentialGeometryError,
+    },
     NonFiniteEnergy,
     GradientLengthMismatch {
         expected: usize,
@@ -233,12 +256,35 @@ pub enum PotentialError {
     NonFiniteGradient {
         atom: AtomId,
     },
-    Custom(String),
+    Backend {
+        backend: &'static str,
+        message: String,
+    },
 }
 
 impl PotentialError {
-    pub fn custom(message: impl Into<String>) -> Self {
-        Self::Custom(message.into())
+    pub fn invalid_geometry(
+        interaction: &'static str,
+        atoms: impl IntoIterator<Item = AtomId>,
+        kind: PotentialGeometryError,
+    ) -> Self {
+        Self::InvalidGeometry {
+            interaction,
+            atoms: atoms.into_iter().collect(),
+            kind,
+        }
+    }
+
+    pub fn backend(backend: &'static str, message: impl Into<String>) -> Self {
+        Self::Backend {
+            backend,
+            message: message.into(),
+        }
+    }
+
+    /// Returns whether the failure is caused only by the evaluated coordinates.
+    pub const fn is_invalid_geometry(&self) -> bool {
+        matches!(self, Self::InvalidGeometry { .. })
     }
 }
 
@@ -252,14 +298,23 @@ impl fmt::Display for PotentialError {
             Self::InvalidBondParameter { bond, parameter } => {
                 write!(f, "invalid harmonic parameter for bond {bond}: {parameter}")
             }
-            Self::ModelTopologyMismatch(bond) => {
-                write!(f, "model topology does not match harmonic bond {bond}")
-            }
-            Self::CoincidentBondAtoms(bond) => {
-                write!(
-                    f,
-                    "bond {bond} has coincident atoms and an undefined gradient"
-                )
+            Self::IncompatibleModel => write!(
+                f,
+                "model definition differs from the definition bound to the potential"
+            ),
+            Self::InvalidGeometry {
+                interaction,
+                atoms,
+                kind,
+            } => {
+                write!(f, "{interaction} has {kind} for atoms [")?;
+                for (index, atom) in atoms.iter().enumerate() {
+                    if index != 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{atom}")?;
+                }
+                f.write_str("]")
             }
             Self::NonFiniteEnergy => write!(f, "potential returned a non-finite energy"),
             Self::GradientLengthMismatch { expected, actual } => write!(
@@ -272,7 +327,9 @@ impl fmt::Display for PotentialError {
                     "potential returned a non-finite gradient for atom {atom}"
                 )
             }
-            Self::Custom(message) => write!(f, "potential evaluation failed: {message}"),
+            Self::Backend { backend, message } => {
+                write!(f, "{backend} potential evaluation failed: {message}")
+            }
         }
     }
 }

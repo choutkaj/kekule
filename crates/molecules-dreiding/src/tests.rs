@@ -407,13 +407,19 @@ fn evaluation_rejects_incompatible_topology_and_singular_geometry() {
 
     let (other, other_conformer) = formaldehyde();
     let other = model_of(&other, other_conformer);
-    assert!(potential.evaluate(&other).is_err());
+    assert!(matches!(
+        potential.evaluate(&other),
+        Err(molecules::modeling::potential::PotentialError::IncompatibleModel)
+    ));
 
     let mut singular = model.clone();
     singular
         .set_position(AtomId::new(1), singular.positions()[0])
         .unwrap();
-    assert!(potential.evaluate(&singular).is_err());
+    assert!(matches!(
+        potential.evaluate(&singular),
+        Err(molecules::modeling::potential::PotentialError::InvalidGeometry { .. })
+    ));
 }
 
 #[test]

@@ -49,6 +49,22 @@ fn model_from_conformer_copies_one_complete_coordinate_set() {
 }
 
 #[test]
+fn model_definition_identity_is_shared_only_by_clones() {
+    let (source, conformer, _) = diatomic(1.5);
+    let model = MolecularModel::from_conformer(&source, conformer).unwrap();
+    let mut cloned = model.clone();
+    cloned
+        .set_position(AtomId::new(1), Point3::new(2.0, 0.0, 0.0))
+        .unwrap();
+    let rebuilt = MolecularModel::from_conformer(&source, conformer).unwrap();
+
+    assert_eq!(model.definition_key(), cloned.definition_key());
+    assert_ne!(model.definition_key(), rebuilt.definition_key());
+    assert_ne!(model, cloned);
+    assert_eq!(model, rebuilt);
+}
+
+#[test]
 fn builder_remaps_tombstones_and_multiple_components() {
     let mut graph = Molecule::new();
     let first = graph.add_atom(atom("C"));
@@ -400,7 +416,7 @@ fn harmonic_potential_rejects_invalid_terms_and_evaluations() {
         HarmonicBondPotential::new(&model, [HarmonicBondParameter::new(bond, 1.0, 1.0)]).unwrap();
     assert_eq!(
         bound.evaluate(&mismatched),
-        Err(PotentialError::ModelTopologyMismatch(bond))
+        Err(PotentialError::IncompatibleModel)
     );
 
     let (coincident, conformer, source_bond) = diatomic(0.0);
@@ -413,7 +429,11 @@ fn harmonic_potential_rejects_invalid_terms_and_evaluations() {
             .unwrap();
     assert_eq!(
         potential.evaluate(&coincident),
-        Err(PotentialError::CoincidentBondAtoms(bond))
+        Err(PotentialError::InvalidGeometry {
+            interaction: "harmonic bond",
+            atoms: vec![AtomId::new(0), AtomId::new(1)],
+            kind: PotentialGeometryError::CoincidentAtoms,
+        })
     );
 }
 
@@ -501,6 +521,77 @@ impl Potential for ConstantEnergyPotential {
             vec![Vector3::new(1.0, 0.0, 0.0); model.atom_count()],
         )
     }
+}
+
+struct RecoverableGeometryPotential;
+
+impl Potential for RecoverableGeometryPotential {
+    fn evaluate(
+        &mut self,
+        model: &MolecularModel,
+    ) -> std::result::Result<PotentialEvaluation, PotentialError> {
+        let coordinate = model.positions()[1].x;
+        if coordinate <= 0.25 {
+            return Err(PotentialError::invalid_geometry(
+                "test coordinate",
+                [AtomId::new(1)],
+                PotentialGeometryError::CoincidentAtoms,
+            ));
+        }
+        PotentialEvaluation::new(
+            model,
+            0.5 * coordinate * coordinate,
+            vec![Vector3::zero(), Vector3::new(coordinate, 0.0, 0.0)],
+        )
+    }
+}
+
+struct BackendFailurePotential {
+    calls: usize,
+}
+
+impl Potential for BackendFailurePotential {
+    fn evaluate(
+        &mut self,
+        model: &MolecularModel,
+    ) -> std::result::Result<PotentialEvaluation, PotentialError> {
+        self.calls += 1;
+        if self.calls > 1 {
+            return Err(PotentialError::backend("test backend", "evaluation failed"));
+        }
+        PotentialEvaluation::new(
+            model,
+            0.5,
+            vec![Vector3::zero(), Vector3::new(1.0, 0.0, 0.0)],
+        )
+    }
+}
+
+#[test]
+fn minimization_backtracks_invalid_geometry_but_propagates_backend_failures() {
+    let (source, conformer, _) = diatomic(1.0);
+    let model = MolecularModel::from_conformer(&source, conformer).unwrap();
+    let options = MinimizeOptions {
+        max_iterations: 1,
+        initial_step: 1.0,
+        ..MinimizeOptions::default()
+    };
+
+    let result = minimize(&model, &mut RecoverableGeometryPotential, options).unwrap();
+    assert_eq!(result.status, MinimizationStatus::MaxIterations);
+    assert_eq!(result.iterations, 1);
+    assert_eq!(result.evaluations, 3);
+    assert_eq!(result.model.positions()[1].x, 0.5);
+    assert_eq!(model.positions()[1].x, 1.0);
+
+    let error = minimize(&model, &mut BackendFailurePotential { calls: 0 }, options).unwrap_err();
+    assert!(matches!(
+        error,
+        MinimizationError::Potential(PotentialError::Backend {
+            backend: "test backend",
+            ..
+        })
+    ));
 }
 
 #[test]
