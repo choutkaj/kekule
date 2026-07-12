@@ -38,6 +38,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+### Molecular modelling
+
+The initial modelling layer creates a fixed-topology `MolecularModel` from one
+or more selected small-molecule conformers. Potentials and minimization remain
+explicit namespaced operations; modelling types are not part of the prelude.
+
+```rust
+use molecules::core::{Atom, BondOrder, Conformer, Element, Molecule, Point3};
+use molecules::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
+use molecules::modeling::{minimize, MinimizeOptions, MolecularModel};
+use molecules::small::SmallMolecule;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut graph = Molecule::new();
+    let carbon = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let oxygen = graph.add_atom(Atom::new(Element::from_symbol("O").unwrap()));
+    let source_bond = graph.add_bond(carbon, oxygen, BondOrder::Single)?;
+
+    let mut conformer = Conformer::new();
+    conformer.set_position(carbon, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(oxygen, Point3::new(2.0, 0.0, 0.0));
+    let conformer = graph.add_conformer(conformer);
+    let molecule = SmallMolecule::from_graph(graph);
+
+    let mut builder = MolecularModel::builder();
+    let mapping = builder.add_component(&molecule, conformer)?;
+    let model = builder.build()?;
+    let bond = mapping.bond(source_bond).unwrap();
+    let mut potential = HarmonicBondPotential::new(
+        &model,
+        [HarmonicBondParameter::new(bond, 1.2, 100.0)],
+    )?;
+    let minimized = minimize(&model, &mut potential, MinimizeOptions::default())?;
+
+    println!("final energy: {} kJ/mol", minimized.final_energy);
+    Ok(())
+}
+```
+
 ### Macromolecules
 
 Use the `mmcif` facade for macromolecular file I/O. Reading mmCIF parses atom-site data into a `MacroMolecule`; validation remains an explicit follow-up step.

@@ -5,6 +5,7 @@ pub mod bio;
 mod chemistry;
 pub mod core;
 mod io;
+pub mod modeling;
 pub mod small;
 
 pub mod smiles {

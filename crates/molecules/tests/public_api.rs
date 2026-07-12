@@ -63,3 +63,36 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
     assert!(sanitize.validation.is_some());
     Ok(())
 }
+
+#[test]
+fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
+    use molecules::modeling::{minimize, MinimizationStatus, MinimizeOptions, MolecularModel};
+
+    let mut graph = Molecule::new();
+    let carbon = graph.add_atom(Atom::new(
+        Element::from_symbol("C").expect("carbon is a known element"),
+    ));
+    let oxygen = graph.add_atom(Atom::new(
+        Element::from_symbol("O").expect("oxygen is a known element"),
+    ));
+    let bond = graph.add_bond(carbon, oxygen, BondOrder::Single)?;
+    let mut conformer = Conformer::new();
+    conformer.set_position(carbon, molecules::core::Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(oxygen, molecules::core::Point3::new(2.0, 0.0, 0.0));
+    let conformer = graph.add_conformer(conformer);
+    let molecule = SmallMolecule::from_graph(graph);
+
+    let mut builder = MolecularModel::builder();
+    let mapping = builder.add_component(&molecule, conformer)?;
+    let model = builder.build()?;
+    let model_bond = mapping.bond(bond).expect("source bond is mapped");
+    let mut potential =
+        HarmonicBondPotential::new(&model, [HarmonicBondParameter::new(model_bond, 1.2, 100.0)])?;
+    let result = minimize(&model, &mut potential, MinimizeOptions::default())?;
+
+    assert_eq!(result.status, MinimizationStatus::Converged);
+    assert!(result.final_energy < result.initial_energy);
+    assert_eq!(model.positions()[1].x, 2.0);
+    Ok(())
+}
