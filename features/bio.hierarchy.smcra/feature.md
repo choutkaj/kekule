@@ -22,13 +22,12 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - Tracks label and author identifiers separately.
 - Supports alternate locations, occupancy, B-factor, insertion code, and model identifiers.
 - Stores label and author component IDs separately on residues.
-- mmCIF residue grouping uses label sequence identity when available, author sequence identity otherwise, and strict mode rejects ambiguous sequence-less residues.
-- Lenient sequence-less grouping is occurrence-based and keeps alternate locations together without merging repeated waters or ligands.
+- mmCIF interpretation populates hierarchy only after molecular boundaries and alternate locations have been resolved.
 
 ## Validation
 
-- Current coverage combines unit tests with Biopython golden validation through `validation.harness`.
-- Fixtures, goldens, and evidence live under each applicable corpus directory.
+- Unit tests cover hierarchy construction, mutation, lookup, validation, and sanitization behavior.
+- The former Biopython evidence exercised the removed whole-file reader rather than the format-neutral hierarchy contract, so the feature remains unvalidated pending replacement evidence.
 
 ## Out Of Scope
 
@@ -42,3 +41,4 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - v3: Preserve label/auth component IDs separately and support conservative lenient occurrence grouping.
 - v4: Add direct macro hierarchy accessors plus conservative macro validation and sanitization APIs.
 - v5: Make macro sanitization defaults honest by enabling only implemented validation behavior and rejecting requested unimplemented stages.
+- v6: Remove validation coupling to the deleted direct mmCIF reader and keep `BioHierarchy` format-neutral.

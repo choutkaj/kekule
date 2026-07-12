@@ -13,6 +13,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MacroMolecule` hides its raw graph and hierarchy fields behind `graph()`, `graph_mut()`, `hierarchy()`, and `hierarchy_mut()`.
 - `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and separate macro validation/sanitization APIs.
 - SMILES, Molfile, SDF, mmCIF, perception, and canonicalization expose namespaced functions matching the staged architecture.
+- The `mmcif` facade separates whole-document parsing from molecular interpretation and exposes reports/options without expanding the prelude.
+- `bio::{MolecularContents, Solvent}` represent clean multi-entity import results while retaining individual molecule objects.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 - Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
 
@@ -40,3 +42,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v2: Move expert perception APIs under focused facade modules and add separate macro validation/sanitization surface.
 - v3: Add downstream-style integration tests for the architecture-level public API.
 - v4: Add the focused SmallMolecule modelling, potential, and minimization namespace without expanding the prelude.
+- v5: Add staged mmCIF document interpretation and molecular-content containers without expanding the prelude.
+- v6: Hard-break the historical direct mmCIF reader and all compatibility re-exports.

@@ -115,15 +115,27 @@ pub mod sdf {
 }
 
 pub mod mmcif {
-    pub use crate::io::{MmcifParseError, MmcifParseOptions};
+    pub use crate::io::{
+        MmcifAltLocPolicy, MmcifDataBlock, MmcifDocument, MmcifEntityKind, MmcifEntry,
+        MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
+        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifParseError, MmcifParseOptions,
+        MmcifValue,
+    };
 
-    use crate::bio::MacroMolecule;
-
-    pub fn read_str(
+    /// Parses a structural mmCIF data document without assigning molecular meaning.
+    pub fn parse_str(
         input: &str,
         options: MmcifParseOptions,
-    ) -> Result<MacroMolecule, MmcifParseError> {
-        crate::io::read_mmcif_str(input, options)
+    ) -> Result<MmcifDocument, MmcifParseError> {
+        crate::io::parse_mmcif_str(input, options)
+    }
+
+    /// Interprets one coordinate-containing data block as clean molecular objects.
+    pub fn interpret(
+        document: &MmcifDocument,
+        options: MmcifInterpretOptions,
+    ) -> Result<MmcifInterpretation, MmcifInterpretError> {
+        crate::io::interpret_mmcif(document, options)
     }
 }
 

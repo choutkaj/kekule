@@ -7,9 +7,7 @@ use crate::perception::{
 use crate::sdf::*;
 use crate::small::*;
 use crate::smiles::*;
-use crate::{
-    bio as bio_api, canon, molfile, perception as perception_api, sdf, smiles as smiles_api,
-};
+use crate::{canon, molfile, perception as perception_api, sdf, smiles as smiles_api};
 
 pub(super) fn carbon() -> Atom {
     Atom::new(Element::from_symbol("C").expect("carbon should be available"))
@@ -214,6 +212,7 @@ mod chemistry;
 mod cip;
 mod core_payload;
 mod graph;
+mod mmcif_contents;
 mod perception;
 mod public_api;
 mod ring_limits;

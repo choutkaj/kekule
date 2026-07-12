@@ -27,10 +27,6 @@ impl MacroMolecule {
         &mut self.graph
     }
 
-    pub(crate) fn graph_mut_raw(&mut self) -> &mut Molecule {
-        &mut self.graph
-    }
-
     pub fn hierarchy(&self) -> &BioHierarchy {
         &self.hierarchy
     }

@@ -1,0 +1,9 @@
+id = "core.conformer-properties"
+title = "Conformer properties"
+area = "core"
+version = 1
+implemented = true
+validated = false
+description = "Attach arbitrary source and workflow metadata to individual conformers."
+depends_on = ["core.conformers", "core.atom-bond"]
+validation_required = []
