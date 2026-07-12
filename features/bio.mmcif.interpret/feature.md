@@ -22,7 +22,7 @@ Decipher a parsed mmCIF structure document into clean molecule objects without t
 - Non-polymer and water occurrences are separated by residue identity, including conservative occurrence grouping when sequence identifiers are absent.
 - Source atom/component/asym identifiers remain on atom and graph properties; macromolecular hierarchy metadata remains in `BioHierarchy`.
 - The report counts coordinate models, output categories, applied connections, inferred classifications, ignored/unresolved connections, and multi-atom graphs still awaiting template bonds.
-- The historical direct `MacroMolecule` reader remains temporarily available for existing validation call sites but is not the canonical multi-entity import path.
+- The parse-then-interpret pipeline is the only mmCIF molecular import path; no direct whole-file molecule reader or compatibility alias exists.
 
 ## Validation
 
@@ -37,3 +37,4 @@ Decipher a parsed mmCIF structure document into clean molecule objects without t
 ## Revision Notes
 
 - v1: Add conservative staged interpretation of structural mmCIF documents into clean molecular contents.
+- v2: Remove the historical direct reader and make parse-then-interpret the exclusive mmCIF molecular import path.

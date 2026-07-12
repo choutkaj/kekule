@@ -652,7 +652,7 @@ Recommended order:
 2. Create a small prelude.
 3. Give `SmallMolecule` real methods and stop documenting `.mol` access.
 4. Add namespaced facades for `smiles`, `molfile`, `sdf`, `perception`, and `canon`.
-5. Keep compatibility aliases only where they are cheap and clearly marked as transitional.
+5. Remove superseded pre-release API shapes instead of retaining compatibility aliases.
 6. Update README examples to use the new happy-path API.
 7. Update tests so public examples compile and define the intended user experience.
 8. Add macromolecule validation/sanitization API design before implementing invasive preparation workflows.

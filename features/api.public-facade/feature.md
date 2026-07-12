@@ -43,3 +43,4 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v3: Add downstream-style integration tests for the architecture-level public API.
 - v4: Add the focused SmallMolecule modelling, potential, and minimization namespace without expanding the prelude.
 - v5: Add staged mmCIF document interpretation and molecular-content containers without expanding the prelude.
+- v6: Hard-break the historical direct mmCIF reader and all compatibility re-exports.

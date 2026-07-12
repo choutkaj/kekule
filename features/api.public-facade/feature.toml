@@ -1,7 +1,7 @@
 id = "api.public-facade"
 title = "Public API facade"
 area = "api"
-version = 5
+version = 6
 implemented = true
 validated = false
 description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."
@@ -13,7 +13,6 @@ depends_on = [
   "bio.molecular-contents",
   "bio.mmcif.interpret",
   "io.mmcif.parse",
-  "io.mmcif.document",
   "chem.sanitize.rdkit-like",
   "io.smiles.parse",
   "io.smiles.write",

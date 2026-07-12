@@ -1,9 +1,9 @@
 id = "io.mmcif.parse"
-title = "mmCIF parser"
+title = "mmCIF document parser"
 area = "io"
-version = 7
+version = 8
 implemented = true
-validated = true
-description = "Parse mmCIF atom-site data into MacroMolecule while preserving label and author identifiers plus Cartesian coordinates."
-depends_on = ["bio.hierarchy.smcra"]
-validation_required = ["smoke", "pdb-10", "pdb-100"]
+validated = false
+description = "Parse complete structural mmCIF data documents without assigning molecular meaning."
+depends_on = []
+validation_required = []
