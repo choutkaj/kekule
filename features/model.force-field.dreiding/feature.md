@@ -20,6 +20,8 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 
 - Uses pinned `dreid-forge` and matching `dreid-kernel` releases; upstream types do not
   cross the adapter's public API.
+- Maps aromatic-flagged localized single and double bonds to DREIDING aromatic bonds
+  without changing the bond orders stored by Molecules.
 - Runs QEq separately for each model component using its formal-charge sum and keeps the
   resulting charges fixed during evaluation and minimization.
 - Evaluates harmonic bonds, cosine angles, torsions, inversions, Lennard-Jones,

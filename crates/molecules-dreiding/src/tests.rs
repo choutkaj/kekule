@@ -100,6 +100,62 @@ fn formaldehyde() -> (SmallMolecule, molecules::core::ConformerId) {
     )
 }
 
+fn localized_benzene() -> (SmallMolecule, molecules::core::ConformerId) {
+    let mut graph = Molecule::new();
+    let carbons = (0..6)
+        .map(|_| {
+            let id = graph.add_atom(atom("C"));
+            graph.atom_mut(id).unwrap().aromatic = true;
+            id
+        })
+        .collect::<Vec<_>>();
+    let hydrogens = (0..6)
+        .map(|_| graph.add_atom(atom("H")))
+        .collect::<Vec<_>>();
+
+    for index in 0..6 {
+        let order = if index % 2 == 0 {
+            BondOrder::Double
+        } else {
+            BondOrder::Single
+        };
+        let bond = graph
+            .add_bond(carbons[index], carbons[(index + 1) % 6], order)
+            .unwrap();
+        graph.bond_mut(bond).unwrap().aromatic = true;
+    }
+    for index in 0..6 {
+        graph
+            .add_bond(carbons[index], hydrogens[index], BondOrder::Single)
+            .unwrap();
+    }
+
+    let carbon_radius = 1.397;
+    let hydrogen_radius = 2.48;
+    let mut conformer = Conformer::new();
+    for index in 0..6 {
+        let angle = index as f64 * std::f64::consts::TAU / 6.0;
+        conformer.set_position(
+            carbons[index],
+            Point3::new(
+                carbon_radius * angle.cos(),
+                carbon_radius * angle.sin(),
+                0.0,
+            ),
+        );
+        conformer.set_position(
+            hydrogens[index],
+            Point3::new(
+                hydrogen_radius * angle.cos(),
+                hydrogen_radius * angle.sin(),
+                0.0,
+            ),
+        );
+    }
+    let conformer = graph.add_conformer(conformer);
+    (SmallMolecule::from_graph(graph), conformer)
+}
+
 fn model_of(source: &SmallMolecule, conformer: molecules::core::ConformerId) -> MolecularModel {
     MolecularModel::from_conformer(source, conformer).unwrap()
 }
@@ -154,6 +210,37 @@ fn preparation_matches_direct_forge_for_single_component() {
     };
     assert!((prepared.bonds[0].k_half - k_half * crate::prepare::KCAL_TO_KJ).abs() < 1.0e-12);
     assert_eq!(prepared.nonbonded.len(), 0, "water has only 1-2/1-3 pairs");
+    assert_eq!(model, original);
+}
+
+#[test]
+fn preparation_accepts_localized_aromatic_bonds() {
+    let (source, conformer) = localized_benzene();
+    let model = model_of(&source, conformer);
+    let original = model.clone();
+
+    let prepared = DreidingPotential::prepare(&model).unwrap();
+
+    for index in 0..6 {
+        assert_eq!(prepared.atom_type(AtomId::new(index)), Some("C_R"));
+    }
+    let localized_orders = model
+        .topology()
+        .bonds()
+        .take(6)
+        .map(|(_, bond)| (bond.order, bond.aromatic))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        localized_orders,
+        vec![
+            (BondOrder::Double, true),
+            (BondOrder::Single, true),
+            (BondOrder::Double, true),
+            (BondOrder::Single, true),
+            (BondOrder::Double, true),
+            (BondOrder::Single, true),
+        ]
+    );
     assert_eq!(model, original);
 }
 

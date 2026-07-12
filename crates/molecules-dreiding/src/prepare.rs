@@ -177,19 +177,7 @@ fn validate_bonds(model: &MolecularModel) -> Result<(), DreidingPrepareError> {
         }
     }
     for (bond_id, bond) in model.topology().bonds() {
-        let aromatic_order = matches!(bond.order, BondOrder::Aromatic);
-        if bond.aromatic != aromatic_order {
-            return Err(DreidingPrepareError::InconsistentAromaticBond { bond: bond_id });
-        }
-        match bond.order {
-            BondOrder::Single | BondOrder::Double | BondOrder::Triple | BondOrder::Aromatic => {}
-            order => {
-                return Err(DreidingPrepareError::UnsupportedBondOrder {
-                    bond: bond_id,
-                    order,
-                });
-            }
-        }
+        forge_bond_order(bond_id, bond.order, bond.aromatic)?;
         let (a, b) = bond.endpoints();
         if atom_component[a.index()] != atom_component[b.index()] {
             return Err(DreidingPrepareError::CrossComponentBond { bond: bond_id });
@@ -234,7 +222,7 @@ fn system_from_model(
         system.bonds.push(ForgeBond::new(
             local_a,
             local_b,
-            forge_bond_order(bond_id, bond.order)?,
+            forge_bond_order(bond_id, bond.order, bond.aromatic)?,
         ));
     }
     Ok(system)
@@ -243,13 +231,21 @@ fn system_from_model(
 fn forge_bond_order(
     bond: BondId,
     order: BondOrder,
+    aromatic: bool,
 ) -> Result<ForgeBondOrder, DreidingPrepareError> {
-    match order {
-        BondOrder::Single => Ok(ForgeBondOrder::Single),
-        BondOrder::Double => Ok(ForgeBondOrder::Double),
-        BondOrder::Triple => Ok(ForgeBondOrder::Triple),
-        BondOrder::Aromatic => Ok(ForgeBondOrder::Aromatic),
-        order => Err(DreidingPrepareError::UnsupportedBondOrder { bond, order }),
+    match (aromatic, order) {
+        (_, order @ (BondOrder::Zero | BondOrder::Quadruple | BondOrder::Dative)) => {
+            Err(DreidingPrepareError::UnsupportedBondOrder { bond, order })
+        }
+        (false, BondOrder::Aromatic) | (true, BondOrder::Triple) => {
+            Err(DreidingPrepareError::InconsistentAromaticBond { bond })
+        }
+        (true, BondOrder::Single | BondOrder::Double | BondOrder::Aromatic) => {
+            Ok(ForgeBondOrder::Aromatic)
+        }
+        (false, BondOrder::Single) => Ok(ForgeBondOrder::Single),
+        (false, BondOrder::Double) => Ok(ForgeBondOrder::Double),
+        (false, BondOrder::Triple) => Ok(ForgeBondOrder::Triple),
     }
 }
 
