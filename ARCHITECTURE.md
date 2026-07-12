@@ -254,9 +254,17 @@ returns a model plus explicit convergence diagnostics. Potentials are not stored
 inside `MolecularModel`, and minimization never changes topology or component
 membership.
 
+Automatic force-field preparation belongs in focused adapter crates layered on
+this contract. The first such adapter, `molecules-dreiding`, converts a
+`MolecularModel` explicitly into a prepared DREIDING potential while keeping the
+core `molecules` dependency surface and prelude unchanged. Adapter preparation
+may infer force-field types and charges, but it must not sanitize, add atoms, or
+mutate the source model implicitly. Prepared potentials remain bound to the
+topology and component partition against which they were created.
+
 Macromolecular selection/preparation, periodic cells, electronic state,
-constraints, topology mutation, reactive workflows, automatic force-field
-typing, and dynamics remain separate future capabilities.
+constraints, topology mutation, reactive workflows, and dynamics remain
+separate future capabilities.
 
 ## MacroMolecule and BioHierarchy
 

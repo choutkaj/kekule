@@ -754,7 +754,7 @@ fn remove_extra_rings(mut rings: Vec<Ring>, bond_slots: usize) -> (Vec<Ring>, Ve
                     .iter()
                     .filter(|bond| union[bond.index()])
                     .count();
-                if best_overlap.map_or(true, |current| overlap > current) {
+                if best_overlap.is_none_or(|current| overlap > current) {
                     best = Some(other);
                     best_overlap = Some(overlap);
                 }

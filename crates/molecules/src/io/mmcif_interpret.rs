@@ -617,7 +617,7 @@ fn connection_partner<'a>(
     Ok(rows.iter().find(|candidate| {
         candidate.asym_id == asym
             && candidate.atom_name == atom
-            && seq.map_or(true, |seq| {
+            && seq.is_none_or(|seq| {
                 candidate
                     .label_seq_id
                     .map(|value| value.to_string())

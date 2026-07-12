@@ -3163,7 +3163,7 @@ fn permutation_is_even(positions: &[usize]) -> bool {
             }
         }
     }
-    inversions % 2 == 0
+    inversions.is_multiple_of(2)
 }
 
 #[cfg(test)]
