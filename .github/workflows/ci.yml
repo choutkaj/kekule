@@ -15,7 +15,7 @@ jobs:
     name: MSRV (Rust 1.89)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89.0
       - run: cargo check --workspace --all-targets --locked
 
@@ -23,7 +23,7 @@ jobs:
     name: Rust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --all -- --check
       - run: cargo check --workspace --all-targets
@@ -40,7 +40,7 @@ jobs:
     name: Parser fuzz smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo install cargo-fuzz --locked
       - run: cargo +nightly fuzz run mol_v2000 -- -runs=256 -max_len=4096 -seed=1
