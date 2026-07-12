@@ -1,7 +1,7 @@
 id = "model.system"
 title = "Fixed-topology molecular model"
 area = "modeling"
-version = 1
+version = 2
 implemented = true
 validated = false
 description = "Represent one or more SmallMolecule components as a fixed global topology with exactly one complete coordinate set."
