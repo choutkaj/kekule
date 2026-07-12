@@ -15,6 +15,8 @@ Molecule        // raw graph kernel: topology, payloads, conformers, properties,
 SmallMolecule   // chemistry-aware small-molecule wrapper around Molecule
 MacroMolecule   // structure-biology wrapper around Molecule plus BioHierarchy
 MolecularModel  // fixed topology plus one complete coordinate set and components
+MolecularContents // clean molecules interpreted from a multi-entity structure document
+Solvent         // collection of individual solvent SmallMolecule instances
 ```
 
 `Molecule` is not an RDKit-style fully interpreted chemical object. It is a graph and payload container. It may be incomplete, unsanitized, chemically invalid, or freshly parsed from a lossy file format. Chemical interpretation belongs to explicit perception/sanitization steps and to domain wrappers.
@@ -22,7 +24,14 @@ MolecularModel  // fixed topology plus one complete coordinate set and component
 The domain wrappers provide the user-facing meaning:
 
 - `SmallMolecule` owns small-molecule convenience workflows: SMILES, SDF/Molfile, sanitization, valence, ring perception, aromaticity, stereochemistry, canonicalization, descriptors, fingerprints, and substructure search.
-- `MacroMolecule` owns macromolecular structure workflows: models, chains, residues, atom-site metadata, alternate locations, occupancy, B-factors, PDB/mmCIF identifiers, and coordinate-heavy structure operations.
+- `MacroMolecule` owns macromolecular structure workflows: chains, residues, atom-site metadata, alternate locations, occupancy, B-factors, PDB/mmCIF identifiers, conformers, and coordinate-heavy structure operations.
+
+A molecule is one chemically intended covalently connected object, even when an
+imported raw graph still awaits template bonds. File formats that describe an
+entire experimental structure are therefore not parsed directly into one graph.
+Their format document is interpreted into distinct domain objects; declared
+covalent links may merge structural instances, while water molecules remain
+individual `SmallMolecule` values grouped by `Solvent`.
 
 Biomolecular hierarchy information must stay in `BioHierarchy`, not in core `Atom`, unless the field is chemically general for both small molecules and macromolecules.
 
@@ -34,11 +43,11 @@ The desired public namespace is:
 molecules
   core         raw graph kernel: Molecule, Atom, Bond, IDs, Element, Conformer, stereo elements
   small        SmallMolecule and small-molecule convenience API
-  bio          MacroMolecule, BioHierarchy, Model, Chain, Residue, AtomSite
+  bio          MacroMolecule, BioHierarchy, MolecularContents, Solvent, Chain, Residue, AtomSite
   smiles       SMILES parsing/writing facade
   molfile      V2000/V3000 Molfile parsing/writing facade
   sdf          SDF record parsing/writing facade
-  mmcif        mmCIF parsing facade for macromolecular structures
+  mmcif        format-document parsing and explicit molecular interpretation
   perception   sanitization, valence, rings, aromaticity, stereo perception
   canon        canonical ranking, identity, canonical graph utilities
   modeling     fixed-topology physical models, potentials, and minimization
@@ -286,6 +295,47 @@ MacroMolecule
 
 Small-molecule algorithms should operate on `Molecule` where reasonable so extracted ligands, residues, and fragments from `MacroMolecule` can reuse them.
 
+## Multi-entity structure import
+
+An mmCIF coordinate file is a structure document, not a molecule. Import is an
+explicit two-stage operation:
+
+```rust
+let document = molecules::mmcif::parse_str(input, options)?;
+let interpreted = molecules::mmcif::interpret(&document, interpret_options)?;
+let contents = interpreted.contents();
+```
+
+`MmcifDocument` preserves data blocks, scalar items, loops, unknown categories,
+missing-value markers, and source line information without assigning chemical
+meaning. Interpretation then uses entity, structural-instance, atom-site, and
+declared-connection categories to produce `MolecularContents`:
+
+```text
+MolecularContents
+  small_molecules  ligands, cofactors, and single-atom ions
+  macromolecules   polymeric or branched covalent objects
+  solvent          collection of individual water SmallMolecule values
+```
+
+Coordinate model numbers do not create duplicate graph atoms. They produce
+conformers on the interpreted molecule, with the source model identifier stored
+as conformer metadata. Alternate-location selection is an explicit interpretation
+policy. Declared covalent connections may merge instances and add the declared
+bond; coordination and other non-covalent links do not.
+
+Interpretation is deliberately conservative. It does not sanitize molecules,
+infer missing force-field or CCD template bonds, add hydrogens, assign
+protonation, or treat a disconnected collection of waters as one molecule. The
+interpretation report records inferred entity classifications, unresolved or
+ignored connections, and molecule graphs that still require template bond
+assignment. A future CCD-backed preparation layer can resolve that chemistry
+without contaminating parsing.
+
+PDB import is deferred. When added, it should target the same document-to-
+`MolecularContents` boundary rather than introduce a second foundational object
+model.
+
 ## Macromolecule validation, sanitization, and preparation
 
 Macromolecules need their own validation and sanitization model. This model is related to, but not the same as, small-molecule sanitization.
@@ -455,7 +505,8 @@ molecules::sdf::read_v2000_str(input)
 molecules::sdf::read_v2000_records(input)
 molecules::sdf::write_v2000(&records)
 
-molecules::mmcif::read_str(input, options)
+molecules::mmcif::parse_str(input, options)
+molecules::mmcif::interpret(&document, interpret_options)
 ```
 
 Options structs should be future-proof. Avoid public zero-sized options types becoming permanent dead ends. If an options struct is public, prefer a real `Default` implementation and consider `#[non_exhaustive]` before the crate is published.

@@ -1,0 +1,9 @@
+id = "io.mmcif.document"
+title = "mmCIF document parser"
+area = "io"
+version = 1
+implemented = true
+validated = false
+description = "Parse complete structural mmCIF data documents without assigning molecular meaning."
+depends_on = ["io.mmcif.parse"]
+validation_required = []

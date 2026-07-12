@@ -1,0 +1,9 @@
+id = "bio.molecular-contents"
+title = "Interpreted molecular contents"
+area = "bio"
+version = 1
+implemented = true
+validated = false
+description = "Represent a multi-entity structure as clean small molecules, macromolecules, and individual solvent molecules."
+depends_on = ["bio.hierarchy.smcra", "core.graph"]
+validation_required = []

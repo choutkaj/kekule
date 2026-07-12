@@ -79,24 +79,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Macromolecules
 
-Use the `mmcif` facade for macromolecular file I/O. Reading mmCIF parses atom-site data into a `MacroMolecule`; validation remains an explicit follow-up step.
+Use the `mmcif` facade for multi-entity structure input. Parsing preserves the
+mmCIF document; a separate interpretation step produces clean macromolecules,
+small molecules, ions, and individual solvent molecules.
 
 ```rust
-use molecules::mmcif::{self, MmcifParseOptions};
+use molecules::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = r#"
 data_demo
 loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
 _atom_site.type_symbol
 _atom_site.label_atom_id
 _atom_site.label_comp_id
 _atom_site.label_asym_id
+_atom_site.label_entity_id
 _atom_site.auth_seq_id
-C C1 GLY A 1
+C C1 GLY A 1 1
 "#;
 
-    let macro_mol = mmcif::read_str(input, MmcifParseOptions::default())?;
+    let document = mmcif::parse_str(input, MmcifParseOptions::default())?;
+    let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
+    let macro_mol = interpreted
+        .contents()
+        .macromolecules()
+        .next()
+        .expect("one polymer molecule");
     macro_mol.validate()?;
 
     println!("atoms: {}", macro_mol.graph().atom_count());
