@@ -9,7 +9,7 @@ one complete mutable coordinate set.
 
 - Exposes `MoleculeInstanceId`, `InstanceAtomId`, `InstanceBondId`,
   `ModelAtomIndex`, `MoleculeInstance`, `MoleculeRole`, `ModelTopology`,
-  `MolecularModel`, and `MolecularModelBuilder`.
+  `ModelDefinitionKey`, `MolecularModel`, and `MolecularModelBuilder`.
 - Builder insertion uses `add_small_molecule[_with_metadata]` and
   `add_macro_molecule[_with_metadata]` and returns a stable instance ID.
 - Preserves molecule-local atom and bond IDs, including tombstones; qualification
@@ -28,6 +28,8 @@ one complete mutable coordinate set.
   multi-entity `Molecule`.
 - Built topology and ownership are immutable. Complete positions may change via
   validated setters.
+- Clones share one opaque definition key; independently built models receive
+  distinct keys even when structurally equal.
 - Construction never sanitizes, perceives, prepares, or merges source molecules.
 
 ## Validation
@@ -46,3 +48,5 @@ one complete mutable coordinate set.
 - v1: SmallMolecule-only flattened component model.
 - v2: Hard break to typed molecule instances, qualified IDs, fixed
   `ModelTopology`, mixed Small/Macro ownership, and authoritative positions.
+- v3: Add shared opaque definition identity for binding prepared potentials
+  without flattening molecule instances.

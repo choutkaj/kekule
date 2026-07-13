@@ -159,12 +159,16 @@ positions and strips conformers from the stored instance payload. Source objects
 remain unchanged. Empty models, empty molecules, missing positions, and
 non-finite positions are rejected transactionally. Once built, topology and
 instance ownership are immutable; only the complete finite position set may
-change.
+change. Clones share an opaque `ModelDefinitionKey`; coordinate updates preserve
+that key, while independently constructed models receive distinct keys even
+when their topology contents are structurally equal.
 
 Potentials address topology through `InstanceAtomId`/`InstanceBondId`; gradients
-are dense arrays in `ModelAtomIndex` order. Prepared topology signatures include
-molecule-instance boundaries. Topology-changing future operations should return
-a new model plus explicit lineage mappings rather than mutate an existing model.
+are dense arrays in `ModelAtomIndex` order. Prepared potentials bind to the
+opaque model-definition identity, which includes molecule-instance boundaries,
+and reject independently constructed models. Topology-changing future operations
+should return a new model plus explicit lineage mappings rather than mutate an
+existing model.
 
 Periodic cells, velocities, trajectories, reactions, and model merging are not
 part of the current contract.

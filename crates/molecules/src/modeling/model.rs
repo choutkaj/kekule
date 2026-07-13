@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use crate::bio::{AtomSite, AtomSiteId, BioHierarchy, MacroMolecule};
 use crate::core::{Atom, AtomId, Bond, BondId, ConformerId, Molecule, Point3, PropMap};
@@ -348,10 +350,58 @@ impl ModelTopology {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct MolecularModel {
+#[derive(Debug, PartialEq)]
+struct ModelDefinition {
     topology: ModelTopology,
+}
+
+/// Opaque identity of a model's immutable topology and molecule-instance definition.
+///
+/// Clones and coordinate updates preserve the key. Independently built models
+/// receive distinct keys even when their topology contents are structurally equal.
+#[derive(Clone)]
+pub struct ModelDefinitionKey(Arc<ModelDefinition>);
+
+impl fmt::Debug for ModelDefinitionKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ModelDefinitionKey(..)")
+    }
+}
+
+impl PartialEq for ModelDefinitionKey {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ModelDefinitionKey {}
+
+impl Hash for ModelDefinitionKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.0).hash(state);
+    }
+}
+
+#[derive(Clone)]
+pub struct MolecularModel {
+    definition: ModelDefinitionKey,
     positions: Vec<Point3>,
+}
+
+impl fmt::Debug for MolecularModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MolecularModel")
+            .field("topology", &self.definition.0.topology)
+            .field("positions", &self.positions)
+            .finish()
+    }
+}
+
+impl PartialEq for MolecularModel {
+    fn eq(&self, other: &Self) -> bool {
+        self.definition.0.as_ref() == other.definition.0.as_ref()
+            && self.positions == other.positions
+    }
 }
 
 impl MolecularModel {
@@ -378,7 +428,12 @@ impl MolecularModel {
     }
 
     pub fn topology(&self) -> &ModelTopology {
-        &self.topology
+        &self.definition.0.topology
+    }
+
+    /// Returns the identity of this model's immutable definition.
+    pub fn definition_key(&self) -> &ModelDefinitionKey {
+        &self.definition
     }
 
     pub fn atom_count(&self) -> usize {
@@ -391,7 +446,7 @@ impl MolecularModel {
 
     pub fn position(&self, atom: InstanceAtomId) -> Result<Point3, PositionError> {
         let index = self
-            .topology
+            .topology()
             .atom_index(atom)
             .ok_or(PositionError::InvalidAtomId(atom))?;
         Ok(self.positions[index.index()])
@@ -410,7 +465,7 @@ impl MolecularModel {
         position: Point3,
     ) -> Result<(), PositionError> {
         let index = self
-            .topology
+            .topology()
             .atom_index(atom)
             .ok_or(PositionError::InvalidAtomId(atom))?;
         if !point_is_finite(position) {
@@ -429,7 +484,7 @@ impl MolecularModel {
         }
         for (index, point) in positions.iter().copied().enumerate() {
             if !point_is_finite(point) {
-                let atom = self.topology.atom_order[index];
+                let atom = self.topology().atom_order[index];
                 return Err(PositionError::NonFinitePosition { atom });
             }
         }
@@ -504,7 +559,9 @@ impl MolecularModelBuilder {
             return Err(ModelBuildError::EmptyModel);
         }
         Ok(MolecularModel {
-            topology: self.topology,
+            definition: ModelDefinitionKey(Arc::new(ModelDefinition {
+                topology: self.topology,
+            })),
             positions: self.positions,
         })
     }

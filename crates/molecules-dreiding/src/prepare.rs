@@ -7,7 +7,9 @@ use dreid_forge::{
     VdwPairPotential, VdwPotentialType, forge,
 };
 use molecules::core::BondOrder;
-use molecules::modeling::{InstanceAtomId, InstanceBondId, MolecularModel, MoleculeInstanceId};
+use molecules::modeling::{
+    InstanceAtomId, InstanceBondId, ModelDefinitionKey, MolecularModel, MoleculeInstanceId,
+};
 
 use crate::DreidingPrepareError;
 
@@ -20,7 +22,8 @@ pub(crate) const COULOMB_KJ_ANGSTROM_PER_MOL_E2: f64 = 1_389.354_576_443_82;
 /// Evaluation does not mutate the model, update charges, or change topology.
 #[derive(Debug, Clone)]
 pub struct DreidingPotential {
-    pub(crate) signature: TopologySignature,
+    pub(crate) definition: ModelDefinitionKey,
+    pub(crate) atom_ids: Vec<InstanceAtomId>,
     pub(crate) atom_indexes: BTreeMap<InstanceAtomId, usize>,
     pub(crate) atom_types: Vec<String>,
     pub(crate) partial_charges: Vec<f64>,
@@ -74,7 +77,8 @@ impl DreidingPotential {
         let hydrogen_bonds = prepare_hydrogen_bonds(&whole, &adjacency, &exclusions)?;
 
         Ok(Self {
-            signature: TopologySignature::from_model(model),
+            definition: model.definition_key().clone(),
+            atom_ids: model.topology().atom_ids().to_vec(),
             atom_indexes: model
                 .topology()
                 .atom_ids()
@@ -587,96 +591,6 @@ fn require_finite_slice(
     values: &[f64],
 ) -> Result<(), DreidingPrepareError> {
     require_finite(interaction, values)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TopologySignature {
-    atoms: Vec<AtomSignature>,
-    bonds: Vec<BondSignature>,
-    molecules: Vec<Vec<usize>>,
-}
-
-impl TopologySignature {
-    pub(crate) fn from_model(model: &MolecularModel) -> Self {
-        Self {
-            atoms: model
-                .topology()
-                .atoms()
-                .map(|(atom_id, atom)| AtomSignature {
-                    atomic_number: atom.element.atomic_number(),
-                    formal_charge: atom.formal_charge,
-                    radical: atom.radical,
-                    explicit_hydrogens: atom.explicit_hydrogens,
-                    implicit_hydrogens: model
-                        .topology()
-                        .implicit_hydrogens(atom_id)
-                        .expect("model atom perception lookup"),
-                    no_implicit_hydrogens: atom.no_implicit_hydrogens,
-                    aromatic: model
-                        .topology()
-                        .atom_is_aromatic(atom_id)
-                        .expect("model atom perception lookup")
-                        .unwrap_or(false),
-                })
-                .collect(),
-            bonds: model
-                .topology()
-                .bonds()
-                .map(|(bond_id, bond)| {
-                    let (a, b) = bond.endpoints();
-                    let a = InstanceAtomId::new(bond_id.molecule(), a);
-                    let b = InstanceAtomId::new(bond_id.molecule(), b);
-                    BondSignature {
-                        atoms: ordered_pair(
-                            model.topology().atom_index(a).expect("model atom").index(),
-                            model.topology().atom_index(b).expect("model atom").index(),
-                        ),
-                        order: bond.order,
-                        aromatic: model
-                            .topology()
-                            .bond_is_aromatic(bond_id)
-                            .expect("model bond perception lookup")
-                            .unwrap_or(false),
-                    }
-                })
-                .collect(),
-            molecules: model
-                .topology()
-                .molecules()
-                .map(|(molecule_id, molecule)| {
-                    molecule
-                        .graph()
-                        .atom_ids()
-                        .map(|atom| {
-                            model
-                                .topology()
-                                .atom_index(InstanceAtomId::new(molecule_id, atom))
-                                .expect("model atom")
-                                .index()
-                        })
-                        .collect()
-                })
-                .collect(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AtomSignature {
-    atomic_number: u8,
-    formal_charge: i8,
-    radical: Option<molecules::core::AtomRadical>,
-    explicit_hydrogens: u8,
-    implicit_hydrogens: Option<u8>,
-    no_implicit_hydrogens: bool,
-    aromatic: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BondSignature {
-    atoms: (usize, usize),
-    order: BondOrder,
-    aromatic: bool,
 }
 
 #[derive(Debug, Clone)]

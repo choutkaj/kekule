@@ -55,3 +55,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v8: Make wrapper mutable graph access state-neutral and rely on concrete graph
   mutators for invalidation, preventing perception prerequisites from being
   erased before stereo and CIP operations.
+- v9: Expose opaque shared model-definition identity and instance-qualified
+  structured potential failures through the focused modelling namespace.

@@ -55,6 +55,7 @@ or manually curated external-reference golden data.
   and `enamine-manual-semantic`.
 - Golden data should be normalized JSON and include reference tool versions.
 - Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
+- The smoke corpus data directory is intentionally checked in and exempt from the default ignore rule for larger generated corpus data.
 - Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
 - Status evidence records fixture and comparison counts, reference versions, the manifest SHA-256, a versioned evidence input list, evidence SHA-256, and validation time.
 - Evidence is considered current only when recomputing it from the current checkout produces the stored schema version and hash.

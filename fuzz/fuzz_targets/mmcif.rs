@@ -2,7 +2,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use molecules::mmcif::{
-    interpret, parse_str, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
+    interpret, parse_str, MmcifEntry, MmcifInterpretOptions, MmcifModelSelection,
+    MmcifParseOptions,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -19,6 +20,26 @@ fuzz_target!(|data: &[u8]| {
             ..MmcifParseOptions::default()
         },
     ) {
+        for block in document.blocks() {
+            let _ = document.block(block.name());
+            for entry in block.entries() {
+                match entry {
+                    MmcifEntry::Item(item) => {
+                        let _ = block.item(item.tag());
+                        let _ = item.value().optional_text();
+                    }
+                    MmcifEntry::Loop(table) => {
+                        for row in 0..table.row_count() {
+                            let _ = table.row(row);
+                            for tag in table.tags() {
+                                let _ = table.value(row, tag);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let options = MmcifInterpretOptions {
             model_selection: MmcifModelSelection::First,
             ..MmcifInterpretOptions::default()

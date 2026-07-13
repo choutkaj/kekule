@@ -3,7 +3,10 @@ use crate::bio::{AtomSiteId, AtomSiteMetadata, BioHierarchy, MacroMolecule};
 use crate::core::{
     Atom, AtomId, BondId, BondOrder, Conformer, ConformerId, Element, Molecule, Point3,
 };
-use crate::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential, Potential};
+use crate::modeling::potential::{
+    HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError, PotentialEvaluation,
+    PotentialGeometryError, Vector3,
+};
 use crate::small::SmallMolecule;
 
 fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId, BondId) {
@@ -64,6 +67,25 @@ fn model_preserves_local_ids_and_dense_round_trips() {
         .topology()
         .atom(InstanceAtomId::new(instance, AtomId::new(1)))
         .is_err());
+}
+
+#[test]
+fn model_definition_identity_is_shared_only_by_clones() {
+    let (small, conformer, _, b, _) = two_atom_small(1.5);
+    let model = MolecularModel::from_small_molecule(&small, conformer).unwrap();
+    let mut cloned = model.clone();
+    cloned
+        .set_position(
+            InstanceAtomId::new(MoleculeInstanceId::new(0), b),
+            Point3::new(2.0, 0.0, 0.0),
+        )
+        .unwrap();
+    let rebuilt = MolecularModel::from_small_molecule(&small, conformer).unwrap();
+
+    assert_eq!(model.definition_key(), cloned.definition_key());
+    assert_ne!(model.definition_key(), rebuilt.definition_key());
+    assert_ne!(model, cloned);
+    assert_eq!(model, rebuilt);
 }
 
 #[test]
@@ -197,4 +219,95 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     let result = minimize(&model, &mut potential, MinimizeOptions::default()).unwrap();
     assert!(result.final_energy < result.initial_energy);
     assert_eq!(model.positions()[1], Point3::new(2.0, 0.0, 0.0));
+
+    let rebuilt = MolecularModel::from_small_molecule(&small, conformer).unwrap();
+    assert_eq!(
+        potential.evaluate(&rebuilt),
+        Err(PotentialError::IncompatibleModel)
+    );
+
+    let mut coincident = model.clone();
+    let instance = MoleculeInstanceId::new(0);
+    coincident
+        .set_position(
+            InstanceAtomId::new(instance, AtomId::new(2)),
+            coincident.positions()[0],
+        )
+        .unwrap();
+    assert_eq!(
+        potential.evaluate(&coincident),
+        Err(PotentialError::InvalidGeometry {
+            interaction: "harmonic bond",
+            atoms: vec![
+                InstanceAtomId::new(instance, AtomId::new(0)),
+                InstanceAtomId::new(instance, AtomId::new(2)),
+            ],
+            kind: PotentialGeometryError::CoincidentAtoms,
+        })
+    );
+}
+
+struct RecoverableGeometryPotential;
+
+impl Potential for RecoverableGeometryPotential {
+    fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError> {
+        let coordinate = model.positions()[1].x;
+        if coordinate <= 0.25 {
+            return Err(PotentialError::invalid_geometry(
+                "test coordinate",
+                [model.topology().atom_ids()[1]],
+                PotentialGeometryError::CoincidentAtoms,
+            ));
+        }
+        PotentialEvaluation::new(
+            model,
+            0.5 * coordinate * coordinate,
+            vec![Vector3::zero(), Vector3::new(coordinate, 0.0, 0.0)],
+        )
+    }
+}
+
+struct BackendFailurePotential {
+    calls: usize,
+}
+
+impl Potential for BackendFailurePotential {
+    fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError> {
+        self.calls += 1;
+        if self.calls > 1 {
+            return Err(PotentialError::backend("test backend", "evaluation failed"));
+        }
+        PotentialEvaluation::new(
+            model,
+            0.5,
+            vec![Vector3::zero(), Vector3::new(1.0, 0.0, 0.0)],
+        )
+    }
+}
+
+#[test]
+fn minimization_backtracks_invalid_geometry_but_propagates_backend_failures() {
+    let (small, conformer, _, _, _) = two_atom_small(1.0);
+    let model = MolecularModel::from_small_molecule(&small, conformer).unwrap();
+    let options = MinimizeOptions {
+        max_iterations: 1,
+        initial_step: 1.0,
+        ..MinimizeOptions::default()
+    };
+
+    let result = minimize(&model, &mut RecoverableGeometryPotential, options).unwrap();
+    assert_eq!(result.status, MinimizationStatus::MaxIterations);
+    assert_eq!(result.iterations, 1);
+    assert_eq!(result.evaluations, 3);
+    assert_eq!(result.model.positions()[1].x, 0.5);
+    assert_eq!(model.positions()[1].x, 1.0);
+
+    let error = minimize(&model, &mut BackendFailurePotential { calls: 0 }, options).unwrap_err();
+    assert!(matches!(
+        error,
+        MinimizationError::Potential(PotentialError::Backend {
+            backend: "test backend",
+            ..
+        })
+    ));
 }

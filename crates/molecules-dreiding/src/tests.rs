@@ -1,6 +1,6 @@
 use molecules::bio::{BioHierarchy, MacroMolecule};
 use molecules::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3};
-use molecules::modeling::potential::Potential;
+use molecules::modeling::potential::{Potential, PotentialError};
 use molecules::modeling::{InstanceAtomId, MolecularModel, MoleculeInstanceId};
 use molecules::small::SmallMolecule;
 
@@ -122,7 +122,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
 }
 
 #[test]
-fn prepared_topology_signature_includes_instance_boundaries() {
+fn prepared_potential_uses_model_definition_identity() {
     let (combined, combined_conf) = molecule(
         &["C", "C"],
         &[],
@@ -136,5 +136,20 @@ fn prepared_topology_signature_includes_instance_boundaries() {
     builder.add_small_molecule(&one, one_conf).unwrap();
     builder.add_small_molecule(&one, one_conf).unwrap();
     let split_model = builder.build().unwrap();
-    assert!(potential.evaluate(&split_model).is_err());
+    assert_eq!(
+        potential.evaluate(&split_model),
+        Err(PotentialError::IncompatibleModel)
+    );
+
+    let mut singular = combined_model.clone();
+    singular
+        .set_position(
+            InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(1)),
+            singular.positions()[0],
+        )
+        .unwrap();
+    assert!(matches!(
+        potential.evaluate(&singular),
+        Err(PotentialError::InvalidGeometry { .. })
+    ));
 }

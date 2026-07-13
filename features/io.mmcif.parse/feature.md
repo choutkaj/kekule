@@ -22,7 +22,7 @@ Parse a structural mmCIF file into a format-level document before chemical inter
 
 ## Validation
 
-- Unit tests cover unknown scalar/loop content, quoted controls, multiline values, multiple blocks, lookup, malformed structure, resource limits, and deterministic mutation safety.
+- Unit tests cover unknown scalar/loop content, quoted controls, multiline values, multiple blocks, lookup, malformed structure, resource limits, and deterministic mutation safety. The parser fuzz target exercises the public document API and bounded parse options.
 - The former Biopython goldens described the removed direct `MacroMolecule` reader and are not evidence for this document contract.
 - No external full-document golden evidence currently exists, so the feature remains unvalidated.
 

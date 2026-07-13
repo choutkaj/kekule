@@ -3,21 +3,21 @@ use dreid_kernel::potentials::bonded::{
 };
 use dreid_kernel::potentials::nonbonded::{Coulomb, HydrogenBond, LennardJones};
 use dreid_kernel::{AngleKernel, HybridKernel, PairKernel, TorsionKernel};
-use molecules::core::{AtomId, Point3};
-use molecules::modeling::MolecularModel;
-use molecules::modeling::potential::{Potential, PotentialError, PotentialEvaluation, Vector3};
+use molecules::core::Point3;
+use molecules::modeling::potential::{
+    Potential, PotentialError, PotentialEvaluation, PotentialGeometryError, Vector3,
+};
+use molecules::modeling::{InstanceAtomId, MolecularModel};
 
 use crate::geometry::{
     GeometryError, angle_cosine, displacement, hydrogen_bond_cosine, inversion_cosine, torsion,
 };
-use crate::prepare::{AngleTerm, DreidingPotential, InversionTerm, TopologySignature};
+use crate::prepare::{AngleTerm, DreidingPotential, InversionTerm};
 
 impl Potential for DreidingPotential {
     fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError> {
-        if self.signature != TopologySignature::from_model(model) {
-            return Err(PotentialError::custom(
-                "model topology or component membership differs from DREIDING preparation",
-            ));
+        if &self.definition != model.definition_key() {
+            return Err(PotentialError::IncompatibleModel);
         }
 
         let positions = model.positions();
@@ -26,7 +26,9 @@ impl Potential for DreidingPotential {
 
         for term in &self.bonds {
             let (vector, distance_sq) = displacement(positions[term.a], positions[term.b])
-                .map_err(|error| geometry_error("bond", &[term.a, term.b], error))?;
+                .map_err(|error| {
+                    geometry_error(&self.atom_ids, "DREIDING bond", &[term.a, term.b], error)
+                })?;
             let result = Harmonic::compute(distance_sq, (term.k_half, term.r0));
             energy += result.energy;
             add_pair_gradient(&mut gradient, term.a, term.b, vector, result.diff);
@@ -39,7 +41,7 @@ impl Potential for DreidingPotential {
                     c_half,
                     cos0,
                 } => {
-                    let (cosine, derivative) = angle_geometry(positions, atoms)?;
+                    let (cosine, derivative) = angle_geometry(&self.atom_ids, positions, atoms)?;
                     (
                         atoms,
                         CosineHarmonic::compute(cosine, (c_half, cos0)),
@@ -47,7 +49,7 @@ impl Potential for DreidingPotential {
                     )
                 }
                 AngleTerm::Linear { atoms, c } => {
-                    let (cosine, derivative) = angle_geometry(positions, atoms)?;
+                    let (cosine, derivative) = angle_geometry(&self.atom_ids, positions, atoms)?;
                     (atoms, CosineLinear::compute(cosine, c), derivative)
                 }
             };
@@ -57,8 +59,9 @@ impl Potential for DreidingPotential {
 
         for term in &self.torsions {
             let points = points4(positions, term.atoms);
-            let (cosine, sine, derivative) =
-                torsion(points).map_err(|error| geometry_error("torsion", &term.atoms, error))?;
+            let (cosine, sine, derivative) = torsion(points).map_err(|error| {
+                geometry_error(&self.atom_ids, "DREIDING torsion", &term.atoms, error)
+            })?;
             let result = Torsion::compute(
                 cosine,
                 sine,
@@ -72,7 +75,9 @@ impl Potential for DreidingPotential {
             let (atoms, result, derivative) = match *term {
                 InversionTerm::Planar { atoms, c_half } => {
                     let (cosine, derivative) = inversion_cosine(points4(positions, atoms))
-                        .map_err(|error| geometry_error("inversion", &atoms, error))?;
+                        .map_err(|error| {
+                            geometry_error(&self.atom_ids, "DREIDING inversion", &atoms, error)
+                        })?;
                     (atoms, PlanarInversion::compute(cosine, c_half), derivative)
                 }
                 InversionTerm::Umbrella {
@@ -81,7 +86,9 @@ impl Potential for DreidingPotential {
                     cos_psi0,
                 } => {
                     let (cosine, derivative) = inversion_cosine(points4(positions, atoms))
-                        .map_err(|error| geometry_error("inversion", &atoms, error))?;
+                        .map_err(|error| {
+                            geometry_error(&self.atom_ids, "DREIDING inversion", &atoms, error)
+                        })?;
                     (
                         atoms,
                         UmbrellaInversion::compute(cosine, (c_half, cos_psi0)),
@@ -96,7 +103,12 @@ impl Potential for DreidingPotential {
         for term in &self.nonbonded {
             let (vector, distance_sq) = displacement(positions[term.first], positions[term.second])
                 .map_err(|error| {
-                    geometry_error("nonbonded pair", &[term.first, term.second], error)
+                    geometry_error(
+                        &self.atom_ids,
+                        "DREIDING nonbonded pair",
+                        &[term.first, term.second],
+                        error,
+                    )
                 })?;
             let vdw = LennardJones::compute(distance_sq, (term.d0, term.r0_sq));
             let electrostatic = Coulomb::compute(distance_sq, term.coulomb);
@@ -115,7 +127,8 @@ impl Potential for DreidingPotential {
             let acceptor = positions[term.acceptor];
             let (vector, distance_sq) = displacement(donor, acceptor).map_err(|error| {
                 geometry_error(
-                    "hydrogen bond",
+                    &self.atom_ids,
+                    "DREIDING hydrogen bond",
                     &[term.donor, term.hydrogen, term.acceptor],
                     error,
                 )
@@ -124,7 +137,8 @@ impl Potential for DreidingPotential {
                 hydrogen_bond_cosine(donor, positions[term.hydrogen], acceptor).map_err(
                     |error| {
                         geometry_error(
-                            "hydrogen bond",
+                            &self.atom_ids,
+                            "DREIDING hydrogen bond",
                             &[term.donor, term.hydrogen, term.acceptor],
                             error,
                         )
@@ -152,6 +166,7 @@ impl Potential for DreidingPotential {
 }
 
 fn angle_geometry(
+    atom_ids: &[InstanceAtomId],
     positions: &[Point3],
     atoms: [usize; 3],
 ) -> Result<(f64, [f64; 9]), PotentialError> {
@@ -160,7 +175,7 @@ fn angle_geometry(
         positions[atoms[1]],
         positions[atoms[2]],
     )
-    .map_err(|error| geometry_error("angle", &atoms, error))
+    .map_err(|error| geometry_error(atom_ids, "DREIDING angle", &atoms, error))
 }
 
 fn points4(positions: &[Point3], atoms: [usize; 4]) -> [Point3; 4] {
@@ -203,19 +218,18 @@ fn add_vector(target: &mut Vector3, vector: [f64; 3], scale: f64) {
     target.z += vector[2] * scale;
 }
 
-fn geometry_error(interaction: &str, atoms: &[usize], error: GeometryError) -> PotentialError {
-    let detail = match error {
-        GeometryError::Coincident => "coincident atoms",
-        GeometryError::DegenerateAngle => "zero-length angle leg",
-        GeometryError::DegenerateDihedral => "collinear or coincident dihedral geometry",
-        GeometryError::DegenerateInversion => "collinear or coincident inversion geometry",
+fn geometry_error(
+    atom_ids: &[InstanceAtomId],
+    interaction: &'static str,
+    atoms: &[usize],
+    error: GeometryError,
+) -> PotentialError {
+    let kind = match error {
+        GeometryError::Coincident => PotentialGeometryError::CoincidentAtoms,
+        GeometryError::DegenerateAngle => PotentialGeometryError::DegenerateAngle,
+        GeometryError::DegenerateDihedral => PotentialGeometryError::DegenerateDihedral,
+        GeometryError::DegenerateInversion => PotentialGeometryError::DegenerateInversion,
     };
-    let atoms = atoms
-        .iter()
-        .map(|&atom| AtomId::new(atom as u32).to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    PotentialError::custom(format!(
-        "DREIDING {interaction} has {detail} for atoms [{atoms}]"
-    ))
+    let atoms = atoms.iter().map(|&atom| atom_ids[atom]).collect::<Vec<_>>();
+    PotentialError::invalid_geometry(interaction, atoms, kind)
 }

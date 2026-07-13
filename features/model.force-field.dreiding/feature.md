@@ -11,6 +11,8 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
   `molecules-dreiding` crate.
 - Prepares a potential with `DreidingPotential::prepare(&MolecularModel)` and implements
   the core `Potential` evaluation contract.
+- Binds preparation to the source model definition, accepting coordinate-modified clones
+  and rejecting independently built models.
 - Exposes read-only per-atom type and partial-charge diagnostics.
 - Rejects unresolved implicit-hydrogen state; every atom must carry an explicit zero
   implicit-hydrogen count or a no-implicit-hydrogens assertion.
@@ -20,6 +22,8 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 
 - Uses pinned `dreid-forge` and matching `dreid-kernel` releases; upstream types do not
   cross the adapter's public API.
+- Uses the shared model-definition key rather than rebuilding an adapter-specific topology
+  signature during each evaluation.
 - Maps aromatic-flagged localized single and double bonds to DREIDING aromatic bonds
   without changing the bond orders stored by Molecules.
 - Runs QEq separately for each molecule instance using its formal-charge sum and keeps the
@@ -49,3 +53,5 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 - v1: Add explicit DREIDING preparation and fixed-topology energy/gradient evaluation.
 - v2: Migrate to molecule-qualified IDs, per-instance QEq, mixed Small/Macro
   models, and instance-boundary topology signatures.
+- v3: Replace adapter-specific topology signatures with shared model-definition
+  identity and report structured evaluation geometry errors.

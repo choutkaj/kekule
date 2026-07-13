@@ -34,6 +34,8 @@ into a `MolecularModel` with distinct molecule instances and a report.
 - Tests cover mixed typed instances and roles, complete positions, default
   multi-model rejection, explicit selection, altloc policy/reporting, missing
   coordinates, covalent merging, and noncovalent separation.
+- Successful bounded fuzz parses traverse the loss-preserving document and then
+  exercise explicit selected-model interpretation and qualified model lookup.
 
 ## Out Of Scope
 

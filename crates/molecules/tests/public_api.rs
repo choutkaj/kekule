@@ -87,6 +87,8 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let mut builder = MolecularModel::builder();
     let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
+    let cloned = model.clone();
+    assert_eq!(model.definition_key(), cloned.definition_key());
     let model_bond = molecules::modeling::InstanceBondId::new(instance, bond);
     let mut potential =
         HarmonicBondPotential::new(&model, [HarmonicBondParameter::new(model_bond, 1.2, 100.0)])?;
