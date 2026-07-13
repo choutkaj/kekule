@@ -1,20 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::core::{
-    AtomId, AxisStereo, BondId, ConformerId, DoubleBondStereo, Molecule, MoleculeError, Point3,
-    PropMap, StereoBondMark, StereoCarrier, StereoElement, StereoElementKind, StereoGroup,
-    TetrahedralStereo,
-};
+use crate::bio::{AtomSite, AtomSiteId, BioHierarchy, MacroMolecule};
+use crate::core::{Atom, AtomId, Bond, BondId, ConformerId, Molecule, Point3, PropMap};
 use crate::small::SmallMolecule;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-/// Stable identifier for one source-molecule component in a [`MolecularModel`].
-pub struct ComponentId(u32);
+pub struct MoleculeInstanceId(u32);
 
-impl ComponentId {
+impl MoleculeInstanceId {
     pub const fn new(raw: u32) -> Self {
         Self(raw)
     }
@@ -28,33 +24,341 @@ impl ComponentId {
     }
 }
 
-impl fmt::Display for ComponentId {
+impl fmt::Display for MoleculeInstanceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "component{}", self.0)
+        write!(f, "molecule{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InstanceAtomId {
+    molecule: MoleculeInstanceId,
+    atom: AtomId,
+}
+
+impl InstanceAtomId {
+    pub const fn new(molecule: MoleculeInstanceId, atom: AtomId) -> Self {
+        Self { molecule, atom }
+    }
+
+    pub const fn molecule(self) -> MoleculeInstanceId {
+        self.molecule
+    }
+
+    pub const fn atom(self) -> AtomId {
+        self.atom
+    }
+}
+
+impl fmt::Display for InstanceAtomId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.molecule, self.atom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InstanceBondId {
+    molecule: MoleculeInstanceId,
+    bond: BondId,
+}
+
+impl InstanceBondId {
+    pub const fn new(molecule: MoleculeInstanceId, bond: BondId) -> Self {
+        Self { molecule, bond }
+    }
+
+    pub const fn molecule(self) -> MoleculeInstanceId {
+        self.molecule
+    }
+
+    pub const fn bond(self) -> BondId {
+        self.bond
+    }
+}
+
+impl fmt::Display for InstanceBondId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.molecule, self.bond)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModelAtomIndex(u32);
+
+impl ModelAtomIndex {
+    pub const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum MoleculeRole {
+    Polymer,
+    Branched,
+    NonPolymer,
+    Solvent,
+    Ion,
+    Ligand,
+    Cofactor,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MoleculeInstanceMetadata {
+    roles: BTreeSet<MoleculeRole>,
+    props: PropMap,
+}
+
+impl MoleculeInstanceMetadata {
+    pub fn roles(&self) -> &BTreeSet<MoleculeRole> {
+        &self.roles
+    }
+
+    pub fn insert_role(&mut self, role: MoleculeRole) -> bool {
+        self.roles.insert(role)
+    }
+
+    pub fn props(&self) -> &PropMap {
+        &self.props
+    }
+
+    pub fn props_mut(&mut self) -> &mut PropMap {
+        &mut self.props
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-/// Read-only membership and source properties for one model component.
-pub struct Component {
-    id: ComponentId,
-    atoms: Vec<AtomId>,
-    props: PropMap,
+enum MoleculeInstancePayload {
+    Small(SmallMolecule),
+    Macro(MacroMolecule),
+}
+
+impl MoleculeInstancePayload {
+    fn graph(&self) -> &Molecule {
+        match self {
+            Self::Small(molecule) => molecule.graph(),
+            Self::Macro(molecule) => molecule.graph(),
+        }
+    }
+
+    fn without_conformers(self) -> Self {
+        match self {
+            Self::Small(molecule) => Self::Small(molecule.without_conformers()),
+            Self::Macro(molecule) => Self::Macro(molecule.without_conformers()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoleculeInstance {
+    id: MoleculeInstanceId,
+    payload: MoleculeInstancePayload,
+    metadata: MoleculeInstanceMetadata,
+}
+
+impl MoleculeInstance {
+    pub const fn id(&self) -> MoleculeInstanceId {
+        self.id
+    }
+
+    pub fn graph(&self) -> &Molecule {
+        self.payload.graph()
+    }
+
+    pub fn small_molecule(&self) -> Option<&SmallMolecule> {
+        match &self.payload {
+            MoleculeInstancePayload::Small(molecule) => Some(molecule),
+            MoleculeInstancePayload::Macro(_) => None,
+        }
+    }
+
+    pub fn macro_molecule(&self) -> Option<&MacroMolecule> {
+        match &self.payload {
+            MoleculeInstancePayload::Macro(molecule) => Some(molecule),
+            MoleculeInstancePayload::Small(_) => None,
+        }
+    }
+
+    pub fn hierarchy(&self) -> Option<&BioHierarchy> {
+        self.macro_molecule().map(MacroMolecule::hierarchy)
+    }
+
+    pub fn bio_hierarchy(&self) -> Option<InstanceBioHierarchy<'_>> {
+        self.hierarchy().map(|hierarchy| InstanceBioHierarchy {
+            molecule: self.id,
+            hierarchy,
+        })
+    }
+
+    pub fn roles(&self) -> &BTreeSet<MoleculeRole> {
+        self.metadata.roles()
+    }
+
+    pub fn has_role(&self, role: MoleculeRole) -> bool {
+        self.roles().contains(&role)
+    }
+
+    pub fn props(&self) -> &PropMap {
+        self.metadata.props()
+    }
+
+    pub const fn qualify_atom(&self, atom: AtomId) -> InstanceAtomId {
+        InstanceAtomId::new(self.id, atom)
+    }
+
+    pub const fn qualify_bond(&self, bond: BondId) -> InstanceBondId {
+        InstanceBondId::new(self.id, bond)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct InstanceBioHierarchy<'a> {
+    molecule: MoleculeInstanceId,
+    hierarchy: &'a BioHierarchy,
+}
+
+impl InstanceBioHierarchy<'_> {
+    pub const fn molecule(&self) -> MoleculeInstanceId {
+        self.molecule
+    }
+
+    pub fn hierarchy(&self) -> &BioHierarchy {
+        self.hierarchy
+    }
+
+    pub fn atom_for_site(&self, site: AtomSiteId) -> Result<InstanceAtomId, ModelError> {
+        let site = self
+            .hierarchy
+            .atom_site(site)
+            .map_err(|_| ModelError::InvalidAtomSiteId(site))?;
+        Ok(InstanceAtomId::new(self.molecule, site.atom))
+    }
+
+    pub fn atom_site_for_atom(&self, atom: InstanceAtomId) -> Option<&AtomSite> {
+        (atom.molecule == self.molecule)
+            .then(|| self.hierarchy.atom_site_for_atom(atom.atom))
+            .flatten()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModelTopology {
+    molecules: Vec<MoleculeInstance>,
+    atom_order: Vec<InstanceAtomId>,
+    atom_indexes: BTreeMap<InstanceAtomId, ModelAtomIndex>,
+}
+
+impl ModelTopology {
+    pub fn molecule(&self, id: MoleculeInstanceId) -> Result<&MoleculeInstance, ModelError> {
+        self.molecules
+            .get(id.index())
+            .ok_or(ModelError::InvalidMoleculeInstanceId(id))
+    }
+
+    pub fn molecules(&self) -> impl Iterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
+        self.molecules
+            .iter()
+            .map(|molecule| (molecule.id, molecule))
+    }
+
+    pub fn molecule_count(&self) -> usize {
+        self.molecules.len()
+    }
+
+    pub fn atom(&self, id: InstanceAtomId) -> Result<&Atom, ModelError> {
+        self.molecule(id.molecule)?
+            .graph()
+            .atom(id.atom)
+            .map_err(|_| ModelError::InvalidAtomId(id))
+    }
+
+    pub fn bond(&self, id: InstanceBondId) -> Result<&Bond, ModelError> {
+        self.molecule(id.molecule)?
+            .graph()
+            .bond(id.bond)
+            .map_err(|_| ModelError::InvalidBondId(id))
+    }
+
+    pub fn atoms(&self) -> impl Iterator<Item = (InstanceAtomId, &Atom)> {
+        self.molecules.iter().flat_map(|molecule| {
+            molecule
+                .graph()
+                .atoms()
+                .map(move |(atom, payload)| (molecule.qualify_atom(atom), payload))
+        })
+    }
+
+    pub fn bonds(&self) -> impl Iterator<Item = (InstanceBondId, &Bond)> {
+        self.molecules.iter().flat_map(|molecule| {
+            molecule
+                .graph()
+                .bonds()
+                .map(move |(bond, payload)| (molecule.qualify_bond(bond), payload))
+        })
+    }
+
+    pub fn atom_ids(&self) -> &[InstanceAtomId] {
+        &self.atom_order
+    }
+
+    pub fn atom_index(&self, atom: InstanceAtomId) -> Option<ModelAtomIndex> {
+        self.atom_indexes.get(&atom).copied()
+    }
+
+    pub fn atom_id(&self, index: ModelAtomIndex) -> Option<InstanceAtomId> {
+        self.atom_order.get(index.index()).copied()
+    }
+
+    pub fn molecule_for_atom(&self, atom: InstanceAtomId) -> Option<&MoleculeInstance> {
+        self.atom(atom).ok()?;
+        self.molecule(atom.molecule).ok()
+    }
+
+    pub fn implicit_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<u8>, ModelError> {
+        self.atom(atom)?;
+        self.molecule(atom.molecule)
+            .expect("validated molecule instance")
+            .graph()
+            .implicit_hydrogens(atom.atom)
+            .map_err(|_| ModelError::InvalidAtomId(atom))
+    }
+
+    pub fn atom_is_aromatic(&self, atom: InstanceAtomId) -> Result<Option<bool>, ModelError> {
+        self.atom(atom)?;
+        self.molecule(atom.molecule)
+            .expect("validated molecule instance")
+            .graph()
+            .atom_is_aromatic(atom.atom)
+            .map_err(|_| ModelError::InvalidAtomId(atom))
+    }
+
+    pub fn bond_is_aromatic(&self, bond: InstanceBondId) -> Result<Option<bool>, ModelError> {
+        self.bond(bond)?;
+        self.molecule(bond.molecule)
+            .expect("validated molecule instance")
+            .graph()
+            .bond_is_aromatic(bond.bond)
+            .map_err(|_| ModelError::InvalidBondId(bond))
+    }
 }
 
 #[derive(Debug, PartialEq)]
 struct ModelDefinition {
-    topology: Molecule,
-    components: Vec<Component>,
-    component_by_atom: Vec<ComponentId>,
+    topology: ModelTopology,
 }
 
-/// Opaque identity of a model's immutable topology and component definition.
+/// Opaque identity of a model's immutable topology and molecule-instance definition.
 ///
-/// The key is preserved by [`MolecularModel::clone`] and coordinate updates.
-/// Separately built models receive distinct keys even when their contents are
-/// structurally equal. Prepared potentials use this identity to reject models
-/// other than the definition against which they were constructed.
+/// Clones and coordinate updates preserve the key. Independently built models
+/// receive distinct keys even when their topology contents are structurally equal.
 #[derive(Clone)]
 pub struct ModelDefinitionKey(Arc<ModelDefinition>);
 
@@ -78,56 +382,7 @@ impl Hash for ModelDefinitionKey {
     }
 }
 
-impl Component {
-    pub const fn id(&self) -> ComponentId {
-        self.id
-    }
-
-    pub fn atoms(&self) -> &[AtomId] {
-        &self.atoms
-    }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Source-to-model ID mapping returned when a component is added to a builder.
-pub struct ComponentMapping {
-    component: ComponentId,
-    atoms: BTreeMap<AtomId, AtomId>,
-    bonds: BTreeMap<BondId, BondId>,
-}
-
-impl ComponentMapping {
-    pub const fn component(&self) -> ComponentId {
-        self.component
-    }
-
-    pub fn atom(&self, source: AtomId) -> Option<AtomId> {
-        self.atoms.get(&source).copied()
-    }
-
-    pub fn bond(&self, source: BondId) -> Option<BondId> {
-        self.bonds.get(&source).copied()
-    }
-
-    pub fn atoms(&self) -> &BTreeMap<AtomId, AtomId> {
-        &self.atoms
-    }
-
-    pub fn bonds(&self) -> &BTreeMap<BondId, BondId> {
-        &self.bonds
-    }
-}
-
 #[derive(Clone)]
-/// A fixed topology with exactly one complete Cartesian coordinate set.
-///
-/// Positions use angstroms. The topology contains no conformers; coordinates
-/// are owned exclusively by this type and may be updated without changing
-/// topology or component membership.
 pub struct MolecularModel {
     definition: ModelDefinitionKey,
     positions: Vec<Point3>,
@@ -138,7 +393,6 @@ impl fmt::Debug for MolecularModel {
         f.debug_struct("MolecularModel")
             .field("topology", &self.definition.0.topology)
             .field("positions", &self.positions)
-            .field("components", &self.definition.0.components)
             .finish()
     }
 }
@@ -155,16 +409,25 @@ impl MolecularModel {
         MolecularModelBuilder::new()
     }
 
-    pub fn from_conformer(
+    pub fn from_small_molecule(
         molecule: &SmallMolecule,
         conformer: ConformerId,
     ) -> Result<Self, ModelBuildError> {
         let mut builder = Self::builder();
-        builder.add_component(molecule, conformer)?;
+        builder.add_small_molecule(molecule, conformer)?;
         builder.build()
     }
 
-    pub fn topology(&self) -> &Molecule {
+    pub fn from_macro_molecule(
+        molecule: &MacroMolecule,
+        conformer: ConformerId,
+    ) -> Result<Self, ModelBuildError> {
+        let mut builder = Self::builder();
+        builder.add_macro_molecule(molecule, conformer)?;
+        builder.build()
+    }
+
+    pub fn topology(&self) -> &ModelTopology {
         &self.definition.0.topology
     }
 
@@ -181,21 +444,34 @@ impl MolecularModel {
         &self.positions
     }
 
-    pub fn position(&self, atom: AtomId) -> Result<Point3, PositionError> {
-        self.topology()
-            .atom(atom)
-            .map_err(|_| PositionError::InvalidAtomId(atom))?;
-        Ok(self.positions[atom.index()])
+    pub fn position(&self, atom: InstanceAtomId) -> Result<Point3, PositionError> {
+        let index = self
+            .topology()
+            .atom_index(atom)
+            .ok_or(PositionError::InvalidAtomId(atom))?;
+        Ok(self.positions[index.index()])
     }
 
-    pub fn set_position(&mut self, atom: AtomId, position: Point3) -> Result<(), PositionError> {
-        self.topology()
-            .atom(atom)
-            .map_err(|_| PositionError::InvalidAtomId(atom))?;
+    pub fn position_at(&self, index: ModelAtomIndex) -> Result<Point3, PositionError> {
+        self.positions
+            .get(index.index())
+            .copied()
+            .ok_or(PositionError::InvalidAtomIndex(index))
+    }
+
+    pub fn set_position(
+        &mut self,
+        atom: InstanceAtomId,
+        position: Point3,
+    ) -> Result<(), PositionError> {
+        let index = self
+            .topology()
+            .atom_index(atom)
+            .ok_or(PositionError::InvalidAtomId(atom))?;
         if !point_is_finite(position) {
             return Err(PositionError::NonFinitePosition { atom });
         }
-        self.positions[atom.index()] = position;
+        self.positions[index.index()] = position;
         Ok(())
     }
 
@@ -208,44 +484,19 @@ impl MolecularModel {
         }
         for (index, point) in positions.iter().copied().enumerate() {
             if !point_is_finite(point) {
-                return Err(PositionError::NonFinitePosition {
-                    atom: AtomId::new(index as u32),
-                });
+                let atom = self.topology().atom_order[index];
+                return Err(PositionError::NonFinitePosition { atom });
             }
         }
         self.positions.clone_from_slice(positions);
         Ok(())
     }
-
-    pub fn component(&self, id: ComponentId) -> Result<&Component, ModelError> {
-        self.definition
-            .0
-            .components
-            .get(id.index())
-            .ok_or(ModelError::InvalidComponentId(id))
-    }
-
-    pub fn components(&self) -> impl Iterator<Item = (ComponentId, &Component)> {
-        self.definition
-            .0
-            .components
-            .iter()
-            .map(|component| (component.id, component))
-    }
-
-    pub fn component_for_atom(&self, atom: AtomId) -> Option<&Component> {
-        let component = *self.definition.0.component_by_atom.get(atom.index())?;
-        self.definition.0.components.get(component.index())
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-/// Transactional builder for a fixed-topology [`MolecularModel`].
 pub struct MolecularModelBuilder {
-    topology: Molecule,
+    topology: ModelTopology,
     positions: Vec<Point3>,
-    components: Vec<Component>,
-    component_by_atom: Vec<ComponentId>,
 }
 
 impl MolecularModelBuilder {
@@ -253,49 +504,93 @@ impl MolecularModelBuilder {
         Self::default()
     }
 
-    pub fn add_component(
+    pub fn add_small_molecule(
         &mut self,
         molecule: &SmallMolecule,
-        conformer_id: ConformerId,
-    ) -> Result<ComponentMapping, ModelBuildError> {
-        let mut staged = self.clone();
-        let mapping = staged.add_component_staged(molecule, conformer_id)?;
-        *self = staged;
-        Ok(mapping)
+        conformer: ConformerId,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        self.add_small_molecule_with_metadata(
+            molecule,
+            conformer,
+            MoleculeInstanceMetadata::default(),
+        )
+    }
+
+    pub fn add_small_molecule_with_metadata(
+        &mut self,
+        molecule: &SmallMolecule,
+        conformer: ConformerId,
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        self.add_payload(
+            MoleculeInstancePayload::Small(molecule.clone()),
+            conformer,
+            metadata,
+        )
+    }
+
+    pub fn add_macro_molecule(
+        &mut self,
+        molecule: &MacroMolecule,
+        conformer: ConformerId,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        self.add_macro_molecule_with_metadata(
+            molecule,
+            conformer,
+            MoleculeInstanceMetadata::default(),
+        )
+    }
+
+    pub fn add_macro_molecule_with_metadata(
+        &mut self,
+        molecule: &MacroMolecule,
+        conformer: ConformerId,
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        self.add_payload(
+            MoleculeInstancePayload::Macro(molecule.clone()),
+            conformer,
+            metadata,
+        )
     }
 
     pub fn build(self) -> Result<MolecularModel, ModelBuildError> {
-        if self.components.is_empty() {
+        if self.topology.molecules.is_empty() {
             return Err(ModelBuildError::EmptyModel);
-        }
-        if self.positions.len() != self.component_by_atom.len() {
-            return Err(ModelBuildError::InvalidSourceTopology(
-                "model component membership is incomplete",
-            ));
         }
         Ok(MolecularModel {
             definition: ModelDefinitionKey(Arc::new(ModelDefinition {
                 topology: self.topology,
-                components: self.components,
-                component_by_atom: self.component_by_atom,
             })),
             positions: self.positions,
         })
     }
 
-    fn add_component_staged(
+    fn add_payload(
         &mut self,
-        molecule: &SmallMolecule,
+        payload: MoleculeInstancePayload,
         conformer_id: ConformerId,
-    ) -> Result<ComponentMapping, ModelBuildError> {
-        let graph = molecule.graph();
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        let mut staged = self.clone();
+        let id = staged.add_payload_staged(payload, conformer_id, metadata)?;
+        *self = staged;
+        Ok(id)
+    }
+
+    fn add_payload_staged(
+        &mut self,
+        payload: MoleculeInstancePayload,
+        conformer_id: ConformerId,
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        let graph = payload.graph();
         if graph.atom_count() == 0 {
-            return Err(ModelBuildError::EmptyComponent);
+            return Err(ModelBuildError::EmptyMolecule);
         }
         let conformer = graph
             .conformer(conformer_id)
             .map_err(|_| ModelBuildError::InvalidConformerId(conformer_id))?;
-
         let mut source_positions = BTreeMap::new();
         for (atom, _) in graph.atoms() {
             let point = conformer
@@ -307,163 +602,21 @@ impl MolecularModelBuilder {
             source_positions.insert(atom, point);
         }
 
-        let component = ComponentId::new(self.components.len() as u32);
-        let mut atom_map = BTreeMap::new();
-        let mut component_atoms = Vec::with_capacity(graph.atom_count());
-        for (source_id, atom) in graph.atoms() {
-            let model_id = self.topology.add_atom(atom.clone());
-            debug_assert_eq!(model_id.index(), self.positions.len());
-            self.positions.push(source_positions[&source_id]);
-            self.component_by_atom.push(component);
-            atom_map.insert(source_id, model_id);
-            component_atoms.push(model_id);
+        let id = MoleculeInstanceId::new(self.topology.molecules.len() as u32);
+        for (atom, _) in graph.atoms() {
+            let qualified = InstanceAtomId::new(id, atom);
+            let index = ModelAtomIndex::new(self.positions.len() as u32);
+            self.topology.atom_indexes.insert(qualified, index);
+            self.topology.atom_order.push(qualified);
+            self.positions.push(source_positions[&atom]);
         }
-
-        let mut bond_map = BTreeMap::new();
-        for (source_id, bond) in graph.bonds() {
-            let (source_a, source_b) = bond.endpoints();
-            let a = mapped_atom(&atom_map, source_a)?;
-            let b = mapped_atom(&atom_map, source_b)?;
-            let model_id = self.topology.add_bond(a, b, bond.order)?;
-            {
-                let mut copied = self.topology.bond_mut(model_id)?;
-                copied.aromatic = bond.aromatic;
-                copied.props = bond.props.clone();
-            }
-            bond_map.insert(source_id, model_id);
-        }
-
-        copy_stereo(graph, &mut self.topology, &atom_map, &bond_map)?;
-
-        self.components.push(Component {
-            id: component,
-            atoms: component_atoms,
-            props: graph.props().clone(),
+        self.topology.molecules.push(MoleculeInstance {
+            id,
+            payload: payload.without_conformers(),
+            metadata,
         });
-        Ok(ComponentMapping {
-            component,
-            atoms: atom_map,
-            bonds: bond_map,
-        })
+        Ok(id)
     }
-}
-
-fn copy_stereo(
-    source: &Molecule,
-    target: &mut Molecule,
-    atoms: &BTreeMap<AtomId, AtomId>,
-    bonds: &BTreeMap<BondId, BondId>,
-) -> Result<(), ModelBuildError> {
-    let mut elements = BTreeMap::new();
-    for (source_id, element) in source.stereo_elements() {
-        let copied = StereoElement {
-            kind: remap_stereo_kind(&element.kind, atoms, bonds)?,
-            specifiedness: element.specifiedness,
-            source: element.source,
-            group: None,
-            descriptor: None,
-        };
-        let target_id = target.add_stereo_element(copied)?;
-        elements.insert(source_id, target_id);
-    }
-    for (_, group) in source.stereo_groups() {
-        let members = group
-            .members
-            .iter()
-            .map(|member| {
-                elements
-                    .get(member)
-                    .copied()
-                    .ok_or(ModelBuildError::InvalidSourceTopology(
-                        "stereo group references an unavailable element",
-                    ))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        target.add_stereo_group(StereoGroup {
-            kind: group.kind,
-            members,
-        })?;
-    }
-    for mark in source.stereo_bond_marks() {
-        target.set_stereo_bond_mark(StereoBondMark {
-            bond: mapped_bond(bonds, mark.bond)?,
-            kind: mark.kind,
-            source: mark.source,
-        })?;
-    }
-    Ok(())
-}
-
-fn remap_stereo_kind(
-    kind: &StereoElementKind,
-    atoms: &BTreeMap<AtomId, AtomId>,
-    bonds: &BTreeMap<BondId, BondId>,
-) -> Result<StereoElementKind, ModelBuildError> {
-    Ok(match kind {
-        StereoElementKind::Tetrahedral(stereo) => {
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
-                center: mapped_atom(atoms, stereo.center)?,
-                carriers: stereo
-                    .carriers
-                    .iter()
-                    .map(|carrier| remap_carrier(*carrier, atoms))
-                    .collect::<Result<_, _>>()?,
-                orientation: stereo.orientation,
-            })
-        }
-        StereoElementKind::DoubleBond(stereo) => StereoElementKind::DoubleBond(DoubleBondStereo {
-            bond: mapped_bond(bonds, stereo.bond)?,
-            left: mapped_atom(atoms, stereo.left)?,
-            right: mapped_atom(atoms, stereo.right)?,
-            left_carrier: remap_carrier(stereo.left_carrier, atoms)?,
-            right_carrier: remap_carrier(stereo.right_carrier, atoms)?,
-            orientation: stereo.orientation,
-        }),
-        StereoElementKind::Axis(stereo) => StereoElementKind::Axis(AxisStereo {
-            axis: mapped_bond(bonds, stereo.axis)?,
-            carriers: stereo
-                .carriers
-                .iter()
-                .map(|carrier| remap_carrier(*carrier, atoms))
-                .collect::<Result<_, _>>()?,
-            orientation: stereo.orientation,
-        }),
-    })
-}
-
-fn remap_carrier(
-    carrier: StereoCarrier,
-    atoms: &BTreeMap<AtomId, AtomId>,
-) -> Result<StereoCarrier, ModelBuildError> {
-    match carrier {
-        StereoCarrier::Atom(atom) => Ok(StereoCarrier::Atom(mapped_atom(atoms, atom)?)),
-        StereoCarrier::ImplicitHydrogen => Ok(StereoCarrier::ImplicitHydrogen),
-        StereoCarrier::ImplicitLonePair => Ok(StereoCarrier::ImplicitLonePair),
-    }
-}
-
-fn mapped_atom(
-    atoms: &BTreeMap<AtomId, AtomId>,
-    source: AtomId,
-) -> Result<AtomId, ModelBuildError> {
-    atoms
-        .get(&source)
-        .copied()
-        .ok_or(ModelBuildError::InvalidSourceTopology(
-            "stereo or bond references an unavailable atom",
-        ))
-}
-
-fn mapped_bond(
-    bonds: &BTreeMap<BondId, BondId>,
-    source: BondId,
-) -> Result<BondId, ModelBuildError> {
-    bonds
-        .get(&source)
-        .copied()
-        .ok_or(ModelBuildError::InvalidSourceTopology(
-            "stereo references an unavailable bond",
-        ))
 }
 
 pub(crate) fn point_is_finite(point: Point3) -> bool {
@@ -472,13 +625,19 @@ pub(crate) fn point_is_finite(point: Point3) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelError {
-    InvalidComponentId(ComponentId),
+    InvalidMoleculeInstanceId(MoleculeInstanceId),
+    InvalidAtomId(InstanceAtomId),
+    InvalidBondId(InstanceBondId),
+    InvalidAtomSiteId(AtomSiteId),
 }
 
 impl fmt::Display for ModelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidComponentId(id) => write!(f, "invalid component id: {id}"),
+            Self::InvalidMoleculeInstanceId(id) => write!(f, "invalid molecule instance: {id}"),
+            Self::InvalidAtomId(id) => write!(f, "invalid molecule-instance atom: {id}"),
+            Self::InvalidBondId(id) => write!(f, "invalid molecule-instance bond: {id}"),
+            Self::InvalidAtomSiteId(id) => write!(f, "invalid atom-site id: {}", id.raw()),
         }
     }
 }
@@ -487,15 +646,19 @@ impl std::error::Error for ModelError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PositionError {
-    InvalidAtomId(AtomId),
+    InvalidAtomId(InstanceAtomId),
+    InvalidAtomIndex(ModelAtomIndex),
     PositionCountMismatch { expected: usize, actual: usize },
-    NonFinitePosition { atom: AtomId },
+    NonFinitePosition { atom: InstanceAtomId },
 }
 
 impl fmt::Display for PositionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAtomId(atom) => write!(f, "invalid model atom id: {atom}"),
+            Self::InvalidAtomIndex(index) => {
+                write!(f, "invalid dense model atom index: {}", index.raw())
+            }
             Self::PositionCountMismatch { expected, actual } => write!(
                 f,
                 "model requires {expected} positions, but received {actual}"
@@ -512,19 +675,17 @@ impl std::error::Error for PositionError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelBuildError {
     EmptyModel,
-    EmptyComponent,
+    EmptyMolecule,
     InvalidConformerId(ConformerId),
     MissingPosition { atom: AtomId },
     NonFinitePosition { atom: AtomId },
-    InvalidSourceTopology(&'static str),
-    Topology(MoleculeError),
 }
 
 impl fmt::Display for ModelBuildError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyModel => write!(f, "a molecular model must contain at least one component"),
-            Self::EmptyComponent => write!(f, "a model component must contain at least one atom"),
+            Self::EmptyModel => write!(f, "a molecular model must contain at least one molecule"),
+            Self::EmptyMolecule => write!(f, "a model molecule must contain at least one atom"),
             Self::InvalidConformerId(id) => write!(f, "invalid source conformer id: {id}"),
             Self::MissingPosition { atom } => {
                 write!(f, "source conformer has no position for atom {atom}")
@@ -532,25 +693,8 @@ impl fmt::Display for ModelBuildError {
             Self::NonFinitePosition { atom } => {
                 write!(f, "source conformer position for atom {atom} is not finite")
             }
-            Self::InvalidSourceTopology(message) => {
-                write!(f, "invalid source topology: {message}")
-            }
-            Self::Topology(error) => write!(f, "cannot copy source topology: {error}"),
         }
     }
 }
 
-impl std::error::Error for ModelBuildError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Topology(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
-impl From<MoleculeError> for ModelBuildError {
-    fn from(error: MoleculeError) -> Self {
-        Self::Topology(error)
-    }
-}
+impl std::error::Error for ModelBuildError {}

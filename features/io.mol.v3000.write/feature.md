@@ -8,8 +8,11 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 
 - Exposes `molfile::write_v3000`.
 - Emits three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND` sections in graph order.
-- Preserves title/program/comment properties, coordinates from the first conformer, bond orders, atom map numbers, formal charges, isotopes via `MASS`, radical multiplicities, and supported source bond `CFG` stereo marks.
-- Successful output is accepted by `molfile::read_v3000_str`.
+- Emits neutral generated headers plus coordinates from the first conformer,
+  bond orders, maps, charges, isotopes, radicals, and supported source `CFG`
+  marks. Format headers are not read from molecule properties.
+- Successful output is accepted by `molfile::parse_str` then
+  `molfile::interpret`.
 - Rejects stored stereo elements, perceived E/Z bond stereo, bond `CFG` source marks incompatible with the bond order, enhanced stereo, and quadruple bonds with structured writer errors.
 - Does not canonicalize, sanitize, or perceive chemistry before writing.
 
@@ -43,3 +46,5 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
 - v6: Read supported V3000 bond `CFG` output from source bond marks and reject stored stereo elements.
 - v7: Reject quartet/quintet radical multiplicity explicitly instead of
   silently mapping an unrepresentable high-spin state.
+- v8: Migrate parse-back validation to `MolfileDocument` and remove
+  molecule-property header coupling.

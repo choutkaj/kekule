@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use flate2::{read::GzDecoder, Compression, GzBuilder};
 use molecules::{
     core::{
-        Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondOrder, DoubleBondOrientation,
-        Molecule, PropValue, StereoBondMark, StereoBondMarkKind, StereoCarrier, StereoDescriptor,
+        Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondId, BondOrder, DoubleBondOrientation,
+        Molecule, StereoBondMark, StereoBondMarkKind, StereoCarrier, StereoDescriptor,
         StereoElement, StereoElementKind, StereoGroup, StereoGroupKind, StereoSource,
         StereoSpecifiedness, TetrahedralOrientation,
     },
@@ -24,9 +24,9 @@ use molecules::{
         valence::{self, ValenceModel, ValenceOptions},
         SanitizeError, SanitizeOptions,
     },
-    sdf::{self, SdfParseOptions, SdfRecord},
+    sdf::{self, SdfDataField, SdfParseOptions, SdfRecord},
     small::SmallMolecule,
-    smiles::{self, CanonicalSmilesWriteOptions, SmilesParseOptions, SmilesWriteOptions},
+    smiles::{self, CanonicalSmilesWriteOptions, SmilesWriteOptions},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

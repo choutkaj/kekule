@@ -114,6 +114,7 @@ pub(crate) fn recorded_corpus_passed(
             .is_some_and(is_sha256)
         && !corpus_status.evidence_inputs.is_empty()
 }
+#[cfg(test)]
 pub(crate) fn recorded_overall_validated(
     feature: &Feature,
     status: Option<&ValidationStatus>,

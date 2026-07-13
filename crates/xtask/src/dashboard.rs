@@ -5,7 +5,7 @@ pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let features = read_features()?;
     let statuses = read_validation_statuses(&features)?;
     let corpus_info = read_dashboard_corpus_info()?;
-    ensure_recorded_validation_flags_synced(&features, &statuses)?;
+    ensure_current_validation_flags_synced(&features, &statuses)?;
     let rendered = render_dashboard(&features, &statuses, &corpus_info);
     let path = Path::new(DASHBOARD_PATH);
 
@@ -284,15 +284,23 @@ pub(crate) fn normalize_text_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-pub(crate) fn ensure_recorded_validation_flags_synced(
+pub(crate) fn ensure_current_validation_flags_synced(
     features: &[Feature],
     statuses: &BTreeMap<String, ValidationStatus>,
 ) -> Result<(), Box<dyn Error>> {
+    ensure_current_validation_flags_synced_at(features, statuses, Path::new("validation"))
+}
+
+pub(crate) fn ensure_current_validation_flags_synced_at(
+    features: &[Feature],
+    statuses: &BTreeMap<String, ValidationStatus>,
+    validation_root: &Path,
+) -> Result<(), Box<dyn Error>> {
     for feature in features {
-        let derived = recorded_overall_validated(feature, statuses.get(&feature.id));
+        let derived = overall_validated_at(feature, statuses.get(&feature.id), validation_root);
         if feature.validated != derived {
             return Err(boxed_error(format!(
-                "feature `{}` has validated={}, but recorded corpus evidence derives validated={derived}; run validation with --update",
+                "feature `{}` has validated={}, but current corpus evidence derives validated={derived}; run validation with --update",
                 feature.id, feature.validated
             )));
         }

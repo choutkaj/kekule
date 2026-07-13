@@ -19,9 +19,9 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
         atom_index.insert(*atom_id, index + 1);
     }
 
-    let title = prop_string(mol, "sdf.title").unwrap_or_default();
-    let program = prop_string(mol, "sdf.program").unwrap_or_else(|| "molecules".to_owned());
-    let comment = prop_string(mol, "sdf.comment").unwrap_or_default();
+    let title = "";
+    let program = "molecules";
+    let comment = "";
     let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
 
     let mut out = String::new();
@@ -105,7 +105,6 @@ fn parse_mol_v3000_lines(
             "record must contain three header lines and a counts line",
         ));
     }
-    let title = lines[0].to_owned();
     let counts_line = checked_line_number(record, start_line, 3)?;
     if !lines[3].contains("V3000") {
         return Err(SdfParseError::new(
@@ -148,16 +147,6 @@ fn parse_mol_v3000_lines(
     }
 
     let mut mol = Molecule::new();
-    mol.props_mut()
-        .insert("sdf.title".to_owned(), PropValue::String(title));
-    mol.props_mut().insert(
-        "sdf.program".to_owned(),
-        PropValue::String(lines[1].to_owned()),
-    );
-    mol.props_mut().insert(
-        "sdf.comment".to_owned(),
-        PropValue::String(lines[2].to_owned()),
-    );
 
     let mut atom_ids = BTreeMap::<usize, AtomId>::new();
     let mut conformer = Conformer::with_atom_capacity(atom_rows.len());
@@ -451,13 +440,6 @@ fn v3000_bond_stereo(order: BondOrder, value: &str) -> Option<Option<StereoBondM
         (BondOrder::Single, "2") => Some(Some(StereoBondMarkKind::WedgeEither)),
         (BondOrder::Single, "3") => Some(Some(StereoBondMarkKind::WedgeDown)),
         (BondOrder::Double, "2") => Some(Some(StereoBondMarkKind::DoubleBondEither)),
-        _ => None,
-    }
-}
-
-fn prop_string(mol: &Molecule, key: &str) -> Option<String> {
-    match mol.props().get(key) {
-        Some(PropValue::String(value)) => Some(value.clone()),
         _ => None,
     }
 }

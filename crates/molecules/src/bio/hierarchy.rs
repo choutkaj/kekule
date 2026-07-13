@@ -35,6 +35,11 @@ impl MacroMolecule {
         &mut self.hierarchy
     }
 
+    pub(crate) fn without_conformers(mut self) -> Self {
+        self.graph = self.graph.without_conformers();
+        self
+    }
+
     pub fn models(&self) -> impl Iterator<Item = (ModelId, &Model)> {
         self.hierarchy.models()
     }

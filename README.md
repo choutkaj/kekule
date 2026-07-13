@@ -19,7 +19,9 @@ The public API is organized around a small prelude plus focused format and workf
 
 ### Small molecules
 
-Use `SmallMolecule` for the common small-molecule path. Parsing a SMILES string creates the graph without running perception; `sanitize` adds chemistry-derived state such as valence, rings, and aromaticity.
+Use `SmallMolecule` for the common small-molecule path. Parsing and interpretation
+do not sanitize; `sanitize` installs chemistry-derived state such as valence,
+rings, and aromaticity.
 
 ```rust
 use molecules::prelude::*;
@@ -38,16 +40,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+The equivalent staged path keeps the raw format document available:
+
+```rust
+let document = molecules::smiles::parse_str("[Na+].[Cl-]")?;
+assert_eq!(document.component_token_ranges().len(), 2);
+let salt = molecules::smiles::interpret(&document)?;
+assert_eq!(salt.atom_count(), 2);
+assert_eq!(salt.graph().connected_components().len(), 2);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The dots describe disconnected graph components; the SMILES record still
+asserts one `SmallMolecule`.
+
 ### Molecular modelling
 
-The initial modelling layer creates a fixed-topology `MolecularModel` from one
-or more selected small-molecule conformers. Potentials and minimization remain
-explicit namespaced operations; modelling types are not part of the prelude.
+The modelling layer creates a fixed `ModelTopology` from distinct Small and
+Macro molecule instances. Local IDs survive insertion and become unambiguous
+when qualified by the returned `MoleculeInstanceId`.
 
 ```rust
 use molecules::core::{Atom, BondOrder, Conformer, Element, Molecule, Point3};
 use molecules::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
-use molecules::modeling::{minimize, MinimizeOptions, MolecularModel};
+use molecules::modeling::{minimize, InstanceBondId, MinimizeOptions, MolecularModel};
 use molecules::small::SmallMolecule;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,9 +79,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let molecule = SmallMolecule::from_graph(graph);
 
     let mut builder = MolecularModel::builder();
-    let mapping = builder.add_component(&molecule, conformer)?;
+    let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
-    let bond = mapping.bond(source_bond).unwrap();
+    let bond = InstanceBondId::new(instance, source_bond);
     let mut potential = HarmonicBondPotential::new(
         &model,
         [HarmonicBondParameter::new(bond, 1.2, 100.0)],
@@ -77,11 +93,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+`add_macro_molecule` can be used on the same builder. The stored instance exposes
+typed Small/Macro accessors and a qualified hierarchy view whose atom-site
+lookups return `InstanceAtomId`.
+
 ### Macromolecules
 
 Use the `mmcif` facade for multi-entity structure input. Parsing preserves the
-mmCIF document; a separate interpretation step produces clean macromolecules,
-small molecules, ions, and individual solvent molecules.
+mmCIF document; interpretation selects one coordinate model and produces one
+`MolecularModel` containing distinct molecule instances.
 
 ```rust
 use molecules::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions};
@@ -100,19 +120,25 @@ _atom_site.label_comp_id
 _atom_site.label_asym_id
 _atom_site.label_entity_id
 _atom_site.auth_seq_id
-C C1 GLY A 1 1
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+C C1 GLY A 1 1 0.0 0.0 0.0
 "#;
 
     let document = mmcif::parse_str(input, MmcifParseOptions::default())?;
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
-    let macro_mol = interpreted
-        .contents()
-        .macromolecules()
+    let macro_instance = interpreted
+        .model()
+        .topology()
+        .molecules()
         .next()
-        .expect("one polymer molecule");
-    macro_mol.validate()?;
+        .expect("one polymer molecule")
+        .1;
+    let macro_mol = macro_instance.macro_molecule().expect("macro instance");
 
-    println!("atoms: {}", macro_mol.graph().atom_count());
+    println!("atoms: {}", interpreted.model().atom_count());
+    println!("selected model: {:?}", interpreted.report().selected_model);
 
     Ok(())
 }

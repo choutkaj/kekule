@@ -6,7 +6,8 @@ pub struct StereoElement {
     pub specifiedness: StereoSpecifiedness,
     pub source: StereoSource,
     pub group: Option<StereoGroupId>,
-    pub descriptor: Option<StereoDescriptor>,
+    #[cfg(test)]
+    pub(crate) descriptor: Option<StereoDescriptor>,
 }
 
 impl StereoElement {
@@ -16,6 +17,7 @@ impl StereoElement {
             specifiedness: StereoSpecifiedness::Specified,
             source,
             group: None,
+            #[cfg(test)]
             descriptor: None,
         }
     }

@@ -12,19 +12,22 @@ pub(crate) fn implementation_expected(
         }
         "io.sdf.v2000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
-            let molecules = records
+            let records = records
                 .into_iter()
-                .map(|record| record.molecule)
+                .map(|record| {
+                    let fields = record
+                        .sdf_fields
+                        .into_iter()
+                        .map(|(name, value)| SdfDataField::new(name, value))
+                        .collect();
+                    SdfRecord::new(record.title, record.molecule, fields)
+                })
                 .collect::<Vec<_>>();
-            let written = sdf::write_v2000(&molecules)?;
-            let records = sdf::read_v2000_records(&written, SdfParseOptions::default())?
+            let written = sdf::write_v2000(&records)?;
+            let records = interpret_sdf(&written)?
                 .into_iter()
                 .enumerate()
-                .map(|(index, record)| IndexedSmallRecord {
-                    record_index: index,
-                    title: record.title,
-                    molecule: record.molecule,
-                })
+                .map(|(index, record)| small_record(index, record))
                 .collect::<Vec<_>>();
             Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
         }
@@ -38,12 +41,14 @@ pub(crate) fn implementation_expected(
                 .into_iter()
                 .enumerate()
                 .map(|(index, record)| {
+                    let title = record.title;
                     let written = molfile::write_v3000(&record.molecule)?;
-                    let molecule = molfile::read_v3000_str(&written)?;
+                    let molecule = interpret_molfile(&written)?;
                     Ok(IndexedSmallRecord {
                         record_index: index,
-                        title: molecule_title(molecule.graph()),
+                        title,
                         molecule,
+                        sdf_fields: BTreeMap::new(),
                     })
                 })
                 .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
@@ -59,12 +64,14 @@ pub(crate) fn implementation_expected(
                 .into_iter()
                 .enumerate()
                 .map(|(index, record)| {
+                    let title = record.title;
                     let written = molfile::write_v2000(&record.molecule)?;
-                    let molecule = molfile::read_v2000_str(&written)?;
+                    let molecule = interpret_molfile(&written)?;
                     Ok(IndexedSmallRecord {
                         record_index: index,
-                        title: molecule_title(molecule.graph()),
+                        title,
                         molecule,
+                        sdf_fields: BTreeMap::new(),
                     })
                 })
                 .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
@@ -76,12 +83,14 @@ pub(crate) fn implementation_expected(
                 .into_iter()
                 .enumerate()
                 .map(|(index, record)| {
+                    let title = record.title;
                     let written = molfile::write_v3000(&record.molecule)?;
-                    let molecule = molfile::read_v3000_str(&written)?;
+                    let molecule = interpret_molfile(&written)?;
                     Ok(IndexedSmallRecord {
                         record_index: index,
-                        title: molecule_title(molecule.graph()),
+                        title,
                         molecule,
+                        sdf_fields: BTreeMap::new(),
                     })
                 })
                 .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
@@ -192,6 +201,7 @@ pub(crate) struct IndexedSmallRecord {
     pub(crate) record_index: usize,
     pub(crate) title: String,
     pub(crate) molecule: SmallMolecule,
+    pub(crate) sdf_fields: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -211,14 +221,17 @@ pub(crate) fn read_small_records_by_suffix(
         path.extension().and_then(|ext| ext.to_str()),
         Some("mol" | "mdl")
     ) {
-        let molecule = molfile::read_v2000_str(&input)?;
+        let document = molfile::parse_str(&input)?;
+        let title = document.header().title().to_owned();
+        let molecule = molfile::interpret(&document)?;
         return Ok(vec![IndexedSmallRecord {
             record_index: 0,
-            title: molecule_title(molecule.graph()),
+            title,
             molecule,
+            sdf_fields: BTreeMap::new(),
         }]);
     }
-    Ok(sdf::read_v2000_records(&input, SdfParseOptions::default())?
+    Ok(interpret_sdf(&input)?
         .into_iter()
         .enumerate()
         .map(|(index, record)| small_record(index, record))
@@ -226,11 +239,33 @@ pub(crate) fn read_small_records_by_suffix(
 }
 
 pub(crate) fn small_record(index: usize, record: SdfRecord) -> IndexedSmallRecord {
+    let title = record.title().to_owned();
+    let sdf_fields = record
+        .data_fields()
+        .iter()
+        .map(|field| (field.name().to_owned(), field.value().to_owned()))
+        .collect();
     IndexedSmallRecord {
         record_index: index,
-        title: record.title,
-        molecule: record.molecule,
+        title,
+        molecule: record.into_molecule(),
+        sdf_fields,
     }
+}
+
+fn interpret_molfile(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
+    let document = molfile::parse_str(input)?;
+    Ok(molfile::interpret(&document)?)
+}
+
+fn interpret_sdf(input: &str) -> Result<Vec<SdfRecord>, Box<dyn Error>> {
+    let document = sdf::parse_str(input, SdfParseOptions::default())?;
+    Ok(sdf::interpret(&document)?)
+}
+
+fn interpret_smiles(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
+    let document = smiles::parse_str(input)?;
+    Ok(smiles::interpret(&document)?)
 }
 
 pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
@@ -268,11 +303,10 @@ fn read_smiles_records_with_filter(
             });
             continue;
         }
-        let (status, molecule) =
-            match smiles::read_str_with_options(&smiles, SmilesParseOptions::default()) {
-                Ok(molecule) => ("ok".to_owned(), Some(molecule)),
-                Err(_) => ("parse_error".to_owned(), None),
-            };
+        let (status, molecule) = match interpret_smiles(&smiles) {
+            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+            Err(_) => ("parse_error".to_owned(), None),
+        };
         records.push(IndexedSmilesRecord {
             record_index: index,
             status,
@@ -299,6 +333,7 @@ pub(crate) fn read_stereo_records_by_suffix(
                     record_index: record.record_index,
                     title: record.title,
                     molecule,
+                    sdf_fields: BTreeMap::new(),
                 })
             })
             .collect());
@@ -309,15 +344,14 @@ pub(crate) fn read_stereo_records_by_suffix(
     ) {
         return read_small_records_by_suffix(path);
     }
-    let molecule = if input.contains("V3000") {
-        molfile::read_v3000_str(&input)?
-    } else {
-        molfile::read_v2000_str(&input)?
-    };
+    let document = molfile::parse_str(&input)?;
+    let title = document.header().title().to_owned();
+    let molecule = molfile::interpret(&document)?;
     Ok(vec![IndexedSmallRecord {
         record_index: 0,
-        title: molecule_title(molecule.graph()),
+        title,
         molecule,
+        sdf_fields: BTreeMap::new(),
     }])
 }
 
@@ -333,11 +367,10 @@ pub(crate) fn read_canonical_smiles_records(
         let mut parts = line.splitn(2, char::is_whitespace);
         let smiles = parts.next().unwrap_or_default().to_owned();
         let title = parts.next().unwrap_or_default().trim().to_owned();
-        let (status, molecule) =
-            match smiles::read_str_with_options(&smiles, SmilesParseOptions::default()) {
-                Ok(molecule) => ("ok".to_owned(), Some(molecule)),
-                Err(_) => ("parse_error".to_owned(), None),
-            };
+        let (status, molecule) = match interpret_smiles(&smiles) {
+            Ok(molecule) => ("ok".to_owned(), Some(molecule)),
+            Err(_) => ("parse_error".to_owned(), None),
+        };
         records.push(IndexedSmilesRecord {
             record_index: index,
             status,
@@ -366,7 +399,7 @@ pub(crate) fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
         "bond_count": mol.bond_count(),
         "atoms": atoms_json(mol),
         "bonds": bonds_json(mol),
-        "properties": sdf_properties_json(mol),
+        "properties": record.sdf_fields,
     })
 }
 
@@ -402,7 +435,7 @@ pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
                 })
                 .collect::<Vec<_>>()
         }).collect::<Vec<_>>(),
-        "atoms": mol.atoms().map(|(id, atom)| conformer_atom_json(id, atom)).collect::<Vec<_>>(),
+        "atoms": mol.atoms().map(|(id, atom)| conformer_atom_json(mol, id, atom)).collect::<Vec<_>>(),
     })
 }
 
@@ -514,14 +547,18 @@ pub(crate) fn cip_atom_descriptors_json(
 ) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element.descriptor.and_then(|descriptor| {
-                let atom_index = *atom_index.get(&stereo.center)?;
-                Some(json!({
-                    "atom_index": atom_index,
-                    "descriptor": stereo_descriptor_json(descriptor),
-                }))
-            }),
+        .filter_map(|(id, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => mol
+                .cip_descriptor(id)
+                .ok()
+                .flatten()
+                .and_then(|descriptor| {
+                    let atom_index = *atom_index.get(&stereo.center)?;
+                    Some(json!({
+                        "atom_index": atom_index,
+                        "descriptor": stereo_descriptor_json(descriptor),
+                    }))
+                }),
             StereoElementKind::Axis(_) | StereoElementKind::DoubleBond(_) => None,
         })
         .collect::<Vec<_>>();
@@ -540,27 +577,36 @@ pub(crate) fn cip_bond_descriptors_json(
 ) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
-                let begin_atom_index = *atom_index.get(&stereo.left)?;
-                let end_atom_index = *atom_index.get(&stereo.right)?;
-                Some(json!({
-                    "begin_atom_index": begin_atom_index,
-                    "end_atom_index": end_atom_index,
-                    "descriptor": stereo_descriptor_json(descriptor),
-                }))
-            }),
-            StereoElementKind::Axis(stereo) => element.descriptor.and_then(|descriptor| {
-                let bond = mol.bond(stereo.axis).ok()?;
-                let (begin, end) = bond.endpoints();
-                let begin_atom_index = *atom_index.get(&begin)?;
-                let end_atom_index = *atom_index.get(&end)?;
-                Some(json!({
-                    "begin_atom_index": begin_atom_index,
-                    "end_atom_index": end_atom_index,
-                    "descriptor": stereo_descriptor_json(descriptor),
-                }))
-            }),
+        .filter_map(|(id, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo) => mol
+                .cip_descriptor(id)
+                .ok()
+                .flatten()
+                .and_then(|descriptor| {
+                    let begin_atom_index = *atom_index.get(&stereo.left)?;
+                    let end_atom_index = *atom_index.get(&stereo.right)?;
+                    Some(json!({
+                        "begin_atom_index": begin_atom_index,
+                        "end_atom_index": end_atom_index,
+                        "descriptor": stereo_descriptor_json(descriptor),
+                    }))
+                }),
+            StereoElementKind::Axis(stereo) => {
+                mol.cip_descriptor(id)
+                    .ok()
+                    .flatten()
+                    .and_then(|descriptor| {
+                        let bond = mol.bond(stereo.axis).ok()?;
+                        let (begin, end) = bond.endpoints();
+                        let begin_atom_index = *atom_index.get(&begin)?;
+                        let end_atom_index = *atom_index.get(&end)?;
+                        Some(json!({
+                            "begin_atom_index": begin_atom_index,
+                            "end_atom_index": end_atom_index,
+                            "descriptor": stereo_descriptor_json(descriptor),
+                        }))
+                    })
+            }
             StereoElementKind::Tetrahedral(_) => None,
         })
         .collect::<Vec<_>>();
@@ -645,7 +691,7 @@ pub(crate) fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {
         .collect::<Vec<_>>()
 }
 
-pub(crate) fn conformer_atom_json(id: AtomId, atom: &Atom) -> Value {
+pub(crate) fn conformer_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
     json!({
         "index": id.raw(),
         "atomic_number": atom.element.atomic_number(),
@@ -654,7 +700,7 @@ pub(crate) fn conformer_atom_json(id: AtomId, atom: &Atom) -> Value {
         "isotope": atom.isotope,
         "explicit_hydrogens": atom.explicit_hydrogens,
         "atom_map": atom.atom_map,
-        "aromatic": atom.aromatic,
+        "aromatic": mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false),
     })
 }
 
@@ -758,8 +804,8 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
-        "atom_aromatic": mol.atoms().map(|(_, atom)| atom.aromatic).collect::<Vec<_>>(),
-        "bond_aromatic": mol.bonds().map(|(_, bond)| bond.aromatic).collect::<Vec<_>>(),
+        "atom_aromatic": mol.atoms().map(|(id, _)| mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false)).collect::<Vec<_>>(),
+        "bond_aromatic": mol.bonds().map(|(id, _)| mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false)).collect::<Vec<_>>(),
     })
 }
 
@@ -770,7 +816,7 @@ pub(crate) fn smiles_write_record_json(
         return Ok(smiles_error_record_json(record));
     };
     let written = smiles::write_with_options(molecule, SmilesWriteOptions::default())?;
-    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
+    let reparsed = match interpret_smiles(&written) {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -808,7 +854,7 @@ pub(crate) fn canonical_smiles_record_json(
     }
     let written =
         smiles::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions::default())?;
-    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
+    let reparsed = match interpret_smiles(&written) {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -860,7 +906,7 @@ pub(crate) fn isomeric_smiles_record_json(
             }));
         }
     };
-    let reparsed = match smiles::read_str_with_options(&written, SmilesParseOptions::default()) {
+    let reparsed = match interpret_smiles(&written) {
         Ok(reparsed) => reparsed,
         Err(_) => {
             return Ok(json!({
@@ -900,9 +946,11 @@ pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
         return smiles_error_record_json(record);
     };
     let written = smiles::write_with_options(molecule, SmilesWriteOptions::default());
-    let round_trip = match written.as_ref().map_err(|_| ()).and_then(|text| {
-        smiles::read_str_with_options(text, SmilesParseOptions::default()).map_err(|_| ())
-    }) {
+    let round_trip = match written
+        .as_ref()
+        .map_err(|_| ())
+        .and_then(|text| interpret_smiles(text).map_err(|_| ()))
+    {
         Ok(reparsed) => smiles_sanitized_semantic_json(reparsed),
         Err(_) => json!({ "status": "write_reparse_error" }),
     };
@@ -968,14 +1016,18 @@ pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) 
 pub(crate) fn smiles_cip_atom_descriptor_keys_json(mol: &Molecule) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element.descriptor.and_then(|descriptor| {
-                let atom = mol.atom(stereo.center).ok()?;
-                Some(json!({
-                    "center_atom": smiles_sanitized_atom_key(mol, stereo.center, atom),
-                    "descriptor": stereo_descriptor_json(descriptor),
-                }))
-            }),
+        .filter_map(|(id, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => mol
+                .cip_descriptor(id)
+                .ok()
+                .flatten()
+                .and_then(|descriptor| {
+                    let atom = mol.atom(stereo.center).ok()?;
+                    Some(json!({
+                        "center_atom": smiles_sanitized_atom_key(mol, stereo.center, atom),
+                        "descriptor": stereo_descriptor_json(descriptor),
+                    }))
+                }),
             StereoElementKind::Axis(_) | StereoElementKind::DoubleBond(_) => None,
         })
         .collect::<Vec<_>>();
@@ -986,35 +1038,44 @@ pub(crate) fn smiles_cip_atom_descriptor_keys_json(mol: &Molecule) -> Vec<Value>
 pub(crate) fn smiles_cip_bond_descriptor_keys_json(mol: &Molecule) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::DoubleBond(stereo) => element.descriptor.and_then(|descriptor| {
-                let left = mol.atom(stereo.left).ok()?;
-                let right = mol.atom(stereo.right).ok()?;
-                let mut endpoint_atoms = [
-                    smiles_sanitized_atom_key(mol, stereo.left, left),
-                    smiles_sanitized_atom_key(mol, stereo.right, right),
-                ];
-                endpoint_atoms.sort();
-                Some(json!({
-                    "endpoint_atoms": endpoint_atoms,
-                    "descriptor": stereo_descriptor_json(descriptor),
-                }))
-            }),
-            StereoElementKind::Axis(stereo) => element.descriptor.and_then(|descriptor| {
-                let bond = mol.bond(stereo.axis).ok()?;
-                let (begin, end) = bond.endpoints();
-                let begin_atom = mol.atom(begin).ok()?;
-                let end_atom = mol.atom(end).ok()?;
-                let mut endpoint_atoms = [
-                    smiles_sanitized_atom_key(mol, begin, begin_atom),
-                    smiles_sanitized_atom_key(mol, end, end_atom),
-                ];
-                endpoint_atoms.sort();
-                Some(json!({
-                    "endpoint_atoms": endpoint_atoms,
-                    "descriptor": stereo_descriptor_json(descriptor),
-                }))
-            }),
+        .filter_map(|(id, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo) => mol
+                .cip_descriptor(id)
+                .ok()
+                .flatten()
+                .and_then(|descriptor| {
+                    let left = mol.atom(stereo.left).ok()?;
+                    let right = mol.atom(stereo.right).ok()?;
+                    let mut endpoint_atoms = [
+                        smiles_sanitized_atom_key(mol, stereo.left, left),
+                        smiles_sanitized_atom_key(mol, stereo.right, right),
+                    ];
+                    endpoint_atoms.sort();
+                    Some(json!({
+                        "endpoint_atoms": endpoint_atoms,
+                        "descriptor": stereo_descriptor_json(descriptor),
+                    }))
+                }),
+            StereoElementKind::Axis(stereo) => {
+                mol.cip_descriptor(id)
+                    .ok()
+                    .flatten()
+                    .and_then(|descriptor| {
+                        let bond = mol.bond(stereo.axis).ok()?;
+                        let (begin, end) = bond.endpoints();
+                        let begin_atom = mol.atom(begin).ok()?;
+                        let end_atom = mol.atom(end).ok()?;
+                        let mut endpoint_atoms = [
+                            smiles_sanitized_atom_key(mol, begin, begin_atom),
+                            smiles_sanitized_atom_key(mol, end, end_atom),
+                        ];
+                        endpoint_atoms.sort();
+                        Some(json!({
+                            "endpoint_atoms": endpoint_atoms,
+                            "descriptor": stereo_descriptor_json(descriptor),
+                        }))
+                    })
+            }
             StereoElementKind::Tetrahedral(_) => None,
         })
         .collect::<Vec<_>>();
@@ -1025,7 +1086,7 @@ pub(crate) fn smiles_cip_bond_descriptor_keys_json(mol: &Molecule) -> Vec<Value>
 pub(crate) fn smiles_sanitized_bonds_json(mol: &Molecule) -> Vec<Value> {
     let mut bonds = mol
         .bonds()
-        .map(|(_, bond)| {
+        .map(|(bond_id, bond)| {
             let left = mol.atom(bond.a()).expect("bond endpoint should exist");
             let right = mol.atom(bond.b()).expect("bond endpoint should exist");
             let mut endpoints = [
@@ -1035,8 +1096,8 @@ pub(crate) fn smiles_sanitized_bonds_json(mol: &Molecule) -> Vec<Value> {
             endpoints.sort();
             json!({
                 "endpoint_atoms": endpoints,
-                "bond_type": smiles_semantic_bond_type(bond),
-                "is_aromatic": bond.aromatic,
+                "bond_type": smiles_semantic_bond_type(mol, bond_id, bond),
+                "is_aromatic": mol.bond_is_aromatic(bond_id).ok().flatten().unwrap_or(false),
             })
         })
         .collect::<Vec<_>>();
@@ -1048,19 +1109,21 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
     let mut atoms = mol
         .atoms()
         .map(|(id, atom)| {
-            let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
-            let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(atom);
+            let (explicit_hydrogens, implicit_hydrogens) =
+                smiles_effective_hydrogens(mol, id, atom);
+            let no_implicit_hydrogens =
+                smiles_effective_no_implicit_hydrogens(mol, id, atom);
             let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
             let mut neighbors = mol
                 .incident_bonds(id)
                 .expect("atom should exist")
-                .map(|(_, bond)| {
+                .map(|(bond_id, bond)| {
                     let neighbor_id = if bond.a() == id { bond.b() } else { bond.a() };
                     let neighbor = mol.atom(neighbor_id).expect("bond endpoint should exist");
                     json!({
                         "atom": smiles_sanitized_atom_key(mol, neighbor_id, neighbor),
-                        "bond_type": smiles_semantic_bond_type(bond),
-                        "is_aromatic": bond.aromatic,
+                        "bond_type": smiles_semantic_bond_type(mol, bond_id, bond),
+                        "is_aromatic": mol.bond_is_aromatic(bond_id).ok().flatten().unwrap_or(false),
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1077,7 +1140,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
                     "no_implicit_hydrogens": no_implicit_hydrogens,
                     "explicit_valence": explicit_valence,
                     "atom_map": atom.atom_map,
-                    "aromatic": atom.aromatic,
+                    "aromatic": mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false),
                     "neighbors": neighbors,
                 }),
             )
@@ -1092,8 +1155,8 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
 }
 
 pub(crate) fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom) -> String {
-    let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(atom);
-    let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(atom);
+    let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(mol, id, atom);
+    let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(mol, id, atom);
     let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
     format!(
         "{:03}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
@@ -1106,38 +1169,40 @@ pub(crate) fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom)
         no_implicit_hydrogens,
         explicit_valence,
         atom.atom_map.unwrap_or(0),
-        atom.aromatic
+        mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false)
     )
 }
 
-pub(crate) fn smiles_semantic_bond_type(bond: &Bond) -> &'static str {
-    if bond.aromatic {
+pub(crate) fn smiles_semantic_bond_type(mol: &Molecule, id: BondId, bond: &Bond) -> &'static str {
+    if mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false) {
         "AROMATIC"
     } else {
         bond_order_json(bond.order)
     }
 }
 
-pub(crate) fn smiles_effective_hydrogens(atom: &Atom) -> (u8, u8) {
+pub(crate) fn smiles_effective_hydrogens(mol: &Molecule, id: AtomId, atom: &Atom) -> (u8, u8) {
+    let implicit = mol.implicit_hydrogens(id).ok().flatten().unwrap_or(0);
     if atom.element.symbol() == "N"
-        && atom.aromatic
+        && mol.atom_is_aromatic(id).ok().flatten() == Some(true)
         && atom.explicit_hydrogens == 0
-        && atom.implicit_hydrogens == Some(1)
+        && implicit == 1
     {
         (1, 0)
     } else {
-        (
-            atom.explicit_hydrogens,
-            atom.implicit_hydrogens.unwrap_or(0),
-        )
+        (atom.explicit_hydrogens, implicit)
     }
 }
 
-pub(crate) fn smiles_effective_no_implicit_hydrogens(atom: &Atom) -> bool {
+pub(crate) fn smiles_effective_no_implicit_hydrogens(
+    mol: &Molecule,
+    id: AtomId,
+    atom: &Atom,
+) -> bool {
     if atom.element.symbol() == "N"
-        && atom.aromatic
+        && mol.atom_is_aromatic(id).ok().flatten() == Some(true)
         && atom.formal_charge == 0
-        && (atom.explicit_hydrogens > 0 || atom.implicit_hydrogens == Some(1))
+        && (atom.explicit_hydrogens > 0 || mol.implicit_hydrogens(id).ok().flatten() == Some(1))
     {
         false
     } else {
@@ -1147,11 +1212,11 @@ pub(crate) fn smiles_effective_no_implicit_hydrogens(atom: &Atom) -> bool {
 
 pub(crate) fn atoms_json(mol: &Molecule) -> Vec<Value> {
     mol.atoms()
-        .map(|(id, atom)| atom_json(id, atom))
+        .map(|(id, atom)| atom_json(mol, id, atom))
         .collect::<Vec<_>>()
 }
 
-pub(crate) fn atom_json(id: AtomId, atom: &Atom) -> Value {
+pub(crate) fn atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
     json!({
         "index": id.raw(),
         "atomic_number": atom.element.atomic_number(),
@@ -1162,17 +1227,17 @@ pub(crate) fn atom_json(id: AtomId, atom: &Atom) -> Value {
         "atom_map": atom.atom_map,
         "radical": atom.radical.map(radical_json),
         "unpaired_electrons": atom.radical.map(AtomRadical::unpaired_electron_count).unwrap_or(0),
-        "aromatic": atom.aromatic,
+        "aromatic": mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false),
     })
 }
 
 pub(crate) fn basic_atoms_json(mol: &Molecule) -> Vec<Value> {
     mol.atoms()
-        .map(|(id, atom)| basic_atom_json(id, atom))
+        .map(|(id, atom)| basic_atom_json(mol, id, atom))
         .collect::<Vec<_>>()
 }
 
-pub(crate) fn basic_atom_json(id: AtomId, atom: &Atom) -> Value {
+pub(crate) fn basic_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
     json!({
         "index": id.raw(),
         "atomic_number": atom.element.atomic_number(),
@@ -1181,7 +1246,7 @@ pub(crate) fn basic_atom_json(id: AtomId, atom: &Atom) -> Value {
         "isotope": atom.isotope,
         "explicit_hydrogens": atom.explicit_hydrogens,
         "atom_map": atom.atom_map,
-        "aromatic": atom.aromatic,
+        "aromatic": mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false),
     })
 }
 
@@ -1192,7 +1257,7 @@ pub(crate) fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Valu
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
         "explicit_hydrogens": atom.explicit_hydrogens,
-        "implicit_hydrogens": atom.implicit_hydrogens.unwrap_or(0),
+        "implicit_hydrogens": mol.implicit_hydrogens(id).ok().flatten().unwrap_or(0),
         "explicit_valence": explicit_valence_json(mol, id) + atom.explicit_hydrogens,
     })
 }
@@ -1204,24 +1269,29 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
         .ok()
         .into_iter()
         .flatten()
-        .map(|(_, bond)| bond)
         .collect::<Vec<_>>();
-    let has_non_aromatic_bond = bonds.iter().any(|bond| !bond.aromatic);
-    let has_non_aromatic_multiple_bond = bonds.iter().any(|bond| {
-        !bond.aromatic
+    let has_non_aromatic_bond = bonds
+        .iter()
+        .any(|(id, _)| mol.bond_is_aromatic(*id).ok().flatten() != Some(true));
+    let has_non_aromatic_multiple_bond = bonds.iter().any(|(id, bond)| {
+        mol.bond_is_aromatic(*id).ok().flatten() != Some(true)
             && matches!(
                 bond.order,
                 BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple
             )
     });
-    let has_marked_aromatic_high_order_bond = bonds.iter().any(|bond| {
-        bond.aromatic && matches!(bond.order, BondOrder::Triple | BondOrder::Quadruple)
+    let has_marked_aromatic_high_order_bond = bonds.iter().any(|(id, bond)| {
+        mol.bond_is_aromatic(*id).ok().flatten() == Some(true)
+            && matches!(bond.order, BondOrder::Triple | BondOrder::Quadruple)
     });
-    let aromatic_bond_count = bonds.iter().filter(|bond| bond.aromatic).count();
+    let aromatic_bond_count = bonds
+        .iter()
+        .filter(|(id, _)| mol.bond_is_aromatic(*id).ok().flatten() == Some(true))
+        .count();
     let doubled: u8 = bonds
         .into_iter()
-        .map(|bond| {
-            if bond.aromatic {
+        .map(|(id, bond)| {
+            if mol.bond_is_aromatic(id).ok().flatten() == Some(true) {
                 if has_marked_aromatic_high_order_bond {
                     return match bond.order {
                         BondOrder::Triple => 6,
@@ -1231,6 +1301,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
                 }
                 return aromatic_bond_valence_twice(
                     atom_record,
+                    mol.atom_is_aromatic(atom).ok().flatten() == Some(true),
                     has_non_aromatic_bond,
                     has_non_aromatic_multiple_bond,
                     aromatic_bond_count,
@@ -1250,6 +1321,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
 
 fn aromatic_bond_valence_twice(
     atom: Option<&Atom>,
+    atom_aromatic: bool,
     has_non_aromatic_bond: bool,
     has_non_aromatic_multiple_bond: bool,
     aromatic_bond_count: usize,
@@ -1257,7 +1329,7 @@ fn aromatic_bond_valence_twice(
     let Some(atom) = atom else {
         return 2;
     };
-    if atom.aromatic && has_non_aromatic_multiple_bond {
+    if atom_aromatic && has_non_aromatic_multiple_bond {
         return 2;
     }
     match atom.element.symbol() {
@@ -1286,17 +1358,22 @@ fn aromatic_bond_valence_twice(
 
 pub(crate) fn bonds_json(mol: &Molecule) -> Vec<Value> {
     mol.bonds()
-        .map(|(id, bond)| bond_json(id.raw(), bond, mol.stereo_bond_mark(id)))
+        .map(|(id, bond)| bond_json(mol, id, bond, mol.stereo_bond_mark(id)))
         .collect::<Vec<_>>()
 }
 
-pub(crate) fn bond_json(index: u32, bond: &Bond, stereo: Option<&StereoBondMark>) -> Value {
+pub(crate) fn bond_json(
+    mol: &Molecule,
+    id: BondId,
+    bond: &Bond,
+    stereo: Option<&StereoBondMark>,
+) -> Value {
     json!({
-        "index": index,
+        "index": id.raw(),
         "begin_atom_index": bond.a().raw(),
         "end_atom_index": bond.b().raw(),
         "bond_type": bond_order_json(bond.order),
-        "is_aromatic": bond.aromatic,
+        "is_aromatic": mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false),
         "stereo": bond_stereo_json(bond.order, stereo),
         "bond_direction": bond_direction_json(bond.order, stereo),
     })
@@ -1304,17 +1381,22 @@ pub(crate) fn bond_json(index: u32, bond: &Bond, stereo: Option<&StereoBondMark>
 
 pub(crate) fn basic_bonds_json(mol: &Molecule) -> Vec<Value> {
     mol.bonds()
-        .map(|(id, bond)| basic_bond_json(id.raw(), bond, mol.stereo_bond_mark(id)))
+        .map(|(id, bond)| basic_bond_json(mol, id, bond, mol.stereo_bond_mark(id)))
         .collect::<Vec<_>>()
 }
 
-pub(crate) fn basic_bond_json(index: u32, bond: &Bond, stereo: Option<&StereoBondMark>) -> Value {
+pub(crate) fn basic_bond_json(
+    mol: &Molecule,
+    id: BondId,
+    bond: &Bond,
+    stereo: Option<&StereoBondMark>,
+) -> Value {
     json!({
-        "index": index,
+        "index": id.raw(),
         "begin_atom_index": bond.a().raw(),
         "end_atom_index": bond.b().raw(),
         "bond_type": bond_order_json(bond.order),
-        "is_aromatic": bond.aromatic,
+        "is_aromatic": mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false),
         "stereo": legacy_bond_stereo_json(stereo),
     })
 }
@@ -1398,7 +1480,7 @@ pub(crate) fn stereo_perception_report_json(report: &StereoPerceptionReport) -> 
             .assembled_elements
             .iter()
             .enumerate()
-            .map(|(index, element)| stereo_element_json(index as u32, element))
+            .map(|(index, element)| stereo_element_json(index as u32, element, None))
             .collect::<Vec<_>>(),
         "created_element_indices": report
             .created_elements
@@ -1596,11 +1678,17 @@ pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Val
 
 pub(crate) fn stereo_elements_json(mol: &Molecule) -> Vec<Value> {
     mol.stereo_elements()
-        .map(|(id, element)| stereo_element_json(id.raw(), element))
+        .map(|(id, element)| {
+            stereo_element_json(id.raw(), element, mol.cip_descriptor(id).ok().flatten())
+        })
         .collect()
 }
 
-pub(crate) fn stereo_element_json(index: u32, element: &StereoElement) -> Value {
+pub(crate) fn stereo_element_json(
+    index: u32,
+    element: &StereoElement,
+    descriptor: Option<StereoDescriptor>,
+) -> Value {
     let mut object = serde_json::Map::new();
     object.insert("index".to_owned(), json!(index));
     object.insert(
@@ -1614,7 +1702,7 @@ pub(crate) fn stereo_element_json(index: u32, element: &StereoElement) -> Value 
     if let Some(group) = element.group {
         object.insert("group_index".to_owned(), json!(group.raw()));
     }
-    if let Some(descriptor) = element.descriptor {
+    if let Some(descriptor) = descriptor {
         object.insert(
             "descriptor".to_owned(),
             json!(stereo_descriptor_json(descriptor)),
@@ -1798,25 +1886,5 @@ pub(crate) fn stereo_bond_mark_kind_json(kind: StereoBondMarkKind) -> &'static s
         StereoBondMarkKind::WedgeDown => "wedge_down",
         StereoBondMarkKind::WedgeEither => "wedge_either",
         StereoBondMarkKind::DoubleBondEither => "double_bond_either",
-    }
-}
-
-pub(crate) fn sdf_properties_json(mol: &Molecule) -> Value {
-    let mut props = serde_json::Map::new();
-    for (key, value) in mol.props() {
-        let Some(name) = key.strip_prefix("sdf.field.") else {
-            continue;
-        };
-        if let PropValue::String(text) = value {
-            props.insert(name.to_owned(), json!(text));
-        }
-    }
-    Value::Object(props)
-}
-
-pub(crate) fn molecule_title(mol: &Molecule) -> String {
-    match mol.props().get("sdf.title") {
-        Some(PropValue::String(title)) => title.clone(),
-        _ => String::new(),
     }
 }

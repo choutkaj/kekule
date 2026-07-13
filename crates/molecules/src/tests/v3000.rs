@@ -22,15 +22,12 @@ M  V30 END CTAB
 M  END
 ";
 
-    let small = molfile::read_v3000_str(input).expect("V3000 should parse");
+    let small = read_molfile(input).expect("V3000 should parse");
     let mol = small.graph();
 
     assert_eq!(mol.atom_count(), 3);
     assert_eq!(mol.bond_count(), 2);
-    assert_eq!(
-        mol.props().get("sdf.title"),
-        Some(&PropValue::String("charged radical".to_owned()))
-    );
+    assert!(mol.props().get("sdf.title").is_none());
     let atom0 = mol.atom(AtomId::new(0)).expect("atom exists");
     let atom1 = mol.atom(AtomId::new(1)).expect("atom exists");
     let atom2 = mol.atom(AtomId::new(2)).expect("atom exists");
@@ -81,7 +78,7 @@ M  V30 END CTAB
 M  END
 ";
 
-    let parsed = molfile::read_v3000_str(input).expect("V3000 should parse");
+    let parsed = read_molfile(input).expect("V3000 should parse");
 
     assert_eq!(
         parsed
@@ -114,24 +111,20 @@ M  V30 END CTAB
 M  END
 ";
 
-    let small = molfile::read_v3000_str(input).expect("V3000 should parse");
+    let small = read_molfile(input).expect("V3000 should parse");
     let mol = small.graph();
 
     assert_eq!(
         mol.bond(BondId::new(0)).expect("bond").order,
         BondOrder::Aromatic
     );
-    assert_eq!(mol.perception().rings, ComputedState::Absent);
-    assert_eq!(mol.perception().aromaticity, ComputedState::Absent);
+    assert!(!mol.perception().has_rings());
+    assert!(!mol.perception().has_aromaticity());
 }
 
 #[test]
 fn malformed_mol_v3000_returns_errors_without_panicking() {
     let cases = [
-        (
-            "missing V3000 declaration",
-            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V2000\nM  END\n",
-        ),
         (
             "bad counts",
             "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS nope 0 0 0 0\nM  V30 END CTAB\nM  END\n",
@@ -159,11 +152,10 @@ fn malformed_mol_v3000_returns_errors_without_panicking() {
     ];
 
     for (name, input) in cases {
-        let parsed = std::panic::catch_unwind(|| molfile::read_v3000_str(input))
+        let parsed = std::panic::catch_unwind(|| read_molfile(input))
             .unwrap_or_else(|_| panic!("{name} panicked"));
         let error = parsed.expect_err("malformed V3000 input should fail");
-        assert!(error.line >= 1, "line for {name}");
-        assert!(!error.message.is_empty(), "message for {name}");
+        assert!(!error.to_string().is_empty(), "message for {name}");
     }
 }
 
@@ -227,11 +219,8 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     assert!(written.contains("RAD=2"));
     assert!(written.contains("CFG=1"));
 
-    let reparsed = molfile::read_v3000_str(&written).expect("written V3000 should parse");
-    assert_eq!(
-        reparsed.graph().props().get("sdf.title"),
-        Some(&PropValue::String("metadata title".to_owned()))
-    );
+    let reparsed = read_molfile(&written).expect("written V3000 should parse");
+    assert!(reparsed.graph().props().get("sdf.title").is_none());
     assert_eq!(
         reparsed
             .graph()

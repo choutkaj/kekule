@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::core::{Atom, AtomId, Bond, BondId, Molecule};
-use crate::io::{MolWriteError, SmilesParseError};
+use crate::io::{MolWriteError, SmilesInterpretError, SmilesParseError};
 use crate::{perception, smiles};
 
 pub use crate::chemistry::{SanitizeError, SanitizeOptions, SanitizeReport};
@@ -36,7 +36,6 @@ impl SmallMolecule {
     }
 
     pub fn graph_mut(&mut self) -> &mut Molecule {
-        self.graph.invalidate_topology();
         &mut self.graph
     }
 
@@ -44,12 +43,20 @@ impl SmallMolecule {
         &mut self.graph
     }
 
-    pub fn from_smiles(input: &str) -> Result<Self, SmilesParseError> {
-        smiles::read_str(input)
+    pub(crate) fn without_conformers(mut self) -> Self {
+        self.graph = self.graph.without_conformers();
+        self
+    }
+
+    pub fn from_smiles(input: &str) -> Result<Self, SmallMoleculeReadError> {
+        let document = smiles::parse_str(input)?;
+        Ok(smiles::interpret(&document)?)
     }
 
     pub fn from_smiles_sanitized(input: &str) -> Result<Self, SmallMoleculeReadError> {
-        smiles::read_sanitized_str(input)
+        let mut molecule = Self::from_smiles(input)?;
+        molecule.sanitize()?;
+        Ok(molecule)
     }
 
     pub fn sanitize(&mut self) -> Result<SanitizeReport, SanitizeError> {
@@ -95,6 +102,7 @@ impl SmallMolecule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmallMoleculeReadError {
     Parse(SmilesParseError),
+    Interpret(SmilesInterpretError),
     Sanitize(SanitizeError),
 }
 
@@ -102,6 +110,7 @@ impl fmt::Display for SmallMoleculeReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Parse(error) => write!(f, "{error}"),
+            Self::Interpret(error) => write!(f, "{error}"),
             Self::Sanitize(error) => write!(f, "{error}"),
         }
     }
@@ -112,6 +121,12 @@ impl std::error::Error for SmallMoleculeReadError {}
 impl From<SmilesParseError> for SmallMoleculeReadError {
     fn from(error: SmilesParseError) -> Self {
         Self::Parse(error)
+    }
+}
+
+impl From<SmilesInterpretError> for SmallMoleculeReadError {
+    fn from(error: SmilesInterpretError) -> Self {
+        Self::Interpret(error)
     }
 }
 

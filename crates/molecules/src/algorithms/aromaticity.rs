@@ -113,26 +113,21 @@ fn perceive_rdkit_like_aromaticity(
     {
         return perceive_rdkit_like_localized_aromaticity(mol, ring_options);
     }
-    mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
-    mol.perception.stereo = invalidate(mol.perception.stereo);
     let imported_aromatic_components = imported_aromatic_bond_components(mol);
     let imported_explicit_aromatic_singles = mol
         .bonds()
         .filter_map(|(bond_id, bond)| {
             (matches!(bond.order, BondOrder::Single)
-                && mol.atom(bond.a()).is_ok_and(|atom| atom.aromatic)
-                && mol.atom(bond.b()).is_ok_and(|atom| atom.aromatic))
+                && mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
+                && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true))
             .then_some(bond_id)
         })
         .collect::<BTreeSet<_>>();
     let ring_set = perceive_ring_set_with_options(mol, ring_options)
         .map_err(AromaticityError::RingPerception)?;
-    for atom in mol.atoms.iter_mut().flatten() {
-        atom.aromatic = false;
-    }
-    for bond in mol.bonds.iter_mut().flatten() {
-        bond.aromatic = false;
-    }
+    mol.begin_aromaticity(AromaticityProvenance::Perceived(
+        AromaticityModel::RdkitLike,
+    ));
 
     let ring_analyses = ring_set
         .rings()
@@ -227,11 +222,10 @@ fn perceive_rdkit_like_aromaticity(
         &protected_simple_fusion_singles,
     )?;
     for component in imported_aromatic_components {
-        if !component.iter().any(|atom_id| {
-            mol.atom(*atom_id)
-                .map(|atom| atom.aromatic)
-                .unwrap_or(false)
-        }) {
+        if !component
+            .iter()
+            .any(|atom_id| mol.atom_is_aromatic(*atom_id).ok().flatten() == Some(true))
+        {
             if try_kekulize_non_aromatic_imported_component(mol, &component) {
                 continue;
             }
@@ -242,7 +236,6 @@ fn perceive_rdkit_like_aromaticity(
         restore_imported_aromatic_component(mol, &component);
     }
 
-    mol.perception.aromaticity = ComputedState::Fresh;
     Ok(())
 }
 
@@ -275,7 +268,7 @@ fn try_kekulize_non_aromatic_imported_component(mol: &mut Molecule, component: &
             .sum::<u8>();
         let occupied_valence = bond_valence
             .saturating_add(atom.explicit_hydrogens)
-            .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
+            .saturating_add(mol.implicit_hydrogens(*atom_id).ok().flatten().unwrap_or(0));
         let required_double_bonds = target_valence.checked_sub(occupied_valence);
         match required_double_bonds {
             Some(0) => {}
@@ -358,9 +351,7 @@ fn try_kekulize_non_aromatic_imported_component(mol: &mut Molecule, component: &
 
     let selected_double_bonds = selected_double_bonds.into_iter().collect::<BTreeSet<_>>();
     for atom_id in component {
-        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            atom.aromatic = false;
-        }
+        mol.set_atom_aromatic(*atom_id, false);
     }
     for (bond_id, bond) in mol
         .bonds
@@ -377,7 +368,6 @@ fn try_kekulize_non_aromatic_imported_component(mol: &mut Molecule, component: &
             } else {
                 BondOrder::Single
             };
-            bond.aromatic = false;
         }
     }
     true
@@ -387,16 +377,11 @@ fn perceive_rdkit_like_localized_aromaticity(
     mol: &mut Molecule,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
-    mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
-    mol.perception.stereo = invalidate(mol.perception.stereo);
     let ring_set = perceive_ring_set_with_options(mol, ring_options)
         .map_err(AromaticityError::RingPerception)?;
-    for atom in mol.atoms.iter_mut().flatten() {
-        atom.aromatic = false;
-    }
-    for bond in mol.bonds.iter_mut().flatten() {
-        bond.aromatic = false;
-    }
+    mol.begin_aromaticity(AromaticityProvenance::Perceived(
+        AromaticityModel::RdkitLike,
+    ));
 
     let mut donors = vec![AromaticElectronDonorType::None; mol.atoms.len()];
     let mut atom_candidates = vec![false; mol.atoms.len()];
@@ -428,7 +413,6 @@ fn perceive_rdkit_like_localized_aromaticity(
         apply_rdkit_huckel_to_fused_component(mol, ring_set.rings(), &component, &donors);
     }
 
-    mol.perception.aromaticity = ComputedState::Fresh;
     Ok(())
 }
 
@@ -617,18 +601,15 @@ fn mark_rdkit_aromatic_subset(
             continue;
         }
         done_bonds.insert(bond_id);
-        let Some(bond) = mol.bonds[bond_id.index()].as_mut() else {
+        let Some(bond) = mol.bonds[bond_id.index()].as_ref() else {
             continue;
         };
-        bond.aromatic = true;
-        if matches!(bond.order, BondOrder::Single | BondOrder::Double) {
-            let (left, right) = bond.endpoints();
-            if let Some(atom) = mol.atoms[left.index()].as_mut() {
-                atom.aromatic = true;
-            }
-            if let Some(atom) = mol.atoms[right.index()].as_mut() {
-                atom.aromatic = true;
-            }
+        let order = bond.order;
+        let (left, right) = bond.endpoints();
+        mol.set_bond_aromatic(bond_id, true);
+        if matches!(order, BondOrder::Single | BondOrder::Double) {
+            mol.set_atom_aromatic(left, true);
+            mol.set_atom_aromatic(right, true);
         }
     }
 }
@@ -640,14 +621,10 @@ fn mark_aromatic_atoms_and_bonds(
     protected_non_aromatic_bonds: &BTreeSet<BondId>,
 ) {
     for atom_id in atoms {
-        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            atom.aromatic = true;
-        }
+        mol.set_atom_aromatic(atom_id, true);
     }
     for bond_id in bonds {
-        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-            bond.aromatic = !protected_non_aromatic_bonds.contains(&bond_id);
-        }
+        mol.set_bond_aromatic(bond_id, !protected_non_aromatic_bonds.contains(&bond_id));
     }
 }
 
@@ -682,17 +659,13 @@ fn mark_aromatic_fused_subset(
         };
         let [left, right] = [bond.a(), bond.b()];
         for atom_id in [left, right] {
-            if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-                atom.aromatic = true;
-            }
+            mol.set_atom_aromatic(atom_id, true);
         }
-        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-            let keep_aliphatic = imported_explicit_aromatic_singles.contains(bond_id)
-                || protected_simple_fusion_singles.contains(bond_id)
-                || preserve_local_perimeter_singles
-                    && protected_perimeter_fusion_singles.contains(bond_id);
-            bond.aromatic = !keep_aliphatic;
-        }
+        let keep_aliphatic = imported_explicit_aromatic_singles.contains(bond_id)
+            || protected_simple_fusion_singles.contains(bond_id)
+            || preserve_local_perimeter_singles
+                && protected_perimeter_fusion_singles.contains(bond_id);
+        mol.set_bond_aromatic(*bond_id, !keep_aliphatic);
     }
     let mut resolved_bonds = perimeter_bonds;
     for bond_id in fused_internal_bonds(rings, indexes) {
@@ -703,18 +676,17 @@ fn mark_aromatic_fused_subset(
             indexes,
             bond_id,
         ) {
-            if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-                bond.aromatic = !imported_explicit_aromatic_singles.contains(&bond_id);
-            }
+            mol.set_bond_aromatic(
+                bond_id,
+                !imported_explicit_aromatic_singles.contains(&bond_id),
+            );
             resolved_bonds.insert(bond_id);
             continue;
         }
         if !local_non_aromatic_fusion_singles.contains(&bond_id) {
             continue;
         }
-        if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
-            bond.aromatic = false;
-        }
+        mol.set_bond_aromatic(bond_id, false);
         resolved_bonds.insert(bond_id);
     }
     resolved_bonds
@@ -868,17 +840,23 @@ fn fused_internal_bonds(rings: &[Ring], indexes: &[usize]) -> BTreeSet<BondId> {
 fn restore_imported_aromatic_component(mol: &mut Molecule, component: &[AtomId]) {
     let atoms = component.iter().copied().collect::<BTreeSet<_>>();
     for atom_id in component {
-        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            atom.aromatic = true;
-        }
+        mol.set_atom_aromatic(*atom_id, true);
     }
-    for bond in mol.bonds.iter_mut().flatten() {
-        if matches!(bond.order, BondOrder::Aromatic)
-            && atoms.contains(&bond.a())
-            && atoms.contains(&bond.b())
-        {
-            bond.aromatic = true;
-        }
+    let aromatic_bonds = mol
+        .bonds()
+        .filter_map(|(bond_id, bond)| {
+            if matches!(bond.order, BondOrder::Aromatic)
+                && atoms.contains(&bond.a())
+                && atoms.contains(&bond.b())
+            {
+                Some(bond_id)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    for bond_id in aromatic_bonds {
+        mol.set_bond_aromatic(bond_id, true);
     }
 }
 
@@ -1593,13 +1571,13 @@ fn atom_aromatic_candidate_degree(mol: &Molecule, atom_id: AtomId, atom: &Atom) 
 }
 
 fn aromaticity_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
-    if atom.no_implicit_hydrogens {
-        return atom.implicit_hydrogens.unwrap_or(0);
-    }
-    if let Some(hydrogens) = atom.implicit_hydrogens {
+    if let Some(hydrogens) = mol.implicit_hydrogens(atom_id).ok().flatten() {
         return hydrogens;
     }
-    let Some(target) = aromaticity_valence_target(atom) else {
+    if atom.no_implicit_hydrogens {
+        return 0;
+    }
+    let Some(target) = aromaticity_valence_target(mol, atom_id, atom) else {
         return 0;
     };
     target.saturating_sub(explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens))
@@ -1611,8 +1589,8 @@ fn atom_rdkit_aromatic_total_valence(mol: &Molecule, atom_id: AtomId, atom: &Ato
         .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
 }
 
-fn aromaticity_valence_target(atom: &Atom) -> Option<u8> {
-    if atom.aromatic {
+fn aromaticity_valence_target(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> Option<u8> {
+    if mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true) {
         return match atom.element.symbol() {
             "B" | "C" => Some(3),
             "N" => {
@@ -2057,7 +2035,8 @@ mod tests {
 
     #[test]
     fn fused_ten_electron_perimeter_preserves_explicit_aromatic_fusion_single() {
-        let mut molecule = crate::smiles::read_str("On2c1-c(ccc2)ccn1").expect("parses");
+        let mut molecule =
+            crate::small::SmallMolecule::from_smiles("On2c1-c(ccc2)ccn1").expect("parses");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{:#?}", valence.issues);
         perceive_ring_set(molecule.graph_mut()).expect("rings");
@@ -2100,7 +2079,7 @@ mod tests {
     #[test]
     fn imported_aromatic_bonds_keep_implicit_hydrogen_nitrogen_pyrrole_like() {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
-        let mut molecule = crate::smiles::read_str(input).expect("dye parses");
+        let mut molecule = crate::small::SmallMolecule::from_smiles(input).expect("dye parses");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{:#?}", valence.issues);
         perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
@@ -2117,8 +2096,8 @@ mod tests {
 
     #[test]
     fn neutral_carbon_radical_can_complete_an_aromatic_sextet() {
-        let mut molecule =
-            crate::smiles::read_str("C1=CC(=CC=[C]1)N").expect("aminophenyl radical parses");
+        let mut molecule = crate::small::SmallMolecule::from_smiles("C1=CC(=CC=[C]1)N")
+            .expect("aminophenyl radical parses");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{:#?}", valence.issues);
         perceive_ring_set(molecule.graph_mut()).expect("ring perception");
@@ -2157,7 +2136,8 @@ mod tests {
     #[test]
     fn charge_adjusted_candidate_valence_does_not_change_carbocation_electron_count() {
         for smiles in ["C1=C[C+]=CC(=C1)N", "C1=C[C+]=CC(=C1)C=O"] {
-            let mut molecule = crate::smiles::read_str(smiles).expect("carbocation parses");
+            let mut molecule =
+                crate::small::SmallMolecule::from_smiles(smiles).expect("carbocation parses");
             crate::perception::sanitize(&mut molecule).expect("carbocation sanitizes");
             assert!(
                 molecule.graph().atoms().all(|(_, atom)| !atom.aromatic),
@@ -2684,6 +2664,9 @@ mod tests {
                 .count(),
             0
         );
+        mol.begin_aromaticity(AromaticityProvenance::Perceived(
+            AromaticityModel::RdkitLike,
+        ));
         perceive_fused_aromatic_components(
             &mut mol,
             &rings,
@@ -2697,7 +2680,7 @@ mod tests {
         let aromatic_bond_count = component
             .bonds
             .iter()
-            .filter(|bond_id| mol.bond(**bond_id).expect("component bond").aromatic)
+            .filter(|bond_id| mol.bond_is_aromatic(**bond_id).unwrap() == Some(true))
             .count();
         assert!(
             aromatic_bond_count > 0,

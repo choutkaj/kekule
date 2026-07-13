@@ -2,37 +2,51 @@
 
 ## Summary
 
-Represent one or more small-molecule components as a modelling snapshot with one fixed global topology and exactly one complete coordinate set.
+Represent distinct Small or Macro molecule instances as immutable topology plus
+one complete mutable coordinate set.
 
 ## Behavior/API
 
-- Exposes `MolecularModel`, `ModelDefinitionKey`, `MolecularModelBuilder`, `Component`, `ComponentId`, and `ComponentMapping` under `molecules::modeling`.
-- Constructs a single-component model with `MolecularModel::from_conformer` or multiple components through the builder.
-- Returns source-to-model atom and bond mappings for each added component.
-- Exposes read-only topology and component membership plus validated position access and replacement.
-- Provides an opaque immutable-definition key preserved by clones and coordinate updates.
-- Rejects empty models/components, invalid conformers, missing coordinates, and non-finite coordinates transactionally.
+- Exposes `MoleculeInstanceId`, `InstanceAtomId`, `InstanceBondId`,
+  `ModelAtomIndex`, `MoleculeInstance`, `MoleculeRole`, `ModelTopology`,
+  `ModelDefinitionKey`, `MolecularModel`, and `MolecularModelBuilder`.
+- Builder insertion uses `add_small_molecule[_with_metadata]` and
+  `add_macro_molecule[_with_metadata]` and returns a stable instance ID.
+- Preserves molecule-local atom and bond IDs, including tombstones; qualification
+  adds instance ownership and dense model indices round-trip to qualified IDs.
+- Stores typed Small/Macro payloads, multi-valued roles, properties, and a
+  qualified read-only `BioHierarchy` view.
+- Copies one complete finite source conformer into authoritative model positions
+  and removes conformers from stored instance topology without mutating sources.
+- Rejects empty models/molecules, invalid conformers, missing positions, and
+  non-finite positions transactionally.
 
 ## Implementation Notes
 
-- Each source `SmallMolecule` is cloned into one fresh, contiguous global `AtomId`/`BondId` space.
-- Atom and bond payloads, properties, stored stereo elements/groups, and source bond marks are remapped and preserved.
-- Source molecule properties live on the component. Other conformers, derived stereo descriptors, and perception caches are not copied.
-- The built topology, components, and atom-membership index form one immutable shared definition; clones share it while owning independent coordinate vectors.
-- Independently built models have distinct definition keys even when structurally equal, and atom-to-component lookup is constant time.
-- Construction never sanitizes or prepares the source molecule implicitly.
+- `ModelTopology` owns ordered molecule instances and immutable bidirectional
+  `InstanceAtomId`/`ModelAtomIndex` mappings; it never creates a flattened
+  multi-entity `Molecule`.
+- Built topology and ownership are immutable. Complete positions may change via
+  validated setters.
+- Clones share one opaque definition key; independently built models receive
+  distinct keys even when structurally equal.
+- Construction never sanitizes, perceives, prepares, or merges source molecules.
 
 ## Validation
 
-- Unit tests cover single- and multi-component construction, exact conformer selection, source tombstones and mappings, source immutability, payload/property/stereo preservation, coordinate mutation, and transactional errors.
-- Downstream-style integration tests compile the public modelling namespace.
-- Reference molecular goldens are not required for this data-structure feature; `validated` remains false until accepted harness evidence exists.
+- Unit tests cover mixed Small/Macro instances, repeated molecules, stable local
+  IDs, tombstones, dense round-trips, qualified hierarchy lookup, roles, source
+  immutability, position mutation, and transactional failures.
 
 ## Out Of Scope
 
-- `MacroMolecule`, mutable topology, component roles, model merging/transforms, periodic cells, constraints, velocities, serialization, and preparation.
+- Topology mutation, cells, velocities, trajectories, reactions, merging,
+  constraints, virtual sites, Drude particles, and backend preparation.
 
 ## Revision Notes
 
-- v2: Share immutable model definitions across clones and expose opaque definition identity for prepared-potential binding.
-- v1: Add the SmallMolecule-only fixed-topology model and transactional component builder.
+- v1: SmallMolecule-only flattened component model.
+- v2: Hard break to typed molecule instances, qualified IDs, fixed
+  `ModelTopology`, mixed Small/Macro ownership, and authoritative positions.
+- v3: Add shared opaque definition identity for binding prepared potentials
+  without flattening molecule instances.

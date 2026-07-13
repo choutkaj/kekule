@@ -75,3 +75,6 @@ symmetry edge case.
   explicit-hydrogen representation on a clone, using periodic-table valence for
   bracket/organic spelling, preserving high-order aromatic-framework bonds, and
   writing valence-implied radical states.
+- v29: Preserve collapsed explicit-hydrogen counts while canonicalizing an
+  unsanitized molecule without falsely marking full valence perception as
+  installed.

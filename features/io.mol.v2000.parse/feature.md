@@ -2,12 +2,18 @@
 
 ## Summary
 
-Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semantics.
+Parse a Molfile into `MolfileDocument`, then explicitly interpret V2000 chemistry
+as one `SmallMolecule`.
 
 ## Behavior/API
 
-- Exposes `molfile::read_v2000_str`.
-- Preserves title/program/comment properties, atom coordinates, bond orders, atom map numbers, formal charges, isotopes, radical multiplicities, and supported V2000 bond stereo codes as source bond marks.
+- Exposes version-autodetecting `molfile::parse_str` and `molfile::interpret`
+  with distinct `MolfileParseError` and `MolfileInterpretError`.
+- The document preserves headers, atom/bond/property records, unsupported
+  records, source lines, and original text without constructing a molecule.
+- Interpretation preserves atom coordinates, bond orders, atom maps, charges,
+  isotopes, radicals, and supported source stereo marks. Headers remain document
+  metadata rather than molecule properties.
 - Preserves the valence-implied hydrogen carrier on degree-three tetrahedral
   wedge centers as an explicit atom hydrogen, matching RDKit's CTfile parsing
   semantics without running general valence perception.
@@ -49,3 +55,7 @@ Parse a single Molfile V2000 block into `SmallMolecule` using raw parsing semant
 - v8: Preserve populated atom-block valence/no-implicit semantics and
   valence-implied tetrahedral hydrogen carriers from V2000 wedge syntax using
   the shared RDKit-like allowed-valence table.
+- v9: Hard break to loss-preserving `MolfileDocument` parsing, explicit
+  interpretation, and separate syntax/chemistry errors.
+- v10: Parse `MolfileDocument` V2000 counts from fixed-width fields so adjacent
+  three-digit atom and bond counts remain unambiguous.

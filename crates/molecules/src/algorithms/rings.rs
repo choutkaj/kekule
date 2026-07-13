@@ -268,9 +268,7 @@ pub fn perceive_ring_set_with_options(
         rings,
         work: tracker.work,
     };
-    mol.ring_membership = Some(membership);
-    mol.ring_set = Some(ring_set.clone());
-    mol.perception.rings = ComputedState::Fresh;
+    mol.install_rings(membership, ring_set.clone());
     Ok(ring_set)
 }
 

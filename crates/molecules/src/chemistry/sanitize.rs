@@ -73,8 +73,6 @@ pub fn sanitize_small_molecule_with_ring_options(
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
     let mut staged = molecule.clone();
     normalize_sanitize_charges(staged.graph_mut_raw());
-    let skipped_ring_state =
-        (!options.perceive_rings).then(|| invalidate(staged.graph().perception.rings));
     prepare_sanitize_states(staged.graph_mut_raw(), options);
     let valence = if options.perceive_valence {
         let report = perceive_valence(staged.graph_mut_raw(), ValenceModel::RdkitLike);
@@ -104,10 +102,8 @@ pub fn sanitize_small_molecule_with_ring_options(
         if options.perceive_valence {
             normalize_aromatic_nitrogen_hydrogens(staged.graph_mut_raw());
         }
-        if let Some(state) = skipped_ring_state {
-            staged.graph_mut_raw().perception.rings = state;
-            staged.graph_mut_raw().ring_membership = None;
-            staged.graph_mut_raw().ring_set = None;
+        if !options.perceive_rings {
+            staged.graph_mut_raw().discard_ring_results();
         }
     }
     let stereo = if options.perceive_stereo {
@@ -144,18 +140,16 @@ fn stereo_report_has_fatal_issues(report: &StereoPerceptionReport) -> bool {
 
 fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {
     if !options.perceive_valence {
-        mol.perception.valence = invalidate(mol.perception.valence);
+        mol.clear_valence();
     }
     if !options.perceive_rings {
-        mol.perception.rings = invalidate(mol.perception.rings);
-        mol.ring_membership = None;
-        mol.ring_set = None;
+        mol.clear_rings();
     }
     if !options.perceive_aromaticity {
-        mol.perception.aromaticity = invalidate(mol.perception.aromaticity);
+        mol.clear_aromaticity();
     }
     if !options.perceive_stereo {
-        mol.perception.stereo = invalidate(mol.perception.stereo);
+        mol.clear_cip_descriptors();
     }
 }
 
@@ -164,19 +158,24 @@ fn normalize_sanitize_charges(mol: &mut Molecule) {
 }
 
 fn normalize_aromatic_nitrogen_hydrogens(mol: &mut Molecule) {
-    for atom in mol.atoms.iter_mut().flatten() {
-        if atom.element.symbol() != "N" || !atom.aromatic || atom.formal_charge != 0 {
-            continue;
+    let nitrogens = mol
+        .atoms()
+        .filter_map(|(atom_id, atom)| {
+            let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
+            let implicit = mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0);
+            (atom.element.symbol() == "N"
+                && aromatic
+                && atom.formal_charge == 0
+                && atom.explicit_hydrogens.saturating_add(implicit) == 1)
+                .then_some(atom_id)
+        })
+        .collect::<Vec<_>>();
+    for atom_id in nitrogens {
+        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
+            atom.explicit_hydrogens = 1;
+            atom.no_implicit_hydrogens = false;
         }
-        let hydrogens = atom
-            .explicit_hydrogens
-            .saturating_add(atom.implicit_hydrogens.unwrap_or(0));
-        if hydrogens != 1 {
-            continue;
-        }
-        atom.explicit_hydrogens = 1;
-        atom.implicit_hydrogens = Some(0);
-        atom.no_implicit_hydrogens = false;
+        mol.set_implicit_hydrogens(atom_id, 0);
     }
 }
 
@@ -210,7 +209,6 @@ fn normalize_hypervalent_oxo_halides(mol: &mut Molecule) {
             }
             if let Some(bond) = mol.bonds[bond_id.index()].as_mut() {
                 bond.order = BondOrder::Single;
-                bond.aromatic = false;
                 changed = true;
             }
         }

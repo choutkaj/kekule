@@ -13,7 +13,8 @@ fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
-    let mut mol = molecules::smiles::read_str("CC(=O)O")?;
+    let document = molecules::smiles::parse_str("CC(=O)O")?;
+    let mut mol = molecules::smiles::interpret(&document)?;
     molecules::perception::sanitize(&mut mol)?;
     let smiles = molecules::smiles::write_canonical(&mol)?;
     assert!(!smiles.is_empty());
@@ -84,11 +85,11 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let molecule = SmallMolecule::from_graph(graph);
 
     let mut builder = MolecularModel::builder();
-    let mapping = builder.add_component(&molecule, conformer)?;
+    let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
     let cloned = model.clone();
     assert_eq!(model.definition_key(), cloned.definition_key());
-    let model_bond = mapping.bond(bond).expect("source bond is mapped");
+    let model_bond = molecules::modeling::InstanceBondId::new(instance, bond);
     let mut potential =
         HarmonicBondPotential::new(&model, [HarmonicBondParameter::new(model_bond, 1.2, 100.0)])?;
     let result = minimize(&model, &mut potential, MinimizeOptions::default())?;
@@ -96,5 +97,85 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     assert_eq!(result.status, MinimizationStatus::Converged);
     assert!(result.final_energy < result.initial_energy);
     assert_eq!(model.positions()[1].x, 2.0);
+    Ok(())
+}
+
+#[test]
+fn production_smiles_stereo_uses_installed_perception_state(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::perception::{self, stereo, SanitizeOptions};
+
+    let document = molecules::smiles::parse_str(r"C(=C\F)\F")?;
+    let mut molecule = molecules::smiles::interpret(&document)?;
+    perception::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )?;
+
+    let graph = molecule.graph();
+    assert_eq!(graph.implicit_hydrogens(AtomId::new(0))?, Some(1));
+    assert_eq!(graph.implicit_hydrogens(AtomId::new(1))?, Some(1));
+
+    let report = stereo::perceive_stereo(molecule.graph_mut());
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(
+        report.candidates.iter().any(|candidate| matches!(
+            candidate,
+            molecules::perception::stereo::StereoCandidate::DoubleBond {
+                left_carriers,
+                right_carriers,
+                ..
+            } if left_carriers.len() == 2 && right_carriers.len() == 2
+        )),
+        "{:?}",
+        report.candidates
+    );
+    Ok(())
+}
+
+#[test]
+fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::core::{StereoDescriptor, StereoElementId};
+    use molecules::perception::{self, stereo};
+
+    let input = include_str!(
+        "../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
+    );
+    let document = molecules::molfile::parse_str(input)?;
+    let mut molecule = molecules::molfile::interpret(&document)?;
+    perception::sanitize(&mut molecule)?;
+    let report = stereo::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        molecule.graph().cip_descriptor(StereoElementId::new(0))?,
+        Some(StereoDescriptor::P)
+    );
+    Ok(())
+}
+
+#[test]
+fn production_canonical_smiles_preserves_collapsed_hydrogen_without_perception(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let document = molecules::smiles::parse_str("[H][C](F)(Cl)Br")?;
+    let molecule = molecules::smiles::interpret(&document)?;
+    assert!(!molecule.graph().perception().has_valence());
+
+    let written = molecules::smiles::write_canonical(&molecule)?;
+    let mut reparsed = SmallMolecule::from_smiles(&written)?;
+    reparsed.sanitize()?;
+    let carbon = reparsed
+        .graph()
+        .atoms()
+        .find_map(|(atom_id, atom)| (atom.element.symbol() == "C").then_some(atom_id))
+        .expect("canonical output retains carbon");
+    assert_eq!(
+        reparsed.graph().implicit_hydrogens(carbon)?,
+        Some(1),
+        "canonical output was {written}"
+    );
     Ok(())
 }

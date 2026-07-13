@@ -1,9 +1,9 @@
 id = "validation.harness"
 title = "Reference validation harness"
 area = "infrastructure"
-version = 17
+version = 18
 implemented = true
 validated = false
-description = "Provide parallel, fixture-isolatable comparisons against generated or manually curated goldens, with guarded acceptance of reviewed manual-semantic snapshots."
+description = "Provide parallel, fixture-isolatable comparisons against generated or manually curated goldens, including a committed 20-case smoke suite whose source bytes are always integrity-checked."
 depends_on = []
 validation_required = []

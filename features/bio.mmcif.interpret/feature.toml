@@ -1,13 +1,13 @@
 id = "bio.mmcif.interpret"
 title = "mmCIF molecular interpretation"
 area = "bio"
-version = 2
+version = 3
 implemented = true
 validated = false
-description = "Interpret a coordinate-containing mmCIF document into clean macromolecules, small molecules, ions, and solvent molecules."
+description = "Interpret one selected mmCIF coordinate model into a MolecularModel with distinct typed molecule instances and a provenance report."
 depends_on = [
   "bio.hierarchy.smcra",
-  "bio.molecular-contents",
+  "model.system",
   "core.conformer-properties",
   "io.mmcif.parse",
 ]

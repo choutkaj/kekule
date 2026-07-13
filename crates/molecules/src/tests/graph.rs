@@ -328,10 +328,10 @@ fn absent_perception_remains_absent_after_topology_mutation() {
 
     mol.add_atom(carbon());
 
-    assert_eq!(mol.perception().valence, ComputedState::Absent);
-    assert_eq!(mol.perception().rings, ComputedState::Absent);
-    assert_eq!(mol.perception().aromaticity, ComputedState::Absent);
-    assert_eq!(mol.perception().stereo, ComputedState::Absent);
+    assert!(!mol.perception().has_valence());
+    assert!(!mol.perception().has_rings());
+    assert!(!mol.perception().has_aromaticity());
+    assert!(!mol.perception().has_cip_descriptors());
 }
 
 #[test]
@@ -378,9 +378,8 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         &[BondOrder::Single, BondOrder::Single, BondOrder::Single],
     );
     rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
-    mol.perception.valence = ComputedState::Fresh;
-    mol.perception.aromaticity = ComputedState::Fresh;
-    mol.perception.stereo = ComputedState::Fresh;
+    let _ = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+    mol.begin_aromaticity(AromaticityProvenance::Imported);
     let before = mol.perception().clone();
 
     mol.atom_mut(atoms[0])

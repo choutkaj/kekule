@@ -1,4 +1,12 @@
 use super::*;
+
+#[test]
+fn committed_smoke_corpus_always_requires_fixture_data() {
+    assert!(corpus_requires_data("smoke", false));
+    assert!(corpus_requires_data("smoke", true));
+    assert!(!corpus_requires_data("pubchem-100", false));
+    assert!(corpus_requires_data("pubchem-100", true));
+}
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -962,6 +970,12 @@ fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed
         Some(&status),
         Path::new("definitely-missing-validation-root")
     ));
+    assert!(ensure_current_validation_flags_synced_at(
+        std::slice::from_ref(&feature),
+        &BTreeMap::from([(feature.id.clone(), status)]),
+        Path::new("definitely-missing-validation-root")
+    )
+    .is_err());
 }
 
 #[test]
@@ -1064,11 +1078,13 @@ fn validation_comparison_counts_multiple_fixture_failures() {
 
 #[test]
 fn stereo_perception_validation_records_sanitize_errors_per_record() {
-    let molecule = smiles::read_str("c1cccc1").expect("invalid aromatic molecule should parse");
+    let molecule =
+        SmallMolecule::from_smiles("c1cccc1").expect("invalid aromatic molecule should parse");
     let mut record = IndexedSmallRecord {
         record_index: 0,
         title: "invalid aromatic representation".to_owned(),
         molecule,
+        sdf_fields: BTreeMap::new(),
     };
 
     let value = stereo_perception_record_json(&mut record);
@@ -1107,17 +1123,14 @@ fn comparison_normalizes_undirected_bonds_and_ring_order() {
 
 #[test]
 fn smiles_semantic_records_assert_topology_and_atom_identity() {
-    let single = smiles::read_str_with_options("CC", SmilesParseOptions::default())
-        .expect("single bond should parse");
-    let double = smiles::read_str_with_options("C=C", SmilesParseOptions::default())
-        .expect("double bond should parse");
+    let single = SmallMolecule::from_smiles("CC").expect("single bond should parse");
+    let double = SmallMolecule::from_smiles("C=C").expect("double bond should parse");
     assert_ne!(
         smiles_sanitized_bonds_json(single.graph()),
         smiles_sanitized_bonds_json(double.graph())
     );
 
-    let aromatic = smiles::read_str_with_options("c1ccccc1", SmilesParseOptions::default())
-        .expect("benzene should parse");
+    let aromatic = SmallMolecule::from_smiles("c1ccccc1").expect("benzene should parse");
     let mut sanitized_aromatic = aromatic.clone();
     perception::sanitize_with_options(&mut sanitized_aromatic, SanitizeOptions::default())
         .expect("benzene should sanitize");
@@ -1126,15 +1139,21 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         3
     );
     let mut aromatic_cyclohexyne =
-        smiles::read_str_with_options("C1=CC#CC=C1", SmilesParseOptions::default())
-            .expect("cyclohexyne parses");
+        SmallMolecule::from_smiles("C1=CC#CC=C1").expect("cyclohexyne parses");
     perception::sanitize_with_options(&mut aromatic_cyclohexyne, SanitizeOptions::default())
         .expect("cyclohexyne should sanitize");
     let alkyne_atoms = aromatic_cyclohexyne
         .graph()
         .bonds()
-        .find_map(|(_, bond)| {
-            (bond.aromatic && bond.order == BondOrder::Triple).then_some(bond.endpoints())
+        .find_map(|(id, bond)| {
+            (aromatic_cyclohexyne
+                .graph()
+                .bond_is_aromatic(id)
+                .ok()
+                .flatten()
+                == Some(true)
+                && bond.order == BondOrder::Triple)
+                .then_some(bond.endpoints())
         })
         .expect("aromaticized triple bond is retained");
     assert_eq!(
@@ -1145,8 +1164,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(aromatic_cyclohexyne.graph(), alkyne_atoms.1),
         4
     );
-    let mut thiophene = smiles::read_str_with_options("c1ccsc1", SmilesParseOptions::default())
-        .expect("thiophene parses");
+    let mut thiophene = SmallMolecule::from_smiles("c1ccsc1").expect("thiophene parses");
     perception::sanitize_with_options(&mut thiophene, SanitizeOptions::default())
         .expect("thiophene should sanitize");
     let sulfur_id = thiophene
@@ -1155,27 +1173,29 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .find_map(|(id, atom)| (atom.element.symbol() == "S").then_some(id))
         .expect("sulfur atom");
     assert_eq!(explicit_valence_json(thiophene.graph(), sulfur_id), 2);
-    let mut phosphorus_ring = smiles::read_str_with_options(
-        "C(F)(F)(F)P1P(P(P(P1C(F)(F)F)C(F)(F)F)C(F)(F)F)C(F)(F)F",
-        SmilesParseOptions::default(),
-    )
-    .expect("phosphorus ring parses");
+    let mut phosphorus_ring =
+        SmallMolecule::from_smiles("C(F)(F)(F)P1P(P(P(P1C(F)(F)F)C(F)(F)F)C(F)(F)F)C(F)(F)F")
+            .expect("phosphorus ring parses");
     perception::sanitize_with_options(&mut phosphorus_ring, SanitizeOptions::default())
         .expect("phosphorus ring should sanitize");
-    for (phosphorus_id, phosphorus) in phosphorus_ring
+    for (phosphorus_id, _phosphorus) in phosphorus_ring
         .graph()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "P")
     {
-        assert!(phosphorus.aromatic);
+        assert_eq!(
+            phosphorus_ring
+                .graph()
+                .atom_is_aromatic(phosphorus_id)
+                .unwrap(),
+            Some(true)
+        );
         assert_eq!(
             explicit_valence_json(phosphorus_ring.graph(), phosphorus_id),
             3
         );
     }
-    let mut phosphinine =
-        smiles::read_str_with_options("C1=CC=PC=C1", SmilesParseOptions::default())
-            .expect("phosphinine parses");
+    let mut phosphinine = SmallMolecule::from_smiles("C1=CC=PC=C1").expect("phosphinine parses");
     perception::sanitize_with_options(&mut phosphinine, SanitizeOptions::default())
         .expect("phosphinine should sanitize");
     let phosphinine_phosphorus = phosphinine
@@ -1187,10 +1207,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(phosphinine.graph(), phosphinine_phosphorus),
         3
     );
-    let mut anionic_macrocycle = smiles::read_str_with_options(
-        "CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]",
-        SmilesParseOptions::default(),
-    )
+    let mut anionic_macrocycle = SmallMolecule::from_smiles("CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]")
     .expect("anionic macrocycle parses");
     perception::sanitize_with_options(&mut anionic_macrocycle, SanitizeOptions::default())
         .expect("anionic macrocycle should sanitize");
@@ -1198,16 +1215,23 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .graph()
         .atoms()
         .find_map(|(id, atom)| {
-            (atom.element.symbol() == "N" && atom.formal_charge < 0 && atom.aromatic).then_some(id)
+            (atom.element.symbol() == "N"
+                && atom.formal_charge < 0
+                && anionic_macrocycle
+                    .graph()
+                    .atom_is_aromatic(id)
+                    .ok()
+                    .flatten()
+                    == Some(true))
+            .then_some(id)
         })
         .expect("anionic aromatic nitrogen");
     assert_eq!(
         explicit_valence_json(anionic_macrocycle.graph(), anionic_nitrogen),
         2
     );
-    let mut cyclopentadienyl =
-        smiles::read_str_with_options("[CH-]1[C-]=[C-][C-]=[C-]1", SmilesParseOptions::default())
-            .expect("cyclopentadienyl anion parses");
+    let mut cyclopentadienyl = SmallMolecule::from_smiles("[CH-]1[C-]=[C-][C-]=[C-]1")
+        .expect("cyclopentadienyl anion parses");
     perception::sanitize_with_options(&mut cyclopentadienyl, SanitizeOptions::default())
         .expect("cyclopentadienyl anion should sanitize");
     let anionic_carbon_with_h = cyclopentadienyl
@@ -1216,7 +1240,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .find_map(|(id, atom)| {
             (atom.element.symbol() == "C"
                 && atom.formal_charge < 0
-                && atom.aromatic
+                && cyclopentadienyl.graph().atom_is_aromatic(id).ok().flatten() == Some(true)
                 && atom.explicit_hydrogens > 0)
                 .then_some(id)
         })
@@ -1230,9 +1254,8 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
             + anionic_carbon.explicit_hydrogens,
         3
     );
-    let mut substituted_cyclopentadienyl =
-        smiles::read_str_with_options("C[C-]1[C-]=[C-][C-]=[C-]1", SmilesParseOptions::default())
-            .expect("substituted cyclopentadienyl parses");
+    let mut substituted_cyclopentadienyl = SmallMolecule::from_smiles("C[C-]1[C-]=[C-][C-]=[C-]1")
+        .expect("substituted cyclopentadienyl parses");
     perception::sanitize_with_options(
         &mut substituted_cyclopentadienyl,
         SanitizeOptions::default(),
@@ -1247,7 +1270,15 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
                 .incident_bonds(id)
                 .ok()?
                 .count();
-            (atom.element.symbol() == "C" && atom.formal_charge < 0 && atom.aromatic && degree == 3)
+            (atom.element.symbol() == "C"
+                && atom.formal_charge < 0
+                && substituted_cyclopentadienyl
+                    .graph()
+                    .atom_is_aromatic(id)
+                    .ok()
+                    .flatten()
+                    == Some(true)
+                && degree == 3)
                 .then_some(id)
         })
         .expect("substituted anionic carbon");
@@ -1258,9 +1289,8 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         ),
         3
     );
-    let mut fused_triazine = smiles::read_str_with_options(
+    let mut fused_triazine = SmallMolecule::from_smiles(
         "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
-        SmilesParseOptions::default(),
     )
     .expect("fused triazine should parse");
     perception::sanitize_with_options(&mut fused_triazine, SanitizeOptions::default())
@@ -1273,9 +1303,19 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
                 .graph()
                 .incident_bonds(id)
                 .ok()?
-                .filter(|(_, bond)| bond.aromatic)
+                .filter(|(bond, _)| {
+                    fused_triazine
+                        .graph()
+                        .bond_is_aromatic(*bond)
+                        .ok()
+                        .flatten()
+                        == Some(true)
+                })
                 .count();
-            (atom.element.symbol() == "N" && atom.aromatic && aromatic_degree >= 3).then_some(id)
+            (atom.element.symbol() == "N"
+                && fused_triazine.graph().atom_is_aromatic(id).ok().flatten() == Some(true)
+                && aromatic_degree >= 3)
+                .then_some(id)
         })
         .expect("tri-coordinate aromatic nitrogen");
     assert_eq!(
@@ -1286,8 +1326,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
 
-    let labeled = smiles::read_str_with_options("[13CH3:7]C", SmilesParseOptions::default())
-        .expect("labeled carbon should parse");
+    let labeled = SmallMolecule::from_smiles("[13CH3:7]C").expect("labeled carbon should parse");
     let atoms = smiles_sanitized_atoms_json(labeled.graph());
     assert!(atoms
         .iter()
@@ -1339,11 +1378,8 @@ fn canonical_smiles_validation_matches_rdkit_parse_status_for_unsanitizable_inpu
 
 #[test]
 fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
-    let molecule = smiles::read_str_with_options(
-        "CCCCCCCc1cc2c(=O)ccn(O)c2cc1",
-        SmilesParseOptions::default(),
-    )
-    .expect("aromatic carbonyl SMILES should parse");
+    let molecule = SmallMolecule::from_smiles("CCCCCCCc1cc2c(=O)ccn(O)c2cc1")
+        .expect("aromatic carbonyl SMILES should parse");
 
     let item = smiles_sanitized_semantic_json(molecule);
     let atoms = item["atoms"]
@@ -1386,8 +1422,8 @@ fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
 
 #[test]
 fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
-    let molecule = smiles::read_str_with_options("[nH]1cccc1", SmilesParseOptions::default())
-        .expect("aromatic nH SMILES should parse");
+    let molecule =
+        SmallMolecule::from_smiles("[nH]1cccc1").expect("aromatic nH SMILES should parse");
 
     let item = smiles_sanitized_semantic_json(molecule);
     let atoms = item["atoms"]
@@ -1405,11 +1441,8 @@ fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
 
 #[test]
 fn smiles_semantics_match_rdkit_promoted_aromatic_nh_valence() {
-    let molecule = smiles::read_str_with_options(
-        "CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C",
-        SmilesParseOptions::default(),
-    )
-    .expect("substituted pyrrole SMILES should parse");
+    let molecule = SmallMolecule::from_smiles("CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C")
+        .expect("substituted pyrrole SMILES should parse");
 
     let item = smiles_sanitized_semantic_json(molecule);
     let atoms = item["atoms"]

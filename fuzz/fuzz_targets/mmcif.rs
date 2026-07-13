@@ -2,7 +2,8 @@
 
 use libfuzzer_sys::fuzz_target;
 use molecules::mmcif::{
-    interpret, parse_str, MmcifEntry, MmcifInterpretOptions, MmcifParseOptions,
+    interpret, parse_str, MmcifEntry, MmcifInterpretOptions, MmcifModelSelection,
+    MmcifParseOptions,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -39,21 +40,14 @@ fuzz_target!(|data: &[u8]| {
             }
         }
 
-        if let Ok(interpreted) = interpret(&document, MmcifInterpretOptions::default()) {
-            for molecule in interpreted
-                .contents()
-                .small_molecules()
-                .chain(interpreted.contents().solvent().molecules())
-            {
-                for atom in molecule.graph().atom_ids() {
-                    let _ = molecule.graph().atom(atom);
-                }
-            }
-            for molecule in interpreted.contents().macromolecules() {
-                for atom in molecule.graph().atom_ids() {
-                    let _ = molecule.graph().atom(atom);
-                    let _ = molecule.hierarchy().atom_site_for_atom(atom);
-                }
+        let options = MmcifInterpretOptions {
+            model_selection: MmcifModelSelection::First,
+            ..MmcifInterpretOptions::default()
+        };
+        if let Ok(interpreted) = interpret(&document, options) {
+            for atom in interpreted.model().topology().atom_ids() {
+                let _ = interpreted.model().topology().atom(*atom);
+                let _ = interpreted.model().position(*atom);
             }
         }
     }

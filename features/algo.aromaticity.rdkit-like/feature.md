@@ -2,14 +2,15 @@
 
 ## Summary
 
-Assign aromatic atom and bond flags for supported organic ring systems using an RDKit-like graph aromaticity model. This is a perception step and remains separate from parsing, valence perception, sanitization orchestration, and SMILES canonicalization.
+Assign aromatic atom and bond membership in canonical `PerceptionState` for
+supported organic ring systems using an RDKit-like graph aromaticity model.
 
 ## Behavior/API
 
 - Exposes `perception::aromaticity::{AromaticityModel::RdkitLike, perceive_aromaticity, perceive_aromaticity_with_ring_options}`.
 - Requires or computes ring perception before assigning aromaticity.
-- Clears existing aromatic flags at the start of perception, then assigns new flags from the selected model.
-- Marks supported aromatic atoms and bonds and sets aromaticity perception state to fresh.
+- Replaces existing imported/perceived aromatic membership transactionally and
+  records `AromaticityModel::RdkitLike` provenance.
 - Can be run directly or through the explicit sanitization pipeline.
 - Treats unsupported ring elements as non-candidates, allowing a supported
   aromatic subring to remain aromatic when fused or attached to a nonaromatic
@@ -72,3 +73,4 @@ Assign aromatic atom and bond flags for supported organic ring systems using an 
   classification and connected fused-subset marking, keep unsupported ring
   atoms as non-candidates, and add bounded valence-demand localization for
   imported aromatic components that are valid chemistry but not aromatic.
+- v92: Store derived membership and model provenance only in `PerceptionState`.

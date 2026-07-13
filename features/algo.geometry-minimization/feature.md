@@ -22,7 +22,8 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 
 ## Validation
 
-- Unit tests minimize distorted one- and multi-component harmonic systems and verify energy decrease, equilibrium distances, convergence reports, source immutability, iteration limits, and line-search stalling.
+- Unit tests minimize distorted multi-instance harmonic systems and verify energy
+  decrease, convergence reports, dense gradient ordering, and source immutability.
 - The implementation uses focused analytic regressions rather than external molecular fixtures; `validated` remains false until accepted harness evidence exists.
 
 ## Out Of Scope
@@ -31,5 +32,7 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 
 ## Revision Notes
 
-- v2: Backtrack recoverable coordinate singularities and preserve fatal evaluation errors.
 - v1: Add normalized steepest descent with Armijo backtracking and structured convergence results.
+- v2: Migrate topology identity and gradients to the instance-qualified model.
+- v3: Backtrack recoverable coordinate singularities while preserving fatal
+  potential and backend failures.

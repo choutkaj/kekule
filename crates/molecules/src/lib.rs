@@ -10,28 +10,18 @@ pub mod small;
 
 pub mod smiles {
     pub use crate::io::{
-        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, MolWriteError, SmilesParseError,
-        SmilesParseOptions, SmilesWriteOptions,
+        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, MolWriteError, SmilesDocument,
+        SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError, SmilesParseError,
+        SmilesWriteOptions,
     };
-    pub use crate::small::SmallMoleculeReadError;
+    use crate::small::SmallMolecule;
 
-    use crate::small::{SanitizeOptions, SmallMolecule};
-
-    pub fn read_str(input: &str) -> Result<SmallMolecule, SmilesParseError> {
-        crate::io::read_smiles_str(input, SmilesParseOptions)
+    pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
+        crate::io::parse_smiles_document(input)
     }
 
-    pub fn read_str_with_options(
-        input: &str,
-        options: SmilesParseOptions,
-    ) -> Result<SmallMolecule, SmilesParseError> {
-        crate::io::read_smiles_str(input, options)
-    }
-
-    pub fn read_sanitized_str(input: &str) -> Result<SmallMolecule, SmallMoleculeReadError> {
-        let mut molecule = read_str(input)?;
-        crate::perception::sanitize_with_options(&mut molecule, SanitizeOptions::default())?;
-        Ok(molecule)
+    pub fn interpret(document: &SmilesDocument) -> Result<SmallMolecule, SmilesInterpretError> {
+        crate::io::interpret_smiles_document(document)
     }
 
     pub fn write(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
@@ -69,20 +59,23 @@ pub mod smiles {
 }
 
 pub mod molfile {
-    pub use crate::io::{MolWriteError, SdfParseError};
+    pub use crate::io::{
+        MolWriteError, MolfileDocument, MolfileHeader, MolfileInterpretError, MolfileLine,
+        MolfileParseError, MolfileVersion,
+    };
 
     use crate::small::SmallMolecule;
 
-    pub fn read_v2000_str(input: &str) -> Result<SmallMolecule, SdfParseError> {
-        crate::io::read_mol_v2000_str(input)
+    pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
+        crate::io::parse_molfile_document(input)
+    }
+
+    pub fn interpret(document: &MolfileDocument) -> Result<SmallMolecule, MolfileInterpretError> {
+        crate::io::interpret_molfile_document(document)
     }
 
     pub fn write_v2000(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v2000(molecule)
-    }
-
-    pub fn read_v3000_str(input: &str) -> Result<SmallMolecule, SdfParseError> {
-        crate::io::read_mol_v3000_str(input)
     }
 
     pub fn write_v3000(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
@@ -91,26 +84,21 @@ pub mod molfile {
 }
 
 pub mod sdf {
-    pub use crate::io::{MolWriteError, SdfParseError, SdfParseOptions, SdfRecord};
+    pub use crate::io::{
+        MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfParseError,
+        SdfParseOptions, SdfRecord, SdfRecordDocument,
+    };
 
-    use crate::small::SmallMolecule;
-
-    pub fn read_v2000_str(
-        input: &str,
-        options: SdfParseOptions,
-    ) -> Result<Vec<SmallMolecule>, SdfParseError> {
-        crate::io::read_sdf_v2000_str(input, options)
+    pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, SdfParseError> {
+        crate::io::parse_sdf_document(input, options)
     }
 
-    pub fn read_v2000_records(
-        input: &str,
-        options: SdfParseOptions,
-    ) -> Result<Vec<SdfRecord>, SdfParseError> {
-        crate::io::read_sdf_v2000_records(input, options)
+    pub fn interpret(document: &SdfDocument) -> Result<Vec<SdfRecord>, SdfInterpretError> {
+        crate::io::interpret_sdf_document(document)
     }
 
-    pub fn write_v2000(molecules: &[SmallMolecule]) -> Result<String, MolWriteError> {
-        crate::io::write_sdf_v2000(molecules)
+    pub fn write_v2000(records: &[SdfRecord]) -> Result<String, MolWriteError> {
+        crate::io::write_sdf_v2000(records)
     }
 }
 
@@ -118,8 +106,8 @@ pub mod mmcif {
     pub use crate::io::{
         MmcifAltLocPolicy, MmcifDataBlock, MmcifDocument, MmcifEntityKind, MmcifEntry,
         MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
-        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifParseError, MmcifParseOptions,
-        MmcifValue,
+        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
+        MmcifParseOptions, MmcifValue,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -210,8 +198,7 @@ pub mod prelude {
     pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
     pub use crate::small::{SanitizeOptions, SanitizeReport, SmallMolecule};
     pub use crate::smiles::{
-        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, SmilesParseOptions,
-        SmilesWriteOptions,
+        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, SmilesWriteOptions,
     };
 }
 

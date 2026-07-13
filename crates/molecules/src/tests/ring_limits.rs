@@ -222,8 +222,7 @@ fn ring_resource_errors_propagate_transactionally() {
     assert!(matches!(error, SanitizeError::Rings(_)));
     assert_eq!(molecule, original);
 
-    let mut aromatic = smiles_api::read_str_with_options("c1ccccc1", SmilesParseOptions)
-        .expect("benzene should parse");
+    let mut aromatic = read_smiles("c1ccccc1").expect("benzene should parse");
     let error = aromaticity_api::perceive_aromaticity_with_ring_options(
         aromatic.graph_mut(),
         AromaticityModel::RdkitLike,

@@ -1,20 +1,20 @@
 use molecules::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3};
-use molecules::modeling::MolecularModel;
 use molecules::modeling::potential::{Potential, PotentialError};
+use molecules::modeling::{InstanceAtomId, MolecularModel, MoleculeInstanceId};
 use molecules::small::SmallMolecule;
 use molecules_dreiding::DreidingPotential;
 
 #[test]
 fn downstream_preparation_and_evaluation() {
     let mut graph = Molecule::new();
-    let explicit_atom = |symbol: &str| {
+    let mut explicit_atom = |symbol: &str| {
         let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
-        atom.implicit_hydrogens = Some(0);
-        atom
+        atom.no_implicit_hydrogens = true;
+        graph.add_atom(atom)
     };
-    let oxygen = graph.add_atom(explicit_atom("O"));
-    let first_hydrogen = graph.add_atom(explicit_atom("H"));
-    let second_hydrogen = graph.add_atom(explicit_atom("H"));
+    let oxygen = explicit_atom("O");
+    let first_hydrogen = explicit_atom("H");
+    let second_hydrogen = explicit_atom("H");
     graph
         .add_bond(oxygen, first_hydrogen, BondOrder::Single)
         .unwrap();
@@ -27,23 +27,17 @@ fn downstream_preparation_and_evaluation() {
     conformer.set_position(second_hydrogen, Point3::new(-0.2399, 0.9272, 0.0));
     let conformer = graph.add_conformer(conformer);
     let molecule = SmallMolecule::from_graph(graph);
-    let model = MolecularModel::from_conformer(&molecule, conformer).unwrap();
-    let independently_built = MolecularModel::from_conformer(&molecule, conformer).unwrap();
-
+    let model = MolecularModel::from_small_molecule(&molecule, conformer).unwrap();
+    let independently_built = MolecularModel::from_small_molecule(&molecule, conformer).unwrap();
     let mut potential = DreidingPotential::prepare(&model).unwrap();
     let evaluation = potential.evaluate(&model).unwrap();
-
+    let oxygen = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(0));
     assert!(evaluation.energy().is_finite());
     assert_eq!(evaluation.gradient().len(), model.atom_count());
-    assert!(potential.atom_type(AtomId::new(0)).is_some());
-    assert!(
-        potential
-            .partial_charge(AtomId::new(0))
-            .unwrap()
-            .is_finite()
-    );
-    assert!(matches!(
+    assert!(potential.atom_type(oxygen).is_some());
+    assert!(potential.partial_charge(oxygen).unwrap().is_finite());
+    assert_eq!(
         potential.evaluate(&independently_built),
         Err(PotentialError::IncompatibleModel)
-    ));
+    );
 }

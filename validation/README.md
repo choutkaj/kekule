@@ -7,7 +7,8 @@ Validation has two top-level areas:
 - `reference/` owns RDKit and Biopython acquisition and golden-generation tooling.
 
 Large corpus `data/` directories are ignored. `sources.lock.json` pins every selected external
-record, URL, checksum, category, and generated pack. The `smoke` corpus is committed in full.
+record, URL, checksum, category, and generated pack. The 20-case `smoke` corpus is committed in
+full, and even the default corpus check verifies all of its fixture bytes.
 
 ```bash
 cargo xtask corpus check --corpus all

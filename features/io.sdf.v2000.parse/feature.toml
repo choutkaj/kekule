@@ -1,9 +1,9 @@
 id = "io.sdf.v2000.parse"
 title = "SDF V2000 parser"
 area = "io"
-version = 9
+version = 11
 implemented = true
-validated = true
+validated = false
 description = "Parse multi-record SDF V2000 files through Molfile V2000 parsing, preserving source bond stereo marks and data fields."
 depends_on = ["io.mol.v2000.parse"]
 validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "pl-rex", "enamine-diversity"]

@@ -1,9 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use crate::core::{AtomId, BondId};
-
-use super::{ModelDefinitionKey, MolecularModel};
+use super::{InstanceAtomId, InstanceBondId, ModelDefinitionKey, MolecularModel};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 /// Three-dimensional Cartesian vector used for energy gradients.
@@ -68,7 +66,7 @@ impl PotentialEvaluation {
         for (index, vector) in gradient.iter().copied().enumerate() {
             if !vector.is_finite() {
                 return Err(PotentialError::NonFiniteGradient {
-                    atom: AtomId::new(index as u32),
+                    atom: model.topology().atom_ids()[index],
                 });
             }
         }
@@ -83,8 +81,9 @@ impl PotentialEvaluation {
         &self.gradient
     }
 
-    pub fn gradient_for(&self, atom: AtomId) -> Option<Vector3> {
-        self.gradient.get(atom.index()).copied()
+    pub fn gradient_for(&self, model: &MolecularModel, atom: InstanceAtomId) -> Option<Vector3> {
+        let index = model.topology().atom_index(atom)?;
+        self.gradient.get(index.index()).copied()
     }
 }
 
@@ -102,7 +101,7 @@ pub trait Potential {
 /// Explicit parameter for one harmonic bond term.
 pub struct HarmonicBondParameter {
     /// Bond in the model topology.
-    pub bond: BondId,
+    pub bond: InstanceBondId,
     /// Equilibrium bond length in angstroms.
     pub equilibrium_length: f64,
     /// Harmonic force constant in kJ/mol/angstrom squared.
@@ -110,7 +109,7 @@ pub struct HarmonicBondParameter {
 }
 
 impl HarmonicBondParameter {
-    pub const fn new(bond: BondId, equilibrium_length: f64, force_constant: f64) -> Self {
+    pub const fn new(bond: InstanceBondId, equilibrium_length: f64, force_constant: f64) -> Self {
         Self {
             bond,
             equilibrium_length,
@@ -131,8 +130,8 @@ pub struct HarmonicBondPotential {
 
 #[derive(Debug, Clone, PartialEq)]
 struct HarmonicBondTerm {
-    a: AtomId,
-    b: AtomId,
+    a: InstanceAtomId,
+    b: InstanceAtomId,
     equilibrium_length: f64,
     force_constant: f64,
 }
@@ -165,6 +164,8 @@ impl HarmonicBondPotential {
                 .bond(parameter.bond)
                 .map_err(|_| PotentialError::InvalidBondId(parameter.bond))?;
             let (a, b) = bond.endpoints();
+            let a = InstanceAtomId::new(parameter.bond.molecule(), a);
+            let b = InstanceAtomId::new(parameter.bond.molecule(), b);
             terms.push(HarmonicBondTerm {
                 a,
                 b,
@@ -205,8 +206,16 @@ impl Potential for HarmonicBondPotential {
             let extension = distance - term.equilibrium_length;
             energy += 0.5 * term.force_constant * extension * extension;
             let scale = term.force_constant * extension / distance;
-            gradient[term.a.index()].add_scaled(displacement, scale);
-            gradient[term.b.index()].add_scaled(displacement, -scale);
+            let a_index = model
+                .topology()
+                .atom_index(term.a)
+                .expect("validated harmonic atom");
+            let b_index = model
+                .topology()
+                .atom_index(term.b)
+                .expect("validated harmonic atom");
+            gradient[a_index.index()].add_scaled(displacement, scale);
+            gradient[b_index.index()].add_scaled(displacement, -scale);
         }
         PotentialEvaluation::new(model, energy, gradient)
     }
@@ -236,16 +245,16 @@ impl fmt::Display for PotentialGeometryError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PotentialError {
-    InvalidBondId(BondId),
-    DuplicateBondParameter(BondId),
+    InvalidBondId(InstanceBondId),
+    DuplicateBondParameter(InstanceBondId),
     InvalidBondParameter {
-        bond: BondId,
+        bond: InstanceBondId,
         parameter: &'static str,
     },
     IncompatibleModel,
     InvalidGeometry {
         interaction: &'static str,
-        atoms: Vec<AtomId>,
+        atoms: Vec<InstanceAtomId>,
         kind: PotentialGeometryError,
     },
     NonFiniteEnergy,
@@ -254,7 +263,7 @@ pub enum PotentialError {
         actual: usize,
     },
     NonFiniteGradient {
-        atom: AtomId,
+        atom: InstanceAtomId,
     },
     Backend {
         backend: &'static str,
@@ -265,7 +274,7 @@ pub enum PotentialError {
 impl PotentialError {
     pub fn invalid_geometry(
         interaction: &'static str,
-        atoms: impl IntoIterator<Item = AtomId>,
+        atoms: impl IntoIterator<Item = InstanceAtomId>,
         kind: PotentialGeometryError,
     ) -> Self {
         Self::InvalidGeometry {

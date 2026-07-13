@@ -17,14 +17,59 @@ pub(super) fn oxygen() -> Atom {
     Atom::new(Element::from_symbol("O").expect("oxygen should be available"))
 }
 
+pub(super) fn read_smiles(
+    input: &str,
+) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
+    let document = smiles_api::parse_str(input)?;
+    Ok(smiles_api::interpret(&document)?)
+}
+
+pub(super) fn read_molfile(
+    input: &str,
+) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
+    let document = molfile::parse_str(input)?;
+    Ok(molfile::interpret(&document)?)
+}
+
+pub(super) fn read_sdf_records(
+    input: &str,
+) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
+    read_sdf_records_with_options(input, SdfParseOptions::default())
+}
+
+pub(super) fn read_sdf_records_with_options(
+    input: &str,
+    options: SdfParseOptions,
+) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
+    let document = sdf::parse_str(input, options)?;
+    Ok(sdf::interpret(&document)?)
+}
+
+pub(super) fn read_sdf_molecules(
+    input: &str,
+) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
+    Ok(read_sdf_records(input)?
+        .into_iter()
+        .map(SdfRecord::into_molecule)
+        .collect())
+}
+
+pub(super) fn read_sdf_molecules_with_options(
+    input: &str,
+    options: SdfParseOptions,
+) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
+    Ok(read_sdf_records_with_options(input, options)?
+        .into_iter()
+        .map(SdfRecord::into_molecule)
+        .collect())
+}
+
 pub(super) fn element_atom(symbol: &str) -> Atom {
     Atom::new(Element::from_symbol(symbol).expect("test element should be available"))
 }
 
 pub(super) fn aromatic_carbon_no_hydrogens() -> Atom {
     let mut atom = carbon();
-    atom.aromatic = true;
-    atom.implicit_hydrogens = Some(0);
     atom.no_implicit_hydrogens = true;
     atom
 }
@@ -52,6 +97,9 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondI
         .expect("right reference");
     mol.add_bond(right, right_other, BondOrder::Single)
         .expect("right other");
+    mol.begin_aromaticity(AromaticityProvenance::Imported);
+    mol.set_atom_aromatic(left, true);
+    mol.set_atom_aromatic(right, true);
 
     let mut conformer = Conformer::new();
     conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
@@ -128,17 +176,16 @@ pub(super) fn deterministic_text_mutations(seed: &str) -> Vec<String> {
 }
 
 pub(super) fn mark_all_fresh(mol: &mut Molecule) {
-    mol.perception.valence = ComputedState::Fresh;
-    mol.perception.rings = ComputedState::Fresh;
-    mol.perception.aromaticity = ComputedState::Fresh;
-    mol.perception.stereo = ComputedState::Fresh;
+    let _ = valence_api::perceive_valence(mol, ValenceModel::RdkitLike);
+    let _ = rings_api::perceive_ring_membership(mol);
+    mol.begin_aromaticity(AromaticityProvenance::Imported);
 }
 
 pub(super) fn assert_all_stale(mol: &Molecule) {
-    assert_eq!(mol.perception().valence, ComputedState::Stale);
-    assert_eq!(mol.perception().rings, ComputedState::Stale);
-    assert_eq!(mol.perception().aromaticity, ComputedState::Stale);
-    assert_eq!(mol.perception().stereo, ComputedState::Stale);
+    assert!(!mol.perception().has_valence());
+    assert!(!mol.perception().has_rings());
+    assert!(!mol.perception().has_aromaticity());
+    assert!(!mol.perception().has_cip_descriptors());
 }
 
 pub(super) fn implicit_h_wedge_geometry_molblock() -> &'static str {

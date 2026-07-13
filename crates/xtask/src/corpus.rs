@@ -43,7 +43,12 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         }
         let lock = read_source_lock(corpus_id)?;
         check_corpus_lock(&descriptor, &lock)?;
-        check_corpus_artifacts(corpus_id, &lock, require_data, &descriptor.build_command)?;
+        check_corpus_artifacts(
+            corpus_id,
+            &lock,
+            corpus_requires_data(corpus_id, require_data),
+            &descriptor.build_command,
+        )?;
         println!(
             "corpus `{corpus_id}` has {} pinned entries and passed integrity checks",
             lock.entries.len()
@@ -52,6 +57,10 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
     check_nested_corpora(&locks)?;
     Ok(())
+}
+
+pub(crate) fn corpus_requires_data(corpus: &str, requested: bool) -> bool {
+    requested || corpus == "smoke"
 }
 
 #[derive(Debug, Clone, Deserialize)]

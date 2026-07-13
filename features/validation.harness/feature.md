@@ -26,6 +26,9 @@ or manually curated external-reference golden data.
 - Normalizes representation-only graph differences such as undirected bond endpoint orientation, bond array order, and ring atom order before comparison.
 - Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
 - Exposes `cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]`.
+- Always verifies the committed 20-case smoke fixture bytes, even when
+  `--require-data` is omitted; the flag remains necessary for ignored larger
+  corpora.
 - Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, synchronizes overall `validated`, and regenerates the dashboard.
 - Allows an independently reviewed implementation-semantic change to be
   accepted explicitly with `--accept-implementation-goldens`, but only for one
@@ -107,3 +110,5 @@ or manually curated external-reference golden data.
 - v17: Add fixture-isolated validation, report every failing fixture, and add a
   guarded acceptance command for independently reviewed `*-manual-semantic`
   implementation goldens.
+- v18: Make smoke a fixed, fully committed 20-case suite and always verify its
+  source fixtures during corpus integrity checks.

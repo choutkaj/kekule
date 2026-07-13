@@ -1,50 +1,47 @@
 use std::fmt;
 
-use molecules::core::{AtomId, BondId, BondOrder};
-use molecules::modeling::ComponentId;
+use molecules::core::BondOrder;
+use molecules::modeling::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
 
 /// Failure while converting and parameterizing a molecular model with DREIDING.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DreidingPrepareError {
     UnresolvedImplicitHydrogens {
-        atom: AtomId,
+        atom: InstanceAtomId,
     },
     CountedHydrogens {
-        atom: AtomId,
+        atom: InstanceAtomId,
         explicit: u8,
         implicit: u8,
     },
     RadicalAtom {
-        atom: AtomId,
+        atom: InstanceAtomId,
     },
     UnsupportedBondOrder {
-        bond: BondId,
+        bond: InstanceBondId,
         order: BondOrder,
     },
     InconsistentAromaticBond {
-        bond: BondId,
-    },
-    CrossComponentBond {
-        bond: BondId,
+        bond: InstanceBondId,
     },
     UnsupportedElement {
-        atom: AtomId,
+        atom: InstanceAtomId,
         symbol: String,
     },
     Parameterization {
-        component: Option<ComponentId>,
+        molecule: Option<MoleculeInstanceId>,
         message: String,
     },
     AtomTypeMismatch {
-        component: ComponentId,
-        atom: AtomId,
+        molecule: MoleculeInstanceId,
+        atom: InstanceAtomId,
         whole_model: String,
         component_model: String,
     },
     MissingVdwParameters {
-        first: AtomId,
-        second: AtomId,
+        first: InstanceAtomId,
+        second: InstanceAtomId,
     },
     InvalidPreparedData {
         interaction: &'static str,
@@ -83,19 +80,16 @@ impl fmt::Display for DreidingPrepareError {
                 f,
                 "bond {bond} has inconsistent aromatic flag and aromatic bond order"
             ),
-            Self::CrossComponentBond { bond } => {
-                write!(f, "bond {bond} connects different model components")
-            }
             Self::UnsupportedElement { atom, symbol } => {
                 write!(
                     f,
                     "atom {atom} element {symbol} cannot be converted for DREIDING"
                 )
             }
-            Self::Parameterization { component, message } => match component {
-                Some(component) => write!(
+            Self::Parameterization { molecule, message } => match molecule {
+                Some(molecule) => write!(
                     f,
-                    "DREIDING parameterization failed for {component}: {message}"
+                    "DREIDING parameterization failed for {molecule}: {message}"
                 ),
                 None => write!(
                     f,
@@ -103,13 +97,13 @@ impl fmt::Display for DreidingPrepareError {
                 ),
             },
             Self::AtomTypeMismatch {
-                component,
+                molecule,
                 atom,
                 whole_model,
                 component_model,
             } => write!(
                 f,
-                "DREIDING atom type for {atom} in {component} differs between whole-model ({whole_model}) and component ({component_model}) preparation"
+                "DREIDING atom type for {atom} in {molecule} differs between whole-model ({whole_model}) and molecule-local ({component_model}) preparation"
             ),
             Self::MissingVdwParameters { first, second } => write!(
                 f,
