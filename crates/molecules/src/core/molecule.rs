@@ -14,7 +14,7 @@ pub enum AromaticityProvenance {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ValencePerception {
-    model: ValenceModel,
+    model: Option<ValenceModel>,
     implicit_hydrogens: BTreeMap<AtomId, u8>,
 }
 
@@ -41,7 +41,9 @@ pub struct PerceptionState {
 
 impl PerceptionState {
     pub fn has_valence(&self) -> bool {
-        self.valence.is_some()
+        self.valence
+            .as_ref()
+            .is_some_and(|state| state.model.is_some())
     }
 
     pub fn has_rings(&self) -> bool {
@@ -57,7 +59,7 @@ impl PerceptionState {
     }
 
     pub fn valence_model(&self) -> Option<ValenceModel> {
-        self.valence.as_ref().map(|state| state.model)
+        self.valence.as_ref().and_then(|state| state.model)
     }
 
     pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<u8> {
@@ -665,7 +667,7 @@ impl Molecule {
             }
         }
         self.perception.valence = Some(ValencePerception {
-            model,
+            model: Some(model),
             implicit_hydrogens,
         });
         self.perception.aromaticity = None;
@@ -673,9 +675,14 @@ impl Molecule {
     }
 
     pub(crate) fn set_implicit_hydrogens(&mut self, atom: AtomId, count: u8) {
-        if let Some(state) = self.perception.valence.as_mut() {
-            state.implicit_hydrogens.insert(atom, count);
-        }
+        self.perception
+            .valence
+            .get_or_insert_with(|| ValencePerception {
+                model: None,
+                implicit_hydrogens: BTreeMap::new(),
+            })
+            .implicit_hydrogens
+            .insert(atom, count);
         #[cfg(test)]
         if let Some(payload) = self.atoms.get_mut(atom.index()).and_then(Option::as_mut) {
             payload.implicit_hydrogens = Some(count);

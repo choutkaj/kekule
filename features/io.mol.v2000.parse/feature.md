@@ -57,3 +57,5 @@ as one `SmallMolecule`.
   the shared RDKit-like allowed-valence table.
 - v9: Hard break to loss-preserving `MolfileDocument` parsing, explicit
   interpretation, and separate syntax/chemistry errors.
+- v10: Parse `MolfileDocument` V2000 counts from fixed-width fields so adjacent
+  three-digit atom and bond counts remain unambiguous.

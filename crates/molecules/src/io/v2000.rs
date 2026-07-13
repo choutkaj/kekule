@@ -198,7 +198,7 @@ fn parse_mol_v2000_lines(
     Ok(SmallMolecule::from_graph(mol))
 }
 
-fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
+pub(super) fn parse_counts_line(line: &str) -> Option<(usize, usize)> {
     if !line.is_ascii() {
         return None;
     }

@@ -156,3 +156,26 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
     );
     Ok(())
 }
+
+#[test]
+fn production_canonical_smiles_preserves_collapsed_hydrogen_without_perception(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let document = molecules::smiles::parse_str("[H][C](F)(Cl)Br")?;
+    let molecule = molecules::smiles::interpret(&document)?;
+    assert!(!molecule.graph().perception().has_valence());
+
+    let written = molecules::smiles::write_canonical(&molecule)?;
+    let mut reparsed = SmallMolecule::from_smiles(&written)?;
+    reparsed.sanitize()?;
+    let carbon = reparsed
+        .graph()
+        .atoms()
+        .find_map(|(atom_id, atom)| (atom.element.symbol() == "C").then_some(atom_id))
+        .expect("canonical output retains carbon");
+    assert_eq!(
+        reparsed.graph().implicit_hydrogens(carbon)?,
+        Some(1),
+        "canonical output was {written}"
+    );
+    Ok(())
+}

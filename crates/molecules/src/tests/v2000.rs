@@ -24,6 +24,29 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
 }
 
 #[test]
+fn molfile_and_sdf_documents_parse_adjacent_three_digit_counts() {
+    let mut molfile_text =
+        String::from("Large\nprogram\ncomment\n999999  0  0  0  0            999 V2000\n");
+    for _ in 0..999 {
+        molfile_text.push_str("atom record\n");
+    }
+    for _ in 0..999 {
+        molfile_text.push_str("bond record\n");
+    }
+    molfile_text.push_str("M  END\n");
+
+    let document = molfile::parse_str(&molfile_text).expect("fixed-width counts parse");
+    assert_eq!(document.atom_records().len(), 999);
+    assert_eq!(document.bond_records().len(), 999);
+
+    let sdf_text = format!("{molfile_text}$$$$\n");
+    let document = sdf::parse_str(&sdf_text, SdfParseOptions::default())
+        .expect("SDF delegates to fixed-width Molfile counts parsing");
+    assert_eq!(document.records()[0].molfile().atom_records().len(), 999);
+    assert_eq!(document.records()[0].molfile().bond_records().len(), 999);
+}
+
+#[test]
 fn sdf_v2000_parses_single_record_atoms_bonds_and_fields() {
     let input = "\
 Water

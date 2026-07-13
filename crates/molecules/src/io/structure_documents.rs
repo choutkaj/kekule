@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::small::SmallMolecule;
 
+use super::v2000::parse_counts_line;
 use super::{read_mol_v2000_str, read_mol_v3000_str, SdfParseError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,15 +177,8 @@ pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfilePar
     let mut unsupported_records = Vec::new();
     match version {
         MolfileVersion::V2000 => {
-            let fields = lines[3].split_whitespace().collect::<Vec<_>>();
-            let atom_count = fields
-                .first()
-                .and_then(|value| value.parse::<usize>().ok())
-                .ok_or_else(|| MolfileParseError::new(4, "invalid V2000 atom count"))?;
-            let bond_count = fields
-                .get(1)
-                .and_then(|value| value.parse::<usize>().ok())
-                .ok_or_else(|| MolfileParseError::new(4, "invalid V2000 bond count"))?;
+            let (atom_count, bond_count) = parse_counts_line(lines[3])
+                .ok_or_else(|| MolfileParseError::new(4, "invalid V2000 counts line"))?;
             let atom_end = 4usize
                 .checked_add(atom_count)
                 .ok_or_else(|| MolfileParseError::new(4, "atom count overflow"))?;

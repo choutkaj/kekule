@@ -32,3 +32,5 @@ their Molfile documents into canonical `SdfRecord` values.
 
 - v1-v9: Direct V2000 SDF-to-molecule reader and expanded metadata coverage.
 - v10: Hard break to `SdfDocument` parse/interpret and canonical record metadata.
+- v11: Inherit fixed-width V2000 counts parsing for adjacent three-digit atom
+  and bond counts in raw SDF record documents.
