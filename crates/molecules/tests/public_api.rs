@@ -97,3 +97,60 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     assert_eq!(model.positions()[1].x, 2.0);
     Ok(())
 }
+
+#[test]
+fn production_smiles_stereo_uses_installed_perception_state(
+) -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::perception::{self, stereo, SanitizeOptions};
+
+    let document = molecules::smiles::parse_str(r"C(=C\F)\F")?;
+    let mut molecule = molecules::smiles::interpret(&document)?;
+    perception::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_stereo: false,
+            ..SanitizeOptions::default()
+        },
+    )?;
+
+    let graph = molecule.graph();
+    assert_eq!(graph.implicit_hydrogens(AtomId::new(0))?, Some(1));
+    assert_eq!(graph.implicit_hydrogens(AtomId::new(1))?, Some(1));
+
+    let report = stereo::perceive_stereo(molecule.graph_mut());
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert!(
+        report.candidates.iter().any(|candidate| matches!(
+            candidate,
+            molecules::perception::stereo::StereoCandidate::DoubleBond {
+                left_carriers,
+                right_carriers,
+                ..
+            } if left_carriers.len() == 2 && right_carriers.len() == 2
+        )),
+        "{:?}",
+        report.candidates
+    );
+    Ok(())
+}
+
+#[test]
+fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::core::{StereoDescriptor, StereoElementId};
+    use molecules::perception::{self, stereo};
+
+    let input = include_str!(
+        "../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
+    );
+    let document = molecules::molfile::parse_str(input)?;
+    let mut molecule = molecules::molfile::interpret(&document)?;
+    perception::sanitize(&mut molecule)?;
+    let report = stereo::assign_cip_descriptors(molecule.graph_mut());
+
+    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(
+        molecule.graph().cip_descriptor(StereoElementId::new(0))?,
+        Some(StereoDescriptor::P)
+    );
+    Ok(())
+}

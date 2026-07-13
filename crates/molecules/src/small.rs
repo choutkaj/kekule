@@ -36,7 +36,6 @@ impl SmallMolecule {
     }
 
     pub fn graph_mut(&mut self) -> &mut Molecule {
-        self.graph.invalidate_topology();
         &mut self.graph
     }
 

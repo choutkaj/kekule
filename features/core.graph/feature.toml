@@ -1,7 +1,7 @@
 id = "core.graph"
 title = "Core molecular graph"
 area = "core"
-version = 5
+version = 6
 implemented = true
 validated = false
 description = "Store atoms, bonds, graph-adjacent stereo state, properties, and computed-state invalidation behind typed IDs."

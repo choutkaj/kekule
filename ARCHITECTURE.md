@@ -73,7 +73,9 @@ full aromaticity perception replaces them with model provenance.
 
 `SmallMolecule` is the ordinary chemistry wrapper around one `Molecule`. It owns
 the ergonomic small-molecule workflows while retaining `graph()` and controlled
-`graph_mut()` access. `SmallMolecule::from_smiles` is an intentional
+`graph_mut()` access. Obtaining mutable access is state-neutral; the selected
+`Molecule` mutation operation performs the required targeted invalidation.
+`SmallMolecule::from_smiles` is an intentional
 parse-then-interpret convenience and does not sanitize;
 `from_smiles_sanitized` names the additional operation explicitly.
 

@@ -29,6 +29,8 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   stale/fresh flags and mutable cache setters do not exist.
 - Property-only and coordinate-only edits do not invalidate chemistry state.
 - Mutation guards compare chemistry-relevant fields when released, so obtaining mutable access alone does not stale perception.
+- Wrapper `graph_mut()` access is likewise state-neutral; concrete `Molecule`
+  mutators remain solely responsible for targeted invalidation.
 - Molecule, atom, and bond property maps are stored on the core data structures.
 - Local stereo state is graph-adjacent storage on `Molecule`, separate from atom and bond payloads and from derived CIP descriptors.
 
@@ -52,3 +54,6 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - v4: Add graph-adjacent stereo elements, stereo groups, source bond marks, typed stereo IDs, mutation invalidation, and topology-aware stereo pruning.
 - v5: Make asserted entity boundaries independent of graph connectedness and
   consolidate all derived chemistry in one private optional `PerceptionState`.
+- v6: Keep wrapper mutable access state-neutral so chained perception
+  operations retain their prerequisite state; concrete graph mutations still
+  invalidate immediately.

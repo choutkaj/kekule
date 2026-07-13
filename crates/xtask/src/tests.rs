@@ -1,4 +1,12 @@
 use super::*;
+
+#[test]
+fn committed_smoke_corpus_always_requires_fixture_data() {
+    assert!(corpus_requires_data("smoke", false));
+    assert!(corpus_requires_data("smoke", true));
+    assert!(!corpus_requires_data("pubchem-100", false));
+    assert!(corpus_requires_data("pubchem-100", true));
+}
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -962,6 +970,12 @@ fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed
         Some(&status),
         Path::new("definitely-missing-validation-root")
     ));
+    assert!(ensure_current_validation_flags_synced_at(
+        std::slice::from_ref(&feature),
+        &BTreeMap::from([(feature.id.clone(), status)]),
+        Path::new("definitely-missing-validation-root")
+    )
+    .is_err());
 }
 
 #[test]

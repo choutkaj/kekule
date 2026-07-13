@@ -25,7 +25,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Existing algorithm and I/O internals remain available through focused facade modules rather than root aliases.
 - `SmallMolecule::from_smiles` orchestrates parse/interpret without sanitizing;
   `from_smiles_sanitized` names the additional operation explicitly.
-- `graph_mut()` conservatively invalidates topology-derived perception state before handing out mutable graph access.
+- `graph_mut()` itself is state-neutral; chemistry and topology mutators on the
+  returned graph perform their own targeted invalidation, allowing perception
+  operations to consume already-installed prerequisite state.
 - Macro validation is read-only; macro sanitization is conservative and rejects unsupported preparation-like options instead of silently guessing.
 - Internal validation tooling uses the same public namespaces as user code.
 
@@ -50,3 +52,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v7: Molecule-first hard break: format Documents, private `PerceptionState`,
   instance-based `ModelTopology`, mmCIF model output, and deletion of all
   superseded readers/components/content containers.
+- v8: Make wrapper mutable graph access state-neutral and rely on concrete graph
+  mutators for invalidation, preventing perception prerequisites from being
+  erased before stereo and CIP operations.
