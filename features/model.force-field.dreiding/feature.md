@@ -55,3 +55,5 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
   models, and instance-boundary topology signatures.
 - v3: Replace adapter-specific topology signatures with shared model-definition
   identity and report structured evaluation geometry errors.
+- v4: Build adjacency and nonbonded exclusions through dense model indexes so
+  repeated instances and tombstoned molecule-local atom IDs remain isolated.

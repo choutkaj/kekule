@@ -541,10 +541,20 @@ fn prepare_hydrogen_bonds(
 
 fn adjacency(model: &MolecularModel) -> Vec<Vec<usize>> {
     let mut adjacency = vec![Vec::new(); model.atom_count()];
-    for (_, bond) in model.topology().bonds() {
+    for (bond_id, bond) in model.topology().bonds() {
         let (a, b) = bond.endpoints();
-        adjacency[a.index()].push(b.index());
-        adjacency[b.index()].push(a.index());
+        let a = model
+            .topology()
+            .atom_index(InstanceAtomId::new(bond_id.molecule(), a))
+            .expect("model bond endpoint must have a dense atom index")
+            .index();
+        let b = model
+            .topology()
+            .atom_index(InstanceAtomId::new(bond_id.molecule(), b))
+            .expect("model bond endpoint must have a dense atom index")
+            .index();
+        adjacency[a].push(b);
+        adjacency[b].push(a);
     }
     for neighbors in &mut adjacency {
         neighbors.sort_unstable();

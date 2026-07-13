@@ -77,6 +77,37 @@ fn qeq_is_prepared_per_molecule_instance() {
             .sum::<f64>();
         assert!(total.abs() < 1.0e-8);
     }
+    assert_eq!(
+        potential.nonbonded.len(),
+        9,
+        "two waters have nine inter-instance pairs and no intramolecular nonbonded pairs"
+    );
+}
+
+#[test]
+fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
+    let mut graph = Molecule::new();
+    let oxygen = graph.add_atom(explicit_atom("O"));
+    let tombstone = graph.add_atom(explicit_atom("H"));
+    let first_hydrogen = graph.add_atom(explicit_atom("H"));
+    let second_hydrogen = graph.add_atom(explicit_atom("H"));
+    graph.delete_atom(tombstone).unwrap();
+    graph
+        .add_bond(oxygen, first_hydrogen, BondOrder::Single)
+        .unwrap();
+    graph
+        .add_bond(oxygen, second_hydrogen, BondOrder::Single)
+        .unwrap();
+    let mut conformer = Conformer::new();
+    conformer.set_position(oxygen, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(first_hydrogen, Point3::new(0.9575, 0.0, 0.0));
+    conformer.set_position(second_hydrogen, Point3::new(-0.2399, 0.9272, 0.0));
+    let conformer = graph.add_conformer(conformer);
+    let model =
+        MolecularModel::from_small_molecule(&SmallMolecule::from_graph(graph), conformer).unwrap();
+
+    let potential = DreidingPotential::prepare(&model).unwrap();
+    assert!(potential.nonbonded.is_empty());
 }
 
 #[test]
