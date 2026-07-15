@@ -164,7 +164,7 @@ pub(crate) fn corpus_passed_at(
         .join("features")
         .join(format!("{}.toml", feature.id));
     if !manifest_path.exists()
-        || hash_file(&manifest_path)
+        || hash_evidence_file(&manifest_path)
             .map(|hash| hash != corpus_status.manifest_hash)
             .unwrap_or(true)
     {

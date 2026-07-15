@@ -153,7 +153,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                         .unwrap_or_else(|| "fixture comparison failed".to_owned()),
                     reference_tool: manifest.reference_tool,
                     reference_version: manifest.reference_version,
-                    manifest_hash: hash_file(&manifest_path)?,
+                    manifest_hash: hash_evidence_file(&manifest_path)?,
                 }));
             }
             if comparison.compared_count != manifest.fixtures.len() {
@@ -170,7 +170,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 compared_count: comparison.compared_count,
                 reference_tool: manifest.reference_tool,
                 reference_version: manifest.reference_version,
-                manifest_hash: hash_file(&manifest_path)?,
+                manifest_hash: hash_evidence_file(&manifest_path)?,
                 evidence,
             }))
         })();

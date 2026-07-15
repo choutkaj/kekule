@@ -806,6 +806,7 @@ fn current_status_drives_overall_validation_and_metadata_sync() {
         validation_required: vec!["smoke".to_owned()],
     };
     let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
+    let manifest_text = fs::read_to_string(&manifest_path).expect("manifest text should read");
     let evidence =
         build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
     let corpus_status = CorpusStatus {
@@ -814,7 +815,7 @@ fn current_status_drives_overall_validation_and_metadata_sync() {
         compared_count: 1,
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit test".to_owned(),
-        manifest_hash: hash_file(&manifest_path).expect("manifest should hash"),
+        manifest_hash: hash_evidence_file(&manifest_path).expect("manifest should hash"),
         failed_count: 0,
         first_failure: None,
         evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
@@ -843,6 +844,14 @@ fn current_status_drives_overall_validation_and_metadata_sync() {
     assert!(fs::read_to_string(&metadata_path)
         .expect("metadata should read")
         .contains("validated = true"));
+
+    fs::write(&manifest_path, manifest_text.replace('\n', "\r\n"))
+        .expect("manifest line endings should change");
+    assert!(overall_validated_at(
+        &feature,
+        Some(&status),
+        &validation_root
+    ));
 
     fs::write(&manifest_path, "changed = true\n").expect("manifest should change");
     assert!(!overall_validated_at(
@@ -947,7 +956,7 @@ fn current_status_requires_known_nonempty_evidence() {
         compared_count: 1,
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit test".to_owned(),
-        manifest_hash: hash_file(&manifest_path).expect("manifest should hash"),
+        manifest_hash: hash_evidence_file(&manifest_path).expect("manifest should hash"),
         failed_count: 0,
         first_failure: None,
         evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),

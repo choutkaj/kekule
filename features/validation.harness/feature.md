@@ -26,7 +26,9 @@ or manually curated external-reference golden data.
   `reference_tool` ends in `-manual-semantic`; these are evidence-backed by
   pinned source fixtures, manifest metadata, committed goldens, and Rust
   implementation sources rather than by local reference generator files.
-- Canonicalizes UTF-8 text inputs to LF before hashing so evidence is stable across Windows and Linux checkouts; binary inputs remain byte-exact.
+- Canonicalizes UTF-8 text inputs to LF before hashing so evidence and the
+  separately recorded manifest hash are stable across Windows and Linux
+  checkouts; binary inputs remain byte-exact.
 - Normalizes representation-only graph differences such as undirected bond endpoint orientation, bond array order, and ring atom order before comparison.
 - Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
 - Exposes `cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]`.
@@ -64,7 +66,9 @@ or manually curated external-reference golden data.
   data directory is ignored. These corpora support on-demand runs and never
   determine repository-wide validation state or appear as dashboard columns.
 - Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
-- Status evidence records fixture and comparison counts, reference versions, the manifest SHA-256, a versioned evidence input list, evidence SHA-256, and validation time.
+- Status evidence records fixture and comparison counts, reference versions,
+  the line-ending-normalized manifest SHA-256, a versioned evidence input list,
+  evidence SHA-256, and validation time.
 - Evidence is considered current only when recomputing it from the current checkout produces the stored schema version and hash.
 - Failed comparison status records fixture count, successful comparison count, failed count, and the first fixture-level failure without recording pass evidence.
 - Evidence schema v2 includes cross-platform text line-ending normalization.
@@ -123,3 +127,5 @@ or manually curated external-reference golden data.
   source fixtures during corpus integrity checks.
 - v19: Add typed local-only corpus metadata, reject every ignored corpus from
   repository-wide required evidence, and retain them for explicit runs.
+- v20: Normalize the separately recorded manifest hash so evidence generated on
+  Windows remains current in Linux CI checkouts.
