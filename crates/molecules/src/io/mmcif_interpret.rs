@@ -679,6 +679,7 @@ fn select_coordinate_model(
 struct DeclaredConnection {
     left_atom: String,
     right_atom: String,
+    order: BondOrder,
 }
 
 fn read_connections(
@@ -713,10 +714,31 @@ fn read_connections(
         connections.push(DeclaredConnection {
             left_atom: left.atom_key(),
             right_atom: right.atom_key(),
+            order: connection_bond_order(table, row)?,
         });
         report.applied_connections += 1;
     }
     Ok(connections)
+}
+
+fn connection_bond_order(
+    table: &MmcifLoopTable,
+    row: usize,
+) -> Result<BondOrder, MmcifInterpretError> {
+    let Some(order) = optional(table, row, "_struct_conn.pdbx_value_order") else {
+        return Ok(BondOrder::Single);
+    };
+    match order.to_ascii_lowercase().as_str() {
+        "sing" => Ok(BondOrder::Single),
+        "doub" => Ok(BondOrder::Double),
+        "trip" => Ok(BondOrder::Triple),
+        "quad" => Ok(BondOrder::Quadruple),
+        _ => Err(row_error(
+            table,
+            row,
+            format!("unsupported struct_conn bond order `{order}`"),
+        )),
+    }
 }
 
 fn is_covalent_connection(kind: &str) -> bool {
@@ -871,8 +893,19 @@ fn build_molecule(
             .is_none()
         {
             graph
-                .add_bond(left, right, BondOrder::Single)
+                .add_bond(left, right, connection.order)
                 .map_err(graph_error)?;
+        } else {
+            let existing = graph
+                .bond_between(left, right)
+                .map_err(graph_error)?
+                .expect("existing bond was found");
+            if graph.bond(existing).map_err(graph_error)?.order != connection.order {
+                return Err(MmcifInterpretError::new(
+                    None,
+                    "duplicate struct_conn records assign conflicting bond orders",
+                ));
+            }
         }
     }
     let asym_ids = representative

@@ -128,7 +128,9 @@ mmCIF document; interpretation selects one coordinate model and produces one
 `MolecularModel` containing distinct molecule instances.
 
 ```rust
-use molecules::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions};
+use molecules::mmcif::{
+    self, MmcifInterpretOptions, MmcifParseOptions, MmcifWriteOptions,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = r#"
@@ -163,6 +165,9 @@ C C1 GLY A 1 1 0.0 0.0 0.0
 
     println!("atoms: {}", interpreted.model().atom_count());
     println!("selected model: {:?}", interpreted.report().selected_model);
+
+    let output = mmcif::write(interpreted.model(), MmcifWriteOptions::default())?;
+    assert!(output.starts_with("data_model"));
 
     Ok(())
 }

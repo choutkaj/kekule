@@ -1,7 +1,13 @@
+use crate::bio::{AtomSiteMetadata, BioHierarchy, MacroMolecule};
+use crate::core::{Atom, BondOrder, Conformer, Element, Molecule, Point3};
 use crate::mmcif::{
     self, MmcifAltLocPolicy, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
+    MmcifWriteError, MmcifWriteOptions,
 };
-use crate::modeling::MoleculeRole;
+use crate::modeling::{
+    MolecularModel, MolecularModelBuilder, MoleculeInstanceMetadata, MoleculeRole,
+};
+use crate::small::SmallMolecule;
 
 const MIXED: &str = r#"
 data_mixed
@@ -173,4 +179,231 @@ hydrog A N 1 W O .
     assert!(first.has_role(MoleculeRole::Polymer));
     assert!(first.has_role(MoleculeRole::NonPolymer));
     assert_eq!(result.report().applied_connections, 1);
+}
+
+#[test]
+fn struct_conn_bond_order_is_interpreted_and_rejected_when_unknown() {
+    let connection = r#"
+loop_
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.pdbx_value_order
+covale A N 1 A CA 1 doub
+"#;
+    let input = format!("{MIXED}\n{connection}");
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let first = result.model().topology().molecules().next().unwrap().1;
+    assert_eq!(
+        first.graph().bonds().next().expect("declared bond").1.order,
+        BondOrder::Double
+    );
+
+    let error = mmcif::interpret(
+        &parse(&input.replace("doub", "arom")),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error
+        .message
+        .contains("unsupported struct_conn bond order `arom`"));
+}
+
+#[test]
+fn mmcif_writer_round_trips_supported_model_content() {
+    let connection = r#"
+loop_
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.pdbx_value_order
+covale A N 1 A CA 1 doub
+"#;
+    let original = mmcif::interpret(
+        &parse(&format!("{MIXED}\n{connection}")),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap();
+    let written = mmcif::write(
+        original.model(),
+        MmcifWriteOptions {
+            data_block_name: "round_trip".to_owned(),
+            coordinate_precision: 4,
+        },
+    )
+    .expect("supported model should write");
+    assert!(written.starts_with("data_round_trip\n"));
+    assert!(written.contains("_struct_conn.pdbx_value_order"));
+    assert!(written.contains("doub"));
+
+    let document = parse(&written);
+    let atom_sites = document.blocks()[0]
+        .loop_with_tag("_atom_site.type_symbol")
+        .expect("writer emits atom-site loop");
+    assert_eq!(atom_sites.row_count(), 4);
+    let round_trip = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(round_trip.model().topology().molecule_count(), 3);
+    assert_eq!(round_trip.model().positions(), original.model().positions());
+    let first = round_trip.model().topology().molecules().next().unwrap().1;
+    assert!(first.has_role(MoleculeRole::Polymer));
+    assert_eq!(
+        first
+            .graph()
+            .bonds()
+            .next()
+            .expect("round-trip bond")
+            .1
+            .order,
+        BondOrder::Double
+    );
+}
+
+#[test]
+fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
+    let aromatic = small_model_with_bond(BondOrder::Aromatic);
+    assert!(matches!(
+        mmcif::write(&aromatic, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::UnsupportedBondOrder {
+            order: BondOrder::Aromatic,
+            ..
+        })
+    ));
+
+    let mut graph = Molecule::new();
+    let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let mut conformer = Conformer::new();
+    conformer.set_position(atom, Point3::new(0.0, 0.0, 0.0));
+    let conformer = graph.add_conformer(conformer).unwrap();
+    let mut hierarchy = BioHierarchy::new();
+    let model = hierarchy.add_model("1");
+    let chain = hierarchy.add_chain(model, "A", None).unwrap();
+    hierarchy
+        .add_residue(chain, "GLY", Some(1), None, None)
+        .unwrap();
+    let macro_molecule = MacroMolecule::from_parts(graph, hierarchy);
+    let mut builder = MolecularModelBuilder::new();
+    builder
+        .add_macro_molecule(&macro_molecule, conformer)
+        .unwrap();
+    let incomplete = builder.build().unwrap();
+    assert!(matches!(
+        mmcif::write(&incomplete, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::MissingAtomSite(_))
+    ));
+}
+
+#[test]
+fn mmcif_writer_preserves_supported_bond_orders() {
+    for order in [
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Triple,
+        BondOrder::Quadruple,
+    ] {
+        let model = small_model_with_bond(order);
+        let written = mmcif::write(&model, MmcifWriteOptions::default()).unwrap();
+        let interpreted =
+            mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
+        let round_trip = interpreted
+            .model()
+            .topology()
+            .molecules()
+            .next()
+            .unwrap()
+            .1
+            .graph()
+            .bonds()
+            .next()
+            .unwrap()
+            .1
+            .order;
+        assert_eq!(round_trip, order);
+    }
+}
+
+#[test]
+fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
+    let carbon = Element::from_symbol("C").unwrap();
+    let mut graph = Molecule::new();
+    let left = graph.add_atom(Atom::new(carbon));
+    let right = graph.add_atom(Atom::new(carbon));
+    let mut conformer = Conformer::new();
+    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
+    let conformer = graph.add_conformer(conformer).unwrap();
+    let mut hierarchy = BioHierarchy::new();
+    let model = hierarchy.add_model("1");
+    let chain = hierarchy.add_chain(model, "A", None).unwrap();
+    let residue = hierarchy
+        .add_residue(chain, "GLY", Some(1), None, None)
+        .unwrap();
+    for atom in [left, right] {
+        hierarchy
+            .add_atom_site(
+                residue,
+                atom,
+                AtomSiteMetadata {
+                    label_atom_id: Some("CA".to_owned()),
+                    ..AtomSiteMetadata::default()
+                },
+            )
+            .unwrap();
+    }
+    let macro_molecule = MacroMolecule::from_parts(graph, hierarchy);
+    let mut builder = MolecularModelBuilder::new();
+    builder
+        .add_macro_molecule(&macro_molecule, conformer)
+        .unwrap();
+    assert!(matches!(
+        mmcif::write(&builder.build().unwrap(), MmcifWriteOptions::default()),
+        Err(MmcifWriteError::DuplicateAtomIdentity(_))
+    ));
+
+    let mut metadata = MoleculeInstanceMetadata::default();
+    metadata.insert_role(MoleculeRole::Ligand);
+    let model = small_model_with_metadata(metadata);
+    assert!(matches!(
+        mmcif::write(&model, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::UnsupportedMoleculeRole {
+            role: MoleculeRole::Ligand,
+            ..
+        })
+    ));
+}
+
+fn small_model_with_bond(order: BondOrder) -> MolecularModel {
+    let mut graph = Molecule::new();
+    let left = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let right = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    graph.add_bond(left, right, order).unwrap();
+    let mut conformer = Conformer::new();
+    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
+    let conformer = graph.add_conformer(conformer).unwrap();
+    let molecule = SmallMolecule::from_graph(graph);
+    let mut builder = MolecularModelBuilder::new();
+    builder.add_small_molecule(&molecule, conformer).unwrap();
+    builder.build().unwrap()
+}
+
+fn small_model_with_metadata(metadata: MoleculeInstanceMetadata) -> MolecularModel {
+    let mut graph = Molecule::new();
+    let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let mut conformer = Conformer::new();
+    conformer.set_position(atom, Point3::new(0.0, 0.0, 0.0));
+    let conformer = graph.add_conformer(conformer).unwrap();
+    let molecule = SmallMolecule::from_graph(graph);
+    let mut builder = MolecularModelBuilder::new();
+    builder
+        .add_small_molecule_with_metadata(&molecule, conformer, metadata)
+        .unwrap();
+    builder.build().unwrap()
 }

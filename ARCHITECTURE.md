@@ -108,7 +108,8 @@ appropriate to its grammar:
   `Molecule::props`.
 - `MmcifDocument` preserves blocks, scalar items, loops, missing-value markers,
   unknown categories, and source locations. Interpretation returns
-  `MmcifInterpretation { model, report }`.
+  `MmcifInterpretation { model, report }`; canonical-model writing is a separate
+  operation over `MolecularModel`.
 
 mmCIF interpretation selects exactly one coordinate-model ID. The default,
 `RequireSingle`, rejects ambiguous multi-model input; `Select(id)` and `First`
@@ -121,6 +122,11 @@ records belong in the report/provenance.
 Interpretation constructs distinct Small/Macro molecule instances and assigns
 only conservative, evidence-backed roles. Exact source classification remains
 available in report/provenance data.
+
+mmCIF model writing emits one selected coordinate model from authoritative model
+positions. It preserves only its documented hierarchy, entity-kind, atom-site,
+and explicit covalent-bond subset and rejects canonical chemistry or model
+semantics outside that subset rather than silently dropping or coercing them.
 
 ## `MolecularModel`
 
@@ -197,7 +203,7 @@ bio         MacroMolecule and BioHierarchy
 smiles      SmilesDocument parse/interpret and writers
 molfile     MolfileDocument parse/interpret and writers
 sdf         SdfDocument parse/interpret and record writers
-mmcif       MmcifDocument parse/interpret
+mmcif       MmcifDocument parse/interpret and MolecularModel writing
 perception  explicit chemical perception and sanitization
 hydrogens   explicit small-molecule hydrogen topology normalization
 query       syntax-neutral query graphs and bounded SMARTS parsing

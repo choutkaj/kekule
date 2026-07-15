@@ -120,7 +120,7 @@ pub mod mmcif {
         MmcifAltLocPolicy, MmcifDataBlock, MmcifDocument, MmcifEntityKind, MmcifEntry,
         MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
         MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
-        MmcifParseOptions, MmcifValue,
+        MmcifParseOptions, MmcifValue, MmcifWriteError, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -137,6 +137,14 @@ pub mod mmcif {
         options: MmcifInterpretOptions,
     ) -> Result<MmcifInterpretation, MmcifInterpretError> {
         crate::io::interpret_mmcif(document, options)
+    }
+
+    /// Writes one canonical molecular model as a structural mmCIF data block.
+    pub fn write(
+        model: &crate::modeling::MolecularModel,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_model(model, options)
     }
 }
 
