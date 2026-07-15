@@ -1,9 +1,9 @@
 id = "query.smarts"
 title = "SMARTS query parsing"
 area = "query"
-version = 1
-implemented = false
-validated = false
-description = "Plan a SMARTS-like query representation and parser."
-depends_on = ["io.smiles.parse"]
-validation_required = []
+version = 2
+implemented = true
+validated = true
+description = "Parse a deliberately bounded, resource-limited SMARTS subset into the syntax-independent query graph."
+depends_on = ["query.graph"]
+validation_required = ["smoke"]

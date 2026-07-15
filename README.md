@@ -54,6 +54,30 @@ assert_eq!(salt.graph().connected_components().len(), 2);
 The dots describe disconnected graph components; the SMILES record still
 asserts one `SmallMolecule`.
 
+### Substructure queries
+
+`QueryGraph` is syntax-independent. The bounded SMARTS frontend creates one,
+and the separate substructure matcher consumes it. Target perception remains an
+explicit caller step.
+
+```rust
+use molecules::small::SmallMolecule;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let target = SmallMolecule::from_smiles_sanitized("CC(=O)O")?;
+    let query = molecules::query::parse_smarts("[C](=O)[O;H1]")?;
+    let matches =
+        molecules::substructure::find_substructure_matches(target.graph(), &query)?;
+
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+```
+
+Unsupported SMARTS primitives return structured errors; they are never
+silently approximated. Programmatic queries use the same `QueryGraphBuilder`,
+atom/bond predicate, and matching APIs without passing through SMARTS.
+
 ### Molecular modelling
 
 The modelling layer creates a fixed `ModelTopology` from distinct Small and

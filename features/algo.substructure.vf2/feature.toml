@@ -1,9 +1,15 @@
 id = "algo.substructure.vf2"
 title = "VF2 substructure search"
 area = "algorithms"
-version = 1
-implemented = false
-validated = false
-description = "Plan VF2-style substructure matching for small molecules."
-depends_on = ["query.smarts"]
-validation_required = []
+version = 2
+implemented = true
+validated = true
+description = "Perform deterministic, resource-bounded non-induced substructure matching directly on syntax-independent query graphs."
+depends_on = [
+  "core.graph",
+  "query.graph",
+  "algo.valence.rdkit-like",
+  "algo.rings.fast",
+  "algo.aromaticity.rdkit-like",
+]
+validation_required = ["smoke"]

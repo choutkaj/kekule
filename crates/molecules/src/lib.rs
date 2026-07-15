@@ -6,7 +6,20 @@ mod chemistry;
 pub mod core;
 mod io;
 pub mod modeling;
+pub mod query;
 pub mod small;
+
+/// Syntax-independent substructure matching algorithms.
+///
+/// Matching consumes `query::QueryGraph` and current target perception state;
+/// it never invokes parsing, sanitization, or perception implicitly.
+pub mod substructure {
+    pub use crate::algorithms::{
+        find_substructure_match, find_substructure_matches, find_substructure_matches_with_options,
+        QueryMatch, QueryPerception, SubstructureMatchError, SubstructureMatchOptions,
+        SubstructureMatchWork, MAX_SUBSTRUCTURE_QUERY_ATOMS,
+    };
+}
 
 pub mod smiles {
     pub use crate::io::{

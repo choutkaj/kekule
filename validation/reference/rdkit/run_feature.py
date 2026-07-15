@@ -13,6 +13,7 @@ from typing import Any
 
 
 SUPPORTED_FEATURES = {
+    "algo.substructure.vf2",
     "algo.canonical-ranking",
     "algo.aromaticity.rdkit-like",
     "algo.rings.fast",
@@ -31,10 +32,32 @@ SUPPORTED_FEATURES = {
     "io.smiles.write",
     "io.smiles.canonical",
     "io.smiles.isomeric",
+    "query.smarts",
     "stereo.cip",
 }
 
 HYDROGEN_VALIDATION_INDEX_PROPERTY = "_moleculesValidationOriginalIndex"
+
+BOUNDED_SUBSTRUCTURE_QUERIES = (
+    "[#6]",
+    "[!#6]",
+    "A",
+    "a",
+    "[C,N]",
+    "[C,H]",
+    "[H,D]",
+    "[!H]",
+    "[#6]-[#8]",
+    "C=O",
+    "[O;H1]",
+    "[#8;+0]",
+    "[#6,#7;H1]",
+    "[#6;R]",
+    "[R0]",
+    "C@C",
+    "C!@C",
+    "c1ccccc1",
+)
 
 
 def main() -> int:
@@ -203,6 +226,17 @@ def generate_document(
                 if isomeric_smiles_record_is_stereo_bearing(record, rdkit["Chem"])
             ]
         expected = {"records": [isomeric_smiles_record(record) for record in records]}
+    elif feature_id == "query.smarts":
+        expected = {
+            "records": smarts_query_records(fixture_path, rdkit["Chem"])
+        }
+    elif feature_id == "algo.substructure.vf2":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
+        expected = {
+            "records": [
+                substructure_record(record, rdkit["Chem"]) for record in records
+            ]
+        }
     elif feature_id == "algo.rings.fast":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [ring_record(record) for record in records]}
@@ -289,6 +323,71 @@ def read_sdf_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
             }
         )
     return records
+
+
+def smarts_query_records(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(fixture_path.read_text(encoding="utf-8").splitlines()):
+        smarts = raw_line.strip()
+        if not smarts or smarts.startswith("#"):
+            continue
+        query = Chem.MolFromSmarts(smarts)
+        records.append(
+            {
+                "record_index": index,
+                "status": "ok" if query is not None else "parse_error",
+                "smarts": smarts,
+                "atom_count": query.GetNumAtoms() if query is not None else None,
+                "bond_count": query.GetNumBonds() if query is not None else None,
+            }
+        )
+    return records
+
+
+def substructure_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
+    if record["status"] != "ok" or record["mol"] is None:
+        return {
+            "record_index": record["record_index"],
+            "status": "parse_error",
+            "title": record["title"],
+            "queries": [],
+        }
+    mol = Chem.Mol(record["mol"])
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception:
+        return {
+            "record_index": record["record_index"],
+            "status": "sanitize_error",
+            "title": record["title"],
+            "queries": [],
+        }
+
+    queries: list[dict[str, Any]] = []
+    for smarts in BOUNDED_SUBSTRUCTURE_QUERIES:
+        query = Chem.MolFromSmarts(smarts)
+        if query is None:
+            raise RuntimeError(f"validation SMARTS did not parse in RDKit: {smarts}")
+        matches = {
+            tuple(sorted(match))
+            for match in mol.GetSubstructMatches(
+                query,
+                uniquify=True,
+                maxMatches=1000,
+            )
+        }
+        queries.append(
+            {
+                "smarts": smarts,
+                "matches": [list(match) for match in sorted(matches)],
+            }
+        )
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "queries": queries,
+    }
 
 
 def read_records_by_suffix(fixture_path: Path, Chem: Any) -> list[dict[str, Any]]:

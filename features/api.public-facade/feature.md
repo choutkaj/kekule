@@ -6,7 +6,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Behavior/API
 
-- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `canon`, and `modeling`.
+- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`, `substructure`, `canon`, and `modeling`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -22,6 +22,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Explicit small-molecule hydrogen topology transforms live under `hydrogens`
   and as `SmallMolecule` convenience methods; they are not hidden in parsing or
   sanitization.
+- Syntax-independent query graphs and bounded SMARTS translation live under
+  `query`; matching lives under `substructure`, preserving one-way dependency
+  on the query IR. Neither namespace is added to the prelude.
 
 ## Implementation Notes
 
@@ -62,3 +65,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   structured potential failures through the focused modelling namespace.
 - v10: Add the focused `hydrogens` namespace and `SmallMolecule`
   conveniences for transactional explicit/implicit hydrogen normalization.
+- v11: Add focused `query` and `substructure` namespaces for syntax-neutral
+  query graphs, bounded SMARTS parsing, and matching without expanding the prelude.
