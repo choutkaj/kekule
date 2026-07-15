@@ -480,7 +480,7 @@ fn compare_one_golden(
         };
     let expected = normalize_for_comparison(expected);
     let actual = normalize_for_comparison(&actual);
-    if let Some(diff) = first_json_diff("$", &expected, &actual) {
+    if let Some(diff) = first_json_diff(&manifest.feature_id, "$", &expected, &actual) {
         return Ok(FixtureComparison::Failed(format!(
             "{} differs from implementation output for fixture `{fixture}`: {diff}",
             golden_path.display()

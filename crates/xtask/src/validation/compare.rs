@@ -1,6 +1,11 @@
 use crate::*;
 
-pub(crate) fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> Option<String> {
+pub(crate) fn first_json_diff(
+    feature_id: &str,
+    path: &str,
+    expected: &Value,
+    actual: &Value,
+) -> Option<String> {
     match (expected, actual) {
         (Value::Object(expected), Value::Object(actual)) => {
             for key in expected.keys() {
@@ -8,7 +13,8 @@ pub(crate) fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> O
                 let Some(actual_value) = actual.get(key) else {
                     return Some(format!("{next} missing from actual output"));
                 };
-                if let Some(diff) = first_json_diff(&next, &expected[key], actual_value) {
+                if let Some(diff) = first_json_diff(feature_id, &next, &expected[key], actual_value)
+                {
                     return Some(diff);
                 }
             }
@@ -28,9 +34,12 @@ pub(crate) fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> O
                 ));
             }
             for (index, (expected_value, actual_value)) in expected.iter().zip(actual).enumerate() {
-                if let Some(diff) =
-                    first_json_diff(&format!("{path}[{index}]"), expected_value, actual_value)
-                {
+                if let Some(diff) = first_json_diff(
+                    feature_id,
+                    &format!("{path}[{index}]"),
+                    expected_value,
+                    actual_value,
+                ) {
                     return Some(diff);
                 }
             }
@@ -42,6 +51,42 @@ pub(crate) fn first_json_diff(path: &str, expected: &Value, actual: &Value) -> O
                     .as_f64()
                     .zip(actual.as_f64())
                     .map(|(expected, actual)| (expected - actual).abs() <= 0.0015)
+                    .unwrap_or(false) =>
+        {
+            None
+        }
+        (Value::Number(expected), Value::Number(actual))
+            if feature_id == "bio.secondary-structure.dssp"
+                && (path.ends_with(".phi_degrees")
+                    || path.ends_with(".psi_degrees")
+                    || path.ends_with(".kappa_degrees")
+                    || path.ends_with(".alpha_degrees"))
+                && expected
+                    .as_f64()
+                    .zip(actual.as_f64())
+                    .map(|(expected, actual)| (expected - actual).abs() <= 0.15)
+                    .unwrap_or(false) =>
+        {
+            None
+        }
+        (Value::Number(expected), Value::Number(actual))
+            if feature_id == "bio.secondary-structure.dssp"
+                && path.ends_with(".tco")
+                && expected
+                    .as_f64()
+                    .zip(actual.as_f64())
+                    .map(|(expected, actual)| (expected - actual).abs() <= 0.0015)
+                    .unwrap_or(false) =>
+        {
+            None
+        }
+        (Value::Number(expected), Value::Number(actual))
+            if feature_id == "bio.secondary-structure.dssp"
+                && path.ends_with(".energy_kcal_per_mol")
+                && expected
+                    .as_f64()
+                    .zip(actual.as_f64())
+                    .map(|(expected, actual)| (expected - actual).abs() <= 0.051)
                     .unwrap_or(false) =>
         {
             None
@@ -184,4 +229,20 @@ pub(crate) fn slugify_fixture(fixture: &str) -> String {
 
 pub(crate) fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dssp_numeric_tolerances_do_not_relax_other_features() {
+        let expected = json!({ "phi_degrees": -75.0 });
+        let actual = json!({ "phi_degrees": -74.9 });
+
+        assert!(
+            first_json_diff("bio.secondary-structure.dssp", "$", &expected, &actual,).is_none()
+        );
+        assert!(first_json_diff("unrelated.feature", "$", &expected, &actual).is_some());
+    }
 }

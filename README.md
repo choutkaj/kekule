@@ -173,6 +173,23 @@ C C1 GLY A 1 1 0.0 0.0 0.0
 }
 ```
 
+Protein secondary structure is an explicit, read-only analysis of that selected
+coordinate snapshot:
+
+```rust
+let assignment = molecules::dssp::assign(
+    interpreted.model(),
+    molecules::dssp::DsspOptions::default(),
+)?;
+for residue in assignment.residues() {
+    println!("{} {}", residue.key(), residue.secondary_structure().code());
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The DSSP result is not cached in the model. Re-run assignment explicitly after
+changing coordinates.
+
 ## License
 
 `molecules` is available under the MIT license.

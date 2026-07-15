@@ -7,15 +7,15 @@ coordinate snapshot using the DSSP hydrogen-bond and geometric definitions. The
 feature is structural analysis, not sequence-based secondary-structure
 prediction.
 
-The target is DSSP 4-compatible behavior, including polyproline-II (kappa)
-helices. Analysis is read-only and returns a derived result; it never installs
-secondary-structure labels into `Molecule`, `MacroMolecule`, `SmcraHierarchy`,
-or `Model`.
+The implementation targets DSSP 4.6.1 behavior, including polyproline-II
+(kappa) helices. Analysis is read-only and returns a derived result; it never
+installs secondary-structure labels into `Molecule`, `MacroMolecule`,
+`SmcraHierarchy`, or `Model`.
 
 ## Behavior/API
 
-- The planned public namespace is `molecules::dssp`.
-- The primary entry point is conceptually
+- The public namespace is `molecules::dssp`.
+- The primary entry point is
   `dssp::assign(&Model, DsspOptions) -> Result<DsspResult, DsspError>`.
 - Input is one already-constructed `Model`, whose positions are the sole
   authoritative coordinate set. DSSP does not parse files, choose an mmCIF
@@ -37,7 +37,7 @@ or `Model`.
   `omega`, `alpha`, `kappa`, and `TCO`), up to two strongest donor and acceptor
   hydrogen-bond partners with energies, and beta bridge/ladder/sheet
   relationships when present.
-- `DsspStatistics` reports analyzed residues and chains, hydrogen bonds,
+- `DsspStatistics` reports analyzed residues and chain segments, hydrogen bonds,
   secondary-structure counts, and intra-chain versus inter-chain beta bridges.
 - `DsspReport` records ignored instances, non-peptide residues, incomplete or
   skipped residues, detected gaps, reconstructed amide hydrogens, and consumed
@@ -54,7 +54,7 @@ or `Model`.
 
 ## Implementation Notes
 
-- Implement the algorithm inside the `molecules` crate behind the focused
+- The algorithm lives inside the `molecules` crate behind the focused
   `molecules::dssp` facade. Do not create a separate DSSP crate or a runtime
   binding to `libdssp`.
 - Use `SmcraHierarchy` chain and residue order plus atom-site labels to identify
@@ -65,16 +65,25 @@ or `Model`.
   coordinate checks because mmCIF interpretation does not infer template
   polymer bonds. Missing or discontinuous residues split local pattern
   recognition.
-- Reconstruct backbone amide-hydrogen positions deterministically according to
-  the DSSP convention; proline is not treated as an amide hydrogen donor.
-- Reproduce the Kabsch-Sander electrostatic hydrogen-bond calculation and DSSP
-  assignment precedence, then add DSSP 4 polyproline-II recognition. Use
-  spatial pruning for candidate pairs rather than an unbounded all-pairs pass.
+- Backbone amide hydrogens are reconstructed deterministically according to the
+  DSSP convention; proline is not treated as an amide-hydrogen donor. DSSP's
+  compatibility behavior of deriving a non-initial residue's hydrogen from the
+  preceding complete residue table row is retained even across a reported
+  chain break, while continuity still gates torsions and local patterns.
+- The Kabsch-Sander electrostatic hydrogen-bond calculation, assignment
+  precedence, beta bridge/ladder construction, and DSSP 4 polyproline-II rule
+  are implemented directly. A deterministic 9 angstrom C-alpha spatial index
+  bounds candidate enumeration instead of using an unbounded all-pairs pass.
+- DSSP 4.6.1 stores coordinate points and evaluates its distance kernel as
+  single-precision floats. Only that reference-compatibility boundary is
+  reproduced so threshold and top-two tie behavior matches `mkdssp`; public
+  coordinates, angles, energies, and result fields remain `f64`.
 - Sheet and ladder identifiers must be deterministic under atom insertion-order
   changes while retaining hierarchy chain/residue order in the public result.
-- Physical values must use the canonical quantity types supplied to
-  `molecules` by the standalone units dependency. This feature must not define
-  a second units system or expose undocumented raw-unit `f64` values.
+- This repository has no standalone units dependency. Consistent with the live
+  `Model` and potential APIs, physical values are documented `f64` values:
+  coordinates and distance limits are angstroms, angles are degrees, and
+  hydrogen-bond energies are kcal/mol. Unit-bearing names prevent ambiguity.
 - The scientific anchors are Kabsch and Sander's original definition
   ([DOI 10.1002/bip.360221211](https://doi.org/10.1002/bip.360221211)) and
   DSSP 4 ([DOI 10.1002/pro.70208](https://doi.org/10.1002/pro.70208)). The
@@ -83,26 +92,36 @@ or `Model`.
 
 ## Validation
 
-- Before setting `implemented = true`, pin an exact DSSP 4 release, executable
-  checksum, command line, and reference environment for golden generation.
-- Externally supplied, provenance-pinned PDB/mmCIF fixtures must compare
-  residue inclusion, chain breaks, nine-state summary assignments, the two
-  strongest donor/acceptor hydrogen bonds and their energies, beta partners,
-  ladders/sheets, and available backbone/geometric values.
-- Start with targeted `pdb-10` coverage and require broader `pdb-100` comparison
-  before claiming general compatibility. Add those corpora to
-  `validation_required` only when their DSSP manifests and current evidence
-  exist.
-- Focused unit regressions should cover alpha, 3-10, pi, and polyproline-II
-  helices; parallel and antiparallel beta topology; turns and bends; chain
-  gaps; termini; proline donors; incomplete and non-standard residues;
-  inter-chain interactions; degenerate geometry; determinism; and every
-  resource limit.
+- Golden generation is pinned to Biopython 1.87 and `mkdssp version 4.6.1`.
+  The Windows reference executable used for the committed evidence has SHA256
+  `963f7e3bfc46818817639430485ad698faee3fd4d26a75d25d895af8925b3d1f`.
+  `validation/reference/biopython/environment.yml` recreates the version-pinned
+  reference environment, and each manifest and golden records the command,
+  executable checksum, fixture checksum, and `runtime_dependency = false`.
+- The reference runner first constructs the same highest-occupancy coordinate
+  snapshot used by normal mmCIF interpretation. Biopython invokes legacy DSSP
+  on that explicit snapshot; a second `mkdssp --output-format=mmcif` call on the
+  same snapshot supplies DSSP4-only geometry and topology fields. Neither tool
+  is a Rust runtime dependency.
+- Exact implementation-golden comparison covers residue author and label
+  identity, residue inclusion/order, chain breaks, the nine-state summary,
+  helix-position flags, sheet/strand/ladder topology and orientation, and both
+  retained donor/acceptor slots. Phi, psi, kappa, and alpha use a 0.15 degree
+  tolerance; TCO uses 0.0015; one-decimal legacy hydrogen-bond energies use
+  0.051 kcal/mol. Tolerances were fixed before broad validation.
+- Required repository-wide evidence uses the checked-in 1CRN smoke fixture.
+  The targeted deterministic `pdb-10` subset and all 100 fixtures in the
+  provenance-pinned `pdb-100` corpus are local-only supplemental evidence: they
+  are run explicitly and cannot gate validation state in ordinary clones whose
+  large corpus data is intentionally ignored.
+- Focused regressions directly cover the complete nine-state alphabet,
+  alpha/3-10/pi/polyproline-II construction, parallel and antiparallel bridge
+  formulas, deterministic top-two retention, snapshot immutability, and every
+  resource-limit class. The broad external corpora additionally exercise chain
+  gaps, termini, proline donors, incomplete and non-standard residues,
+  inter-chain interactions, turns/bends, and multi-sheet topology.
 - Exact categorical fields must match the pinned reference. Floating-point
-  energies and angles use documented tolerances chosen before golden
-  generation; tolerances may not be widened merely to make mismatches pass.
-- The feature remains `implemented = false`, `validated = false`, and has no
-  required validation corpus while this is only a contract.
+  tolerances may not be widened merely to make mismatches pass.
 
 ## Out Of Scope
 
@@ -120,4 +139,7 @@ or `Model`.
 
 ## Revision Notes
 
+- v2: Implement the read-only DSSP 4.6.1 kernel and public API, pin Biopython
+  1.87 plus DSSP 4.6.1 reference generation, require checked-in smoke evidence,
+  and add explicit PDB-10/PDB-100 supplemental validation.
 - v1: Establish the planned DSSP 4-compatible, read-only analysis contract.
