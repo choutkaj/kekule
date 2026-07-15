@@ -24,6 +24,8 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 
 - Unit tests cover multi-record round trips, multiline data fields, and Molfile metadata symmetry.
 - RDKit-generated goldens compare SDF writer records for external PubChem fixtures.
+- All ignored non-smoke corpora remain available for explicit local-only
+  validation but do not determine repository-wide validation state.
 
 ## Out Of Scope
 
@@ -39,3 +41,5 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - v6: Inherit atom-block valence/no-implicit output and lossless high-spin
   radical rejection from Molfile V2000 writing.
 - v7: Hard break to canonical `SdfRecord` input and record-owned metadata.
+- v8: Make the committed smoke corpus the CI-reproducible required evidence
+  tier while retaining every ignored corpus on demand.

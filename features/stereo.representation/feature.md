@@ -98,3 +98,5 @@ not atom/bond payload flags.
   for broader drug-like stereo representation preservation coverage.
 - v9: Add PL-REX ligand SDF packs to the representation validation contract for
   coordinate- and Molfile-stereo source-mark regression coverage.
+- v10: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

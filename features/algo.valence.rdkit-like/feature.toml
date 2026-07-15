@@ -1,9 +1,9 @@
 id = "algo.valence.rdkit-like"
 title = "RDKit-like valence perception"
 area = "algorithms"
-version = 12
+version = 13
 implemented = true
 validated = false
 description = "Assign RDKit-like implicit hydrogens from charge-adjusted periodic-table valences, with strict reporting and an explicit permissive inspection mode."
 depends_on = ["core.graph", "core.atom-bond"]
-validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "pl-rex", "enamine-diversity"]
+validation_required = ["smoke"]

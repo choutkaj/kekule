@@ -74,3 +74,5 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   atoms as non-candidates, and add bounded valence-demand localization for
   imported aromatic components that are valid chemistry but not aromatic.
 - v92: Store derived membership and model provenance only in `PerceptionState`.
+- v93: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

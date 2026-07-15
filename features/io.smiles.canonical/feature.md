@@ -78,3 +78,5 @@ symmetry edge case.
 - v29: Preserve collapsed explicit-hydrogen counts while canonicalizing an
   unsanitized molecule without falsely marking full valence perception as
   installed.
+- v30: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

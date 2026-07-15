@@ -31,6 +31,8 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 
 - Unit tests cover writer parse-back preservation for metadata, coordinates, atom maps, charges, isotopes, radicals, and supported source bond stereo marks.
 - RDKit-generated goldens compare Molfile-preservable content for the same external PubChem fixtures used by the V2000 writer tier.
+- All ignored non-smoke corpora remain available for explicit local-only
+  validation but do not determine repository-wide validation state.
 
 ## Out Of Scope
 
@@ -48,3 +50,5 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
   silently mapping an unrepresentable high-spin state.
 - v8: Migrate parse-back validation to `MolfileDocument` and remove
   molecule-property header coupling.
+- v9: Make the committed smoke corpus the CI-reproducible required evidence
+  tier while retaining every ignored corpus on demand.

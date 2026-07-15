@@ -111,6 +111,12 @@ pub(crate) fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box
                 path.display()
             )));
         }
+        if validation_corpus(corpus).is_some_and(|registered| registered.local_only) {
+            return Err(boxed_error(format!(
+                "{} lists local-only validation corpus `{corpus}` in `validation_required`; local-only corpora may be run explicitly but cannot determine repository-wide validation state",
+                path.display()
+            )));
+        }
         if !seen_corpora.insert(corpus) {
             return Err(boxed_error(format!(
                 "{} lists validation corpus `{corpus}` more than once",

@@ -24,19 +24,12 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
     let corpora = VALIDATION_CORPORA
         .iter()
-        .map(|(id, _)| *id)
+        .map(|corpus| corpus.id)
         .filter(|id| selector == "all" || selector == *id)
         .collect::<Vec<_>>();
     let mut locks = BTreeMap::new();
     for corpus_id in &corpora {
         let descriptor = read_corpus_descriptor(corpus_id)?;
-        if descriptor.id != *corpus_id {
-            return Err(boxed_error(format!(
-                "{} declares id `{}`, expected `{corpus_id}`",
-                corpus_descriptor_path(corpus_id).display(),
-                descriptor.id
-            )));
-        }
         if !descriptor.ready {
             println!("corpus `{corpus_id}` is declared but not built; skipping integrity checks");
             continue;
@@ -72,6 +65,8 @@ pub(crate) struct CorpusDescriptor {
     pub(crate) ready: bool,
     pub(crate) expected_count: usize,
     #[serde(default)]
+    pub(crate) local_only: bool,
+    #[serde(default)]
     pub(crate) parent: Option<String>,
     #[serde(default)]
     pub(crate) seed: Option<String>,
@@ -95,20 +90,16 @@ pub(crate) struct CorpusDashboardInfo {
 pub(crate) fn read_dashboard_corpus_info(
 ) -> Result<BTreeMap<String, CorpusDashboardInfo>, Box<dyn Error>> {
     let mut summaries = BTreeMap::new();
-    for (corpus, label) in VALIDATION_CORPORA {
-        let descriptor = read_corpus_descriptor(corpus)?;
-        if descriptor.id != *corpus {
-            return Err(boxed_error(format!(
-                "{} declares id `{}`, expected `{corpus}`",
-                corpus_descriptor_path(corpus).display(),
-                descriptor.id
-            )));
-        }
+    for corpus in VALIDATION_CORPORA
+        .iter()
+        .filter(|corpus| !corpus.local_only)
+    {
+        let descriptor = read_corpus_descriptor(corpus.id)?;
         summaries.insert(
-            (*corpus).to_owned(),
+            corpus.id.to_owned(),
             CorpusDashboardInfo {
-                id: (*corpus).to_owned(),
-                label: (*label).to_owned(),
+                id: corpus.id.to_owned(),
+                label: corpus.label.to_owned(),
                 title: descriptor.title,
                 expected_count: descriptor.expected_count,
             },
@@ -172,7 +163,27 @@ pub(crate) fn corpus_descriptor_path(corpus: &str) -> PathBuf {
 pub(crate) fn read_corpus_descriptor(corpus: &str) -> Result<CorpusDescriptor, Box<dyn Error>> {
     let path = corpus_descriptor_path(corpus);
     let text = fs::read_to_string(&path)?;
-    toml::from_str(&text).map_err(|error| boxed_error(format!("{}: {error}", path.display())))
+    let descriptor: CorpusDescriptor = toml::from_str(&text)
+        .map_err(|error| boxed_error(format!("{}: {error}", path.display())))?;
+    let registered = validation_corpus(corpus)
+        .ok_or_else(|| boxed_error(format!("unknown validation corpus `{corpus}`")))?;
+    if descriptor.id != registered.id {
+        return Err(boxed_error(format!(
+            "{} declares id `{}`, expected `{}`",
+            path.display(),
+            descriptor.id,
+            registered.id
+        )));
+    }
+    if descriptor.local_only != registered.local_only {
+        return Err(boxed_error(format!(
+            "{} declares local_only={}, expected {} from the validation corpus registry",
+            path.display(),
+            descriptor.local_only,
+            registered.local_only
+        )));
+    }
+    Ok(descriptor)
 }
 
 pub(crate) fn read_source_lock(corpus: &str) -> Result<SourceLock, Box<dyn Error>> {

@@ -30,3 +30,5 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 
 - v1: Shared conformer storage.
 - v2: Add PubChem-100k as required broad-corpus validation evidence.
+- v3: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

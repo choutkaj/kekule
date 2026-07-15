@@ -220,3 +220,5 @@ stereo transfer.
   ambiguity rather than rejecting valid chemistry. Preserve explicit
   hypervalent and pyramidal heteroatom wedge centers without broadening
   unmarked candidate detection.
+- v22: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

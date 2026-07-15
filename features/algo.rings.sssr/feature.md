@@ -47,3 +47,5 @@ Compute a compact ring basis for downstream small-molecule perception.
 - v8: Replace per-bond shortest-path enumeration with RDKit's degree-trimming
   candidate discovery and exact same-size, shared-bond,
   unique-bond-preserving SSSR replacement rule.
+- v10: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

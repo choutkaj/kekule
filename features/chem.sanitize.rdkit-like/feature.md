@@ -76,3 +76,5 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   explicit unknown double-bond stereo, align conflicting multi-wedge handling
   with RDKit's non-fatal warning semantics, and gate oxyhalogen charge cleanup
   on a general terminal-oxygen valence pattern.
+- v13: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.
