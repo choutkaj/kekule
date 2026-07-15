@@ -15,6 +15,9 @@ into a `MolecularModel` with distinct molecule instances and a report.
   alternate-location selection.
 - Uses entity, structural-instance, atom-site, and declared-connection metadata
   to build Small/Macro instances. Only declared covalent links merge boundaries.
+- Preserves `sing`, `doub`, `trip`, and `quad` values from
+  `_struct_conn.pdbx_value_order`; a missing value defaults to single and an
+  unsupported explicit value returns a structured interpretation error.
 - Assigns conservative evidence-backed roles and exposes exact source
   classifications through graph properties/report data.
 - Reports selected and ignored models, altloc omissions, inferred entity kinds,
@@ -33,7 +36,8 @@ into a `MolecularModel` with distinct molecule instances and a report.
 
 - Tests cover mixed typed instances and roles, complete positions, default
   multi-model rejection, explicit selection, altloc policy/reporting, missing
-  coordinates, covalent merging, and noncovalent separation.
+  coordinates, covalent merging, noncovalent separation, supported connection
+  order interpretation, and unknown-order rejection.
 - Successful bounded fuzz parses traverse the loss-preserving document and then
   exercise explicit selected-model interpretation and qualified model lookup.
 
@@ -48,3 +52,5 @@ into a `MolecularModel` with distinct molecule instances and a report.
 - v2: Remove direct whole-file molecule reader.
 - v3: Hard break to selected-model `MolecularModel` output and remove
   `MolecularContents`/`Solvent`.
+- v4: Preserve the four PDBx/mmCIF covalent bond orders carried by
+  `_struct_conn.pdbx_value_order` instead of coercing every connection to single.

@@ -1,0 +1,13 @@
+id = "io.mmcif.write"
+title = "mmCIF molecular model writer"
+area = "io"
+version = 1
+implemented = true
+validated = false
+description = "Write a supported canonical MolecularModel as structural mmCIF with hierarchy, coordinates, entity typing, and explicit covalent connectivity."
+depends_on = [
+  "bio.hierarchy.smcra",
+  "bio.mmcif.interpret",
+  "model.system",
+]
+validation_required = []

@@ -1,7 +1,7 @@
 id = "api.public-facade"
 title = "Public API facade"
 area = "api"
-version = 11
+version = 12
 implemented = true
 validated = false
 description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."
@@ -12,6 +12,7 @@ depends_on = [
   "bio.hierarchy.smcra",
   "bio.mmcif.interpret",
   "io.mmcif.parse",
+  "io.mmcif.write",
   "chem.sanitize.rdkit-like",
   "chem.hydrogen-normalization",
   "query.graph",
