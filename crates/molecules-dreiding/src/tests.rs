@@ -29,7 +29,7 @@ fn molecule(
     for (&atom, &position) in atoms.iter().zip(positions) {
         conformer.set_position(atom, position);
     }
-    let conformer = graph.add_conformer(conformer);
+    let conformer = graph.add_conformer(conformer).expect("valid conformer");
     (SmallMolecule::from_graph(graph), conformer)
 }
 
@@ -102,7 +102,7 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
     conformer.set_position(oxygen, Point3::new(0.0, 0.0, 0.0));
     conformer.set_position(first_hydrogen, Point3::new(0.9575, 0.0, 0.0));
     conformer.set_position(second_hydrogen, Point3::new(-0.2399, 0.9272, 0.0));
-    let conformer = graph.add_conformer(conformer);
+    let conformer = graph.add_conformer(conformer).expect("valid conformer");
     let model =
         MolecularModel::from_small_molecule(&SmallMolecule::from_graph(graph), conformer).unwrap();
 
@@ -126,7 +126,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let id = graph.add_atom(atom.clone());
     let mut conformer = Conformer::new();
     conformer.set_position(id, Point3::default());
-    let conformer_id = graph.add_conformer(conformer);
+    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
     let model =
         MolecularModel::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id)
             .unwrap();
@@ -142,7 +142,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let id = graph.add_atom(atom);
     let mut conformer = Conformer::new();
     conformer.set_position(id, Point3::default());
-    let conformer_id = graph.add_conformer(conformer);
+    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
     let model =
         MolecularModel::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id)
             .unwrap();

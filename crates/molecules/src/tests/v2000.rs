@@ -539,7 +539,10 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         let atom_id = molecule.graph_mut().add_atom(atom);
         conformer.set_position(atom_id, Point3::new(-(index as f64), index as f64, 0.0));
     }
-    molecule.graph_mut().add_conformer(conformer);
+    molecule
+        .graph_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
 
     let mol_text = molfile::write_v2000(&molecule).expect("metadata molecule should write");
     assert_eq!(mol_text.matches("M  CHG").count(), 2);

@@ -394,7 +394,7 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         .insert("name".to_owned(), PropValue::String("triangle".to_owned()));
     let mut conformer = Conformer::new();
     conformer.set_position(atoms[0], Point3::new(0.0, 0.0, 0.0));
-    let conformer_id = mol.add_conformer(conformer);
+    let conformer_id = mol.add_conformer(conformer).expect("valid conformer");
     mol.conformer_mut(conformer_id)
         .expect("conformer exists")
         .set_position(atoms[1], Point3::new(1.0, 0.0, 0.0));
@@ -402,4 +402,21 @@ fn property_and_coordinate_edits_preserve_computed_state() {
     assert_eq!(mol.perception(), &before);
     assert!(mol.ring_membership().is_some());
     assert!(mol.ring_set().is_some());
+}
+
+#[test]
+fn conformer_attachment_rejects_coordinates_for_non_live_atoms_transactionally() {
+    let mut mol = Molecule::new();
+    let deleted = mol.add_atom(carbon());
+    let live = mol.add_atom(oxygen());
+    mol.delete_atom(deleted).expect("delete atom");
+    let mut conformer = Conformer::new();
+    conformer.set_position(deleted, Point3::new(0.0, 0.0, 0.0));
+    conformer.set_position(live, Point3::new(1.0, 0.0, 0.0));
+
+    assert!(matches!(
+        mol.add_conformer(conformer),
+        Err(MoleculeError::InvalidAtomId(id)) if id == deleted
+    ));
+    assert!(mol.conformers().next().is_none());
 }

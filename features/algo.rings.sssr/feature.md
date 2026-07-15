@@ -9,7 +9,8 @@ Compute a compact ring basis for downstream small-molecule perception.
 - Exposes `perception::rings::{RingSet, Ring, RingWork, RingPerceptionOptions, RingPerceptionError, perceive_ring_set, perceive_ring_set_with_options}`.
 - Reports ring atom and bond IDs for a deterministic cycle basis.
 - Reports graph size, candidate cycles, equivalent shortest paths, path expansions, queue/stack peaks, and total work.
-- Returns a structured resource-limit error without caching a partial ring set.
+- Returns a structured `ResourceLimit` or `IncompleteRingCoverage` error without
+  caching a partial ring set.
 - Sets ring perception state through the existing ring membership machinery.
 - Cached ring sets are accessible only while ring perception remains fresh.
 
@@ -19,6 +20,11 @@ Compute a compact ring basis for downstream small-molecule perception.
   search one representative per degree-two chain with deterministic
   single-parent BFS, recover candidates hidden by duplicate roots, and handle
   degree-three cores before bounded basis completion.
+- Completes rare discovery shortfalls with bounded deterministic multi-root
+  BFS fundamental cycles, selected by cycle-space independence and shortest
+  length, so every bond identified as cyclic is covered by a returned ring.
+- Follows RDKit's SSSR coverage semantics for bridged and cage systems; it does
+  not force the returned ring count to equal the algebraic cycle rank.
 - Adds RDKit-like symmetric extra rings only when an unselected candidate can
   replace one same-sized basis ring without removing any bond uniquely supplied
   by that basis ring and the candidate shares at least one bond with it.
@@ -49,3 +55,7 @@ Compute a compact ring basis for downstream small-molecule perception.
   unique-bond-preserving SSSR replacement rule.
 - v10: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v11: Require every cyclic bond to be covered by the returned SSSR and report
+  an explicit coverage error separately from resource exhaustion; add a
+  bounded fundamental-cycle fallback when edge-local shortest cycles leave a
+  cyclic bond uncovered, while preserving RDKit cage-system ring counts.

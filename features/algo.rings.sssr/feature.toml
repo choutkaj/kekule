@@ -1,9 +1,9 @@
 id = "algo.rings.sssr"
 title = "Smallest-set ring basis"
 area = "algorithms"
-version = 10
+version = 11
 implemented = true
-validated = false
+validated = true
 description = "Compute a smallest-set ring basis for small-molecule workflows."
 depends_on = ["algo.rings.fast"]
 validation_required = ["smoke"]

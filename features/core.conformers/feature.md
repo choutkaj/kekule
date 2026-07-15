@@ -8,6 +8,8 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 
 - Exposes `Point3`, `Conformer`, `ConformerId`, and conformer accessors on `Molecule`.
 - Conformers store optional coordinates keyed by `AtomId`.
+- `Molecule::add_conformer` is fallible and transactionally rejects coordinates
+  assigned to invalid, deleted, or otherwise non-live atom IDs.
 - Adding or deleting topology invalidates coordinate-bearing conformers only when the topology operation removes atoms.
 
 ## Implementation Notes
@@ -32,3 +34,5 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 - v2: Add PubChem-100k as required broad-corpus validation evidence.
 - v3: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v4: Make conformer attachment fallible and reject coordinates for non-live
+  graph atoms without inserting a partial conformer.

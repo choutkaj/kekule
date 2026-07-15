@@ -940,7 +940,9 @@ fn build_molecule(
     {
         metadata.insert_role(MoleculeRole::Ion);
     }
-    let conformer = graph.add_conformer(conformer);
+    let conformer = graph
+        .add_conformer(conformer)
+        .expect("interpreted coordinates reference live atoms");
     if is_macro {
         let hierarchy = build_hierarchy(&graph, &representative, &atoms)?;
         Ok(BuiltMolecule::Macro {

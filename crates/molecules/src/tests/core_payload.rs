@@ -195,6 +195,59 @@ fn stereo_elements_groups_and_bond_marks_live_on_molecule() {
 }
 
 #[test]
+fn stereo_replacement_and_group_creation_preserve_graph_references() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon());
+    let a = mol.add_atom(oxygen());
+    let b = mol.add_atom(carbon());
+    let c = mol.add_atom(carbon());
+    let element = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(a),
+                    StereoCarrier::Atom(b),
+                    StereoCarrier::Atom(c),
+                    StereoCarrier::ImplicitHydrogen,
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("valid stereo element");
+    let before = mol.stereo_element(element).expect("element").clone();
+    let mut invalid = before.clone();
+    let StereoElementKind::Tetrahedral(stereo) = &mut invalid.kind else {
+        unreachable!("test element is tetrahedral");
+    };
+    stereo.center = AtomId::new(999);
+
+    assert!(matches!(
+        mol.replace_stereo_element(element, invalid),
+        Err(MoleculeError::InvalidAtomId(id)) if id == AtomId::new(999)
+    ));
+    assert_eq!(mol.stereo_element(element).expect("element"), &before);
+
+    assert!(matches!(
+        mol.add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Absolute,
+            members: Vec::new(),
+        }),
+        Err(MoleculeError::InvalidStereoReference(_))
+    ));
+    assert!(matches!(
+        mol.add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Absolute,
+            members: vec![element, element],
+        }),
+        Err(MoleculeError::InvalidStereoReference(_))
+    ));
+    assert!(mol.stereo_groups().next().is_none());
+    assert_eq!(mol.stereo_element(element).expect("element").group, None);
+}
+
+#[test]
 fn topology_deletions_prune_referencing_stereo_state() {
     let mut mol = Molecule::new();
     let a = mol.add_atom(carbon());

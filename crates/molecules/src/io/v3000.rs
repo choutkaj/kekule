@@ -200,7 +200,8 @@ fn parse_mol_v3000_lines(
     preserve_molfile_tetrahedral_hydrogens(&mut mol);
 
     if conformer.positions().next().is_some() {
-        mol.add_conformer(conformer);
+        mol.add_conformer(conformer)
+            .expect("parsed coordinates reference live atoms");
     }
     Ok(SmallMolecule::from_graph(mol))
 }

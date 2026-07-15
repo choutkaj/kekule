@@ -19,33 +19,33 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   atoms to deterministic localized single/double bonds when a bounded
   valence-demand matching exists; otherwise returns
   `InvalidAromaticRepresentation` transactionally.
+- Reports imported-aromatic matching budget exhaustion separately as
+  `ImportedAromaticKekulizationLimit`; it is never presented as invalid
+  chemistry.
 - Propagates bounded ring-perception failures as `AromaticityError::RingPerception`.
 
 ## Implementation Notes
 
 - Operates on the shared core `Molecule` graph and uses ring data from the `algo.rings.sssr` stack.
-- Uses one RDKit-style donor classifier for localized rings, imported aromatic-order rings, aromatic candidate checks, and fused-component electron counting.
+- Localizes imported aromatic-order components through one general
+  valence-demand matching step, then sends imported and already-localized input
+  through the same donor/candidate/Huckel engine.
+- Uses one RDKit-style donor classifier for aromatic candidate checks and
+  simple- and fused-component electron counting.
 - Supports common RDKit organic aromatic elements: C, N, O, P, S, Se, and Te.
 - Applies RDKit-like candidate gates for atom degree, explicit pi-bond count, triple bonds, exocyclic multiple-bond options, charge-adjusted default valence, and radical eligibility.
 - Counts localized saturated, vacant, lone-pair, anionic, and pi-bond donors with a `countAtomElec`-style helper using default valence, outer-shell electrons, charge, radical electrons, effective hydrogens, and exocyclic electronegativity.
 - Evaluates localized simple rings of arbitrary size through the same Huckel donor-count path, including two-electron rings such as cyclopropenyl cation.
-- Handles imported aromatic-bond rings with variable donor ranges and accepts them when the donor set contains a valid 4n+2 count.
 - Treats exocyclic pi bonds through electronegativity-aware donor logic rather than raw hetero-atom symbol checks.
-- Uses cached per-ring donor analysis so initial ring gates, Huckel counting, fused candidate admission, and fused single-bond protection share the same candidate state.
 - Applies a bounded RDKit-style fused-system pass: fused candidate rings are grouped by shared bonds, connected subsets are evaluated from small to large, subset atom sets use fused-ring multiplicity, and accepted subsets mark perimeter bonds.
 - Uses RDKit-like fused-system atom multiplicity, selected-subsystem perimeter bonds, additive accepted subsets, and the 24-atom fused-ring candidate cap.
-- Keeps simple-ring nonaromatic fused-bond suppression local to simple-ring assignment, then lets accepted fused subsets decide perimeter and internal bond flags from the accepted subset topology.
-- Keeps multi-protected fused-subset perimeter singles and explicitly rejected internal shared singles aliphatic, while allowing accepted fused subsets to aromatize shared bonds when member rings remain candidate-compatible and have individual Huckel or one-electron-deficient fused support.
-- Distinguishes fused support rings from perimeter-marking rings, so candidate-compatible hetero five-electron rings fused to a large accepted member can support internal fused aromaticity without aromatizing their non-shared perimeter.
-- Allows accepted fused subsets to aromatize internal shared bonds through candidate-compatible four-electron dione partners when the fused-system Huckel evaluator accepts the larger system.
-- Allows low-unsaturation chalcogen-containing fused candidates with exocyclic pi links into the surrounding fused system to reach the fused-subset Huckel evaluator.
-- Allows candidate-compatible five-member rings with a nitrogen lone-pair Huckel count and two fused-system-local exocyclic pi links to remain aromatic inside accepted macrocyclic/fused systems.
-- Distinguishes terminal exocyclic pi bonds from exocyclic pi bonds that are ring-local in an adjacent fused system, so six-member rings whose Huckel count depends on a nitrogen lone pair are not admitted when the fused topology keeps the neighboring pi bond aliphatic.
-- Does not run a post-Huckel molecule-specific cleanup pass. Carbonyl, imide, lactam, lactone, amidine, chalcogen-oxo, terminal-imine, and orphan-atom corrections are expected to emerge from the general donor/candidate/fused rules rather than separate motif clearing.
+- Does not run molecule- or functional-group-specific cleanup. Carbonyl,
+  heteroatom, radical, charge, and fused-ring behavior emerges from the shared
+  valence, donor, candidate, and graph-topology rules.
 - Keeps parsing separate from aromaticity perception. Canonical SMILES normalization issues exposed by these flags belong to `io.smiles.canonical`, not hidden aromaticity cleanup.
 - Treats unsupported or ambiguous systems conservatively rather than claiming full RDKit parity.
-- Uses the source-faithful localized donor path directly when the input has no
-  imported aromatic-order bonds, avoiding legacy ring-local motif gates.
+- The direct public API stages the complete operation, including ring
+  perception and imported-order localization, and commits only on success.
 
 ## Validation
 
@@ -56,7 +56,8 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 
 - Full RDKit aromaticity parity.
 - Runtime RDKit dependency.
-- Valence perception, sanitization policy, kekulization, stereochemistry, and parser behavior.
+- Valence perception, sanitization policy, general-purpose Kekule-form
+  enumeration, stereochemistry, and parser behavior.
 - Canonical SMILES normalization for every valid aromaticity assignment.
 
 ## Revision Notes
@@ -76,3 +77,7 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 - v92: Store derived membership and model provenance only in `PerceptionState`.
 - v93: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v94: Remove the parallel imported-aromatic perception engine and all
+  motif-specific fused exceptions, localize imported components before one
+  shared donor/candidate/Huckel pass, make the direct API transactional, widen
+  electron counts, and distinguish matching limits from invalid chemistry.

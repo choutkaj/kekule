@@ -538,19 +538,21 @@ fn inferred_smiles_bracket_radical(
         return Ok(None);
     };
     let occupied_valence = smiles_bracket_occupied_valence(mol, atom_id, atom);
-    Ok(match target_valence.saturating_sub(occupied_valence) {
-        0 => None,
-        1 => Some(AtomRadical::Doublet),
-        2 => Some(AtomRadical::Triplet),
-        3 => Some(AtomRadical::Quartet),
-        4 => Some(AtomRadical::Quintet),
-        _ => unreachable!("RDKit default valence is at most four"),
-    })
+    Ok(
+        match usize::from(target_valence).saturating_sub(occupied_valence) {
+            0 => None,
+            1 => Some(AtomRadical::Doublet),
+            2 => Some(AtomRadical::Triplet),
+            3 => Some(AtomRadical::Quartet),
+            4 => Some(AtomRadical::Quintet),
+            _ => unreachable!("RDKit default valence is at most four"),
+        },
+    )
 }
 
-fn smiles_bracket_occupied_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
+fn smiles_bracket_occupied_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> usize {
     if mol.atom_is_aromatic(atom_id).ok().flatten() != Some(true) {
-        return explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens);
+        return explicit_valence(mol, atom_id) + usize::from(atom.explicit_hydrogens);
     }
     let bond_valence_twice = mol
         .incident_bonds(atom_id)
@@ -565,8 +567,8 @@ fn smiles_bracket_occupied_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom)
             BondOrder::Quadruple => 8,
             BondOrder::Aromatic => 3,
         })
-        .sum::<u8>();
-    bond_valence_twice.saturating_add(atom.explicit_hydrogens.saturating_mul(2)) / 2
+        .sum::<usize>();
+    (bond_valence_twice + usize::from(atom.explicit_hydrogens) * 2) / 2
 }
 
 fn add_smiles_bond(

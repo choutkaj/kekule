@@ -16,6 +16,10 @@ not atom/bond payload flags.
 - `Molecule` stores stereo elements, stereo groups, and source bond marks with
   focused insertion, lookup, iteration, removal, and topology-aware pruning
   methods.
+- Stereo-element replacement validates every carrier and central reference
+  before commit. An element already in a relation group cannot change group
+  membership implicitly; callers must use the group operations explicitly.
+- Stereo groups must contain at least one unique live stereo element.
 - Local stereo is the authoritative representation. `R/S`, `E/Z`, `M/P`,
   sequence cis/trans, and pseudoasymmetric descriptors are optional derived
   descriptors and must be treated as cacheable views over local stereo.
@@ -100,3 +104,5 @@ not atom/bond payload flags.
   coordinate- and Molfile-stereo source-mark regression coverage.
 - v10: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v11: Replace unchecked mutable stereo-element access with validated
+  transactional replacement and reject empty or duplicate-member groups.
