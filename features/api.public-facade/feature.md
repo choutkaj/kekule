@@ -14,10 +14,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and separate macro validation/sanitization APIs.
 - SMILES, Molfile, SDF, and mmCIF expose format-specific Documents and explicit
   interpretation; superseded direct reader APIs are absent.
-- `mmcif::write` exposes explicit supported `MolecularModel` serialization with
+- `mmcif::write` exposes explicit supported `Model` serialization with
   format-specific options and structured rejection errors.
 - `Molecule` is one asserted entity and may have disconnected graph topology.
-- `mmcif::interpret` returns a selected-coordinate `MolecularModel` plus report;
+- `mmcif::interpret` returns a selected-coordinate `Model` plus report;
   `MolecularContents` and `Solvent` are removed.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 - Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
@@ -71,3 +71,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   query graphs, bounded SMARTS parsing, and matching without expanding the prelude.
 - v12: Add the foundational `mmcif::write` model-serialization surface without
   expanding the crate root or prelude.
+- v13: Hard-break the modelling facade to `Model`/`ModelBuilder` and the full
+  biomolecular hierarchy vocabulary to `Smcra*` names without compatibility
+  aliases.

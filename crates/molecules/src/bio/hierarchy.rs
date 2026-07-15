@@ -6,7 +6,7 @@ use crate::core::*;
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MacroMolecule {
     graph: Molecule,
-    hierarchy: BioHierarchy,
+    hierarchy: SmcraHierarchy,
 }
 
 impl MacroMolecule {
@@ -14,7 +14,7 @@ impl MacroMolecule {
         Self::default()
     }
 
-    pub fn from_parts(graph: Molecule, hierarchy: BioHierarchy) -> Self {
+    pub fn from_parts(graph: Molecule, hierarchy: SmcraHierarchy) -> Self {
         Self { graph, hierarchy }
     }
 
@@ -27,11 +27,11 @@ impl MacroMolecule {
         &mut self.graph
     }
 
-    pub fn hierarchy(&self) -> &BioHierarchy {
+    pub fn hierarchy(&self) -> &SmcraHierarchy {
         &self.hierarchy
     }
 
-    pub fn hierarchy_mut(&mut self) -> &mut BioHierarchy {
+    pub fn hierarchy_mut(&mut self) -> &mut SmcraHierarchy {
         &mut self.hierarchy
     }
 
@@ -40,23 +40,23 @@ impl MacroMolecule {
         self
     }
 
-    pub fn models(&self) -> impl Iterator<Item = (ModelId, &Model)> {
+    pub fn models(&self) -> impl Iterator<Item = (SmcraModelId, &SmcraModel)> {
         self.hierarchy.models()
     }
 
-    pub fn chains(&self) -> impl Iterator<Item = (ChainId, &Chain)> {
+    pub fn chains(&self) -> impl Iterator<Item = (SmcraChainId, &SmcraChain)> {
         self.hierarchy.chains()
     }
 
-    pub fn residues(&self) -> impl Iterator<Item = (ResidueId, &Residue)> {
+    pub fn residues(&self) -> impl Iterator<Item = (SmcraResidueId, &SmcraResidue)> {
         self.hierarchy.residues()
     }
 
-    pub fn atom_sites(&self) -> impl Iterator<Item = (AtomSiteId, &AtomSite)> {
+    pub fn atom_sites(&self) -> impl Iterator<Item = (SmcraAtomSiteId, &SmcraAtomSite)> {
         self.hierarchy.atom_sites()
     }
 
-    pub fn atom_site_for_atom(&self, atom: AtomId) -> Option<&AtomSite> {
+    pub fn atom_site_for_atom(&self, atom: AtomId) -> Option<&SmcraAtomSite> {
         self.hierarchy.atom_site_for_atom(atom)
     }
 
@@ -121,13 +121,13 @@ impl MacroMolecule {
 
     pub fn add_atom_site(
         &mut self,
-        residue: ResidueId,
+        residue: SmcraResidueId,
         atom: AtomId,
-        metadata: AtomSiteMetadata,
-    ) -> std::result::Result<AtomSiteId, BioHierarchyError> {
+        metadata: SmcraAtomSiteMetadata,
+    ) -> std::result::Result<SmcraAtomSiteId, SmcraHierarchyError> {
         self.graph
             .atom(atom)
-            .map_err(|_| BioHierarchyError::InvalidAtomId(atom))?;
+            .map_err(|_| SmcraHierarchyError::InvalidAtomId(atom))?;
         self.hierarchy.add_atom_site(residue, atom, metadata)
     }
 }
@@ -158,30 +158,30 @@ pub struct MacroValidateReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MacroValidateError {
     InvalidChainModel {
-        chain: ChainId,
-        model: ModelId,
+        chain: SmcraChainId,
+        model: SmcraModelId,
     },
     InvalidResidueChain {
-        residue: ResidueId,
-        chain: ChainId,
+        residue: SmcraResidueId,
+        chain: SmcraChainId,
     },
     InvalidResidueAtomSite {
-        residue: ResidueId,
-        site: AtomSiteId,
+        residue: SmcraResidueId,
+        site: SmcraAtomSiteId,
     },
     InvalidAtomSiteResidue {
-        site: AtomSiteId,
-        residue: ResidueId,
+        site: SmcraAtomSiteId,
+        residue: SmcraResidueId,
     },
     InvalidAtomSiteAtom {
-        site: AtomSiteId,
+        site: SmcraAtomSiteId,
         atom: AtomId,
     },
     InvalidAtomSiteOccupancy {
-        site: AtomSiteId,
+        site: SmcraAtomSiteId,
     },
     InvalidAtomSiteBFactor {
-        site: AtomSiteId,
+        site: SmcraAtomSiteId,
     },
     InvalidConformerAtom {
         conformer: ConformerId,
@@ -403,9 +403,9 @@ fn validate_macro_molecule(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ModelId(u32);
+pub struct SmcraModelId(u32);
 
-impl ModelId {
+impl SmcraModelId {
     pub const fn new(raw: u32) -> Self {
         Self(raw)
     }
@@ -420,9 +420,9 @@ impl ModelId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ChainId(u32);
+pub struct SmcraChainId(u32);
 
-impl ChainId {
+impl SmcraChainId {
     pub const fn new(raw: u32) -> Self {
         Self(raw)
     }
@@ -437,9 +437,9 @@ impl ChainId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ResidueId(u32);
+pub struct SmcraResidueId(u32);
 
-impl ResidueId {
+impl SmcraResidueId {
     pub const fn new(raw: u32) -> Self {
         Self(raw)
     }
@@ -454,9 +454,9 @@ impl ResidueId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AtomSiteId(u32);
+pub struct SmcraAtomSiteId(u32);
 
-impl AtomSiteId {
+impl SmcraAtomSiteId {
     pub const fn new(raw: u32) -> Self {
         Self(raw)
     }
@@ -471,23 +471,23 @@ impl AtomSiteId {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct BioHierarchy {
-    models: Vec<Model>,
-    chains: Vec<Chain>,
-    pub(crate) residues: Vec<Residue>,
-    atom_sites: Vec<AtomSite>,
-    atom_lookup: BTreeMap<AtomId, AtomSiteId>,
+pub struct SmcraHierarchy {
+    models: Vec<SmcraModel>,
+    chains: Vec<SmcraChain>,
+    pub(crate) residues: Vec<SmcraResidue>,
+    atom_sites: Vec<SmcraAtomSite>,
+    atom_lookup: BTreeMap<AtomId, SmcraAtomSiteId>,
     pub props: PropMap,
 }
 
-impl BioHierarchy {
+impl SmcraHierarchy {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn add_model(&mut self, model_id: impl Into<String>) -> ModelId {
-        let id = ModelId::new(self.models.len() as u32);
-        self.models.push(Model {
+    pub fn add_model(&mut self, model_id: impl Into<String>) -> SmcraModelId {
+        let id = SmcraModelId::new(self.models.len() as u32);
+        self.models.push(SmcraModel {
             id,
             model_id: model_id.into(),
             chains: Vec::new(),
@@ -498,13 +498,13 @@ impl BioHierarchy {
 
     pub fn add_chain(
         &mut self,
-        model: ModelId,
+        model: SmcraModelId,
         label_id: impl Into<String>,
         author_id: Option<String>,
-    ) -> std::result::Result<ChainId, BioHierarchyError> {
+    ) -> std::result::Result<SmcraChainId, SmcraHierarchyError> {
         self.model(model)?;
-        let id = ChainId::new(self.chains.len() as u32);
-        self.chains.push(Chain {
+        let id = SmcraChainId::new(self.chains.len() as u32);
+        self.chains.push(SmcraChain {
             id,
             model,
             label_id: label_id.into(),
@@ -518,16 +518,16 @@ impl BioHierarchy {
 
     pub fn add_residue(
         &mut self,
-        chain: ChainId,
+        chain: SmcraChainId,
         name: impl Into<String>,
         label_seq_id: Option<i32>,
         author_seq_id: Option<String>,
         insertion_code: Option<String>,
-    ) -> std::result::Result<ResidueId, BioHierarchyError> {
+    ) -> std::result::Result<SmcraResidueId, SmcraHierarchyError> {
         self.chain(chain)?;
         let name = name.into();
-        let id = ResidueId::new(self.residues.len() as u32);
-        self.residues.push(Residue {
+        let id = SmcraResidueId::new(self.residues.len() as u32);
+        self.residues.push(SmcraResidue {
             id,
             chain,
             name: name.clone(),
@@ -545,16 +545,16 @@ impl BioHierarchy {
 
     pub fn add_atom_site(
         &mut self,
-        residue: ResidueId,
+        residue: SmcraResidueId,
         atom: AtomId,
-        metadata: AtomSiteMetadata,
-    ) -> std::result::Result<AtomSiteId, BioHierarchyError> {
+        metadata: SmcraAtomSiteMetadata,
+    ) -> std::result::Result<SmcraAtomSiteId, SmcraHierarchyError> {
         self.residue(residue)?;
         if self.atom_lookup.contains_key(&atom) {
-            return Err(BioHierarchyError::DuplicateAtomPlacement(atom));
+            return Err(SmcraHierarchyError::DuplicateAtomPlacement(atom));
         }
-        let id = AtomSiteId::new(self.atom_sites.len() as u32);
-        self.atom_sites.push(AtomSite {
+        let id = SmcraAtomSiteId::new(self.atom_sites.len() as u32);
+        self.atom_sites.push(SmcraAtomSite {
             id,
             residue,
             atom,
@@ -566,96 +566,102 @@ impl BioHierarchy {
         Ok(id)
     }
 
-    pub fn model(&self, id: ModelId) -> std::result::Result<&Model, BioHierarchyError> {
+    pub fn model(&self, id: SmcraModelId) -> std::result::Result<&SmcraModel, SmcraHierarchyError> {
         self.models
             .get(id.index())
-            .ok_or(BioHierarchyError::InvalidModelId(id))
+            .ok_or(SmcraHierarchyError::InvalidModelId(id))
     }
 
-    pub fn chain(&self, id: ChainId) -> std::result::Result<&Chain, BioHierarchyError> {
+    pub fn chain(&self, id: SmcraChainId) -> std::result::Result<&SmcraChain, SmcraHierarchyError> {
         self.chains
             .get(id.index())
-            .ok_or(BioHierarchyError::InvalidChainId(id))
+            .ok_or(SmcraHierarchyError::InvalidChainId(id))
     }
 
-    pub fn residue(&self, id: ResidueId) -> std::result::Result<&Residue, BioHierarchyError> {
+    pub fn residue(
+        &self,
+        id: SmcraResidueId,
+    ) -> std::result::Result<&SmcraResidue, SmcraHierarchyError> {
         self.residues
             .get(id.index())
-            .ok_or(BioHierarchyError::InvalidResidueId(id))
+            .ok_or(SmcraHierarchyError::InvalidResidueId(id))
     }
 
-    pub fn atom_site(&self, id: AtomSiteId) -> std::result::Result<&AtomSite, BioHierarchyError> {
+    pub fn atom_site(
+        &self,
+        id: SmcraAtomSiteId,
+    ) -> std::result::Result<&SmcraAtomSite, SmcraHierarchyError> {
         self.atom_sites
             .get(id.index())
-            .ok_or(BioHierarchyError::InvalidAtomSiteId(id))
+            .ok_or(SmcraHierarchyError::InvalidAtomSiteId(id))
     }
 
-    pub fn atom_site_for_atom(&self, atom: AtomId) -> Option<&AtomSite> {
+    pub fn atom_site_for_atom(&self, atom: AtomId) -> Option<&SmcraAtomSite> {
         self.atom_lookup
             .get(&atom)
             .and_then(|id| self.atom_sites.get(id.index()))
     }
 
-    pub fn models(&self) -> impl Iterator<Item = (ModelId, &Model)> {
+    pub fn models(&self) -> impl Iterator<Item = (SmcraModelId, &SmcraModel)> {
         self.models.iter().map(|model| (model.id, model))
     }
 
-    pub fn chains(&self) -> impl Iterator<Item = (ChainId, &Chain)> {
+    pub fn chains(&self) -> impl Iterator<Item = (SmcraChainId, &SmcraChain)> {
         self.chains.iter().map(|chain| (chain.id, chain))
     }
 
-    pub fn residues(&self) -> impl Iterator<Item = (ResidueId, &Residue)> {
+    pub fn residues(&self) -> impl Iterator<Item = (SmcraResidueId, &SmcraResidue)> {
         self.residues.iter().map(|residue| (residue.id, residue))
     }
 
-    pub fn atom_sites(&self) -> impl Iterator<Item = (AtomSiteId, &AtomSite)> {
+    pub fn atom_sites(&self) -> impl Iterator<Item = (SmcraAtomSiteId, &SmcraAtomSite)> {
         self.atom_sites.iter().map(|site| (site.id, site))
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Model {
-    pub id: ModelId,
+pub struct SmcraModel {
+    pub id: SmcraModelId,
     pub model_id: String,
-    pub chains: Vec<ChainId>,
+    pub chains: Vec<SmcraChainId>,
     pub props: PropMap,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Chain {
-    pub id: ChainId,
-    pub model: ModelId,
+pub struct SmcraChain {
+    pub id: SmcraChainId,
+    pub model: SmcraModelId,
     pub label_id: String,
     pub author_id: Option<String>,
-    pub residues: Vec<ResidueId>,
+    pub residues: Vec<SmcraResidueId>,
     pub props: PropMap,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Residue {
-    pub id: ResidueId,
-    pub chain: ChainId,
+pub struct SmcraResidue {
+    pub id: SmcraResidueId,
+    pub chain: SmcraChainId,
     pub name: String,
     pub label_comp_id: Option<String>,
     pub author_comp_id: Option<String>,
     pub label_seq_id: Option<i32>,
     pub author_seq_id: Option<String>,
     pub insertion_code: Option<String>,
-    pub atom_sites: Vec<AtomSiteId>,
+    pub atom_sites: Vec<SmcraAtomSiteId>,
     pub props: PropMap,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AtomSite {
-    pub id: AtomSiteId,
-    pub residue: ResidueId,
+pub struct SmcraAtomSite {
+    pub id: SmcraAtomSiteId,
+    pub residue: SmcraResidueId,
     pub atom: AtomId,
-    pub metadata: AtomSiteMetadata,
+    pub metadata: SmcraAtomSiteMetadata,
     pub props: PropMap,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct AtomSiteMetadata {
+pub struct SmcraAtomSiteMetadata {
     pub group_pdb: Option<String>,
     pub atom_site_id: Option<String>,
     pub type_symbol: Option<String>,
@@ -674,16 +680,16 @@ pub struct AtomSiteMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BioHierarchyError {
-    InvalidModelId(ModelId),
-    InvalidChainId(ChainId),
-    InvalidResidueId(ResidueId),
-    InvalidAtomSiteId(AtomSiteId),
+pub enum SmcraHierarchyError {
+    InvalidModelId(SmcraModelId),
+    InvalidChainId(SmcraChainId),
+    InvalidResidueId(SmcraResidueId),
+    InvalidAtomSiteId(SmcraAtomSiteId),
     InvalidAtomId(AtomId),
     DuplicateAtomPlacement(AtomId),
 }
 
-impl fmt::Display for BioHierarchyError {
+impl fmt::Display for SmcraHierarchyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidModelId(id) => write!(f, "invalid model id: {}", id.raw()),
@@ -696,4 +702,4 @@ impl fmt::Display for BioHierarchyError {
     }
 }
 
-impl std::error::Error for BioHierarchyError {}
+impl std::error::Error for SmcraHierarchyError {}

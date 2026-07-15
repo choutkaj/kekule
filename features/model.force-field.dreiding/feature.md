@@ -9,7 +9,7 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 
 - Exposes `DreidingPotential` and `DreidingPrepareError` from the separate
   `molecules-dreiding` crate.
-- Prepares a potential with `DreidingPotential::prepare(&MolecularModel)` and implements
+- Prepares a potential with `DreidingPotential::prepare(&Model)` and implements
   the core `Potential` evaluation contract.
 - Binds preparation to the source model definition, accepting coordinate-modified clones
   and rejecting independently built models.
@@ -57,3 +57,5 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
   identity and report structured evaluation geometry errors.
 - v4: Build adjacency and nonbonded exclusions through dense model indexes so
   repeated instances and tombstoned molecule-local atom IDs remain isolated.
+- v5: Migrate preparation and evaluation signatures to the renamed canonical
+  `Model` API.

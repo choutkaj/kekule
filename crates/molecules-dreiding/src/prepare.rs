@@ -8,7 +8,7 @@ use dreid_forge::{
 };
 use molecules::core::BondOrder;
 use molecules::modeling::{
-    InstanceAtomId, InstanceBondId, ModelDefinitionKey, MolecularModel, MoleculeInstanceId,
+    InstanceAtomId, InstanceBondId, Model, ModelDefinitionKey, MoleculeInstanceId,
 };
 
 use crate::DreidingPrepareError;
@@ -37,7 +37,7 @@ pub struct DreidingPotential {
 
 impl DreidingPotential {
     /// Prepares standard DREIDING parameters and fixed component-local QEq charges.
-    pub fn prepare(model: &MolecularModel) -> Result<Self, DreidingPrepareError> {
+    pub fn prepare(model: &Model) -> Result<Self, DreidingPrepareError> {
         let prepared = PreparedInput::new(model)?;
         let total_charge = prepared
             .molecules
@@ -119,7 +119,7 @@ struct PreparedInput {
 }
 
 impl PreparedInput {
-    fn new(model: &MolecularModel) -> Result<Self, DreidingPrepareError> {
+    fn new(model: &Model) -> Result<Self, DreidingPrepareError> {
         validate_atoms(model)?;
         validate_bonds(model)?;
 
@@ -161,7 +161,7 @@ struct PreparedMolecule {
     formal_charge: f64,
 }
 
-fn validate_atoms(model: &MolecularModel) -> Result<(), DreidingPrepareError> {
+fn validate_atoms(model: &Model) -> Result<(), DreidingPrepareError> {
     for (atom_id, atom) in model.topology().atoms() {
         let implicit = model
             .topology()
@@ -184,7 +184,7 @@ fn validate_atoms(model: &MolecularModel) -> Result<(), DreidingPrepareError> {
     Ok(())
 }
 
-fn validate_bonds(model: &MolecularModel) -> Result<(), DreidingPrepareError> {
+fn validate_bonds(model: &Model) -> Result<(), DreidingPrepareError> {
     for (bond_id, bond) in model.topology().bonds() {
         let aromatic = model
             .topology()
@@ -197,7 +197,7 @@ fn validate_bonds(model: &MolecularModel) -> Result<(), DreidingPrepareError> {
 }
 
 fn system_from_model(
-    model: &MolecularModel,
+    model: &Model,
     selection: Option<MoleculeInstanceId>,
 ) -> Result<System, DreidingPrepareError> {
     let selected = match selection {
@@ -422,7 +422,7 @@ fn prepare_inversions(forged: &ForgedSystem) -> Result<Vec<InversionTerm>, Dreid
 }
 
 fn prepare_nonbonded(
-    model: &MolecularModel,
+    model: &Model,
     forged: &ForgedSystem,
     charges: &[f64],
     exclusions: &BTreeSet<(usize, usize)>,
@@ -539,7 +539,7 @@ fn prepare_hydrogen_bonds(
     Ok(terms)
 }
 
-fn adjacency(model: &MolecularModel) -> Vec<Vec<usize>> {
+fn adjacency(model: &Model) -> Vec<Vec<usize>> {
     let mut adjacency = vec![Vec::new(); model.atom_count()];
     for (bond_id, bond) in model.topology().bonds() {
         let (a, b) = bond.endpoints();

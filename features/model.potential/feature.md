@@ -39,3 +39,4 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
   mismatch detection.
 - v3: Bind prepared potentials to shared model-definition identity and add
   structured coordinate-geometry and backend failures.
+- v4: Migrate potential signatures to the renamed canonical `Model` API.

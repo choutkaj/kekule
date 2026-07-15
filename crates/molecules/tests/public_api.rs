@@ -79,7 +79,11 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
         macro_mol
             .hierarchy_mut()
             .add_residue(chain, "GLY", Some(1), Some("1".to_owned()), None)?;
-    macro_mol.add_atom_site(residue, atom, molecules::bio::AtomSiteMetadata::default())?;
+    macro_mol.add_atom_site(
+        residue,
+        atom,
+        molecules::bio::SmcraAtomSiteMetadata::default(),
+    )?;
 
     let validate = macro_mol.validate()?;
     assert_eq!(validate.models_checked, 1);
@@ -91,9 +95,32 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::bio::{SmcraHierarchy, SmcraModel};
+    use molecules::modeling::Model;
+
+    let mut hierarchy = SmcraHierarchy::new();
+    let hierarchy_model_id = hierarchy.add_model("1");
+    let hierarchy_model: &SmcraModel = hierarchy.model(hierarchy_model_id)?;
+    assert_eq!(hierarchy_model.model_id, "1");
+
+    let mut graph = Molecule::new();
+    let atom = graph.add_atom(Atom::new(
+        Element::from_symbol("C").expect("carbon is a known element"),
+    ));
+    let mut conformer = Conformer::new();
+    conformer.set_position(atom, molecules::core::Point3::new(0.0, 0.0, 0.0));
+    let conformer = graph.add_conformer(conformer)?;
+    let model = Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer)?;
+
+    assert_eq!(model.atom_count(), 1);
+    Ok(())
+}
+
+#[test]
 fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use molecules::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
-    use molecules::modeling::{minimize, MinimizationStatus, MinimizeOptions, MolecularModel};
+    use molecules::modeling::{minimize, MinimizationStatus, MinimizeOptions, Model};
 
     let mut graph = Molecule::new();
     let carbon = graph.add_atom(Atom::new(
@@ -109,7 +136,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
 
-    let mut builder = MolecularModel::builder();
+    let mut builder = Model::builder();
     let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
     let cloned = model.clone();

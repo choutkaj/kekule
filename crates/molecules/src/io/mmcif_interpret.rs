@@ -2,13 +2,11 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::bio::{AtomSiteMetadata, BioHierarchy, MacroMolecule};
+use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
 use crate::core::{
     Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Molecule, Point3, PropValue,
 };
-use crate::modeling::{
-    MolecularModel, MolecularModelBuilder, MoleculeInstanceMetadata, MoleculeRole,
-};
+use crate::modeling::{Model, ModelBuilder, MoleculeInstanceMetadata, MoleculeRole};
 use crate::small::SmallMolecule;
 
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
@@ -118,12 +116,12 @@ pub struct MmcifInterpretationReport {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MmcifInterpretation {
-    model: MolecularModel,
+    model: Model,
     report: MmcifInterpretationReport,
 }
 
 impl MmcifInterpretation {
-    pub fn model(&self) -> &MolecularModel {
+    pub fn model(&self) -> &Model {
         &self.model
     }
 
@@ -131,7 +129,7 @@ impl MmcifInterpretation {
         &self.report
     }
 
-    pub fn into_parts(self) -> (MolecularModel, MmcifInterpretationReport) {
+    pub fn into_parts(self) -> (Model, MmcifInterpretationReport) {
         (self.model, self.report)
     }
 }
@@ -216,7 +214,7 @@ fn interpret_block(
     let mut union = InstanceUnion::new(selected.iter().map(|row| row.instance_key.clone()));
     let connections = read_connections(block, &selected, &mut union, &mut report)?;
     let groups = group_rows(selected, &mut union);
-    let mut builder = MolecularModelBuilder::new();
+    let mut builder = ModelBuilder::new();
     for (_, group) in groups {
         let built = build_molecule(group, &connections, &mut report)?;
         match built {
@@ -997,8 +995,8 @@ fn build_hierarchy(
     graph: &Molecule,
     representative: &[(String, AtomRow)],
     atoms: &BTreeMap<String, AtomId>,
-) -> Result<BioHierarchy, MmcifInterpretError> {
-    let mut hierarchy = BioHierarchy::new();
+) -> Result<SmcraHierarchy, MmcifInterpretError> {
+    let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("structure");
     let mut chains = BTreeMap::new();
     let mut residues = BTreeMap::new();
@@ -1037,7 +1035,7 @@ fn build_hierarchy(
             .add_atom_site(
                 residue,
                 atom,
-                AtomSiteMetadata {
+                SmcraAtomSiteMetadata {
                     group_pdb: row.group_pdb.clone(),
                     atom_site_id: row.atom_site_id.clone(),
                     type_symbol: Some(row.element.symbol().to_owned()),

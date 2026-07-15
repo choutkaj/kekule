@@ -55,7 +55,7 @@ Keep feature docs concise and current. Do not recreate stale phase-specific plan
 - Follow `ARCHITECTURE.md` for API shape and module boundaries.
 - Keep `Molecule` as the raw graph kernel shared by `SmallMolecule` and `MacroMolecule`.
 - Keep parsing, sanitization, macromolecule validation, and preparation separate.
-- Keep biomolecular labels in `BioHierarchy`, not core `Atom` or `Bond`, unless chemically general.
+- Keep biomolecular labels in `SmcraHierarchy`, not core `Atom` or `Bond`, unless chemically general.
 - Keep small-molecule and macromolecule sanitization options/reports/errors separate.
 - Mutations that affect topology or interpreted chemistry must invalidate computed state.
 - Failed transactional operations must leave inputs unchanged.

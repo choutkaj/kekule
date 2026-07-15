@@ -1,7 +1,7 @@
 id = "algo.geometry-minimization"
 title = "Geometry minimization"
 area = "algorithms"
-version = 3
+version = 4
 implemented = true
 validated = false
 description = "Minimize fixed-topology molecular-model coordinates with deterministic normalized steepest descent and Armijo backtracking."

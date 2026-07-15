@@ -141,7 +141,7 @@ pub mod mmcif {
 
     /// Writes one canonical molecular model as a structural mmCIF data block.
     pub fn write(
-        model: &crate::modeling::MolecularModel,
+        model: &crate::modeling::Model,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
         crate::io::write_mmcif_model(model, options)
@@ -258,7 +258,7 @@ pub mod hydrogens {
 }
 
 pub mod prelude {
-    pub use crate::bio::{BioHierarchy, MacroMolecule};
+    pub use crate::bio::{MacroMolecule, SmcraHierarchy};
     pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
     pub use crate::small::{SanitizeOptions, SanitizeReport, SmallMolecule};
     pub use crate::smiles::{

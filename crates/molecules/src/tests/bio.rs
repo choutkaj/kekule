@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn bio_hierarchy_adds_models_chains_residues_and_atom_sites() {
-    let mut hierarchy = BioHierarchy::new();
+fn smcra_hierarchy_adds_models_chains_residues_and_atom_sites() {
+    let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("1");
     let chain = hierarchy
         .add_chain(model, "A", Some("authA".to_owned()))
@@ -16,7 +16,7 @@ fn bio_hierarchy_adds_models_chains_residues_and_atom_sites() {
             Some("A".to_owned()),
         )
         .expect("residue should be valid");
-    let metadata = AtomSiteMetadata {
+    let metadata = SmcraAtomSiteMetadata {
         group_pdb: Some("ATOM".to_owned()),
         atom_site_id: Some("1".to_owned()),
         type_symbol: Some("C".to_owned()),
@@ -66,8 +66,8 @@ fn bio_hierarchy_adds_models_chains_residues_and_atom_sites() {
 }
 
 #[test]
-fn bio_hierarchy_iteration_is_insertion_order() {
-    let mut hierarchy = BioHierarchy::new();
+fn smcra_hierarchy_iteration_is_insertion_order() {
+    let mut hierarchy = SmcraHierarchy::new();
     let first_model = hierarchy.add_model("1");
     let second_model = hierarchy.add_model("2");
     let first_chain = hierarchy.add_chain(first_model, "A", None).expect("chain");
@@ -84,35 +84,35 @@ fn bio_hierarchy_iteration_is_insertion_order() {
 }
 
 #[test]
-fn bio_hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
-    let mut hierarchy = BioHierarchy::new();
+fn smcra_hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
+    let mut hierarchy = SmcraHierarchy::new();
     assert_eq!(
         hierarchy
-            .add_chain(ModelId::new(99), "A", None)
+            .add_chain(SmcraModelId::new(99), "A", None)
             .expect_err("missing model should fail"),
-        BioHierarchyError::InvalidModelId(ModelId::new(99))
+        SmcraHierarchyError::InvalidModelId(SmcraModelId::new(99))
     );
 
     let model = hierarchy.add_model("1");
     let chain = hierarchy.add_chain(model, "A", None).expect("chain");
     assert_eq!(
         hierarchy
-            .add_residue(ChainId::new(99), "GLY", None, None, None)
+            .add_residue(SmcraChainId::new(99), "GLY", None, None, None)
             .expect_err("missing chain should fail"),
-        BioHierarchyError::InvalidChainId(ChainId::new(99))
+        SmcraHierarchyError::InvalidChainId(SmcraChainId::new(99))
     );
     let residue = hierarchy
         .add_residue(chain, "GLY", None, None, None)
         .expect("residue");
     let atom = AtomId::new(2);
     hierarchy
-        .add_atom_site(residue, atom, AtomSiteMetadata::default())
+        .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .expect("first placement should work");
     assert_eq!(
         hierarchy
-            .add_atom_site(residue, atom, AtomSiteMetadata::default())
+            .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
             .expect_err("duplicate atom placement should fail"),
-        BioHierarchyError::DuplicateAtomPlacement(atom)
+        SmcraHierarchyError::DuplicateAtomPlacement(atom)
     );
 }
 
@@ -134,7 +134,7 @@ fn macro_molecule_validates_atom_site_atom_ids() {
         .add_atom_site(
             residue,
             atom,
-            AtomSiteMetadata {
+            SmcraAtomSiteMetadata {
                 group_pdb: Some("ATOM".to_owned()),
                 atom_site_id: Some("1".to_owned()),
                 type_symbol: Some("C".to_owned()),
@@ -155,9 +155,9 @@ fn macro_molecule_validates_atom_site_atom_ids() {
         .expect("valid atom should attach");
     assert_eq!(
         macro_mol
-            .add_atom_site(residue, AtomId::new(99), AtomSiteMetadata::default())
+            .add_atom_site(residue, AtomId::new(99), SmcraAtomSiteMetadata::default())
             .expect_err("missing atom should fail"),
-        BioHierarchyError::InvalidAtomId(AtomId::new(99))
+        SmcraHierarchyError::InvalidAtomId(AtomId::new(99))
     );
 }
 
@@ -184,10 +184,10 @@ fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
         .add_atom_site(
             residue,
             atom,
-            AtomSiteMetadata {
+            SmcraAtomSiteMetadata {
                 occupancy: Some(1.0),
                 b_factor: Some(12.0),
-                ..AtomSiteMetadata::default()
+                ..SmcraAtomSiteMetadata::default()
             },
         )
         .expect("atom site");
@@ -255,14 +255,14 @@ fn macro_molecule_default_sanitize_only_validates_current_state() {
 #[test]
 fn macro_molecule_validation_rejects_cross_layer_inconsistency() {
     let graph = Molecule::new();
-    let mut hierarchy = BioHierarchy::new();
+    let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("1");
     let chain = hierarchy.add_chain(model, "A", None).expect("chain");
     let residue = hierarchy
         .add_residue(chain, "GLY", None, None, None)
         .expect("residue");
     let site = hierarchy
-        .add_atom_site(residue, AtomId::new(0), AtomSiteMetadata::default())
+        .add_atom_site(residue, AtomId::new(0), SmcraAtomSiteMetadata::default())
         .expect("hierarchy accepts graph-external atom ids");
     let macro_mol = MacroMolecule::from_parts(graph, hierarchy);
 
@@ -307,7 +307,7 @@ fn macro_molecule_sanitize_rejects_unsupported_preparation_options() {
         .add_residue(chain, "LIG", None, None, None)
         .expect("residue");
     macro_mol
-        .add_atom_site(residue, atom, AtomSiteMetadata::default())
+        .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .expect("atom site");
 
     let options = MacroSanitizeOptions {

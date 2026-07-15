@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2024"
 rust-version.workspace = true
 repository.workspace = true
-description = "DREIDING force-field adapter for molecules MolecularModel values."
+description = "DREIDING force-field adapter for molecules Model values."
 publish = false
 
 [dependencies]

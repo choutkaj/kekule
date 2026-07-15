@@ -36,3 +36,5 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 - v2: Migrate topology identity and gradients to the instance-qualified model.
 - v3: Backtrack recoverable coordinate singularities while preserving fatal
   potential and backend failures.
+- v4: Migrate minimization input and result signatures to the renamed `Model`
+  API.

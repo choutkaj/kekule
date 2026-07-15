@@ -1,7 +1,7 @@
 id = "model.system"
 title = "Fixed-topology molecular model"
 area = "modeling"
-version = 3
+version = 4
 implemented = true
 validated = false
 description = "Represent distinct Small or Macro molecule instances as immutable ModelTopology plus one complete mutable coordinate set."

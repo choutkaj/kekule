@@ -1,7 +1,7 @@
 id = "api.public-facade"
 title = "Public API facade"
 area = "api"
-version = 12
+version = 13
 implemented = true
 validated = false
 description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."
