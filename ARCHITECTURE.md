@@ -199,6 +199,7 @@ molfile     MolfileDocument parse/interpret and writers
 sdf         SdfDocument parse/interpret and record writers
 mmcif       MmcifDocument parse/interpret
 perception  explicit chemical perception and sanitization
+hydrogens   explicit small-molecule hydrogen topology normalization
 canon       canonicalization algorithms
 modeling    ModelTopology, MolecularModel, potentials, minimization
 ```
@@ -208,3 +209,9 @@ specialized reports, modelling types, and expert algorithms remain in focused
 namespaces. Parsing, interpretation, sanitization, preparation, and writing must
 stay visibly separate in names and documentation; none may be hidden inside a
 default parser.
+
+Hydrogen normalization is likewise explicit. `add_hydrogens` and
+`remove_hydrogens` are transactional small-molecule topology transforms, not
+parser or sanitizer side effects. They preserve retained stable atom IDs,
+report topology changes, and leave newly materialized hydrogen coordinates
+missing instead of inventing geometry.

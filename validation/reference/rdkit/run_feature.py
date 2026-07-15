@@ -18,6 +18,7 @@ SUPPORTED_FEATURES = {
     "algo.rings.fast",
     "algo.rings.sssr",
     "algo.valence.rdkit-like",
+    "chem.hydrogen-normalization",
     "chem.sanitize.rdkit-like",
     "core.conformers",
     "io.mol.v2000.parse",
@@ -32,6 +33,8 @@ SUPPORTED_FEATURES = {
     "io.smiles.isomeric",
     "stereo.cip",
 }
+
+HYDROGEN_VALIDATION_INDEX_PROPERTY = "_moleculesValidationOriginalIndex"
 
 
 def main() -> int:
@@ -209,6 +212,11 @@ def generate_document(
     elif feature_id == "algo.valence.rdkit-like":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [valence_record(record) for record in records]}
+    elif feature_id == "chem.hydrogen-normalization":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
+        expected = {
+            "records": [hydrogen_normalization_record(record) for record in records]
+        }
     elif feature_id == "chem.sanitize.rdkit-like":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [sanitized_atom_record(record) for record in records]}
@@ -803,6 +811,67 @@ def valence_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def hydrogen_normalization_record(record: dict[str, Any]) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    prepared = clone_and_sanitize(mol) if mol is not None else None
+    if prepared is None:
+        return {
+            "record_index": record["record_index"],
+            "status": "sanitize_error",
+            "title": record["title"],
+        }
+
+    original_atom_count = prepared.GetNumAtoms()
+    for atom in prepared.GetAtoms():
+        atom.SetIntProp(HYDROGEN_VALIDATION_INDEX_PROPERTY, atom.GetIdx())
+    try:
+        expanded = Chem.AddHs(prepared, addCoords=False)
+    except Exception:
+        return {
+            "record_index": record["record_index"],
+            "status": "add_error",
+            "title": record["title"],
+        }
+
+    added_by_parent: dict[int, int] = {}
+    for atom in list(expanded.GetAtoms())[original_atom_count:]:
+        if atom.GetAtomicNum() != 1 or atom.GetDegree() != 1:
+            return {
+                "record_index": record["record_index"],
+                "status": "add_error",
+                "title": record["title"],
+            }
+        parent = atom.GetNeighbors()[0].GetIdx()
+        added_by_parent[parent] = added_by_parent.get(parent, 0) + 1
+
+    try:
+        remove_options = Chem.RemoveHsParameters()
+        remove_options.removeMapped = False
+        remove_options.removeWithWedgedBond = False
+        remove_options.removeDefiningBondStereo = True
+        collapsed = Chem.RemoveHs(expanded, remove_options, sanitize=True)
+    except Exception:
+        return {
+            "record_index": record["record_index"],
+            "status": "remove_error",
+            "title": record["title"],
+        }
+
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "atom_count_after_add": expanded.GetNumAtoms(),
+        "added_hydrogens_by_parent": [
+            {"parent_atom_index": parent, "count": count}
+            for parent, count in sorted(added_by_parent.items())
+        ],
+        "round_trip": hydrogen_normalized_semantic_record(collapsed),
+    }
+
+
 def smiles_parse_record(record: dict[str, Any]) -> dict[str, Any]:
     mol = record["mol"]
     if mol is None:
@@ -933,6 +1002,35 @@ def smiles_sanitized_semantic_record(mol: Any) -> dict[str, Any]:
         "bond_count": sanitized.GetNumBonds(),
         "atoms": smiles_sanitized_atoms_json(sanitized),
         "bonds": smiles_sanitized_bonds_json(sanitized),
+    }
+
+
+def hydrogen_normalized_semantic_record(mol: Any) -> dict[str, Any]:
+    sanitized = clone_and_sanitize(mol)
+    if sanitized is None:
+        return {"status": "sanitize_error"}
+    atoms = []
+    for atom in sanitized.GetAtoms():
+        item = {
+            "atom_index": atom.GetIntProp(HYDROGEN_VALIDATION_INDEX_PROPERTY),
+            "atomic_number": atom.GetAtomicNum(),
+            "symbol": atom.GetSymbol(),
+            "formal_charge": atom.GetFormalCharge(),
+            "isotope": atom.GetIsotope() or None,
+            "atom_map": atom.GetAtomMapNum() or None,
+            "encoded_hydrogens": atom.GetNumExplicitHs() + atom.GetNumImplicitHs(),
+            "neighbors": sorted(
+                neighbor.GetIntProp(HYDROGEN_VALIDATION_INDEX_PROPERTY)
+                for neighbor in atom.GetNeighbors()
+            ),
+        }
+        atoms.append(item)
+    atoms.sort(key=lambda item: item["atom_index"])
+    return {
+        "status": "ok",
+        "atom_count": sanitized.GetNumAtoms(),
+        "bond_count": sanitized.GetNumBonds(),
+        "atoms": atoms,
     }
 
 

@@ -193,6 +193,49 @@ pub mod canon {
     }
 }
 
+/// Explicit small-molecule hydrogen topology transforms.
+///
+/// These functions never sanitize implicitly. Addition consumes current
+/// valence assignments unless `explicit_only` is selected, and removal
+/// requires current valence assignments. Successful topology changes
+/// invalidate perception state.
+pub mod hydrogens {
+    pub use crate::algorithms::{
+        AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
+        HydrogenCountAdjustment, HydrogenNormalizationError, RemoveHydrogensReport,
+        RemovedHydrogen, RetainedHydrogen, RetainedHydrogenReason,
+    };
+
+    use crate::algorithms::{add_hydrogens_to_molecule, remove_hydrogens_from_molecule};
+    use crate::small::SmallMolecule;
+
+    /// Materialize stored explicit counts and perceived implicit hydrogens.
+    pub fn add_hydrogens(
+        molecule: &mut SmallMolecule,
+    ) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
+        add_hydrogens_with_options(molecule, AddHydrogensOptions::default())
+    }
+
+    /// Materialize hydrogens with an explicit growth bound and count policy.
+    pub fn add_hydrogens_with_options(
+        molecule: &mut SmallMolecule,
+        options: AddHydrogensOptions,
+    ) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
+        add_hydrogens_to_molecule(molecule.graph_mut_raw(), options)
+    }
+
+    /// Collapse ordinary degree-one hydrogens without discarding protected state.
+    ///
+    /// Isotopic, mapped, charged, radical, property-bearing, and otherwise
+    /// non-losslessly representable hydrogens remain in the graph and are
+    /// described by the returned report.
+    pub fn remove_hydrogens(
+        molecule: &mut SmallMolecule,
+    ) -> Result<RemoveHydrogensReport, HydrogenNormalizationError> {
+        remove_hydrogens_from_molecule(molecule.graph_mut_raw())
+    }
+}
+
 pub mod prelude {
     pub use crate::bio::{BioHierarchy, MacroMolecule};
     pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
