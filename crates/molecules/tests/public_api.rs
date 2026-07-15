@@ -35,6 +35,18 @@ fn hydrogen_normalization_public_api() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[test]
+fn query_graph_smarts_and_substructure_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    let target = SmallMolecule::from_smiles_sanitized("CC(=O)O")?;
+    let query = molecules::query::parse_smarts("[C](=O)[O;H1]")?;
+    let matches = molecules::substructure::find_substructure_matches(target.graph(), &query)?;
+
+    assert_eq!(query.atom_count(), 3);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].atoms().len(), 3);
+    Ok(())
+}
+
+#[test]
 fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
     use molecules::core::*;
 

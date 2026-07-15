@@ -25,9 +25,11 @@ use molecules::{
         valence::{self, ValenceModel, ValenceOptions},
         SanitizeError, SanitizeOptions,
     },
+    query,
     sdf::{self, SdfDataField, SdfParseOptions, SdfRecord},
     small::SmallMolecule,
     smiles::{self, CanonicalSmilesWriteOptions, SmilesWriteOptions},
+    substructure,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

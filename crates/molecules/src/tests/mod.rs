@@ -263,6 +263,7 @@ mod hydrogens;
 mod mmcif_contents;
 mod perception;
 mod public_api;
+mod query;
 mod ring_limits;
 mod smiles;
 mod v2000;

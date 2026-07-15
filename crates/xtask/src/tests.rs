@@ -614,6 +614,29 @@ fn implementation_dispatch_supports_hydrogen_normalization() {
 }
 
 #[test]
+fn implementation_dispatch_supports_query_validation() {
+    let root = temp_feature_root("query-validation-dispatch");
+    let smarts_fixture = root.join("fixture.smi");
+    fs::write(&smarts_fixture, "CCO\nC1=CC=CC=C1\n").expect("fixture should write");
+
+    let parsed = implementation_expected("query.smarts", "smoke", &smarts_fixture)
+        .expect("SMARTS feature should compare");
+    assert_eq!(parsed["records"][0]["status"], "ok");
+    assert_eq!(parsed["records"][0]["atom_count"], 3);
+    assert_eq!(parsed["records"][1]["bond_count"], 6);
+
+    let molecule_fixture = root.join("fixture.sdf");
+    fs::write(&molecule_fixture, simple_sdf_record("methane")).expect("fixture should write");
+    let matched = implementation_expected("algo.substructure.vf2", "smoke", &molecule_fixture)
+        .expect("substructure feature should compare");
+    assert_eq!(matched["records"][0]["status"], "ok");
+    assert_eq!(matched["records"][0]["queries"][0]["smarts"], "[#6]");
+    assert_eq!(matched["records"][0]["queries"][0]["matches"], json!([[0]]));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
     let root = temp_feature_root("isomeric-smiles-feature-dispatch");
     let fixture = root.join("fixture.smi");

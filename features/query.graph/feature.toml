@@ -1,0 +1,9 @@
+id = "query.graph"
+title = "Syntax-independent query graph"
+area = "query"
+version = 1
+implemented = true
+validated = false
+description = "Represent bounded boolean atom and bond predicates on an immutable query topology without overloading concrete molecule payloads."
+depends_on = ["core.atom-bond"]
+validation_required = []

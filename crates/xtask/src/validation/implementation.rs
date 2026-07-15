@@ -134,6 +134,18 @@ pub(crate) fn implementation_expected(
                     .collect::<Result<Vec<_>, Box<dyn Error>>>()?
             }))
         }
+        "query.smarts" => Ok(json!({
+            "records": smarts_query_records_json(fixture_path)?
+        })),
+        "algo.substructure.vf2" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter_mut()
+                    .map(substructure_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
         "algo.rings.fast" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(
@@ -229,6 +241,96 @@ pub(crate) struct IndexedSmilesRecord {
     pub(crate) title: String,
     pub(crate) input_smiles: String,
     pub(crate) molecule: Option<SmallMolecule>,
+}
+
+const BOUNDED_SUBSTRUCTURE_QUERIES: &[&str] = &[
+    "[#6]",
+    "[!#6]",
+    "A",
+    "a",
+    "[C,N]",
+    "[C,H]",
+    "[H,D]",
+    "[!H]",
+    "[#6]-[#8]",
+    "C=O",
+    "[O;H1]",
+    "[#8;+0]",
+    "[#6,#7;H1]",
+    "[#6;R]",
+    "[R0]",
+    "C@C",
+    "C!@C",
+    "c1ccccc1",
+];
+
+fn smarts_query_records_json(path: &Path) -> Result<Vec<Value>, Box<dyn Error>> {
+    let mut records = Vec::new();
+    for (record_index, raw_line) in fs::read_to_string(path)?.lines().enumerate() {
+        let smarts = raw_line.trim();
+        if smarts.is_empty() || smarts.starts_with('#') {
+            continue;
+        }
+        match query::parse_smarts(smarts) {
+            Ok(graph) => records.push(json!({
+                "record_index": record_index,
+                "status": "ok",
+                "smarts": smarts,
+                "atom_count": graph.atom_count(),
+                "bond_count": graph.bond_count(),
+            })),
+            Err(_) => records.push(json!({
+                "record_index": record_index,
+                "status": "parse_error",
+                "smarts": smarts,
+                "atom_count": Value::Null,
+                "bond_count": Value::Null,
+            })),
+        }
+    }
+    Ok(records)
+}
+
+fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
+    if perception::sanitize(&mut record.molecule).is_err() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "queries": [],
+        });
+    }
+    let mut queries = Vec::new();
+    for smarts in BOUNDED_SUBSTRUCTURE_QUERIES {
+        let graph =
+            query::parse_smarts(smarts).expect("checked-in bounded validation SMARTS must parse");
+        let matches = substructure::find_substructure_matches(record.molecule.graph(), &graph)
+            .expect("sanitized validation molecule must satisfy query prerequisites");
+        let mut atom_sets = matches
+            .into_iter()
+            .map(|query_match| {
+                let mut atoms = query_match
+                    .atoms()
+                    .iter()
+                    .map(|atom| atom.raw())
+                    .collect::<Vec<_>>();
+                atoms.sort_unstable();
+                atoms
+            })
+            .collect::<Vec<_>>();
+        atom_sets.sort_unstable();
+        atom_sets.dedup();
+        queries.push(json!({
+            "smarts": smarts,
+            "matches": atom_sets,
+        }));
+    }
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "queries": queries,
+    })
 }
 
 pub(crate) fn read_small_records_by_suffix(

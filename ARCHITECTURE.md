@@ -200,6 +200,8 @@ sdf         SdfDocument parse/interpret and record writers
 mmcif       MmcifDocument parse/interpret
 perception  explicit chemical perception and sanitization
 hydrogens   explicit small-molecule hydrogen topology normalization
+query       syntax-neutral query graphs and bounded SMARTS parsing
+substructure query-graph matching algorithms
 canon       canonicalization algorithms
 modeling    ModelTopology, MolecularModel, potentials, minimization
 ```
@@ -209,6 +211,14 @@ specialized reports, modelling types, and expert algorithms remain in focused
 namespaces. Parsing, interpretation, sanitization, preparation, and writing must
 stay visibly separate in names and documentation; none may be hidden inside a
 default parser.
+
+Query syntax, query meaning, and matching are separate dependency layers.
+`QueryGraph` owns bounded boolean atom/bond expressions and immutable query
+topology; parsers such as bounded SMARTS translate into it; the `substructure`
+matcher consumes it without depending on the originating syntax. Query
+predicates never extend the concrete `Atom` or `Bond` payload. Matching consumes
+installed perception state explicitly and never hides sanitization or
+perception work.
 
 Hydrogen normalization is likewise explicit. `add_hydrogens` and
 `remove_hydrogens` are transactional small-molecule topology transforms, not
