@@ -47,3 +47,5 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - v7: Reject first-class stereo elements and source bond marks instead of reading removed atom/bond payload flags.
 - v8: Round-trip valence-implied bracket radicals through quintet while
   rejecting radical multiplicities that the emitted atom valence cannot encode.
+- v9: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

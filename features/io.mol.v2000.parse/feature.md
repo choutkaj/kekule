@@ -38,6 +38,8 @@ as one `SmallMolecule`.
 - Unit tests cover coordinates, `M  CHG`, `M  ISO`, radical multiplicities, supported and unsupported source bond stereo marks, atom maps, zero endpoints, non-ASCII/truncated fields, extreme counts, and malformed blocks.
 - The standalone `mol_v2000` fuzz target checks panic safety and successful parse/write/parse paths.
 - RDKit-generated goldens compare raw Molfile-preserved atom, bond, metadata, and coordinate records for external PubChem fixtures.
+- All ignored non-smoke corpora remain available for explicit local-only
+  validation but do not determine repository-wide validation state.
 
 ## Out Of Scope
 
@@ -59,3 +61,5 @@ as one `SmallMolecule`.
   interpretation, and separate syntax/chemistry errors.
 - v10: Parse `MolfileDocument` V2000 counts from fixed-width fields so adjacent
   three-digit atom and bond counts remain unambiguous.
+- v11: Make the committed smoke corpus the CI-reproducible required evidence
+  tier while retaining every ignored corpus on demand.

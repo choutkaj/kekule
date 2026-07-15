@@ -89,8 +89,11 @@ pub(crate) fn render_dashboard(
     out.push_str(&area_header());
     out.push_str(&rotated_header("Version", "Version", "number"));
     out.push_str(&rotated_header("Implemented", "Implemented", "number"));
-    for (corpus, label) in VALIDATION_CORPORA {
-        let (visible, title) = corpus_header(corpus, label, corpus_info);
+    for corpus in VALIDATION_CORPORA
+        .iter()
+        .filter(|corpus| !corpus.local_only)
+    {
+        let (visible, title) = corpus_header(corpus.id, corpus.label, corpus_info);
         out.push_str(&rotated_header(&visible, &title, "number"));
     }
     out.push_str("</tr>\n</thead>\n<tbody>\n");
@@ -119,8 +122,11 @@ pub(crate) fn render_dashboard(
             bool_sort_value(feature.implemented),
             dashboard_bool_marker(feature.implemented)
         ));
-        for (corpus, _) in VALIDATION_CORPORA {
-            out.push_str(&dashboard_corpus_cell(feature, status, corpus));
+        for corpus in VALIDATION_CORPORA
+            .iter()
+            .filter(|corpus| !corpus.local_only)
+        {
+            out.push_str(&dashboard_corpus_cell(feature, status, corpus.id));
         }
         out.push_str("</tr>\n");
     }

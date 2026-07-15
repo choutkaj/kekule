@@ -51,6 +51,67 @@ validation_required = []
 }
 
 #[test]
+fn local_only_corpus_descriptors_match_the_registry() {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for corpus_id in [
+        "pubchem-100",
+        "pubchem-1k",
+        "pubchem-100k",
+        "pl-rex",
+        "enamine-diversity",
+        "pdb-10",
+        "pdb-100",
+    ] {
+        let path = workspace_root
+            .join("validation/corpora")
+            .join(corpus_id)
+            .join("corpus.toml");
+        let text = fs::read_to_string(&path).expect("corpus descriptor should read");
+        let descriptor: CorpusDescriptor =
+            toml::from_str(&text).expect("corpus descriptor should parse");
+        let registered = validation_corpus(corpus_id).expect("corpus should be registered");
+        assert_eq!(descriptor.id, registered.id);
+        assert_eq!(descriptor.local_only, registered.local_only);
+    }
+}
+
+#[test]
+fn read_feature_rejects_local_only_required_corpora() {
+    let root = temp_feature_root("local-only-required-corpus");
+    write_feature(
+        &root,
+        "bad.requirement",
+        r#"id = "bad.requirement"
+title = "Bad requirement"
+area = "infrastructure"
+version = 1
+implemented = true
+validated = false
+description = "Invalid local-only validation requirement."
+depends_on = []
+validation_required = ["pubchem-100"]
+"#,
+    );
+
+    let error = read_feature(&root.join("bad.requirement").join("feature.toml"))
+        .expect_err("local-only corpora cannot be required");
+    assert!(error
+        .to_string()
+        .contains("local-only validation corpus `pubchem-100` in `validation_required`"));
+    assert!(
+        validation_corpus("enamine-diversity")
+            .expect("Enamine corpus should be registered")
+            .local_only
+    );
+    assert!(
+        !validation_corpus("smoke")
+            .expect("smoke corpus should be registered")
+            .local_only
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn read_feature_rejects_bad_boolean_deprecated_keys_missing_docs_and_directory_mismatch() {
     let root = temp_feature_root("bad-feature");
     write_feature(
@@ -244,7 +305,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             validated: false,
             description: "Feature without recorded status.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["pubchem-100".to_owned()],
+            validation_required: vec!["smoke".to_owned()],
         },
     ];
     let statuses = BTreeMap::from([(
@@ -313,7 +374,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains(
         "<span class=\"rotated-name\">smoke</span><br><span class=\"rotated-count\">(n=7)</span>"
     ));
-    assert!(dashboard.contains("<span class=\"rotated-name\">pubchem-1k</span><br><span class=\"rotated-count\">(n=1000)</span>"));
+    assert!(!dashboard.contains("<span class=\"rotated-name\">pubchem-1k</span>"));
     assert!(dashboard.contains("<code>a.feature</code>"));
     assert!(dashboard.contains("data-sort-value=\"0\""));
     assert!(dashboard.contains("<code>z.feature</code>"));
@@ -461,7 +522,7 @@ fn progress_bars_are_compact_and_deterministic() {
 }
 
 #[test]
-fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
+fn selectors_keep_local_only_corpora_explicit_and_all_routine() {
     let features = vec![
         Feature {
             id: "small".to_owned(),
@@ -472,7 +533,7 @@ fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
             validated: false,
             description: "Small feature.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["smoke".to_owned(), "pubchem-100".to_owned()],
+            validation_required: vec!["smoke".to_owned()],
         },
         Feature {
             id: "macro".to_owned(),
@@ -483,21 +544,31 @@ fn all_selectors_expand_only_applicable_feature_corpus_pairs() {
             validated: false,
             description: "Macro feature.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["smoke".to_owned(), "pdb-10".to_owned()],
+            validation_required: vec!["smoke".to_owned()],
         },
     ];
 
     assert_eq!(
-        validation_targets(&features, "all", "pubchem-100")
+        validation_targets(&features, "all", "smoke")
             .into_iter()
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
-        vec![("small", "pubchem-100".to_owned())]
+        vec![("small", "smoke".to_owned()), ("macro", "smoke".to_owned())]
     );
-    assert_eq!(validation_targets(&features, "small", "all").len(), 2);
+    assert_eq!(validation_targets(&features, "small", "all").len(), 1);
     assert_eq!(
-        validation_targets(&features, "macro", "pubchem-100").len(),
-        0
+        validation_targets(&features, "small", "pubchem-100k")
+            .into_iter()
+            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
+            .collect::<Vec<_>>(),
+        vec![("small", "pubchem-100k".to_owned())]
+    );
+    assert_eq!(
+        validation_targets(&features, "macro", "pubchem-100")
+            .into_iter()
+            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
+            .collect::<Vec<_>>(),
+        vec![("macro", "pubchem-100".to_owned())]
     );
 }
 

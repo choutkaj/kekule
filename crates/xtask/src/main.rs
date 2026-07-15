@@ -32,15 +32,54 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-const VALIDATION_CORPORA: &[(&str, &str)] = &[
-    ("smoke", "Smoke"),
-    ("pubchem-100", "PubChem 100"),
-    ("pubchem-1k", "PubChem 1k"),
-    ("pubchem-100k", "PubChem 100k"),
-    ("pl-rex", "PL-REX"),
-    ("enamine-diversity", "Enamine diversity"),
-    ("pdb-10", "PDB 10"),
-    ("pdb-100", "PDB 100"),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ValidationCorpus {
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) local_only: bool,
+}
+
+const VALIDATION_CORPORA: &[ValidationCorpus] = &[
+    ValidationCorpus {
+        id: "smoke",
+        label: "Smoke",
+        local_only: false,
+    },
+    ValidationCorpus {
+        id: "pubchem-100",
+        label: "PubChem 100",
+        local_only: true,
+    },
+    ValidationCorpus {
+        id: "pubchem-1k",
+        label: "PubChem 1k",
+        local_only: true,
+    },
+    ValidationCorpus {
+        id: "pubchem-100k",
+        label: "PubChem 100k",
+        local_only: true,
+    },
+    ValidationCorpus {
+        id: "pl-rex",
+        label: "PL-REX",
+        local_only: true,
+    },
+    ValidationCorpus {
+        id: "enamine-diversity",
+        label: "Enamine diversity",
+        local_only: true,
+    },
+    ValidationCorpus {
+        id: "pdb-10",
+        label: "PDB 10",
+        local_only: true,
+    },
+    ValidationCorpus {
+        id: "pdb-100",
+        label: "PDB 100",
+        local_only: true,
+    },
 ];
 const DASHBOARD_PATH: &str = "features/DASHBOARD.html";
 const VALIDATION_EVIDENCE_SCHEMA_VERSION: u32 = 2;

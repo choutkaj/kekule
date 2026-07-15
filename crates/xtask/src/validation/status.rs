@@ -4,15 +4,16 @@ pub(crate) fn read_validation_statuses(
     features: &[Feature],
 ) -> Result<BTreeMap<String, ValidationStatus>, Box<dyn Error>> {
     let mut statuses = BTreeMap::new();
-    for (corpus, _) in VALIDATION_CORPORA {
-        let path = validation_status_path(corpus);
+    for corpus in VALIDATION_CORPORA {
+        let path = validation_status_path(corpus.id);
         if path.exists() {
             let status = read_corpus_status(&path)?;
-            if status.corpus_id != *corpus {
+            if status.corpus_id != corpus.id {
                 return Err(boxed_error(format!(
-                    "{} declares corpus_id `{}`, expected `{corpus}`",
+                    "{} declares corpus_id `{}`, expected `{}`",
                     path.display(),
-                    status.corpus_id
+                    status.corpus_id,
+                    corpus.id
                 )));
             }
             for (feature_id, feature_status) in status.features {
@@ -26,7 +27,7 @@ pub(crate) fn read_validation_statuses(
                     .entry(feature_id.clone())
                     .or_insert_with(|| ValidationStatus::new(&feature_id))
                     .corpora
-                    .insert((*corpus).to_owned(), feature_status);
+                    .insert(corpus.id.to_owned(), feature_status);
             }
         }
     }
@@ -57,16 +58,16 @@ pub(crate) fn write_validation_statuses(
     statuses: &BTreeMap<String, ValidationStatus>,
     selected_corpora: &BTreeSet<String>,
 ) -> Result<(), Box<dyn Error>> {
-    for (corpus, _) in VALIDATION_CORPORA {
-        if !selected_corpora.contains(*corpus) {
+    for corpus in VALIDATION_CORPORA {
+        if !selected_corpora.contains(corpus.id) {
             continue;
         }
         let mut corpus_status = CorpusStatusFile {
-            corpus_id: (*corpus).to_owned(),
+            corpus_id: corpus.id.to_owned(),
             features: BTreeMap::new(),
         };
         for (feature_id, status) in statuses {
-            if let Some(feature_status) = status.corpora.get(*corpus) {
+            if let Some(feature_status) = status.corpora.get(corpus.id) {
                 corpus_status
                     .features
                     .insert(feature_id.clone(), feature_status.clone());
@@ -75,7 +76,7 @@ pub(crate) fn write_validation_statuses(
         if corpus_status.features.is_empty() {
             continue;
         }
-        let path = validation_status_path(corpus);
+        let path = validation_status_path(corpus.id);
         fs::create_dir_all(
             path.parent()
                 .ok_or_else(|| boxed_error("status path has no parent"))?,

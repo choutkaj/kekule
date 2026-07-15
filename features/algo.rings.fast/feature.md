@@ -39,3 +39,5 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - v4: Move the public expert API under the `perception::rings` facade.
 - v5: Add PubChem-100k as required broad-corpus validation evidence.
 - v6: Mark current broad-corpus validation evidence as passing in feature metadata.
+- v8: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

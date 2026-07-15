@@ -16,6 +16,10 @@ or manually curated external-reference golden data.
 - Compares fixtures in parallel by default using all available processors; `--jobs N` bounds validation to a fixed worker count.
 - Prints compact progress output for the overall target set and for fixture comparison within each feature/corpus target.
 - Accepts only declared implementation-vs-golden comparison manifests for required implemented validation.
+- Declares corpus availability in typed metadata; local-only corpora remain
+  explicitly runnable with a concrete `--corpus` selector but are rejected from
+  feature `validation_required` lists because a clean checkout cannot recompute
+  their fixture evidence. `--corpus all` selects only required routine tiers.
 - Verifies golden `feature_id`, `corpus_id`, `fixture_path`, current fixture SHA-256, and reference tool/version metadata before comparing payloads.
 - Records content-addressed pass evidence over manifests, source locks, fixtures, goldens, Rust source, Cargo manifests, feature metadata, and reference generator/environment files when the reference tool is generator-backed.
 - Supports manually curated semantic references when the manifest
@@ -56,6 +60,9 @@ or manually curated external-reference golden data.
 - Golden data should be normalized JSON and include reference tool versions.
 - Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
 - The smoke corpus data directory is intentionally checked in and exempt from the default ignore rule for larger generated corpus data.
+- Every registered non-smoke corpus declares `local_only = true` because its
+  data directory is ignored. These corpora support on-demand runs and never
+  determine repository-wide validation state or appear as dashboard columns.
 - Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
 - Status evidence records fixture and comparison counts, reference versions, the manifest SHA-256, a versioned evidence input list, evidence SHA-256, and validation time.
 - Evidence is considered current only when recomputing it from the current checkout produces the stored schema version and hash.
@@ -76,6 +83,8 @@ or manually curated external-reference golden data.
 
 - Current coverage is infrastructure unit-test based plus live corpus comparisons against committed external-source goldens.
 - Passing comparisons are evidence for the compared behavior; failing comparisons identify implementation gaps and should not be papered over.
+- Unit coverage rejects local-only corpus IDs in `validation_required` while
+  preserving explicit command-line selection for on-demand runs.
 
 ## Out Of Scope
 
@@ -112,3 +121,5 @@ or manually curated external-reference golden data.
   implementation goldens.
 - v18: Make smoke a fixed, fully committed 20-case suite and always verify its
   source fixtures during corpus integrity checks.
+- v19: Add typed local-only corpus metadata, reject every ignored corpus from
+  repository-wide required evidence, and retain them for explicit runs.

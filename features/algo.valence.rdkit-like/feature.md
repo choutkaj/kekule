@@ -52,3 +52,5 @@ Provide conservative valence perception for common organic molecules.
   lookup, unrestricted-valence elements, implicit-hydrogen suppression for
   electropositive centers, and reuse the same allowed-valence table for
   Molfile tetrahedral hydrogen-carrier preservation.
+- v13: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

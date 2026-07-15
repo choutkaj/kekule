@@ -37,3 +37,5 @@ interpret one record as one asserted `SmallMolecule`.
 - v1-v12: Practical raw SMILES reader and expanded chemistry/stereo coverage.
 - v13: Hard break to `SmilesDocument` parse/interpret and remove direct readers
   and `SmilesParseOptions`.
+- v14: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

@@ -1,9 +1,9 @@
 id = "io.sdf.v2000.write"
 title = "SDF V2000 writer"
 area = "io"
-version = 7
+version = 8
 implemented = true
 validated = true
 description = "Write one or more small molecules as SDF V2000 records with data fields and supported source bond stereo marks."
 depends_on = ["io.mol.v2000.write", "io.sdf.v2000.parse"]
-validation_required = ["smoke", "pubchem-100", "pubchem-1k", "pubchem-100k", "pl-rex", "enamine-diversity"]
+validation_required = ["smoke"]

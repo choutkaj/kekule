@@ -104,3 +104,5 @@ parity validation.
   Kekule bond orders.
 - v7: Inherit lossless valence-implied bracket-radical output through quintet
   from the noncanonical SMILES writer.
+- v8: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.

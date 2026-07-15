@@ -143,9 +143,13 @@ impl ValidationStatus {
 }
 
 pub(crate) fn is_known_corpus(corpus: &str) -> bool {
+    validation_corpus(corpus).is_some()
+}
+
+pub(crate) fn validation_corpus(corpus: &str) -> Option<&'static ValidationCorpus> {
     VALIDATION_CORPORA
         .iter()
-        .any(|(candidate, _)| *candidate == corpus)
+        .find(|candidate| candidate.id == corpus)
 }
 
 pub(crate) fn validation_manifest_path(feature: &str, corpus: &str) -> PathBuf {
@@ -180,6 +184,20 @@ pub(crate) fn validation_targets<'a>(
     feature_selector: &str,
     corpus_selector: &str,
 ) -> Vec<(&'a Feature, String)> {
+    if corpus_selector != "all"
+        && validation_corpus(corpus_selector).is_some_and(|corpus| corpus.local_only)
+    {
+        return features
+            .iter()
+            .filter(|feature| feature_selector == "all" || feature.id == feature_selector)
+            .filter(|feature| {
+                feature_selector != "all"
+                    || validation_manifest_path(&feature.id, corpus_selector).exists()
+            })
+            .map(|feature| (feature, corpus_selector.to_owned()))
+            .collect();
+    }
+
     let mut targets = Vec::new();
     for feature in features {
         if feature_selector != "all" && feature.id != feature_selector {

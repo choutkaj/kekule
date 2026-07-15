@@ -339,3 +339,5 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v38: Retry final equivalent-ligand and endpoint tie classification at
   connected-component depth before reporting unresolved priority, while still
   preserving node-budget resource failures.
+- v40: Keep every ignored non-smoke corpus as explicit local-only validation
+  instead of repository-wide required evidence.
