@@ -1,7 +1,7 @@
-use molecules::bio::{BioHierarchy, MacroMolecule};
+use molecules::bio::{MacroMolecule, SmcraHierarchy};
 use molecules::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3};
 use molecules::modeling::potential::{Potential, PotentialError};
-use molecules::modeling::{InstanceAtomId, MolecularModel, MoleculeInstanceId};
+use molecules::modeling::{InstanceAtomId, Model, MoleculeInstanceId};
 use molecules::small::SmallMolecule;
 
 use crate::{DreidingPotential, DreidingPrepareError};
@@ -48,7 +48,7 @@ fn water(offset: f64) -> (SmallMolecule, molecules::core::ConformerId) {
 #[test]
 fn preparation_and_evaluation_are_finite() {
     let (water, conformer) = water(0.0);
-    let model = MolecularModel::from_small_molecule(&water, conformer).unwrap();
+    let model = Model::from_small_molecule(&water, conformer).unwrap();
     let mut potential = DreidingPotential::prepare(&model).unwrap();
     let evaluation = potential.evaluate(&model).unwrap();
     let oxygen = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(0));
@@ -62,7 +62,7 @@ fn preparation_and_evaluation_are_finite() {
 fn qeq_is_prepared_per_molecule_instance() {
     let (first, first_conf) = water(0.0);
     let (second, second_conf) = water(5.0);
-    let mut builder = MolecularModel::builder();
+    let mut builder = Model::builder();
     let first_id = builder.add_small_molecule(&first, first_conf).unwrap();
     let second_id = builder.add_small_molecule(&second, second_conf).unwrap();
     let model = builder.build().unwrap();
@@ -103,8 +103,7 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
     conformer.set_position(first_hydrogen, Point3::new(0.9575, 0.0, 0.0));
     conformer.set_position(second_hydrogen, Point3::new(-0.2399, 0.9272, 0.0));
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    let model =
-        MolecularModel::from_small_molecule(&SmallMolecule::from_graph(graph), conformer).unwrap();
+    let model = Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer).unwrap();
 
     let potential = DreidingPotential::prepare(&model).unwrap();
     assert!(potential.nonbonded.is_empty());
@@ -113,8 +112,8 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
 #[test]
 fn eligible_macro_molecules_are_supported() {
     let (small, conformer) = water(0.0);
-    let macromolecule = MacroMolecule::from_parts(small.graph().clone(), BioHierarchy::new());
-    let model = MolecularModel::from_macro_molecule(&macromolecule, conformer).unwrap();
+    let macromolecule = MacroMolecule::from_parts(small.graph().clone(), SmcraHierarchy::new());
+    let model = Model::from_macro_molecule(&macromolecule, conformer).unwrap();
     let mut potential = DreidingPotential::prepare(&model).unwrap();
     assert!(potential.evaluate(&model).unwrap().energy().is_finite());
 }
@@ -128,8 +127,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     conformer.set_position(id, Point3::default());
     let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
     let model =
-        MolecularModel::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id)
-            .unwrap();
+        Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(&model),
         Err(DreidingPrepareError::UnresolvedImplicitHydrogens { atom })
@@ -144,8 +142,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     conformer.set_position(id, Point3::default());
     let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
     let model =
-        MolecularModel::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id)
-            .unwrap();
+        Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(&model),
         Err(DreidingPrepareError::CountedHydrogens { .. })
@@ -159,11 +156,11 @@ fn prepared_potential_uses_model_definition_identity() {
         &[],
         &[Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 0.0, 0.0)],
     );
-    let combined_model = MolecularModel::from_small_molecule(&combined, combined_conf).unwrap();
+    let combined_model = Model::from_small_molecule(&combined, combined_conf).unwrap();
     let mut potential = DreidingPotential::prepare(&combined_model).unwrap();
 
     let (one, one_conf) = molecule(&["C"], &[], &[Point3::new(0.0, 0.0, 0.0)]);
-    let mut builder = MolecularModel::builder();
+    let mut builder = Model::builder();
     builder.add_small_molecule(&one, one_conf).unwrap();
     builder.add_small_molecule(&one, one_conf).unwrap();
     let split_model = builder.build().unwrap();

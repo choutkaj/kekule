@@ -1,7 +1,7 @@
 id = "model.potential"
 title = "Model potential interface"
 area = "modeling"
-version = 3
+version = 4
 implemented = true
 validated = false
 description = "Evaluate finite energies and complete Cartesian gradients for fixed-topology molecular models, including explicit harmonic bond terms."

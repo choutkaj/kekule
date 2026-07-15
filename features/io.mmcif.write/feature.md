@@ -2,7 +2,7 @@
 
 ## Summary
 
-Write a supported canonical `MolecularModel` as one structural PDBx/mmCIF data
+Write a supported canonical `Model` as one structural PDBx/mmCIF data
 block without hiding validation, perception, sanitization, or preparation.
 
 ## Behavior/API
@@ -11,7 +11,7 @@ block without hiding validation, perception, sanitization, or preparation.
   `MmcifWriteError` failures.
 - Emits deterministic `_entity`, `_struct_asym`, `_atom_site`, and optional
   `_struct_conn` loops in model topology order.
-- Reads coordinates only from the authoritative `MolecularModel` position array;
+- Reads coordinates only from the authoritative `Model` position array;
   `coordinate_precision` controls fixed-decimal output and defaults to three
   decimal places.
 - Preserves supported macro hierarchy labels, residue identifiers, selected
@@ -31,10 +31,10 @@ block without hiding validation, perception, sanitization, or preparation.
 
 ## Implementation Notes
 
-- The writer targets `MolecularModel`, not `MacroMolecule`, because model
+- The writer targets `Model`, not `MacroMolecule`, because model
   positions are complete and authoritative and one structure may contain
   multiple Small and Macro molecule instances.
-- Macro atom sites remain a `BioHierarchy` sidecar over local `AtomId`s; writer
+- Macro atom sites remain a `SmcraHierarchy` sidecar over local `AtomId`s; writer
   rows qualify them only while resolving model positions and connectivity.
 - Values are emitted as single CIF tokens. Source formatting, comments,
   unknown categories, and original atom-site row IDs belong to `MmcifDocument`
@@ -65,3 +65,5 @@ block without hiding validation, perception, sanitization, or preparation.
 
 - v1: Add foundational canonical-model writing with explicit support boundaries
   and order-preserving covalent connectivity.
+- v2: Accept the renamed canonical `Model` and `SmcraHierarchy` APIs without
+  changing emitted mmCIF semantics.

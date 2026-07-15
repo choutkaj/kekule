@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
-use crate::bio::{AtomSite, BioHierarchy, MacroValidateOptions};
+use crate::bio::{MacroValidateOptions, SmcraAtomSite, SmcraHierarchy};
 use crate::core::{AtomId, BondOrder, Point3};
 use crate::modeling::{
-    InstanceAtomId, InstanceBondId, MolecularModel, MoleculeInstance, MoleculeInstanceId,
-    MoleculeRole,
+    InstanceAtomId, InstanceBondId, Model, MoleculeInstance, MoleculeInstanceId, MoleculeRole,
 };
 
 const MAX_COORDINATE_PRECISION: usize = 15;
@@ -225,7 +224,7 @@ struct PreparedModel {
 }
 
 pub fn write_mmcif_model(
-    model: &MolecularModel,
+    model: &Model,
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
@@ -252,7 +251,7 @@ fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> 
     Ok(())
 }
 
-fn prepare_model(model: &MolecularModel) -> Result<PreparedModel, MmcifWriteError> {
+fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
     let mut reserved_asym_ids = BTreeSet::new();
     for (_, molecule) in model.topology().molecules() {
         if let Some(hierarchy) = molecule.hierarchy() {
@@ -455,9 +454,9 @@ fn validate_graph_chemistry(molecule: &MoleculeInstance) -> Result<(), MmcifWrit
 
 #[allow(clippy::too_many_arguments)]
 fn collect_macro_rows(
-    model: &MolecularModel,
+    model: &Model,
     molecule: &MoleculeInstance,
-    hierarchy: &BioHierarchy,
+    hierarchy: &SmcraHierarchy,
     entity_id: &str,
     kind: EntityKind,
     asyms: &mut Vec<AsymRow>,
@@ -478,7 +477,7 @@ fn collect_macro_rows(
         ));
     }
 
-    let mut sites = BTreeMap::<AtomId, &AtomSite>::new();
+    let mut sites = BTreeMap::<AtomId, &SmcraAtomSite>::new();
     for (_, site) in hierarchy.atom_sites() {
         if sites.insert(site.atom, site).is_some() {
             return Err(MmcifWriteError::DuplicateAtomSite(
@@ -589,7 +588,7 @@ fn collect_macro_rows(
 }
 
 fn collect_small_rows(
-    model: &MolecularModel,
+    model: &Model,
     molecule: &MoleculeInstance,
     entity_id: &str,
     asym_id: &str,
@@ -716,7 +715,7 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), MmcifWriteError> {
 }
 
 fn validate_instance_boundaries(
-    model: &MolecularModel,
+    model: &Model,
     atoms: &[AtomRow],
     connections: &[ConnectionRow],
 ) -> Result<(), MmcifWriteError> {

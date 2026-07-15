@@ -6,9 +6,10 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 
 ## Behavior/API
 
-- Exposes typed hierarchy IDs for models, chains, residues, and atom sites.
-- Stores biomolecular labels and atom-site metadata in `BioHierarchy`, not core `Atom`.
-- `MacroMolecule` owns one core `Molecule` plus one `BioHierarchy`.
+- Exposes `SmcraModel`, `SmcraChain`, `SmcraResidue`, and `SmcraAtomSite`
+  nodes plus correspondingly prefixed typed IDs.
+- Stores biomolecular labels and atom-site metadata in `SmcraHierarchy`, not core `Atom`.
+- `MacroMolecule` owns one core `Molecule` plus one `SmcraHierarchy`.
 - `MacroMolecule` exposes model, chain, residue, and atom-site iterators plus `atom_site_for_atom`.
 - `MacroMolecule::validate` checks graph/hierarchy/coordinate consistency without mutation.
 - `MacroMolecule::sanitize` uses separate macro options, reports, and errors; defaults only validate current graph/hierarchy/coordinate state.
@@ -41,4 +42,6 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - v3: Preserve label/auth component IDs separately and support conservative lenient occurrence grouping.
 - v4: Add direct macro hierarchy accessors plus conservative macro validation and sanitization APIs.
 - v5: Make macro sanitization defaults honest by enabling only implemented validation behavior and rejecting requested unimplemented stages.
-- v6: Remove validation coupling to the deleted direct mmCIF reader and keep `BioHierarchy` format-neutral.
+- v6: Remove validation coupling to the deleted direct mmCIF reader and keep `SmcraHierarchy` format-neutral.
+- v7: Hard-break the complete hierarchy vocabulary to `Smcra*` names so its
+  structural model cannot be confused with `modeling::Model`.

@@ -39,7 +39,7 @@ Use trunk-based development with short-lived feature branches.
 - Follow the public API shape in `ARCHITECTURE.md`. Do not add broad root re-exports or bloat the prelude casually.
 - Keep parsing separate from sanitization, validation, and preparation. Never hide preparation inside parsing or default sanitization.
 - Keep small-molecule chemical sanitization separate from macromolecule validation/sanitization; use separate options, reports, and errors.
-- Keep biomolecular labels and structure metadata in `BioHierarchy`, not core `Atom` or `Bond`, unless chemically general.
+- Keep biomolecular labels and structure metadata in `SmcraHierarchy`, not core `Atom` or `Bond`, unless chemically general.
 - Topology or chemistry-relevant mutation must invalidate affected computed state. Failed transactional operations must leave inputs unchanged.
 - Parsers must return structured errors for malformed input. Writers must reject unsupported chemistry rather than silently coercing it.
 - RDKit and Biopython are validation/reference tools only, not Rust runtime dependencies.

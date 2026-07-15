@@ -1,12 +1,10 @@
-use crate::bio::{AtomSiteMetadata, BioHierarchy, MacroMolecule};
+use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
 use crate::core::{Atom, BondOrder, Conformer, Element, Molecule, Point3};
 use crate::mmcif::{
     self, MmcifAltLocPolicy, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
     MmcifWriteError, MmcifWriteOptions,
 };
-use crate::modeling::{
-    MolecularModel, MolecularModelBuilder, MoleculeInstanceMetadata, MoleculeRole,
-};
+use crate::modeling::{Model, ModelBuilder, MoleculeInstanceMetadata, MoleculeRole};
 use crate::small::SmallMolecule;
 
 const MIXED: &str = r#"
@@ -282,14 +280,14 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
     let mut conformer = Conformer::new();
     conformer.set_position(atom, Point3::new(0.0, 0.0, 0.0));
     let conformer = graph.add_conformer(conformer).unwrap();
-    let mut hierarchy = BioHierarchy::new();
+    let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("1");
     let chain = hierarchy.add_chain(model, "A", None).unwrap();
     hierarchy
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
     let macro_molecule = MacroMolecule::from_parts(graph, hierarchy);
-    let mut builder = MolecularModelBuilder::new();
+    let mut builder = ModelBuilder::new();
     builder
         .add_macro_molecule(&macro_molecule, conformer)
         .unwrap();
@@ -339,7 +337,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
     conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
     conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
     let conformer = graph.add_conformer(conformer).unwrap();
-    let mut hierarchy = BioHierarchy::new();
+    let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("1");
     let chain = hierarchy.add_chain(model, "A", None).unwrap();
     let residue = hierarchy
@@ -350,15 +348,15 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
             .add_atom_site(
                 residue,
                 atom,
-                AtomSiteMetadata {
+                SmcraAtomSiteMetadata {
                     label_atom_id: Some("CA".to_owned()),
-                    ..AtomSiteMetadata::default()
+                    ..SmcraAtomSiteMetadata::default()
                 },
             )
             .unwrap();
     }
     let macro_molecule = MacroMolecule::from_parts(graph, hierarchy);
-    let mut builder = MolecularModelBuilder::new();
+    let mut builder = ModelBuilder::new();
     builder
         .add_macro_molecule(&macro_molecule, conformer)
         .unwrap();
@@ -379,7 +377,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
     ));
 }
 
-fn small_model_with_bond(order: BondOrder) -> MolecularModel {
+fn small_model_with_bond(order: BondOrder) -> Model {
     let mut graph = Molecule::new();
     let left = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
     let right = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
@@ -389,19 +387,19 @@ fn small_model_with_bond(order: BondOrder) -> MolecularModel {
     conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
     let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
-    let mut builder = MolecularModelBuilder::new();
+    let mut builder = ModelBuilder::new();
     builder.add_small_molecule(&molecule, conformer).unwrap();
     builder.build().unwrap()
 }
 
-fn small_model_with_metadata(metadata: MoleculeInstanceMetadata) -> MolecularModel {
+fn small_model_with_metadata(metadata: MoleculeInstanceMetadata) -> Model {
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
     let mut conformer = Conformer::new();
     conformer.set_position(atom, Point3::new(0.0, 0.0, 0.0));
     let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
-    let mut builder = MolecularModelBuilder::new();
+    let mut builder = ModelBuilder::new();
     builder
         .add_small_molecule_with_metadata(&molecule, conformer, metadata)
         .unwrap();

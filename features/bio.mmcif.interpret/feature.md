@@ -3,7 +3,7 @@
 ## Summary
 
 Interpret one selected coordinate model from a loss-preserving `MmcifDocument`
-into a `MolecularModel` with distinct molecule instances and a report.
+into a `Model` with distinct molecule instances and a report.
 
 ## Behavior/API
 
@@ -25,7 +25,7 @@ into a `MolecularModel` with distinct molecule instances and a report.
 
 ## Implementation Notes
 
-- `BioHierarchy` maps labels to local `AtomId`; model insertion provides the
+- `SmcraHierarchy` maps labels to local `AtomId`; model insertion provides the
   instance-qualified view.
 - Polymer/branched instances establish conservative macro boundaries; nonpolymer
   and water occurrences remain distinct unless a declared covalent link joins
@@ -50,7 +50,9 @@ into a `MolecularModel` with distinct molecule instances and a report.
 
 - v1: Staged interpretation into molecular-content containers.
 - v2: Remove direct whole-file molecule reader.
-- v3: Hard break to selected-model `MolecularModel` output and remove
+- v3: Hard break to selected-model `Model` output and remove
   `MolecularContents`/`Solvent`.
 - v4: Preserve the four PDBx/mmCIF covalent bond orders carried by
   `_struct_conn.pdbx_value_order` instead of coercing every connection to single.
+- v5: Return the renamed canonical `Model` and populate the fully prefixed
+  `SmcraHierarchy` API without changing interpretation semantics.

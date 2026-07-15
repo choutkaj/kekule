@@ -3,7 +3,7 @@ use std::fmt;
 use crate::core::Point3;
 
 use super::potential::{Potential, PotentialError, PotentialEvaluation, Vector3};
-use super::{MolecularModel, PositionError};
+use super::{Model, PositionError};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Controls normalized steepest descent with Armijo backtracking.
@@ -49,7 +49,7 @@ pub enum MinimizationStatus {
 #[derive(Debug, Clone, PartialEq)]
 /// Minimized model and convergence diagnostics.
 pub struct MinimizationResult {
-    pub model: MolecularModel,
+    pub model: Model,
     pub initial_energy: f64,
     pub final_energy: f64,
     pub final_max_gradient: f64,
@@ -64,7 +64,7 @@ pub struct MinimizationResult {
 /// Trial evaluations with [`PotentialError::InvalidGeometry`] are rejected and
 /// backtracked; other potential failures abort the minimization.
 pub fn minimize(
-    model: &MolecularModel,
+    model: &Model,
     potential: &mut dyn Potential,
     options: MinimizeOptions,
 ) -> Result<MinimizationResult, MinimizationError> {
@@ -234,7 +234,7 @@ fn maximum_gradient(gradient: &[Vector3]) -> f64 {
 }
 
 fn result(
-    model: MolecularModel,
+    model: Model,
     initial_energy: f64,
     evaluation: &PotentialEvaluation,
     final_max_gradient: f64,

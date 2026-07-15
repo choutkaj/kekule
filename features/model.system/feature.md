@@ -9,13 +9,13 @@ one complete mutable coordinate set.
 
 - Exposes `MoleculeInstanceId`, `InstanceAtomId`, `InstanceBondId`,
   `ModelAtomIndex`, `MoleculeInstance`, `MoleculeRole`, `ModelTopology`,
-  `ModelDefinitionKey`, `MolecularModel`, and `MolecularModelBuilder`.
+  `ModelDefinitionKey`, `Model`, and `ModelBuilder`.
 - Builder insertion uses `add_small_molecule[_with_metadata]` and
   `add_macro_molecule[_with_metadata]` and returns a stable instance ID.
 - Preserves molecule-local atom and bond IDs, including tombstones; qualification
   adds instance ownership and dense model indices round-trip to qualified IDs.
 - Stores typed Small/Macro payloads, multi-valued roles, properties, and a
-  qualified read-only `BioHierarchy` view.
+  qualified read-only `SmcraHierarchy` view.
 - Copies one complete finite source conformer into authoritative model positions
   and removes conformers from stored instance topology without mutating sources.
 - Rejects empty models/molecules, invalid conformers, missing positions, and
@@ -50,3 +50,6 @@ one complete mutable coordinate set.
   `ModelTopology`, mixed Small/Macro ownership, and authoritative positions.
 - v3: Add shared opaque definition identity for binding prepared potentials
   without flattening molecule instances.
+- v4: Rename the canonical `MolecularModel`/builder API to `Model` and
+  `ModelBuilder`, and rename its qualified hierarchy view to
+  `InstanceSmcraHierarchy`.

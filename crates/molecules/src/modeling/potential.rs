@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use super::{InstanceAtomId, InstanceBondId, ModelDefinitionKey, MolecularModel};
+use super::{InstanceAtomId, InstanceBondId, Model, ModelDefinitionKey};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 /// Three-dimensional Cartesian vector used for energy gradients.
@@ -49,11 +49,7 @@ pub struct PotentialEvaluation {
 }
 
 impl PotentialEvaluation {
-    pub fn new(
-        model: &MolecularModel,
-        energy: f64,
-        gradient: Vec<Vector3>,
-    ) -> Result<Self, PotentialError> {
+    pub fn new(model: &Model, energy: f64, gradient: Vec<Vector3>) -> Result<Self, PotentialError> {
         if !energy.is_finite() {
             return Err(PotentialError::NonFiniteEnergy);
         }
@@ -81,7 +77,7 @@ impl PotentialEvaluation {
         &self.gradient
     }
 
-    pub fn gradient_for(&self, model: &MolecularModel, atom: InstanceAtomId) -> Option<Vector3> {
+    pub fn gradient_for(&self, model: &Model, atom: InstanceAtomId) -> Option<Vector3> {
         let index = model.topology().atom_index(atom)?;
         self.gradient.get(index.index()).copied()
     }
@@ -91,10 +87,10 @@ impl PotentialEvaluation {
 ///
 /// Implementations may retain mutable caches between calls. Every returned
 /// evaluation must contain one finite gradient vector per model atom. Prepared
-/// implementations should bind to [`MolecularModel::definition_key`] and return
+/// implementations should bind to [`Model::definition_key`] and return
 /// [`PotentialError::IncompatibleModel`] for a different definition.
 pub trait Potential {
-    fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError>;
+    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,7 +134,7 @@ struct HarmonicBondTerm {
 
 impl HarmonicBondPotential {
     pub fn new(
-        model: &MolecularModel,
+        model: &Model,
         parameters: impl IntoIterator<Item = HarmonicBondParameter>,
     ) -> Result<Self, PotentialError> {
         let mut seen = BTreeSet::new();
@@ -181,7 +177,7 @@ impl HarmonicBondPotential {
 }
 
 impl Potential for HarmonicBondPotential {
-    fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError> {
+    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError> {
         if &self.definition != model.definition_key() {
             return Err(PotentialError::IncompatibleModel);
         }

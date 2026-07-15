@@ -20,7 +20,7 @@ algorithms still report the graph's actual components.
 format text
     -> format-specific Document
     -> explicit interpretation + report
-    -> SmallMolecule / MacroMolecule / MolecularModel
+    -> SmallMolecule / MacroMolecule / Model
     -> explicit perception, validation, or sanitization
     -> downstream prepared System or backend object
 ```
@@ -35,7 +35,7 @@ These boundaries are architectural, not merely API conventions:
 - Perception derives chemical state from asserted topology.
 - Sanitization is an explicit transactional workflow over canonical objects.
 - Modelling preparation may add force-field parameters or mechanical particles,
-  but those are downstream representations and never mutate a `MolecularModel`.
+  but those are downstream representations and never mutate a `Model`.
 
 ## Molecules and wrappers
 
@@ -79,9 +79,9 @@ the ergonomic small-molecule workflows while retaining `graph()` and controlled
 parse-then-interpret convenience and does not sanitize;
 `from_smiles_sanitized` names the additional operation explicitly.
 
-### `MacroMolecule` and `BioHierarchy`
+### `MacroMolecule` and `SmcraHierarchy`
 
-`MacroMolecule` is one `Molecule` plus `BioHierarchy<AtomId>`. `BioHierarchy`
+`MacroMolecule` is one `Molecule` plus `SmcraHierarchy`. `SmcraHierarchy`
 stores structure labels and metadata—models, chains, residues, atom sites,
 author/label identifiers, alternate-location metadata, occupancy, and
 B-factors. It maps structural labels to local `AtomId`s but never determines
@@ -109,7 +109,7 @@ appropriate to its grammar:
 - `MmcifDocument` preserves blocks, scalar items, loops, missing-value markers,
   unknown categories, and source locations. Interpretation returns
   `MmcifInterpretation { model, report }`; canonical-model writing is a separate
-  operation over `MolecularModel`.
+  operation over `Model`.
 
 mmCIF interpretation selects exactly one coordinate-model ID. The default,
 `RequireSingle`, rejects ambiguous multi-model input; `Select(id)` and `First`
@@ -128,12 +128,12 @@ positions. It preserves only its documented hierarchy, entity-kind, atom-site,
 and explicit covalent-bond subset and rejects canonical chemistry or model
 semantics outside that subset rather than silently dropping or coercing them.
 
-## `MolecularModel`
+## `Model`
 
-`MolecularModel` is the canonical start of modelling workflows:
+`Model` is the canonical start of modelling workflows:
 
 ```text
-MolecularModel
+Model
   immutable ModelTopology
     ordered MoleculeInstance values
     InstanceAtomId <-> dense ModelAtomIndex
@@ -183,7 +183,7 @@ part of the current contract.
 
 Force-field parameters, virtual sites, Drude particles, constraints, backend
 particles, electronic state, and execution-engine objects do not belong in
-`MolecularModel`. A future `System`, `MMSystem`, or backend-specific prepared
+`Model`. A future `System`, `MMSystem`, or backend-specific prepared
 object may own them, but it must provide explicit mappings between its particles
 and `ModelAtomIndex`/`InstanceAtomId` and remain bound to the model topology it
 was prepared from.
@@ -199,17 +199,17 @@ The public facade is intentionally focused:
 ```text
 core        Molecule graph kernel and local IDs
 small       SmallMolecule
-bio         MacroMolecule and BioHierarchy
+bio         MacroMolecule and SmcraHierarchy
 smiles      SmilesDocument parse/interpret and writers
 molfile     MolfileDocument parse/interpret and writers
 sdf         SdfDocument parse/interpret and record writers
-mmcif       MmcifDocument parse/interpret and MolecularModel writing
+mmcif       MmcifDocument parse/interpret and Model writing
 perception  explicit chemical perception and sanitization
 hydrogens   explicit small-molecule hydrogen topology normalization
 query       syntax-neutral query graphs and bounded SMARTS parsing
 substructure query-graph matching algorithms
 canon       canonicalization algorithms
-modeling    ModelTopology, MolecularModel, potentials, minimization
+modeling    ModelTopology, Model, potentials, minimization
 ```
 
 The prelude contains only common domain and graph types. Format internals,

@@ -7,7 +7,7 @@ use molecules::core::Point3;
 use molecules::modeling::potential::{
     Potential, PotentialError, PotentialEvaluation, PotentialGeometryError, Vector3,
 };
-use molecules::modeling::{InstanceAtomId, MolecularModel};
+use molecules::modeling::{InstanceAtomId, Model};
 
 use crate::geometry::{
     GeometryError, angle_cosine, displacement, hydrogen_bond_cosine, inversion_cosine, torsion,
@@ -15,7 +15,7 @@ use crate::geometry::{
 use crate::prepare::{AngleTerm, DreidingPotential, InversionTerm};
 
 impl Potential for DreidingPotential {
-    fn evaluate(&mut self, model: &MolecularModel) -> Result<PotentialEvaluation, PotentialError> {
+    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError> {
         if &self.definition != model.definition_key() {
             return Err(PotentialError::IncompatibleModel);
         }

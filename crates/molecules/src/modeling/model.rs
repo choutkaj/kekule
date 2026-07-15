@@ -3,7 +3,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::bio::{AtomSite, AtomSiteId, BioHierarchy, MacroMolecule};
+use crate::bio::{MacroMolecule, SmcraAtomSite, SmcraAtomSiteId, SmcraHierarchy};
 use crate::core::{Atom, AtomId, Bond, BondId, ConformerId, Molecule, Point3, PropMap};
 use crate::small::SmallMolecule;
 
@@ -187,12 +187,12 @@ impl MoleculeInstance {
         }
     }
 
-    pub fn hierarchy(&self) -> Option<&BioHierarchy> {
+    pub fn hierarchy(&self) -> Option<&SmcraHierarchy> {
         self.macro_molecule().map(MacroMolecule::hierarchy)
     }
 
-    pub fn bio_hierarchy(&self) -> Option<InstanceBioHierarchy<'_>> {
-        self.hierarchy().map(|hierarchy| InstanceBioHierarchy {
+    pub fn smcra_hierarchy(&self) -> Option<InstanceSmcraHierarchy<'_>> {
+        self.hierarchy().map(|hierarchy| InstanceSmcraHierarchy {
             molecule: self.id,
             hierarchy,
         })
@@ -220,21 +220,21 @@ impl MoleculeInstance {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct InstanceBioHierarchy<'a> {
+pub struct InstanceSmcraHierarchy<'a> {
     molecule: MoleculeInstanceId,
-    hierarchy: &'a BioHierarchy,
+    hierarchy: &'a SmcraHierarchy,
 }
 
-impl InstanceBioHierarchy<'_> {
+impl InstanceSmcraHierarchy<'_> {
     pub const fn molecule(&self) -> MoleculeInstanceId {
         self.molecule
     }
 
-    pub fn hierarchy(&self) -> &BioHierarchy {
+    pub fn hierarchy(&self) -> &SmcraHierarchy {
         self.hierarchy
     }
 
-    pub fn atom_for_site(&self, site: AtomSiteId) -> Result<InstanceAtomId, ModelError> {
+    pub fn atom_for_site(&self, site: SmcraAtomSiteId) -> Result<InstanceAtomId, ModelError> {
         let site = self
             .hierarchy
             .atom_site(site)
@@ -242,7 +242,7 @@ impl InstanceBioHierarchy<'_> {
         Ok(InstanceAtomId::new(self.molecule, site.atom))
     }
 
-    pub fn atom_site_for_atom(&self, atom: InstanceAtomId) -> Option<&AtomSite> {
+    pub fn atom_site_for_atom(&self, atom: InstanceAtomId) -> Option<&SmcraAtomSite> {
         (atom.molecule == self.molecule)
             .then(|| self.hierarchy.atom_site_for_atom(atom.atom))
             .flatten()
@@ -383,30 +383,30 @@ impl Hash for ModelDefinitionKey {
 }
 
 #[derive(Clone)]
-pub struct MolecularModel {
+pub struct Model {
     definition: ModelDefinitionKey,
     positions: Vec<Point3>,
 }
 
-impl fmt::Debug for MolecularModel {
+impl fmt::Debug for Model {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MolecularModel")
+        f.debug_struct("Model")
             .field("topology", &self.definition.0.topology)
             .field("positions", &self.positions)
             .finish()
     }
 }
 
-impl PartialEq for MolecularModel {
+impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
         self.definition.0.as_ref() == other.definition.0.as_ref()
             && self.positions == other.positions
     }
 }
 
-impl MolecularModel {
-    pub fn builder() -> MolecularModelBuilder {
-        MolecularModelBuilder::new()
+impl Model {
+    pub fn builder() -> ModelBuilder {
+        ModelBuilder::new()
     }
 
     pub fn from_small_molecule(
@@ -494,12 +494,12 @@ impl MolecularModel {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct MolecularModelBuilder {
+pub struct ModelBuilder {
     topology: ModelTopology,
     positions: Vec<Point3>,
 }
 
-impl MolecularModelBuilder {
+impl ModelBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -554,11 +554,11 @@ impl MolecularModelBuilder {
         )
     }
 
-    pub fn build(self) -> Result<MolecularModel, ModelBuildError> {
+    pub fn build(self) -> Result<Model, ModelBuildError> {
         if self.topology.molecules.is_empty() {
             return Err(ModelBuildError::EmptyModel);
         }
-        Ok(MolecularModel {
+        Ok(Model {
             definition: ModelDefinitionKey(Arc::new(ModelDefinition {
                 topology: self.topology,
             })),
@@ -628,7 +628,7 @@ pub enum ModelError {
     InvalidMoleculeInstanceId(MoleculeInstanceId),
     InvalidAtomId(InstanceAtomId),
     InvalidBondId(InstanceBondId),
-    InvalidAtomSiteId(AtomSiteId),
+    InvalidAtomSiteId(SmcraAtomSiteId),
 }
 
 impl fmt::Display for ModelError {

@@ -87,7 +87,7 @@ when qualified by the returned `MoleculeInstanceId`.
 ```rust
 use molecules::core::{Atom, BondOrder, Conformer, Element, Molecule, Point3};
 use molecules::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
-use molecules::modeling::{minimize, InstanceBondId, MinimizeOptions, MolecularModel};
+use molecules::modeling::{minimize, InstanceBondId, MinimizeOptions, Model};
 use molecules::small::SmallMolecule;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conformer = graph.add_conformer(conformer);
     let molecule = SmallMolecule::from_graph(graph);
 
-    let mut builder = MolecularModel::builder();
+    let mut builder = Model::builder();
     let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
     let bond = InstanceBondId::new(instance, source_bond);
@@ -125,7 +125,7 @@ lookups return `InstanceAtomId`.
 
 Use the `mmcif` facade for multi-entity structure input. Parsing preserves the
 mmCIF document; interpretation selects one coordinate model and produces one
-`MolecularModel` containing distinct molecule instances.
+`Model` containing distinct molecule instances.
 
 ```rust
 use molecules::mmcif::{
