@@ -16,7 +16,9 @@ use molecules::{
         StereoElement, StereoElementKind, StereoGroup, StereoGroupKind, StereoSource,
         StereoSpecifiedness, TetrahedralOrientation,
     },
-    hydrogens, molfile,
+    dssp, hydrogens,
+    mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions},
+    molfile,
     perception::{
         self,
         aromaticity::{self, AromaticityModel},

@@ -204,6 +204,7 @@ smiles      SmilesDocument parse/interpret and writers
 molfile     MolfileDocument parse/interpret and writers
 sdf         SdfDocument parse/interpret and record writers
 mmcif       MmcifDocument parse/interpret and Model writing
+dssp        read-only DSSP 4 protein secondary-structure assignment over Model
 perception  explicit chemical perception and sanitization
 hydrogens   explicit small-molecule hydrogen topology normalization
 query       syntax-neutral query graphs and bounded SMARTS parsing
