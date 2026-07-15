@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::core::{Atom, AtomId, Bond, BondId, Molecule};
 use crate::io::{MolWriteError, SmilesInterpretError, SmilesParseError};
-use crate::{perception, smiles};
+use crate::{hydrogens, perception, smiles};
 
 pub use crate::chemistry::{SanitizeError, SanitizeOptions, SanitizeReport};
 
@@ -68,6 +68,28 @@ impl SmallMolecule {
         options: SanitizeOptions,
     ) -> Result<SanitizeReport, SanitizeError> {
         perception::sanitize_with_options(self, options)
+    }
+
+    /// Materialize stored and perceived hydrogens as graph atoms.
+    pub fn add_hydrogens(
+        &mut self,
+    ) -> Result<hydrogens::AddHydrogensReport, hydrogens::HydrogenNormalizationError> {
+        hydrogens::add_hydrogens(self)
+    }
+
+    /// Materialize hydrogens under the supplied count and growth policy.
+    pub fn add_hydrogens_with_options(
+        &mut self,
+        options: hydrogens::AddHydrogensOptions,
+    ) -> Result<hydrogens::AddHydrogensReport, hydrogens::HydrogenNormalizationError> {
+        hydrogens::add_hydrogens_with_options(self, options)
+    }
+
+    /// Collapse ordinary graph hydrogens and report retained protected atoms.
+    pub fn remove_hydrogens(
+        &mut self,
+    ) -> Result<hydrogens::RemoveHydrogensReport, hydrogens::HydrogenNormalizationError> {
+        hydrogens::remove_hydrogens(self)
     }
 
     pub fn atom_count(&self) -> usize {

@@ -593,6 +593,27 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
 }
 
 #[test]
+fn implementation_dispatch_supports_hydrogen_normalization() {
+    let root = temp_feature_root("hydrogen-normalization-dispatch");
+    let fixture = root.join("fixture.sdf");
+    fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
+
+    let expected = implementation_expected("chem.hydrogen-normalization", "smoke", &fixture)
+        .expect("feature should compare");
+    let record = &expected["records"][0];
+
+    assert_eq!(record["status"], "ok");
+    assert_eq!(record["atom_count_after_add"], 5);
+    assert_eq!(
+        record["added_hydrogens_by_parent"],
+        json!([{ "parent_atom_index": 0, "count": 4 }])
+    );
+    assert_eq!(record["round_trip"]["status"], "ok");
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
     let root = temp_feature_root("isomeric-smiles-feature-dispatch");
     let fixture = root.join("fixture.smi");

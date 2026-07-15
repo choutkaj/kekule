@@ -22,6 +22,19 @@ fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn hydrogen_normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    let mut molecule = SmallMolecule::from_smiles_sanitized("C")?;
+    let added = molecules::hydrogens::add_hydrogens(&mut molecule)?;
+    assert_eq!(added.added.len(), 4);
+
+    molecule.sanitize()?;
+    let removed = molecule.remove_hydrogens()?;
+    assert_eq!(removed.removed.len(), 4);
+    assert_eq!(molecule.atom_count(), 1);
+    Ok(())
+}
+
+#[test]
 fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
     use molecules::core::*;
 

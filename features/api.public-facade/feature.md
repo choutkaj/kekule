@@ -6,7 +6,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Behavior/API
 
-- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, `canon`, and `modeling`.
+- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `canon`, and `modeling`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -19,6 +19,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   `MolecularContents` and `Solvent` are removed.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 - Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
+- Explicit small-molecule hydrogen topology transforms live under `hydrogens`
+  and as `SmallMolecule` convenience methods; they are not hidden in parsing or
+  sanitization.
 
 ## Implementation Notes
 
@@ -57,3 +60,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   erased before stereo and CIP operations.
 - v9: Expose opaque shared model-definition identity and instance-qualified
   structured potential failures through the focused modelling namespace.
+- v10: Add the focused `hydrogens` namespace and `SmallMolecule`
+  conveniences for transactional explicit/implicit hydrogen normalization.

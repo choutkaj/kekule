@@ -152,6 +152,15 @@ pub(crate) fn implementation_expected(
                 json!({ "records": records.iter_mut().map(valence_record_json).collect::<Vec<_>>() }),
             )
         }
+        "chem.hydrogen-normalization" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter_mut()
+                    .map(hydrogen_normalization_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
         "chem.sanitize.rdkit-like" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(
@@ -787,6 +796,62 @@ pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
     })
 }
 
+pub(crate) fn hydrogen_normalization_record_json(record: &mut IndexedSmallRecord) -> Value {
+    if perception::sanitize_with_options(&mut record.molecule, SanitizeOptions::default()).is_err()
+    {
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+        });
+    }
+    let added = match hydrogens::add_hydrogens(&mut record.molecule) {
+        Ok(report) => report,
+        Err(_) => {
+            return json!({
+                "record_index": record.record_index,
+                "status": "add_error",
+                "title": record.title,
+            });
+        }
+    };
+    let atom_count_after_add = record.molecule.atom_count();
+    let mut added_by_parent = BTreeMap::<usize, usize>::new();
+    for entry in added.added {
+        *added_by_parent.entry(entry.parent.index()).or_default() += 1;
+    }
+
+    if !valence::perceive_valence(record.molecule.graph_mut(), ValenceModel::RdkitLike).is_ok() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "add_error",
+            "title": record.title,
+        });
+    }
+    if hydrogens::remove_hydrogens(&mut record.molecule).is_err() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "remove_error",
+            "title": record.title,
+        });
+    }
+
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "atom_count_after_add": atom_count_after_add,
+        "added_hydrogens_by_parent": added_by_parent
+            .into_iter()
+            .map(|(parent_atom_index, count)| json!({
+                "parent_atom_index": parent_atom_index,
+                "count": count,
+            }))
+            .collect::<Vec<_>>(),
+        "round_trip": hydrogen_normalized_semantic_json(record.molecule.clone()),
+    })
+}
+
 pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value {
     let status = perception::sanitize_with_options(
         &mut record.molecule,
@@ -1036,6 +1101,43 @@ pub(crate) fn smiles_sanitized_semantic_json(mut molecule: SmallMolecule) -> Val
         }
         Err(_) => json!({ "status": "sanitize_error" }),
     }
+}
+
+pub(crate) fn hydrogen_normalized_semantic_json(mut molecule: SmallMolecule) -> Value {
+    let _ = valence::perceive_valence_with_options(
+        molecule.graph_mut(),
+        ValenceModel::RdkitLike,
+        ValenceOptions { strict: false },
+    );
+    let mol = molecule.graph();
+    let atoms = mol
+        .atoms()
+        .map(|(id, atom)| {
+            let mut neighbors = mol
+                .neighbors(id)
+                .expect("live atoms have valid adjacency")
+                .map(AtomId::index)
+                .collect::<Vec<_>>();
+            neighbors.sort();
+            json!({
+                "atom_index": id.index(),
+                "atomic_number": atom.element.atomic_number(),
+                "symbol": atom.element.symbol(),
+                "formal_charge": atom.formal_charge,
+                "isotope": atom.isotope,
+                "atom_map": atom.atom_map,
+                "encoded_hydrogens": usize::from(atom.explicit_hydrogens)
+                    + usize::from(mol.implicit_hydrogens(id).ok().flatten().unwrap_or(0)),
+                "neighbors": neighbors,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "status": "ok",
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "atoms": atoms,
+    })
 }
 
 pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) -> Value {

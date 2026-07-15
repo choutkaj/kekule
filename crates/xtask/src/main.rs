@@ -16,7 +16,7 @@ use molecules::{
         StereoElement, StereoElementKind, StereoGroup, StereoGroupKind, StereoSource,
         StereoSpecifiedness, TetrahedralOrientation,
     },
-    molfile,
+    hydrogens, molfile,
     perception::{
         self,
         aromaticity::{self, AromaticityModel},
