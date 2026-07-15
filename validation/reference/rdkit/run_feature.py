@@ -13,6 +13,7 @@ from typing import Any
 
 
 SUPPORTED_FEATURES = {
+    "algo.canonical-ranking",
     "algo.aromaticity.rdkit-like",
     "algo.rings.fast",
     "algo.rings.sssr",
@@ -214,6 +215,9 @@ def generate_document(
     elif feature_id == "algo.aromaticity.rdkit-like":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [aromaticity_record(record) for record in records]}
+    elif feature_id == "algo.canonical-ranking":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
+        expected = {"records": [canonical_ranking_record(record) for record in records]}
     elif feature_id == "stereo.cip":
         records = read_stereo_cip_records(fixture_path, rdkit["Chem"])
         expected = {
@@ -1075,6 +1079,41 @@ def aromaticity_record(record: dict[str, Any]) -> dict[str, Any]:
         "title": record["title"],
         "atom_aromatic": [atom.GetIsAromatic() for atom in sanitized.GetAtoms()],
         "bond_aromatic": [bond.GetIsAromatic() for bond in sanitized.GetBonds()],
+    }
+
+
+def canonical_ranking_record(record: dict[str, Any]) -> dict[str, Any]:
+    from rdkit import Chem
+
+    mol = record["mol"]
+    if mol is None:
+        return {
+            "record_index": record["record_index"],
+            "status": record["status"],
+        }
+    sanitized = clone_and_sanitize(mol)
+    if sanitized is None:
+        return {
+            "record_index": record["record_index"],
+            "status": "sanitize_error",
+            "title": record["title"],
+        }
+    ranks = Chem.CanonicalRankAtoms(
+        sanitized,
+        breakTies=False,
+        includeChirality=False,
+        includeIsotopes=True,
+        includeAtomMaps=True,
+        includeChiralPresence=False,
+    )
+    classes: dict[int, list[int]] = {}
+    for atom_index, rank in enumerate(ranks):
+        classes.setdefault(int(rank), []).append(atom_index)
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "classes": sorted(classes.values()),
     }
 
 

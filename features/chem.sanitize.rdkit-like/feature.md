@@ -42,6 +42,8 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   wedge parsing so tetrahedral local stereo survives the full pipeline.
 - Its valence, ring, aromaticity, and stereo passes are compared together against each required corpus.
 - Inherits the current valence and aromaticity improvements, including radical implicit-hydrogen handling, imported aromatic SMILES handling, and conservative unsupported-ring behavior.
+- Propagates imported-aromatic matching-budget exhaustion distinctly from an
+  invalid aromatic representation while retaining whole-pipeline rollback.
 
 ## Validation
 
@@ -78,3 +80,5 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   on a general terminal-oxygen valence pattern.
 - v13: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v14: Inherit the exact RDKit valence-table cleanup and unified transactional
+  aromaticity engine, including structured imported-aromatic matching limits.

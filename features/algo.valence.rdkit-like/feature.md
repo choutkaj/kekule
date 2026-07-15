@@ -18,10 +18,16 @@ Provide conservative valence perception for common organic molecules.
 
 ## Implementation Notes
 
-- The current model uses charge-adjusted isoelectronic neutral valence tables
-  for main-group ions, suppresses implicit hydrogens on alkali/alkaline-earth
-  centers, and follows RDKit's unrestricted-valence treatment for transition,
-  lanthanide, actinide, and heavier coordination centers.
+- The current model uses RDKit's periodic-table allowed-valence entries,
+  including the unrestricted `-1` sentinel, charge-adjusted isoelectronic
+  lookup, and the P/S/As/Se hypervalent-anion adjustments used by RDKit.
+- Preserves RDKit's historical acceptance of two-coordinate hydride.
+- Neutral alkali and alkaline-earth atoms receive the implicit hydrogens implied
+  by those allowed valences; there is no corpus-specific electropositive-atom
+  suppression rule.
+- Radical electrons participate in target-valence selection, and explicit
+  valence/count arithmetic uses `usize` so large malformed graphs return
+  structured issues instead of truncating or panicking.
 - Its allowed-valence table is also the single source of truth for preserving
   valence-implied tetrahedral hydrogen carriers during Molfile parsing.
 - Perception state is marked fresh only after the pass completes.
@@ -54,3 +60,7 @@ Provide conservative valence perception for common organic molecules.
   Molfile tetrahedral hydrogen-carrier preservation.
 - v13: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v14: Replace corpus-era charged-element exceptions with the exact RDKit
+  fixed/unrestricted valence table and isoelectronic rules, restore RDKit-like
+  hydrogens for neutral electropositive atoms, include radical electrons, and
+  widen valence accounting to graph-sized integers.

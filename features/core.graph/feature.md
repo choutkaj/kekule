@@ -12,6 +12,9 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   not an asserted-entity invariant.
 - Supports adding and deleting atoms and bonds.
 - Supports first-class stereo elements, stereo groups, and source bond marks attached to stable graph IDs.
+- Replaces stereo elements through a validating transactional operation; direct
+  mutable access cannot bypass graph-reference or stereo-group invariants.
+- Rejects empty stereo groups and duplicate group members.
 - Rejects invalid atom IDs, invalid bond IDs, self-bonds, and duplicate bonds.
 - Iterates live atoms, live bonds, neighbors, and incident bonds.
 - Preserves stable `AtomId` and `BondId` values after deletion.
@@ -57,3 +60,5 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - v6: Keep wrapper mutable access state-neutral so chained perception
   operations retain their prerequisite state; concrete graph mutations still
   invalidate immediately.
+- v7: Replace unchecked mutable stereo-element access with transactional
+  replacement and enforce nonempty, duplicate-free stereo groups.

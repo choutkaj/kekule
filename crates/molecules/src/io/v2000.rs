@@ -192,7 +192,8 @@ fn parse_mol_v2000_lines(
     )?;
     preserve_molfile_tetrahedral_hydrogens(&mut mol);
     if conformer.positions().next().is_some() {
-        mol.add_conformer(conformer);
+        mol.add_conformer(conformer)
+            .expect("parsed coordinates reference live atoms");
     }
 
     Ok(SmallMolecule::from_graph(mol))
@@ -635,10 +636,10 @@ fn v2000_valence_code(
     if !atom.no_implicit_hydrogens {
         return Ok(0);
     }
-    let valence = explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens);
+    let valence = explicit_valence(mol, atom_id) + usize::from(atom.explicit_hydrogens);
     match valence {
         0 => Ok(15),
-        1..=14 => Ok(valence),
+        1..=14 => Ok(u8::try_from(valence).expect("range checked")),
         _ => Err(MolWriteError::new(format!(
             "V2000 cannot encode explicit valence {valence} for atom {}",
             atom_id.index()

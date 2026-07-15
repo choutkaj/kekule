@@ -210,7 +210,10 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     conformer.set_position(n, Point3::new(0.1, 0.2, 0.3));
     conformer.set_position(c, Point3::new(1.4, 0.0, 0.0));
     conformer.set_position(o, Point3::new(2.5, 0.0, 0.0));
-    molecule.graph_mut().add_conformer(conformer);
+    molecule
+        .graph_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
 
     let written = molfile::write_v3000(&molecule).expect("V3000 should write");
     assert!(written.contains("V3000"));

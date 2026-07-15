@@ -164,6 +164,15 @@ pub(crate) fn implementation_expected(
                 json!({ "records": records.iter_mut().map(aromaticity_record_json).collect::<Vec<_>>() }),
             )
         }
+        "algo.canonical-ranking" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter_mut()
+                    .map(canonical_ranking_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
         "stereo.representation" => {
             let records = read_stereo_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(stereo_record_json).collect::<Vec<_>>() }))
@@ -806,6 +815,35 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
         "title": record.title,
         "atom_aromatic": mol.atoms().map(|(id, _)| mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false)).collect::<Vec<_>>(),
         "bond_aromatic": mol.bonds().map(|(id, _)| mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false)).collect::<Vec<_>>(),
+    })
+}
+
+pub(crate) fn canonical_ranking_record_json(record: &mut IndexedSmallRecord) -> Value {
+    let options = SanitizeOptions {
+        perceive_valence: true,
+        perceive_rings: true,
+        perceive_aromaticity: true,
+        perceive_stereo: false,
+    };
+    if perception::sanitize_with_options(&mut record.molecule, options).is_err() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+        });
+    }
+    let ranking = canon::atom_ranking(record.molecule.graph());
+    let mut classes = BTreeMap::<u32, Vec<usize>>::new();
+    for (atom, rank) in ranking.iter() {
+        classes.entry(rank).or_default().push(atom.index());
+    }
+    let mut classes = classes.into_values().collect::<Vec<_>>();
+    classes.sort();
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "classes": classes,
     })
 }
 

@@ -135,7 +135,7 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
     conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
     conformer.set_position(left_carrier, Point3::new(0.0, 1.0, 0.0));
     conformer.set_position(right_carrier, Point3::new(1.0, -1.0, 0.0));
-    mol.add_conformer(conformer);
+    mol.add_conformer(conformer).expect("valid conformer");
     let mut molecule = SmallMolecule::from_graph(mol);
 
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
@@ -245,6 +245,22 @@ fn failed_aromaticity_sanitization_is_transactional() {
 }
 
 #[test]
+fn failed_direct_aromaticity_perception_is_transactional() {
+    let mut molecule = read_smiles("c1cccc1").expect("raw invalid aromatic representation parses");
+    let before = molecule.graph().clone();
+
+    let error =
+        aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+            .expect_err("unmatchable aromatic representation should fail");
+
+    assert!(matches!(
+        error,
+        AromaticityError::InvalidAromaticRepresentation(_)
+    ));
+    assert_eq!(molecule.graph(), &before);
+}
+
+#[test]
 fn successful_sanitization_is_idempotent() {
     let mut molecule = read_smiles("CCO").expect("ethanol should parse");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
@@ -329,6 +345,133 @@ fn valence_reports_excess_common_valence() {
     );
     assert!(report.is_ok());
     assert_eq!(mol.atom(c).expect("carbon").implicit_hydrogens, Some(0));
+}
+
+#[test]
+fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
+    let mut mol = Molecule::new();
+    let carbon = mol.add_atom(element_atom("C"));
+    for _ in 0..300 {
+        let hydrogen = mol.add_atom(element_atom("H"));
+        mol.add_bond(carbon, hydrogen, BondOrder::Single)
+            .expect("bond");
+    }
+
+    let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+
+    assert_eq!(
+        report.issues,
+        vec![ValenceIssue::ValenceExceeded {
+            atom: carbon,
+            explicit_valence: 300,
+            max_allowed: 4,
+        }]
+    );
+    assert_eq!(
+        mol.atom(carbon).expect("carbon").implicit_hydrogens,
+        Some(0)
+    );
+}
+
+#[test]
+fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
+    for (symbol, expected_implicit_hydrogens) in [
+        ("Li", 1),
+        ("Be", 2),
+        ("Na", 1),
+        ("Mg", 2),
+        ("K", 1),
+        ("Ca", 2),
+        ("Rb", 1),
+        ("Sr", 2),
+        ("Cs", 1),
+        ("Ba", 2),
+        ("Fr", 1),
+        ("Ra", 2),
+    ] {
+        let mut mol = Molecule::new();
+        let atom_id = mol.add_atom(element_atom(symbol));
+
+        let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+
+        assert!(report.is_ok(), "neutral {symbol} should be supported");
+        assert_eq!(
+            mol.atom(atom_id).expect("atom").implicit_hydrogens,
+            Some(expected_implicit_hydrogens),
+            "neutral {symbol} implicit hydrogens"
+        );
+    }
+}
+
+#[test]
+fn valence_keeps_rdkit_hypervalent_anion_limits() {
+    for (symbol, charge, accepted, rejected) in [
+        ("P", -2, 3, 4),
+        ("S", -1, 5, 6),
+        ("As", -2, 3, 4),
+        ("Se", -1, 5, 6),
+    ] {
+        let mut accepted_mol = Molecule::new();
+        let accepted_center = accepted_mol.add_atom(charged_atom(symbol, charge));
+        for _ in 0..accepted {
+            let hydrogen = accepted_mol.add_atom(element_atom("H"));
+            accepted_mol
+                .add_bond(accepted_center, hydrogen, BondOrder::Single)
+                .expect("bond");
+        }
+        let accepted_report =
+            valence_api::perceive_valence(&mut accepted_mol, ValenceModel::RdkitLike);
+        assert!(
+            accepted_report.is_ok(),
+            "{symbol}{charge:+} valence {accepted}"
+        );
+
+        let mut rejected_mol = Molecule::new();
+        let rejected_center = rejected_mol.add_atom(charged_atom(symbol, charge));
+        for _ in 0..rejected {
+            let hydrogen = rejected_mol.add_atom(element_atom("H"));
+            rejected_mol
+                .add_bond(rejected_center, hydrogen, BondOrder::Single)
+                .expect("bond");
+        }
+        let rejected_report =
+            valence_api::perceive_valence(&mut rejected_mol, ValenceModel::RdkitLike);
+        assert!(
+            matches!(
+                rejected_report.issues.as_slice(),
+                [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == rejected_center
+            ),
+            "{symbol}{charge:+} valence {rejected}"
+        );
+    }
+}
+
+#[test]
+fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() {
+    let mut hexafluorophosphate = Molecule::new();
+    let phosphorus = hexafluorophosphate.add_atom(charged_atom("P", -1));
+    for _ in 0..6 {
+        let fluorine =
+            hexafluorophosphate.add_atom(Atom::new(Element::from_symbol("F").expect("fluorine")));
+        hexafluorophosphate
+            .add_bond(phosphorus, fluorine, BondOrder::Single)
+            .expect("P-F bond");
+    }
+    assert!(
+        valence_api::perceive_valence(&mut hexafluorophosphate, ValenceModel::RdkitLike).is_ok()
+    );
+
+    let mut bridged_hydride = Molecule::new();
+    let hydrogen = bridged_hydride.add_atom(charged_atom("H", -1));
+    let boron_a = bridged_hydride.add_atom(Atom::new(Element::from_symbol("B").expect("boron")));
+    let boron_b = bridged_hydride.add_atom(Atom::new(Element::from_symbol("B").expect("boron")));
+    bridged_hydride
+        .add_bond(hydrogen, boron_a, BondOrder::Single)
+        .expect("first hydride bond");
+    bridged_hydride
+        .add_bond(hydrogen, boron_b, BondOrder::Single)
+        .expect("second hydride bond");
+    assert!(valence_api::perceive_valence(&mut bridged_hydride, ValenceModel::RdkitLike).is_ok());
 }
 
 #[test]

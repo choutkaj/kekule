@@ -97,8 +97,15 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
         },
     )
     .expect_err("symmetric cage should hit candidate limit");
-    assert_eq!(error.resource, "candidate cycles");
-    assert!(error.observed > error.limit);
+    assert!(matches!(
+        error,
+        RingPerceptionError::ResourceLimit {
+            resource: "candidate cycles",
+            observed,
+            limit,
+            ..
+        } if observed > limit
+    ));
     assert!(mol.ring_set().is_none());
 }
 
@@ -186,9 +193,15 @@ fn cycle_size_limit_returns_structured_error() {
         },
     )
     .expect_err("large cycle should hit cycle-size limit");
-    assert_eq!(error.resource, "cycle size");
-    assert_eq!(error.observed, 10);
-    assert_eq!(error.limit, 5);
+    assert!(matches!(
+        error,
+        RingPerceptionError::ResourceLimit {
+            resource: "cycle size",
+            observed: 10,
+            limit: 5,
+            ..
+        }
+    ));
 }
 
 #[test]

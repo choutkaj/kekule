@@ -653,39 +653,48 @@ fn fused_aromatic_component_preserves_explicit_single_bond() {
     let explicit_single_between_aromatic_atoms = molecule
         .graph()
         .bonds()
-        .filter(|(_, bond)| {
+        .filter(|(bond_id, bond)| {
             matches!(bond.order, BondOrder::Single)
                 && molecule
                     .graph()
-                    .atom(bond.a())
-                    .is_ok_and(|atom| atom.aromatic)
+                    .atom_is_aromatic(bond.a())
+                    .is_ok_and(|aromatic| aromatic == Some(true))
                 && molecule
                     .graph()
-                    .atom(bond.b())
-                    .is_ok_and(|atom| atom.aromatic)
+                    .atom_is_aromatic(bond.b())
+                    .is_ok_and(|aromatic| aromatic == Some(true))
+                && molecule
+                    .graph()
+                    .bond_is_aromatic(*bond_id)
+                    .is_ok_and(|aromatic| aromatic == Some(false))
         })
         .collect::<Vec<_>>();
     assert_eq!(explicit_single_between_aromatic_atoms.len(), 1);
-    assert!(!explicit_single_between_aromatic_atoms[0].1.aromatic);
 
     let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
         .expect("fused aromatic system should write");
     assert!(written.contains('-'));
-    let reparsed = read_smiles(&written).expect("writer output should parse");
+    let mut reparsed = read_smiles(&written).expect("writer output should parse");
+    perception_api::sanitize_with_options(&mut reparsed, SanitizeOptions::default())
+        .expect("writer output should sanitize");
     assert_eq!(
         reparsed
             .graph()
             .bonds()
-            .filter(|(_, bond)| {
+            .filter(|(bond_id, bond)| {
                 matches!(bond.order, BondOrder::Single)
                     && reparsed
                         .graph()
-                        .atom(bond.a())
-                        .is_ok_and(|atom| atom.aromatic)
+                        .atom_is_aromatic(bond.a())
+                        .is_ok_and(|aromatic| aromatic == Some(true))
                     && reparsed
                         .graph()
-                        .atom(bond.b())
-                        .is_ok_and(|atom| atom.aromatic)
+                        .atom_is_aromatic(bond.b())
+                        .is_ok_and(|aromatic| aromatic == Some(true))
+                    && reparsed
+                        .graph()
+                        .bond_is_aromatic(*bond_id)
+                        .is_ok_and(|aromatic| aromatic == Some(false))
             })
             .count(),
         1
@@ -3308,11 +3317,16 @@ fn isomeric_smiles_rejects_unencoded_stereo_layers() {
         .stereo_element_ids()
         .next()
         .expect("stereo element");
+    let mut replacement = unknown
+        .graph()
+        .stereo_element(element)
+        .expect("stereo element")
+        .clone();
+    replacement.specifiedness = StereoSpecifiedness::Unknown;
     unknown
         .graph_mut()
-        .stereo_element_mut(element)
-        .expect("stereo element")
-        .specifiedness = StereoSpecifiedness::Unknown;
+        .replace_stereo_element(element, replacement)
+        .expect("valid replacement");
     assert!(smiles_api::write_isomeric(&unknown)
         .expect_err("unknown stereo should be rejected")
         .message

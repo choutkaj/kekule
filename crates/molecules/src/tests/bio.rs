@@ -166,7 +166,10 @@ fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
     let atom = macro_mol.graph_mut().add_atom(carbon());
     let mut conformer = Conformer::new();
     conformer.set_position(atom, Point3::new(1.0, 2.0, 3.0));
-    macro_mol.graph_mut().add_conformer(conformer);
+    macro_mol
+        .graph_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
 
     let model = macro_mol.hierarchy_mut().add_model("1");
     let chain = macro_mol

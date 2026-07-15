@@ -191,20 +191,47 @@ pub struct RingWork {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingPerceptionError {
-    pub resource: &'static str,
-    pub observed: usize,
-    pub limit: usize,
-    pub work: RingWork,
+pub enum RingPerceptionError {
+    ResourceLimit {
+        resource: &'static str,
+        observed: usize,
+        limit: usize,
+        work: RingWork,
+    },
+    IncompleteRingCoverage {
+        uncovered_bonds: Vec<BondId>,
+        work: RingWork,
+    },
+}
+
+impl RingPerceptionError {
+    pub fn work(&self) -> RingWork {
+        match self {
+            Self::ResourceLimit { work, .. } | Self::IncompleteRingCoverage { work, .. } => *work,
+        }
+    }
 }
 
 impl fmt::Display for RingPerceptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "ring perception {} limit exceeded: observed {}, limit {}",
-            self.resource, self.observed, self.limit
-        )
+        match self {
+            Self::ResourceLimit {
+                resource,
+                observed,
+                limit,
+                ..
+            } => write!(
+                f,
+                "ring perception {resource} limit exceeded: observed {observed}, limit {limit}"
+            ),
+            Self::IncompleteRingCoverage {
+                uncovered_bonds, ..
+            } => write!(
+                f,
+                "ring perception did not cover {} cyclic bond(s)",
+                uncovered_bonds.len()
+            ),
+        }
     }
 }
 
@@ -245,10 +272,9 @@ pub fn perceive_ring_set_with_options(
     let mut tracker = RingWorkTracker::new(options, mol.atom_count(), mol.bond_count())?;
     let (membership, bridge_stack_peak) = compute_ring_membership(mol);
     tracker.observe_stack(bridge_stack_peak);
-    let (mut rings, extras, expected_rings) =
-        figueras_sssr_candidates(mol, &membership, &mut tracker)?;
-    if rings.len() < expected_rings {
-        rings = complete_ring_basis(mol, &membership, rings, expected_rings, &mut tracker)?;
+    let (mut rings, extras) = figueras_sssr_candidates(mol, &membership, &mut tracker)?;
+    if !uncovered_ring_bonds(mol, &membership, &rings).is_empty() {
+        rings = complete_ring_coverage(mol, &membership, rings, &mut tracker)?;
     }
     if !rings.is_empty() {
         let bond_counts = sssr_bond_counts(&rings, mol.bonds.len());
@@ -328,13 +354,12 @@ fn figueras_sssr_candidates(
     mol: &Molecule,
     membership: &RingMembership,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(Vec<Ring>, Vec<Ring>, usize), RingPerceptionError> {
+) -> std::result::Result<(Vec<Ring>, Vec<Ring>), RingPerceptionError> {
     let mut graph = ActiveRingGraph::new(mol);
     let fragments = active_fragments(mol, &graph);
     let mut seen_invariants = BTreeSet::<Vec<AtomId>>::new();
     let mut all_sssr = Vec::new();
     let mut all_extras = Vec::new();
-    let mut expected_total = 0usize;
 
     for fragment in fragments {
         if fragment.len() < 3 {
@@ -348,7 +373,6 @@ fn figueras_sssr_candidates(
         if expected == 0 {
             continue;
         }
-        expected_total = expected_total.saturating_add(expected);
 
         let mut changed = fragment
             .iter()
@@ -419,7 +443,7 @@ fn figueras_sssr_candidates(
         .iter()
         .flat_map(|ring| &ring.bonds)
         .all(|bond| membership.bond_in_ring(*bond)));
-    Ok((all_sssr, all_extras, expected_total))
+    Ok((all_sssr, all_extras))
 }
 
 fn active_fragments(mol: &Molecule, graph: &ActiveRingGraph) -> Vec<Vec<AtomId>> {
@@ -791,11 +815,10 @@ fn add_ring_to_union(ring: &Ring, union: &mut [bool]) {
     }
 }
 
-fn complete_ring_basis(
+fn complete_ring_coverage(
     mol: &Molecule,
     membership: &RingMembership,
     mut rings: Vec<Ring>,
-    expected: usize,
     tracker: &mut RingWorkTracker,
 ) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
     let mut graph = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
@@ -822,7 +845,10 @@ fn complete_ring_basis(
         }
         independent
     });
-    for (closing_bond, a, b) in ring_bonds {
+    if uncovered_ring_bonds(mol, membership, &rings).is_empty() {
+        return Ok(rings);
+    }
+    for (closing_bond, a, b) in ring_bonds.iter().copied() {
         for mut ring in shortest_cycles_excluding(&graph, a, b, closing_bond, tracker)? {
             ring.bonds.push(closing_bond);
             ring.bonds.sort();
@@ -834,13 +860,137 @@ fn complete_ring_basis(
             if add_independent_cycle(cycle_bond_bits(&ring.bonds, bit_len), &mut basis_rows) {
                 selected.insert(ring.bonds.clone());
                 rings.push(ring);
-                if rings.len() == expected {
+                if uncovered_ring_bonds(mol, membership, &rings).is_empty() {
                     return Ok(rings);
                 }
             }
         }
     }
-    Ok(rings)
+
+    // Edge-local shortest cycles do not necessarily span the complete cycle
+    // space in highly bridged cage graphs. Deterministic BFS spanning trees
+    // provide a guaranteed fundamental-cycle basis. Consider trees rooted at
+    // every ring atom and take the shortest independent fallback, keeping the
+    // usual small-ring candidates preferred while guaranteeing completeness.
+    for ring in fundamental_cycle_candidates(&graph, &ring_bonds, tracker)? {
+        if selected.contains(&ring.bonds) {
+            continue;
+        }
+        if add_independent_cycle(cycle_bond_bits(&ring.bonds, bit_len), &mut basis_rows) {
+            selected.insert(ring.bonds.clone());
+            rings.push(ring);
+            if uncovered_ring_bonds(mol, membership, &rings).is_empty() {
+                return Ok(rings);
+            }
+        }
+    }
+    Err(RingPerceptionError::IncompleteRingCoverage {
+        uncovered_bonds: uncovered_ring_bonds(mol, membership, &rings),
+        work: tracker.work,
+    })
+}
+
+fn uncovered_ring_bonds(
+    mol: &Molecule,
+    membership: &RingMembership,
+    rings: &[Ring],
+) -> Vec<BondId> {
+    let covered = rings
+        .iter()
+        .flat_map(|ring| ring.bonds.iter().copied())
+        .collect::<BTreeSet<_>>();
+    mol.bond_ids()
+        .filter(|bond| membership.bond_in_ring(*bond) && !covered.contains(bond))
+        .collect()
+}
+
+fn fundamental_cycle_candidates(
+    graph: &BTreeMap<AtomId, Vec<(AtomId, BondId)>>,
+    ring_bonds: &[(BondId, AtomId, AtomId)],
+    tracker: &mut RingWorkTracker,
+) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
+    let atom_slots = graph
+        .keys()
+        .map(|atom| atom.index())
+        .max()
+        .map_or(0, |maximum| maximum + 1);
+    let mut unique = BTreeMap::<Vec<BondId>, Vec<AtomId>>::new();
+
+    for &root in graph.keys() {
+        let mut parent_atom = vec![None; atom_slots];
+        let mut parent_bond = vec![None; atom_slots];
+        let mut depth = vec![None; atom_slots];
+        let mut tree_bonds = BTreeSet::<BondId>::new();
+        let mut queue = VecDeque::from([root]);
+        depth[root.index()] = Some(0);
+        tracker.observe_queue(queue.len());
+
+        while let Some(atom) = queue.pop_front() {
+            let atom_depth = depth[atom.index()].expect("queued atom has a depth");
+            for (neighbor, bond) in graph.get(&atom).into_iter().flatten().copied() {
+                tracker.record_path_expansion()?;
+                if depth[neighbor.index()].is_some() {
+                    continue;
+                }
+                depth[neighbor.index()] = Some(atom_depth + 1);
+                parent_atom[neighbor.index()] = Some(atom);
+                parent_bond[neighbor.index()] = Some(bond);
+                tree_bonds.insert(bond);
+                queue.push_back(neighbor);
+                tracker.observe_queue(queue.len());
+            }
+        }
+
+        for &(closing_bond, a, b) in ring_bonds {
+            if tree_bonds.contains(&closing_bond)
+                || depth[a.index()].is_none()
+                || depth[b.index()].is_none()
+            {
+                continue;
+            }
+            let mut left = a;
+            let mut right = b;
+            let mut bonds = vec![closing_bond];
+            let mut atoms = BTreeSet::from([a, b]);
+
+            while left != right {
+                let left_depth = depth[left.index()].expect("tree vertex depth");
+                let right_depth = depth[right.index()].expect("tree vertex depth");
+                if left_depth >= right_depth {
+                    let bond = parent_bond[left.index()].expect("non-root tree vertex bond");
+                    left = parent_atom[left.index()].expect("non-root tree vertex parent");
+                    bonds.push(bond);
+                    atoms.insert(left);
+                }
+                if right_depth >= left_depth && left != right {
+                    let bond = parent_bond[right.index()].expect("non-root tree vertex bond");
+                    right = parent_atom[right.index()].expect("non-root tree vertex parent");
+                    bonds.push(bond);
+                    atoms.insert(right);
+                }
+            }
+
+            bonds.sort();
+            bonds.dedup();
+            tracker.check("cycle size", bonds.len(), tracker.options.max_cycle_size)?;
+            if bonds.len() >= 3 && !unique.contains_key(&bonds) {
+                tracker.record_candidate()?;
+                unique.insert(bonds, atoms.into_iter().collect());
+            }
+        }
+    }
+
+    let mut candidates = unique
+        .into_iter()
+        .map(|(bonds, atoms)| Ring { atoms, bonds })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.bonds
+            .len()
+            .cmp(&right.bonds.len())
+            .then_with(|| left.bonds.cmp(&right.bonds))
+    });
+    Ok(candidates)
 }
 
 struct RingWorkTracker {
@@ -874,7 +1024,7 @@ impl RingWorkTracker {
         limit: usize,
     ) -> std::result::Result<(), RingPerceptionError> {
         if observed > limit {
-            Err(RingPerceptionError {
+            Err(RingPerceptionError::ResourceLimit {
                 resource,
                 observed,
                 limit,
@@ -1109,5 +1259,40 @@ pub(crate) fn ordered_atom_pair(a: AtomId, b: AtomId) -> (AtomId, AtomId) {
         (a, b)
     } else {
         (b, a)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inconsistent_ring_membership_returns_structured_coverage_error() {
+        let mut mol = Molecule::new();
+        let atoms = (0..2)
+            .map(|_| mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon"))))
+            .collect::<Vec<_>>();
+        let bond = mol
+            .add_bond(atoms[0], atoms[1], BondOrder::Single)
+            .expect("chain bond");
+        let (mut membership, _) = compute_ring_membership(&mol);
+        membership.atom_flags[atoms[0].index()] = true;
+        membership.atom_flags[atoms[1].index()] = true;
+        membership.bond_flags[bond.index()] = true;
+        let mut tracker = RingWorkTracker::new(
+            RingPerceptionOptions::default(),
+            mol.atom_count(),
+            mol.bond_count(),
+        )
+        .expect("tracker");
+
+        let error = complete_ring_coverage(&mol, &membership, Vec::new(), &mut tracker)
+            .expect_err("a bridge cannot be covered by a cycle");
+
+        assert!(matches!(
+            error,
+            RingPerceptionError::IncompleteRingCoverage { uncovered_bonds, .. }
+                if uncovered_bonds == vec![bond]
+        ));
     }
 }

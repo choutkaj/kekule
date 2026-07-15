@@ -81,7 +81,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let mut conformer = Conformer::new();
     conformer.set_position(carbon, molecules::core::Point3::new(0.0, 0.0, 0.0));
     conformer.set_position(oxygen, molecules::core::Point3::new(2.0, 0.0, 0.0));
-    let conformer = graph.add_conformer(conformer);
+    let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
 
     let mut builder = MolecularModel::builder();

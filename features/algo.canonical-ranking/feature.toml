@@ -1,9 +1,9 @@
 id = "algo.canonical-ranking"
 title = "Canonical atom ranking"
 area = "algorithms"
-version = 4
+version = 5
 implemented = true
-validated = false
-description = "Assign deterministic non-stereo atom symmetry ranks for canonical SMILES and related deterministic workflows."
+validated = true
+description = "Assign deterministic RDKit-like non-stereo atom symmetry classes using local color refinement plus cyclic-topology invariants."
 depends_on = ["chem.sanitize.rdkit-like"]
-validation_required = []
+validation_required = ["smoke"]

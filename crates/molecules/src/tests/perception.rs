@@ -1056,7 +1056,7 @@ fn stereo_perception_assigns_tetrahedral_from_3d_coordinates() {
     conformer.set_position(carriers[1], Point3::new(0.0, 1.0, 0.0));
     conformer.set_position(carriers[2], Point3::new(0.0, 0.0, 1.0));
     conformer.set_position(carriers[3], Point3::new(0.0, 0.0, -1.0));
-    mol.add_conformer(conformer);
+    mol.add_conformer(conformer).expect("valid conformer");
 
     let report = stereo_api::perceive_stereo(&mut mol);
 
@@ -1100,7 +1100,7 @@ fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
     conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
     conformer.set_position(left_carrier, Point3::new(0.0, 1.0, 0.0));
     conformer.set_position(right_carrier, Point3::new(1.0, -1.0, 0.0));
-    mol.add_conformer(conformer);
+    mol.add_conformer(conformer).expect("valid conformer");
 
     let report = stereo_api::perceive_stereo(&mut mol);
 

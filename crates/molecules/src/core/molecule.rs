@@ -450,13 +450,18 @@ impl Molecule {
         self.perception.ring_set()
     }
 
-    pub fn add_conformer(&mut self, mut conformer: Conformer) -> ConformerId {
+    pub fn add_conformer(&mut self, mut conformer: Conformer) -> Result<ConformerId> {
+        for (index, position) in conformer.positions.iter().enumerate() {
+            if position.is_some() && self.atoms.get(index).and_then(Option::as_ref).is_none() {
+                return Err(MoleculeError::InvalidAtomId(AtomId::new(index as u32)));
+            }
+        }
         if conformer.positions.len() < self.atoms.len() {
             conformer.positions.resize(self.atoms.len(), None);
         }
         let id = ConformerId::new(self.conformers.len() as u32);
         self.conformers.push(Some(conformer));
-        id
+        Ok(id)
     }
 
     pub fn conformer(&self, id: ConformerId) -> Result<&Conformer> {
@@ -503,19 +508,32 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidStereoElementId(id))
     }
 
-    pub fn stereo_element_mut(&mut self, id: StereoElementId) -> Result<&mut StereoElement> {
-        if self
+    pub fn replace_stereo_element(
+        &mut self,
+        id: StereoElementId,
+        replacement: StereoElement,
+    ) -> Result<StereoElement> {
+        let Some(current) = self
             .stereo_elements
             .get(id.index())
             .and_then(Option::as_ref)
-            .is_none()
-        {
+        else {
             return Err(MoleculeError::InvalidStereoElementId(id));
+        };
+        if replacement.group != current.group {
+            return Err(MoleculeError::InvalidStereoReference(
+                "stereo group membership must be changed through stereo-group operations",
+            ));
         }
+        self.validate_stereo_element_refs(&replacement)?;
+        let previous = std::mem::replace(
+            self.stereo_elements[id.index()]
+                .as_mut()
+                .expect("validated stereo element should remain live"),
+            replacement,
+        );
         self.invalidate_stereo();
-        Ok(self.stereo_elements[id.index()]
-            .as_mut()
-            .expect("validated stereo element should remain live"))
+        Ok(previous)
     }
 
     pub fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
@@ -545,6 +563,16 @@ impl Molecule {
     }
 
     pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
+        if group.members.is_empty() {
+            return Err(MoleculeError::InvalidStereoReference(
+                "stereo group must contain at least one element",
+            ));
+        }
+        if group.members.iter().copied().collect::<BTreeSet<_>>().len() != group.members.len() {
+            return Err(MoleculeError::InvalidStereoReference(
+                "stereo group members must be unique",
+            ));
+        }
         for member in &group.members {
             let element = self.stereo_element(*member)?;
             if element.group.is_some() {

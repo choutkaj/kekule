@@ -25,7 +25,7 @@ fn downstream_preparation_and_evaluation() {
     conformer.set_position(oxygen, Point3::new(0.0, 0.0, 0.0));
     conformer.set_position(first_hydrogen, Point3::new(0.9575, 0.0, 0.0));
     conformer.set_position(second_hydrogen, Point3::new(-0.2399, 0.9272, 0.0));
-    let conformer = graph.add_conformer(conformer);
+    let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
     let model = MolecularModel::from_small_molecule(&molecule, conformer).unwrap();
     let independently_built = MolecularModel::from_small_molecule(&molecule, conformer).unwrap();

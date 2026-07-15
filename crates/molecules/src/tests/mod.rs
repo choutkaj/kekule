@@ -113,7 +113,7 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondI
         conformer.set_position(right_reference, Point3::new(1.0, 1.0, 0.0));
         conformer.set_position(right_other, Point3::new(1.0, -1.0, 0.0));
     }
-    mol.add_conformer(conformer);
+    mol.add_conformer(conformer).expect("valid conformer");
     (mol, axis)
 }
 

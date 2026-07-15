@@ -85,3 +85,14 @@ fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
         ranking.rank_of(AtomId::new(1))
     );
 }
+
+#[test]
+fn canonical_ranking_ignores_kekule_choice_for_perceived_aromatic_bonds() {
+    let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene parses");
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("naphthalene sanitizes");
+
+    let ranking = canon::atom_ranking(molecule.graph());
+
+    assert_eq!(ranking.rank_count(), 3);
+}

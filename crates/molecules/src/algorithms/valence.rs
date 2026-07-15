@@ -22,8 +22,8 @@ pub enum ValenceIssue {
     UnsupportedElement(AtomId),
     ValenceExceeded {
         atom: AtomId,
-        explicit_valence: u8,
-        max_allowed: u8,
+        explicit_valence: usize,
+        max_allowed: usize,
     },
 }
 
@@ -56,55 +56,103 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule, options: ValenceOptions) -> V
     let mut assignments = Vec::<(AtomId, u8)>::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
-        let explicit = explicit_valence(mol, atom_id).saturating_add(atom.explicit_hydrogens);
-        if has_rdkit_unrestricted_valence(atom) {
+        let explicit = explicit_valence(mol, atom_id) + usize::from(atom.explicit_hydrogens);
+        let radical_electrons = atom
+            .radical
+            .map_or(0, |radical| usize::from(radical.unpaired_electron_count()));
+
+        let Some(original_rule) = rdkit_neutral_valence_rule(atom.element.atomic_number()) else {
+            record_unsupported(&mut issues, atom_id, options);
+            assignments.push((atom_id, 0));
+            continue;
+        };
+
+        // RDKit leaves atoms whose periodic-table entry is only `-1` on that
+        // unrestricted rule. All other charged atoms use the isoelectronic
+        // neutral element's valence list.
+        let effective_rule = if original_rule.is_only_unrestricted() {
+            Some(original_rule)
+        } else {
+            rdkit_effective_atomic_number(atom).and_then(rdkit_neutral_valence_rule)
+        };
+        let Some(mut target_rule) = effective_rule else {
+            record_unsupported(&mut issues, atom_id, options);
+            assignments.push((atom_id, 0));
+            continue;
+        };
+
+        let effective_atomic_number = rdkit_effective_atomic_number(atom);
+        let hypervalent_anion = effective_atomic_number
+            .is_some_and(|effective| can_be_rdkit_hypervalent_anion(atom, effective));
+        let charge_offset = if hypervalent_anion {
+            target_rule = original_rule;
+            usize::from(atom.formal_charge.unsigned_abs())
+        } else {
+            0
+        };
+        let occupied_for_target = explicit + radical_electrons + charge_offset;
+
+        // Explicit-valence checking in RDKit honors unrestricted sentinels in
+        // either the original or effective valence list. Negatively charged
+        // P/S/As/Se instead use their original hypervalent limit with the
+        // charge offset applied.
+        let two_coordinate_hydride = atom.element.atomic_number() == 1 && atom.formal_charge == -1;
+        let explicit_limit = if two_coordinate_hydride {
+            // Historical RDKit compatibility: two-coordinate hydride is
+            // accepted even though it is chemically unusual.
+            Some(2)
+        } else if hypervalent_anion {
+            target_rule
+                .max_fixed()
+                .map(|maximum| maximum.saturating_sub(charge_offset))
+        } else if original_rule.unrestricted_above || target_rule.unrestricted_above {
+            None
+        } else {
+            target_rule.max_fixed()
+        };
+        let target_limit = if two_coordinate_hydride || target_rule.unrestricted_above {
+            None
+        } else {
+            target_rule
+                .max_fixed()
+                .map(|maximum| maximum.saturating_sub(radical_electrons + charge_offset))
+        };
+        let max_allowed = explicit_limit.into_iter().chain(target_limit).min();
+        if max_allowed.is_some_and(|maximum| explicit > maximum) {
+            if options.strict {
+                issues.push(ValenceIssue::ValenceExceeded {
+                    atom: atom_id,
+                    explicit_valence: explicit,
+                    max_allowed: max_allowed.expect("checked as present"),
+                });
+            }
             assignments.push((atom_id, 0));
             continue;
         }
-        match allowed_valences(atom) {
-            Some(allowed) => {
-                if let Some(max_allowed) = allowed.iter().copied().max() {
-                    if explicit > max_allowed {
-                        if options.strict {
-                            issues.push(ValenceIssue::ValenceExceeded {
-                                atom: atom_id,
-                                explicit_valence: explicit,
-                                max_allowed,
-                            });
-                        }
-                        assignments.push((atom_id, 0));
-                    } else {
-                        let target = if atom.no_implicit_hydrogens
-                            || rdkit_suppresses_implicit_hydrogens(atom)
-                        {
-                            explicit
-                        } else if let Some(target) = aromatic_valence_target(
-                            atom,
-                            mol.atom_is_aromatic(atom_id).ok().flatten(),
-                            explicit,
-                        ) {
-                            target
-                        } else if atom.radical.is_some() {
-                            explicit
-                        } else {
-                            allowed
-                                .iter()
-                                .copied()
-                                .find(|allowed| *allowed >= explicit)
-                                .unwrap_or(explicit)
-                        };
-                        assignments.push((atom_id, target - explicit));
-                    }
-                }
-            }
-            None if explicit == 0 => assignments.push((atom_id, 0)),
-            None => {
-                if options.strict {
-                    issues.push(ValenceIssue::UnsupportedElement(atom_id));
-                }
-                assignments.push((atom_id, 0));
-            }
-        }
+
+        let implicit = if atom.no_implicit_hydrogens {
+            0
+        } else if let Some(target) =
+            aromatic_valence_target(atom, mol.atom_is_aromatic(atom_id).ok().flatten(), explicit)
+        {
+            target.saturating_sub(explicit)
+        } else if let Some(target) = target_rule
+            .fixed
+            .iter()
+            .copied()
+            .map(usize::from)
+            .find(|allowed| *allowed >= occupied_for_target)
+        {
+            target - occupied_for_target
+        } else {
+            // A trailing `-1` accepts any valence above the largest fixed one
+            // but never implies additional hydrogens there.
+            0
+        };
+        assignments.push((
+            atom_id,
+            u8::try_from(implicit).expect("RDKit implicit valences fit in u8"),
+        ));
     }
     mol.install_valence(
         model_from_options(),
@@ -117,26 +165,58 @@ fn model_from_options() -> ValenceModel {
     ValenceModel::RdkitLike
 }
 
-fn rdkit_suppresses_implicit_hydrogens(atom: &Atom) -> bool {
-    matches!(
-        atom.element.atomic_number(),
-        3 | 4 | 11 | 12 | 19 | 20 | 37 | 38 | 55 | 56 | 87 | 88
-    )
+fn record_unsupported(issues: &mut Vec<ValenceIssue>, atom: AtomId, options: ValenceOptions) {
+    if options.strict {
+        issues.push(ValenceIssue::UnsupportedElement(atom));
+    }
 }
 
-fn has_rdkit_unrestricted_valence(atom: &Atom) -> bool {
-    rdkit_atomic_number_has_unrestricted_valence(atom.element.atomic_number())
-        || (i16::from(atom.element.atomic_number()) - i16::from(atom.formal_charge))
-            .try_into()
-            .ok()
-            .is_some_and(rdkit_atomic_number_has_unrestricted_valence)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AllowedValenceRule {
+    fixed: &'static [u8],
+    unrestricted_above: bool,
 }
 
-fn rdkit_atomic_number_has_unrestricted_valence(atomic_number: u8) -> bool {
-    matches!(atomic_number, 21..=30 | 39..=48 | 57..=81 | 89..=118)
+impl AllowedValenceRule {
+    const fn fixed(fixed: &'static [u8]) -> Self {
+        Self {
+            fixed,
+            unrestricted_above: false,
+        }
+    }
+
+    const fn with_unrestricted(fixed: &'static [u8]) -> Self {
+        Self {
+            fixed,
+            unrestricted_above: true,
+        }
+    }
+
+    fn is_only_unrestricted(self) -> bool {
+        self.fixed.is_empty() && self.unrestricted_above
+    }
+
+    fn max_fixed(self) -> Option<usize> {
+        self.fixed.last().copied().map(usize::from)
+    }
 }
 
-fn aromatic_valence_target(atom: &Atom, aromatic: Option<bool>, explicit: u8) -> Option<u8> {
+fn rdkit_effective_atomic_number(atom: &Atom) -> Option<u8> {
+    let effective = i16::from(atom.element.atomic_number()) - i16::from(atom.formal_charge);
+    (0..=118)
+        .contains(&effective)
+        .then(|| u8::try_from(effective).expect("range checked"))
+}
+
+fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> bool {
+    match atom.element.atomic_number() {
+        15 | 16 => effective_atomic_number > 16,
+        33 | 34 => effective_atomic_number > 34,
+        _ => false,
+    }
+}
+
+fn aromatic_valence_target(atom: &Atom, aromatic: Option<bool>, explicit: usize) -> Option<usize> {
     if aromatic != Some(true) {
         return None;
     }
@@ -155,7 +235,7 @@ fn aromatic_valence_target(atom: &Atom, aromatic: Option<bool>, explicit: u8) ->
     Some(target.max(explicit))
 }
 
-pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> u8 {
+pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> usize {
     mol.incident_bonds(atom)
         .ok()
         .into_iter()
@@ -164,7 +244,7 @@ pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> u8 {
         .sum()
 }
 
-fn bond_order_valence(order: BondOrder) -> u8 {
+fn bond_order_valence(order: BondOrder) -> usize {
     match order {
         BondOrder::Zero | BondOrder::Dative => 0,
         BondOrder::Single | BondOrder::Aromatic => 1,
@@ -175,59 +255,13 @@ fn bond_order_valence(order: BondOrder) -> u8 {
 }
 
 pub(crate) fn allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
-    if atom.formal_charge != 0 {
-        return rdkit_charge_adjusted_allowed_valences(atom);
-    }
-    match (atom.element.symbol(), atom.formal_charge) {
-        ("H", 0) => Some(&[1]),
-        ("H", -1 | 1) => Some(&[0]),
-        ("B", -1) => Some(&[4]),
-        ("B", _) => Some(&[3]),
-        ("C", 0) => Some(&[4]),
-        ("C", 1 | -1) => Some(&[3]),
-        ("N", 1) => Some(&[4]),
-        ("N", -1) => Some(&[2]),
-        ("N", 0) => Some(&[3, 5]),
-        ("O", 0) => Some(&[2]),
-        ("O", -1) => Some(&[1]),
-        ("O", -2) => Some(&[0]),
-        ("O", 1) => Some(&[1, 3]),
-        ("Li" | "Na" | "K" | "Rb" | "Cs", 0) => Some(&[1]),
-        ("Li" | "Na" | "K" | "Rb" | "Cs", 1) => Some(&[0]),
-        ("Be" | "Mg" | "Ca" | "Sr" | "Ba", 1..=3) => Some(&[0]),
-        ("Be" | "Mg" | "Ca" | "Sr" | "Ba", 0) => Some(&[2]),
-        ("F" | "Cl" | "Br" | "I", -1) => Some(&[0]),
-        ("F", 0) => Some(&[1]),
-        ("Cl" | "Br" | "I", 1) => Some(&[2, 4, 6]),
-        ("Cl" | "Br" | "I", 2) => Some(&[3, 5]),
-        ("Cl" | "Br" | "I", 3) => Some(&[4]),
-        ("Cl" | "Br", 0) => Some(&[1]),
-        ("I", 0) => Some(&[1, 3, 5]),
-        ("Xe", 0) => Some(&[0, 2, 4, 6]),
-        ("Po", 0) => Some(&[2, 4, 6]),
-        ("At", 0) => Some(&[1, 3, 5]),
-        ("P" | "As" | "Sb" | "Bi", 0) => Some(&[3, 5]),
-        ("P" | "As", -1) => Some(&[2, 4, 6]),
-        ("P" | "As", -3) => Some(&[0]),
-        ("P" | "As", 1) => Some(&[4]),
-        ("As" | "Sb" | "Bi", 3 | 5) => Some(&[0]),
-        ("Al" | "Ga" | "In" | "Tl", 3) => Some(&[0]),
-        ("Al" | "Ga" | "In", 0) => Some(&[3]),
-        ("Si", 0) => Some(&[4]),
-        ("Si", -1) => Some(&[3]),
-        ("Si", -2 | 4) => Some(&[0]),
-        ("Ge", 0) => Some(&[0, 4]),
-        ("Ge", 4) => Some(&[0]),
-        ("Sn", 0) => Some(&[0, 2, 4]),
-        ("Sn", -1) => Some(&[3]),
-        ("Sn", 2..=4) => Some(&[0]),
-        ("Pb", 0) => Some(&[0, 2, 4]),
-        ("Pb", 2 | 4) => Some(&[0]),
-        ("S" | "Se" | "Te", 0) => Some(&[2, 4, 6]),
-        ("S" | "Se" | "Te", -2) => Some(&[0]),
-        ("S" | "Se" | "Te", -1 | 1) => Some(&[1, 3, 5]),
-        _ => None,
-    }
+    let original = rdkit_neutral_valence_rule(atom.element.atomic_number())?;
+    let rule = if original.is_only_unrestricted() {
+        original
+    } else {
+        rdkit_effective_atomic_number(atom).and_then(rdkit_neutral_valence_rule)?
+    };
+    Some(rule.fixed)
 }
 
 pub(crate) fn rdkit_default_valence(atom: &Atom) -> Option<u8> {
@@ -250,35 +284,26 @@ fn rdkit_default_valence_for_atomic_number(atomic_number: u8) -> Option<u8> {
     }
 }
 
-fn rdkit_charge_adjusted_allowed_valences(atom: &Atom) -> Option<&'static [u8]> {
-    let adjusted = i16::from(atom.element.atomic_number()) - i16::from(atom.formal_charge);
-    if adjusted == 0 {
-        return Some(&[0]);
-    }
-    let adjusted = u8::try_from(adjusted).ok()?;
-    rdkit_neutral_allowed_valences(adjusted)
-}
-
-fn rdkit_neutral_allowed_valences(atomic_number: u8) -> Option<&'static [u8]> {
+fn rdkit_neutral_valence_rule(atomic_number: u8) -> Option<AllowedValenceRule> {
     match atomic_number {
-        1 => Some(&[1]),
-        2 | 10 | 18 | 36 | 86 => Some(&[0]),
-        3 | 11 | 19 | 37 | 55 | 87 => Some(&[1]),
-        4 | 12 | 20 | 38 | 56 | 88 => Some(&[2]),
-        5 => Some(&[3]),
-        6 => Some(&[4]),
-        7 => Some(&[3]),
-        8 => Some(&[2]),
-        9 => Some(&[1]),
-        13 | 31 | 49 => Some(&[3]),
-        14 | 32 => Some(&[4]),
-        15 | 33 | 51 | 83 => Some(&[3, 5]),
-        16 | 34 | 52 | 84 => Some(&[2, 4, 6]),
-        17 => Some(&[1]),
-        35 => Some(&[1]),
-        50 | 82 => Some(&[2, 4]),
-        53 | 85 => Some(&[1, 3, 5]),
-        54 => Some(&[0, 2, 4, 6]),
+        0 => Some(AllowedValenceRule::with_unrestricted(&[])),
+        1 => Some(AllowedValenceRule::fixed(&[1])),
+        2 | 10 | 18 | 36 | 86 => Some(AllowedValenceRule::fixed(&[0])),
+        3 | 11 | 19 | 37 => Some(AllowedValenceRule::with_unrestricted(&[1])),
+        4 => Some(AllowedValenceRule::fixed(&[2])),
+        12 | 20 | 38 | 56 | 88 => Some(AllowedValenceRule::with_unrestricted(&[2])),
+        5 | 7 | 13 | 31 | 49 => Some(AllowedValenceRule::fixed(&[3])),
+        6 | 14 | 32 => Some(AllowedValenceRule::fixed(&[4])),
+        8 => Some(AllowedValenceRule::fixed(&[2])),
+        9 | 17 | 35 => Some(AllowedValenceRule::fixed(&[1])),
+        15 | 33 | 51 | 83 => Some(AllowedValenceRule::fixed(&[3, 5])),
+        16 | 34 | 52 | 84 => Some(AllowedValenceRule::fixed(&[2, 4, 6])),
+        50 | 82 => Some(AllowedValenceRule::fixed(&[2, 4])),
+        53 | 85 => Some(AllowedValenceRule::fixed(&[1, 3, 5])),
+        54 => Some(AllowedValenceRule::fixed(&[0, 2, 4, 6])),
+        55 | 87 => Some(AllowedValenceRule::fixed(&[1])),
+        // Every other current RDKit periodic-table entry has only `-1`.
+        21..=30 | 39..=48 | 57..=81 | 89..=118 => Some(AllowedValenceRule::with_unrestricted(&[])),
         _ => None,
     }
 }

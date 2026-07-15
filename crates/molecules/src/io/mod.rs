@@ -53,8 +53,14 @@ fn preserve_molfile_tetrahedral_hydrogens(mol: &mut Molecule) {
         }
         let explicit = explicit_valence(mol, center);
         let implied_hydrogens = allowed_valences(atom)
-            .and_then(|allowed| allowed.iter().copied().find(|target| *target >= explicit))
-            .map(|target| target.saturating_sub(explicit))
+            .and_then(|allowed| {
+                allowed
+                    .iter()
+                    .copied()
+                    .map(usize::from)
+                    .find(|target| *target >= explicit)
+            })
+            .map(|target| target - explicit)
             .unwrap_or(0);
         if implied_hydrogens == 1 {
             mol.atom_mut(center)

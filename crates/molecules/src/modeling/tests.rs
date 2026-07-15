@@ -20,7 +20,7 @@ fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId,
     let mut conformer = Conformer::new();
     conformer.set_position(a, Point3::new(0.0, 0.0, 0.0));
     conformer.set_position(b, Point3::new(distance, 0.0, 0.0));
-    let conformer = graph.add_conformer(conformer);
+    let conformer = graph.add_conformer(conformer).expect("valid conformer");
     (SmallMolecule::from_graph(graph), conformer, a, b, bond)
 }
 
@@ -29,7 +29,7 @@ fn one_atom_macro() -> (MacroMolecule, ConformerId, AtomId, AtomSiteId) {
     let atom = graph.add_atom(Atom::new(Element::from_symbol("N").unwrap()));
     let mut conformer = Conformer::new();
     conformer.set_position(atom, Point3::new(2.0, 0.0, 0.0));
-    let conformer = graph.add_conformer(conformer);
+    let conformer = graph.add_conformer(conformer).expect("valid conformer");
     let mut hierarchy = BioHierarchy::new();
     let model = hierarchy.add_model("1");
     let chain = hierarchy.add_chain(model, "A", None).unwrap();
