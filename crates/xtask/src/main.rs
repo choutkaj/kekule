@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::{read::GzDecoder, Compression, GzBuilder};
 use molecules::{
+    canon,
     core::{
         Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondId, BondOrder, DoubleBondOrientation,
         Molecule, StereoBondMark, StereoBondMarkKind, StereoCarrier, StereoDescriptor,
