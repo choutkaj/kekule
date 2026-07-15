@@ -8,6 +8,7 @@ use molecules::modeling::potential::{
     Potential, PotentialError, PotentialEvaluation, PotentialGeometryError, Vector3,
 };
 use molecules::modeling::{InstanceAtomId, Model};
+use molecules::units::{MODEL_ENERGY_UNIT, MODEL_GRADIENT_UNIT, Quantity};
 
 use crate::geometry::{
     GeometryError, angle_cosine, displacement, hydrogen_bond_cosine, inversion_cosine, torsion,
@@ -20,7 +21,7 @@ impl Potential for DreidingPotential {
             return Err(PotentialError::IncompatibleModel);
         }
 
-        let positions = model.positions();
+        let positions = model.positions().into_value();
         let mut energy = 0.0;
         let mut gradient = vec![Vector3::zero(); positions.len()];
 
@@ -161,7 +162,11 @@ impl Potential for DreidingPotential {
             );
         }
 
-        PotentialEvaluation::new(model, energy, gradient)
+        PotentialEvaluation::new(
+            model,
+            Quantity::new(energy, MODEL_ENERGY_UNIT),
+            Quantity::new(gradient, MODEL_GRADIENT_UNIT),
+        )
     }
 }
 

@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::core::Point3;
+use crate::units::{Quantity, UnitError, MODEL_GRADIENT_UNIT, MODEL_LENGTH_UNIT};
 
 use super::potential::{Potential, PotentialError, PotentialEvaluation, Vector3};
 use super::{Model, PositionError};
@@ -10,12 +11,12 @@ use super::{Model, PositionError};
 pub struct MinimizeOptions {
     /// Maximum number of accepted coordinate updates.
     pub max_iterations: usize,
-    /// Convergence threshold for the maximum atom-gradient norm, in kJ/mol/angstrom.
-    pub gradient_tolerance: f64,
-    /// Initial maximum atom displacement for each line search, in angstroms.
-    pub initial_step: f64,
-    /// Smallest line-search displacement to consider, in angstroms.
-    pub minimum_step: f64,
+    /// Convergence threshold for the maximum atom-gradient norm.
+    pub gradient_tolerance: Quantity<f64>,
+    /// Initial maximum atom displacement for each line search.
+    pub initial_step: Quantity<f64>,
+    /// Smallest line-search displacement to consider.
+    pub minimum_step: Quantity<f64>,
     /// Multiplicative line-search step reduction, strictly between zero and one.
     pub backtracking_factor: f64,
     /// Armijo sufficient-decrease coefficient, strictly between zero and one.
@@ -28,9 +29,9 @@ impl Default for MinimizeOptions {
     fn default() -> Self {
         Self {
             max_iterations: 1_000,
-            gradient_tolerance: 1.0e-4,
-            initial_step: 0.1,
-            minimum_step: 1.0e-8,
+            gradient_tolerance: Quantity::new(1.0e-4, MODEL_GRADIENT_UNIT),
+            initial_step: Quantity::new(0.1, MODEL_LENGTH_UNIT),
+            minimum_step: Quantity::new(1.0e-8, MODEL_LENGTH_UNIT),
             backtracking_factor: 0.5,
             armijo_coefficient: 1.0e-4,
             max_backtracks: 24,
@@ -50,9 +51,9 @@ pub enum MinimizationStatus {
 /// Minimized model and convergence diagnostics.
 pub struct MinimizationResult {
     pub model: Model,
-    pub initial_energy: f64,
-    pub final_energy: f64,
-    pub final_max_gradient: f64,
+    pub initial_energy: Quantity<f64>,
+    pub final_energy: Quantity<f64>,
+    pub final_max_gradient: Quantity<f64>,
     pub iterations: usize,
     pub evaluations: usize,
     pub status: MinimizationStatus,
@@ -68,7 +69,7 @@ pub fn minimize(
     potential: &mut dyn Potential,
     options: MinimizeOptions,
 ) -> Result<MinimizationResult, MinimizationError> {
-    validate_options(options)?;
+    let validated = validate_options(options)?;
     let mut working = model.clone();
     let mut evaluation = potential.evaluate(&working)?;
     let initial_energy = evaluation.energy();
@@ -76,8 +77,8 @@ pub fn minimize(
     let mut iterations = 0;
 
     loop {
-        let max_gradient = maximum_gradient(evaluation.gradient());
-        if max_gradient <= options.gradient_tolerance {
+        let max_gradient = maximum_gradient(evaluation.gradient().value());
+        if max_gradient <= validated.gradient_tolerance {
             return Ok(result(
                 working,
                 initial_energy,
@@ -102,6 +103,7 @@ pub fn minimize(
 
         let direction = evaluation
             .gradient()
+            .value()
             .iter()
             .map(|gradient| {
                 Vector3::new(
@@ -113,47 +115,48 @@ pub fn minimize(
             .collect::<Vec<_>>();
         let directional_derivative = evaluation
             .gradient()
+            .value()
             .iter()
             .zip(&direction)
             .map(|(gradient, direction)| gradient.dot(*direction))
             .sum::<f64>();
-        let current_positions = working.positions().to_vec();
-        let current_energy = evaluation.energy();
-        let mut step = options.initial_step;
+        let current_positions = working.positions_value().to_vec();
+        let current_energy = evaluation.energy().into_value();
+        let mut step = validated.initial_step;
         let mut accepted = None;
 
         for _ in 0..options.max_backtracks {
-            if step < options.minimum_step {
+            if step < validated.minimum_step {
                 break;
             }
             let trial_positions = displaced_positions(&current_positions, &direction, step);
-            working.set_positions(&trial_positions)?;
+            working.set_positions(Quantity::new(trial_positions, MODEL_LENGTH_UNIT))?;
             let trial_result = potential.evaluate(&working);
             evaluations += 1;
             let trial = match trial_result {
                 Ok(trial) => trial,
                 Err(error) if error.is_invalid_geometry() => {
-                    working.set_positions(&current_positions)?;
+                    working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
                     step *= options.backtracking_factor;
                     continue;
                 }
                 Err(error) => {
-                    working.set_positions(&current_positions)?;
+                    working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
                     return Err(MinimizationError::Potential(error));
                 }
             };
             let armijo_limit =
                 current_energy + options.armijo_coefficient * step * directional_derivative;
-            if trial.energy() <= armijo_limit {
+            if trial.energy().into_value() <= armijo_limit {
                 accepted = Some(trial);
                 break;
             }
-            working.set_positions(&current_positions)?;
+            working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
             step *= options.backtracking_factor;
         }
 
         let Some(trial) = accepted else {
-            working.set_positions(&current_positions)?;
+            working.set_positions(Quantity::new(&current_positions, MODEL_LENGTH_UNIT))?;
             return Ok(result(
                 working,
                 initial_energy,
@@ -169,21 +172,27 @@ pub fn minimize(
     }
 }
 
-fn validate_options(options: MinimizeOptions) -> Result<(), MinimizationError> {
-    if !options.gradient_tolerance.is_finite() || options.gradient_tolerance <= 0.0 {
+struct ValidatedOptions {
+    gradient_tolerance: f64,
+    initial_step: f64,
+    minimum_step: f64,
+}
+
+fn validate_options(options: MinimizeOptions) -> Result<ValidatedOptions, MinimizationError> {
+    let gradient_tolerance = options.gradient_tolerance.value_in(MODEL_GRADIENT_UNIT)?;
+    let initial_step = options.initial_step.value_in(MODEL_LENGTH_UNIT)?;
+    let minimum_step = options.minimum_step.value_in(MODEL_LENGTH_UNIT)?;
+    if !gradient_tolerance.is_finite() || gradient_tolerance <= 0.0 {
         return Err(MinimizationError::InvalidOptions(
             "gradient tolerance must be finite and positive",
         ));
     }
-    if !options.initial_step.is_finite() || options.initial_step <= 0.0 {
+    if !initial_step.is_finite() || initial_step <= 0.0 {
         return Err(MinimizationError::InvalidOptions(
             "initial step must be finite and positive",
         ));
     }
-    if !options.minimum_step.is_finite()
-        || options.minimum_step <= 0.0
-        || options.minimum_step > options.initial_step
-    {
+    if !minimum_step.is_finite() || minimum_step <= 0.0 || minimum_step > initial_step {
         return Err(MinimizationError::InvalidOptions(
             "minimum step must be finite, positive, and no larger than the initial step",
         ));
@@ -209,7 +218,11 @@ fn validate_options(options: MinimizeOptions) -> Result<(), MinimizationError> {
             "maximum backtracks must be at least one",
         ));
     }
-    Ok(())
+    Ok(ValidatedOptions {
+        gradient_tolerance,
+        initial_step,
+        minimum_step,
+    })
 }
 
 fn displaced_positions(positions: &[Point3], direction: &[Vector3], step: f64) -> Vec<Point3> {
@@ -235,7 +248,7 @@ fn maximum_gradient(gradient: &[Vector3]) -> f64 {
 
 fn result(
     model: Model,
-    initial_energy: f64,
+    initial_energy: Quantity<f64>,
     evaluation: &PotentialEvaluation,
     final_max_gradient: f64,
     iterations: usize,
@@ -246,18 +259,19 @@ fn result(
         model,
         initial_energy,
         final_energy: evaluation.energy(),
-        final_max_gradient,
+        final_max_gradient: Quantity::new(final_max_gradient, MODEL_GRADIENT_UNIT),
         iterations,
         evaluations,
         status,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MinimizationError {
     InvalidOptions(&'static str),
     Potential(PotentialError),
     Position(PositionError),
+    Unit(UnitError),
 }
 
 impl fmt::Display for MinimizationError {
@@ -266,6 +280,7 @@ impl fmt::Display for MinimizationError {
             Self::InvalidOptions(message) => write!(f, "invalid minimization options: {message}"),
             Self::Potential(error) => write!(f, "potential evaluation failed: {error}"),
             Self::Position(error) => write!(f, "cannot update model positions: {error}"),
+            Self::Unit(error) => write!(f, "invalid minimization quantity unit: {error}"),
         }
     }
 }
@@ -276,6 +291,7 @@ impl std::error::Error for MinimizationError {
             Self::InvalidOptions(_) => None,
             Self::Potential(error) => Some(error),
             Self::Position(error) => Some(error),
+            Self::Unit(error) => Some(error),
         }
     }
 }
@@ -289,5 +305,11 @@ impl From<PotentialError> for MinimizationError {
 impl From<PositionError> for MinimizationError {
     fn from(error: PositionError) -> Self {
         Self::Position(error)
+    }
+}
+
+impl From<UnitError> for MinimizationError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
     }
 }

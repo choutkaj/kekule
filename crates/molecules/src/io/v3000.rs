@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::core::*;
 use crate::io::{preserve_molfile_tetrahedral_hydrogens, MolWriteError, SdfParseError};
 use crate::small::SmallMolecule;
+use crate::units::{Quantity, ANGSTROM};
 
 pub fn read_mol_v3000_str(input: &str) -> std::result::Result<SmallMolecule, SdfParseError> {
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
@@ -45,6 +46,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .map_err(|error| MolWriteError::new(error.to_string()))?;
         let point = conformer
             .and_then(|conformer| conformer.position(*atom_id))
+            .map(|point| point.value_in(ANGSTROM).expect("conformer length unit"))
             .unwrap_or_default();
         let index = atom_index
             .get(atom_id)
@@ -149,7 +151,8 @@ fn parse_mol_v3000_lines(
     let mut mol = Molecule::new();
 
     let mut atom_ids = BTreeMap::<usize, AtomId>::new();
-    let mut conformer = Conformer::with_atom_capacity(atom_rows.len());
+    let mut conformer = Conformer::with_atom_capacity(atom_rows.len(), ANGSTROM)
+        .expect("angstrom is a length unit");
     for row in atom_rows {
         let parsed = parse_v3000_atom(&row.body)
             .ok_or_else(|| SdfParseError::new(record, row.line, "invalid V3000 atom line"))?;
@@ -171,7 +174,9 @@ fn parse_mol_v3000_lines(
         atom.atom_map = (parsed.atom_map != 0).then_some(parsed.atom_map);
         apply_v3000_atom_options(record, row.line, &mut atom, &parsed.options)?;
         let atom_id = mol.add_atom(atom);
-        conformer.set_position(atom_id, parsed.point);
+        conformer
+            .set_position(atom_id, Quantity::new(parsed.point, ANGSTROM))
+            .expect("matching coordinate units");
         atom_ids.insert(parsed.index, atom_id);
     }
 

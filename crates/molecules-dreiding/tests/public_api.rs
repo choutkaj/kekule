@@ -21,10 +21,31 @@ fn downstream_preparation_and_evaluation() {
     graph
         .add_bond(oxygen, second_hydrogen, BondOrder::Single)
         .unwrap();
-    let mut conformer = Conformer::new();
-    conformer.set_position(oxygen, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(first_hydrogen, Point3::new(0.9575, 0.0, 0.0));
-    conformer.set_position(second_hydrogen, Point3::new(-0.2399, 0.9272, 0.0));
+    let mut conformer = Conformer::new(molecules::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            oxygen,
+            molecules::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), molecules::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            first_hydrogen,
+            molecules::units::Quantity::new(
+                Point3::new(0.9575, 0.0, 0.0),
+                molecules::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            second_hydrogen,
+            molecules::units::Quantity::new(
+                Point3::new(-0.2399, 0.9272, 0.0),
+                molecules::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();

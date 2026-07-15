@@ -8,6 +8,7 @@ use crate::core::{
 };
 use crate::modeling::{Model, ModelBuilder, MoleculeInstanceMetadata, MoleculeRole};
 use crate::small::SmallMolecule;
+use crate::units::{Quantity, ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
 
@@ -862,7 +863,7 @@ fn build_molecule(
         .first()
         .map(|row| row.model_id.clone())
         .ok_or_else(|| MmcifInterpretError::new(None, "empty molecule group"))?;
-    let mut conformer = Conformer::new();
+    let mut conformer = Conformer::new(ANGSTROM).expect("angstrom is a length unit");
     conformer
         .props_mut()
         .insert("mmcif.model_id".into(), PropValue::String(model_id));
@@ -876,7 +877,9 @@ fn build_molecule(
                 ),
             )
         })?;
-        conformer.set_position(atoms[&row.atom_key()], point);
+        conformer
+            .set_position(atoms[&row.atom_key()], Quantity::new(point, ANGSTROM))
+            .expect("matching coordinate units");
     }
     for connection in connections {
         let Some(&left) = atoms.get(&connection.left_atom) else {

@@ -392,12 +392,21 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         .insert("score".to_owned(), PropValue::Int(1));
     mol.props_mut()
         .insert("name".to_owned(), PropValue::String("triangle".to_owned()));
-    let mut conformer = Conformer::new();
-    conformer.set_position(atoms[0], Point3::new(0.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            atoms[0],
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer_id = mol.add_conformer(conformer).expect("valid conformer");
     mol.conformer_mut(conformer_id)
         .expect("conformer exists")
-        .set_position(atoms[1], Point3::new(1.0, 0.0, 0.0));
+        .set_position(
+            atoms[1],
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
 
     assert_eq!(mol.perception(), &before);
     assert!(mol.ring_membership().is_some());
@@ -410,9 +419,19 @@ fn conformer_attachment_rejects_coordinates_for_non_live_atoms_transactionally()
     let deleted = mol.add_atom(carbon());
     let live = mol.add_atom(oxygen());
     mol.delete_atom(deleted).expect("delete atom");
-    let mut conformer = Conformer::new();
-    conformer.set_position(deleted, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(live, Point3::new(1.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            deleted,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            live,
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
 
     assert!(matches!(
         mol.add_conformer(conformer),

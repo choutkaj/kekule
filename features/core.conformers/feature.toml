@@ -1,9 +1,9 @@
 id = "core.conformers"
 title = "Core conformer coordinate storage"
 area = "core"
-version = 4
+version = 5
 implemented = true
 validated = true
 description = "Store molecule conformer coordinates behind stable conformer IDs on the shared core graph."
-depends_on = ["core.graph"]
+depends_on = ["core.graph", "core.units"]
 validation_required = ["smoke"]

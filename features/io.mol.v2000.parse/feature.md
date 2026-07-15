@@ -31,7 +31,8 @@ as one `SmallMolecule`.
 - Supported bond stereo codes are code 1/4/6 on single bonds for wedge-up/either/wedge-down and code 3 on double bonds for double-bond either; they are stored as source bond marks, and unsupported code/order combinations are rejected.
 - Counts, atom fields, and bond lines use ASCII byte-field helpers with checked block arithmetic and whitespace fallback for short permissive inputs.
 - Allocation is bounded by the V2000 limit of 999 atoms and 999 bonds.
-- Coordinates are stored in the first conformer.
+- Coordinates are interpreted as angstrom quantities and stored in the first
+  conformer with that explicit unit.
 
 ## Validation
 
@@ -63,3 +64,5 @@ as one `SmallMolecule`.
   three-digit atom and bond counts remain unambiguous.
 - v11: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
+- v12: Record the CTfile coordinate convention as an explicit angstrom
+  conformer unit.

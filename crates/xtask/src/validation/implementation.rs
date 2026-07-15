@@ -682,12 +682,15 @@ pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
         "conformers": mol.conformers().map(|(_, conformer)| {
             mol.atom_ids()
                 .filter_map(|atom_id| {
-                    conformer.position(atom_id).map(|point| json!({
-                        "atom_index": atom_id.raw(),
-                        "x": point.x,
-                        "y": point.y,
-                        "z": point.z,
-                    }))
+                    conformer.position(atom_id).map(|point| {
+                        let point = point.value();
+                        json!({
+                            "atom_index": atom_id.raw(),
+                            "x": point.x,
+                            "y": point.y,
+                            "z": point.z,
+                        })
+                    })
                 })
                 .collect::<Vec<_>>()
         }).collect::<Vec<_>>(),
@@ -934,6 +937,7 @@ pub(crate) fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {
             mol.atom_ids()
                 .filter_map(|atom_id| {
                     conformer.position(atom_id).map(|point| {
+                        let point = point.value();
                         json!({
                             "atom_index": atom_id.raw(),
                             "x": point.x,

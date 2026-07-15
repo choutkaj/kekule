@@ -269,7 +269,10 @@ M  END
     let (_, conformer) = small.graph().first_conformer().expect("conformer exists");
     assert_eq!(
         conformer.position(AtomId::new(0)),
-        Some(Point3::new(0.1, 0.2, 0.3))
+        Some(crate::units::Quantity::new(
+            Point3::new(0.1, 0.2, 0.3),
+            crate::units::ANGSTROM,
+        ))
     );
 }
 
@@ -347,7 +350,10 @@ fn v2000_supported_bond_stereo_codes_round_trip_exactly() {
                 .expect("conformer")
                 .1
                 .position(AtomId::new(0)),
-            Some(Point3::new(-1.25, 0.0, 0.0))
+            Some(crate::units::Quantity::new(
+                Point3::new(-1.25, 0.0, 0.0),
+                crate::units::ANGSTROM,
+            ))
         );
     }
 }
@@ -529,7 +535,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         "sdf.field.NOTES".to_owned(),
         PropValue::String("line one\nline two".to_owned()),
     );
-    let mut conformer = Conformer::new();
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     for index in 0..9u32 {
         let mut atom = carbon();
         atom.formal_charge = 1;
@@ -537,7 +543,15 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         atom.radical = Some(AtomRadical::Doublet);
         atom.atom_map = Some(index + 1);
         let atom_id = molecule.graph_mut().add_atom(atom);
-        conformer.set_position(atom_id, Point3::new(-(index as f64), index as f64, 0.0));
+        conformer
+            .set_position(
+                atom_id,
+                crate::units::Quantity::new(
+                    Point3::new(-(index as f64), index as f64, 0.0),
+                    crate::units::ANGSTROM,
+                ),
+            )
+            .unwrap();
     }
     molecule
         .graph_mut()

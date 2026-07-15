@@ -50,7 +50,10 @@ M  END
     let (_, conformer) = mol.first_conformer().expect("conformer exists");
     assert_eq!(
         conformer.position(AtomId::new(0)),
-        Some(Point3::new(0.1, 0.2, 0.3))
+        Some(crate::units::Quantity::new(
+            Point3::new(0.1, 0.2, 0.3),
+            crate::units::ANGSTROM,
+        ))
     );
 }
 
@@ -206,10 +209,25 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         .add_bond(c, o, BondOrder::Double)
         .expect("double bond");
 
-    let mut conformer = Conformer::new();
-    conformer.set_position(n, Point3::new(0.1, 0.2, 0.3));
-    conformer.set_position(c, Point3::new(1.4, 0.0, 0.0));
-    conformer.set_position(o, Point3::new(2.5, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            n,
+            crate::units::Quantity::new(Point3::new(0.1, 0.2, 0.3), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            c,
+            crate::units::Quantity::new(Point3::new(1.4, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            o,
+            crate::units::Quantity::new(Point3::new(2.5, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     molecule
         .graph_mut()
         .add_conformer(conformer)
@@ -259,7 +277,10 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     let (_, conformer) = reparsed.graph().first_conformer().expect("conformer");
     assert_eq!(
         conformer.position(AtomId::new(2)),
-        Some(Point3::new(2.5, 0.0, 0.0))
+        Some(crate::units::Quantity::new(
+            Point3::new(2.5, 0.0, 0.0),
+            crate::units::ANGSTROM,
+        ))
     );
 }
 

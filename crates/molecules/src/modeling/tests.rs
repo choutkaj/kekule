@@ -8,6 +8,10 @@ use crate::modeling::potential::{
     PotentialGeometryError, Vector3,
 };
 use crate::small::SmallMolecule;
+use crate::units::{
+    Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
+    NANOMETER,
+};
 
 fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId, BondId) {
     let mut graph = Molecule::new();
@@ -17,9 +21,19 @@ fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId,
     graph.delete_atom(tombstone).unwrap();
     let b = graph.add_atom(Atom::new(carbon));
     let bond = graph.add_bond(a, b, BondOrder::Single).unwrap();
-    let mut conformer = Conformer::new();
-    conformer.set_position(a, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(b, Point3::new(distance, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            a,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            b,
+            crate::units::Quantity::new(Point3::new(distance, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
     (SmallMolecule::from_graph(graph), conformer, a, b, bond)
 }
@@ -27,8 +41,13 @@ fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId,
 fn one_atom_macro() -> (MacroMolecule, ConformerId, AtomId, SmcraAtomSiteId) {
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(Element::from_symbol("N").unwrap()));
-    let mut conformer = Conformer::new();
-    conformer.set_position(atom, Point3::new(2.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            atom,
+            crate::units::Quantity::new(Point3::new(2.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
     let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("1");
@@ -62,11 +81,45 @@ fn model_preserves_local_ids_and_dense_round_trips() {
             .atom_id(model.topology().atom_index(qb).unwrap()),
         Some(qb)
     );
-    assert_eq!(model.position(qb).unwrap(), Point3::new(1.5, 0.0, 0.0));
+    assert_eq!(
+        model.position(qb).unwrap(),
+        Quantity::new(Point3::new(1.5, 0.0, 0.0), ANGSTROM)
+    );
     assert!(model
         .topology()
         .atom(InstanceAtomId::new(instance, AtomId::new(1)))
         .is_err());
+}
+
+#[test]
+fn model_converts_source_conformer_units_once_without_mutating_the_source() {
+    let mut graph = Molecule::new();
+    let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let mut conformer = Conformer::new(NANOMETER).unwrap();
+    conformer
+        .set_position(atom, Quantity::new(Point3::new(0.15, 0.0, 0.0), NANOMETER))
+        .unwrap();
+    let conformer_id = graph.add_conformer(conformer).unwrap();
+    let small = SmallMolecule::from_graph(graph);
+
+    let model = Model::from_small_molecule(&small, conformer_id).unwrap();
+    let qualified = InstanceAtomId::new(MoleculeInstanceId::new(0), atom);
+    assert_eq!(model.position(qualified).unwrap().unit(), ANGSTROM);
+    assert_eq!(model.position(qualified).unwrap().x, 1.5);
+    assert_eq!(
+        small.graph().conformer(conformer_id).unwrap().unit(),
+        NANOMETER
+    );
+    assert_eq!(
+        small
+            .graph()
+            .conformer(conformer_id)
+            .unwrap()
+            .position(atom)
+            .unwrap()
+            .x,
+        0.15
+    );
 }
 
 #[test]
@@ -77,7 +130,7 @@ fn model_definition_identity_is_shared_only_by_clones() {
     cloned
         .set_position(
             InstanceAtomId::new(MoleculeInstanceId::new(0), b),
-            Point3::new(2.0, 0.0, 0.0),
+            Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM),
         )
         .unwrap();
     let rebuilt = Model::from_small_molecule(&small, conformer).unwrap();
@@ -142,12 +195,12 @@ fn construction_copies_positions_and_preserves_sources() {
     let mut model = Model::from_small_molecule(&small, conformer).unwrap();
     let atom = InstanceAtomId::new(MoleculeInstanceId::new(0), a);
     model
-        .set_position(atom, Point3::new(3.0, 0.0, 0.0))
+        .set_position(atom, Quantity::new(Point3::new(3.0, 0.0, 0.0), ANGSTROM))
         .unwrap();
     assert_eq!(small, source);
     assert_eq!(
         small.graph().conformer(conformer).unwrap().position(a),
-        Some(Point3::new(0.0, 0.0, 0.0))
+        Some(Quantity::new(Point3::new(0.0, 0.0, 0.0), ANGSTROM))
     );
     assert_eq!(
         model
@@ -177,7 +230,8 @@ fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
         .graph_mut_raw()
         .conformer_mut(conformer)
         .unwrap()
-        .set_position(a, Point3::new(f64::NAN, 0.0, 0.0));
+        .set_position(a, Quantity::new(Point3::new(f64::NAN, 0.0, 0.0), ANGSTROM))
+        .unwrap();
     let mut builder = Model::builder();
     assert!(
         matches!(builder.add_small_molecule(&small, conformer), Err(ModelBuildError::NonFinitePosition { atom }) if atom == a)
@@ -191,16 +245,16 @@ fn position_updates_are_complete_finite_and_transactional() {
     let mut model = Model::from_small_molecule(&small, conformer).unwrap();
     let original = model.positions().to_vec();
     assert!(matches!(
-        model.set_positions(&[Point3::default()]),
+        model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
         Err(PositionError::PositionCountMismatch { .. })
     ));
-    assert_eq!(model.positions(), original);
+    assert_eq!(model.positions().into_value(), original.as_slice());
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(
-        matches!(model.set_positions(&invalid), Err(PositionError::NonFinitePosition { atom }) if atom.atom() == a)
+        matches!(model.set_positions(Quantity::new(&invalid, ANGSTROM)), Err(PositionError::NonFinitePosition { atom }) if atom.atom() == a)
     );
-    assert_eq!(model.positions(), original);
+    assert_eq!(model.positions().into_value(), original.as_slice());
 }
 
 #[test]
@@ -208,11 +262,17 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     let (small, conformer, _, _, bond) = two_atom_small(2.0);
     let model = Model::from_small_molecule(&small, conformer).unwrap();
     let qualified = InstanceBondId::new(MoleculeInstanceId::new(0), bond);
-    let mut potential =
-        HarmonicBondPotential::new(&model, [HarmonicBondParameter::new(qualified, 1.0, 100.0)])
-            .unwrap();
+    let mut potential = HarmonicBondPotential::new(
+        &model,
+        [HarmonicBondParameter::new(
+            qualified,
+            Quantity::new(1.0, ANGSTROM),
+            Quantity::new(100.0, MODEL_FORCE_CONSTANT_UNIT),
+        )],
+    )
+    .unwrap();
     let initial = potential.evaluate(&model).unwrap();
-    assert!((initial.energy() - 50.0).abs() < 1.0e-10);
+    assert!((initial.energy().into_value() - 50.0).abs() < 1.0e-10);
     let result = minimize(&model, &mut potential, MinimizeOptions::default()).unwrap();
     assert!(result.final_energy < result.initial_energy);
     assert_eq!(model.positions()[1], Point3::new(2.0, 0.0, 0.0));
@@ -228,7 +288,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     coincident
         .set_position(
             InstanceAtomId::new(instance, AtomId::new(2)),
-            coincident.positions()[0],
+            Quantity::new(coincident.positions()[0], ANGSTROM),
         )
         .unwrap();
     assert_eq!(
@@ -258,8 +318,11 @@ impl Potential for RecoverableGeometryPotential {
         }
         PotentialEvaluation::new(
             model,
-            0.5 * coordinate * coordinate,
-            vec![Vector3::zero(), Vector3::new(coordinate, 0.0, 0.0)],
+            Quantity::new(0.5 * coordinate * coordinate, MODEL_ENERGY_UNIT),
+            Quantity::new(
+                vec![Vector3::zero(), Vector3::new(coordinate, 0.0, 0.0)],
+                MODEL_GRADIENT_UNIT,
+            ),
         )
     }
 }
@@ -276,8 +339,11 @@ impl Potential for BackendFailurePotential {
         }
         PotentialEvaluation::new(
             model,
-            0.5,
-            vec![Vector3::zero(), Vector3::new(1.0, 0.0, 0.0)],
+            Quantity::new(0.5, MODEL_ENERGY_UNIT),
+            Quantity::new(
+                vec![Vector3::zero(), Vector3::new(1.0, 0.0, 0.0)],
+                MODEL_GRADIENT_UNIT,
+            ),
         )
     }
 }
@@ -288,7 +354,7 @@ fn minimization_backtracks_invalid_geometry_but_propagates_backend_failures() {
     let model = Model::from_small_molecule(&small, conformer).unwrap();
     let options = MinimizeOptions {
         max_iterations: 1,
-        initial_step: 1.0,
+        initial_step: Quantity::new(1.0, ANGSTROM),
         ..MinimizeOptions::default()
     };
 

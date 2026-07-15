@@ -13,6 +13,8 @@ into a `Model` with distinct molecule instances and a report.
   IDs; `Select(String)` and `First` are explicit alternatives.
 - Requires one complete finite position per interpreted atom after deterministic
   alternate-location selection.
+- Treats `_atom_site.Cartn_*` coordinates as explicit angstrom quantities before
+  model construction.
 - Uses entity, structural-instance, atom-site, and declared-connection metadata
   to build Small/Macro instances. Only declared covalent links merge boundaries.
 - Preserves `sing`, `doub`, `trip`, and `quad` values from
@@ -56,3 +58,5 @@ into a `Model` with distinct molecule instances and a report.
   `_struct_conn.pdbx_value_order` instead of coercing every connection to single.
 - v5: Return the renamed canonical `Model` and populate the fully prefixed
   `SmcraHierarchy` API without changing interpretation semantics.
+- v6: Carry the mmCIF Cartesian angstrom convention through explicit conformer
+  and model quantities.

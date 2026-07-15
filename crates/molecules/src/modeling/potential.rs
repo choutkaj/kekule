@@ -2,6 +2,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use super::{InstanceAtomId, InstanceBondId, Model, ModelDefinitionKey};
+use crate::units::{
+    Quantity, ScaleValue, UnitError, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT,
+    MODEL_GRADIENT_UNIT, MODEL_LENGTH_UNIT,
+};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 /// Three-dimensional Cartesian vector used for energy gradients.
@@ -39,27 +43,40 @@ impl Vector3 {
     }
 }
 
+impl ScaleValue for Vector3 {
+    fn scaled(self, factor: f64) -> Self {
+        Self::new(self.x * factor, self.y * factor, self.z * factor)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 /// Validated energy and Cartesian gradient from a [`Potential`].
 ///
-/// Energy is expressed in kJ/mol and gradient components in kJ/mol/angstrom.
+/// Values are converted once to the modelling kernel's explicit canonical
+/// energy and gradient units.
 pub struct PotentialEvaluation {
-    energy: f64,
-    gradient: Vec<Vector3>,
+    energy: Quantity<f64>,
+    gradient: Quantity<Vec<Vector3>>,
 }
 
 impl PotentialEvaluation {
-    pub fn new(model: &Model, energy: f64, gradient: Vec<Vector3>) -> Result<Self, PotentialError> {
-        if !energy.is_finite() {
+    pub fn new(
+        model: &Model,
+        energy: Quantity<f64>,
+        gradient: Quantity<Vec<Vector3>>,
+    ) -> Result<Self, PotentialError> {
+        let energy = energy.into_unit(MODEL_ENERGY_UNIT)?;
+        let gradient = gradient.into_unit(MODEL_GRADIENT_UNIT)?;
+        if !energy.value().is_finite() {
             return Err(PotentialError::NonFiniteEnergy);
         }
-        if gradient.len() != model.atom_count() {
+        if gradient.value().len() != model.atom_count() {
             return Err(PotentialError::GradientLengthMismatch {
                 expected: model.atom_count(),
-                actual: gradient.len(),
+                actual: gradient.value().len(),
             });
         }
-        for (index, vector) in gradient.iter().copied().enumerate() {
+        for (index, vector) in gradient.value().iter().copied().enumerate() {
             if !vector.is_finite() {
                 return Err(PotentialError::NonFiniteGradient {
                     atom: model.topology().atom_ids()[index],
@@ -69,17 +86,21 @@ impl PotentialEvaluation {
         Ok(Self { energy, gradient })
     }
 
-    pub fn energy(&self) -> f64 {
+    pub fn energy(&self) -> Quantity<f64> {
         self.energy
     }
 
-    pub fn gradient(&self) -> &[Vector3] {
-        &self.gradient
+    pub fn gradient(&self) -> Quantity<&[Vector3]> {
+        Quantity::new(self.gradient.value().as_slice(), self.gradient.unit())
     }
 
-    pub fn gradient_for(&self, model: &Model, atom: InstanceAtomId) -> Option<Vector3> {
+    pub fn gradient_for(&self, model: &Model, atom: InstanceAtomId) -> Option<Quantity<Vector3>> {
         let index = model.topology().atom_index(atom)?;
-        self.gradient.get(index.index()).copied()
+        self.gradient
+            .value()
+            .get(index.index())
+            .copied()
+            .map(|vector| Quantity::new(vector, self.gradient.unit()))
     }
 }
 
@@ -98,14 +119,18 @@ pub trait Potential {
 pub struct HarmonicBondParameter {
     /// Bond in the model topology.
     pub bond: InstanceBondId,
-    /// Equilibrium bond length in angstroms.
-    pub equilibrium_length: f64,
-    /// Harmonic force constant in kJ/mol/angstrom squared.
-    pub force_constant: f64,
+    /// Equilibrium bond length.
+    pub equilibrium_length: Quantity<f64>,
+    /// Harmonic force constant (energy per squared length).
+    pub force_constant: Quantity<f64>,
 }
 
 impl HarmonicBondParameter {
-    pub const fn new(bond: InstanceBondId, equilibrium_length: f64, force_constant: f64) -> Self {
+    pub const fn new(
+        bond: InstanceBondId,
+        equilibrium_length: Quantity<f64>,
+        force_constant: Quantity<f64>,
+    ) -> Self {
         Self {
             bond,
             equilibrium_length,
@@ -143,13 +168,21 @@ impl HarmonicBondPotential {
             if !seen.insert(parameter.bond) {
                 return Err(PotentialError::DuplicateBondParameter(parameter.bond));
             }
-            if !parameter.equilibrium_length.is_finite() || parameter.equilibrium_length <= 0.0 {
+            let equilibrium_length = parameter
+                .equilibrium_length
+                .into_unit(MODEL_LENGTH_UNIT)?
+                .into_value();
+            let force_constant = parameter
+                .force_constant
+                .into_unit(MODEL_FORCE_CONSTANT_UNIT)?
+                .into_value();
+            if !equilibrium_length.is_finite() || equilibrium_length <= 0.0 {
                 return Err(PotentialError::InvalidBondParameter {
                     bond: parameter.bond,
                     parameter: "equilibrium length must be finite and positive",
                 });
             }
-            if !parameter.force_constant.is_finite() || parameter.force_constant <= 0.0 {
+            if !force_constant.is_finite() || force_constant <= 0.0 {
                 return Err(PotentialError::InvalidBondParameter {
                     bond: parameter.bond,
                     parameter: "force constant must be finite and positive",
@@ -165,8 +198,8 @@ impl HarmonicBondPotential {
             terms.push(HarmonicBondTerm {
                 a,
                 b,
-                equilibrium_length: parameter.equilibrium_length,
-                force_constant: parameter.force_constant,
+                equilibrium_length,
+                force_constant,
             });
         }
         Ok(Self {
@@ -186,10 +219,12 @@ impl Potential for HarmonicBondPotential {
         for term in &self.terms {
             let a = model
                 .position(term.a)
-                .map_err(|_| PotentialError::IncompatibleModel)?;
+                .map_err(|_| PotentialError::IncompatibleModel)?
+                .into_value();
             let b = model
                 .position(term.b)
-                .map_err(|_| PotentialError::IncompatibleModel)?;
+                .map_err(|_| PotentialError::IncompatibleModel)?
+                .into_value();
             let displacement = Vector3::new(a.x - b.x, a.y - b.y, a.z - b.z);
             let distance = displacement.norm();
             if distance == 0.0 {
@@ -213,7 +248,11 @@ impl Potential for HarmonicBondPotential {
             gradient[a_index.index()].add_scaled(displacement, scale);
             gradient[b_index.index()].add_scaled(displacement, -scale);
         }
-        PotentialEvaluation::new(model, energy, gradient)
+        PotentialEvaluation::new(
+            model,
+            Quantity::new(energy, MODEL_ENERGY_UNIT),
+            Quantity::new(gradient, MODEL_GRADIENT_UNIT),
+        )
     }
 }
 
@@ -238,7 +277,7 @@ impl fmt::Display for PotentialGeometryError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PotentialError {
     InvalidBondId(InstanceBondId),
@@ -261,6 +300,7 @@ pub enum PotentialError {
     NonFiniteGradient {
         atom: InstanceAtomId,
     },
+    Unit(UnitError),
     Backend {
         backend: &'static str,
         message: String,
@@ -332,6 +372,7 @@ impl fmt::Display for PotentialError {
                     "potential returned a non-finite gradient for atom {atom}"
                 )
             }
+            Self::Unit(error) => write!(f, "invalid potential quantity unit: {error}"),
             Self::Backend { backend, message } => {
                 write!(f, "{backend} potential evaluation failed: {message}")
             }
@@ -340,3 +381,9 @@ impl fmt::Display for PotentialError {
 }
 
 impl std::error::Error for PotentialError {}
+
+impl From<UnitError> for PotentialError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
+    }
+}

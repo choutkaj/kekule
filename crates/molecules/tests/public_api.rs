@@ -1,6 +1,19 @@
 use molecules::prelude::*;
 
 #[test]
+fn quantity_and_unit_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::units::{Dimension, Quantity, Unit, ANGSTROM, NANOMETER};
+
+    let length = 1.0 * NANOMETER;
+    assert_eq!(length.value_in(ANGSTROM)?, 10.0);
+
+    let picometer = Unit::new(Dimension::LENGTH, 1.0e-12, Some("pm"))?;
+    let coordinates = Quantity::new(vec![[100.0, 200.0, 300.0]], picometer);
+    assert_eq!(coordinates.value_in(ANGSTROM)?, vec![[1.0, 2.0, 3.0]]);
+    Ok(())
+}
+
+#[test]
 fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
     let mut mol = SmallMolecule::from_smiles("c1ccccc1O")?;
     mol.sanitize()?;
@@ -108,8 +121,16 @@ fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error
     let atom = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
     ));
-    let mut conformer = Conformer::new();
-    conformer.set_position(atom, molecules::core::Point3::new(0.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(molecules::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            atom,
+            molecules::units::Quantity::new(
+                molecules::core::Point3::new(0.0, 0.0, 0.0),
+                molecules::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer)?;
     let model = Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer)?;
 
@@ -130,9 +151,25 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         Element::from_symbol("O").expect("oxygen is a known element"),
     ));
     let bond = graph.add_bond(carbon, oxygen, BondOrder::Single)?;
-    let mut conformer = Conformer::new();
-    conformer.set_position(carbon, molecules::core::Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(oxygen, molecules::core::Point3::new(2.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(molecules::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            carbon,
+            molecules::units::Quantity::new(
+                molecules::core::Point3::new(0.0, 0.0, 0.0),
+                molecules::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            oxygen,
+            molecules::units::Quantity::new(
+                molecules::core::Point3::new(2.0, 0.0, 0.0),
+                molecules::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
 
@@ -142,8 +179,14 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let cloned = model.clone();
     assert_eq!(model.definition_key(), cloned.definition_key());
     let model_bond = molecules::modeling::InstanceBondId::new(instance, bond);
-    let mut potential =
-        HarmonicBondPotential::new(&model, [HarmonicBondParameter::new(model_bond, 1.2, 100.0)])?;
+    let mut potential = HarmonicBondPotential::new(
+        &model,
+        [HarmonicBondParameter::new(
+            model_bond,
+            molecules::units::Quantity::new(1.2, molecules::units::ANGSTROM),
+            molecules::units::Quantity::new(100.0, molecules::units::MODEL_FORCE_CONSTANT_UNIT),
+        )],
+    )?;
     let result = minimize(&model, &mut potential, MinimizeOptions::default())?;
 
     assert_eq!(result.status, MinimizationStatus::Converged);

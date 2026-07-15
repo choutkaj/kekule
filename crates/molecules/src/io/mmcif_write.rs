@@ -6,6 +6,7 @@ use crate::core::{AtomId, BondOrder, Point3};
 use crate::modeling::{
     InstanceAtomId, InstanceBondId, Model, MoleculeInstance, MoleculeInstanceId, MoleculeRole,
 };
+use crate::units::ANGSTROM;
 
 const MAX_COORDINATE_PRECISION: usize = 15;
 
@@ -566,6 +567,8 @@ fn collect_macro_rows(
             insertion_code: residue.insertion_code.clone(),
             position: model
                 .position(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             occupancy: site.metadata.occupancy,
             b_factor: site.metadata.b_factor,
@@ -616,6 +619,8 @@ fn collect_small_rows(
             insertion_code: None,
             position: model
                 .position(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             occupancy: None,
             b_factor: None,

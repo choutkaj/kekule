@@ -130,11 +130,31 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
         .expect("left carrier");
     mol.add_bond(right, right_carrier, BondOrder::Single)
         .expect("right carrier");
-    let mut conformer = Conformer::new();
-    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
-    conformer.set_position(left_carrier, Point3::new(0.0, 1.0, 0.0));
-    conformer.set_position(right_carrier, Point3::new(1.0, -1.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            left,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            right,
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            left_carrier,
+            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            right_carrier,
+            crate::units::Quantity::new(Point3::new(1.0, -1.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     mol.add_conformer(conformer).expect("valid conformer");
     let mut molecule = SmallMolecule::from_graph(mol);
 

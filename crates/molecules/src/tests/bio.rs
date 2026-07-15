@@ -164,8 +164,13 @@ fn macro_molecule_validates_atom_site_atom_ids() {
 fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
     let mut macro_mol = MacroMolecule::default();
     let atom = macro_mol.graph_mut().add_atom(carbon());
-    let mut conformer = Conformer::new();
-    conformer.set_position(atom, Point3::new(1.0, 2.0, 3.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            atom,
+            crate::units::Quantity::new(Point3::new(1.0, 2.0, 3.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     macro_mol
         .graph_mut()
         .add_conformer(conformer)

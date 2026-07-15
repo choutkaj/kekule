@@ -784,11 +784,11 @@ fn tetrahedral_points_with_virtual_implicit_h(
         return None;
     }
 
-    let center_point = conformer.position(center)?;
+    let center_point = conformer.position_value(center)?;
     let mut carrier_points = [None; 4];
     for (index, carrier) in carriers.iter().enumerate() {
         if let StereoCarrier::Atom(atom) = carrier {
-            carrier_points[index] = Some(conformer.position(*atom)?);
+            carrier_points[index] = Some(conformer.position_value(*atom)?);
         }
     }
 
@@ -986,12 +986,12 @@ fn axis_orientation_from_wedge(
 ) -> Option<AxisOrientation> {
     let (_, conformer) = mol.first_conformer()?;
     let (left, right) = axis_bond.endpoints();
-    let left_point = conformer.position(left)?;
-    let right_point = conformer.position(right)?;
-    let mut left_reference_point = conformer.position(left_reference)?;
-    let mut right_reference_point = conformer.position(right_reference)?;
-    let marked_endpoint_point = conformer.position(marked_endpoint)?;
-    let marked_point = conformer.position(marked_carrier)?;
+    let left_point = conformer.position_value(left)?;
+    let right_point = conformer.position_value(right)?;
+    let mut left_reference_point = conformer.position_value(left_reference)?;
+    let mut right_reference_point = conformer.position_value(right_reference)?;
+    let marked_endpoint_point = conformer.position_value(marked_endpoint)?;
+    let marked_point = conformer.position_value(marked_carrier)?;
     let coordinate_points = [
         left_point,
         right_point,
@@ -1523,11 +1523,11 @@ fn tetrahedral_points(
 ) -> Option<[Point3; 5]> {
     (carriers.len() == 4).then_some(())?;
     Some([
-        conformer.position(center)?,
-        conformer.position(carriers[0])?,
-        conformer.position(carriers[1])?,
-        conformer.position(carriers[2])?,
-        conformer.position(carriers[3])?,
+        conformer.position_value(center)?,
+        conformer.position_value(carriers[0])?,
+        conformer.position_value(carriers[1])?,
+        conformer.position_value(carriers[2])?,
+        conformer.position_value(carriers[3])?,
     ])
 }
 
@@ -1539,10 +1539,10 @@ fn double_bond_points(
     right_carrier: AtomId,
 ) -> Option<[Point3; 4]> {
     Some([
-        conformer.position(left)?,
-        conformer.position(right)?,
-        conformer.position(left_carrier)?,
-        conformer.position(right_carrier)?,
+        conformer.position_value(left)?,
+        conformer.position_value(right)?,
+        conformer.position_value(left_carrier)?,
+        conformer.position_value(right_carrier)?,
     ])
 }
 
@@ -1583,10 +1583,10 @@ fn axis_orientation_from_3d_coordinates(
     right_reference: AtomId,
 ) -> Option<AxisOrientation> {
     let (left, right) = axis_bond.endpoints();
-    let left_point = conformer.position(left)?;
-    let right_point = conformer.position(right)?;
-    let left_reference_point = conformer.position(left_reference)?;
-    let right_reference_point = conformer.position(right_reference)?;
+    let left_point = conformer.position_value(left)?;
+    let right_point = conformer.position_value(right)?;
+    let left_reference_point = conformer.position_value(left_reference)?;
+    let right_reference_point = conformer.position_value(right_reference)?;
     let points = [
         left_point,
         right_point,
