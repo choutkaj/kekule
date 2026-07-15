@@ -1,0 +1,9 @@
+id = "bio.secondary-structure.dssp"
+title = "DSSP protein secondary structure"
+area = "bio"
+version = 1
+implemented = false
+validated = false
+description = "Plan read-only DSSP 4-compatible protein secondary-structure analysis over one explicit Model coordinate snapshot."
+depends_on = ["bio.hierarchy.smcra", "model.system"]
+validation_required = []
