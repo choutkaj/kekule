@@ -95,6 +95,9 @@ or manually curated external-reference golden data.
 - One validation command caches exact and line-ending-normalized hashes for
   immutable inputs, so features sharing broad-corpus fixtures verify the same
   bytes without repeatedly reading them from disk.
+- Development builds optimize only the third-party hashing, gzip, and JSON
+  stack used by the harness, keeping project code debuggable while making large
+  golden verification practical.
 - Manual-semantic golden acceptance is an explicit review operation, not a way
   to make an unexplained failure pass; the motivating chemistry or file-format
   behavior must be independently checked before accepting the snapshot.
@@ -174,3 +177,6 @@ or manually curated external-reference golden data.
 - v30: Cache exact and evidence-normalized input hashes for the duration of one
   validation run, eliminating repeated broad-corpus reads across feature
   targets without weakening per-input evidence.
+- v31: Optimize the harness's third-party hashing, gzip, and JSON dependencies
+  in development builds so broad validation spends time on chemistry rather
+  than debug-mode evidence decoding.
