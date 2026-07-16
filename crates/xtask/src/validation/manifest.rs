@@ -160,6 +160,10 @@ pub(crate) fn validation_manifest_path(feature: &str, corpus: &str) -> PathBuf {
         .join(format!("{feature}.toml"))
 }
 
+pub(crate) fn validation_manifest_path_from(root: &Path, feature: &str, corpus: &str) -> PathBuf {
+    root.join(validation_manifest_path(feature, corpus))
+}
+
 pub(crate) fn read_validation_manifest(path: &Path) -> Result<ValidationManifest, Box<dyn Error>> {
     let text = fs::read_to_string(path)?;
     toml::from_str(&text).map_err(|error| boxed_error(format!("{}: {error}", path.display())))
@@ -184,6 +188,36 @@ pub(crate) fn validation_targets<'a>(
     feature_selector: &str,
     corpus_selector: &str,
 ) -> Vec<(&'a Feature, String)> {
+    validation_targets_from(Path::new("."), features, feature_selector, corpus_selector)
+}
+
+pub(crate) fn validation_targets_from<'a>(
+    root: &Path,
+    features: &'a [Feature],
+    feature_selector: &str,
+    corpus_selector: &str,
+) -> Vec<(&'a Feature, String)> {
+    if corpus_selector == "all" {
+        let mut targets = Vec::new();
+        for feature in features {
+            if feature_selector != "all" && feature.id != feature_selector {
+                continue;
+            }
+            for corpus in VALIDATION_CORPORA {
+                let required = feature
+                    .validation_required
+                    .iter()
+                    .any(|required| required == corpus.id);
+                let manifest_exists =
+                    validation_manifest_path_from(root, &feature.id, corpus.id).exists();
+                if required || (feature.implemented && manifest_exists) {
+                    targets.push((feature, corpus.id.to_owned()));
+                }
+            }
+        }
+        return targets;
+    }
+
     if corpus_selector != "all"
         && validation_corpus(corpus_selector).is_some_and(|corpus| corpus.local_only)
     {
@@ -192,7 +226,7 @@ pub(crate) fn validation_targets<'a>(
             .filter(|feature| feature_selector == "all" || feature.id == feature_selector)
             .filter(|feature| {
                 feature_selector != "all"
-                    || validation_manifest_path(&feature.id, corpus_selector).exists()
+                    || validation_manifest_path_from(root, &feature.id, corpus_selector).exists()
             })
             .map(|feature| (feature, corpus_selector.to_owned()))
             .collect();

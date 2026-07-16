@@ -17,7 +17,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
 
 pub(crate) fn print_help() {
     eprintln!(
-        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all] [--fixture PATH] [--update] [--accept-implementation-goldens] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
+        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all (default: all)] [--fixture PATH] [--update] [--accept-implementation-goldens] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
     );
 }
 
