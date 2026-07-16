@@ -3,16 +3,18 @@
 ## Summary
 
 Parse ordered SDF records into a loss-preserving `SdfDocument`, then interpret
-their Molfile documents into canonical `SdfRecord` values.
+their Molfile documents into canonical `SdfRecord` values plus qualified
+per-record reports.
 
 ## Behavior/API
 
 - Exposes `SdfDocument`, `SdfRecordDocument`, `SdfDataField`, canonical
-  `SdfRecord`, `sdf::parse_str`, and `sdf::interpret`.
+  `SdfRecord`, `SdfInterpretation`, `sdf::parse_str`, and `sdf::interpret`.
 - Each raw record owns a `MolfileDocument` and ordered raw data fields with source
   lines. Molfile versions are auto-detected per record.
-- Interpretation returns one `SmallMolecule` plus record title/data fields and
-  keeps syntax errors distinct from chemical interpretation errors.
+- Interpretation returns ordered records plus an `SdfInterpretationReport`.
+  Each `SdfRecordInterpretationReport` qualifies the underlying Molfile
+  atom/bond mappings with its record index and source start line.
 - Headers and SDF fields are record metadata and are never injected into
   `Molecule::props`.
 - Parsing and interpretation never sanitize or run chemical perception.
@@ -38,3 +40,5 @@ their Molfile documents into canonical `SdfRecord` values.
   and bond counts in raw SDF record documents.
 - v12: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
+- v13: Return a first-class SDF interpretation result with qualified per-record
+  Molfile reports and source-to-canonical mappings.

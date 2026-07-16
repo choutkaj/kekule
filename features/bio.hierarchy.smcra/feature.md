@@ -12,8 +12,12 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - `MacroMolecule` owns one core `Molecule` plus one `SmcraHierarchy`.
 - `MacroMolecule` exposes model, chain, residue, and atom-site iterators plus `atom_site_for_atom`.
 - `MacroMolecule::validate` checks graph/hierarchy/coordinate consistency without mutation.
-- `MacroMolecule::sanitize` uses separate macro options, reports, and errors; defaults only validate current graph/hierarchy/coordinate state.
-- Unsupported normalization, residue recognition, connectivity, alternate-location selection, and ligand sanitization requests fail explicitly.
+- `MacroMoleculeBuilder` and `MacroMolecule::try_from_parts` are the only raw
+  assembly paths and reject invalid graph/hierarchy pairs.
+- `MacroMolecule::edit` provides coordinated transactional graph/hierarchy
+  mutation; commit validates before atomically replacing the original.
+- Every live graph atom must have exactly one atom site, and every atom site
+  must reference a live graph atom.
 - Atom-site insertion validates that referenced core atoms exist.
 - Atom-site metadata preserves `_atom_site.group_PDB`, `_atom_site.id`, label/auth atom IDs, alternate location, occupancy, and B-factor.
 
@@ -27,7 +31,8 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 
 ## Validation
 
-- Unit tests cover hierarchy construction, mutation, lookup, validation, and sanitization behavior.
+- Unit tests cover hierarchy construction, checked assembly, transactional
+  mutation, lookup, validation, and failed-commit rollback.
 - The former Biopython evidence exercised the removed whole-file reader rather
   than the format-neutral hierarchy contract, so no current hierarchy parity
   evidence is recorded pending a replacement comparison.
@@ -47,3 +52,6 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - v6: Remove validation coupling to the deleted direct mmCIF reader and keep `SmcraHierarchy` format-neutral.
 - v7: Hard-break the complete hierarchy vocabulary to `Smcra*` names so its
   structural model cannot be confused with `modeling::Model`.
+- v8: Enforce a valid-state `MacroMolecule` boundary with checked builders,
+  complete graph-to-atom-site coverage, and transactional coordinated editing;
+  remove the placeholder macromolecule sanitization surface.

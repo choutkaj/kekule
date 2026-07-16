@@ -22,6 +22,8 @@ one complete mutable coordinate set.
   getters and setters expose explicit quantities and accept compatible length units.
 - Rejects empty models/molecules, invalid conformers, missing positions, and
   non-finite positions transactionally.
+- Validates every `MacroMolecule` graph/hierarchy pair before accepting it as a
+  model instance.
 
 ## Implementation Notes
 
@@ -57,3 +59,5 @@ one complete mutable coordinate set.
   `InstanceSmcraHierarchy`.
 - v5: Replace implicit model coordinate conventions with quantity-valued
   positions and explicit compatible conversion at model boundaries.
+- v6: Make valid macromolecule structure a checked model-construction
+  precondition.

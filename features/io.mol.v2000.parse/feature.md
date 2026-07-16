@@ -3,14 +3,17 @@
 ## Summary
 
 Parse a Molfile into `MolfileDocument`, then explicitly interpret V2000 chemistry
-as one `SmallMolecule`.
+as one `SmallMolecule` plus source mappings.
 
 ## Behavior/API
 
 - Exposes version-autodetecting `molfile::parse_str` and `molfile::interpret`
   with distinct `MolfileParseError` and `MolfileInterpretError`.
 - The document preserves headers, atom/bond/property records, unsupported
-  records, source lines, and original text without constructing a molecule.
+  records, source lines, original text, and a validated private typed CTAB
+  representation without constructing a molecule.
+- Interpretation returns `MolfileInterpretation`; its report maps source atom
+  and bond records to stable canonical `AtomId` and `BondId` values.
 - Interpretation preserves atom coordinates, bond orders, atom maps, charges,
   isotopes, radicals, and supported source stereo marks. Headers remain document
   metadata rather than molecule properties.
@@ -66,3 +69,6 @@ as one `SmallMolecule`.
   tier while retaining every ignored corpus on demand.
 - v12: Record the CTfile coordinate convention as an explicit angstrom
   conformer unit.
+- v13: Parse and validate atom, bond, and supported property records into a
+  typed V2000 syntax representation; interpretation consumes it without
+  reparsing source lines and returns canonical mappings.

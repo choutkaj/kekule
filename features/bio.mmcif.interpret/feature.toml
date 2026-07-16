@@ -2,9 +2,9 @@ id = "bio.mmcif.interpret"
 title = "mmCIF molecular interpretation"
 area = "bio"
 domains = ["macromolecule"]
-version = 6
+version = 7
 implemented = true
-description = "Interpret one selected mmCIF coordinate model into a Model with distinct typed molecule instances, explicit supported bond orders, and a provenance report."
+description = "Interpret one selected mmCIF coordinate model into typed instances with explicit bond orders and qualified format provenance."
 depends_on = [
   "bio.hierarchy.smcra",
   "model.system",

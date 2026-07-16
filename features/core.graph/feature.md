@@ -21,6 +21,9 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - Returns scoped `AtomMut` and `BondMut` guards from mutable graph access.
 - Owns one internally consistent `PerceptionState` with read-only valence,
   implicit-H, ring, aromaticity/provenance, and CIP queries.
+- Owns the stored perception-result vocabulary (`ValenceModel`,
+  `AromaticityModel`, `RingMembership`, `Ring`, `RingSet`, and `RingWork`);
+  algorithm implementations depend on core, never the reverse.
 
 ## Implementation Notes
 
@@ -62,3 +65,5 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   invalidate immediately.
 - v7: Replace unchecked mutable stereo-element access with transactional
   replacement and enforce nonempty, duplicate-free stereo groups.
+- v8: Move all kernel-stored perception vocabulary into core so the graph has
+  no physical dependency on algorithm implementations.

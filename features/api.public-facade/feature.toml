@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 14
+version = 15
 implemented = true
-description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."
+description = "Expose the release facade with focused modules, real interpretation results, checked lifecycles, and private invariant state."
 depends_on = [
   "core.units",
   "core.graph",

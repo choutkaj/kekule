@@ -70,6 +70,11 @@ are available only through read-only queries. There is one installed perception
 profile at a time; an alternative-model calculation remains a standalone result
 until an explicit perception operation installs it.
 
+The vocabulary stored by the kernel, including ring results and selected
+valence/aromaticity model identifiers, is core-owned. Perception algorithms
+depend on these result types; the core graph never imports algorithm
+implementations.
+
 Topology or chemistry-relevant mutation clears affected perception immediately.
 There is no stale state and no public freshness flag. Property and coordinate
 edits are perception-neutral. Failed transactional operations leave their input
@@ -86,6 +91,11 @@ the ergonomic small-molecule workflows while retaining `graph()` and controlled
 parse-then-interpret convenience and does not sanitize;
 `from_smiles_sanitized` names the additional operation explicitly.
 
+Physically, the wrapper type is defined in a dependency-light model submodule
+that depends only on the core graph. I/O, chemistry, modelling, and public
+workflow conveniences depend on that type. The workflow facade may compose
+those services, but no lower layer depends back on the workflow facade.
+
 ### `MacroMolecule` and `SmcraHierarchy`
 
 `MacroMolecule` is one `Molecule` plus `SmcraHierarchy`. `SmcraHierarchy`
@@ -94,9 +104,17 @@ author/label identifiers, alternate-location metadata, occupancy, and
 B-factors. It maps structural labels to local `AtomId`s but never determines
 molecule boundaries.
 
-Small- and macromolecule sanitization/validation remain separate workflows with
-separate options, reports, and errors. Chemically general algorithms should
-operate on `Molecule` where practical.
+Every public `MacroMolecule` is valid: every live graph atom has exactly one
+atom site, every atom site references a live graph atom, hierarchy parentage is
+consistent, and checked coordinate requirements hold. Construction uses
+`MacroMoleculeBuilder` or `MacroMolecule::try_from_parts`. Coordinated mutation
+uses a transactional editor that validates before atomically replacing the
+original value; a failed commit leaves the input unchanged. Independent raw
+graph and hierarchy mutation is not exposed on a completed macro molecule.
+
+Macromolecule validation is read-only and separate from small-molecule chemical
+sanitization. No placeholder macromolecule sanitization API is exposed.
+Chemically general algorithms should operate on `Molecule` where practical.
 
 ## Format documents
 
@@ -104,15 +122,21 @@ There is no generic `Document` trait. Each format exposes a loss-preserving type
 appropriate to its grammar:
 
 - `SmilesDocument` preserves source text, tokens and spans, branches, ring and
-  stereo marks, and dot-component boundaries. One SMILES record asserts one
-  `SmallMolecule`; dots create disconnected graph components.
+  stereo marks, dot-component boundaries, and a validated private syntax
+  program. Interpretation consumes that program and returns a
+  `SmilesInterpretation` containing the `SmallMolecule` and source-to-canonical
+  atom/bond mappings. One SMILES record asserts one `SmallMolecule`; dots create
+  disconnected graph components.
 - `MolfileDocument` auto-detects V2000/V3000 and preserves headers, atom/bond and
-  property records, unsupported records, and source lines. Parse and chemical
+  property records, unsupported records, source lines, and a validated typed
+  CTAB syntax representation. Interpretation consumes that representation and
+  returns a `MolfileInterpretation` with atom/bond mappings. Parse and chemical
   interpretation errors are distinct.
 - `SdfDocument` owns ordered `SdfRecordDocument`s, each with a raw
-  `MolfileDocument` and raw data fields. Interpretation returns canonical
-  `SdfRecord`s. Headers and data fields are record metadata, never injected into
-  `Molecule::props`.
+  `MolfileDocument` and raw data fields. Interpretation returns an
+  `SdfInterpretation` with canonical `SdfRecord`s and one qualified
+  interpretation report per record. Headers and data fields are record
+  metadata, never injected into `Molecule::props`.
 - `MmcifDocument` preserves blocks, scalar items, loops, missing-value markers,
   unknown categories, and source locations. Interpretation returns
   `MmcifInterpretation { model, report }`; canonical-model writing is a separate
@@ -128,7 +152,11 @@ records belong in the report/provenance.
 
 Interpretation constructs distinct Small/Macro molecule instances and assigns
 only conservative, evidence-backed roles. Exact source classification remains
-available in report/provenance data.
+available in report/provenance data. Atom-site, component, asymmetry, entity,
+and coordinate-model identifiers are reported through
+`MmcifInstanceProvenance`/`MmcifAtomProvenance`, qualified by
+`MoleculeInstanceId` and `InstanceAtomId`; they are never injected into generic
+core atom, molecule, or conformer property maps.
 
 mmCIF model writing emits one selected coordinate model from authoritative model
 positions. It preserves only its documented hierarchy, entity-kind, atom-site,
@@ -171,9 +199,10 @@ Model construction converts one selected source conformer once into the
 declared modelling length unit, copies it into authoritative model positions,
 and strips conformers from the stored instance payload. Source objects remain
 unchanged. Empty models, empty molecules, missing positions, non-finite
-positions, and incompatible units are rejected transactionally. Once built,
-topology and instance ownership are immutable; only the complete finite
-position set may change. Position setters accept compatible length quantities.
+positions, incompatible units, and invalid macro graph/hierarchy pairs are
+rejected transactionally. Once built, topology and instance ownership are
+immutable; only the complete finite position set may change. Position setters
+accept compatible length quantities.
 Clones share an opaque `ModelDefinitionKey`; coordinate updates preserve that
 key, while independently constructed models receive distinct keys even when
 their topology contents are structurally equal.
@@ -229,6 +258,12 @@ specialized reports, modelling types, and expert algorithms remain in focused
 namespaces. Parsing, interpretation, sanitization, preparation, and writing must
 stay visibly separate in names and documentation; none may be hidden inside a
 default parser.
+
+The initial release line is `0.x`. Breaking public API changes require a minor
+version increment. Public structs use direct fields only for deliberate value,
+options, or report payloads; invariant-bearing hierarchy, provenance, model,
+document, and error state is private behind accessors or checked constructors.
+Extensible public error enums are non-exhaustive.
 
 Query syntax, query meaning, and matching are separate dependency layers.
 `QueryGraph` owns bounded boolean atom/bond expressions and immutable query
