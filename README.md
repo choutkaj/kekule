@@ -89,6 +89,7 @@ use molecules::core::{Atom, BondOrder, Conformer, Element, Molecule, Point3};
 use molecules::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
 use molecules::modeling::{minimize, InstanceBondId, MinimizeOptions, Model};
 use molecules::small::SmallMolecule;
+use molecules::units::{ANGSTROM, MODEL_FORCE_CONSTANT_UNIT, Quantity};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut graph = Molecule::new();
@@ -96,10 +97,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let oxygen = graph.add_atom(Atom::new(Element::from_symbol("O").unwrap()));
     let source_bond = graph.add_bond(carbon, oxygen, BondOrder::Single)?;
 
-    let mut conformer = Conformer::new();
-    conformer.set_position(carbon, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(oxygen, Point3::new(2.0, 0.0, 0.0));
-    let conformer = graph.add_conformer(conformer);
+    let mut conformer = Conformer::new(ANGSTROM)?;
+    conformer.set_position(
+        carbon,
+        Quantity::new(Point3::new(0.0, 0.0, 0.0), ANGSTROM),
+    )?;
+    conformer.set_position(
+        oxygen,
+        Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM),
+    )?;
+    let conformer = graph.add_conformer(conformer)?;
     let molecule = SmallMolecule::from_graph(graph);
 
     let mut builder = Model::builder();
@@ -108,11 +115,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bond = InstanceBondId::new(instance, source_bond);
     let mut potential = HarmonicBondPotential::new(
         &model,
-        [HarmonicBondParameter::new(bond, 1.2, 100.0)],
+        [HarmonicBondParameter::new(
+            bond,
+            1.2 * ANGSTROM,
+            100.0 * MODEL_FORCE_CONSTANT_UNIT,
+        )],
     )?;
     let minimized = minimize(&model, &mut potential, MinimizeOptions::default())?;
 
-    println!("final energy: {} kJ/mol", minimized.final_energy);
+    println!(
+        "final energy: {} {}",
+        minimized.final_energy.value(),
+        minimized.final_energy.unit()
+    );
     Ok(())
 }
 ```

@@ -13,10 +13,11 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
   the core `Potential` evaluation contract.
 - Binds preparation to the source model definition, accepting coordinate-modified clones
   and rejecting independently built models.
-- Exposes read-only per-atom type and partial-charge diagnostics.
+- Exposes read-only per-atom type diagnostics and quantity-valued partial charges.
 - Rejects unresolved implicit-hydrogen state; every atom must carry an explicit zero
   implicit-hydrogen count or a no-implicit-hydrogens assertion.
-- Uses angstrom coordinates, kJ/mol energies, and kJ/mol/angstrom gradients.
+- Consumes the model's declared coordinate quantity and returns explicit
+  kJ/mol energy and kJ/mol/angstrom gradient quantities.
 
 ## Implementation Notes
 
@@ -59,3 +60,5 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
   repeated instances and tombstoned molecule-local atom IDs remain isolated.
 - v5: Migrate preparation and evaluation signatures to the renamed canonical
   `Model` API.
+- v6: Integrate explicit coordinate, energy, gradient, and charge quantities at
+  the adapter boundary while retaining raw numeric inner kernels.

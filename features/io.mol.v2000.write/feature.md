@@ -7,7 +7,8 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Behavior/API
 
 - Exposes `molfile::write_v2000`.
-- Emits atom coordinates from the first conformer when present.
+- Emits atom coordinates from the first conformer when present, explicitly
+  converting compatible length quantities to angstroms.
 - Emits common bond orders plus `M  CHG`, `M  ISO`, and exact `M  RAD` records.
 - Emits the atom-block valence field when `no_implicit_hydrogens` is set,
   including code 15 for explicit zero valence, and rejects values beyond the
@@ -52,3 +53,4 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 - v8: Remove molecule-property coupling for format headers.
 - v9: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
+- v10: Convert explicit conformer length units to the CTfile angstrom convention.

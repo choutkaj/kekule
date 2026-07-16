@@ -6,7 +6,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Behavior/API
 
-- Public modules are focused around `core`, `small`, `bio`, `smiles`, `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`, `substructure`, `canon`, and `modeling`.
+- Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
+  `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
+  `substructure`, `canon`, and `modeling`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -74,3 +76,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v13: Hard-break the modelling facade to `Model`/`ModelBuilder` and the full
   biomolecular hierarchy vocabulary to `Smcra*` names without compatibility
   aliases.
+- v14: Add the focused `units` namespace and migrate coordinate and modelling
+  boundaries to explicit quantities without expanding the prelude.

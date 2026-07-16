@@ -1,9 +1,9 @@
 id = "io.mol.v2000.parse"
 title = "Molfile V2000 parser"
 area = "io"
-version = 11
+version = 12
 implemented = true
 validated = true
 description = "Parse raw Molfile V2000 blocks into small molecules while preserving common atom metadata, coordinates, and supported stereo marks."
-depends_on = ["core.graph", "core.atom-bond", "core.conformers", "stereo.representation"]
+depends_on = ["core.graph", "core.atom-bond", "core.conformers", "core.units", "stereo.representation"]
 validation_required = ["smoke"]

@@ -1,9 +1,9 @@
 id = "model.force-field.dreiding"
 title = "DREIDING force-field adapter"
 area = "modeling"
-version = 5
+version = 6
 implemented = true
 validated = false
 description = "Prepare and evaluate fixed-charge DREIDING potentials for molecule-instance Model values."
-depends_on = ["model.system", "model.potential"]
+depends_on = ["model.system", "model.potential", "core.units"]
 validation_required = []

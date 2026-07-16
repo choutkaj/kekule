@@ -382,6 +382,7 @@ fn validate_macro_molecule(
         for (conformer_id, conformer) in molecule.graph.conformers() {
             report.conformers_checked += 1;
             for (atom, point) in conformer.positions() {
+                let point = point.value();
                 molecule.graph.atom(atom).map_err(|_| {
                     MacroValidateError::InvalidConformerAtom {
                         conformer: conformer_id,

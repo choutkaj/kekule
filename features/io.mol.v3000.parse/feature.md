@@ -21,7 +21,8 @@ Interpret V3000 records from the version-autodetected loss-preserving
 - V3000 atom indices are mapped to stable `AtomId`s.
 - Supported bond orders use the existing core `BondOrder` representation: zero, single, double, triple, aromatic, and dative.
 - Supported bond `CFG` mappings are stored as source bond marks for wedge/either cases.
-- Coordinates are stored in the first conformer.
+- Coordinates are interpreted as angstrom quantities and stored in the first
+  conformer with that explicit unit.
 
 ## Validation
 
@@ -48,3 +49,5 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
   syntax and chemical errors.
 - v9: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
+- v10: Record the CTfile coordinate convention as an explicit angstrom
+  conformer unit.

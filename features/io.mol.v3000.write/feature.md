@@ -19,7 +19,8 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 ## Implementation Notes
 
 - Atom and bond output follows current graph insertion order.
-- Missing coordinates write as zero coordinates.
+- Compatible conformer length quantities are converted to angstroms; missing
+  coordinates write as zero coordinates.
 - Supported bond orders match the parser subset: zero, single, double, triple, aromatic, and dative.
 - Supported V3000 bond `CFG` output is read from source bond marks, not from atom or bond payload fields.
 - Unsupported chemistry is rejected instead of silently being coerced into a different representation.
@@ -52,3 +53,4 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
   molecule-property header coupling.
 - v9: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
+- v10: Convert explicit conformer length units to the CTfile angstrom convention.

@@ -9,6 +9,7 @@ mod io;
 pub mod modeling;
 pub mod query;
 pub mod small;
+pub mod units;
 
 /// Syntax-independent substructure matching algorithms.
 ///

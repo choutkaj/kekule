@@ -277,8 +277,13 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
 
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
-    let mut conformer = Conformer::new();
-    conformer.set_position(atom, Point3::new(0.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            atom,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("1");
@@ -333,9 +338,19 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
     let mut graph = Molecule::new();
     let left = graph.add_atom(Atom::new(carbon));
     let right = graph.add_atom(Atom::new(carbon));
-    let mut conformer = Conformer::new();
-    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            left,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            right,
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let mut hierarchy = SmcraHierarchy::new();
     let model = hierarchy.add_model("1");
@@ -382,9 +397,19 @@ fn small_model_with_bond(order: BondOrder) -> Model {
     let left = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
     let right = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
     graph.add_bond(left, right, order).unwrap();
-    let mut conformer = Conformer::new();
-    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            left,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            right,
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
     let mut builder = ModelBuilder::new();
@@ -395,8 +420,13 @@ fn small_model_with_bond(order: BondOrder) -> Model {
 fn small_model_with_metadata(metadata: MoleculeInstanceMetadata) -> Model {
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
-    let mut conformer = Conformer::new();
-    conformer.set_position(atom, Point3::new(0.0, 0.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            atom,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let molecule = SmallMolecule::from_graph(graph);
     let mut builder = ModelBuilder::new();

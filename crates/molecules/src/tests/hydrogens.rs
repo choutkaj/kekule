@@ -207,8 +207,13 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
 fn added_hydrogens_have_explicitly_missing_conformer_positions() {
     let mut molecule = SmallMolecule::from_smiles_sanitized("C").expect("methane");
     let carbon = molecule.graph().atom_ids().next().expect("carbon");
-    let mut conformer = Conformer::new();
-    conformer.set_position(carbon, Point3::new(1.0, 2.0, 3.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            carbon,
+            crate::units::Quantity::new(Point3::new(1.0, 2.0, 3.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer_id = molecule
         .graph_mut()
         .add_conformer(conformer)
@@ -219,7 +224,13 @@ fn added_hydrogens_have_explicitly_missing_conformer_positions() {
         .graph()
         .conformer(conformer_id)
         .expect("conformer remains");
-    assert_eq!(conformer.position(carbon), Some(Point3::new(1.0, 2.0, 3.0)));
+    assert_eq!(
+        conformer.position(carbon),
+        Some(crate::units::Quantity::new(
+            Point3::new(1.0, 2.0, 3.0),
+            crate::units::ANGSTROM,
+        ))
+    );
     assert!(report
         .added
         .iter()

@@ -18,6 +18,8 @@ one complete mutable coordinate set.
   qualified read-only `SmcraHierarchy` view.
 - Copies one complete finite source conformer into authoritative model positions
   and removes conformers from stored instance topology without mutating sources.
+- Converts source coordinates once to `MODEL_LENGTH_UNIT`; model position
+  getters and setters expose explicit quantities and accept compatible length units.
 - Rejects empty models/molecules, invalid conformers, missing positions, and
   non-finite positions transactionally.
 
@@ -53,3 +55,5 @@ one complete mutable coordinate set.
 - v4: Rename the canonical `MolecularModel`/builder API to `Model` and
   `ModelBuilder`, and rename its qualified hierarchy view to
   `InstanceSmcraHierarchy`.
+- v5: Replace implicit model coordinate conventions with quantity-valued
+  positions and explicit compatible conversion at model boundaries.

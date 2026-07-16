@@ -1,11 +1,12 @@
 id = "api.public-facade"
 title = "Public API facade"
 area = "api"
-version = 13
+version = 14
 implemented = true
 validated = false
 description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."
 depends_on = [
+  "core.units",
   "core.graph",
   "core.atom-bond",
   "core.conformer-properties",

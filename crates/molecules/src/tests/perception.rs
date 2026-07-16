@@ -1050,12 +1050,37 @@ fn stereo_perception_reports_ambiguous_tetrahedral_wedge_marks() {
 #[test]
 fn stereo_perception_assigns_tetrahedral_from_3d_coordinates() {
     let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
-    let mut conformer = Conformer::new();
-    conformer.set_position(center, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(carriers[0], Point3::new(1.0, 0.0, 0.0));
-    conformer.set_position(carriers[1], Point3::new(0.0, 1.0, 0.0));
-    conformer.set_position(carriers[2], Point3::new(0.0, 0.0, 1.0));
-    conformer.set_position(carriers[3], Point3::new(0.0, 0.0, -1.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            center,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            carriers[0],
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            carriers[1],
+            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            carriers[2],
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 1.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            carriers[3],
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, -1.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     mol.add_conformer(conformer).expect("valid conformer");
 
     let report = stereo_api::perceive_stereo(&mut mol);
@@ -1095,11 +1120,31 @@ fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
         .expect("left carrier");
     mol.add_bond(right, right_carrier, BondOrder::Single)
         .expect("right carrier");
-    let mut conformer = Conformer::new();
-    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
-    conformer.set_position(left_carrier, Point3::new(0.0, 1.0, 0.0));
-    conformer.set_position(right_carrier, Point3::new(1.0, -1.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            left,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            right,
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            left_carrier,
+            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            right_carrier,
+            crate::units::Quantity::new(Point3::new(1.0, -1.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     mol.add_conformer(conformer).expect("valid conformer");
 
     let report = stereo_api::perceive_stereo(&mut mol);

@@ -11,7 +11,9 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
 - Exposes `HarmonicBondParameter` and `HarmonicBondPotential` for explicit
   `InstanceBondId` parameters; atom errors use `InstanceAtomId` and gradients
   remain dense in `ModelAtomIndex` order.
-- Uses angstroms, kJ/mol energies, kJ/mol/angstrom gradients, and kJ/mol/angstrom-squared force constants.
+- Accepts explicit compatible quantities for harmonic parameters and potential
+  outputs, then converts once to the modelling kernel's declared length,
+  energy, gradient, and force-constant units.
 - Distinguishes incompatible models, coordinate singularities, malformed outputs, and backend failures.
 
 ## Implementation Notes
@@ -40,3 +42,5 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
 - v3: Bind prepared potentials to shared model-definition identity and add
   structured coordinate-geometry and backend failures.
 - v4: Migrate potential signatures to the renamed canonical `Model` API.
+- v5: Make energies, Cartesian gradients, harmonic lengths, and force constants
+  quantity-valued instead of relying on documentation-only units.

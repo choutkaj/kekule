@@ -8,13 +8,17 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 
 - Exposes `modeling::minimize`, `MinimizeOptions`, `MinimizationResult`, `MinimizationStatus`, and `MinimizationError`.
 - Reports initial/final energy, final maximum-gradient norm, accepted iterations, potential evaluations, and terminal status.
+- Takes quantity-valued gradient tolerance and displacement limits and returns
+  quantity-valued energy and gradient diagnostics.
 - Treats convergence, maximum iterations, and line-search stalling as explicit non-error statuses.
 - Rejects invalid optimizer options and propagates structured potential or position errors.
 - Backtracks trial evaluations that report coordinate-only invalid geometry while propagating incompatible-model and backend failures.
 
 ## Implementation Notes
 
-- Search directions are negative gradients normalized so the largest atom-vector norm is one; the line-search step therefore expresses maximum atom displacement in angstroms.
+- Search directions are negative gradients normalized so the largest
+  atom-vector norm is one; quantity inputs are converted once before the inner
+  line-search loop.
 - Armijo backtracking guarantees accepted steps provide sufficient energy decrease.
 - Every attempted potential call, including rejected invalid-geometry trials, contributes to the evaluation count.
 - Default limits are 1000 iterations, `1e-4` kJ/mol/angstrom gradient tolerance, `0.1` angstrom initial step, `1e-8` angstrom minimum step, factor `0.5`, Armijo coefficient `1e-4`, and 24 backtracks.
@@ -38,3 +42,4 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
   potential and backend failures.
 - v4: Migrate minimization input and result signatures to the renamed `Model`
   API.
+- v5: Replace optimizer and result unit conventions with explicit quantities.

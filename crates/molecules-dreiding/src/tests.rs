@@ -25,9 +25,14 @@ fn molecule(
     for &(a, b, order) in bonds {
         graph.add_bond(atoms[a], atoms[b], order).unwrap();
     }
-    let mut conformer = Conformer::new();
+    let mut conformer = Conformer::new(molecules::units::ANGSTROM).unwrap();
     for (&atom, &position) in atoms.iter().zip(positions) {
-        conformer.set_position(atom, position);
+        conformer
+            .set_position(
+                atom,
+                molecules::units::Quantity::new(position, molecules::units::ANGSTROM),
+            )
+            .unwrap();
     }
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
     (SmallMolecule::from_graph(graph), conformer)
@@ -73,6 +78,7 @@ fn qeq_is_prepared_per_molecule_instance() {
                 potential
                     .partial_charge(InstanceAtomId::new(instance, AtomId::new(atom)))
                     .unwrap()
+                    .into_value()
             })
             .sum::<f64>();
         assert!(total.abs() < 1.0e-8);
@@ -98,10 +104,31 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
     graph
         .add_bond(oxygen, second_hydrogen, BondOrder::Single)
         .unwrap();
-    let mut conformer = Conformer::new();
-    conformer.set_position(oxygen, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(first_hydrogen, Point3::new(0.9575, 0.0, 0.0));
-    conformer.set_position(second_hydrogen, Point3::new(-0.2399, 0.9272, 0.0));
+    let mut conformer = Conformer::new(molecules::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            oxygen,
+            molecules::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), molecules::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            first_hydrogen,
+            molecules::units::Quantity::new(
+                Point3::new(0.9575, 0.0, 0.0),
+                molecules::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            second_hydrogen,
+            molecules::units::Quantity::new(
+                Point3::new(-0.2399, 0.9272, 0.0),
+                molecules::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
     let model = Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer).unwrap();
 
@@ -123,8 +150,13 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let mut atom = Atom::new(Element::from_symbol("C").unwrap());
     let mut graph = Molecule::new();
     let id = graph.add_atom(atom.clone());
-    let mut conformer = Conformer::new();
-    conformer.set_position(id, Point3::default());
+    let mut conformer = Conformer::new(molecules::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            id,
+            molecules::units::Quantity::new(Point3::default(), molecules::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
     let model =
         Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
@@ -138,8 +170,13 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     atom.explicit_hydrogens = 1;
     let mut graph = Molecule::new();
     let id = graph.add_atom(atom);
-    let mut conformer = Conformer::new();
-    conformer.set_position(id, Point3::default());
+    let mut conformer = Conformer::new(molecules::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            id,
+            molecules::units::Quantity::new(Point3::default(), molecules::units::ANGSTROM),
+        )
+        .unwrap();
     let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
     let model =
         Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
@@ -173,7 +210,7 @@ fn prepared_potential_uses_model_definition_identity() {
     singular
         .set_position(
             InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(1)),
-            singular.positions()[0],
+            molecules::units::Quantity::new(singular.positions()[0], molecules::units::ANGSTROM),
         )
         .unwrap();
     assert!(matches!(

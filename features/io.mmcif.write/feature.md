@@ -14,6 +14,8 @@ block without hiding validation, perception, sanitization, or preparation.
 - Reads coordinates only from the authoritative `Model` position array;
   `coordinate_precision` controls fixed-decimal output and defaults to three
   decimal places.
+- Explicitly converts model length quantities to the mmCIF Cartesian angstrom
+  convention before formatting.
 - Preserves supported macro hierarchy labels, residue identifiers, selected
   alternate-location metadata, occupancy, B-factor, element, formal charge, and
   author identifiers. Small-molecule instances receive deterministic structural
@@ -67,3 +69,5 @@ block without hiding validation, perception, sanitization, or preparation.
   and order-preserving covalent connectivity.
 - v2: Accept the renamed canonical `Model` and `SmcraHierarchy` APIs without
   changing emitted mmCIF semantics.
+- v3: Convert explicit model length quantities to the mmCIF Cartesian angstrom
+  convention before serialization.

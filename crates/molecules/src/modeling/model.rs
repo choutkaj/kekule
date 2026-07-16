@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::bio::{MacroMolecule, SmcraAtomSite, SmcraAtomSiteId, SmcraHierarchy};
 use crate::core::{Atom, AtomId, Bond, BondId, ConformerId, Molecule, Point3, PropMap};
 use crate::small::SmallMolecule;
+use crate::units::{Quantity, ScaleValue, UnitError, MODEL_LENGTH_UNIT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MoleculeInstanceId(u32);
@@ -385,7 +386,7 @@ impl Hash for ModelDefinitionKey {
 #[derive(Clone)]
 pub struct Model {
     definition: ModelDefinitionKey,
-    positions: Vec<Point3>,
+    positions: Quantity<Vec<Point3>>,
 }
 
 impl fmt::Debug for Model {
@@ -437,59 +438,82 @@ impl Model {
     }
 
     pub fn atom_count(&self) -> usize {
-        self.positions.len()
+        self.positions.value().len()
     }
 
-    pub fn positions(&self) -> &[Point3] {
-        &self.positions
+    /// Returns all coordinates with their explicit model length unit.
+    pub fn positions(&self) -> Quantity<&[Point3]> {
+        Quantity::new(self.positions.value().as_slice(), self.positions.unit())
     }
 
-    pub fn position(&self, atom: InstanceAtomId) -> Result<Point3, PositionError> {
+    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, PositionError> {
         let index = self
             .topology()
             .atom_index(atom)
             .ok_or(PositionError::InvalidAtomId(atom))?;
-        Ok(self.positions[index.index()])
+        Ok(Quantity::new(
+            self.positions.value()[index.index()],
+            self.positions.unit(),
+        ))
     }
 
-    pub fn position_at(&self, index: ModelAtomIndex) -> Result<Point3, PositionError> {
+    pub fn position_at(&self, index: ModelAtomIndex) -> Result<Quantity<Point3>, PositionError> {
         self.positions
+            .value()
             .get(index.index())
             .copied()
+            .map(|point| Quantity::new(point, self.positions.unit()))
             .ok_or(PositionError::InvalidAtomIndex(index))
     }
 
     pub fn set_position(
         &mut self,
         atom: InstanceAtomId,
-        position: Point3,
+        position: Quantity<Point3>,
     ) -> Result<(), PositionError> {
         let index = self
             .topology()
             .atom_index(atom)
             .ok_or(PositionError::InvalidAtomId(atom))?;
+        let position = position.into_unit(self.positions.unit())?.into_value();
         if !point_is_finite(position) {
             return Err(PositionError::NonFinitePosition { atom });
         }
-        self.positions[index.index()] = position;
+        self.positions.value_mut()[index.index()] = position;
         Ok(())
     }
 
-    pub fn set_positions(&mut self, positions: &[Point3]) -> Result<(), PositionError> {
-        if positions.len() != self.positions.len() {
+    pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), PositionError>
+    where
+        T: AsRef<[Point3]>,
+    {
+        let factor = positions
+            .unit()
+            .conversion_factor_to(self.positions.unit())?;
+        let positions = positions.value().as_ref();
+        if positions.len() != self.positions.value().len() {
             return Err(PositionError::PositionCountMismatch {
-                expected: self.positions.len(),
+                expected: self.positions.value().len(),
                 actual: positions.len(),
             });
         }
-        for (index, point) in positions.iter().copied().enumerate() {
+        let converted = positions
+            .iter()
+            .copied()
+            .map(|point| point.scaled(factor))
+            .collect::<Vec<_>>();
+        for (index, point) in converted.iter().copied().enumerate() {
             if !point_is_finite(point) {
                 let atom = self.topology().atom_order[index];
                 return Err(PositionError::NonFinitePosition { atom });
             }
         }
-        self.positions.clone_from_slice(positions);
+        *self.positions.value_mut() = converted;
         Ok(())
+    }
+
+    pub(crate) fn positions_value(&self) -> &[Point3] {
+        self.positions.value()
     }
 }
 
@@ -562,7 +586,7 @@ impl ModelBuilder {
             definition: ModelDefinitionKey(Arc::new(ModelDefinition {
                 topology: self.topology,
             })),
-            positions: self.positions,
+            positions: Quantity::new(self.positions, MODEL_LENGTH_UNIT),
         })
     }
 
@@ -596,6 +620,7 @@ impl ModelBuilder {
             let point = conformer
                 .position(atom)
                 .ok_or(ModelBuildError::MissingPosition { atom })?;
+            let point = point.into_unit(MODEL_LENGTH_UNIT)?.into_value();
             if !point_is_finite(point) {
                 return Err(ModelBuildError::NonFinitePosition { atom });
             }
@@ -644,12 +669,13 @@ impl fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PositionError {
     InvalidAtomId(InstanceAtomId),
     InvalidAtomIndex(ModelAtomIndex),
     PositionCountMismatch { expected: usize, actual: usize },
     NonFinitePosition { atom: InstanceAtomId },
+    Unit(UnitError),
 }
 
 impl fmt::Display for PositionError {
@@ -666,19 +692,27 @@ impl fmt::Display for PositionError {
             Self::NonFinitePosition { atom } => {
                 write!(f, "model position for atom {atom} is not finite")
             }
+            Self::Unit(error) => write!(f, "invalid model position unit: {error}"),
         }
     }
 }
 
 impl std::error::Error for PositionError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl From<UnitError> for PositionError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ModelBuildError {
     EmptyModel,
     EmptyMolecule,
     InvalidConformerId(ConformerId),
     MissingPosition { atom: AtomId },
     NonFinitePosition { atom: AtomId },
+    Unit(UnitError),
 }
 
 impl fmt::Display for ModelBuildError {
@@ -693,8 +727,15 @@ impl fmt::Display for ModelBuildError {
             Self::NonFinitePosition { atom } => {
                 write!(f, "source conformer position for atom {atom} is not finite")
             }
+            Self::Unit(error) => write!(f, "invalid source conformer position unit: {error}"),
         }
     }
 }
 
 impl std::error::Error for ModelBuildError {}
+
+impl From<UnitError> for ModelBuildError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
+    }
+}

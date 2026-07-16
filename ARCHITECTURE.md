@@ -37,6 +37,12 @@ These boundaries are architectural, not merely API conventions:
 - Modelling preparation may add force-field parameters or mechanical particles,
   but those are downstream representations and never mutate a `Model`.
 
+Physical values cross these boundaries as `Quantity<T>` with composable runtime
+`Unit` values. Compatible conversion is explicit. Units describe numeric
+meaning and representation; source provenance remains in format documents,
+interpretation reports, or domain metadata instead of being conflated with the
+unit algebra.
+
 ## Molecules and wrappers
 
 ### `Molecule`
@@ -47,7 +53,8 @@ These boundaries are architectural, not merely API conventions:
   are never reused;
 - atoms, bonds, adjacency, graph-adjacent stereo elements, stereo groups, and
   source stereo marks;
-- optional source conformers and arbitrary properties;
+- optional source conformers with one explicit length unit per coordinate array,
+  plus arbitrary properties;
 - one internally consistent `PerceptionState`.
 
 Topology facts stored directly on `Atom`, `Bond`, and stereo elements include
@@ -137,7 +144,7 @@ Model
   immutable ModelTopology
     ordered MoleculeInstance values
     InstanceAtomId <-> dense ModelAtomIndex
-  one complete mutable Point3 array in ModelAtomIndex order
+  one complete mutable Quantity<Vec<Point3>> in ModelAtomIndex order
 ```
 
 Public identifiers are:
@@ -160,21 +167,24 @@ The supported roles are `Polymer`, `Branched`, `NonPolymer`, `Solvent`, `Ion`,
 `Ligand`, and `Cofactor`. A qualified hierarchy view maps atom-site lookup to
 `InstanceAtomId`, while a standalone `MacroMolecule` continues to use local IDs.
 
-Model construction copies one selected source conformer into authoritative model
-positions and strips conformers from the stored instance payload. Source objects
-remain unchanged. Empty models, empty molecules, missing positions, and
-non-finite positions are rejected transactionally. Once built, topology and
-instance ownership are immutable; only the complete finite position set may
-change. Clones share an opaque `ModelDefinitionKey`; coordinate updates preserve
-that key, while independently constructed models receive distinct keys even
-when their topology contents are structurally equal.
+Model construction converts one selected source conformer once into the
+declared modelling length unit, copies it into authoritative model positions,
+and strips conformers from the stored instance payload. Source objects remain
+unchanged. Empty models, empty molecules, missing positions, non-finite
+positions, and incompatible units are rejected transactionally. Once built,
+topology and instance ownership are immutable; only the complete finite
+position set may change. Position setters accept compatible length quantities.
+Clones share an opaque `ModelDefinitionKey`; coordinate updates preserve that
+key, while independently constructed models receive distinct keys even when
+their topology contents are structurally equal.
 
-Potentials address topology through `InstanceAtomId`/`InstanceBondId`; gradients
-are dense arrays in `ModelAtomIndex` order. Prepared potentials bind to the
-opaque model-definition identity, which includes molecule-instance boundaries,
-and reject independently constructed models. Topology-changing future operations
-should return a new model plus explicit lineage mappings rather than mutate an
-existing model.
+Potentials address topology through `InstanceAtomId`/`InstanceBondId`; energies
+and dense gradient arrays are quantities with declared modelling units.
+Prepared potentials bind to the opaque model-definition identity, which
+includes molecule-instance boundaries, and reject independently constructed
+models. Numerical kernels may use raw values after one checked boundary
+conversion. Topology-changing future operations should return a new model plus
+explicit lineage mappings rather than mutate an existing model.
 
 Periodic cells, velocities, trajectories, reactions, and model merging are not
 part of the current contract.
@@ -198,6 +208,7 @@ The public facade is intentionally focused:
 
 ```text
 core        Molecule graph kernel and local IDs
+units       Runtime Unit and Quantity values plus molecular unit constants
 small       SmallMolecule
 bio         MacroMolecule and SmcraHierarchy
 smiles      SmilesDocument parse/interpret and writers

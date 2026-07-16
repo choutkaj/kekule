@@ -5,6 +5,7 @@ use crate::algorithms::explicit_valence;
 use crate::core::*;
 use crate::io::preserve_molfile_tetrahedral_hydrogens;
 use crate::small::SmallMolecule;
+use crate::units::{Quantity, ANGSTROM};
 
 use super::sdf_document::SdfRecord;
 
@@ -107,7 +108,8 @@ fn parse_mol_v2000_lines(
     }
 
     let mut atom_ids = Vec::with_capacity(atom_count);
-    let mut conformer = Conformer::with_atom_capacity(atom_count);
+    let mut conformer =
+        Conformer::with_atom_capacity(atom_count, ANGSTROM).expect("angstrom is a length unit");
     for atom_index in 0..atom_count {
         let block_index = atom_start
             .checked_add(atom_index)
@@ -131,7 +133,9 @@ fn parse_mol_v2000_lines(
         let point = atom_coordinates_from_v2000_line(atom_line)
             .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom coordinates"))?;
         let atom_id = mol.add_atom(atom);
-        conformer.set_position(atom_id, point);
+        conformer
+            .set_position(atom_id, Quantity::new(point, ANGSTROM))
+            .expect("matching coordinate units");
         atom_ids.push(atom_id);
     }
 
@@ -517,6 +521,7 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .map_err(|error| MolWriteError::new(error.to_string()))?;
         let point = conformer
             .and_then(|conformer| conformer.position(*atom_id))
+            .map(|point| point.value_in(ANGSTROM).expect("conformer length unit"))
             .unwrap_or_default();
         let valence_code = v2000_valence_code(mol, *atom_id, atom)?;
         out.push_str(&format!(

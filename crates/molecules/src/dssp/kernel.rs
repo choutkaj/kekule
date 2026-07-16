@@ -327,12 +327,15 @@ fn extract_chain(
                 });
             }
             let atom = InstanceAtomId::new(molecule_id, site.atom);
-            backbone[backbone_index] = Some(Vec3::from(model.position(atom).map_err(|error| {
-                DsspError::InvalidHierarchy {
-                    molecule: molecule_id,
-                    message: error.to_string(),
-                }
-            })?));
+            backbone[backbone_index] = Some(Vec3::from(
+                model
+                    .position(atom)
+                    .map_err(|error| DsspError::InvalidHierarchy {
+                        molecule: molecule_id,
+                        message: error.to_string(),
+                    })?
+                    .into_value(),
+            ));
         }
 
         let missing = BACKBONE_NAMES

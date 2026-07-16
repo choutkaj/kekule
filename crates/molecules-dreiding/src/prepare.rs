@@ -10,6 +10,7 @@ use molecules::core::BondOrder;
 use molecules::modeling::{
     InstanceAtomId, InstanceBondId, Model, ModelDefinitionKey, MoleculeInstanceId,
 };
+use molecules::units::{ELEMENTARY_CHARGE, Quantity};
 
 use crate::DreidingPrepareError;
 
@@ -104,11 +105,12 @@ impl DreidingPotential {
             .map(String::as_str)
     }
 
-    /// Returns the fixed QEq partial charge assigned to a model atom, in elementary charge.
-    pub fn partial_charge(&self, atom: InstanceAtomId) -> Option<f64> {
+    /// Returns the fixed QEq partial charge assigned to a model atom.
+    pub fn partial_charge(&self, atom: InstanceAtomId) -> Option<Quantity<f64>> {
         self.partial_charges
             .get(*self.atom_indexes.get(&atom)?)
             .copied()
+            .map(|charge| Quantity::new(charge, ELEMENTARY_CHARGE))
     }
 }
 
@@ -225,7 +227,10 @@ fn system_from_model(
                 symbol: atom.element.symbol().to_owned(),
             }
         })?;
-        let point = model.position(atom_id).expect("complete model positions");
+        let point = model
+            .position(atom_id)
+            .expect("complete model positions")
+            .into_value();
         system
             .atoms
             .push(ForgeAtom::new(element, [point.x, point.y, point.z]));

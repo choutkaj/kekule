@@ -101,17 +101,57 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondI
     mol.set_atom_aromatic(left, true);
     mol.set_atom_aromatic(right, true);
 
-    let mut conformer = Conformer::new();
-    conformer.set_position(left, Point3::new(0.0, 0.0, 0.0));
-    conformer.set_position(right, Point3::new(1.0, 0.0, 0.0));
-    conformer.set_position(left_reference, Point3::new(0.0, 1.0, 0.0));
-    conformer.set_position(left_other, Point3::new(0.0, -1.0, 0.0));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    conformer
+        .set_position(
+            left,
+            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            right,
+            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            left_reference,
+            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
+    conformer
+        .set_position(
+            left_other,
+            crate::units::Quantity::new(Point3::new(0.0, -1.0, 0.0), crate::units::ANGSTROM),
+        )
+        .unwrap();
     if three_dimensional {
-        conformer.set_position(right_reference, Point3::new(1.0, 0.0, 1.0));
-        conformer.set_position(right_other, Point3::new(1.0, 0.0, -1.0));
+        conformer
+            .set_position(
+                right_reference,
+                crate::units::Quantity::new(Point3::new(1.0, 0.0, 1.0), crate::units::ANGSTROM),
+            )
+            .unwrap();
+        conformer
+            .set_position(
+                right_other,
+                crate::units::Quantity::new(Point3::new(1.0, 0.0, -1.0), crate::units::ANGSTROM),
+            )
+            .unwrap();
     } else {
-        conformer.set_position(right_reference, Point3::new(1.0, 1.0, 0.0));
-        conformer.set_position(right_other, Point3::new(1.0, -1.0, 0.0));
+        conformer
+            .set_position(
+                right_reference,
+                crate::units::Quantity::new(Point3::new(1.0, 1.0, 0.0), crate::units::ANGSTROM),
+            )
+            .unwrap();
+        conformer
+            .set_position(
+                right_other,
+                crate::units::Quantity::new(Point3::new(1.0, -1.0, 0.0), crate::units::ANGSTROM),
+            )
+            .unwrap();
     }
     mol.add_conformer(conformer).expect("valid conformer");
     (mol, axis)

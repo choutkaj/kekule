@@ -1,9 +1,9 @@
 id = "algo.geometry-minimization"
 title = "Geometry minimization"
 area = "algorithms"
-version = 4
+version = 5
 implemented = true
 validated = false
 description = "Minimize fixed-topology molecular-model coordinates with deterministic normalized steepest descent and Armijo backtracking."
-depends_on = ["model.potential"]
+depends_on = ["model.potential", "core.units"]
 validation_required = []
