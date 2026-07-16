@@ -99,27 +99,31 @@ pub(crate) fn first_json_diff(
     }
 }
 
-pub(crate) fn normalize_for_comparison(value: &Value) -> Value {
+pub(crate) fn normalize_for_comparison_in_place(value: &mut Value) {
     match value {
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(normalize_for_comparison)
-                .collect::<Vec<_>>(),
-        ),
-        Value::Object(object) => {
-            let mut normalized = serde_json::Map::new();
-            for (key, value) in object {
-                normalized.insert(key.clone(), normalize_for_comparison(value));
+        Value::Array(items) => {
+            for item in items {
+                normalize_for_comparison_in_place(item);
             }
-            normalize_undirected_bond_object(&mut normalized);
-            normalize_bond_array_object(&mut normalized);
-            normalize_ring_set_object(&mut normalized);
-            normalize_coord_object(&mut normalized);
-            Value::Object(normalized)
         }
-        _ => value.clone(),
+        Value::Object(object) => {
+            for value in object.values_mut() {
+                normalize_for_comparison_in_place(value);
+            }
+            normalize_undirected_bond_object(object);
+            normalize_bond_array_object(object);
+            normalize_ring_set_object(object);
+            normalize_coord_object(object);
+        }
+        _ => {}
     }
+}
+
+#[cfg(test)]
+pub(crate) fn normalize_for_comparison(value: &Value) -> Value {
+    let mut normalized = value.clone();
+    normalize_for_comparison_in_place(&mut normalized);
+    normalized
 }
 
 pub(crate) fn normalize_coord_object(object: &mut serde_json::Map<String, Value>) {

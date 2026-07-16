@@ -530,7 +530,7 @@ fn compare_one_golden(
             manifest_path.display()
         )));
     }
-    let golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
+    let mut golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
     validate_golden_metadata(
         &golden_path,
         &golden,
@@ -540,9 +540,9 @@ fn compare_one_golden(
         hash_cache,
     )?;
     let expected = golden
-        .get("expected")
+        .get_mut("expected")
         .ok_or_else(|| boxed_error(format!("{} is missing `expected`", golden_path.display())))?;
-    let actual =
+    let mut actual =
         match implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path) {
             Ok(actual) => actual,
             Err(error) => {
@@ -551,9 +551,9 @@ fn compare_one_golden(
                 )))
             }
         };
-    let expected = normalize_for_comparison(expected);
-    let actual = normalize_for_comparison(&actual);
-    if let Some(diff) = first_json_diff(&manifest.feature_id, "$", &expected, &actual) {
+    normalize_for_comparison_in_place(expected);
+    normalize_for_comparison_in_place(&mut actual);
+    if let Some(diff) = first_json_diff(&manifest.feature_id, "$", expected, &actual) {
         return Ok(FixtureComparison::Failed(format!(
             "{} differs from implementation output for fixture `{fixture}`: {diff}",
             golden_path.display()

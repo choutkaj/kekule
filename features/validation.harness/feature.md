@@ -189,3 +189,6 @@ or manually curated external-reference golden data.
   checks, avoiding unnecessary full expected-tree allocation.
 - v33: Parallelize independent golden syntax checks while preserving
   deterministic path-ordered failures.
+- v34: Normalize expected and implementation JSON in place during comparison,
+  eliminating two full-tree clones per parallel fixture and substantially
+  reducing peak memory for broad structural-output validation.
