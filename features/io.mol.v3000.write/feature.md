@@ -34,8 +34,8 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 - A dedicated bounded fuzz target exercises V3000 parse, interpretation, write,
   and reparse in CI smoke tests and scheduled campaigns.
 - RDKit-generated goldens compare Molfile-preservable content for the same external PubChem fixtures used by the V2000 writer tier.
-- All ignored non-smoke corpora remain available for explicit local-only
-  parity checks but are not selected as required routine evidence.
+- PubChem-1k is required baseline evidence; manifest-backed broader corpora
+  remain available for deliberate local parity checks.
 
 ## Out Of Scope
 
@@ -58,3 +58,4 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
 - v10: Convert explicit conformer length units to the CTfile angstrom convention.
 - v11: Add a dedicated bounded V3000 parse/interpret/write round-trip fuzz
   target to CI and scheduled campaigns.
+- v12: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

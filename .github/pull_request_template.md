@@ -12,9 +12,9 @@
 - [ ] `cargo test --workspace --doc`
 - [ ] `cargo xtask dashboard --check`
 - [ ] `cargo xtask skills --check`
-- [ ] `cargo xtask corpus check --corpus smoke --require-data`
-- [ ] `cargo xtask validate --feature all --corpus smoke`
-- [ ] Reference validation, if applicable
+- [ ] Targeted `cargo xtask corpus check --corpus <id> --require-data`, if applicable
+- [ ] Targeted `cargo xtask validate --feature <id> --corpus <id>`, if applicable
+- [ ] Broad or full reference validation, if release scope requires it
 
 ## Notes
 

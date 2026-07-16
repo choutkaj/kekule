@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import gzip
 import hashlib
 import json
@@ -19,7 +20,6 @@ from typing import Any
 SUPPORTED_FEATURES = {
     "bio.secondary-structure.dssp",
     "io.mmcif.parse",
-    "bio.hierarchy.smcra",
 }
 
 ATOM_SITE_FIELDS = [
@@ -50,7 +50,7 @@ def main() -> int:
         description="Generate normalized JSON golden data with Biopython."
     )
     parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
-    parser.add_argument("--corpus", default="smoke")
+    parser.add_argument("--corpus", default="pdb-100")
     parser.add_argument(
         "--repo-root",
         type=Path,
@@ -72,6 +72,12 @@ def main() -> int:
         action="store_true",
         help="Only check that Biopython imports and print its version.",
     )
+    parser.add_argument(
+        "--jobs",
+        type=positive_int,
+        default=1,
+        help="Number of independent fixture generators to run concurrently.",
+    )
     args = parser.parse_args()
 
     biopython = import_biopython()
@@ -92,17 +98,48 @@ def main() -> int:
     output_dir = (args.output_dir or corpus_dir / "golden" / args.feature).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for fixture in fixtures:
-        fixture_path = (corpus_dir / fixture).resolve()
-        if not fixture_path.exists():
-            raise SystemExit(f"{manifest_path} references missing fixture: {fixture}")
-        document = generate_document(
-            args.feature, args.corpus, fixture, fixture_path, biopython
-        )
-        output_path = output_dir / f"{slugify_fixture(fixture)}.json.gz"
-        write_json(output_path, document)
+    tasks = [
+        (args.feature, args.corpus, fixture, str(corpus_dir), str(output_dir))
+        for fixture in fixtures
+    ]
+    if args.jobs == 1:
+        output_paths = [generate_fixture(task, biopython) for task in tasks]
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs) as executor:
+            output_paths = list(executor.map(generate_fixture, tasks))
+    for output_path in output_paths:
         print(output_path)
     return 0
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def generate_fixture(
+    task: tuple[str, str, str, str, str],
+    biopython: dict[str, Any] | None = None,
+) -> Path:
+    feature, corpus, fixture, corpus_dir_text, output_dir_text = task
+    corpus_dir = Path(corpus_dir_text)
+    output_dir = Path(output_dir_text)
+    fixture_path = (corpus_dir / fixture).resolve()
+    manifest_path = corpus_dir / "features" / f"{feature}.toml"
+    if not fixture_path.exists():
+        raise SystemExit(f"{manifest_path} references missing fixture: {fixture}")
+    document = generate_document(
+        feature,
+        corpus,
+        fixture,
+        fixture_path,
+        biopython or import_biopython(),
+    )
+    output_path = output_dir / f"{slugify_fixture(fixture)}.json.gz"
+    write_json(output_path, document)
+    return output_path
 
 
 def import_biopython() -> dict[str, Any]:
@@ -198,7 +235,6 @@ def generate_document(
             "expected": expected,
         }
     atom_site = atom_site_table(fixture_path, biopython["MMCIF2Dict"])
-    structure = structure_summary(fixture_path, biopython["MMCIFParser"])
     return {
         "schema_version": 1,
         "feature_id": feature_id,
@@ -211,10 +247,7 @@ def generate_document(
             "version": biopython["version"],
             "runtime_dependency": False,
         },
-        "expected": {
-            "atom_site_rows": atom_site,
-            "structure": structure,
-        },
+        "expected": {"atom_site_rows": atom_site},
     }
 
 
@@ -582,51 +615,6 @@ def atom_site_table(fixture_path: Path, MMCIF2Dict: Any) -> dict[str, Any]:
         "row_count": row_count,
         "rows": rows,
     }
-
-
-def structure_summary(fixture_path: Path, MMCIFParser: Any) -> dict[str, Any]:
-    parser = MMCIFParser(QUIET=True)
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            structure = parser.get_structure(fixture_path.stem, str(fixture_path))
-    except Exception as error:
-        return {"status": "parse_error", "error": error.__class__.__name__, "models": []}
-
-    models = []
-    for model in structure:
-        chains = []
-        for chain in model:
-            residues = []
-            for residue in chain:
-                residue_name = residue.get_resname().strip()
-                hetflag, sequence_id, insertion_code = residue.id
-                atoms = []
-                for atom in residue.get_unpacked_list():
-                    atoms.append(
-                        {
-                            "name": atom.get_name(),
-                            "full_name": atom.get_fullname().strip(),
-                            "altloc": normalize_missing(atom.get_altloc().strip()),
-                            "element": normalize_missing(atom.element.strip()),
-                            "occupancy": atom.get_occupancy(),
-                            "bfactor": atom.get_bfactor(),
-                            "coord": [round(float(value), 6) for value in atom.get_coord()],
-                        }
-                    )
-                residues.append(
-                    {
-                        "name": residue_name,
-                        "hetflag": normalize_missing(hetflag.strip()),
-                        "sequence_id": sequence_id,
-                        "insertion_code": normalize_missing(str(insertion_code).strip()),
-                        "atoms": atoms,
-                    }
-                )
-            chains.append({"id": chain.id, "residues": residues})
-        models.append({"id": model.id, "chains": chains})
-
-    return {"status": "ok", "models": models}
 
 
 def normalize_mmcif_column(value: Any) -> list[str | None]:

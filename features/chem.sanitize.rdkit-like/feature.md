@@ -82,3 +82,4 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   instead of repository-wide required evidence.
 - v14: Inherit the exact RDKit valence-table cleanup and unified transactional
   aromaticity engine, including structured imported-aromatic matching limits.
+- v15: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

@@ -51,3 +51,4 @@ interpret one record as one asserted `SmallMolecule` plus source mappings.
   without reparsing source text, and returns canonical atom/bond mappings.
 - v16: Add configurable input, atom, and bond resource limits while retaining
   `parse_str` as the default-bounded convenience entry point.
+- v17: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

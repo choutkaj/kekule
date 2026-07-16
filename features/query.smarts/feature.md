@@ -51,3 +51,4 @@ fallback for unsupported primitives.
 
 - v1: Feature contract reserved.
 - v2: Implement the bounded parser as a one-way frontend for `query.graph`.
+- v3: Remove the retired smoke requirement; SMARTS semantics remain covered by focused regression fixtures until an appropriate independent query corpus is registered.

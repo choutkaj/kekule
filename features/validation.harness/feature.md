@@ -13,14 +13,13 @@ or manually curated external-reference golden data.
 - Verifies listed fixture paths exist.
 - Requires one deterministic gzip golden under the corpus `golden/<feature-id>/` directory for each listed fixture.
 - Compares normalized Rust implementation output against each golden file's `expected` payload.
-- Compares fixtures in parallel by default using all available processors; `--jobs N` bounds validation to a fixed worker count.
+- Compares fixtures in parallel with an automatic maximum of four workers; `--jobs N` selects an explicit worker count.
 - Prints compact progress output for the overall target set and for fixture comparison within each feature/corpus target.
 - Accepts only declared implementation-vs-golden comparison manifests for
   required validation of available features.
-- Declares corpus availability in typed metadata; local-only corpora remain
-  explicitly runnable with a concrete `--corpus` selector but are rejected from
-  feature `validation_required` lists because a clean checkout cannot recompute
-  their fixture evidence. `--corpus all`, including the default when the flag is
+- Declares corpus availability in typed metadata. `local_only` describes source-data
+  availability and does not prevent a corpus from being release-required for an
+  applicable feature. `--corpus all`, including the default when the flag is
   omitted, selects every required target plus every manifest-backed target
   whose feature status is `experimental`, `supported`, or `deprecated`, across
   all registered corpora, including local-only large corpora. `planned`
@@ -37,9 +36,8 @@ or manually curated external-reference golden data.
 - Normalizes representation-only graph differences such as undirected bond endpoint orientation, bond array order, and ring atom order before comparison.
 - Treats non-applicable feature/corpus combinations as skips and missing required manifests as errors.
 - Exposes `cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]`.
-- Always verifies the committed 20-case smoke fixture bytes, even when
-  `--require-data` is omitted; the flag remains necessary for ignored larger
-  corpora.
+- Verifies source-lock structure and tracked artifacts by default; `--require-data`
+  additionally requires and byte-checks every ignored local source fixture.
 - Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, and regenerates the dashboard.
 - Allows an independently reviewed implementation-semantic change to be
   accepted explicitly with `--accept-implementation-goldens`, but only for one
@@ -66,12 +64,11 @@ or manually curated external-reference golden data.
   and `enamine-manual-semantic`.
 - Golden data should be normalized JSON and include reference tool versions.
 - Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
-- The smoke corpus data directory is intentionally checked in and exempt from the default ignore rule for larger generated corpus data.
-- Every registered non-smoke corpus declares `local_only = true` because its
-  data directory is ignored. These corpora are excluded from
-  `validation_required`, but are selected by explicit or default `--corpus all`
-  when a feature manifest exists. Their local data must therefore be present for
-  an all-corpus run.
+- Registered validation corpus data is generated locally and ignored; locks,
+  manifests, goldens, and status evidence remain tracked artifacts.
+- A local-only corpus may be required baseline evidence or optional broad evidence.
+  Explicit and default `--corpus all` selection includes every applicable
+  manifest-backed registered corpus, so all local data must be present for a full run.
 - Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
 - Status evidence records fixture and comparison counts, reference versions,
   the line-ending-normalized manifest SHA-256, a versioned evidence input list,
@@ -81,12 +78,9 @@ or manually curated external-reference golden data.
 - Evidence schema v2 includes cross-platform text line-ending normalization.
 - Repeated `--update` runs preserve timestamps when the evidence hash is unchanged.
 - The validation command uses the Rust implementation only; RDKit, Biopython, or manually pinned external sources are used to generate or curate goldens, not to run validation.
-- The manual GitHub validation workflow likewise checks committed fixtures and
-  goldens without installing unused RDKit or Biopython runtime environments.
-- Manual workflow inputs are passed through environment variables rather than
-  interpolated into shell source.
-- Manual workflow log capture enables shell pipeline failure propagation, so a
-  failed corpus check or validation command cannot be masked by `tee`.
+- Reference validation is intentionally run on provisioned local hosts because all
+  registered corpus source data is local-only; hosted CI checks code, metadata, and
+  generated-dashboard consistency without claiming external parity.
 - The main CI release matrix exercises all workspace features against the
   committed dependency lockfile.
 - Byte-exact fixture and corpus checks stream file contents through SHA-256
@@ -110,15 +104,17 @@ or manually curated external-reference golden data.
   comparison and writes deterministic gzip streams with zero timestamps.
 - Fixture comparison uses a bounded worker pool while status writes and dashboard regeneration remain single-threaded.
 - Progress output uses plain ASCII bars and throttled checkpoint updates so it stays readable in terminals and captured logs.
+- Biopython reference generation supports bounded process workers; the DSSP corpus builder defaults to four and allows an explicit `--jobs N` override on provisioned hosts.
 - Reference tools are never Rust runtime dependencies.
 
 ## Validation
 
 - Current coverage is infrastructure unit-test based plus live corpus comparisons against committed external-source goldens.
 - Passing comparisons are evidence for the compared behavior; failing comparisons identify implementation gaps and should not be papered over.
-- Unit coverage rejects local-only corpus IDs in `validation_required` while
-  verifying that explicit and default all-corpus selection includes every
-  available manifest-backed local corpus and excludes planned features.
+- Unit coverage accepts known local-only corpus IDs in `validation_required`,
+  rejects unknown or duplicate requirements, and verifies that explicit and default
+  all-corpus selection includes every applicable manifest-backed corpus while
+  excluding planned features.
 
 ## Out Of Scope
 
@@ -195,3 +191,6 @@ or manually curated external-reference golden data.
 - v35: Cap the automatic fixture-worker default at four so machines with many
   logical CPUs do not multiply large JSON comparison memory unexpectedly;
   explicit `--jobs N` remains available for provisioned validation hosts.
+- v36: Retire smoke, PubChem-100, and PDB-10 as public validation corpora; allow local-only corpora to be release-required; add PDB-1000; prune status entries without manifests; and keep hosted CI free of unverifiable parity claims.
+- v37: Fail feature listing and dashboard generation when required corpus manifests are missing, and exclude planned features from explicit local-only corpus selection.
+- v38: Make PDB corpus selection category-aware through the RCSB Search API and add bounded process-parallel Biopython/DSSP golden generation.

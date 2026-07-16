@@ -32,8 +32,7 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 ## Validation
 
 - Unit tests cover atom-order-independent tree output, component sorting, branch/ring round trips, and inherited unsupported-chemistry errors through the noncanonical writer contract.
-- RDKit-generated smoke goldens compare exact non-isomeric canonical SMILES plus sanitized reparse semantics for external PubChem SMILES fixtures in the current non-fused-ring subset.
-- RDKit-generated PubChem-100 and pubchem-1k goldens compare sanitized reparse semantics for canonical output across all declared records. Validation sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model. It does not apply a feature-specific unsupported-chemistry filter; parser, sanitizer, or writer gaps surface as validation failures.
+- RDKit-generated PubChem-1k baseline goldens compare sanitized reparse semantics for canonical output across all declared records; broader manifests extend the same semantic contract. Validation sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model. It does not apply a feature-specific unsupported-chemistry filter; parser, sanitizer, or writer gaps surface as validation failures.
 
 ## Out Of Scope
 
@@ -80,3 +79,4 @@ symmetry edge case.
   installed.
 - v30: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v31: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

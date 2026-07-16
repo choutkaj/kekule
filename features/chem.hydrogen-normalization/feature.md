@@ -49,7 +49,7 @@ implicit hydrogens.
   resource-limit and missing-perception transactionality, methane and aromatic
   bracket-hydrogen collapse, stereo carrier preservation, conformer behavior,
   and conservative retention of lossy hydrogen cases.
-- RDKit-generated smoke, PubChem-100, PubChem-1k, and PL-REX goldens compare
+- RDKit-generated PubChem-1k baseline and PL-REX broad goldens compare
   per-parent added hydrogen counts, retained graph topology, atom identity,
   charges, isotopes, maps, stable original-index connectivity, and total
   encoded hydrogen counts.
@@ -67,3 +67,4 @@ implicit hydrogens.
 
 - v1: Add bounded transactional hydrogen materialization and conservative
   collapse with mappings, stereo preservation, and explicit coordinate policy.
+- v2: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

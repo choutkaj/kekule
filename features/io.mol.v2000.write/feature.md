@@ -32,8 +32,8 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 
 - Unit tests cover Molfile parse/write/parse round trips for radical multiplicity, supported source bond stereo marks, charge codes, isotope/map records, coordinates, and unsupported representations.
 - RDKit-generated goldens compare Molfile-preservable atoms, bonds, coordinates, charges, isotopes, atom maps, and headers for external PubChem fixtures.
-- All ignored non-smoke corpora remain available for explicit local-only
-  parity checks but are not selected as required routine evidence.
+- PubChem-1k is required baseline evidence; manifest-backed broader corpora
+  remain available for deliberate local parity checks.
 
 ## Out Of Scope
 
@@ -54,3 +54,4 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 - v9: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
 - v10: Convert explicit conformer length units to the CTfile angstrom convention.
+- v11: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

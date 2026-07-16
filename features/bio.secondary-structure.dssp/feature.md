@@ -109,11 +109,10 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   retained donor/acceptor slots. Phi, psi, kappa, and alpha use a 0.15 degree
   tolerance; TCO uses 0.0015; one-decimal legacy hydrogen-bond energies use
   0.051 kcal/mol. Tolerances were fixed before broad validation.
-- Required repository-wide evidence uses the checked-in 1CRN smoke fixture.
-  The targeted deterministic `pdb-10` subset and all 100 fixtures in the
-  provenance-pinned `pdb-100` corpus are local-only supplemental evidence: they
-  are run explicitly and cannot gate validation state in ordinary clones whose
-  large corpus data is intentionally ignored.
+- Required baseline evidence uses all 100 fixtures in the provenance-pinned
+  `pdb-100` corpus. The nested `pdb-1000` corpus supplies deliberate broad
+  macromolecular coverage across the same five structural categories. Both
+  source datasets are local-only and must be built before validation.
 - Focused regressions directly cover the complete nine-state alphabet,
   alpha/3-10/pi/polyproline-II construction, parallel and antiparallel bridge
   formulas, deterministic top-two retention, snapshot immutability, and every
@@ -143,3 +142,4 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   1.87 plus DSSP 4.6.1 reference generation, require checked-in smoke evidence,
   and add explicit PDB-10/PDB-100 supplemental validation.
 - v1: Establish the planned DSSP 4-compatible, read-only analysis contract.
+- v3: Use PDB-100 as the required macromolecular baseline and retire smoke and PDB-10 as validation corpora.

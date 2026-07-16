@@ -15,5 +15,3 @@ fuzz/target/
 validation/corpora/*/data/
 !validation/corpora/tiny/data/
 !validation/corpora/tiny/data/**
-!validation/corpora/smoke/data/
-!validation/corpora/smoke/data/**

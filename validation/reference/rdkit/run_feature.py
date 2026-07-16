@@ -65,7 +65,7 @@ def main() -> int:
         description="Generate normalized JSON golden data with RDKit."
     )
     parser.add_argument("--feature", required=True, choices=sorted(SUPPORTED_FEATURES))
-    parser.add_argument("--corpus", default="smoke")
+    parser.add_argument("--corpus", default="pubchem-1k")
     parser.add_argument(
         "--repo-root",
         type=Path,
@@ -211,20 +211,12 @@ def generate_document(
         expected = {"records": [smiles_write_record(record) for record in records]}
     elif feature_id == "io.smiles.canonical":
         records = read_canonical_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
-        expected = {
-            "records": [
-                canonical_smiles_record(record, exact_smiles=corpus_id == "smoke")
-                for record in records
-            ]
-        }
+        expected = {"records": [canonical_smiles_record(record, exact_smiles=False) for record in records]}
     elif feature_id == "io.smiles.isomeric":
         records = read_isomeric_smiles_records(fixture_path, rdkit["Chem"], sanitize=True)
-        if corpus_id != "smoke":
-            records = [
-                record
-                for record in records
-                if isomeric_smiles_record_is_stereo_bearing(record, rdkit["Chem"])
-            ]
+        records = [
+            record for record in records if isomeric_smiles_record_is_stereo_bearing(record, rdkit["Chem"])
+        ]
         expected = {"records": [isomeric_smiles_record(record) for record in records]}
     elif feature_id == "query.smarts":
         expected = {

@@ -106,3 +106,4 @@ parity validation.
   from the noncanonical SMILES writer.
 - v8: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v9: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

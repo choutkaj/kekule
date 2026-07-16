@@ -35,7 +35,11 @@ pub(crate) fn read_validation_statuses(
 }
 
 pub(crate) fn validation_status_path(corpus: &str) -> PathBuf {
-    Path::new("validation")
+    validation_status_path_from(Path::new("."), corpus)
+}
+
+pub(crate) fn validation_status_path_from(root: &Path, corpus: &str) -> PathBuf {
+    root.join("validation")
         .join("corpora")
         .join(corpus)
         .join("status.toml")
@@ -58,6 +62,14 @@ pub(crate) fn write_validation_statuses(
     statuses: &BTreeMap<String, ValidationStatus>,
     selected_corpora: &BTreeSet<String>,
 ) -> Result<(), Box<dyn Error>> {
+    write_validation_statuses_from(Path::new("."), statuses, selected_corpora)
+}
+
+pub(crate) fn write_validation_statuses_from(
+    root: &Path,
+    statuses: &BTreeMap<String, ValidationStatus>,
+    selected_corpora: &BTreeSet<String>,
+) -> Result<(), Box<dyn Error>> {
     for corpus in VALIDATION_CORPORA {
         if !selected_corpora.contains(corpus.id) {
             continue;
@@ -67,16 +79,22 @@ pub(crate) fn write_validation_statuses(
             features: BTreeMap::new(),
         };
         for (feature_id, status) in statuses {
+            if !validation_manifest_path_from(root, feature_id, corpus.id).exists() {
+                continue;
+            }
             if let Some(feature_status) = status.corpora.get(corpus.id) {
                 corpus_status
                     .features
                     .insert(feature_id.clone(), feature_status.clone());
             }
         }
+        let path = validation_status_path_from(root, corpus.id);
         if corpus_status.features.is_empty() {
+            if path.exists() {
+                fs::remove_file(&path)?;
+            }
             continue;
         }
-        let path = validation_status_path(corpus.id);
         fs::create_dir_all(
             path.parent()
                 .ok_or_else(|| boxed_error("status path has no parent"))?,
@@ -88,21 +106,6 @@ pub(crate) fn write_validation_statuses(
         )?;
     }
     Ok(())
-}
-
-pub(crate) fn recorded_corpus_passed(
-    feature: &Feature,
-    status: Option<&ValidationStatus>,
-    corpus: &str,
-) -> bool {
-    if !feature
-        .validation_required
-        .iter()
-        .any(|item| item == corpus)
-    {
-        return false;
-    }
-    recorded_corpus_status_passed(status.and_then(|status| status.corpora.get(corpus)))
 }
 
 pub(crate) fn recorded_corpus_status_passed(corpus_status: Option<&CorpusStatus>) -> bool {

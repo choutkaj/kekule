@@ -1,12 +1,9 @@
 # Reference Generators
 
-Reference generators produce normalized JSON golden data from external tools using externally supplied
-fixtures declared in each feature's validation manifest.
+Reference generators produce normalized JSON goldens from external tools using externally supplied fixtures declared in feature validation manifests.
 
-These scripts are validation infrastructure only:
-
-- RDKit is used for small-molecule parser, ring, and aromaticity reference output.
-- Biopython is used for mmCIF atom-site and SMCRA hierarchy reference output.
+- RDKit supplies small-molecule parser, writer, perception, ring, stereo, and aromaticity reference output.
+- Biopython supplies format-level mmCIF atom-site rows and, together with `mkdssp`, DSSP reference output.
 - Neither tool is a Rust runtime dependency.
 
 Create the matching micromamba environments from the repository root:
@@ -19,30 +16,31 @@ micromamba create -f validation/reference/biopython/environment.yml
 Run dependency checks through those environments:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus smoke --check-deps
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus smoke --check-deps
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus pubchem-1k --check-deps
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus pdb-100 --check-deps
 ```
 
-Generate goldens for a feature:
+Generate feature goldens:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus smoke
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.rings.fast --corpus smoke
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like --corpus smoke
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus smoke
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature bio.hierarchy.smcra --corpus smoke
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus pubchem-1k
+micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like --corpus pubchem-1k
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus pdb-100
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/build_dssp_validation.py --corpus pdb-100 --jobs 4
 ```
 
-By default, output goes to `validation/corpora/<corpus-id>/golden/<feature-id>/`. Use `--fixture`
-to limit generation to a listed fixture, and `--output-dir` to write elsewhere for review.
+Construct or refresh the nested macromolecular tiers with:
 
-Golden files should be reviewed before committing. Creating a golden file does not automatically
-record validation evidence; run the Rust comparison with `--update` only after the corpus is ready.
+```bash
+micromamba run -n molecules-biopython-reference python validation/reference/biopython/build_corpus.py
+```
 
-Do not create molecule fixtures by hand for reference validation. Add compact records from external
-sources under the corpus `data/` directory, record their source URL and SHA-256 in
-`sources.lock.json`, then generate goldens with RDKit or Biopython.
+The PDB builder intersects the current RCSB holdings with typed RCSB Search API candidate pools, ranks each category deterministically from the corpus seed, verifies the downloaded mmCIF records, and preserves PDB-100 as the exact prefix of PDB-1000.
 
-The PubChem builder uses the official `CID-SMILES.gz` snapshot and the first `CURRENT-Full` SDF
-shard. Selection remains seeded and deterministic; the shard constraint and source checksums are
-recorded in corpus metadata and locks.
+DSSP generation defaults to four independent process workers. Provisioned hosts may override the bound explicitly with `--jobs N`.
+
+By default, output goes to `validation/corpora/<corpus-id>/golden/<feature-id>/`. Use `--fixture` to limit generation to a listed fixture and `--output-dir` to write elsewhere for review.
+
+Golden files should be reviewed before committing. Creating a golden does not record validation evidence; run the Rust comparison with `--update` only after the corpus is ready.
+
+Do not create molecular reference fixtures by hand. Add externally sourced records under the corpus `data/` directory, pin their source URL and SHA-256 in `sources.lock.json`, then generate goldens with the matching reference environment.

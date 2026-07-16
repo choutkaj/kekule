@@ -11,6 +11,7 @@ pub(crate) struct DashboardSection {
 pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let check = args.iter().any(|arg| arg == "--check");
     let features = read_features()?;
+    validate_required_manifests(&features)?;
     let statuses = read_validation_statuses(&features)?;
     let corpus_info = read_dashboard_corpus_info()?;
     let rendered = render_dashboard(&features, &statuses, &corpus_info);
@@ -108,7 +109,7 @@ pub(crate) fn render_dashboard(
     out.push_str("<h1>Feature Dashboard</h1>\n");
     out.push_str("<p>Generated from feature metadata and recorded per-corpus parity status. Run cargo xtask validate to compare against the current checkout. Do not hand-edit this file.</p>\n");
     out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"unknown\">?</span>unknown <span class=\"na\">-</span>not required</p>\n");
-    out.push_str("<p>Features shared by both molecular domains are intentionally shown in both chemistry tables. The mixed smoke corpus also appears in both tables; only applicable feature rows carry parity status.</p>\n");
+    out.push_str("<p>Features shared by both molecular domains are intentionally shown in both chemistry tables. Validation columns come only from the registered typed small-molecule and macromolecule corpora.</p>\n");
     render_feature_graph(&mut out, features);
     render_dashboard_section(
         &mut out,
@@ -374,10 +375,7 @@ pub(crate) fn render_dashboard_section(
                 .get(corpus.id)
                 .expect("dashboard corpus metadata should be available");
             let reference = info.features.get(&feature.id);
-            let corpus_status = status.and_then(|status| status.corpora.get(corpus.id));
-            let reference_tool = reference
-                .map(|reference| reference.reference_tool.as_str())
-                .or_else(|| corpus_status.map(|status| status.reference_tool.as_str()));
+            let reference_tool = reference.map(|reference| reference.reference_tool.as_str());
             let domain_applicable = match info.kind {
                 CorpusKind::SmallMolecule => section.domain == FeatureDomain::SmallMolecule,
                 CorpusKind::Macromolecule => section.domain == FeatureDomain::Macromolecule,
@@ -605,8 +603,9 @@ pub(crate) fn dashboard_corpus_cell(
         .validation_required
         .iter()
         .any(|required| required == corpus);
-    let corpus_status = status.and_then(|status| status.corpora.get(corpus));
-    if !required && manifest_reference.is_none() && corpus_status.is_none() {
+    let corpus_status =
+        manifest_reference.and_then(|_| status.and_then(|status| status.corpora.get(corpus)));
+    if !required && manifest_reference.is_none() {
         return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not required\" title=\"not required\">-</span></td>".to_owned();
     }
     let reference = corpus_status
@@ -624,9 +623,7 @@ pub(crate) fn dashboard_corpus_cell(
                 )
             })
         });
-    if (required && recorded_corpus_passed(feature, status, corpus))
-        || (!required && recorded_corpus_status_passed(corpus_status))
-    {
+    if recorded_corpus_status_passed(corpus_status) {
         let title = dashboard_cell_title("recorded evidence passed", reference);
         return format!(
             "<td class=\"marker\" data-sort-value=\"1\"><span class=\"ok\" aria-label=\"passed\" title=\"{}\">&#10003;</span></td>",

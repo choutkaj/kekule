@@ -23,13 +23,19 @@ def main() -> int:
     parser.add_argument(
         "--corpus",
         action="append",
-        choices=("smoke", "pdb-10", "pdb-100"),
-        help="Corpus to generate. May be repeated; defaults to all three.",
+        choices=("pdb-100", "pdb-1000"),
+        help="Corpus to generate. May be repeated; defaults to both public PDB tiers.",
     )
     parser.add_argument(
         "--repo-root",
         type=Path,
         default=Path(__file__).resolve().parents[3],
+    )
+    parser.add_argument(
+        "--jobs",
+        type=positive_int,
+        default=4,
+        help="Number of independent DSSP fixture generators to run concurrently.",
     )
     args = parser.parse_args()
     if Bio.__version__ != "1.87":
@@ -49,7 +55,7 @@ def main() -> int:
 
     repo = args.repo_root.resolve()
     script = repo / "validation" / "reference" / "biopython" / "run_feature.py"
-    for corpus in args.corpus or ["smoke", "pdb-10", "pdb-100"]:
+    for corpus in args.corpus or ["pdb-100", "pdb-1000"]:
         root = repo / "validation" / "corpora" / corpus
         fixtures = corpus_fixtures(root, corpus)
         manifest = root / "features" / f"{FEATURE_ID}.toml"
@@ -57,6 +63,9 @@ def main() -> int:
         manifest.write_text(
             manifest_text(corpus, fixtures, executable_sha256), encoding="utf-8"
         )
+        output_dir = root / "golden" / FEATURE_ID
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
         subprocess.run(
             [
                 sys.executable,
@@ -67,6 +76,8 @@ def main() -> int:
                 corpus,
                 "--repo-root",
                 str(repo),
+                "--jobs",
+                str(args.jobs),
             ],
             cwd=repo,
             check=True,
@@ -75,8 +86,6 @@ def main() -> int:
 
 
 def corpus_fixtures(root: Path, corpus: str) -> list[str]:
-    if corpus == "smoke":
-        return ["data/rcsb/1CRN.cif"]
     lock = json.loads((root / "sources.lock.json").read_text(encoding="utf-8"))
     return [
         file["path"]
@@ -101,6 +110,13 @@ def manifest_text(corpus: str, fixtures: list[str], executable_sha256: str) -> s
         ']\n\n'
         f"fixtures = [\n{fixture_lines}\n]\n"
     )
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def sha256_file(path: Path) -> str:

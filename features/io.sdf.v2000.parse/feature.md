@@ -36,8 +36,8 @@ per-record reports.
 - Tests cover ordered records, raw headers/data fields, record round trips,
   V2000 metadata/stereo inheritance, malformed input, and absence of implicit
   perception. Existing external corpora remain the reference evidence.
-- All ignored non-smoke corpora remain available for explicit local-only
-  parity checks but are not selected as required routine evidence.
+- PubChem-1k is required baseline evidence; manifest-backed broader corpora
+  remain available for deliberate local parity checks.
 
 ## Out Of Scope
 
@@ -64,3 +64,4 @@ per-record reports.
 - v17: Accept the common, unambiguous SDF form where `$$$$` directly terminates
   the final data field while still rejecting a field that reaches bare
   end-of-input without a blank line.
+- v18: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

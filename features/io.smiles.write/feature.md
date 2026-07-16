@@ -49,3 +49,4 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
   rejecting radical multiplicities that the emitted atom valence cannot encode.
 - v9: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v10: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

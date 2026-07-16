@@ -43,3 +43,4 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
   graph atoms without inserting a partial conformer.
 - v5: Require explicit length units for conformer construction and coordinate
   access through `Quantity<Point3>`.
+- v6: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

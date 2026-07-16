@@ -54,3 +54,4 @@ Stereochemistry-sensitive ranking, total canonical atom ordering, canonical SMIL
   aromatic bond codes across Kekule forms, align base invariants with RDKit's
   total-H semantics, preserve graph-sized degrees, and add conditionally
   triggered rooted cyclic-topology refinement for WL-hard ring systems.
+- v6: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

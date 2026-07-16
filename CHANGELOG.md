@@ -19,3 +19,6 @@ Initial release.
 - Explicit sanitization, hydrogen normalization, query, substructure,
   canonicalization, and modelling workflows.
 - Bounded parser fuzz smoke tests in CI and longer scheduled campaigns.
+- Generated feature/corpus validation matrix with PubChem-1k and PDB-100
+  baselines, broader PubChem/Enamine/PL-REX/PDB-1000 tiers, and reproducible
+  RDKit/Biopython/mkdssp reference artifacts.

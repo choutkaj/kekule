@@ -222,3 +222,4 @@ stereo transfer.
   unmarked candidate detection.
 - v22: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v23: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
