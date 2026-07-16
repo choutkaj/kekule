@@ -361,7 +361,7 @@ pub(crate) fn check_corpus_artifacts(
                     golden.display()
                 )));
             }
-            let _: Value = serde_json::from_str(&read_gzip_string(&golden)?)?;
+            validate_gzip_json(&golden)?;
         }
     }
     if validation_status_path(corpus).exists() {
@@ -391,6 +391,15 @@ pub(crate) fn check_corpus_artifacts(
             )));
         }
     }
+    Ok(())
+}
+
+fn validate_gzip_json(path: &Path) -> Result<(), Box<dyn Error>> {
+    let file = fs::File::open(path)?;
+    let decoder = GzDecoder::new(file);
+    let mut deserializer = serde_json::Deserializer::from_reader(decoder);
+    serde::de::IgnoredAny::deserialize(&mut deserializer)?;
+    deserializer.end()?;
     Ok(())
 }
 
