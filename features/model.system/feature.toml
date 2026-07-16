@@ -3,7 +3,6 @@ title = "Fixed-topology molecular model"
 area = "modeling"
 version = 5
 implemented = true
-validated = false
 description = "Represent distinct Small or Macro molecule instances as immutable ModelTopology plus one complete mutable coordinate set."
 depends_on = ["core.graph", "core.atom-bond", "core.conformers", "core.units", "stereo.representation", "bio.hierarchy.smcra"]
 validation_required = []

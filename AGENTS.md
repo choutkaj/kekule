@@ -48,7 +48,7 @@ Use trunk-based development with short-lived feature branches.
 ## Validation guardrails
 
 - Every tracked feature must have canonical `feature.toml` and `feature.md`.
-- No feature is validated without current generated evidence or documented manual evidence accepted by the validation harness.
+- Do not claim feature/corpus parity without current generated evidence or documented manual evidence accepted by the validation harness.
 - Molecular validation fixtures must be externally supplied and provenance-pinned; toy molecules are allowed only for focused unit regressions.
 - Do not weaken comparisons, remove asserted fields, delete regression tests, or regenerate goldens merely to make failures disappear.
 - The dashboard is generated from feature metadata; do not hand-edit `features/DASHBOARD.html`.

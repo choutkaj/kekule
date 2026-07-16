@@ -3,7 +3,6 @@ title = "Canonical atom ranking"
 area = "algorithms"
 version = 5
 implemented = true
-validated = true
 description = "Assign deterministic RDKit-like non-stereo atom symmetry classes using local color refinement plus cyclic-topology invariants."
 depends_on = ["chem.sanitize.rdkit-like"]
 validation_required = ["smoke"]

@@ -3,7 +3,6 @@ title = "Core molecular graph"
 area = "core"
 version = 7
 implemented = true
-validated = false
 description = "Store atoms, bonds, graph-adjacent stereo state, properties, and computed-state invalidation behind typed IDs."
 depends_on = []
 validation_required = []

@@ -28,7 +28,9 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 ## Validation
 
 - Unit tests cover hierarchy construction, mutation, lookup, validation, and sanitization behavior.
-- The former Biopython evidence exercised the removed whole-file reader rather than the format-neutral hierarchy contract, so the feature remains unvalidated pending replacement evidence.
+- The former Biopython evidence exercised the removed whole-file reader rather
+  than the format-neutral hierarchy contract, so no current hierarchy parity
+  evidence is recorded pending a replacement comparison.
 
 ## Out Of Scope
 

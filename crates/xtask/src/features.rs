@@ -2,15 +2,10 @@ use crate::*;
 
 pub(crate) fn list_features() -> Result<(), Box<dyn Error>> {
     let features = read_features()?;
-    let statuses = read_validation_statuses(&features)?;
     for feature in &features {
         println!(
-            "{}\t{}\tv{}\timplemented={}\tvalidated={}",
-            feature.id,
-            feature.area,
-            feature.version,
-            feature.implemented,
-            overall_validated(feature, statuses.get(&feature.id))
+            "{}\t{}\tv{}\timplemented={}",
+            feature.id, feature.area, feature.version, feature.implemented
         );
     }
     Ok(())
@@ -24,7 +19,6 @@ pub(crate) struct Feature {
     pub(crate) area: String,
     pub(crate) version: u32,
     pub(crate) implemented: bool,
-    pub(crate) validated: bool,
     pub(crate) description: String,
     pub(crate) depends_on: Vec<String>,
     pub(crate) validation_required: Vec<String>,
@@ -113,7 +107,7 @@ pub(crate) fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box
         }
         if validation_corpus(corpus).is_some_and(|registered| registered.local_only) {
             return Err(boxed_error(format!(
-                "{} lists local-only validation corpus `{corpus}` in `validation_required`; local-only corpora may be run explicitly but cannot determine repository-wide validation state",
+                "{} lists local-only validation corpus `{corpus}` in `validation_required`; local-only corpora may be run explicitly but cannot be required because a clean checkout cannot recompute their parity evidence",
                 path.display()
             )));
         }

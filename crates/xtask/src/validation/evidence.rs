@@ -131,25 +131,7 @@ pub(crate) fn hash_evidence_file(path: &Path) -> Result<String, Box<dyn Error>> 
     let normalized_text = String::from_utf8(raw.clone())
         .ok()
         .map(|text| text.replace("\r\n", "\n").replace('\r', "\n"));
-    let bytes = if path.file_name().and_then(|name| name.to_str()) == Some("feature.toml")
-        && path
-            .components()
-            .any(|component| component.as_os_str() == "features")
-    {
-        normalized_text
-            .ok_or_else(|| boxed_error(format!("{} is not UTF-8", path.display())))?
-            .lines()
-            .map(|line| {
-                if line.trim_start().starts_with("validated =") {
-                    "validated = <generated>"
-                } else {
-                    line
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            .into_bytes()
-    } else if let Some(text) = normalized_text {
+    let bytes = if let Some(text) = normalized_text {
         text.into_bytes()
     } else {
         raw

@@ -216,10 +216,8 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
     if update {
         write_validation_statuses(&statuses, &update_corpora)?;
-        sync_feature_validation_flags(&features, &statuses)?;
-        let refreshed_features = read_features()?;
         let corpus_info = read_dashboard_corpus_info()?;
-        let rendered = render_dashboard(&refreshed_features, &statuses, &corpus_info);
+        let rendered = render_dashboard(&features, &statuses, &corpus_info);
         write_atomic_text(Path::new(DASHBOARD_PATH), &rendered)?;
         println!("updated validation status and dashboard");
     }

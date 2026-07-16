@@ -33,7 +33,7 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 - Unit tests cover writer parse-back preservation for metadata, coordinates, atom maps, charges, isotopes, radicals, and supported source bond stereo marks.
 - RDKit-generated goldens compare Molfile-preservable content for the same external PubChem fixtures used by the V2000 writer tier.
 - All ignored non-smoke corpora remain available for explicit local-only
-  validation but do not determine repository-wide validation state.
+  parity checks but are not selected as required routine evidence.
 
 ## Out Of Scope
 

@@ -38,7 +38,7 @@ paired with a composable runtime unit.
 - Focused unit tests cover scalar and collection conversion, incompatible
   dimensions, composite units, and scalar quantity arithmetic.
 - This feature intentionally has no validation-harness requirement and remains
-  `validated = false`.
+  no external parity result is recorded.
 
 ## Out Of Scope
 

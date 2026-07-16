@@ -13,19 +13,19 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 
 ## Implementation Notes
 
-- Feature metadata schema v2 requires `id`, `title`, `area`, `version`, `implemented`, `validated`, `description`, `depends_on`, and `validation_required`.
-- Deprecated metadata keys `priority`, `status`, and `last_ai_review` are rejected.
+- Feature metadata schema v3 requires `id`, `title`, `area`, `version`, `implemented`, `description`, `depends_on`, and `validation_required`.
+- Deprecated metadata keys `priority`, `status`, and `last_ai_review`, plus the
+  removed global `validated` key, are rejected.
 - Each tracked feature directory must include `feature.md`.
 - The dashboard renders a generated HTML table with feature metadata and one column per known corpus.
-- Dashboard cells and the cached overall `validated` flag report structurally valid recorded pass evidence so generation is deterministic on clean checkouts without ignored large-corpus fixtures.
-- `cargo xtask validate` and `cargo xtask features` remain the authority for whether recorded evidence is current for the files available in the checkout.
+- Dashboard cells report structurally valid recorded per-corpus parity evidence so generation is deterministic on clean checkouts without ignored large-corpus fixtures.
+- `cargo xtask validate` is the authority for checking parity against the current checkout; `cargo xtask features` lists feature metadata without deriving a global validation result.
 - Per-feature evidence is read from each corpus-owned `status.toml`.
 - Manifest-backed local-only corpus cells display their recorded optional
-  evidence without contributing to the feature's overall `validated` flag.
-- Dashboard generation rejects drift between generated evidence and the cached overall `validated` field.
+  evidence without contributing to routine required parity checks.
 - Boolean dashboard values render as check and cross marks, with compact failure counts only for recorded fixture-level validation failures.
 - Required validation with no current recorded status, stale or incomplete evidence, or no fixture-level failure count renders as an unknown `?` marker rather than a confirmed failure.
-- The dashboard omits the redundant overall `validated` column, uses centered rotated compact headers, includes corpus case counts from `corpus.toml`, and supports client-side column sorting.
+- The feature schema has no global validation boolean; the dashboard presents the per-corpus matrix directly, uses centered rotated compact headers, includes corpus case counts from `corpus.toml`, and supports client-side column sorting.
 - `features/DASHBOARD.html` remains the generated source artifact and is published as the GitHub Pages dashboard.
 
 ## Validation
@@ -51,3 +51,5 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - v7: Distinguish uncertain required validation from confirmed fixture failures with a question-mark dashboard marker.
 - v8: Render all registered corpora, including local-only optional validation
   tiers, as dashboard columns.
+- v9: Remove the global `validated` metadata flag and treat per-corpus parity
+  evidence as the complete validation state.

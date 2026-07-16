@@ -1,4 +1,4 @@
-registry_version = 2
+registry_version = 3
 
 # Feature directories under features/ are the source of truth.
 # Run `cargo xtask dashboard` to regenerate features/DASHBOARD.html.

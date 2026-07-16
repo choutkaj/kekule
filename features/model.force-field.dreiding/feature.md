@@ -41,7 +41,8 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 - Unit tests compare Cartesian gradients with central finite differences and cover
   molecule-instance charge isolation, exclusions, topology binding, singular geometry, and
   minimization integration.
-- No external force-field golden corpus is currently accepted; `validated` remains false.
+- No external force-field golden corpus is currently accepted, so no parity
+  result is recorded.
 
 ## Out Of Scope
 

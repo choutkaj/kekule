@@ -3,7 +3,6 @@ title = "mmCIF document parser"
 area = "io"
 version = 8
 implemented = true
-validated = false
 description = "Parse complete structural mmCIF data documents without assigning molecular meaning."
 depends_on = []
 validation_required = []

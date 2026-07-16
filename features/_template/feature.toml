@@ -3,7 +3,6 @@ title = "Human-readable feature title"
 area = "core"
 version = 1
 implemented = false
-validated = false
 description = "One-sentence description."
 validation_required = []
 

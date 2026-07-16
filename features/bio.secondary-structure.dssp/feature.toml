@@ -3,7 +3,6 @@ title = "DSSP protein secondary structure"
 area = "bio"
 version = 2
 implemented = true
-validated = true
 description = "Assign DSSP 4.6.1-compatible protein secondary structure over one explicit Model coordinate snapshot."
 depends_on = ["bio.hierarchy.smcra", "model.system"]
 validation_required = ["smoke"]

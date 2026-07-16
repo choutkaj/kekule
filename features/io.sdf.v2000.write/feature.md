@@ -25,7 +25,7 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - Unit tests cover multi-record round trips, multiline data fields, and Molfile metadata symmetry.
 - RDKit-generated goldens compare SDF writer records for external PubChem fixtures.
 - All ignored non-smoke corpora remain available for explicit local-only
-  validation but do not determine repository-wide validation state.
+  parity checks but are not selected as required routine evidence.
 
 ## Out Of Scope
 

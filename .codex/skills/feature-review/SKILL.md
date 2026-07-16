@@ -25,7 +25,7 @@ Lead with findings ordered by severity. Check:
 - Structured errors for untrusted input.
 - Non-lossy parser/writer round trips and explicit rejection of unsupported chemistry.
 - Algorithmic resource limits and stack safety where relevant.
-- Validation claims, corpus evidence, manifest hashes, and derived `validated = true` status.
+- Validation claims, per-corpus parity evidence, manifest hashes, and evidence freshness.
 - Whether comparisons, asserted fields, tests, or goldens were weakened merely to obtain a pass.
 - Synchronization of feature metadata, feature docs, dashboard, and skills.
 - Commands not run and unsupported claims in the PR description.

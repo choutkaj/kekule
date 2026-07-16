@@ -3,7 +3,6 @@ title = "Canonical SMILES writer"
 area = "io"
 version = 30
 implemented = true
-validated = true
 description = "Write deterministic non-stereo canonical SMILES using canonical atom ranking and rank-guided graph traversal."
 depends_on = ["io.smiles.write", "algo.canonical-ranking", "stereo.representation"]
 validation_required = ["smoke"]

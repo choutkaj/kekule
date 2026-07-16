@@ -32,7 +32,6 @@ title = "Example"
 area = "infrastructure"
 version = 2
 implemented = false
-validated = true
 description = "Example feature."
 depends_on = ["core.graph"]
 validation_required = []
@@ -45,7 +44,6 @@ validation_required = []
     assert_eq!(feature.id, "example.feature");
     assert_eq!(feature.version, 2);
     assert!(!feature.implemented);
-    assert!(feature.validated);
     assert_eq!(feature.depends_on, vec!["core.graph"]);
     fs::remove_dir_all(root).ok();
 }
@@ -86,7 +84,6 @@ title = "Bad requirement"
 area = "infrastructure"
 version = 1
 implemented = true
-validated = false
 description = "Invalid local-only validation requirement."
 depends_on = []
 validation_required = ["pubchem-100"]
@@ -112,7 +109,7 @@ validation_required = ["pubchem-100"]
 }
 
 #[test]
-fn read_feature_rejects_bad_boolean_deprecated_keys_missing_docs_and_directory_mismatch() {
+fn read_feature_rejects_bad_boolean_removed_or_deprecated_keys_and_shape_errors() {
     let root = temp_feature_root("bad-feature");
     write_feature(
         &root,
@@ -122,7 +119,6 @@ title = "Bad"
 area = "infrastructure"
 version = 1
 implemented = maybe
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -139,7 +135,6 @@ area = "infrastructure"
 version = 1
 priority = "P0"
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -149,13 +144,28 @@ validation_required = []
 
     write_feature(
         &root,
+        "bad.removed",
+        r#"id = "bad.removed"
+title = "Bad"
+area = "infrastructure"
+version = 1
+implemented = false
+validated = false
+description = "Removed metadata field."
+depends_on = []
+validation_required = []
+"#,
+    );
+    assert!(read_feature(&root.join("bad.removed").join("feature.toml")).is_err());
+
+    write_feature(
+        &root,
         "bad.version",
         r#"id = "bad.version"
 title = "Bad"
 area = "infrastructure"
 version = 0
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -171,7 +181,6 @@ title = "Bad"
 area = "infrastructure"
 version = 1
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -187,7 +196,6 @@ title = "Bad"
 area = "infrastructure"
 version = 1
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -208,7 +216,6 @@ title = "Zed"
 area = "core"
 version = 1
 implemented = true
-validated = false
 description = "Z feature."
 depends_on = ["a.feature"]
 validation_required = []
@@ -222,7 +229,6 @@ title = "Aye"
 area = "core"
 version = 1
 implemented = false
-validated = false
 description = "A feature."
 depends_on = []
 validation_required = []
@@ -250,7 +256,6 @@ title = "Bad"
 area = "core"
 version = 1
 implemented = false
-validated = false
 description = "Bad dependency."
 depends_on = ["missing.feature"]
 validation_required = []
@@ -269,7 +274,6 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "core".to_owned(),
             version: 1,
             implemented: false,
-            validated: false,
             description: "A feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: Vec::new(),
@@ -280,7 +284,6 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "io".to_owned(),
             version: 3,
             implemented: true,
-            validated: false,
             description: "Z feature.".to_owned(),
             depends_on: vec!["a.feature".to_owned()],
             validation_required: Vec::new(),
@@ -291,7 +294,6 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "validation".to_owned(),
             version: 1,
             implemented: true,
-            validated: false,
             description: "Feature with counted failures.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -302,7 +304,6 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "validation".to_owned(),
             version: 1,
             implemented: true,
-            validated: false,
             description: "Feature without recorded status.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -407,7 +408,6 @@ fn dashboard_corpus_cells_show_optional_manifest_evidence() {
         area: "validation".to_owned(),
         version: 1,
         implemented: true,
-        validated: false,
         description: "Feature with optional corpus evidence.".to_owned(),
         depends_on: Vec::new(),
         validation_required: Vec::new(),
@@ -582,7 +582,6 @@ fn selectors_keep_local_only_corpora_explicit_and_all_routine() {
             area: "io".to_owned(),
             version: 1,
             implemented: true,
-            validated: false,
             description: "Small feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -593,7 +592,6 @@ fn selectors_keep_local_only_corpora_explicit_and_all_routine() {
             area: "bio".to_owned(),
             version: 1,
             implemented: true,
-            validated: false,
             description: "Macro feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -885,80 +883,6 @@ fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
 }
 
 #[test]
-fn current_status_drives_overall_validation_and_metadata_sync() {
-    let root = temp_feature_root("status-sync");
-    let (features_root, validation_root, manifest_path) = write_evidence_test_repo(&root);
-    let metadata_path = features_root.join("example").join("feature.toml");
-
-    let feature = Feature {
-        id: "example".to_owned(),
-        title: "Example".to_owned(),
-        area: "io".to_owned(),
-        version: 1,
-        implemented: true,
-        validated: false,
-        description: "Example feature.".to_owned(),
-        depends_on: Vec::new(),
-        validation_required: vec!["smoke".to_owned()],
-    };
-    let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
-    let manifest_text = fs::read_to_string(&manifest_path).expect("manifest text should read");
-    let evidence =
-        build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
-    let corpus_status = CorpusStatus {
-        passed: true,
-        fixture_count: 1,
-        compared_count: 1,
-        reference_tool: "rdkit".to_owned(),
-        reference_version: "RDKit test".to_owned(),
-        manifest_hash: hash_evidence_file(&manifest_path).expect("manifest should hash"),
-        failed_count: 0,
-        first_failure: None,
-        evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
-        evidence_hash: Some(evidence.sha256),
-        evidence_inputs: evidence.inputs,
-        validated_at_unix: 1,
-    };
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status)]),
-    };
-    let statuses = BTreeMap::from([(feature.id.clone(), status.clone())]);
-
-    assert!(overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
-    sync_feature_validation_flags_at(
-        std::slice::from_ref(&feature),
-        &statuses,
-        &features_root,
-        &validation_root,
-    )
-    .expect("metadata should sync");
-    assert!(fs::read_to_string(&metadata_path)
-        .expect("metadata should read")
-        .contains("validated = true"));
-
-    fs::write(&manifest_path, manifest_text.replace('\n', "\r\n"))
-        .expect("manifest line endings should change");
-    assert!(overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
-
-    fs::write(&manifest_path, "changed = true\n").expect("manifest should change");
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
 fn evidence_changes_after_material_input_changes() {
     let root = temp_feature_root("evidence-change");
     let (_, _, manifest_path) = write_evidence_test_repo(&root);
@@ -1029,23 +953,12 @@ fn evidence_hash_normalizes_text_line_endings() {
 }
 
 #[test]
-fn current_status_requires_known_nonempty_evidence() {
+fn recorded_corpus_status_requires_known_nonempty_evidence() {
     let root = temp_feature_root("status-rejects-stale");
-    let (_, validation_root, manifest_path) = write_evidence_test_repo(&root);
+    let (_, _, manifest_path) = write_evidence_test_repo(&root);
     let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
     let evidence =
         build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
-    let feature = Feature {
-        id: "example".to_owned(),
-        title: "Example".to_owned(),
-        area: "io".to_owned(),
-        version: 1,
-        implemented: true,
-        validated: false,
-        description: "Example feature.".to_owned(),
-        depends_on: Vec::new(),
-        validation_required: vec!["smoke".to_owned()],
-    };
     let mut corpus_status = CorpusStatus {
         passed: true,
         fixture_count: 1,
@@ -1060,38 +973,14 @@ fn current_status_requires_known_nonempty_evidence() {
         evidence_inputs: evidence.inputs,
         validated_at_unix: 1,
     };
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status.clone())]),
-    };
-    assert!(overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
+    assert!(recorded_corpus_status_passed(Some(&corpus_status)));
 
     corpus_status.evidence_schema_version = Some(999);
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status.clone())]),
-    };
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
+    assert!(!recorded_corpus_status_passed(Some(&corpus_status)));
 
     corpus_status.evidence_schema_version = Some(VALIDATION_EVIDENCE_SCHEMA_VERSION);
     corpus_status.compared_count = 0;
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status)]),
-    };
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
+    assert!(!recorded_corpus_status_passed(Some(&corpus_status)));
     fs::remove_dir_all(root).ok();
 }
 
@@ -1104,14 +993,13 @@ fn dashboard_text_comparison_ignores_platform_line_endings() {
 }
 
 #[test]
-fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed() {
+fn recorded_dashboard_status_is_portable_without_global_validation_state() {
     let feature = Feature {
         id: "portable.feature".to_owned(),
         title: "Portable".to_owned(),
         area: "infrastructure".to_owned(),
         version: 1,
         implemented: true,
-        validated: true,
         description: "Portable dashboard evidence.".to_owned(),
         depends_on: Vec::new(),
         validation_required: vec!["smoke".to_owned()],
@@ -1140,18 +1028,10 @@ fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed
         )]),
     };
 
-    assert!(recorded_overall_validated(&feature, Some(&status)));
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        Path::new("definitely-missing-validation-root")
-    ));
-    assert!(ensure_current_validation_flags_synced_at(
-        std::slice::from_ref(&feature),
-        &BTreeMap::from([(feature.id.clone(), status)]),
-        Path::new("definitely-missing-validation-root")
-    )
-    .is_err());
+    assert!(
+        dashboard_corpus_cell(&feature, Some(&status), "smoke", true)
+            .contains("aria-label=\"passed\"")
+    );
 }
 
 #[test]
@@ -1700,7 +1580,7 @@ fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
     fs::write(
         feature_dir.join("feature.toml"),
-        "id = \"example\"\nvalidated = false\n",
+        "id = \"example\"\ntitle = \"Example\"\narea = \"test\"\nversion = 1\nimplemented = true\ndescription = \"Example feature.\"\ndepends_on = []\nvalidation_required = [\"smoke\"]\n",
     )
     .expect("metadata should write");
     fs::write(feature_dir.join("feature.md"), "# Example\n").expect("feature doc should write");

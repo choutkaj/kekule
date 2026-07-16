@@ -3,7 +3,6 @@ title = "Molfile V2000 writer"
 area = "io"
 version = 10
 implemented = true
-validated = true
 description = "Write small molecules as V2000 Molfile blocks with coordinates, common atom metadata, and supported source bond stereo marks."
 depends_on = ["io.mol.v2000.parse", "core.units", "stereo.representation"]
 validation_required = ["smoke"]

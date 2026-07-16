@@ -28,7 +28,8 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
 
 - Unit tests compare analytic harmonic gradients against central finite differences in arbitrary orientations.
 - Tests cover invalid bonds, duplicate or invalid parameters, malformed evaluations, topology mismatch, additive terms, and coincident atoms.
-- Reference molecular goldens are not required for this analytic infrastructure; `validated` remains false until accepted harness evidence exists.
+- Reference molecular goldens are not currently defined for this analytic
+  infrastructure, so no external parity result is recorded.
 
 ## Out Of Scope
 

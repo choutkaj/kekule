@@ -28,7 +28,8 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 
 - Unit tests minimize distorted multi-instance harmonic systems and verify energy
   decrease, convergence reports, dense gradient ordering, and source immutability.
-- The implementation uses focused analytic regressions rather than external molecular fixtures; `validated` remains false until accepted harness evidence exists.
+- The implementation uses focused analytic regressions rather than an external
+  parity corpus; no feature/corpus parity claim is currently recorded.
 
 ## Out Of Scope
 

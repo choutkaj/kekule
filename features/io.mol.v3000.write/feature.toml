@@ -3,7 +3,6 @@ title = "Molfile V3000 writer"
 area = "io"
 version = 10
 implemented = true
-validated = true
 description = "Write deterministic Molfile V3000 CTAB output for the supported raw graph subset and source bond CFG marks."
 depends_on = ["io.mol.v3000.parse", "core.units", "stereo.representation"]
 validation_required = ["smoke"]

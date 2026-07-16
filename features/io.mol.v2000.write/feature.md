@@ -33,7 +33,7 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 - Unit tests cover Molfile parse/write/parse round trips for radical multiplicity, supported source bond stereo marks, charge codes, isotope/map records, coordinates, and unsupported representations.
 - RDKit-generated goldens compare Molfile-preservable atoms, bonds, coordinates, charges, isotopes, atom maps, and headers for external PubChem fixtures.
 - All ignored non-smoke corpora remain available for explicit local-only
-  validation but do not determine repository-wide validation state.
+  parity checks but are not selected as required routine evidence.
 
 ## Out Of Scope
 

@@ -40,7 +40,7 @@ as one `SmallMolecule`.
 - The standalone `mol_v2000` fuzz target checks panic safety and successful parse/write/parse paths.
 - RDKit-generated goldens compare raw Molfile-preserved atom, bond, metadata, and coordinate records for external PubChem fixtures.
 - All ignored non-smoke corpora remain available for explicit local-only
-  validation but do not determine repository-wide validation state.
+  parity checks but are not selected as required routine evidence.
 
 ## Out Of Scope
 

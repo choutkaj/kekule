@@ -23,7 +23,7 @@ their Molfile documents into canonical `SdfRecord` values.
   V2000 metadata/stereo inheritance, malformed input, and absence of implicit
   perception. Existing external corpora remain the reference evidence.
 - All ignored non-smoke corpora remain available for explicit local-only
-  validation but do not determine repository-wide validation state.
+  parity checks but are not selected as required routine evidence.
 
 ## Out Of Scope
 

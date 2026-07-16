@@ -19,23 +19,23 @@ Canonical flow: add -> optional research -> plan -> implement.
 
 ## Feature metadata
 
-Feature metadata uses schema v2:
+Feature metadata uses schema v3:
 
 - `id`
 - `title`
 - `area`
 - `version`
 - `implemented`
-- `validated`
 - `description`
 - `depends_on`
 - `validation_required`
 
-Do not use `priority`, `status`, or `last_ai_review`.
+Do not use `priority`, `status`, `last_ai_review`, or the removed global
+`validated` flag.
 
-Increment `version` only when behavior, public API, or validation contract intentionally changes. Set `implemented = true` only when implementation is complete. Let `cargo xtask validate ... --update` record passing evidence and synchronize `validated`.
+Increment `version` only when behavior, public API, or validation contract intentionally changes. Set `implemented = true` only when implementation is complete. Let `cargo xtask validate ... --update` record per-corpus parity evidence.
 
-Feature IDs and titles describe long-term capabilities, not temporary maturity levels. Use `version`, `implemented`, `validated`, Validation, and Revision Notes to describe partial coverage or missing goldens.
+Feature IDs and titles describe long-term capabilities, not temporary maturity levels. Use `version`, `implemented`, the Validation section, per-corpus evidence, and Revision Notes to describe partial coverage or missing goldens.
 
 ## Feature docs
 

@@ -37,7 +37,7 @@ or manually curated external-reference golden data.
 - Always verifies the committed 20-case smoke fixture bytes, even when
   `--require-data` is omitted; the flag remains necessary for ignored larger
   corpora.
-- Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, synchronizes overall `validated`, and regenerates the dashboard.
+- Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, and regenerates the dashboard.
 - Allows an independently reviewed implementation-semantic change to be
   accepted explicitly with `--accept-implementation-goldens`, but only for one
   concrete feature/corpus whose reference tool is `*-manual-semantic`. This
@@ -65,9 +65,9 @@ or manually curated external-reference golden data.
 - Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
 - The smoke corpus data directory is intentionally checked in and exempt from the default ignore rule for larger generated corpus data.
 - Every registered non-smoke corpus declares `local_only = true` because its
-  data directory is ignored. These corpora support on-demand runs and never
-  determine repository-wide validation state, but they remain visible as
-  dashboard columns so optional broad-corpus evidence is inspectable.
+  data directory is ignored. These corpora support on-demand runs, are excluded
+  from `validation_required` and the `--corpus all` routine selector, and remain
+  visible as dashboard columns so optional broad-corpus evidence is inspectable.
 - Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
 - Status evidence records fixture and comparison counts, reference versions,
   the line-ending-normalized manifest SHA-256, a versioned evidence input list,
@@ -133,4 +133,6 @@ or manually curated external-reference golden data.
 - v20: Normalize the separately recorded manifest hash so evidence generated on
   Windows remains current in Linux CI checkouts.
 - v21: Display every registered corpus on the dashboard while keeping
-  local-only evidence optional and excluded from overall validation state.
+  local-only evidence optional and outside required routine parity checks.
+- v22: Remove the global feature validation boolean; corpus status files and
+  dashboard cells now carry the full parity result without metadata syncing.

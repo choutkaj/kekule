@@ -24,7 +24,8 @@ feature/corpus using a `*-manual-semantic` reference and is deliberately
 separate from `--update`; generator-backed RDKit and Biopython goldens cannot be
 replaced this way.
 
-The following command will run a full validation of all features on all corpora, and update the feature dashboard.
+The following command runs every required routine feature/corpus parity check
+and updates the recorded evidence and feature dashboard.
 ```bash
 cargo xtask validate --feature all --corpus all --update
 ```
