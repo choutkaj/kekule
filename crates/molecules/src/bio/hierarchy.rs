@@ -14,25 +14,33 @@ impl MacroMolecule {
         Self::default()
     }
 
-    pub fn from_parts(graph: Molecule, hierarchy: SmcraHierarchy) -> Self {
-        Self { graph, hierarchy }
+    pub fn builder() -> MacroMoleculeBuilder {
+        MacroMoleculeBuilder::new()
+    }
+
+    pub fn try_from_parts(
+        graph: Molecule,
+        hierarchy: SmcraHierarchy,
+    ) -> std::result::Result<Self, MacroValidateError> {
+        let molecule = Self { graph, hierarchy };
+        molecule.validate()?;
+        Ok(molecule)
     }
 
     pub fn graph(&self) -> &Molecule {
         &self.graph
     }
 
-    pub fn graph_mut(&mut self) -> &mut Molecule {
-        self.graph.invalidate_topology();
-        &mut self.graph
-    }
-
     pub fn hierarchy(&self) -> &SmcraHierarchy {
         &self.hierarchy
     }
 
-    pub fn hierarchy_mut(&mut self) -> &mut SmcraHierarchy {
-        &mut self.hierarchy
+    pub fn edit(&mut self) -> MacroMoleculeEditor<'_> {
+        MacroMoleculeEditor {
+            graph: self.graph.clone(),
+            hierarchy: self.hierarchy.clone(),
+            target: self,
+        }
     }
 
     pub(crate) fn without_conformers(mut self) -> Self {
@@ -70,53 +78,33 @@ impl MacroMolecule {
     ) -> std::result::Result<MacroValidateReport, MacroValidateError> {
         validate_macro_molecule(self, options)
     }
+}
 
-    pub fn sanitize(&mut self) -> std::result::Result<MacroSanitizeReport, MacroSanitizeError> {
-        self.sanitize_with_options(MacroSanitizeOptions::default())
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MacroMoleculeBuilder {
+    graph: Molecule,
+    hierarchy: SmcraHierarchy,
+}
+
+impl MacroMoleculeBuilder {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn sanitize_with_options(
-        &mut self,
-        options: MacroSanitizeOptions,
-    ) -> std::result::Result<MacroSanitizeReport, MacroSanitizeError> {
-        if !matches!(options.altloc_policy, AltLocPolicy::PreserveAll) {
-            return Err(MacroSanitizeError::UnsupportedOption(
-                "alternate-location selection is not implemented",
-            ));
-        }
-        if options.normalize_elements
-            || options.normalize_atom_site_metadata
-            || options.recognize_standard_residues
-        {
-            return Err(MacroSanitizeError::UnsupportedOption(
-                "element normalization, atom-site metadata normalization, or residue recognition is not implemented",
-            ));
-        }
-        if options.assign_template_bonds
-            || options.assign_polymer_bonds
-            || options.detect_disulfides
-            || !matches!(options.ligand_policy, LigandSanitizePolicy::LeaveRaw)
-        {
-            return Err(MacroSanitizeError::UnsupportedOption(
-                "bond, disulfide, or ligand sanitization is not implemented",
-            ));
-        }
-        let validation = if options.validate_first || options.validate_coordinates {
-            Some(
-                self.validate_with_options(MacroValidateOptions {
-                    validate_coordinates: options.validate_coordinates,
-                })
-                .map_err(MacroSanitizeError::Validate)?,
-            )
-        } else {
-            None
-        };
-        Ok(MacroSanitizeReport {
-            validation,
-            normalized_atom_sites: 0,
-            recognized_residues: 0,
-            assigned_bonds: 0,
-        })
+    pub fn graph(&self) -> &Molecule {
+        &self.graph
+    }
+
+    pub fn graph_mut(&mut self) -> &mut Molecule {
+        &mut self.graph
+    }
+
+    pub fn hierarchy(&self) -> &SmcraHierarchy {
+        &self.hierarchy
+    }
+
+    pub fn hierarchy_mut(&mut self) -> &mut SmcraHierarchy {
+        &mut self.hierarchy
     }
 
     pub fn add_atom_site(
@@ -129,6 +117,52 @@ impl MacroMolecule {
             .atom(atom)
             .map_err(|_| SmcraHierarchyError::InvalidAtomId(atom))?;
         self.hierarchy.add_atom_site(residue, atom, metadata)
+    }
+
+    pub fn build(self) -> std::result::Result<MacroMolecule, MacroValidateError> {
+        MacroMolecule::try_from_parts(self.graph, self.hierarchy)
+    }
+}
+
+pub struct MacroMoleculeEditor<'a> {
+    target: &'a mut MacroMolecule,
+    graph: Molecule,
+    hierarchy: SmcraHierarchy,
+}
+
+impl MacroMoleculeEditor<'_> {
+    pub fn graph(&self) -> &Molecule {
+        &self.graph
+    }
+
+    pub fn graph_mut(&mut self) -> &mut Molecule {
+        &mut self.graph
+    }
+
+    pub fn hierarchy(&self) -> &SmcraHierarchy {
+        &self.hierarchy
+    }
+
+    pub fn hierarchy_mut(&mut self) -> &mut SmcraHierarchy {
+        &mut self.hierarchy
+    }
+
+    pub fn add_atom_site(
+        &mut self,
+        residue: SmcraResidueId,
+        atom: AtomId,
+        metadata: SmcraAtomSiteMetadata,
+    ) -> std::result::Result<SmcraAtomSiteId, SmcraHierarchyError> {
+        self.graph
+            .atom(atom)
+            .map_err(|_| SmcraHierarchyError::InvalidAtomId(atom))?;
+        self.hierarchy.add_atom_site(residue, atom, metadata)
+    }
+
+    pub fn commit(self) -> std::result::Result<(), MacroValidateError> {
+        let candidate = MacroMolecule::try_from_parts(self.graph, self.hierarchy)?;
+        *self.target = candidate;
+        Ok(())
     }
 }
 
@@ -155,6 +189,7 @@ pub struct MacroValidateReport {
     pub coordinates_checked: usize,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MacroValidateError {
     InvalidChainModel {
@@ -175,6 +210,9 @@ pub enum MacroValidateError {
     },
     InvalidAtomSiteAtom {
         site: SmcraAtomSiteId,
+        atom: AtomId,
+    },
+    MissingAtomSiteForAtom {
         atom: AtomId,
     },
     InvalidAtomSiteOccupancy {
@@ -221,6 +259,9 @@ impl fmt::Display for MacroValidateError {
             Self::InvalidAtomSiteAtom { site, atom } => {
                 write!(f, "atom-site {} references invalid atom {atom}", site.raw())
             }
+            Self::MissingAtomSiteForAtom { atom } => {
+                write!(f, "macro-molecule atom {atom} has no hierarchy atom-site")
+            }
             Self::InvalidAtomSiteOccupancy { site } => {
                 write!(f, "atom-site {} has non-finite occupancy", site.raw())
             }
@@ -237,77 +278,6 @@ impl fmt::Display for MacroValidateError {
 }
 
 impl std::error::Error for MacroValidateError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MacroSanitizeOptions {
-    pub validate_first: bool,
-    pub normalize_elements: bool,
-    pub normalize_atom_site_metadata: bool,
-    pub validate_coordinates: bool,
-    pub recognize_standard_residues: bool,
-    pub assign_template_bonds: bool,
-    pub assign_polymer_bonds: bool,
-    pub detect_disulfides: bool,
-    pub altloc_policy: AltLocPolicy,
-    pub ligand_policy: LigandSanitizePolicy,
-}
-
-impl Default for MacroSanitizeOptions {
-    fn default() -> Self {
-        Self {
-            validate_first: true,
-            normalize_elements: false,
-            normalize_atom_site_metadata: false,
-            validate_coordinates: true,
-            recognize_standard_residues: false,
-            assign_template_bonds: false,
-            assign_polymer_bonds: false,
-            detect_disulfides: false,
-            altloc_policy: AltLocPolicy::PreserveAll,
-            ligand_policy: LigandSanitizePolicy::LeaveRaw,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AltLocPolicy {
-    PreserveAll,
-    SelectHighestOccupancy,
-    SelectLabel(String),
-    ErrorOnAltLoc,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LigandSanitizePolicy {
-    LeaveRaw,
-    SanitizeNonPolymerComponents,
-    SanitizeAllDisconnectedComponents,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MacroSanitizeReport {
-    pub validation: Option<MacroValidateReport>,
-    pub normalized_atom_sites: usize,
-    pub recognized_residues: usize,
-    pub assigned_bonds: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MacroSanitizeError {
-    Validate(MacroValidateError),
-    UnsupportedOption(&'static str),
-}
-
-impl fmt::Display for MacroSanitizeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Validate(error) => write!(f, "{error}"),
-            Self::UnsupportedOption(message) => write!(f, "{message}"),
-        }
-    }
-}
-
-impl std::error::Error for MacroSanitizeError {}
 
 fn validate_macro_molecule(
     molecule: &MacroMolecule,
@@ -377,6 +347,11 @@ fn validate_macro_molecule(
             return Err(MacroValidateError::InvalidAtomSiteBFactor { site: site_id });
         }
         report.atom_sites_checked += 1;
+    }
+    for atom in molecule.graph.atom_ids() {
+        if molecule.hierarchy.atom_site_for_atom(atom).is_none() {
+            return Err(MacroValidateError::MissingAtomSiteForAtom { atom });
+        }
     }
     if options.validate_coordinates {
         for (conformer_id, conformer) in molecule.graph.conformers() {
@@ -478,7 +453,7 @@ pub struct SmcraHierarchy {
     pub(crate) residues: Vec<SmcraResidue>,
     atom_sites: Vec<SmcraAtomSite>,
     atom_lookup: BTreeMap<AtomId, SmcraAtomSiteId>,
-    pub props: PropMap,
+    props: PropMap,
 }
 
 impl SmcraHierarchy {
@@ -618,47 +593,163 @@ impl SmcraHierarchy {
     pub fn atom_sites(&self) -> impl Iterator<Item = (SmcraAtomSiteId, &SmcraAtomSite)> {
         self.atom_sites.iter().map(|site| (site.id, site))
     }
+
+    pub fn props(&self) -> &PropMap {
+        &self.props
+    }
+
+    pub fn props_mut(&mut self) -> &mut PropMap {
+        &mut self.props
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmcraModel {
-    pub id: SmcraModelId,
-    pub model_id: String,
-    pub chains: Vec<SmcraChainId>,
-    pub props: PropMap,
+    pub(crate) id: SmcraModelId,
+    pub(crate) model_id: String,
+    pub(crate) chains: Vec<SmcraChainId>,
+    pub(crate) props: PropMap,
+}
+
+impl SmcraModel {
+    pub const fn id(&self) -> SmcraModelId {
+        self.id
+    }
+
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    pub fn chains(&self) -> &[SmcraChainId] {
+        &self.chains
+    }
+
+    pub fn props(&self) -> &PropMap {
+        &self.props
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmcraChain {
-    pub id: SmcraChainId,
-    pub model: SmcraModelId,
-    pub label_id: String,
-    pub author_id: Option<String>,
-    pub residues: Vec<SmcraResidueId>,
-    pub props: PropMap,
+    pub(crate) id: SmcraChainId,
+    pub(crate) model: SmcraModelId,
+    pub(crate) label_id: String,
+    pub(crate) author_id: Option<String>,
+    pub(crate) residues: Vec<SmcraResidueId>,
+    pub(crate) props: PropMap,
+}
+
+impl SmcraChain {
+    pub const fn id(&self) -> SmcraChainId {
+        self.id
+    }
+
+    pub const fn model(&self) -> SmcraModelId {
+        self.model
+    }
+
+    pub fn label_id(&self) -> &str {
+        &self.label_id
+    }
+
+    pub fn author_id(&self) -> Option<&str> {
+        self.author_id.as_deref()
+    }
+
+    pub fn residues(&self) -> &[SmcraResidueId] {
+        &self.residues
+    }
+
+    pub fn props(&self) -> &PropMap {
+        &self.props
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmcraResidue {
-    pub id: SmcraResidueId,
-    pub chain: SmcraChainId,
-    pub name: String,
-    pub label_comp_id: Option<String>,
-    pub author_comp_id: Option<String>,
-    pub label_seq_id: Option<i32>,
-    pub author_seq_id: Option<String>,
-    pub insertion_code: Option<String>,
-    pub atom_sites: Vec<SmcraAtomSiteId>,
-    pub props: PropMap,
+    pub(crate) id: SmcraResidueId,
+    pub(crate) chain: SmcraChainId,
+    pub(crate) name: String,
+    pub(crate) label_comp_id: Option<String>,
+    pub(crate) author_comp_id: Option<String>,
+    pub(crate) label_seq_id: Option<i32>,
+    pub(crate) author_seq_id: Option<String>,
+    pub(crate) insertion_code: Option<String>,
+    pub(crate) atom_sites: Vec<SmcraAtomSiteId>,
+    pub(crate) props: PropMap,
+}
+
+impl SmcraResidue {
+    pub const fn id(&self) -> SmcraResidueId {
+        self.id
+    }
+
+    pub const fn chain(&self) -> SmcraChainId {
+        self.chain
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn label_comp_id(&self) -> Option<&str> {
+        self.label_comp_id.as_deref()
+    }
+
+    pub fn author_comp_id(&self) -> Option<&str> {
+        self.author_comp_id.as_deref()
+    }
+
+    pub const fn label_seq_id(&self) -> Option<i32> {
+        self.label_seq_id
+    }
+
+    pub fn author_seq_id(&self) -> Option<&str> {
+        self.author_seq_id.as_deref()
+    }
+
+    pub fn insertion_code(&self) -> Option<&str> {
+        self.insertion_code.as_deref()
+    }
+
+    pub fn atom_sites(&self) -> &[SmcraAtomSiteId] {
+        &self.atom_sites
+    }
+
+    pub fn props(&self) -> &PropMap {
+        &self.props
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmcraAtomSite {
-    pub id: SmcraAtomSiteId,
-    pub residue: SmcraResidueId,
-    pub atom: AtomId,
-    pub metadata: SmcraAtomSiteMetadata,
-    pub props: PropMap,
+    pub(crate) id: SmcraAtomSiteId,
+    pub(crate) residue: SmcraResidueId,
+    pub(crate) atom: AtomId,
+    pub(crate) metadata: SmcraAtomSiteMetadata,
+    pub(crate) props: PropMap,
+}
+
+impl SmcraAtomSite {
+    pub const fn id(&self) -> SmcraAtomSiteId {
+        self.id
+    }
+
+    pub const fn residue(&self) -> SmcraResidueId {
+        self.residue
+    }
+
+    pub const fn atom(&self) -> AtomId {
+        self.atom
+    }
+
+    pub fn metadata(&self) -> &SmcraAtomSiteMetadata {
+        &self.metadata
+    }
+
+    pub fn props(&self) -> &PropMap {
+        &self.props
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -680,6 +771,7 @@ pub struct SmcraAtomSiteMetadata {
     pub cartn_z_raw: Option<String>,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmcraHierarchyError {
     InvalidModelId(SmcraModelId),

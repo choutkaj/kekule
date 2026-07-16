@@ -9,11 +9,7 @@ const MAX_FUSED_AROMATIC_RING_SIZE: usize = 24;
 const LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT: usize = 300;
 const MAX_IMPORTED_AROMATIC_MATCHING_STATES: usize = 100_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AromaticityModel {
-    RdkitLike,
-}
-
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AromaticityError {
     UnsupportedElement(AtomId),

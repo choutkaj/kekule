@@ -3,14 +3,18 @@
 ## Summary
 
 Parse SMILES syntax into a loss-preserving `SmilesDocument`, then explicitly
-interpret one record as one asserted `SmallMolecule`.
+interpret one record as one asserted `SmallMolecule` plus source mappings.
 
 ## Behavior/API
 
 - Exposes `smiles::parse_str(&str) -> SmilesDocument` and
-  `smiles::interpret(&SmilesDocument) -> SmallMolecule` with distinct errors.
+  `smiles::interpret(&SmilesDocument) -> SmilesInterpretation` with distinct
+  errors.
 - Preserves source text, tokens and UTF-8 spans, branch/ring/stereo marks, and
-  dot-component token ranges.
+  dot-component token ranges. Parsing also builds and validates the private
+  syntax program consumed by interpretation.
+- `SmilesInterpretationReport` maps parsed atom and bond records, including
+  source spans, to stable canonical `AtomId` and `BondId` values.
 - Interpretation supports the established atom, bond, branch, ring, charge,
   isotope, map, radical, aromatic-token, and local-stereo subset.
 - Dots create disconnected graph components but do not split the asserted
@@ -39,3 +43,6 @@ interpret one record as one asserted `SmallMolecule`.
   and `SmilesParseOptions`.
 - v14: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v15: Make the parse/interpret boundary real: parsing validates the complete
+  supported grammar into a private syntax program, interpretation consumes it
+  without reparsing source text, and returns canonical atom/bond mappings.

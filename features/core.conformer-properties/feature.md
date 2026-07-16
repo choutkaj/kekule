@@ -13,11 +13,13 @@ Attach arbitrary metadata to a conformer without placing coordinate-set identity
 ## Implementation Notes
 
 - Properties reuse the chemically general core `PropMap` and `PropValue` types.
-- The mmCIF interpreter records the source coordinate-model identifier on each generated conformer.
+- Format-specific coordinate-model identifiers and provenance remain in
+  interpretation reports rather than this generic property map.
 
 ## Validation
 
-- Unit tests verify source model identifiers on independently stored mmCIF conformers.
+- Unit tests verify generic conformer property storage independently of format
+  provenance.
 - No external validation evidence is required for the generic metadata container.
 
 ## Out Of Scope
@@ -27,3 +29,5 @@ Attach arbitrary metadata to a conformer without placing coordinate-set identity
 ## Revision Notes
 
 - v1: Add arbitrary conformer properties.
+- v2: Remove mmCIF coordinate-model provenance from generic conformer
+  properties and keep it in qualified interpretation reports.

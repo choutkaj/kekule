@@ -253,6 +253,7 @@ impl QueryGraphBuilder {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryGraphError {
     EmptyGraph,

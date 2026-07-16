@@ -4,13 +4,35 @@ use std::fmt;
 use crate::algorithms::explicit_valence;
 use crate::core::*;
 use crate::io::preserve_molfile_tetrahedral_hydrogens;
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::sdf_document::SdfRecord;
 
-const V2000_MAX_ATOMS: usize = 999;
-const V2000_MAX_BONDS: usize = 999;
+pub(super) const V2000_MAX_ATOMS: usize = 999;
+pub(super) const V2000_MAX_BONDS: usize = 999;
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct V2000Syntax {
+    pub(super) atoms: Vec<V2000AtomSyntax>,
+    pub(super) bonds: Vec<V2000BondSyntax>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct V2000AtomSyntax {
+    pub(super) atom: Atom,
+    pub(super) point: Point3,
+    pub(super) line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct V2000BondSyntax {
+    pub(super) a: usize,
+    pub(super) b: usize,
+    pub(super) order: BondOrder,
+    pub(super) stereo: Option<StereoBondMarkKind>,
+    pub(super) line: usize,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfParseOptions {
@@ -19,9 +41,9 @@ pub struct SdfParseOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdfParseError {
-    pub record: usize,
-    pub line: usize,
-    pub message: String,
+    pub(crate) record: usize,
+    pub(crate) line: usize,
+    pub(crate) message: String,
 }
 
 impl SdfParseError {
@@ -31,6 +53,18 @@ impl SdfParseError {
             line,
             message: message.into(),
         }
+    }
+
+    pub const fn record(&self) -> usize {
+        self.record
+    }
+
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -46,17 +80,11 @@ impl fmt::Display for SdfParseError {
 
 impl std::error::Error for SdfParseError {}
 
-pub fn read_mol_v2000_str(input: &str) -> std::result::Result<SmallMolecule, SdfParseError> {
-    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
-    let lines = normalized.lines().collect::<Vec<_>>();
-    parse_mol_v2000_lines(1, 1, &lines)
-}
-
-fn parse_mol_v2000_lines(
+pub(super) fn parse_v2000_syntax(
     record: usize,
     start_line: usize,
     lines: &[&str],
-) -> std::result::Result<SmallMolecule, SdfParseError> {
+) -> std::result::Result<V2000Syntax, SdfParseError> {
     if lines.len() < 4 {
         return Err(SdfParseError::new(
             record,
@@ -90,8 +118,6 @@ fn parse_mol_v2000_lines(
         ));
     }
 
-    let mut mol = Molecule::new();
-
     let atom_start = 4usize;
     let bond_start = atom_start.checked_add(atom_count).ok_or_else(|| {
         SdfParseError::new(record, start_line, "V2000 atom block offset overflow")
@@ -107,9 +133,7 @@ fn parse_mol_v2000_lines(
         ));
     }
 
-    let mut atom_ids = Vec::with_capacity(atom_count);
-    let mut conformer =
-        Conformer::with_atom_capacity(atom_count, ANGSTROM).expect("angstrom is a length unit");
+    let mut atoms = Vec::with_capacity(atom_count);
     for atom_index in 0..atom_count {
         let block_index = atom_start
             .checked_add(atom_index)
@@ -132,13 +156,15 @@ fn parse_mol_v2000_lines(
         apply_atom_v2000_fields(&mut atom, atom_line);
         let point = atom_coordinates_from_v2000_line(atom_line)
             .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom coordinates"))?;
-        let atom_id = mol.add_atom(atom);
-        conformer
-            .set_position(atom_id, Quantity::new(point, ANGSTROM))
-            .expect("matching coordinate units");
-        atom_ids.push(atom_id);
+        atoms.push(V2000AtomSyntax {
+            atom,
+            point,
+            line: line_number,
+        });
     }
 
+    let mut bonds = Vec::with_capacity(bond_count);
+    let mut endpoints = std::collections::BTreeSet::new();
     for bond_index in 0..bond_count {
         let block_index = bond_start
             .checked_add(bond_index)
@@ -156,23 +182,39 @@ fn parse_mol_v2000_lines(
         let b_index = b.checked_sub(1).ok_or_else(|| {
             SdfParseError::new(record, line_number, "bond endpoint must be one-based")
         })?;
-        let a = atom_ids.get(a_index).copied().ok_or_else(|| {
-            SdfParseError::new(record, line_number, "bond endpoint outside atom block")
-        })?;
-        let b = atom_ids.get(b_index).copied().ok_or_else(|| {
-            SdfParseError::new(record, line_number, "bond endpoint outside atom block")
-        })?;
-        let bond_id = mol.add_bond(a, b, order).map_err(|error| {
-            SdfParseError::new(record, line_number, format!("invalid graph bond: {error}"))
-        })?;
-        if let Some(kind) = stereo {
-            mol.set_stereo_bond_mark(StereoBondMark {
-                bond: bond_id,
-                kind,
-                source: StereoSource::MolfileV2000,
-            })
-            .expect("newly added bond should accept a stereo mark");
+        if a_index >= atoms.len() || b_index >= atoms.len() {
+            return Err(SdfParseError::new(
+                record,
+                line_number,
+                "bond endpoint outside atom block",
+            ));
         }
+        if a_index == b_index {
+            return Err(SdfParseError::new(
+                record,
+                line_number,
+                "bond endpoints must be distinct",
+            ));
+        }
+        let ordered = if a_index < b_index {
+            (a_index, b_index)
+        } else {
+            (b_index, a_index)
+        };
+        if !endpoints.insert(ordered) {
+            return Err(SdfParseError::new(
+                record,
+                line_number,
+                "duplicate bond endpoints",
+            ));
+        }
+        bonds.push(V2000BondSyntax {
+            a: a_index,
+            b: b_index,
+            order,
+            stereo,
+            line: line_number,
+        });
     }
 
     let property_line = checked_line_number(record, start_line, property_start)?;
@@ -190,10 +232,47 @@ fn parse_mol_v2000_lines(
     parse_m_records(
         record,
         property_line,
-        &mut mol,
-        &atom_ids,
+        &mut atoms,
         &lines[property_start..end_index],
     )?;
+
+    Ok(V2000Syntax { atoms, bonds })
+}
+
+pub(super) fn interpret_v2000_syntax(
+    syntax: &V2000Syntax,
+) -> std::result::Result<SmallMolecule, SdfParseError> {
+    let mut mol = Molecule::new();
+    let mut atom_ids = Vec::with_capacity(syntax.atoms.len());
+    let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
+        .expect("angstrom is a length unit");
+    for record in &syntax.atoms {
+        let atom_id = mol.add_atom(record.atom.clone());
+        conformer
+            .set_position(atom_id, Quantity::new(record.point, ANGSTROM))
+            .expect("matching coordinate units");
+        atom_ids.push(atom_id);
+    }
+    for bond in &syntax.bonds {
+        let a = atom_ids.get(bond.a).copied().ok_or_else(|| {
+            SdfParseError::new(1, bond.line, "bond endpoint outside parsed atom records")
+        })?;
+        let b = atom_ids.get(bond.b).copied().ok_or_else(|| {
+            SdfParseError::new(1, bond.line, "bond endpoint outside parsed atom records")
+        })?;
+        let bond_id = mol.add_bond(a, b, bond.order).map_err(|error| {
+            SdfParseError::new(1, bond.line, format!("invalid graph bond: {error}"))
+        })?;
+        if let Some(kind) = bond.stereo {
+            mol.set_stereo_bond_mark(StereoBondMark {
+                bond: bond_id,
+                kind,
+                source: StereoSource::MolfileV2000,
+            })
+            .expect("newly added bond should accept a stereo mark");
+        }
+    }
+
     preserve_molfile_tetrahedral_hydrogens(&mut mol);
     if conformer.positions().next().is_some() {
         mol.add_conformer(conformer)
@@ -351,8 +430,7 @@ fn checked_line_number(
 fn parse_m_records(
     record: usize,
     start_line: usize,
-    mol: &mut Molecule,
-    atom_ids: &[AtomId],
+    atoms: &mut [V2000AtomSyntax],
     lines: &[&str],
 ) -> std::result::Result<(), SdfParseError> {
     for (offset, line) in lines.iter().enumerate() {
@@ -364,8 +442,7 @@ fn parse_m_records(
                     start_line + offset,
                     count,
                     rest,
-                    mol,
-                    atom_ids,
+                    atoms,
                     |atom, value| {
                         atom.formal_charge =
                             i8::try_from(value).map_err(|_| "formal charge is outside i8 range")?;
@@ -379,8 +456,7 @@ fn parse_m_records(
                     start_line + offset,
                     count,
                     rest,
-                    mol,
-                    atom_ids,
+                    atoms,
                     |atom, value| {
                         atom.isotope = if value > 0 {
                             Some(u16::try_from(value).map_err(|_| "isotope is outside u16 range")?)
@@ -397,8 +473,7 @@ fn parse_m_records(
                     start_line + offset,
                     count,
                     rest,
-                    mol,
-                    atom_ids,
+                    atoms,
                     |atom, value| {
                         atom.radical = Some(match value {
                             1 => AtomRadical::Singlet,
@@ -421,8 +496,7 @@ fn parse_atom_value_pairs<F>(
     line: usize,
     count: &str,
     rest: &[&str],
-    mol: &mut Molecule,
-    atom_ids: &[AtomId],
+    atoms: &mut [V2000AtomSyntax],
     mut apply: F,
 ) -> std::result::Result<(), SdfParseError>
 where
@@ -451,21 +525,18 @@ where
         let atom_offset = atom_index.checked_sub(1).ok_or_else(|| {
             SdfParseError::new(record, line, "M record atom index must be one-based")
         })?;
-        let atom_id = atom_ids
-            .get(atom_offset)
-            .copied()
+        let atom = atoms
+            .get_mut(atom_offset)
+            .map(|record| &mut record.atom)
             .ok_or_else(|| SdfParseError::new(record, line, "M record atom outside atom block"))?;
-        let mut atom = mol
-            .atom_mut(atom_id)
-            .map_err(|error| SdfParseError::new(record, line, error.to_string()))?;
-        apply(&mut atom, value).map_err(|message| SdfParseError::new(record, line, message))?;
+        apply(atom, value).map_err(|message| SdfParseError::new(record, line, message))?;
     }
     Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MolWriteError {
-    pub message: String,
+    pub(crate) message: String,
 }
 
 impl MolWriteError {
@@ -473,6 +544,10 @@ impl MolWriteError {
         Self {
             message: message.into(),
         }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 

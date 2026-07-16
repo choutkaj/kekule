@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::algorithms::*;
 use crate::core::*;
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SanitizeOptions {
@@ -30,6 +30,7 @@ pub struct SanitizeReport {
     pub stereo: Option<StereoPerceptionReport>,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SanitizeError {
     Valence(ValenceReport),

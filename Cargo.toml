@@ -7,6 +7,11 @@ members = [
 ]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.89"
 repository = "https://github.com/choutkaj/molecules"
+license = "MIT"
+readme = "README.md"
+keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]
+categories = ["science", "data-structures", "parser-implementations"]

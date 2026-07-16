@@ -31,6 +31,8 @@ jobs:
       - run: cargo test --workspace
       - run: cargo test --workspace --doc
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+      - run: cargo package -p molecules --locked
+      - run: cargo package -p molecules-dreiding --locked --no-verify
       - run: cargo xtask dashboard --check
       - run: cargo xtask skills --check
       - run: cargo xtask corpus check --corpus smoke --require-data

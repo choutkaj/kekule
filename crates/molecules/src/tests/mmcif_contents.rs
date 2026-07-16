@@ -81,6 +81,28 @@ fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
     assert!(instances[1].has_role(MoleculeRole::NonPolymer));
     assert!(instances[2].has_role(MoleculeRole::Solvent));
     assert_eq!(interpreted.report().selected_model.as_deref(), Some("1"));
+    assert_eq!(interpreted.report().instances.len(), 3);
+    assert_eq!(
+        interpreted
+            .report()
+            .instances
+            .iter()
+            .map(|instance| instance.atoms.len())
+            .sum::<usize>(),
+        4
+    );
+    for instance in &instances {
+        assert!(instance.graph().props().is_empty());
+        assert!(instance
+            .graph()
+            .atoms()
+            .all(|(_, atom)| atom.props.keys().all(|key| !key.starts_with("mmcif."))));
+    }
+    let first_provenance = &interpreted.report().instances[0];
+    assert_eq!(first_provenance.coordinate_model_id, "1");
+    assert_eq!(first_provenance.asym_ids, vec!["A"]);
+    assert_eq!(first_provenance.entity_ids, vec!["1"]);
+    assert_eq!(first_provenance.atoms[0].atom_name, "N");
 }
 
 #[test]
@@ -291,16 +313,12 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
     hierarchy
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
-    let macro_molecule = MacroMolecule::from_parts(graph, hierarchy);
-    let mut builder = ModelBuilder::new();
-    builder
-        .add_macro_molecule(&macro_molecule, conformer)
-        .unwrap();
-    let incomplete = builder.build().unwrap();
-    assert!(matches!(
-        mmcif::write(&incomplete, MmcifWriteOptions::default()),
-        Err(MmcifWriteError::MissingAtomSite(_))
-    ));
+    assert_eq!(
+        MacroMolecule::try_from_parts(graph, hierarchy)
+            .expect_err("incomplete hierarchy must not construct"),
+        crate::bio::MacroValidateError::MissingAtomSiteForAtom { atom }
+    );
+    let _ = conformer;
 }
 
 #[test]
@@ -370,7 +388,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
             )
             .unwrap();
     }
-    let macro_molecule = MacroMolecule::from_parts(graph, hierarchy);
+    let macro_molecule = MacroMolecule::try_from_parts(graph, hierarchy).unwrap();
     let mut builder = ModelBuilder::new();
     builder
         .add_macro_molecule(&macro_molecule, conformer)

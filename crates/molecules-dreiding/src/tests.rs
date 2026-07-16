@@ -1,4 +1,4 @@
-use molecules::bio::{MacroMolecule, SmcraHierarchy};
+use molecules::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
 use molecules::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3};
 use molecules::modeling::potential::{Potential, PotentialError};
 use molecules::modeling::{InstanceAtomId, Model, MoleculeInstanceId};
@@ -139,7 +139,18 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
 #[test]
 fn eligible_macro_molecules_are_supported() {
     let (small, conformer) = water(0.0);
-    let macromolecule = MacroMolecule::from_parts(small.graph().clone(), SmcraHierarchy::new());
+    let mut hierarchy = SmcraHierarchy::new();
+    let model = hierarchy.add_model("1");
+    let chain = hierarchy.add_chain(model, "A", None).unwrap();
+    let residue = hierarchy
+        .add_residue(chain, "HOH", None, None, None)
+        .unwrap();
+    for atom in small.graph().atom_ids() {
+        hierarchy
+            .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
+            .unwrap();
+    }
+    let macromolecule = MacroMolecule::try_from_parts(small.graph().clone(), hierarchy).unwrap();
     let model = Model::from_macro_molecule(&macromolecule, conformer).unwrap();
     let mut potential = DreidingPotential::prepare(&model).unwrap();
     assert!(potential.evaluate(&model).unwrap().energy().is_finite());

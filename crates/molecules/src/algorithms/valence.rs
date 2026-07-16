@@ -2,11 +2,6 @@ use crate::core::*;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValenceModel {
-    RdkitLike,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValenceOptions {
     pub strict: bool,
 }

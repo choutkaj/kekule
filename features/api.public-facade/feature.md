@@ -12,10 +12,14 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
-- `MacroMolecule` hides its raw graph and hierarchy fields behind `graph()`, `graph_mut()`, `hierarchy()`, and `hierarchy_mut()`.
-- `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and separate macro validation/sanitization APIs.
+- `MacroMolecule` exposes read-only graph/hierarchy access plus checked
+  construction and transactional coordinated editing; completed values cannot
+  be independently mutated into an invalid graph/hierarchy pair.
+- `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and
+  read-only validation. The placeholder macro sanitization surface is absent.
 - SMILES, Molfile, SDF, and mmCIF expose format-specific Documents and explicit
-  interpretation; superseded direct reader APIs are absent.
+  interpretation results with reports/mappings; superseded direct reader APIs
+  are absent.
 - `mmcif::write` exposes explicit supported `Model` serialization with
   format-specific options and structured rejection errors.
 - `Molecule` is one asserted entity and may have disconnected graph topology.
@@ -38,8 +42,13 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `graph_mut()` itself is state-neutral; chemistry and topology mutators on the
   returned graph perform their own targeted invalidation, allowing perception
   operations to consume already-installed prerequisite state.
-- Macro validation is read-only; macro sanitization is conservative and rejects unsupported preparation-like options instead of silently guessing.
 - Internal validation tooling uses the same public namespaces as user code.
+- Invariant-bearing hierarchy, provenance, document, model, and structured
+  error state is private behind accessors or checked constructors.
+- Extensible public error enums are non-exhaustive. Deliberate value, options,
+  and report payloads may retain direct public fields.
+- Published crates start at `0.1.0`; breaking changes in the `0.x` line require
+  a minor version increment.
 
 ## Validation
 
@@ -78,3 +87,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   aliases.
 - v14: Add the focused `units` namespace and migrate coordinate and modelling
   boundaries to explicit quantities without expanding the prelude.
+- v15: Establish the hard-break release facade: real format interpretation
+  results/reports, checked macromolecule lifecycle, private invariant-bearing
+  hierarchy/provenance/error state, non-exhaustive extensible errors, and the
+  published `0.1.0` contract.

@@ -13,8 +13,10 @@ fuzz_target!(|data: &[u8]| {
             allow_missing_final_delimiter: true,
         },
     ) {
-        let Ok(records) = interpret(&document) else { return };
-        if let Ok(output) = write_v2000(&records) {
+        let Ok(interpreted) = interpret(&document) else {
+            return;
+        };
+        if let Ok(output) = write_v2000(interpreted.records()) {
             if let Ok(document) = parse_str(&output, SdfParseOptions::default()) {
                 let _ = interpret(&document);
             }

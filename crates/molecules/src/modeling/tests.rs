@@ -59,7 +59,7 @@ fn one_atom_macro() -> (MacroMolecule, ConformerId, AtomId, SmcraAtomSiteId) {
         .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .unwrap();
     (
-        MacroMolecule::from_parts(graph, hierarchy),
+        MacroMolecule::try_from_parts(graph, hierarchy).unwrap(),
         conformer,
         atom,
         site,

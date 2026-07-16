@@ -21,9 +21,14 @@ into a `Model` with distinct molecule instances and a report.
   `_struct_conn.pdbx_value_order`; a missing value defaults to single and an
   unsupported explicit value returns a structured interpretation error.
 - Assigns conservative evidence-backed roles and exposes exact source
-  classifications through graph properties/report data.
+  classifications through report/provenance data.
 - Reports selected and ignored models, altloc omissions, inferred entity kinds,
   applied/ignored/unresolved connections, and pending template connectivity.
+- Reports every interpreted atom through `MmcifAtomProvenance`, qualified by
+  `MoleculeInstanceId` and `InstanceAtomId`, with source line, atom-site,
+  component, asymmetry, entity, and coordinate-model identifiers.
+- Never writes mmCIF-specific labels into generic atom, molecule, or conformer
+  property maps.
 
 ## Implementation Notes
 
@@ -60,3 +65,6 @@ into a `Model` with distinct molecule instances and a report.
   `SmcraHierarchy` API without changing interpretation semantics.
 - v6: Carry the mmCIF Cartesian angstrom convention through explicit conformer
   and model quantities.
+- v7: Move all mmCIF labels and source identity into structured,
+  instance-qualified interpretation provenance and keep core property maps
+  format-neutral.

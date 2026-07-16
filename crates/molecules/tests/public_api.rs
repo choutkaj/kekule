@@ -27,10 +27,44 @@ fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
     let document = molecules::smiles::parse_str("CC(=O)O")?;
-    let mut mol = molecules::smiles::interpret(&document)?;
+    let interpreted = molecules::smiles::interpret(&document)?;
+    assert_eq!(interpreted.report().atom_mappings().len(), 4);
+    assert_eq!(interpreted.report().bond_mappings().len(), 3);
+    let mut mol = interpreted.into_molecule();
     molecules::perception::sanitize(&mut mol)?;
     let smiles = molecules::smiles::write_canonical(&mol)?;
     assert!(!smiles.is_empty());
+    Ok(())
+}
+
+#[test]
+fn molfile_and_sdf_interpretation_reports_are_public() -> Result<(), Box<dyn std::error::Error>> {
+    let molfile = "\
+Report
+molecules
+
+  1  0  0  0  0  0            999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0
+M  END
+";
+    let document = molecules::molfile::parse_str(molfile)?;
+    let interpreted = molecules::molfile::interpret(&document)?;
+    assert_eq!(interpreted.report().atom_mappings().len(), 1);
+    assert_eq!(interpreted.report().atom_mappings()[0].source_line(), 5);
+
+    let sdf = format!("{molfile}>  <SOURCE>\nrelease-test\n\n$$$$\n");
+    let document = molecules::sdf::parse_str(&sdf, molecules::sdf::SdfParseOptions::default())?;
+    let interpreted = molecules::sdf::interpret(&document)?;
+    assert_eq!(interpreted.records().len(), 1);
+    assert_eq!(interpreted.report().records()[0].record(), 1);
+    assert_eq!(interpreted.report().records()[0].source_start_line(), 1);
+    assert_eq!(
+        interpreted.report().records()[0]
+            .molfile()
+            .atom_mappings()
+            .len(),
+        1
+    );
     Ok(())
 }
 
@@ -81,29 +115,27 @@ fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
-    let mut macro_mol = MacroMolecule::new();
-    let atom = macro_mol.graph_mut().add_atom(Atom::new(
+    let mut builder = MacroMolecule::builder();
+    let atom = builder.graph_mut().add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
     ));
 
-    let model = macro_mol.hierarchy_mut().add_model("1");
-    let chain = macro_mol.hierarchy_mut().add_chain(model, "A", None)?;
+    let model = builder.hierarchy_mut().add_model("1");
+    let chain = builder.hierarchy_mut().add_chain(model, "A", None)?;
     let residue =
-        macro_mol
+        builder
             .hierarchy_mut()
             .add_residue(chain, "GLY", Some(1), Some("1".to_owned()), None)?;
-    macro_mol.add_atom_site(
+    builder.add_atom_site(
         residue,
         atom,
         molecules::bio::SmcraAtomSiteMetadata::default(),
     )?;
+    let macro_mol = builder.build()?;
 
     let validate = macro_mol.validate()?;
     assert_eq!(validate.models_checked, 1);
     assert_eq!(validate.atom_sites_checked, 1);
-
-    let sanitize = macro_mol.sanitize()?;
-    assert!(sanitize.validation.is_some());
     Ok(())
 }
 
@@ -115,7 +147,7 @@ fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error
     let mut hierarchy = SmcraHierarchy::new();
     let hierarchy_model_id = hierarchy.add_model("1");
     let hierarchy_model: &SmcraModel = hierarchy.model(hierarchy_model_id)?;
-    assert_eq!(hierarchy_model.model_id, "1");
+    assert_eq!(hierarchy_model.model_id(), "1");
 
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(
@@ -201,7 +233,7 @@ fn production_smiles_stereo_uses_installed_perception_state(
     use molecules::perception::{self, stereo, SanitizeOptions};
 
     let document = molecules::smiles::parse_str(r"C(=C\F)\F")?;
-    let mut molecule = molecules::smiles::interpret(&document)?;
+    let mut molecule = molecules::smiles::interpret(&document)?.into_molecule();
     perception::sanitize_with_options(
         &mut molecule,
         SanitizeOptions {
@@ -240,7 +272,7 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
         "../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
     );
     let document = molecules::molfile::parse_str(input)?;
-    let mut molecule = molecules::molfile::interpret(&document)?;
+    let mut molecule = molecules::molfile::interpret(&document)?.into_molecule();
     perception::sanitize(&mut molecule)?;
     let report = stereo::assign_cip_descriptors(molecule.graph_mut());
 
@@ -256,7 +288,7 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
 fn production_canonical_smiles_preserves_collapsed_hydrogen_without_perception(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let document = molecules::smiles::parse_str("[H][C](F)(Cl)Br")?;
-    let molecule = molecules::smiles::interpret(&document)?;
+    let molecule = molecules::smiles::interpret(&document)?.into_molecule();
     assert!(!molecule.graph().perception().has_valence());
 
     let written = molecules::smiles::write_canonical(&molecule)?;

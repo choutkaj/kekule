@@ -5,12 +5,18 @@
   </picture>
 </p>
 
-`molecules` is an experimental pure-Rust backend for both small-molecule and macromolecular structure work. This project is human-architected and AI-coded. The cheminformatic capabilities are bundled into features, which are parity-checked against established codebases - RDKit for small molecules and Biopython for macromolecules.
+`molecules` is a pre-1.0 pure-Rust backend for both small-molecule and
+macromolecular structure work. This project is human-architected and AI-coded.
+The cheminformatic capabilities are bundled into features, which are
+parity-checked against established codebases - RDKit for small molecules and
+Biopython for macromolecules.
 
 For already-implemented features, see the [rendered feature dashboard](https://choutkaj.github.io/molecules/) or inspect the generated [dashboard source](features/DASHBOARD.html).
 
 > [!NOTE]
-> It is early. API may break without warning.
+> The `0.x` series follows Cargo semver: breaking API changes are released in a
+> new minor version. Focused facade modules are the supported public surface;
+> implementation modules remain private.
 
 
 ## Basic Usage
@@ -45,7 +51,8 @@ The equivalent staged path keeps the raw format document available:
 ```rust
 let document = molecules::smiles::parse_str("[Na+].[Cl-]")?;
 assert_eq!(document.component_token_ranges().len(), 2);
-let salt = molecules::smiles::interpret(&document)?;
+let interpreted = molecules::smiles::interpret(&document)?;
+let salt = interpreted.molecule();
 assert_eq!(salt.atom_count(), 2);
 assert_eq!(salt.graph().connected_components().len(), 2);
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -179,7 +186,7 @@ C C1 GLY A 1 1 0.0 0.0 0.0
     let macro_mol = macro_instance.macro_molecule().expect("macro instance");
 
     println!("atoms: {}", interpreted.model().atom_count());
-    println!("selected model: {:?}", interpreted.report().selected_model);
+    println!("selected model: {:?}", interpreted.report().selected_model());
 
     let output = mmcif::write(interpreted.model(), MmcifWriteOptions::default())?;
     assert!(output.starts_with("data_model"));

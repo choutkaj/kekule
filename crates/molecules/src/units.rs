@@ -240,6 +240,7 @@ impl Div for Unit {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnitError {
     InvalidScale(f64),

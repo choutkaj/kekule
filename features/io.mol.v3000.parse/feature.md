@@ -3,13 +3,17 @@
 ## Summary
 
 Interpret V3000 records from the version-autodetected loss-preserving
-`MolfileDocument` as one `SmallMolecule`.
+`MolfileDocument` as one `SmallMolecule` plus source mappings.
 
 ## Behavior/API
 
 - Shares `molfile::parse_str` and `molfile::interpret` with V2000; no
   version-specific reader remains.
-- Parses three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND` sections, and line continuations.
+- Parses three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND`
+  sections, and line continuations into a validated private typed syntax
+  representation.
+- Interpretation returns `MolfileInterpretation`; its report maps source atom
+  and bond records to stable canonical `AtomId` and `BondId` values.
 - Preserves title/program/comment properties, atom coordinates, bond orders, atom map numbers, formal charges, isotopes via `MASS`, radical multiplicities, and supported V3000 bond `CFG` stereo as source bond marks.
 - Preserves valence-implied hydrogen carriers on degree-three tetrahedral `CFG`
   centers as explicit atom hydrogens using the same rule as V2000 parsing.
@@ -51,3 +55,6 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
   tier while retaining every ignored corpus on demand.
 - v10: Record the CTfile coordinate convention as an explicit angstrom
   conformer unit.
+- v11: Make parsing own the typed V3000 atom/bond representation and validation;
+  interpretation consumes it without reparsing source lines and returns
+  canonical mappings.

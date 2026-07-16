@@ -2,8 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use molecules::mmcif::{
-    interpret, parse_str, MmcifEntry, MmcifInterpretOptions, MmcifModelSelection,
-    MmcifParseOptions,
+    interpret, parse_str, MmcifEntry, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
 };
 
 fuzz_target!(|data: &[u8]| {

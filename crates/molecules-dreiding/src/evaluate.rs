@@ -8,10 +8,10 @@ use molecules::modeling::potential::{
     Potential, PotentialError, PotentialEvaluation, PotentialGeometryError, Vector3,
 };
 use molecules::modeling::{InstanceAtomId, Model};
-use molecules::units::{MODEL_ENERGY_UNIT, MODEL_GRADIENT_UNIT, Quantity};
+use molecules::units::{Quantity, MODEL_ENERGY_UNIT, MODEL_GRADIENT_UNIT};
 
 use crate::geometry::{
-    GeometryError, angle_cosine, displacement, hydrogen_bond_cosine, inversion_cosine, torsion,
+    angle_cosine, displacement, hydrogen_bond_cosine, inversion_cosine, torsion, GeometryError,
 };
 use crate::prepare::{AngleTerm, DreidingPotential, InversionTerm};
 

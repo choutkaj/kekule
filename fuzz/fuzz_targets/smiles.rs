@@ -8,8 +8,12 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     if let Ok(document) = parse_str(input) {
-        let Ok(molecule) = interpret(&document) else { return };
-        if let Ok(output) = write_with_options(&molecule, SmilesWriteOptions::default()) {
+        let Ok(interpreted) = interpret(&document) else {
+            return;
+        };
+        if let Ok(output) =
+            write_with_options(interpreted.molecule(), SmilesWriteOptions::default())
+        {
             if let Ok(document) = parse_str(&output) {
                 let _ = interpret(&document);
             }
