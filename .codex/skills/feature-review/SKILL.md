@@ -26,6 +26,9 @@ Lead with findings ordered by severity. Check:
 - Non-lossy parser/writer round trips and explicit rejection of unsupported chemistry.
 - Algorithmic resource limits and stack safety where relevant.
 - Validation claims, per-corpus parity evidence, manifest hashes, and evidence freshness.
+- Feature status accuracy and dependency-graph integrity, including maturity
+  compatibility, unknown prerequisites, duplicates, self-dependencies, and
+  cycles.
 - Whether comparisons, asserted fields, tests, or goldens were weakened merely to obtain a pass.
 - Synchronization of feature metadata, feature docs, dashboard, and skills.
 - Commands not run and unsupported claims in the PR description.

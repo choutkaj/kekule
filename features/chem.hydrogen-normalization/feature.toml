@@ -3,7 +3,7 @@ title = "Hydrogen topology normalization"
 area = "chemistry"
 domains = ["small-molecule"]
 version = 1
-implemented = true
+status = "supported"
 description = "Materialize and collapse ordinary small-molecule hydrogens transactionally without hiding perception or losing protected hydrogen state."
 depends_on = [
   "core.graph",

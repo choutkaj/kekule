@@ -11,7 +11,9 @@ The cheminformatic capabilities are bundled into features, which are
 parity-checked against established codebases - RDKit for small molecules and
 Biopython for macromolecules.
 
-For already-implemented features, see the [rendered feature dashboard](https://choutkaj.github.io/molecules/) or inspect the generated [dashboard source](features/DASHBOARD.html).
+For feature release status, validation evidence, and the generated dependency
+graph, see the [rendered feature dashboard](https://choutkaj.github.io/molecules/)
+or inspect the generated [dashboard source](features/DASHBOARD.html).
 
 > [!NOTE]
 > The `0.x` series follows Cargo semver: breaking API changes are released in a

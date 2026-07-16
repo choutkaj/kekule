@@ -15,14 +15,16 @@ or manually curated external-reference golden data.
 - Compares normalized Rust implementation output against each golden file's `expected` payload.
 - Compares fixtures in parallel by default using all available processors; `--jobs N` bounds validation to a fixed worker count.
 - Prints compact progress output for the overall target set and for fixture comparison within each feature/corpus target.
-- Accepts only declared implementation-vs-golden comparison manifests for required implemented validation.
+- Accepts only declared implementation-vs-golden comparison manifests for
+  required validation of available features.
 - Declares corpus availability in typed metadata; local-only corpora remain
   explicitly runnable with a concrete `--corpus` selector but are rejected from
   feature `validation_required` lists because a clean checkout cannot recompute
   their fixture evidence. `--corpus all`, including the default when the flag is
-  omitted, selects every required target plus every implemented
-  manifest-backed target across all registered corpora, including local-only
-  large corpora.
+  omitted, selects every required target plus every manifest-backed target
+  whose feature status is `experimental`, `supported`, or `deprecated`, across
+  all registered corpora, including local-only large corpora. `planned`
+  features are excluded because they have no usable implementation.
 - Verifies golden `feature_id`, `corpus_id`, `fixture_path`, current fixture SHA-256, and reference tool/version metadata before comparing payloads.
 - Records content-addressed pass evidence over manifests, source locks, fixtures, goldens, Rust source, Cargo manifests, feature metadata, and reference generator/environment files when the reference tool is generator-backed.
 - Supports manually curated semantic references when the manifest
@@ -94,7 +96,7 @@ or manually curated external-reference golden data.
 - Passing comparisons are evidence for the compared behavior; failing comparisons identify implementation gaps and should not be papered over.
 - Unit coverage rejects local-only corpus IDs in `validation_required` while
   verifying that explicit and default all-corpus selection includes every
-  implemented manifest-backed local corpus.
+  available manifest-backed local corpus and excludes planned features.
 
 ## Out Of Scope
 
@@ -141,3 +143,6 @@ or manually curated external-reference golden data.
   dashboard cells now carry the full parity result without metadata syncing.
 - v23: Make explicit and omitted `--corpus all` select every applicable
   registered corpus, including large local-only corpora.
+- v24: Select manifest-backed validation targets from explicit feature release
+  status, including experimental and deprecated implementations while
+  excluding planned features.

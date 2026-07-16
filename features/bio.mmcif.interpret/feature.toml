@@ -3,7 +3,7 @@ title = "mmCIF molecular interpretation"
 area = "bio"
 domains = ["macromolecule"]
 version = 7
-implemented = true
+status = "supported"
 description = "Interpret one selected mmCIF coordinate model into typed instances with explicit bond orders and qualified format provenance."
 depends_on = [
   "bio.hierarchy.smcra",

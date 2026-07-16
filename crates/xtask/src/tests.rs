@@ -32,7 +32,7 @@ title = "Example"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 2
-implemented = false
+status = "planned"
 description = "Example feature."
 depends_on = ["core.graph"]
 validation_required = []
@@ -44,10 +44,31 @@ validation_required = []
 
     assert_eq!(feature.id, "example.feature");
     assert_eq!(feature.version, 2);
-    assert!(!feature.implemented);
+    assert_eq!(feature.status, FeatureStatus::Planned);
+    assert!(!feature.status.has_implementation());
     assert_eq!(feature.domains, vec![FeatureDomain::Infrastructure]);
     assert_eq!(feature.depends_on, vec!["core.graph"]);
     fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn feature_status_parses_the_release_vocabulary() {
+    #[derive(Deserialize)]
+    struct StatusOnly {
+        status: FeatureStatus,
+    }
+
+    for (name, expected, has_implementation) in [
+        ("planned", FeatureStatus::Planned, false),
+        ("experimental", FeatureStatus::Experimental, true),
+        ("supported", FeatureStatus::Supported, true),
+        ("deprecated", FeatureStatus::Deprecated, true),
+    ] {
+        let parsed: StatusOnly =
+            toml::from_str(&format!("status = \"{name}\"")).expect("release status should parse");
+        assert_eq!(parsed.status, expected);
+        assert_eq!(parsed.status.has_implementation(), has_implementation);
+    }
 }
 
 #[test]
@@ -86,7 +107,7 @@ title = "Bad requirement"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 1
-implemented = true
+status = "supported"
 description = "Invalid local-only validation requirement."
 depends_on = []
 validation_required = ["pubchem-100"]
@@ -112,7 +133,33 @@ validation_required = ["pubchem-100"]
 }
 
 #[test]
-fn read_feature_rejects_bad_boolean_removed_or_deprecated_keys_and_shape_errors() {
+fn read_feature_rejects_required_validation_for_planned_features() {
+    let root = temp_feature_root("planned-required-validation");
+    write_feature(
+        &root,
+        "planned.validation",
+        r#"id = "planned.validation"
+title = "Planned validation"
+area = "infrastructure"
+domains = ["infrastructure"]
+version = 1
+status = "planned"
+description = "Planned features cannot require validation."
+depends_on = []
+validation_required = ["smoke"]
+"#,
+    );
+
+    let error = read_feature(&root.join("planned.validation").join("feature.toml"))
+        .expect_err("planned features should not require validation");
+    assert!(error
+        .to_string()
+        .contains("status `planned` but declares required validation"));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn read_feature_rejects_unknown_status_removed_keys_and_shape_errors() {
     let root = temp_feature_root("bad-feature");
     write_feature(
         &root,
@@ -122,13 +169,29 @@ title = "Bad"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 1
-implemented = maybe
+status = "unknown"
 description = "Bad feature."
 depends_on = []
 validation_required = []
 "#,
     );
     assert!(read_feature(&root.join("bad.bool").join("feature.toml")).is_err());
+
+    write_feature(
+        &root,
+        "bad.implemented",
+        r#"id = "bad.implemented"
+title = "Bad"
+area = "infrastructure"
+domains = ["infrastructure"]
+version = 1
+implemented = false
+description = "Removed metadata field."
+depends_on = []
+validation_required = []
+"#,
+    );
+    assert!(read_feature(&root.join("bad.implemented").join("feature.toml")).is_err());
 
     write_feature(
         &root,
@@ -139,7 +202,7 @@ area = "infrastructure"
 domains = ["infrastructure"]
 version = 1
 priority = "P0"
-implemented = false
+status = "planned"
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -155,7 +218,7 @@ title = "Bad"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 1
-implemented = false
+status = "planned"
 validated = false
 description = "Removed metadata field."
 depends_on = []
@@ -172,7 +235,7 @@ title = "Bad"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 0
-implemented = false
+status = "planned"
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -188,7 +251,7 @@ title = "Bad"
 area = "infrastructure"
 domains = ["infrastructure", "small-molecule"]
 version = 1
-implemented = false
+status = "planned"
 description = "Bad feature domains."
 depends_on = []
 validation_required = []
@@ -204,7 +267,7 @@ title = "Bad"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 1
-implemented = false
+status = "planned"
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -220,7 +283,7 @@ title = "Bad"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 1
-implemented = false
+status = "planned"
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -241,7 +304,7 @@ title = "Zed"
 area = "core"
 domains = ["small-molecule", "macromolecule"]
 version = 1
-implemented = true
+status = "experimental"
 description = "Z feature."
 depends_on = ["a.feature"]
 validation_required = []
@@ -255,7 +318,7 @@ title = "Aye"
 area = "core"
 domains = ["small-molecule", "macromolecule"]
 version = 1
-implemented = false
+status = "experimental"
 description = "A feature."
 depends_on = []
 validation_required = []
@@ -283,7 +346,7 @@ title = "Bad"
 area = "core"
 domains = ["small-molecule"]
 version = 1
-implemented = false
+status = "planned"
 description = "Bad dependency."
 depends_on = ["missing.feature"]
 validation_required = []
@@ -291,6 +354,78 @@ validation_required = []
     );
     assert!(read_features_from(&root).is_err());
     fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn feature_graph_rejects_duplicate_self_cyclic_and_incompatible_dependencies() {
+    let base = feature_for_test("base", FeatureStatus::Supported, &[]);
+
+    let duplicate = feature_for_test("duplicate", FeatureStatus::Experimental, &["base", "base"]);
+    let error = validate_feature_set(&[base.clone(), duplicate])
+        .expect_err("duplicate dependencies should be rejected");
+    assert!(error.to_string().contains("more than once"));
+
+    let self_dependent = feature_for_test("self", FeatureStatus::Planned, &["self"]);
+    let error =
+        validate_feature_set(&[self_dependent]).expect_err("self dependencies should be rejected");
+    assert!(error.to_string().contains("depends on itself"));
+
+    let cycle_a = feature_for_test("cycle.a", FeatureStatus::Planned, &["cycle.b"]);
+    let cycle_b = feature_for_test("cycle.b", FeatureStatus::Planned, &["cycle.a"]);
+    let error = validate_feature_set(&[cycle_a, cycle_b])
+        .expect_err("dependency cycles should be rejected");
+    assert!(error
+        .to_string()
+        .contains("feature dependency graph contains a cycle: cycle.a -> cycle.b -> cycle.a"));
+
+    let experimental = feature_for_test("experimental", FeatureStatus::Experimental, &[]);
+    let supported = feature_for_test("supported", FeatureStatus::Supported, &["experimental"]);
+    let error = validate_feature_set(&[experimental, supported])
+        .expect_err("supported features should require supported dependencies");
+    assert!(error
+        .to_string()
+        .contains("`supported` features may depend only on `supported` features"));
+
+    let planned = feature_for_test("planned", FeatureStatus::Planned, &[]);
+    let experimental = feature_for_test("experimental", FeatureStatus::Experimental, &["planned"]);
+    let error = validate_feature_set(&[planned, experimental])
+        .expect_err("experimental features should not depend on planned work");
+    assert!(error.to_string().contains(
+        "`experimental` features may depend only on `experimental` or `supported` features"
+    ));
+
+    let supported = feature_for_test("supported", FeatureStatus::Supported, &[]);
+    let experimental =
+        feature_for_test("experimental", FeatureStatus::Experimental, &["supported"]);
+    let deprecated = feature_for_test("deprecated", FeatureStatus::Deprecated, &["experimental"]);
+    let planned = feature_for_test("planned", FeatureStatus::Planned, &["deprecated"]);
+    validate_feature_set(&[supported, experimental, deprecated, planned])
+        .expect("each status should accept its documented dependency maturity");
+}
+
+#[test]
+fn feature_dependency_layers_are_deterministic() {
+    let features = vec![
+        feature_for_test("leaf", FeatureStatus::Supported, &["right", "left"]),
+        feature_for_test("right", FeatureStatus::Supported, &["root"]),
+        feature_for_test("root", FeatureStatus::Supported, &[]),
+        feature_for_test("left", FeatureStatus::Supported, &["root"]),
+    ];
+
+    validate_feature_set(&features).expect("feature graph should be valid");
+    let layers = feature_dependency_layers(&features).expect("layers should resolve");
+    assert_eq!(
+        layers
+            .iter()
+            .map(|layer| {
+                layer
+                    .iter()
+                    .map(|feature| feature.id.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        vec![vec!["root"], vec!["left", "right"], vec!["leaf"]]
+    );
 }
 
 #[test]
@@ -302,7 +437,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "core".to_owned(),
             domains: vec![FeatureDomain::SmallMolecule, FeatureDomain::Macromolecule],
             version: 1,
-            implemented: false,
+            status: FeatureStatus::Supported,
             description: "A feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: Vec::new(),
@@ -313,7 +448,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "io".to_owned(),
             domains: vec![FeatureDomain::SmallMolecule],
             version: 3,
-            implemented: true,
+            status: FeatureStatus::Supported,
             description: "Z feature.".to_owned(),
             depends_on: vec!["a.feature".to_owned()],
             validation_required: Vec::new(),
@@ -324,7 +459,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "validation".to_owned(),
             domains: vec![FeatureDomain::SmallMolecule],
             version: 1,
-            implemented: true,
+            status: FeatureStatus::Deprecated,
             description: "Feature with counted failures.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -335,7 +470,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "validation".to_owned(),
             domains: vec![FeatureDomain::Macromolecule],
             version: 1,
-            implemented: true,
+            status: FeatureStatus::Experimental,
             description: "Feature without recorded status.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -346,7 +481,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             area: "infrastructure".to_owned(),
             domains: vec![FeatureDomain::Infrastructure],
             version: 2,
-            implemented: true,
+            status: FeatureStatus::Supported,
             description: "Infrastructure feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: Vec::new(),
@@ -449,6 +584,12 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains("<h2>Small molecules</h2>"));
     assert!(dashboard.contains("<h2>Macromolecules</h2>"));
     assert!(dashboard.contains("<h2>Infrastructure and harness</h2>"));
+    assert!(dashboard.contains("<h2>Feature dependency graph</h2>"));
+    assert!(dashboard.contains("class=\"feature-graph\""));
+    assert!(dashboard.contains("marker-end=\"url(#feature-graph-arrow)\""));
+    assert!(dashboard.contains("<a href=\"./z.feature/feature.md\">"));
+    assert!(dashboard.contains("layer 0"));
+    assert!(dashboard.contains("layer 1"));
     assert!(dashboard.contains("<strong>Reference codebase:</strong> RDKit v2026.03.3"));
     assert!(dashboard.contains("<strong>Reference codebase:</strong> Biopython v1.87"));
     assert!(dashboard.contains("<strong>DSSP executable:</strong> mkdssp v4.6.1"));
@@ -457,9 +598,14 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains("<td class=\"compact area\" data-sort-value=\"core\">core</td>"));
     assert!(!dashboard
         .contains("aria-label=\"Sort by Area\"><span class=\"rotated-label\">Area</span>"));
-    assert!(dashboard.contains(
-        "<span class=\"rotated-label\"><span class=\"rotated-name\">Implemented</span></span>"
-    ));
+    assert!(dashboard.contains("aria-label=\"Sort by Status\">Status</button>"));
+    assert!(dashboard.contains("<span class=\"feature-status status-supported\">supported</span>"));
+    assert!(dashboard
+        .contains("<span class=\"feature-status status-experimental\">experimental</span>"));
+    assert!(
+        dashboard.contains("<span class=\"feature-status status-deprecated\">deprecated</span>")
+    );
+    assert!(!dashboard.contains(">Implemented<"));
     assert!(dashboard.contains("height: 168px"));
     assert!(dashboard.contains("left: calc(50% + 23px)"));
     assert!(dashboard.contains("bottom: 12px"));
@@ -507,7 +653,7 @@ fn dashboard_corpus_cells_show_optional_manifest_evidence() {
         area: "validation".to_owned(),
         domains: vec![FeatureDomain::SmallMolecule],
         version: 1,
-        implemented: true,
+        status: FeatureStatus::Supported,
         description: "Feature with optional corpus evidence.".to_owned(),
         depends_on: Vec::new(),
         validation_required: Vec::new(),
@@ -576,7 +722,7 @@ description: Builder skill.
 ---
 # Feature Work
 add -> optional research -> plan -> implement
-Use feature.md. Set implemented = true with evidence and declare validation_required.
+Use feature.md. Set status = "supported" with evidence, declare depends_on, and declare validation_required.
 Molecular validation fixtures must be externally supplied.
 Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id> --corpus smoke.
 "#,
@@ -694,7 +840,7 @@ fn progress_bars_are_compact_and_deterministic() {
 }
 
 #[test]
-fn validation_defaults_to_all_and_all_includes_manifest_backed_local_corpora() {
+fn validation_defaults_to_all_and_all_includes_available_manifest_backed_features() {
     assert_eq!(validation_corpus_selector(&[]), "all");
     assert_eq!(
         validation_corpus_selector(&[
@@ -714,7 +860,7 @@ fn validation_defaults_to_all_and_all_includes_manifest_backed_local_corpora() {
             area: "io".to_owned(),
             domains: vec![FeatureDomain::SmallMolecule],
             version: 1,
-            implemented: true,
+            status: FeatureStatus::Supported,
             description: "Small feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -725,7 +871,7 @@ fn validation_defaults_to_all_and_all_includes_manifest_backed_local_corpora() {
             area: "bio".to_owned(),
             domains: vec![FeatureDomain::Macromolecule],
             version: 1,
-            implemented: true,
+            status: FeatureStatus::Experimental,
             description: "Macro feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -736,8 +882,19 @@ fn validation_defaults_to_all_and_all_includes_manifest_backed_local_corpora() {
             area: "descriptors".to_owned(),
             domains: vec![FeatureDomain::SmallMolecule],
             version: 1,
-            implemented: false,
+            status: FeatureStatus::Planned,
             description: "Planned feature.".to_owned(),
+            depends_on: Vec::new(),
+            validation_required: Vec::new(),
+        },
+        Feature {
+            id: "deprecated".to_owned(),
+            title: "Deprecated".to_owned(),
+            area: "descriptors".to_owned(),
+            domains: vec![FeatureDomain::SmallMolecule],
+            version: 1,
+            status: FeatureStatus::Deprecated,
+            description: "Deprecated feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: Vec::new(),
         },
@@ -748,6 +905,7 @@ fn validation_defaults_to_all_and_all_includes_manifest_backed_local_corpora() {
         ("small", "enamine-diversity"),
         ("macro", "pdb-100"),
         ("planned", "smoke"),
+        ("deprecated", "pubchem-100"),
     ] {
         let path = validation_manifest_path_from(&root, feature, corpus);
         fs::create_dir_all(path.parent().expect("manifest parent"))
@@ -774,6 +932,7 @@ fn validation_defaults_to_all_and_all_includes_manifest_backed_local_corpora() {
             ("small", "enamine-diversity".to_owned()),
             ("macro", "smoke".to_owned()),
             ("macro", "pdb-100".to_owned()),
+            ("deprecated", "pubchem-100".to_owned()),
         ]
     );
     assert_eq!(
@@ -1183,7 +1342,7 @@ fn recorded_dashboard_status_is_portable_without_global_validation_state() {
         area: "infrastructure".to_owned(),
         domains: vec![FeatureDomain::Infrastructure],
         version: 1,
-        implemented: true,
+        status: FeatureStatus::Supported,
         description: "Portable dashboard evidence.".to_owned(),
         depends_on: Vec::new(),
         validation_required: vec!["smoke".to_owned()],
@@ -1754,6 +1913,23 @@ fn temp_feature_root(label: &str) -> PathBuf {
     root
 }
 
+fn feature_for_test(id: &str, status: FeatureStatus, depends_on: &[&str]) -> Feature {
+    Feature {
+        id: id.to_owned(),
+        title: id.to_owned(),
+        area: "test".to_owned(),
+        domains: vec![FeatureDomain::Infrastructure],
+        version: 1,
+        status,
+        description: format!("Test feature {id}."),
+        depends_on: depends_on
+            .iter()
+            .map(|dependency| (*dependency).to_owned())
+            .collect(),
+        validation_required: Vec::new(),
+    }
+}
+
 fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let features_root = root.join("features");
     let validation_root = root.join("validation");
@@ -1764,7 +1940,7 @@ fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
     fs::write(
         feature_dir.join("feature.toml"),
-        "id = \"example\"\ntitle = \"Example\"\narea = \"test\"\ndomains = [\"small-molecule\"]\nversion = 1\nimplemented = true\ndescription = \"Example feature.\"\ndepends_on = []\nvalidation_required = [\"smoke\"]\n",
+        "id = \"example\"\ntitle = \"Example\"\narea = \"test\"\ndomains = [\"small-molecule\"]\nversion = 1\nstatus = \"supported\"\ndescription = \"Example feature.\"\ndepends_on = []\nvalidation_required = [\"smoke\"]\n",
     )
     .expect("metadata should write");
     fs::write(feature_dir.join("feature.md"), "# Example\n").expect("feature doc should write");

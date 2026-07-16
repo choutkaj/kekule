@@ -13,15 +13,27 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 
 ## Implementation Notes
 
-- Feature metadata schema v4 requires `id`, `title`, `area`, `domains`,
-  `version`, `implemented`, `description`, `depends_on`, and
+- Feature metadata schema v5 requires `id`, `title`, `area`, `domains`,
+  `version`, `status`, `description`, `depends_on`, and
   `validation_required`.
-- Deprecated metadata keys `priority`, `status`, and `last_ai_review`, plus the
-  removed global `validated` key, are rejected.
+- `status` uses the release vocabulary `planned`, `experimental`, `supported`,
+  and `deprecated`. The removed `implemented` and global `validated` booleans,
+  plus deprecated `priority` and `last_ai_review`, are rejected.
+- `depends_on` declares semantic feature prerequisites. Dependency IDs must
+  exist and form a directed acyclic graph; duplicate dependencies,
+  self-dependencies, and cycles are rejected.
+- Status compatibility is enforced across graph edges: `supported` features
+  require only `supported` prerequisites; `experimental` features require
+  `experimental` or `supported` prerequisites; `deprecated` features may use
+  any implemented prerequisite; `planned` features may name any registered
+  prerequisite.
 - Each tracked feature directory must include `feature.md`.
 - The dashboard renders separate generated HTML tables for small molecules,
   macromolecules, and infrastructure. Shared chemistry foundations appear in
   both chemistry tables.
+- The dashboard procedurally renders the complete dependency DAG as a
+  deterministic SVG. Arrows run from prerequisites to dependents, and columns
+  are assigned from dependency depth.
 - Small-molecule and PDB-derived corpora are selected from typed corpus
   `kind` metadata. The mixed smoke corpus appears in both chemistry tables.
 - Each chemistry section displays the exact reference codebase version found
@@ -32,7 +44,8 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - Per-feature evidence is read from each corpus-owned `status.toml`.
 - Manifest-backed local-only corpus cells display their recorded optional
   evidence without contributing to routine required parity checks.
-- Boolean dashboard values render as check and cross marks, with compact failure counts only for recorded fixture-level validation failures.
+- Release statuses render as labeled, color-coded pills. Compact failure counts
+  are reserved for recorded fixture-level validation failures.
 - Required validation with no current recorded status, stale or incomplete evidence, or no fixture-level failure count renders as an unknown `?` marker rather than a confirmed failure.
 - The feature schema has no global validation boolean; the dashboard presents the per-corpus matrix directly, uses centered rotated compact headers, includes corpus case counts from `corpus.toml`, and supports client-side column sorting.
 - `features/DASHBOARD.html` remains the generated source artifact and is published as the GitHub Pages dashboard.
@@ -47,7 +60,7 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 
 - Chemistry implementation or validation.
 - Pulling feature metadata from external services.
-- Automatically marking features implemented.
+- Automatically assigning or promoting feature release statuses.
 
 ## Revision Notes
 
@@ -65,3 +78,6 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - v10: Split the dashboard into small-molecule, macromolecule, and
   infrastructure tables; add explicit feature-domain metadata and display
   versioned external reference information.
+- v11: Replace the implementation boolean with explicit release statuses,
+  enforce the feature dependency DAG and status compatibility, and render the
+  generated graph in the HTML dashboard.
