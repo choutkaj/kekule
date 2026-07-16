@@ -101,6 +101,8 @@ or manually curated external-reference golden data.
 - Corpus integrity checks stream-decode golden JSON into a syntax sink instead
   of materializing each complete expected-value tree when only structural
   validity is required.
+- Independent compressed goldens are syntax-checked in parallel with stable
+  path-ordered error reporting.
 - Manual-semantic golden acceptance is an explicit review operation, not a way
   to make an unexplained failure pass; the motivating chemistry or file-format
   behavior must be independently checked before accepting the snapshot.
@@ -185,3 +187,5 @@ or manually curated external-reference golden data.
   than debug-mode evidence decoding.
 - v32: Validate compressed golden JSON as a stream during corpus integrity
   checks, avoiding unnecessary full expected-tree allocation.
+- v33: Parallelize independent golden syntax checks while preserving
+  deterministic path-ordered failures.

@@ -336,6 +336,7 @@ pub(crate) fn check_corpus_artifacts(
             root.display()
         )));
     }
+    let mut golden_paths = Vec::new();
     for entry in fs::read_dir(&features_dir)? {
         let path = entry?.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
@@ -361,9 +362,11 @@ pub(crate) fn check_corpus_artifacts(
                     golden.display()
                 )));
             }
-            validate_gzip_json(&golden)?;
+            golden_paths.push(golden);
         }
     }
+    golden_paths.sort();
+    validate_gzip_json_files(&golden_paths)?;
     if validation_status_path(corpus).exists() {
         read_corpus_status(&validation_status_path(corpus))?;
     }
@@ -390,6 +393,46 @@ pub(crate) fn check_corpus_artifacts(
                 corpus, pack.path
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_gzip_json_files(paths: &[PathBuf]) -> Result<(), Box<dyn Error>> {
+    let worker_count = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(paths.len().max(1));
+    if worker_count == 1 {
+        for path in paths {
+            validate_gzip_json(path)?;
+        }
+        return Ok(());
+    }
+
+    let next_path = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(vec![None; paths.len()]);
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| loop {
+                let index = next_path.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if index >= paths.len() {
+                    break;
+                }
+                let result = validate_gzip_json(&paths[index]).map_err(|error| error.to_string());
+                results
+                    .lock()
+                    .expect("corpus golden result lock should not be poisoned")[index] =
+                    Some(result);
+            });
+        }
+    });
+    for result in results
+        .into_inner()
+        .expect("corpus golden result lock should not be poisoned")
+    {
+        result
+            .ok_or_else(|| boxed_error("corpus golden worker recorded no result"))?
+            .map_err(boxed_error)?;
     }
     Ok(())
 }
