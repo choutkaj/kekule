@@ -1,15 +1,83 @@
 use crate::*;
 
+#[derive(Default)]
+pub(crate) struct ValidationHashCache {
+    exact: std::sync::Mutex<BTreeMap<PathBuf, String>>,
+    evidence: std::sync::Mutex<BTreeMap<PathBuf, String>>,
+}
+
+impl ValidationHashCache {
+    pub(crate) fn exact_hash(&self, path: &Path) -> Result<String, Box<dyn Error>> {
+        if let Some(hash) = self
+            .exact
+            .lock()
+            .map_err(|_| boxed_error("validation exact-hash cache lock was poisoned"))?
+            .get(path)
+            .cloned()
+        {
+            return Ok(hash);
+        }
+        let hash = hash_file(path)?;
+        let mut cache = self
+            .exact
+            .lock()
+            .map_err(|_| boxed_error("validation exact-hash cache lock was poisoned"))?;
+        Ok(cache.entry(path.to_path_buf()).or_insert(hash).clone())
+    }
+
+    pub(crate) fn evidence_hash(&self, path: &Path) -> Result<String, Box<dyn Error>> {
+        if let Some(hash) = self
+            .evidence
+            .lock()
+            .map_err(|_| boxed_error("validation evidence-hash cache lock was poisoned"))?
+            .get(path)
+            .cloned()
+        {
+            return Ok(hash);
+        }
+        let hash = hash_evidence_file(path)?;
+        let mut cache = self
+            .evidence
+            .lock()
+            .map_err(|_| boxed_error("validation evidence-hash cache lock was poisoned"))?;
+        Ok(cache.entry(path.to_path_buf()).or_insert(hash).clone())
+    }
+}
+
 pub(crate) fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
+    let file = fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut buffer = vec![0u8; 64 * 1024];
     let mut hasher = Sha256::new();
-    hasher.update(fs::read(path)?);
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+#[cfg(test)]
 pub(crate) fn build_validation_evidence(
     repo_root: &Path,
     manifest_path: &Path,
     manifest: &ValidationManifest,
+) -> Result<ValidationEvidence, Box<dyn Error>> {
+    build_validation_evidence_cached(
+        repo_root,
+        manifest_path,
+        manifest,
+        &ValidationHashCache::default(),
+    )
+}
+
+pub(crate) fn build_validation_evidence_cached(
+    repo_root: &Path,
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+    hash_cache: &ValidationHashCache,
 ) -> Result<ValidationEvidence, Box<dyn Error>> {
     let corpus_root = manifest_path
         .parent()
@@ -82,7 +150,7 @@ pub(crate) fn build_validation_evidence(
         }
         inputs.push(EvidenceInput {
             path: relative_path(repo_root, &path)?,
-            sha256: hash_evidence_file(&path)?,
+            sha256: hash_cache.evidence_hash(&path)?,
         });
     }
     inputs.sort_by(|left, right| left.path.cmp(&right.path));
@@ -127,17 +195,14 @@ pub(crate) fn collect_files(
 }
 
 pub(crate) fn hash_evidence_file(path: &Path) -> Result<String, Box<dyn Error>> {
-    let raw = fs::read(path)?;
-    let normalized_text = String::from_utf8(raw.clone())
-        .ok()
-        .map(|text| text.replace("\r\n", "\n").replace('\r', "\n"));
-    let bytes = if let Some(text) = normalized_text {
-        text.into_bytes()
-    } else {
-        raw
-    };
     let mut hasher = Sha256::new();
-    hasher.update(bytes);
+    match String::from_utf8(fs::read(path)?) {
+        Ok(text) if text.contains('\r') => {
+            hasher.update(text.replace("\r\n", "\n").replace('\r', "\n"));
+        }
+        Ok(text) => hasher.update(text),
+        Err(error) => hasher.update(error.into_bytes()),
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -307,11 +372,28 @@ pub(crate) struct ValidationComparison {
     pub(crate) first_failure: Option<String>,
 }
 
+#[cfg(test)]
 pub(crate) fn validate_golden_outputs(
     manifest_path: &Path,
     manifest: &ValidationManifest,
     jobs: usize,
     progress: Option<&FixtureProgress>,
+) -> Result<ValidationComparison, Box<dyn Error>> {
+    validate_golden_outputs_cached(
+        manifest_path,
+        manifest,
+        jobs,
+        progress,
+        &ValidationHashCache::default(),
+    )
+}
+
+pub(crate) fn validate_golden_outputs_cached(
+    manifest_path: &Path,
+    manifest: &ValidationManifest,
+    jobs: usize,
+    progress: Option<&FixtureProgress>,
+    hash_cache: &ValidationHashCache,
 ) -> Result<ValidationComparison, Box<dyn Error>> {
     if manifest.fixtures.is_empty() {
         return Ok(ValidationComparison {
@@ -331,7 +413,7 @@ pub(crate) fn validate_golden_outputs(
         })?;
     let worker_count = validation_worker_count(jobs, manifest.fixtures.len());
     if worker_count == 1 {
-        return validate_golden_outputs_serial(manifest_path, manifest, base, progress);
+        return validate_golden_outputs_serial(manifest_path, manifest, base, progress, hash_cache);
     }
 
     let next_fixture = std::sync::Mutex::new(0usize);
@@ -359,7 +441,7 @@ pub(crate) fn validate_golden_outputs(
                     break;
                 };
                 let fixture = &manifest.fixtures[index];
-                let result = compare_one_golden(manifest_path, base, manifest, fixture)
+                let result = compare_one_golden(manifest_path, base, manifest, fixture, hash_cache)
                     .map_err(|error| error.to_string());
                 if let Some(progress) = progress {
                     progress.fixture_finished();
@@ -392,6 +474,7 @@ fn validate_golden_outputs_serial(
     manifest: &ValidationManifest,
     base: &Path,
     progress: Option<&FixtureProgress>,
+    hash_cache: &ValidationHashCache,
 ) -> Result<ValidationComparison, Box<dyn Error>> {
     let mut comparison = ValidationComparison {
         compared_count: 0,
@@ -399,7 +482,7 @@ fn validate_golden_outputs_serial(
         first_failure: None,
     };
     for fixture in &manifest.fixtures {
-        let result = compare_one_golden(manifest_path, base, manifest, fixture);
+        let result = compare_one_golden(manifest_path, base, manifest, fixture, hash_cache);
         if let Some(progress) = progress {
             progress.fixture_finished();
         }
@@ -434,6 +517,7 @@ fn compare_one_golden(
     base: &Path,
     manifest: &ValidationManifest,
     fixture: &str,
+    hash_cache: &ValidationHashCache,
 ) -> Result<FixtureComparison, Box<dyn Error>> {
     let fixture_path = base.join(fixture);
     let golden_path = base
@@ -447,7 +531,14 @@ fn compare_one_golden(
         )));
     }
     let golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
-    validate_golden_metadata(&golden_path, &golden, manifest, fixture, &fixture_path)?;
+    validate_golden_metadata(
+        &golden_path,
+        &golden,
+        manifest,
+        fixture,
+        &fixture_path,
+        hash_cache,
+    )?;
     let expected = golden
         .get("expected")
         .ok_or_else(|| boxed_error(format!("{} is missing `expected`", golden_path.display())))?;
@@ -477,6 +568,7 @@ pub(crate) fn validate_golden_metadata(
     manifest: &ValidationManifest,
     fixture: &str,
     fixture_path: &Path,
+    hash_cache: &ValidationHashCache,
 ) -> Result<(), Box<dyn Error>> {
     if golden.get("schema_version") != Some(&json!(GOLDEN_SCHEMA_VERSION)) {
         return Err(boxed_error(format!(
@@ -506,7 +598,7 @@ pub(crate) fn validate_golden_metadata(
         .get("input_sha256")
         .and_then(Value::as_str)
         .ok_or_else(|| boxed_error(format!("{} is missing input_sha256", golden_path.display())))?;
-    let fixture_hash = hash_file(fixture_path)?;
+    let fixture_hash = hash_cache.exact_hash(fixture_path)?;
     if input_sha256 != fixture_hash {
         return Err(boxed_error(format!(
             "{} input_sha256 does not match current fixture `{fixture}`",

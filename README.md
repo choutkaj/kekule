@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/molecules-logo-dark.svg">
-    <img alt="MOLECULES - cheminformatics in Rust" src="./assets/molecules-logo-light.svg" width="250">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/choutkaj/molecules/main/assets/molecules-logo-dark.svg">
+    <img alt="MOLECULES - cheminformatics in Rust" src="https://raw.githubusercontent.com/choutkaj/molecules/main/assets/molecules-logo-light.svg" width="250">
   </picture>
 </p>
 
@@ -13,7 +13,8 @@ Biopython for macromolecules.
 
 For feature release status, validation evidence, and the generated dependency
 graph, see the [rendered feature dashboard](https://choutkaj.github.io/molecules/)
-or inspect the generated [dashboard source](features/DASHBOARD.html).
+or inspect the generated
+[dashboard source](https://github.com/choutkaj/molecules/blob/main/features/DASHBOARD.html).
 
 > [!NOTE]
 > The `0.x` series follows Cargo semver: breaking API changes are released in a
@@ -62,6 +63,11 @@ assert_eq!(salt.graph().connected_components().len(), 2);
 
 The dots describe disconnected graph components; the SMILES record still
 asserts one `SmallMolecule`.
+
+Public parsers enforce default input and topology limits. The SMILES and
+Molfile facades also expose `parse_str_with_options` for tighter
+application-specific bounds; SDF and mmCIF parsing accept their options
+directly.
 
 ### Substructure queries
 

@@ -15,3 +15,6 @@ license = "MIT"
 readme = "README.md"
 keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]
 categories = ["science", "data-structures", "parser-implementations"]
+
+[profile.dev.package.sha2]
+opt-level = 3
