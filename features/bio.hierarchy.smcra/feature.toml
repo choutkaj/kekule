@@ -1,9 +1,9 @@
 id = "bio.hierarchy.smcra"
 title = "SMCRA-like biomolecular hierarchy"
 area = "bio"
+domains = ["macromolecule"]
 version = 7
 implemented = true
-validated = false
 description = "Represent model, chain, residue, and atom-site hierarchy plus atom-site metadata as a sidecar over the core molecule graph."
 depends_on = ["core.graph"]
 validation_required = []

@@ -56,12 +56,20 @@ pub(crate) fn corpus_requires_data(corpus: &str, requested: bool) -> bool {
     requested || corpus == "smoke"
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum CorpusKind {
+    SmallMolecule,
+    Macromolecule,
+    Mixed,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CorpusDescriptor {
     pub(crate) id: String,
     pub(crate) title: String,
-    pub(crate) kind: String,
+    pub(crate) kind: CorpusKind,
     pub(crate) ready: bool,
     pub(crate) expected_count: usize,
     #[serde(default)]
@@ -80,28 +88,80 @@ pub(crate) struct CorpusDescriptor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CorpusFeatureDashboardInfo {
+    pub(crate) reference_tool: String,
+    pub(crate) reference_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CorpusDashboardInfo {
     pub(crate) id: String,
     pub(crate) label: String,
     pub(crate) title: String,
+    pub(crate) kind: CorpusKind,
     pub(crate) expected_count: usize,
+    pub(crate) features: BTreeMap<String, CorpusFeatureDashboardInfo>,
 }
 
 pub(crate) fn read_dashboard_corpus_info(
 ) -> Result<BTreeMap<String, CorpusDashboardInfo>, Box<dyn Error>> {
     let mut summaries = BTreeMap::new();
-    for corpus in VALIDATION_CORPORA
-        .iter()
-        .filter(|corpus| !corpus.local_only)
-    {
+    for corpus in VALIDATION_CORPORA {
         let descriptor = read_corpus_descriptor(corpus.id)?;
+        let manifest_dir = Path::new("validation")
+            .join("corpora")
+            .join(corpus.id)
+            .join("features");
+        let mut features = BTreeMap::new();
+        if manifest_dir.exists() {
+            for entry in fs::read_dir(&manifest_dir)? {
+                let path = entry?.path();
+                if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
+                    continue;
+                }
+                let feature_id =
+                    path.file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .ok_or_else(|| {
+                            boxed_error(format!(
+                                "{} has a non-UTF-8 validation manifest name",
+                                path.display()
+                            ))
+                        })?;
+                let manifest = read_validation_manifest(&path)?;
+                if manifest.feature_id != feature_id {
+                    return Err(boxed_error(format!(
+                        "{} declares feature_id `{}`, expected `{feature_id}`",
+                        path.display(),
+                        manifest.feature_id
+                    )));
+                }
+                if manifest.corpus_id != corpus.id {
+                    return Err(boxed_error(format!(
+                        "{} declares corpus_id `{}`, expected `{}`",
+                        path.display(),
+                        manifest.corpus_id,
+                        corpus.id
+                    )));
+                }
+                features.insert(
+                    feature_id.to_owned(),
+                    CorpusFeatureDashboardInfo {
+                        reference_tool: manifest.reference_tool,
+                        reference_version: manifest.reference_version,
+                    },
+                );
+            }
+        }
         summaries.insert(
             corpus.id.to_owned(),
             CorpusDashboardInfo {
                 id: corpus.id.to_owned(),
                 label: corpus.label.to_owned(),
                 title: descriptor.title,
+                kind: descriptor.kind,
                 expected_count: descriptor.expected_count,
+                features,
             },
         );
     }
@@ -198,7 +258,6 @@ pub(crate) fn check_corpus_lock(
     lock: &SourceLock,
 ) -> Result<(), Box<dyn Error>> {
     if descriptor.title.trim().is_empty()
-        || descriptor.kind.trim().is_empty()
         || descriptor.formats.is_empty()
         || lock.source.trim().is_empty()
     {

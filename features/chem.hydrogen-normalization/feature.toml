@@ -1,9 +1,9 @@
 id = "chem.hydrogen-normalization"
 title = "Hydrogen topology normalization"
 area = "chemistry"
+domains = ["small-molecule"]
 version = 1
 implemented = true
-validated = true
 description = "Materialize and collapse ordinary small-molecule hydrogens transactionally without hiding perception or losing protected hydrogen state."
 depends_on = [
   "core.graph",

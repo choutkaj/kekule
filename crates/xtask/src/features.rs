@@ -2,18 +2,21 @@ use crate::*;
 
 pub(crate) fn list_features() -> Result<(), Box<dyn Error>> {
     let features = read_features()?;
-    let statuses = read_validation_statuses(&features)?;
     for feature in &features {
         println!(
-            "{}\t{}\tv{}\timplemented={}\tvalidated={}",
-            feature.id,
-            feature.area,
-            feature.version,
-            feature.implemented,
-            overall_validated(feature, statuses.get(&feature.id))
+            "{}\t{}\tv{}\timplemented={}",
+            feature.id, feature.area, feature.version, feature.implemented
         );
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum FeatureDomain {
+    SmallMolecule,
+    Macromolecule,
+    Infrastructure,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -22,9 +25,9 @@ pub(crate) struct Feature {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) area: String,
+    pub(crate) domains: Vec<FeatureDomain>,
     pub(crate) version: u32,
     pub(crate) implemented: bool,
-    pub(crate) validated: bool,
     pub(crate) description: String,
     pub(crate) depends_on: Vec<String>,
     pub(crate) validation_required: Vec<String>,
@@ -91,6 +94,27 @@ pub(crate) fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box
             path.display()
         )));
     }
+    if feature.domains.is_empty() {
+        return Err(boxed_error(format!(
+            "{} has empty required field `domains`",
+            path.display()
+        )));
+    }
+    let mut seen_domains = BTreeSet::new();
+    for domain in &feature.domains {
+        if !seen_domains.insert(domain) {
+            return Err(boxed_error(format!(
+                "{} lists feature domain `{domain:?}` more than once",
+                path.display()
+            )));
+        }
+    }
+    if feature.domains.contains(&FeatureDomain::Infrastructure) && feature.domains.len() != 1 {
+        return Err(boxed_error(format!(
+            "{} combines the `infrastructure` domain with a chemistry domain",
+            path.display()
+        )));
+    }
     for (key, value) in [
         ("title", feature.title.as_str()),
         ("area", feature.area.as_str()),
@@ -113,7 +137,7 @@ pub(crate) fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box
         }
         if validation_corpus(corpus).is_some_and(|registered| registered.local_only) {
             return Err(boxed_error(format!(
-                "{} lists local-only validation corpus `{corpus}` in `validation_required`; local-only corpora may be run explicitly but cannot determine repository-wide validation state",
+                "{} lists local-only validation corpus `{corpus}` in `validation_required`; local-only corpora may be run explicitly but cannot be required because a clean checkout cannot recompute their parity evidence",
                 path.display()
             )));
         }

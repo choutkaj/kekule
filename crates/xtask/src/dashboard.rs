@@ -1,11 +1,18 @@
 use crate::*;
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DashboardSection {
+    pub(crate) title: &'static str,
+    pub(crate) table_id: &'static str,
+    pub(crate) domain: FeatureDomain,
+    pub(crate) include_corpora: bool,
+}
+
 pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let check = args.iter().any(|arg| arg == "--check");
     let features = read_features()?;
     let statuses = read_validation_statuses(&features)?;
     let corpus_info = read_dashboard_corpus_info()?;
-    ensure_current_validation_flags_synced(&features, &statuses)?;
     let rendered = render_dashboard(&features, &statuses, &corpus_info);
     let path = Path::new(DASHBOARD_PATH);
 
@@ -39,9 +46,14 @@ pub(crate) fn render_dashboard(
     out.push_str("@media (prefers-color-scheme: dark) { :root { --border: #30363d; --head: #161b22; --ok: #3fb950; --bad: #ff7b72; --unknown: #d29922; --muted: #8b949e; --text: #c9d1d9; --bg: #0d1117; } }\n");
     out.push_str("body { margin: 24px; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }\n");
     out.push_str("h1 { margin: 0 0 4px; font-size: 24px; }\n");
+    out.push_str("h2 { margin: 30px 0 4px; font-size: 20px; }\n");
     out.push_str("p { margin: 0 0 18px; color: var(--muted); }\n");
+    out.push_str(".section-description { margin-bottom: 6px; }\n");
+    out.push_str(".reference { margin-bottom: 4px; color: var(--text); }\n");
+    out.push_str(".supplemental { margin-bottom: 10px; font-size: 12px; }\n");
     out.push_str(".dashboard-wrap { overflow-x: auto; }\n");
     out.push_str("table { border-collapse: collapse; width: 100%; min-width: 980px; }\n");
+    out.push_str("table.infrastructure-table { min-width: 720px; }\n");
     out.push_str(
         "th, td { border: 1px solid var(--border); padding: 6px 8px; vertical-align: middle; }\n",
     );
@@ -79,61 +91,48 @@ pub(crate) fn render_dashboard(
     out.push_str("</head>\n");
     out.push_str("<body>\n");
     out.push_str("<h1>Feature Dashboard</h1>\n");
-    out.push_str("<p>Generated from feature metadata and recorded validation status. Run cargo xtask validate to verify evidence against the current checkout. Do not hand-edit this file.</p>\n");
+    out.push_str("<p>Generated from feature metadata and recorded per-corpus parity status. Run cargo xtask validate to compare against the current checkout. Do not hand-edit this file.</p>\n");
     out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"unknown\">?</span>unknown <span class=\"na\">-</span>not required</p>\n");
-    out.push_str("<div class=\"dashboard-wrap\">\n");
-    out.push_str("<table id=\"feature-dashboard\">\n");
-    out.push_str("<thead>\n<tr>");
-    out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Feature</button></th>");
-    out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Title</button></th>");
-    out.push_str(&area_header());
-    out.push_str(&rotated_header("Version", "Version", "number"));
-    out.push_str(&rotated_header("Implemented", "Implemented", "number"));
-    for corpus in VALIDATION_CORPORA
-        .iter()
-        .filter(|corpus| !corpus.local_only)
-    {
-        let (visible, title) = corpus_header(corpus.id, corpus.label, corpus_info);
-        out.push_str(&rotated_header(&visible, &title, "number"));
-    }
-    out.push_str("</tr>\n</thead>\n<tbody>\n");
-    for feature in features {
-        let status = statuses.get(&feature.id);
-        out.push_str(&format!(
-            "<tr><td class=\"text\" data-sort-value=\"{0}\"><code>{0}</code></td>",
-            escape_html(&feature.id)
-        ));
-        out.push_str(&format!(
-            "<td class=\"text\" data-sort-value=\"{}\">{}</td>",
-            escape_html(&feature.title),
-            escape_html(&feature.title)
-        ));
-        out.push_str(&format!(
-            "<td class=\"compact area\" data-sort-value=\"{}\">{}</td>",
-            escape_html(&feature.area),
-            escape_html(&feature.area)
-        ));
-        out.push_str(&format!(
-            "<td class=\"compact\" data-sort-value=\"{}\">{}</td>",
-            feature.version, feature.version
-        ));
-        out.push_str(&format!(
-            "<td class=\"marker\" data-sort-value=\"{}\">{}</td>",
-            bool_sort_value(feature.implemented),
-            dashboard_bool_marker(feature.implemented)
-        ));
-        for corpus in VALIDATION_CORPORA
-            .iter()
-            .filter(|corpus| !corpus.local_only)
-        {
-            out.push_str(&dashboard_corpus_cell(feature, status, corpus.id));
-        }
-        out.push_str("</tr>\n");
-    }
-    out.push_str("</tbody>\n</table>\n</div>\n");
+    out.push_str("<p>Features shared by both molecular domains are intentionally shown in both chemistry tables. The mixed smoke corpus also appears in both tables; only applicable feature rows carry parity status.</p>\n");
+    render_dashboard_section(
+        &mut out,
+        DashboardSection {
+            title: "Small molecules",
+            table_id: "small-molecules-dashboard",
+            domain: FeatureDomain::SmallMolecule,
+            include_corpora: true,
+        },
+        features,
+        statuses,
+        corpus_info,
+    );
+    render_dashboard_section(
+        &mut out,
+        DashboardSection {
+            title: "Macromolecules",
+            table_id: "macromolecules-dashboard",
+            domain: FeatureDomain::Macromolecule,
+            include_corpora: true,
+        },
+        features,
+        statuses,
+        corpus_info,
+    );
+    render_dashboard_section(
+        &mut out,
+        DashboardSection {
+            title: "Infrastructure and harness",
+            table_id: "infrastructure-dashboard",
+            domain: FeatureDomain::Infrastructure,
+            include_corpora: false,
+        },
+        features,
+        statuses,
+        corpus_info,
+    );
     out.push_str("<script>\n");
     out.push_str("(() => {\n");
-    out.push_str("  const table = document.getElementById('feature-dashboard');\n");
+    out.push_str("  document.querySelectorAll('table.feature-dashboard').forEach(table => {\n");
     out.push_str("  const tbody = table.tBodies[0];\n");
     out.push_str("  const headers = Array.from(table.tHead.rows[0].cells);\n");
     out.push_str("  const value = (row, index, type) => {\n");
@@ -161,10 +160,276 @@ pub(crate) fn render_dashboard(
     out.push_str("      rows.forEach(row => tbody.appendChild(row));\n");
     out.push_str("    });\n");
     out.push_str("  });\n");
+    out.push_str("  });\n");
     out.push_str("})();\n");
     out.push_str("</script>\n");
     out.push_str("</body>\n</html>\n");
     out
+}
+
+pub(crate) fn render_dashboard_section(
+    out: &mut String,
+    section: DashboardSection,
+    features: &[Feature],
+    statuses: &BTreeMap<String, ValidationStatus>,
+    corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
+) {
+    let corpora = if section.include_corpora {
+        dashboard_corpora(section.domain, corpus_info)
+    } else {
+        Vec::new()
+    };
+    out.push_str(&format!(
+        "<section>\n<h2>{}</h2>\n",
+        escape_html(section.title)
+    ));
+    if section.include_corpora {
+        let description = match section.domain {
+            FeatureDomain::SmallMolecule => {
+                "Small-molecule features with small-molecule validation corpora."
+            }
+            FeatureDomain::Macromolecule => {
+                "Macromolecular features with PDB-derived validation corpora."
+            }
+            FeatureDomain::Infrastructure => unreachable!("infrastructure has no corpora"),
+        };
+        out.push_str(&format!(
+            "<p class=\"section-description\">{}</p>\n",
+            escape_html(description)
+        ));
+        out.push_str(&dashboard_reference_summary(
+            section.domain,
+            features,
+            &corpora,
+            corpus_info,
+        ));
+    } else {
+        out.push_str("<p class=\"section-description\">Repository feature-registry and validation-harness capabilities. These rows do not use an external chemistry reference codebase.</p>\n");
+    }
+    out.push_str("<div class=\"dashboard-wrap\">\n");
+    let table_class = if section.include_corpora {
+        "feature-dashboard"
+    } else {
+        "feature-dashboard infrastructure-table"
+    };
+    out.push_str(&format!(
+        "<table id=\"{}\" class=\"{}\">\n",
+        escape_html(section.table_id),
+        table_class
+    ));
+    out.push_str("<thead>\n<tr>");
+    out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Feature</button></th>");
+    out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Title</button></th>");
+    out.push_str(&area_header());
+    out.push_str(&rotated_header("Version", "Version", "number"));
+    out.push_str(&rotated_header("Implemented", "Implemented", "number"));
+    for corpus in &corpora {
+        let (visible, title) = corpus_header(corpus.id, corpus.label, corpus_info);
+        out.push_str(&rotated_header(&visible, &title, "number"));
+    }
+    out.push_str("</tr>\n</thead>\n<tbody>\n");
+    for feature in features
+        .iter()
+        .filter(|feature| feature.domains.contains(&section.domain))
+    {
+        let status = statuses.get(&feature.id);
+        out.push_str(&format!(
+            "<tr><td class=\"text\" data-sort-value=\"{0}\"><code>{0}</code></td>",
+            escape_html(&feature.id)
+        ));
+        out.push_str(&format!(
+            "<td class=\"text\" data-sort-value=\"{}\">{}</td>",
+            escape_html(&feature.title),
+            escape_html(&feature.title)
+        ));
+        out.push_str(&format!(
+            "<td class=\"compact area\" data-sort-value=\"{}\">{}</td>",
+            escape_html(&feature.area),
+            escape_html(&feature.area)
+        ));
+        out.push_str(&format!(
+            "<td class=\"compact\" data-sort-value=\"{}\">{}</td>",
+            feature.version, feature.version
+        ));
+        out.push_str(&format!(
+            "<td class=\"marker\" data-sort-value=\"{}\">{}</td>",
+            bool_sort_value(feature.implemented),
+            dashboard_bool_marker(feature.implemented)
+        ));
+        for corpus in &corpora {
+            let info = corpus_info
+                .get(corpus.id)
+                .expect("dashboard corpus metadata should be available");
+            let reference = info.features.get(&feature.id);
+            let corpus_status = status.and_then(|status| status.corpora.get(corpus.id));
+            let reference_tool = reference
+                .map(|reference| reference.reference_tool.as_str())
+                .or_else(|| corpus_status.map(|status| status.reference_tool.as_str()));
+            let domain_applicable = match info.kind {
+                CorpusKind::SmallMolecule => section.domain == FeatureDomain::SmallMolecule,
+                CorpusKind::Macromolecule => section.domain == FeatureDomain::Macromolecule,
+                CorpusKind::Mixed => reference_tool.map_or_else(
+                    || feature.domains.len() == 1 && feature.domains.contains(&section.domain),
+                    |tool| dashboard_reference_applies_to_domain(section.domain, info.kind, tool),
+                ),
+            };
+            out.push_str(&dashboard_corpus_cell(
+                feature,
+                status,
+                corpus.id,
+                reference,
+                domain_applicable,
+            ));
+        }
+        out.push_str("</tr>\n");
+    }
+    out.push_str("</tbody>\n</table>\n</div>\n</section>\n");
+}
+
+pub(crate) fn dashboard_corpora(
+    domain: FeatureDomain,
+    corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
+) -> Vec<&'static ValidationCorpus> {
+    VALIDATION_CORPORA
+        .iter()
+        .filter(|corpus| {
+            corpus_info.get(corpus.id).is_some_and(|info| match domain {
+                FeatureDomain::SmallMolecule => {
+                    matches!(info.kind, CorpusKind::SmallMolecule | CorpusKind::Mixed)
+                }
+                FeatureDomain::Macromolecule => {
+                    matches!(info.kind, CorpusKind::Macromolecule | CorpusKind::Mixed)
+                }
+                FeatureDomain::Infrastructure => false,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn dashboard_reference_summary(
+    domain: FeatureDomain,
+    features: &[Feature],
+    corpora: &[&ValidationCorpus],
+    corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
+) -> String {
+    let feature_ids = features
+        .iter()
+        .filter(|feature| feature.domains.contains(&domain))
+        .map(|feature| feature.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut codebases = BTreeSet::new();
+    let mut dssp_executables = BTreeSet::new();
+    let mut supplemental = BTreeSet::new();
+    for corpus in corpora {
+        let Some(info) = corpus_info.get(corpus.id) else {
+            continue;
+        };
+        for (feature_id, reference) in &info.features {
+            if !feature_ids.contains(feature_id.as_str()) {
+                continue;
+            }
+            if !dashboard_reference_applies_to_domain(domain, info.kind, &reference.reference_tool)
+            {
+                continue;
+            }
+            match reference.reference_tool.as_str() {
+                "rdkit" => {
+                    codebases.insert(dashboard_reference_label(
+                        &reference.reference_tool,
+                        &reference.reference_version,
+                    ));
+                }
+                "biopython" => {
+                    if let Some((biopython, mkdssp)) =
+                        reference.reference_version.split_once(" / mkdssp version ")
+                    {
+                        codebases.insert(version_label("Biopython", biopython));
+                        dssp_executables.insert(version_label("mkdssp", mkdssp));
+                    } else {
+                        codebases.insert(dashboard_reference_label(
+                            &reference.reference_tool,
+                            &reference.reference_version,
+                        ));
+                    }
+                }
+                tool if tool.ends_with("-manual-semantic") => {
+                    supplemental.insert(reference.reference_version.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = String::new();
+    out.push_str("<p class=\"reference\"><strong>Reference codebase:</strong> ");
+    if codebases.is_empty() {
+        out.push_str("none recorded");
+    } else {
+        out.push_str(&escape_html(
+            &codebases.into_iter().collect::<Vec<_>>().join("; "),
+        ));
+    }
+    if !dssp_executables.is_empty() {
+        out.push_str("; <strong>DSSP executable:</strong> ");
+        out.push_str(&escape_html(
+            &dssp_executables.into_iter().collect::<Vec<_>>().join("; "),
+        ));
+    }
+    out.push_str("</p>\n");
+    if !supplemental.is_empty() {
+        out.push_str(&format!(
+            "<p class=\"supplemental\"><strong>Supplemental semantic references:</strong> {}</p>\n",
+            escape_html(&supplemental.into_iter().collect::<Vec<_>>().join("; "))
+        ));
+    }
+    out
+}
+
+pub(crate) fn dashboard_reference_applies_to_domain(
+    domain: FeatureDomain,
+    corpus_kind: CorpusKind,
+    reference_tool: &str,
+) -> bool {
+    match corpus_kind {
+        CorpusKind::SmallMolecule => domain == FeatureDomain::SmallMolecule,
+        CorpusKind::Macromolecule => domain == FeatureDomain::Macromolecule,
+        CorpusKind::Mixed => match reference_tool {
+            "biopython" => domain == FeatureDomain::Macromolecule,
+            "rdkit" | "planned-rdkit" => domain == FeatureDomain::SmallMolecule,
+            tool if tool.ends_with("-manual-semantic") => domain == FeatureDomain::SmallMolecule,
+            _ => false,
+        },
+    }
+}
+
+pub(crate) fn version_label(name: &str, version: &str) -> String {
+    let without_name = version.strip_prefix(name).map(str::trim).unwrap_or(version);
+    let without_v = without_name.strip_prefix('v').unwrap_or(without_name);
+    format!("{name} v{without_v}")
+}
+
+pub(crate) fn dashboard_reference_label(tool: &str, version: &str) -> String {
+    match tool {
+        "rdkit" => version_label("RDKit", version),
+        "biopython" => {
+            if let Some((biopython, mkdssp)) = version.split_once(" / mkdssp version ") {
+                format!(
+                    "{} / {}",
+                    version_label("Biopython", biopython),
+                    version_label("mkdssp", mkdssp)
+                )
+            } else {
+                version_label("Biopython", version)
+            }
+        }
+        tool if tool.ends_with("-manual-semantic") => version.to_owned(),
+        _ if version
+            .to_ascii_lowercase()
+            .starts_with(&tool.to_ascii_lowercase()) =>
+        {
+            version.to_owned()
+        }
+        _ => format!("{tool} {version}"),
+    }
 }
 
 pub(crate) fn corpus_header(
@@ -220,21 +485,47 @@ pub(crate) fn dashboard_corpus_cell(
     feature: &Feature,
     status: Option<&ValidationStatus>,
     corpus: &str,
+    manifest_reference: Option<&CorpusFeatureDashboardInfo>,
+    domain_applicable: bool,
 ) -> String {
-    if !feature
-        .validation_required
-        .iter()
-        .any(|required| required == corpus)
-    {
+    if !domain_applicable {
         return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not required\" title=\"not required\">-</span></td>".to_owned();
     }
-    if recorded_corpus_passed(feature, status, corpus) {
-        return "<td class=\"marker\" data-sort-value=\"1\"><span class=\"ok\" aria-label=\"passed\" title=\"recorded evidence passed\">&#10003;</span></td>".to_owned();
+    let required = feature
+        .validation_required
+        .iter()
+        .any(|required| required == corpus);
+    let corpus_status = status.and_then(|status| status.corpora.get(corpus));
+    if !required && manifest_reference.is_none() && corpus_status.is_none() {
+        return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not required\" title=\"not required\">-</span></td>".to_owned();
     }
-    let failed_status = status.and_then(|status| status.corpora.get(corpus));
-    let marker = if let Some(corpus_status) = failed_status {
+    let reference = corpus_status
+        .map(|status| {
+            (
+                status.reference_tool.as_str(),
+                status.reference_version.as_str(),
+            )
+        })
+        .or_else(|| {
+            manifest_reference.map(|reference| {
+                (
+                    reference.reference_tool.as_str(),
+                    reference.reference_version.as_str(),
+                )
+            })
+        });
+    if (required && recorded_corpus_passed(feature, status, corpus))
+        || (!required && recorded_corpus_status_passed(corpus_status))
+    {
+        let title = dashboard_cell_title("recorded evidence passed", reference);
+        return format!(
+            "<td class=\"marker\" data-sort-value=\"1\"><span class=\"ok\" aria-label=\"passed\" title=\"{}\">&#10003;</span></td>",
+            escape_html(&title)
+        );
+    }
+    let marker = if let Some(corpus_status) = corpus_status {
         if !corpus_status.passed && corpus_status.failed_count > 0 {
-            let title = corpus_status
+            let failure_title = corpus_status
                 .first_failure
                 .as_deref()
                 .map(|failure| {
@@ -244,6 +535,7 @@ pub(crate) fn dashboard_corpus_cell(
                     )
                 })
                 .unwrap_or_else(|| format!("{} non-passing case(s)", corpus_status.failed_count));
+            let title = dashboard_cell_title(&failure_title, reference);
             format!(
                 "<span class=\"bad\" aria-label=\"failed: {} non-passing case(s)\" title=\"{}\">&#10007;<span class=\"count\">{}</span></span>",
                 corpus_status.failed_count,
@@ -256,12 +548,27 @@ pub(crate) fn dashboard_corpus_cell(
             } else {
                 "validation did not record fixture-level failures"
             };
-            dashboard_unknown_marker(title)
+            dashboard_unknown_marker(&dashboard_cell_title(title, reference))
         }
     } else {
-        dashboard_unknown_marker("no recorded validation status")
+        dashboard_unknown_marker(&dashboard_cell_title(
+            "no recorded validation status",
+            reference,
+        ))
     };
     format!("<td class=\"marker\" data-sort-value=\"0\">{marker}</td>")
+}
+
+pub(crate) fn dashboard_cell_title(base: &str, reference: Option<(&str, &str)>) -> String {
+    reference.map_or_else(
+        || base.to_owned(),
+        |(tool, version)| {
+            format!(
+                "{base}; reference: {}",
+                dashboard_reference_label(tool, version)
+            )
+        },
+    )
 }
 
 pub(crate) fn dashboard_unknown_marker(title: &str) -> String {
@@ -288,28 +595,4 @@ pub(crate) fn escape_html(text: &str) -> String {
 
 pub(crate) fn normalize_text_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
-}
-
-pub(crate) fn ensure_current_validation_flags_synced(
-    features: &[Feature],
-    statuses: &BTreeMap<String, ValidationStatus>,
-) -> Result<(), Box<dyn Error>> {
-    ensure_current_validation_flags_synced_at(features, statuses, Path::new("validation"))
-}
-
-pub(crate) fn ensure_current_validation_flags_synced_at(
-    features: &[Feature],
-    statuses: &BTreeMap<String, ValidationStatus>,
-    validation_root: &Path,
-) -> Result<(), Box<dyn Error>> {
-    for feature in features {
-        let derived = overall_validated_at(feature, statuses.get(&feature.id), validation_root);
-        if feature.validated != derived {
-            return Err(boxed_error(format!(
-                "feature `{}` has validated={}, but current corpus evidence derives validated={derived}; run validation with --update",
-                feature.id, feature.validated
-            )));
-        }
-    }
-    Ok(())
 }

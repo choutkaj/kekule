@@ -1,9 +1,9 @@
 id = "algo.substructure.vf2"
 title = "VF2 substructure search"
 area = "algorithms"
+domains = ["small-molecule"]
 version = 2
 implemented = true
-validated = true
 description = "Perform deterministic, resource-bounded non-induced substructure matching directly on syntax-independent query graphs."
 depends_on = [
   "core.graph",

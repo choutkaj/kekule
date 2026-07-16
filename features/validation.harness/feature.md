@@ -19,7 +19,9 @@ or manually curated external-reference golden data.
 - Declares corpus availability in typed metadata; local-only corpora remain
   explicitly runnable with a concrete `--corpus` selector but are rejected from
   feature `validation_required` lists because a clean checkout cannot recompute
-  their fixture evidence. `--corpus all` selects only required routine tiers.
+  their fixture evidence. `--corpus all` selects only required routine tiers,
+  while the dashboard still displays recorded evidence for every registered
+  corpus.
 - Verifies golden `feature_id`, `corpus_id`, `fixture_path`, current fixture SHA-256, and reference tool/version metadata before comparing payloads.
 - Records content-addressed pass evidence over manifests, source locks, fixtures, goldens, Rust source, Cargo manifests, feature metadata, and reference generator/environment files when the reference tool is generator-backed.
 - Supports manually curated semantic references when the manifest
@@ -35,7 +37,7 @@ or manually curated external-reference golden data.
 - Always verifies the committed 20-case smoke fixture bytes, even when
   `--require-data` is omitted; the flag remains necessary for ignored larger
   corpora.
-- Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, synchronizes overall `validated`, and regenerates the dashboard.
+- Keeps ordinary validation read-only; `--update` clears selected stale passes before running, records evidence for successful selected targets, records fixture-level failure summaries for failed comparisons, and regenerates the dashboard.
 - Allows an independently reviewed implementation-semantic change to be
   accepted explicitly with `--accept-implementation-goldens`, but only for one
   concrete feature/corpus whose reference tool is `*-manual-semantic`. This
@@ -63,8 +65,9 @@ or manually curated external-reference golden data.
 - Corpus descriptors and feature manifests use typed TOML; source selection and checksums live in `sources.lock.json`.
 - The smoke corpus data directory is intentionally checked in and exempt from the default ignore rule for larger generated corpus data.
 - Every registered non-smoke corpus declares `local_only = true` because its
-  data directory is ignored. These corpora support on-demand runs and never
-  determine repository-wide validation state or appear as dashboard columns.
+  data directory is ignored. These corpora support on-demand runs, are excluded
+  from `validation_required` and the `--corpus all` routine selector, and remain
+  visible as dashboard columns so optional broad-corpus evidence is inspectable.
 - Source pack records may declare `member_id_property` for SDF packs or `member_title_prefix` for SMILES packs when the corpus does not use PubChem CID metadata.
 - Status evidence records fixture and comparison counts, reference versions,
   the line-ending-normalized manifest SHA-256, a versioned evidence input list,
@@ -129,3 +132,7 @@ or manually curated external-reference golden data.
   repository-wide required evidence, and retain them for explicit runs.
 - v20: Normalize the separately recorded manifest hash so evidence generated on
   Windows remains current in Linux CI checkouts.
+- v21: Display every registered corpus on the dashboard while keeping
+  local-only evidence optional and outside required routine parity checks.
+- v22: Remove the global feature validation boolean; corpus status files and
+  dashboard cells now carry the full parity result without metadata syncing.

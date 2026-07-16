@@ -30,9 +30,9 @@ fn read_feature_parses_typed_metadata() {
         r#"id = "example.feature"
 title = "Example"
 area = "infrastructure"
+domains = ["infrastructure"]
 version = 2
 implemented = false
-validated = true
 description = "Example feature."
 depends_on = ["core.graph"]
 validation_required = []
@@ -45,7 +45,7 @@ validation_required = []
     assert_eq!(feature.id, "example.feature");
     assert_eq!(feature.version, 2);
     assert!(!feature.implemented);
-    assert!(feature.validated);
+    assert_eq!(feature.domains, vec![FeatureDomain::Infrastructure]);
     assert_eq!(feature.depends_on, vec!["core.graph"]);
     fs::remove_dir_all(root).ok();
 }
@@ -84,9 +84,9 @@ fn read_feature_rejects_local_only_required_corpora() {
         r#"id = "bad.requirement"
 title = "Bad requirement"
 area = "infrastructure"
+domains = ["infrastructure"]
 version = 1
 implemented = true
-validated = false
 description = "Invalid local-only validation requirement."
 depends_on = []
 validation_required = ["pubchem-100"]
@@ -112,7 +112,7 @@ validation_required = ["pubchem-100"]
 }
 
 #[test]
-fn read_feature_rejects_bad_boolean_deprecated_keys_missing_docs_and_directory_mismatch() {
+fn read_feature_rejects_bad_boolean_removed_or_deprecated_keys_and_shape_errors() {
     let root = temp_feature_root("bad-feature");
     write_feature(
         &root,
@@ -120,9 +120,9 @@ fn read_feature_rejects_bad_boolean_deprecated_keys_missing_docs_and_directory_m
         r#"id = "bad.bool"
 title = "Bad"
 area = "infrastructure"
+domains = ["infrastructure"]
 version = 1
 implemented = maybe
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -136,10 +136,10 @@ validation_required = []
         r#"id = "bad.deprecated"
 title = "Bad"
 area = "infrastructure"
+domains = ["infrastructure"]
 version = 1
 priority = "P0"
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -149,13 +149,30 @@ validation_required = []
 
     write_feature(
         &root,
+        "bad.removed",
+        r#"id = "bad.removed"
+title = "Bad"
+area = "infrastructure"
+domains = ["infrastructure"]
+version = 1
+implemented = false
+validated = false
+description = "Removed metadata field."
+depends_on = []
+validation_required = []
+"#,
+    );
+    assert!(read_feature(&root.join("bad.removed").join("feature.toml")).is_err());
+
+    write_feature(
+        &root,
         "bad.version",
         r#"id = "bad.version"
 title = "Bad"
 area = "infrastructure"
+domains = ["infrastructure"]
 version = 0
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -163,15 +180,31 @@ validation_required = []
     );
     assert!(read_feature(&root.join("bad.version").join("feature.toml")).is_err());
 
+    write_feature(
+        &root,
+        "bad.domains",
+        r#"id = "bad.domains"
+title = "Bad"
+area = "infrastructure"
+domains = ["infrastructure", "small-molecule"]
+version = 1
+implemented = false
+description = "Bad feature domains."
+depends_on = []
+validation_required = []
+"#,
+    );
+    assert!(read_feature(&root.join("bad.domains").join("feature.toml")).is_err());
+
     write_feature_without_doc(
         &root,
         "missing.doc",
         r#"id = "missing.doc"
 title = "Bad"
 area = "infrastructure"
+domains = ["infrastructure"]
 version = 1
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -185,9 +218,9 @@ validation_required = []
         r#"id = "wrong.id"
 title = "Bad"
 area = "infrastructure"
+domains = ["infrastructure"]
 version = 1
 implemented = false
-validated = false
 description = "Bad feature."
 depends_on = []
 validation_required = []
@@ -206,9 +239,9 @@ fn read_features_sorts_skips_templates_and_validates_dependencies() {
         r#"id = "z.feature"
 title = "Zed"
 area = "core"
+domains = ["small-molecule", "macromolecule"]
 version = 1
 implemented = true
-validated = false
 description = "Z feature."
 depends_on = ["a.feature"]
 validation_required = []
@@ -220,9 +253,9 @@ validation_required = []
         r#"id = "a.feature"
 title = "Aye"
 area = "core"
+domains = ["small-molecule", "macromolecule"]
 version = 1
 implemented = false
-validated = false
 description = "A feature."
 depends_on = []
 validation_required = []
@@ -248,9 +281,9 @@ validation_required = []
         r#"id = "bad.dependency"
 title = "Bad"
 area = "core"
+domains = ["small-molecule"]
 version = 1
 implemented = false
-validated = false
 description = "Bad dependency."
 depends_on = ["missing.feature"]
 validation_required = []
@@ -267,9 +300,9 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             id: "a.feature".to_owned(),
             title: "Aye".to_owned(),
             area: "core".to_owned(),
+            domains: vec![FeatureDomain::SmallMolecule, FeatureDomain::Macromolecule],
             version: 1,
             implemented: false,
-            validated: false,
             description: "A feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: Vec::new(),
@@ -278,9 +311,9 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             id: "z.feature".to_owned(),
             title: "Zed".to_owned(),
             area: "io".to_owned(),
+            domains: vec![FeatureDomain::SmallMolecule],
             version: 3,
             implemented: true,
-            validated: false,
             description: "Z feature.".to_owned(),
             depends_on: vec!["a.feature".to_owned()],
             validation_required: Vec::new(),
@@ -289,9 +322,9 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             id: "failing.feature".to_owned(),
             title: "Failing".to_owned(),
             area: "validation".to_owned(),
+            domains: vec![FeatureDomain::SmallMolecule],
             version: 1,
             implemented: true,
-            validated: false,
             description: "Feature with counted failures.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -300,12 +333,23 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             id: "missing.feature".to_owned(),
             title: "Missing".to_owned(),
             area: "validation".to_owned(),
+            domains: vec![FeatureDomain::Macromolecule],
             version: 1,
             implemented: true,
-            validated: false,
             description: "Feature without recorded status.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
+        },
+        Feature {
+            id: "harness.feature".to_owned(),
+            title: "Harness".to_owned(),
+            area: "infrastructure".to_owned(),
+            domains: vec![FeatureDomain::Infrastructure],
+            version: 2,
+            implemented: true,
+            description: "Infrastructure feature.".to_owned(),
+            depends_on: Vec::new(),
+            validation_required: Vec::new(),
         },
     ];
     let statuses = BTreeMap::from([(
@@ -334,7 +378,24 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
                 id: "smoke".to_owned(),
                 label: "smoke".to_owned(),
                 title: "Checked-in external smoke corpus".to_owned(),
+                kind: CorpusKind::Mixed,
                 expected_count: 7,
+                features: BTreeMap::from([
+                    (
+                        "failing.feature".to_owned(),
+                        CorpusFeatureDashboardInfo {
+                            reference_tool: "rdkit".to_owned(),
+                            reference_version: "RDKit 2026.03.3".to_owned(),
+                        },
+                    ),
+                    (
+                        "missing.feature".to_owned(),
+                        CorpusFeatureDashboardInfo {
+                            reference_tool: "biopython".to_owned(),
+                            reference_version: "Biopython 1.87 / mkdssp version 4.6.1".to_owned(),
+                        },
+                    ),
+                ]),
             },
         ),
         (
@@ -343,7 +404,32 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
                 id: "pubchem-1k".to_owned(),
                 label: "PubChem 1k".to_owned(),
                 title: "PubChem deterministic 1000-compound corpus".to_owned(),
+                kind: CorpusKind::SmallMolecule,
                 expected_count: 1000,
+                features: BTreeMap::from([(
+                    "a.feature".to_owned(),
+                    CorpusFeatureDashboardInfo {
+                        reference_tool: "rdkit".to_owned(),
+                        reference_version: "RDKit 2026.03.3".to_owned(),
+                    },
+                )]),
+            },
+        ),
+        (
+            "pdb-10".to_owned(),
+            CorpusDashboardInfo {
+                id: "pdb-10".to_owned(),
+                label: "PDB 10".to_owned(),
+                title: "PDB deterministic 10-entry corpus".to_owned(),
+                kind: CorpusKind::Macromolecule,
+                expected_count: 10,
+                features: BTreeMap::from([(
+                    "missing.feature".to_owned(),
+                    CorpusFeatureDashboardInfo {
+                        reference_tool: "biopython".to_owned(),
+                        reference_version: "Biopython 1.87".to_owned(),
+                    },
+                )]),
             },
         ),
     ]);
@@ -351,7 +437,21 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     let dashboard = render_dashboard(&features, &statuses, &corpus_info);
 
     assert!(dashboard.starts_with("<!doctype html>\n"));
-    assert!(dashboard.contains("<table id=\"feature-dashboard\">"));
+    assert!(
+        dashboard.contains("<table id=\"small-molecules-dashboard\" class=\"feature-dashboard\">")
+    );
+    assert!(
+        dashboard.contains("<table id=\"macromolecules-dashboard\" class=\"feature-dashboard\">")
+    );
+    assert!(dashboard.contains(
+        "<table id=\"infrastructure-dashboard\" class=\"feature-dashboard infrastructure-table\">"
+    ));
+    assert!(dashboard.contains("<h2>Small molecules</h2>"));
+    assert!(dashboard.contains("<h2>Macromolecules</h2>"));
+    assert!(dashboard.contains("<h2>Infrastructure and harness</h2>"));
+    assert!(dashboard.contains("<strong>Reference codebase:</strong> RDKit v2026.03.3"));
+    assert!(dashboard.contains("<strong>Reference codebase:</strong> Biopython v1.87"));
+    assert!(dashboard.contains("<strong>DSSP executable:</strong> mkdssp v4.6.1"));
     assert!(dashboard.contains("th.area, td.area { text-align: left; }"));
     assert!(dashboard.contains("<th class=\"compact area\" data-sort-type=\"text\" title=\"Area\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Area\">Area</button></th>"));
     assert!(dashboard.contains("<td class=\"compact area\" data-sort-value=\"core\">core</td>"));
@@ -374,22 +474,94 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains(
         "<span class=\"rotated-name\">smoke</span><br><span class=\"rotated-count\">(n=7)</span>"
     ));
-    assert!(!dashboard.contains("<span class=\"rotated-name\">pubchem-1k</span>"));
-    assert!(dashboard.contains("<code>a.feature</code>"));
+    assert!(dashboard.contains(
+        "<span class=\"rotated-name\">pubchem-1k</span><br><span class=\"rotated-count\">(n=1000)</span>"
+    ));
+    assert!(dashboard.contains(
+        "<span class=\"rotated-name\">pdb-10</span><br><span class=\"rotated-count\">(n=10)</span>"
+    ));
+    assert_eq!(dashboard.matches("<code>a.feature</code>").count(), 2);
     assert!(dashboard.contains("data-sort-value=\"0\""));
     assert!(dashboard.contains("<code>z.feature</code>"));
+    assert!(dashboard.contains("<code>harness.feature</code>"));
     assert!(dashboard.contains("data-sort-value=\"1\""));
     assert!(dashboard.contains("aria-label=\"failed: 3 non-passing case(s)\""));
     assert!(dashboard.contains("<span class=\"count\">3</span>"));
     assert!(dashboard.contains("<span class=\"unknown\">?</span>unknown"));
     assert!(dashboard.contains(
-        "<span class=\"unknown\" aria-label=\"unknown\" title=\"no recorded validation status\">?</span>"
+        "<span class=\"unknown\" aria-label=\"unknown\" title=\"no recorded validation status; reference: Biopython v1.87"
     ));
     assert!(!dashboard.contains(
         "<span class=\"bad\" aria-label=\"failed\" title=\"no recorded validation status\">"
     ));
+    assert!(dashboard.contains("document.querySelectorAll('table.feature-dashboard')"));
     assert!(dashboard.contains("button.addEventListener('click'"));
     assert!(dashboard.ends_with('\n'));
+}
+
+#[test]
+fn dashboard_corpus_cells_show_optional_manifest_evidence() {
+    let feature = Feature {
+        id: "optional.feature".to_owned(),
+        title: "Optional".to_owned(),
+        area: "validation".to_owned(),
+        domains: vec![FeatureDomain::SmallMolecule],
+        version: 1,
+        implemented: true,
+        description: "Feature with optional corpus evidence.".to_owned(),
+        depends_on: Vec::new(),
+        validation_required: Vec::new(),
+    };
+    let passed = CorpusStatus {
+        passed: true,
+        fixture_count: 1,
+        compared_count: 1,
+        reference_tool: "rdkit".to_owned(),
+        reference_version: "RDKit test".to_owned(),
+        manifest_hash: "a".repeat(64),
+        failed_count: 0,
+        first_failure: None,
+        evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
+        evidence_hash: Some("b".repeat(64)),
+        evidence_inputs: vec![EvidenceInput {
+            path: "validation/corpora/pubchem-1k/features/optional.feature.toml".to_owned(),
+            sha256: "c".repeat(64),
+        }],
+        validated_at_unix: 1,
+    };
+    let status = ValidationStatus {
+        feature_id: feature.id.clone(),
+        corpora: BTreeMap::from([("pubchem-1k".to_owned(), passed)]),
+    };
+    let reference = CorpusFeatureDashboardInfo {
+        reference_tool: "rdkit".to_owned(),
+        reference_version: "RDKit test".to_owned(),
+    };
+
+    assert!(dashboard_corpus_cell(
+        &feature,
+        Some(&status),
+        "pubchem-1k",
+        Some(&reference),
+        true,
+    )
+    .contains("aria-label=\"passed\""));
+    assert!(
+        dashboard_corpus_cell(&feature, None, "pubchem-1k", Some(&reference), true)
+            .contains("title=\"no recorded validation status; reference: RDKit vtest\"")
+    );
+    assert!(
+        dashboard_corpus_cell(&feature, None, "pubchem-1k", None, true)
+            .contains("aria-label=\"not required\"")
+    );
+    assert!(dashboard_corpus_cell(
+        &feature,
+        Some(&status),
+        "pubchem-1k",
+        Some(&reference),
+        false
+    )
+    .contains("aria-label=\"not required\""));
 }
 
 #[test]
@@ -528,9 +700,9 @@ fn selectors_keep_local_only_corpora_explicit_and_all_routine() {
             id: "small".to_owned(),
             title: "Small".to_owned(),
             area: "io".to_owned(),
+            domains: vec![FeatureDomain::SmallMolecule],
             version: 1,
             implemented: true,
-            validated: false,
             description: "Small feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -539,9 +711,9 @@ fn selectors_keep_local_only_corpora_explicit_and_all_routine() {
             id: "macro".to_owned(),
             title: "Macro".to_owned(),
             area: "bio".to_owned(),
+            domains: vec![FeatureDomain::Macromolecule],
             version: 1,
             implemented: true,
-            validated: false,
             description: "Macro feature.".to_owned(),
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
@@ -833,80 +1005,6 @@ fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
 }
 
 #[test]
-fn current_status_drives_overall_validation_and_metadata_sync() {
-    let root = temp_feature_root("status-sync");
-    let (features_root, validation_root, manifest_path) = write_evidence_test_repo(&root);
-    let metadata_path = features_root.join("example").join("feature.toml");
-
-    let feature = Feature {
-        id: "example".to_owned(),
-        title: "Example".to_owned(),
-        area: "io".to_owned(),
-        version: 1,
-        implemented: true,
-        validated: false,
-        description: "Example feature.".to_owned(),
-        depends_on: Vec::new(),
-        validation_required: vec!["smoke".to_owned()],
-    };
-    let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
-    let manifest_text = fs::read_to_string(&manifest_path).expect("manifest text should read");
-    let evidence =
-        build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
-    let corpus_status = CorpusStatus {
-        passed: true,
-        fixture_count: 1,
-        compared_count: 1,
-        reference_tool: "rdkit".to_owned(),
-        reference_version: "RDKit test".to_owned(),
-        manifest_hash: hash_evidence_file(&manifest_path).expect("manifest should hash"),
-        failed_count: 0,
-        first_failure: None,
-        evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
-        evidence_hash: Some(evidence.sha256),
-        evidence_inputs: evidence.inputs,
-        validated_at_unix: 1,
-    };
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status)]),
-    };
-    let statuses = BTreeMap::from([(feature.id.clone(), status.clone())]);
-
-    assert!(overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
-    sync_feature_validation_flags_at(
-        std::slice::from_ref(&feature),
-        &statuses,
-        &features_root,
-        &validation_root,
-    )
-    .expect("metadata should sync");
-    assert!(fs::read_to_string(&metadata_path)
-        .expect("metadata should read")
-        .contains("validated = true"));
-
-    fs::write(&manifest_path, manifest_text.replace('\n', "\r\n"))
-        .expect("manifest line endings should change");
-    assert!(overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
-
-    fs::write(&manifest_path, "changed = true\n").expect("manifest should change");
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
 fn evidence_changes_after_material_input_changes() {
     let root = temp_feature_root("evidence-change");
     let (_, _, manifest_path) = write_evidence_test_repo(&root);
@@ -977,23 +1075,12 @@ fn evidence_hash_normalizes_text_line_endings() {
 }
 
 #[test]
-fn current_status_requires_known_nonempty_evidence() {
+fn recorded_corpus_status_requires_known_nonempty_evidence() {
     let root = temp_feature_root("status-rejects-stale");
-    let (_, validation_root, manifest_path) = write_evidence_test_repo(&root);
+    let (_, _, manifest_path) = write_evidence_test_repo(&root);
     let manifest = read_validation_manifest(&manifest_path).expect("manifest should read");
     let evidence =
         build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
-    let feature = Feature {
-        id: "example".to_owned(),
-        title: "Example".to_owned(),
-        area: "io".to_owned(),
-        version: 1,
-        implemented: true,
-        validated: false,
-        description: "Example feature.".to_owned(),
-        depends_on: Vec::new(),
-        validation_required: vec!["smoke".to_owned()],
-    };
     let mut corpus_status = CorpusStatus {
         passed: true,
         fixture_count: 1,
@@ -1008,38 +1095,14 @@ fn current_status_requires_known_nonempty_evidence() {
         evidence_inputs: evidence.inputs,
         validated_at_unix: 1,
     };
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status.clone())]),
-    };
-    assert!(overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
+    assert!(recorded_corpus_status_passed(Some(&corpus_status)));
 
     corpus_status.evidence_schema_version = Some(999);
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status.clone())]),
-    };
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
+    assert!(!recorded_corpus_status_passed(Some(&corpus_status)));
 
     corpus_status.evidence_schema_version = Some(VALIDATION_EVIDENCE_SCHEMA_VERSION);
     corpus_status.compared_count = 0;
-    let status = ValidationStatus {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("smoke".to_owned(), corpus_status)]),
-    };
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        &validation_root
-    ));
+    assert!(!recorded_corpus_status_passed(Some(&corpus_status)));
     fs::remove_dir_all(root).ok();
 }
 
@@ -1052,14 +1115,14 @@ fn dashboard_text_comparison_ignores_platform_line_endings() {
 }
 
 #[test]
-fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed() {
+fn recorded_dashboard_status_is_portable_without_global_validation_state() {
     let feature = Feature {
         id: "portable.feature".to_owned(),
         title: "Portable".to_owned(),
         area: "infrastructure".to_owned(),
+        domains: vec![FeatureDomain::Infrastructure],
         version: 1,
         implemented: true,
-        validated: true,
         description: "Portable dashboard evidence.".to_owned(),
         depends_on: Vec::new(),
         validation_required: vec!["smoke".to_owned()],
@@ -1088,18 +1151,10 @@ fn recorded_dashboard_status_is_portable_but_current_status_is_content_addressed
         )]),
     };
 
-    assert!(recorded_overall_validated(&feature, Some(&status)));
-    assert!(!overall_validated_at(
-        &feature,
-        Some(&status),
-        Path::new("definitely-missing-validation-root")
-    ));
-    assert!(ensure_current_validation_flags_synced_at(
-        std::slice::from_ref(&feature),
-        &BTreeMap::from([(feature.id.clone(), status)]),
-        Path::new("definitely-missing-validation-root")
-    )
-    .is_err());
+    assert!(
+        dashboard_corpus_cell(&feature, Some(&status), "smoke", None, true)
+            .contains("aria-label=\"passed\"")
+    );
 }
 
 #[test]
@@ -1648,7 +1703,7 @@ fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
     fs::write(
         feature_dir.join("feature.toml"),
-        "id = \"example\"\nvalidated = false\n",
+        "id = \"example\"\ntitle = \"Example\"\narea = \"test\"\ndomains = [\"small-molecule\"]\nversion = 1\nimplemented = true\ndescription = \"Example feature.\"\ndepends_on = []\nvalidation_required = [\"smoke\"]\n",
     )
     .expect("metadata should write");
     fs::write(feature_dir.join("feature.md"), "# Example\n").expect("feature doc should write");

@@ -51,7 +51,8 @@ block without hiding validation, perception, sanitization, or preparation.
   unsupported aromatic connectivity, missing atom-site rejection, duplicate atom
   identities, and unencodable model roles.
 - No external writer golden is currently accepted by the validation harness, so
-  the feature remains unvalidated despite targeted unit regression coverage.
+  no external writer parity result is recorded despite targeted unit regression
+  coverage.
 
 ## Out Of Scope
 
