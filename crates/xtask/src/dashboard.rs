@@ -42,8 +42,8 @@ pub(crate) fn render_dashboard(
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
     out.push_str("<title>Feature Dashboard</title>\n");
     out.push_str("<style>\n");
-    out.push_str(":root { color-scheme: light dark; --border: #d0d7de; --head: #f6f8fa; --ok: #1a7f37; --bad: #cf222e; --unknown: #9a6700; --muted: #656d76; --text: #24292f; --bg: #ffffff; }\n");
-    out.push_str("@media (prefers-color-scheme: dark) { :root { --border: #30363d; --head: #161b22; --ok: #3fb950; --bad: #ff7b72; --unknown: #d29922; --muted: #8b949e; --text: #c9d1d9; --bg: #0d1117; } }\n");
+    out.push_str(":root { color-scheme: light dark; --border: #d0d7de; --head: #f6f8fa; --ok: #1a7f37; --bad: #cf222e; --unknown: #9a6700; --muted: #656d76; --text: #24292f; --bg: #ffffff; --planned: #656d76; --experimental: #9a6700; --supported: #1a7f37; --deprecated: #8250df; }\n");
+    out.push_str("@media (prefers-color-scheme: dark) { :root { --border: #30363d; --head: #161b22; --ok: #3fb950; --bad: #ff7b72; --unknown: #d29922; --muted: #8b949e; --text: #c9d1d9; --bg: #0d1117; --planned: #8b949e; --experimental: #d29922; --supported: #3fb950; --deprecated: #d2a8ff; } }\n");
     out.push_str("body { margin: 24px; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }\n");
     out.push_str("h1 { margin: 0 0 4px; font-size: 24px; }\n");
     out.push_str("h2 { margin: 30px 0 4px; font-size: 20px; }\n");
@@ -52,6 +52,16 @@ pub(crate) fn render_dashboard(
     out.push_str(".reference { margin-bottom: 4px; color: var(--text); }\n");
     out.push_str(".supplemental { margin-bottom: 10px; font-size: 12px; }\n");
     out.push_str(".dashboard-wrap { overflow-x: auto; }\n");
+    out.push_str(".graph-wrap { overflow-x: auto; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--head) 55%, transparent); }\n");
+    out.push_str(".feature-graph { display: block; min-width: 100%; height: auto; }\n");
+    out.push_str(".graph-edge { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-opacity: .42; }\n");
+    out.push_str(".graph-node rect { stroke-width: 1.5; rx: 6; }\n");
+    out.push_str(".graph-node text { fill: var(--text); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; pointer-events: none; }\n");
+    out.push_str(".graph-layer-label { fill: var(--muted); font: 11px system-ui, -apple-system, Segoe UI, sans-serif; }\n");
+    out.push_str(".graph-node.status-planned rect { fill: color-mix(in srgb, var(--planned) 12%, var(--bg)); stroke: var(--planned); stroke-dasharray: 4 3; }\n");
+    out.push_str(".graph-node.status-experimental rect { fill: color-mix(in srgb, var(--experimental) 13%, var(--bg)); stroke: var(--experimental); }\n");
+    out.push_str(".graph-node.status-supported rect { fill: color-mix(in srgb, var(--supported) 12%, var(--bg)); stroke: var(--supported); }\n");
+    out.push_str(".graph-node.status-deprecated rect { fill: color-mix(in srgb, var(--deprecated) 13%, var(--bg)); stroke: var(--deprecated); }\n");
     out.push_str("table { border-collapse: collapse; width: 100%; min-width: 980px; }\n");
     out.push_str("table.infrastructure-table { min-width: 720px; }\n");
     out.push_str(
@@ -86,6 +96,11 @@ pub(crate) fn render_dashboard(
     out.push_str(".na { color: var(--muted); }\n");
     out.push_str(".legend { margin-top: -8px; font-size: 12px; }\n");
     out.push_str(".legend span { margin-right: 3px; }\n");
+    out.push_str(".feature-status { display: inline-block; padding: 1px 6px; border: 1px solid currentColor; border-radius: 999px; font-size: 12px; font-weight: 650; white-space: nowrap; }\n");
+    out.push_str(".status-planned { color: var(--planned); }\n");
+    out.push_str(".status-experimental { color: var(--experimental); }\n");
+    out.push_str(".status-supported { color: var(--supported); }\n");
+    out.push_str(".status-deprecated { color: var(--deprecated); }\n");
     out.push_str("code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }\n");
     out.push_str("</style>\n");
     out.push_str("</head>\n");
@@ -94,6 +109,7 @@ pub(crate) fn render_dashboard(
     out.push_str("<p>Generated from feature metadata and recorded per-corpus parity status. Run cargo xtask validate to compare against the current checkout. Do not hand-edit this file.</p>\n");
     out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"unknown\">?</span>unknown <span class=\"na\">-</span>not required</p>\n");
     out.push_str("<p>Features shared by both molecular domains are intentionally shown in both chemistry tables. The mixed smoke corpus also appears in both tables; only applicable feature rows carry parity status.</p>\n");
+    render_feature_graph(&mut out, features);
     render_dashboard_section(
         &mut out,
         DashboardSection {
@@ -167,6 +183,103 @@ pub(crate) fn render_dashboard(
     out
 }
 
+pub(crate) fn render_feature_graph(out: &mut String, features: &[Feature]) {
+    const NODE_WIDTH: usize = 210;
+    const NODE_HEIGHT: usize = 34;
+    const COLUMN_GAP: usize = 46;
+    const ROW_GAP: usize = 18;
+    const MARGIN_X: usize = 24;
+    const MARGIN_TOP: usize = 40;
+    const MARGIN_BOTTOM: usize = 22;
+
+    let layers = feature_dependency_layers(features)
+        .expect("dashboard features should form a validated dependency graph");
+    let max_rows = layers.iter().map(Vec::len).max().unwrap_or(0).max(1);
+    let width =
+        MARGIN_X * 2 + layers.len() * NODE_WIDTH + layers.len().saturating_sub(1) * COLUMN_GAP;
+    let height =
+        MARGIN_TOP + max_rows * NODE_HEIGHT + max_rows.saturating_sub(1) * ROW_GAP + MARGIN_BOTTOM;
+    let mut positions = BTreeMap::new();
+    for (layer_index, layer) in layers.iter().enumerate() {
+        let layer_height = layer.len() * NODE_HEIGHT + layer.len().saturating_sub(1) * ROW_GAP;
+        let available_height = max_rows * NODE_HEIGHT + max_rows.saturating_sub(1) * ROW_GAP;
+        let layer_offset = (available_height.saturating_sub(layer_height)) / 2;
+        for (row_index, feature) in layer.iter().enumerate() {
+            positions.insert(
+                feature.id.as_str(),
+                (
+                    MARGIN_X + layer_index * (NODE_WIDTH + COLUMN_GAP),
+                    MARGIN_TOP + layer_offset + row_index * (NODE_HEIGHT + ROW_GAP),
+                ),
+            );
+        }
+    }
+
+    out.push_str("<section id=\"feature-dependency-graph\">\n");
+    out.push_str("<h2>Feature dependency graph</h2>\n");
+    out.push_str("<p class=\"section-description\">Generated from <code>depends_on</code>. Arrows point from a prerequisite to the feature that depends on it; columns are deterministic dependency layers.</p>\n");
+    out.push_str("<p class=\"legend\">");
+    for status in [
+        FeatureStatus::Planned,
+        FeatureStatus::Experimental,
+        FeatureStatus::Supported,
+        FeatureStatus::Deprecated,
+    ] {
+        out.push_str(&dashboard_status_marker(status));
+        out.push(' ');
+    }
+    out.push_str("</p>\n");
+    out.push_str("<div class=\"graph-wrap\">\n");
+    out.push_str(&format!(
+        "<svg class=\"feature-graph\" viewBox=\"0 0 {width} {height}\" width=\"{width}\" height=\"{height}\" role=\"img\" aria-labelledby=\"feature-graph-title feature-graph-description\">\n"
+    ));
+    out.push_str("<title id=\"feature-graph-title\">Feature dependency graph</title>\n");
+    out.push_str("<desc id=\"feature-graph-description\">Directed acyclic graph of repository features. Arrows lead from dependencies to dependents.</desc>\n");
+    out.push_str("<defs><marker id=\"feature-graph-arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\" markerUnits=\"strokeWidth\"><path d=\"M0,0 L7,3.5 L0,7 Z\" fill=\"#8c959f\"/></marker></defs>\n");
+    for feature in features {
+        let Some((end_x, end_y)) = positions.get(feature.id.as_str()).copied() else {
+            continue;
+        };
+        for dependency in &feature.depends_on {
+            let Some((start_x, start_y)) = positions.get(dependency.as_str()).copied() else {
+                continue;
+            };
+            let start_x = start_x + NODE_WIDTH;
+            let start_y = start_y + NODE_HEIGHT / 2;
+            let end_y = end_y + NODE_HEIGHT / 2;
+            let bend_x = (start_x + end_x) / 2;
+            out.push_str(&format!(
+                "<path class=\"graph-edge\" marker-end=\"url(#feature-graph-arrow)\" d=\"M {start_x} {start_y} C {bend_x} {start_y}, {bend_x} {end_y}, {end_x} {end_y}\"/>\n"
+            ));
+        }
+    }
+    for (layer_index, layer) in layers.iter().enumerate() {
+        let x = MARGIN_X + layer_index * (NODE_WIDTH + COLUMN_GAP);
+        out.push_str(&format!(
+            "<text class=\"graph-layer-label\" x=\"{x}\" y=\"18\">layer {layer_index}</text>\n"
+        ));
+        for feature in layer {
+            let (x, y) = positions[feature.id.as_str()];
+            let id = escape_html(&feature.id);
+            let title = escape_html(&format!(
+                "{} — {}; depends on: {}",
+                feature.title,
+                feature.status.as_str(),
+                if feature.depends_on.is_empty() {
+                    "none".to_owned()
+                } else {
+                    feature.depends_on.join(", ")
+                }
+            ));
+            out.push_str(&format!(
+                "<a href=\"./{id}/feature.md\"><g class=\"graph-node status-{}\" transform=\"translate({x} {y})\"><title>{title}</title><rect width=\"{NODE_WIDTH}\" height=\"{NODE_HEIGHT}\" rx=\"6\"/><text x=\"10\" y=\"21\">{id}</text></g></a>\n",
+                feature.status.as_str()
+            ));
+        }
+    }
+    out.push_str("</svg>\n</div>\n</section>\n");
+}
+
 pub(crate) fn render_dashboard_section(
     out: &mut String,
     section: DashboardSection,
@@ -222,7 +335,7 @@ pub(crate) fn render_dashboard_section(
     out.push_str("<th class=\"text\" data-sort-type=\"text\"><button class=\"sort\" type=\"button\">Title</button></th>");
     out.push_str(&area_header());
     out.push_str(&rotated_header("Version", "Version", "number"));
-    out.push_str(&rotated_header("Implemented", "Implemented", "number"));
+    out.push_str("<th class=\"compact\" data-sort-type=\"number\" title=\"Release status\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Status\">Status</button></th>");
     for corpus in &corpora {
         let (visible, title) = corpus_header(corpus.id, corpus.label, corpus_info);
         out.push_str(&rotated_header(&visible, &title, "number"));
@@ -252,9 +365,9 @@ pub(crate) fn render_dashboard_section(
             feature.version, feature.version
         ));
         out.push_str(&format!(
-            "<td class=\"marker\" data-sort-value=\"{}\">{}</td>",
-            bool_sort_value(feature.implemented),
-            dashboard_bool_marker(feature.implemented)
+            "<td class=\"compact\" data-sort-value=\"{}\">{}</td>",
+            feature.status.sort_value(),
+            dashboard_status_marker(feature.status)
         ));
         for corpus in &corpora {
             let info = corpus_info
@@ -473,12 +586,9 @@ pub(crate) fn rotated_label_html(label: &str) -> String {
     format!("<span class=\"rotated-name\">{}</span>", escape_html(label))
 }
 
-pub(crate) fn dashboard_bool_marker(value: bool) -> &'static str {
-    if value {
-        "<span class=\"ok\" aria-label=\"passed\">&#10003;</span>"
-    } else {
-        "<span class=\"bad\" aria-label=\"failed\">&#10007;</span>"
-    }
+pub(crate) fn dashboard_status_marker(status: FeatureStatus) -> String {
+    let status = status.as_str();
+    format!("<span class=\"feature-status status-{status}\">{status}</span>")
 }
 
 pub(crate) fn dashboard_corpus_cell(
@@ -576,14 +686,6 @@ pub(crate) fn dashboard_unknown_marker(title: &str) -> String {
         "<span class=\"unknown\" aria-label=\"unknown\" title=\"{}\">?</span>",
         escape_html(title)
     )
-}
-
-pub(crate) fn bool_sort_value(value: bool) -> &'static str {
-    if value {
-        "1"
-    } else {
-        "0"
-    }
 }
 
 pub(crate) fn escape_html(text: &str) -> String {

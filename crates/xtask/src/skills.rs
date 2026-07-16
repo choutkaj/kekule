@@ -60,7 +60,8 @@ pub(crate) fn expected_skills() -> &'static [ExpectedSkill] {
             required_phrases: &[
                 "add -> optional research -> plan -> implement",
                 "feature.md",
-                "implemented = true",
+                "status = \"supported\"",
+                "depends_on",
                 "validation_required",
                 "externally supplied",
                 "cargo xtask dashboard --check",

@@ -3,7 +3,7 @@ title = "mmCIF molecular model writer"
 area = "io"
 domains = ["macromolecule"]
 version = 3
-implemented = true
+status = "supported"
 description = "Write a supported canonical Model as structural mmCIF with hierarchy, coordinates, entity typing, and explicit covalent connectivity."
 depends_on = [
   "bio.hierarchy.smcra",

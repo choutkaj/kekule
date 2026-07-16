@@ -19,28 +19,45 @@ Canonical flow: add -> optional research -> plan -> implement.
 
 ## Feature metadata
 
-Feature metadata uses schema v4:
+Feature metadata uses schema v5:
 
 - `id`
 - `title`
 - `area`
 - `domains`
 - `version`
-- `implemented`
+- `status`
 - `description`
 - `depends_on`
 - `validation_required`
 
-Do not use `priority`, `status`, `last_ai_review`, or the removed global
-`validated` flag.
+Do not use `priority`, `implemented`, `last_ai_review`, or the removed global
+`validated` flag. `status` is one of:
+
+- `planned`: tracked design intent with no usable implementation.
+- `experimental`: usable implementation whose contract may still change.
+- `supported`: release-quality contract intended for ordinary users.
+- `deprecated`: usable compatibility surface scheduled for removal.
 
 `domains` is a non-empty list containing `small-molecule`, `macromolecule`, or
 `infrastructure`. Shared graph, API, unit, and modeling features declare both
 chemistry domains; infrastructure cannot be combined with a chemistry domain.
 
-Increment `version` only when behavior, public API, or validation contract intentionally changes. Set `implemented = true` only when implementation is complete. Let `cargo xtask validate ... --update` record per-corpus parity evidence.
+`depends_on` declares semantic feature prerequisites, not source-file imports.
+Dependency IDs must exist and form a directed acyclic graph. Duplicate and
+self-dependencies are invalid. A `supported` feature may depend only on
+`supported` features; an `experimental` feature may depend on `experimental`
+or `supported` features; a `deprecated` feature may depend on any implemented
+feature; a `planned` feature may depend on any registered feature.
 
-Feature IDs and titles describe long-term capabilities, not temporary maturity levels. Use `version`, `implemented`, the Validation section, per-corpus evidence, and Revision Notes to describe partial coverage or missing goldens.
+Increment `version` only when behavior, public API, or validation contract
+intentionally changes. Set `status = "supported"` only when the public contract
+is release-quality. Let `cargo xtask validate ... --update` record per-corpus
+parity evidence.
+
+Feature IDs and titles describe long-term capabilities, not temporary maturity
+levels. Use `version`, `status`, the Validation section, per-corpus evidence,
+and Revision Notes to describe partial coverage or missing goldens.
 
 ## Feature docs
 

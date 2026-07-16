@@ -210,7 +210,7 @@ pub(crate) fn validation_targets_from<'a>(
                     .any(|required| required == corpus.id);
                 let manifest_exists =
                     validation_manifest_path_from(root, &feature.id, corpus.id).exists();
-                if required || (feature.implemented && manifest_exists) {
+                if required || (feature.status.has_implementation() && manifest_exists) {
                     targets.push((feature, corpus.id.to_owned()));
                 }
             }

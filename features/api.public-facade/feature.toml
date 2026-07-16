@@ -3,7 +3,7 @@ title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
 version = 15
-implemented = true
+status = "supported"
 description = "Expose the release facade with focused modules, real interpretation results, checked lifecycles, and private invariant state."
 depends_on = [
   "core.units",
