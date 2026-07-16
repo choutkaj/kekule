@@ -213,7 +213,7 @@ pub fn parse_sdf_document(
         let line_number = offset + 1;
         if line.trim() == "$$$$" {
             if current.iter().any(|(_, line)| !line.trim().is_empty()) {
-                push_record_document(&mut records, &current, options)?;
+                push_record_document(&mut records, &current, options, true)?;
             }
             current.clear();
             current_bytes = 0;
@@ -240,7 +240,7 @@ pub fn parse_sdf_document(
     }
     if current.iter().any(|(_, line)| !line.trim().is_empty()) {
         if options.allow_missing_final_delimiter {
-            push_record_document(&mut records, &current, options)?;
+            push_record_document(&mut records, &current, options, false)?;
         } else {
             return Err(SdfParseError::new(
                 records.len() + 1,
@@ -256,6 +256,7 @@ fn push_record_document(
     records: &mut Vec<SdfRecordDocument>,
     lines: &[(usize, &str)],
     options: SdfParseOptions,
+    ended_by_delimiter: bool,
 ) -> Result<(), SdfParseError> {
     if records.len() >= options.max_records {
         return Err(SdfParseError::new(
@@ -264,7 +265,12 @@ fn push_record_document(
             "SDF record count exceeds configured limit",
         ));
     }
-    records.push(parse_record_document(records.len() + 1, lines, options)?);
+    records.push(parse_record_document(
+        records.len() + 1,
+        lines,
+        options,
+        ended_by_delimiter,
+    )?);
     Ok(())
 }
 
@@ -272,6 +278,7 @@ fn parse_record_document(
     record: usize,
     lines: &[(usize, &str)],
     options: SdfParseOptions,
+    ended_by_delimiter: bool,
 ) -> Result<SdfRecordDocument, SdfParseError> {
     let end = lines
         .iter()
@@ -327,7 +334,7 @@ fn parse_record_document(
             values.push(lines[index].1);
             index += 1;
         }
-        if !terminated {
+        if !terminated && !ended_by_delimiter {
             return Err(SdfParseError::new(
                 record,
                 lines.last().map(|(line, _)| *line).unwrap_or(line_number),

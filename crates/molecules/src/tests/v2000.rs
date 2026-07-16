@@ -214,7 +214,7 @@ M  END
 }
 
 #[test]
-fn sdf_v2000_rejects_unstructured_post_ctab_text_and_unterminated_fields() {
+fn sdf_v2000_rejects_unstructured_post_ctab_text_and_truly_unterminated_fields() {
     let molfile = "\
 One
   molecules
@@ -228,9 +228,20 @@ M  END
         .expect_err("unstructured post-CTAB content must not be discarded");
     assert!(error.message().contains("unexpected content"));
 
-    let unterminated_field = format!("{molfile}>  <FIELD>\nvalue\n$$$$\n");
-    let error = sdf::parse_str(&unterminated_field, SdfParseOptions::default())
-        .expect_err("data fields require a terminating blank line");
+    let delimited_field = format!("{molfile}>  <FIELD>\nvalue\n$$$$\n");
+    let document = sdf::parse_str(&delimited_field, SdfParseOptions::default())
+        .expect("the record delimiter unambiguously terminates the final field");
+    assert_eq!(document.records()[0].data_fields()[0].value(), "value");
+
+    let unterminated_field = format!("{molfile}>  <FIELD>\nvalue\n");
+    let error = sdf::parse_str(
+        &unterminated_field,
+        SdfParseOptions {
+            allow_missing_final_delimiter: true,
+            ..SdfParseOptions::default()
+        },
+    )
+    .expect_err("a field at bare end-of-input still requires a blank terminator");
     assert!(error.message().contains("terminating blank line"));
 }
 

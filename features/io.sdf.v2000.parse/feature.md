@@ -23,12 +23,12 @@ per-record reports.
 - `SdfParseOptions` also bounds total input bytes, record count, and bytes per
   record. Defaults support the repository's broad corpora while preventing
   unbounded document and per-record allocation.
-- Data values continue until their required blank-line terminator, so a value
-  line beginning with `>` is preserved as data rather than misread as a new
-  field header.
+- Data values continue until a blank line or the record's `$$$$` delimiter, so
+  a value line beginning with `>` is preserved as data rather than misread as a
+  new field header. Bare end-of-input does not implicitly terminate a field.
 - Nonblank text after the Molfile block must be a data-field header, and every
-  field must have its blank-line terminator; malformed post-CTAB content is
-  rejected rather than discarded.
+  field must end at a blank line or record delimiter; malformed post-CTAB
+  content is rejected rather than discarded.
 - Parsing and interpretation never sanitize or run chemical perception.
 
 ## Validation
@@ -61,3 +61,6 @@ per-record reports.
 - v16: Reject unstructured post-CTAB text and data fields without their required
   blank-line terminator instead of silently dropping or ambiguously accepting
   malformed record content.
+- v17: Accept the common, unambiguous SDF form where `$$$$` directly terminates
+  the final data field while still rejecting a field that reaches bare
+  end-of-input without a blank line.
