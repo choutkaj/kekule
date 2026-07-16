@@ -9,15 +9,30 @@ Interpret V3000 records from the version-autodetected loss-preserving
 
 - Shares `molfile::parse_str` and `molfile::interpret` with V2000; no
   version-specific reader remains.
+- Shares `molfile::parse_str_with_options` and `MolfileParseOptions`; default
+  limits bound input bytes, V3000 atoms, V3000 bonds, and continued logical-line
+  size before allocation.
 - Parses three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND`
   sections, and line continuations into a validated private typed syntax
   representation.
 - Interpretation returns `MolfileInterpretation`; its report maps source atom
   and bond records to stable canonical `AtomId` and `BondId` values.
-- Preserves title/program/comment properties, atom coordinates, bond orders, atom map numbers, formal charges, isotopes via `MASS`, radical multiplicities, and supported V3000 bond `CFG` stereo as source bond marks.
+- Preserves title/program/comment document metadata, atom coordinates, bond
+  orders, atom map numbers, formal charges, isotopes via `MASS`, radical
+  multiplicities, and supported V3000 bond `CFG` stereo as source bond marks.
 - Preserves valence-implied hydrogen carriers on degree-three tetrahedral `CFG`
   centers as explicit atom hydrogens using the same rule as V2000 parsing.
-- Rejects malformed sections, count mismatches, duplicate atom indices, out-of-range bond endpoints, unknown elements, non-finite coordinates, unsupported bond orders, atom stereochemistry, and enhanced stereo collections with structured parse errors.
+- Rejects malformed sections, incomplete or malformed count records, count
+  mismatches, duplicate count or section-control records, misplaced count
+  records, structural records outside the CTAB,
+  zero or duplicate atom/bond indices, out-of-range bond endpoints, unknown
+  elements, non-finite coordinates, malformed, duplicate, or unsupported
+  embedded atom/bond options, unsupported bond orders, and atom
+  stereochemistry with structured parse errors.
+- Loss-preserves unsupported nonstructural CTAB records such as enhanced stereo
+  collections in the document and reports their source lines as ignored during
+  interpretation; required CTAB control records are not misreported as ignored
+  chemistry.
 - Does not run sanitization, valence perception, ring perception, aromaticity, or stereochemistry perception.
 
 ## Implementation Notes
@@ -31,6 +46,8 @@ Interpret V3000 records from the version-autodetected loss-preserving
 ## Validation
 
 - Unit tests cover successful raw parsing, line continuations, metadata fields, no-perception behavior, malformed counts, count mismatches, non-finite coordinates, bad endpoints, supported source bond stereo marks, unsupported atom stereo, and unsupported bond types.
+- A dedicated bounded fuzz target exercises V3000 parse, interpretation, write,
+  and reparse in CI smoke tests and scheduled campaigns.
 - RDKit-generated goldens compare Molfile-preserved atom, bond, metadata, and coordinate records for the same external PubChem fixtures used by the V2000 parser tier.
 - All ignored non-smoke corpora remain available for explicit local-only
   parity checks but are not selected as required routine evidence.
@@ -58,3 +75,15 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 - v11: Make parsing own the typed V3000 atom/bond representation and validation;
   interpretation consumes it without reparsing source lines and returns
   canonical mappings.
+- v12: Validate complete count records and positive unique atom/bond indices,
+  preserve unsupported nonstructural CTAB records explicitly, and keep required
+  V3000 control lines out of the ignored-record report.
+- v13: Add configurable V3000 atom, bond, logical-line, and whole-document
+  resource bounds through the shared Molfile parser options.
+- v14: Add a dedicated bounded V3000 parse/interpret/write round-trip fuzz
+  target to CI and scheduled campaigns.
+- v15: Reject duplicate structural records and malformed, duplicate, or
+  unsupported embedded atom/bond options instead of silently discarding them.
+- v16: Require exactly one CTAB, ATOM, and BOND section-control pair and place
+  the sole COUNTS record before ATOM, closing remaining structural
+  record-discard paths.

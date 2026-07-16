@@ -17,6 +17,18 @@ per-record reports.
   atom/bond mappings with its record index and source start line.
 - Headers and SDF fields are record metadata and are never injected into
   `Molecule::props`.
+- The final record requires its own `$$$$` delimiter unless
+  `SdfParseOptions::allow_missing_final_delimiter` is enabled; an earlier
+  record delimiter never makes a later unterminated record valid.
+- `SdfParseOptions` also bounds total input bytes, record count, and bytes per
+  record. Defaults support the repository's broad corpora while preventing
+  unbounded document and per-record allocation.
+- Data values continue until their required blank-line terminator, so a value
+  line beginning with `>` is preserved as data rather than misread as a new
+  field header.
+- Nonblank text after the Molfile block must be a data-field header, and every
+  field must have its blank-line terminator; malformed post-CTAB content is
+  rejected rather than discarded.
 - Parsing and interpretation never sanitize or run chemical perception.
 
 ## Validation
@@ -42,3 +54,10 @@ per-record reports.
   tier while retaining every ignored corpus on demand.
 - v13: Return a first-class SDF interpretation result with qualified per-record
   Molfile reports and source-to-canonical mappings.
+- v14: Enforce the final delimiter per record and preserve data-value lines
+  beginning with `>` until the field's blank-line terminator.
+- v15: Add configurable whole-input, record-count, and per-record resource
+  limits with broad-corpus-safe defaults.
+- v16: Reject unstructured post-CTAB text and data fields without their required
+  blank-line terminator instead of silently dropping or ambiguously accepting
+  malformed record content.

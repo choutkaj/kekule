@@ -7,7 +7,7 @@ use crate::io::preserve_molfile_tetrahedral_hydrogens;
 use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
-use super::sdf_document::SdfRecord;
+use super::sdf_document::{SdfDataField, SdfRecord};
 
 pub(super) const V2000_MAX_ATOMS: usize = 999;
 pub(super) const V2000_MAX_BONDS: usize = 999;
@@ -34,9 +34,28 @@ pub(super) struct V2000BondSyntax {
     pub(super) line: usize,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Resource and record-boundary policy for SDF parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SdfParseOptions {
+    /// Accept a nonempty final record without its terminating `$$$$` line.
     pub allow_missing_final_delimiter: bool,
+    /// Maximum UTF-8 byte length of the complete input document.
+    pub max_input_bytes: usize,
+    /// Maximum number of nonempty records.
+    pub max_records: usize,
+    /// Maximum normalized byte length of one record, excluding its delimiter.
+    pub max_record_bytes: usize,
+}
+
+impl Default for SdfParseOptions {
+    fn default() -> Self {
+        Self {
+            allow_missing_final_delimiter: false,
+            max_input_bytes: 256 * 1024 * 1024,
+            max_records: 1_000_000,
+            max_record_bytes: 64 * 1024 * 1024,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,7 +172,7 @@ pub(super) fn parse_v2000_syntax(
             )
         })?;
         let mut atom = Atom::new(element);
-        apply_atom_v2000_fields(&mut atom, atom_line);
+        apply_atom_v2000_fields(record, line_number, &mut atom, atom_line)?;
         let point = atom_coordinates_from_v2000_line(atom_line)
             .ok_or_else(|| SdfParseError::new(record, line_number, "invalid atom coordinates"))?;
         atoms.push(V2000AtomSyntax {
@@ -334,18 +353,36 @@ fn atom_coordinates_from_v2000_line(line: &str) -> Option<Point3> {
     (point.x.is_finite() && point.y.is_finite() && point.z.is_finite()).then_some(point)
 }
 
-fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
+fn apply_atom_v2000_fields(
+    record: usize,
+    line_number: usize,
+    atom: &mut Atom,
+    line: &str,
+) -> std::result::Result<(), SdfParseError> {
     let fields = line.split_whitespace().collect::<Vec<_>>();
-    if let Some(charge_code) = fields.get(5).and_then(|value| value.parse::<i8>().ok()) {
+    if let Some(value) = fields.get(5) {
+        let charge_code = value.parse::<u8>().map_err(|_| {
+            SdfParseError::new(record, line_number, "invalid V2000 atom charge code")
+        })?;
         atom.formal_charge = match charge_code {
+            0 | 4 => 0,
             1 => 3,
             2 => 2,
             3 => 1,
             5 => -1,
             6 => -2,
             7 => -3,
-            _ => 0,
+            _ => {
+                return Err(SdfParseError::new(
+                    record,
+                    line_number,
+                    "unsupported V2000 atom charge code",
+                ))
+            }
         };
+        if charge_code == 4 {
+            atom.radical = Some(AtomRadical::Doublet);
+        }
     }
     if fields
         .get(9)
@@ -363,6 +400,7 @@ fn apply_atom_v2000_fields(atom: &mut Atom, line: &str) {
             atom.atom_map = Some(atom_map);
         }
     }
+    Ok(())
 }
 
 fn parse_v2000_bond_line(
@@ -679,6 +717,10 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
 pub fn write_sdf_v2000(records: &[SdfRecord]) -> std::result::Result<String, MolWriteError> {
     let mut out = String::new();
     for record in records {
+        validate_sdf_title(record.title())?;
+        for field in record.data_fields() {
+            validate_sdf_data_field(field)?;
+        }
         let written = write_mol_v2000(record.molecule())?;
         let mut lines = written.lines();
         let _generated_title = lines.next();
@@ -694,6 +736,41 @@ pub fn write_sdf_v2000(records: &[SdfRecord]) -> std::result::Result<String, Mol
         out.push_str("$$$$\n");
     }
     Ok(out)
+}
+
+fn validate_sdf_title(title: &str) -> std::result::Result<(), MolWriteError> {
+    if title.contains(['\r', '\n']) {
+        return Err(MolWriteError::new(
+            "SDF record titles cannot contain line breaks",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sdf_data_field(field: &SdfDataField) -> std::result::Result<(), MolWriteError> {
+    let name = field.name();
+    if name.is_empty() || name.trim() != name || name.contains(['<', '>', '\r', '\n']) {
+        return Err(MolWriteError::new(
+            "SDF data field names must be nonempty, trimmed, and exclude angle brackets or line breaks",
+        ));
+    }
+    let value = field.value();
+    if value.contains('\r') {
+        return Err(MolWriteError::new(
+            "SDF data field values cannot contain carriage returns",
+        ));
+    }
+    if !value.is_empty() && value.split('\n').any(str::is_empty) {
+        return Err(MolWriteError::new(
+            "SDF data field values cannot contain blank lines",
+        ));
+    }
+    if value.lines().any(|line| line.trim() == "$$$$") {
+        return Err(MolWriteError::new(
+            "SDF data field values cannot contain a record delimiter line",
+        ));
+    }
+    Ok(())
 }
 
 fn v2000_charge_code(charge: i8) -> i8 {

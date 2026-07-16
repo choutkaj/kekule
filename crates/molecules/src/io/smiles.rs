@@ -84,6 +84,27 @@ pub enum SmilesDocumentTokenKind {
     Unsupported,
 }
 
+/// Resource limits for parsing one SMILES record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmilesParseOptions {
+    /// Maximum UTF-8 byte length of the complete SMILES record.
+    pub max_input_bytes: usize,
+    /// Maximum parsed atom count.
+    pub max_atoms: usize,
+    /// Maximum parsed bond count.
+    pub max_bonds: usize,
+}
+
+impl Default for SmilesParseOptions {
+    fn default() -> Self {
+        Self {
+            max_input_bytes: 16 * 1024 * 1024,
+            max_atoms: 1_000_000,
+            max_bonds: 2_000_000,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SmilesWriteOptions;
@@ -228,6 +249,25 @@ impl SmilesInterpretation {
 }
 
 pub fn parse_smiles_document(input: &str) -> std::result::Result<SmilesDocument, SmilesParseError> {
+    parse_smiles_document_with_options(input, SmilesParseOptions::default())
+}
+
+pub fn parse_smiles_document_with_options(
+    input: &str,
+    options: SmilesParseOptions,
+) -> std::result::Result<SmilesDocument, SmilesParseError> {
+    if options.max_atoms > u32::MAX as usize || options.max_bonds > u32::MAX as usize {
+        return Err(SmilesParseError::new(
+            0,
+            "configured atom and bond limits must fit the public identifier range",
+        ));
+    }
+    if input.len() > options.max_input_bytes {
+        return Err(SmilesParseError::new(
+            0,
+            "input exceeds configured byte limit",
+        ));
+    }
     if input.is_empty() {
         return Err(SmilesParseError::new(0, "empty SMILES document"));
     }
@@ -321,7 +361,7 @@ pub fn parse_smiles_document(input: &str) -> std::result::Result<SmilesDocument,
         ));
     }
     components.push(component_start..tokens.len());
-    let program = parse_smiles_program(input)?;
+    let program = parse_smiles_program(input, &chars, options)?;
     Ok(SmilesDocument {
         source: input.to_owned(),
         tokens,
@@ -336,8 +376,11 @@ pub fn interpret_smiles_document(
     interpret_smiles_program(&document.program, document.source.len())
 }
 
-fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, SmilesParseError> {
-    let chars = input.char_indices().collect::<Vec<_>>();
+fn parse_smiles_program(
+    input: &str,
+    chars: &[(usize, char)],
+    options: SmilesParseOptions,
+) -> std::result::Result<SmilesProgram, SmilesParseError> {
     let mut atoms = Vec::<SmilesProgramAtom>::new();
     let mut bonds = Vec::<SmilesProgramBond>::new();
     let mut imported_aromatic_atoms = BTreeSet::new();
@@ -447,7 +490,7 @@ fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, Smile
             '0'..='9' | '%' => {
                 let atom = current
                     .ok_or_else(|| SmilesParseError::new(offset, "ring closure without atom"))?;
-                let (label, next_cursor) = parse_smiles_ring_label(&chars, cursor)?;
+                let (label, next_cursor) = parse_smiles_ring_label(chars, cursor)?;
                 let close_bond = pending_bond
                     .take()
                     .map(|(order, stereo, _)| (order, stereo));
@@ -471,7 +514,15 @@ fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, Smile
                             None,
                         ),
                     };
-                    add_smiles_program_bond(&mut bonds, other, atom, order, stereo, offset)?;
+                    add_smiles_program_bond(
+                        &mut bonds,
+                        other,
+                        atom,
+                        order,
+                        stereo,
+                        offset,
+                        options.max_bonds,
+                    )?;
                     resolve_tetrahedral_ring_carrier(
                         &mut tetrahedral_carriers,
                         other,
@@ -497,9 +548,9 @@ fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, Smile
                 cursor = next_cursor;
             }
             '[' => {
-                let (atom, aromatic, chirality, next_cursor) = parse_bracket_atom(&chars, cursor)?;
+                let (atom, aromatic, chirality, next_cursor) = parse_bracket_atom(chars, cursor)?;
                 let explicit_hydrogens = atom.explicit_hydrogens;
-                let atom_id = AtomId::new(atoms.len() as u32);
+                let atom_id = next_smiles_atom_id(atoms.len(), offset, options.max_atoms)?;
                 let end = chars
                     .get(next_cursor)
                     .map(|(offset, _)| *offset)
@@ -533,7 +584,15 @@ fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, Smile
                             None,
                         ),
                     };
-                    add_smiles_program_bond(&mut bonds, previous, atom_id, order, stereo, offset)?;
+                    add_smiles_program_bond(
+                        &mut bonds,
+                        previous,
+                        atom_id,
+                        order,
+                        stereo,
+                        offset,
+                        options.max_bonds,
+                    )?;
                     push_tetrahedral_carrier(
                         &mut tetrahedral_carriers,
                         previous,
@@ -553,8 +612,8 @@ fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, Smile
                 ));
             }
             _ => {
-                let (atom, aromatic, next_cursor) = parse_organic_atom(&chars, cursor)?;
-                let atom_id = AtomId::new(atoms.len() as u32);
+                let (atom, aromatic, next_cursor) = parse_organic_atom(chars, cursor)?;
+                let atom_id = next_smiles_atom_id(atoms.len(), offset, options.max_atoms)?;
                 let end = chars
                     .get(next_cursor)
                     .map(|(offset, _)| *offset)
@@ -577,7 +636,15 @@ fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, Smile
                             None,
                         ),
                     };
-                    add_smiles_program_bond(&mut bonds, previous, atom_id, order, stereo, offset)?;
+                    add_smiles_program_bond(
+                        &mut bonds,
+                        previous,
+                        atom_id,
+                        order,
+                        stereo,
+                        offset,
+                        options.max_bonds,
+                    )?;
                     push_tetrahedral_carrier(
                         &mut tetrahedral_carriers,
                         previous,
@@ -612,6 +679,22 @@ fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, Smile
         tetrahedral: pending_tetrahedral,
         tetrahedral_carriers,
     })
+}
+
+fn next_smiles_atom_id(
+    atom_count: usize,
+    offset: usize,
+    max_atoms: usize,
+) -> std::result::Result<AtomId, SmilesParseError> {
+    if atom_count >= max_atoms {
+        return Err(SmilesParseError::new(
+            offset,
+            "SMILES atom count exceeds configured limit",
+        ));
+    }
+    Ok(AtomId::new(
+        u32::try_from(atom_count).expect("validated SMILES atom limit fits u32"),
+    ))
 }
 
 fn interpret_smiles_program(
@@ -770,7 +853,14 @@ fn add_smiles_program_bond(
     order: BondOrder,
     stereo: Option<StereoBondMarkKind>,
     offset: usize,
+    max_bonds: usize,
 ) -> std::result::Result<(), SmilesParseError> {
+    if bonds.len() >= max_bonds {
+        return Err(SmilesParseError::new(
+            offset,
+            "SMILES bond count exceeds configured limit",
+        ));
+    }
     if left == right {
         return Err(SmilesParseError::new(offset, "self bond"));
     }

@@ -290,6 +290,7 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
                 &input,
                 SdfParseOptions {
                     allow_missing_final_delimiter: true,
+                    ..SdfParseOptions::default()
                 },
             ) {
                 if let Ok(output) = sdf::write_v2000(&records) {

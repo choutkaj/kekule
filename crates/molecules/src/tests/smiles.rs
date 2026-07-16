@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn smiles_parse_options_bound_input_atoms_and_bonds() {
+    let input_error = smiles_api::parse_str_with_options(
+        "CC",
+        SmilesParseOptions {
+            max_input_bytes: 1,
+            ..SmilesParseOptions::default()
+        },
+    )
+    .expect_err("SMILES input byte limit should apply");
+    assert!(input_error.message().contains("input"));
+
+    let atom_error = smiles_api::parse_str_with_options(
+        "CC",
+        SmilesParseOptions {
+            max_atoms: 1,
+            ..SmilesParseOptions::default()
+        },
+    )
+    .expect_err("SMILES atom limit should apply");
+    assert!(atom_error.message().contains("atom count"));
+
+    let bond_error = smiles_api::parse_str_with_options(
+        "CC",
+        SmilesParseOptions {
+            max_bonds: 0,
+            ..SmilesParseOptions::default()
+        },
+    )
+    .expect_err("SMILES bond limit should apply");
+    assert!(bond_error.message().contains("bond count"));
+}
+
+#[test]
 fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
     let input = "[Na+].[Cl-]";
     let document = smiles_api::parse_str(input).expect("document parses");

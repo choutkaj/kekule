@@ -6,6 +6,30 @@ use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax
 use super::v3000::{interpret_v3000_syntax, parse_v3000_syntax, V3000Syntax};
 use super::SdfParseError;
 
+/// Resource limits shared by version-autodetected Molfile parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MolfileParseOptions {
+    /// Maximum UTF-8 byte length of the complete Molfile document.
+    pub max_input_bytes: usize,
+    /// Maximum declared V3000 atom count.
+    pub max_v3000_atoms: usize,
+    /// Maximum declared V3000 bond count.
+    pub max_v3000_bonds: usize,
+    /// Maximum byte length after joining one continued `M  V30` logical line.
+    pub max_v3000_logical_line_bytes: usize,
+}
+
+impl Default for MolfileParseOptions {
+    fn default() -> Self {
+        Self {
+            max_input_bytes: 64 * 1024 * 1024,
+            max_v3000_atoms: 1_000_000,
+            max_v3000_bonds: 2_000_000,
+            max_v3000_logical_line_bytes: 1024 * 1024,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MolfileVersion {
     V2000,
@@ -247,6 +271,19 @@ impl MolfileInterpretation {
 }
 
 pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfileParseError> {
+    parse_molfile_document_with_options(input, MolfileParseOptions::default())
+}
+
+pub fn parse_molfile_document_with_options(
+    input: &str,
+    options: MolfileParseOptions,
+) -> Result<MolfileDocument, MolfileParseError> {
+    if input.len() > options.max_input_bytes {
+        return Err(MolfileParseError::new(
+            1,
+            "input exceeds configured byte limit",
+        ));
+    }
     let source = input.replace("\r\n", "\n").replace('\r', "\n");
     let lines = source.lines().collect::<Vec<_>>();
     if lines.len() < 4 {
@@ -324,6 +361,8 @@ pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfilePar
                 let number = offset + 5;
                 let body = line.strip_prefix("M  V30 ").map(str::trim);
                 match body {
+                    Some("BEGIN CTAB" | "END CTAB") => {}
+                    Some(body) if body.starts_with("COUNTS ") => {}
                     Some("BEGIN ATOM") => section = Some("ATOM"),
                     Some("END ATOM") => section = None,
                     Some("BEGIN BOND") => section = Some("BOND"),
@@ -348,13 +387,23 @@ pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfilePar
             }
         }
     }
+    unsupported_records.extend(
+        lines[end + 1..]
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| !line.trim().is_empty())
+            .map(|(offset, line)| MolfileLine {
+                number: end + offset + 2,
+                text: (*line).to_owned(),
+            }),
+    );
     let syntax = match version {
         MolfileVersion::V2000 => MolfileSyntax::V2000(
             parse_v2000_syntax(1, 1, &lines[..=end])
                 .map_err(|error| MolfileParseError::new(error.line, error.message))?,
         ),
         MolfileVersion::V3000 => MolfileSyntax::V3000(
-            parse_v3000_syntax(1, 1, &lines[..=end])
+            parse_v3000_syntax(1, 1, &lines[..=end], options)
                 .map_err(|error| MolfileParseError::new(error.line, error.message))?,
         ),
     };

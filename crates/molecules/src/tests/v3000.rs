@@ -152,6 +152,58 @@ fn malformed_mol_v3000_returns_errors_without_panicking() {
             "unsupported bond type",
             "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 8 1 2\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
         ),
+        (
+            "incomplete counts",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "zero atom index",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 0 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "duplicate bond index",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 3 2 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 3 C 2 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2\nM  V30 1 1 2 3\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "duplicate counts",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "counts after atom section",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "duplicate atom section",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 BEGIN ATOM\nM  V30 END ATOM\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "duplicate bond section",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "record outside CTAB",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 NOTE=outside\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "unsupported atom option",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 VAL=4\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "malformed atom option",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 BROKEN\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "duplicate atom option",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CHG=1 CHG=2\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "unsupported bond option",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 TOPO=1\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
+        (
+            "duplicate bond option",
+            "Bad\nmolecules\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 2 1 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2 CFG=1 CFG=1\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
+        ),
     ];
 
     for (name, input) in cases {
@@ -160,6 +212,86 @@ fn malformed_mol_v3000_returns_errors_without_panicking() {
         let error = parsed.expect_err("malformed V3000 input should fail");
         assert!(!error.to_string().is_empty(), "message for {name}");
     }
+}
+
+#[test]
+fn mol_v3000_reports_only_nonstructural_unsupported_records_as_ignored() {
+    let input = "\
+collection
+molecules
+
+  0  0  0  0  0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 1 0 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0 0 0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 END BOND
+M  V30 BEGIN COLLECTION
+M  V30 MDLV30/STEABS ATOMS=(1 1)
+M  V30 END COLLECTION
+M  V30 END CTAB
+M  END
+";
+
+    let document = molfile::parse_str(input).expect("unsupported collection is loss-preserved");
+    assert_eq!(document.property_records().len(), 3);
+    let interpretation =
+        molfile::interpret(&document).expect("unsupported collection is reported, not hidden");
+    assert_eq!(
+        interpretation.report().ignored_record_lines(),
+        &[12, 13, 14]
+    );
+}
+
+#[test]
+fn mol_v3000_parse_options_bound_input_counts_and_logical_lines() {
+    let input = "\
+bounded
+molecules
+
+  0  0  0  0  0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 1 0 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0 0 0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+";
+
+    let input_error = molfile::parse_str_with_options(
+        input,
+        molfile::MolfileParseOptions {
+            max_input_bytes: input.len() - 1,
+            ..molfile::MolfileParseOptions::default()
+        },
+    )
+    .expect_err("Molfile input limit should apply");
+    assert!(input_error.message().contains("input"));
+
+    let atom_error = molfile::parse_str_with_options(
+        input,
+        molfile::MolfileParseOptions {
+            max_v3000_atoms: 0,
+            ..molfile::MolfileParseOptions::default()
+        },
+    )
+    .expect_err("V3000 atom limit should apply");
+    assert!(atom_error.message().contains("atom count"));
+
+    let line_error = molfile::parse_str_with_options(
+        input,
+        molfile::MolfileParseOptions {
+            max_v3000_logical_line_bytes: 4,
+            ..molfile::MolfileParseOptions::default()
+        },
+    )
+    .expect_err("V3000 logical line limit should apply");
+    assert!(line_error.message().contains("logical line"));
 }
 
 #[test]
