@@ -110,7 +110,6 @@ pub(crate) fn render_dashboard(
     out.push_str("<p>Generated from feature metadata and recorded per-corpus parity status. Run cargo xtask validate to compare against the current checkout. Do not hand-edit this file.</p>\n");
     out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"unknown\">?</span>unknown <span class=\"na\">-</span>not required</p>\n");
     out.push_str("<p>Features shared by both molecular domains are intentionally shown in both chemistry tables. Validation columns come only from the registered typed small-molecule and macromolecule corpora.</p>\n");
-    render_feature_graph(&mut out, features);
     render_dashboard_section(
         &mut out,
         DashboardSection {
@@ -147,6 +146,7 @@ pub(crate) fn render_dashboard(
         statuses,
         corpus_info,
     );
+    render_feature_graph(&mut out, features);
     out.push_str("<script>\n");
     out.push_str("(() => {\n");
     out.push_str("  document.querySelectorAll('table.feature-dashboard').forEach(table => {\n");

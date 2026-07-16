@@ -33,7 +33,8 @@ Keep feature metadata as the machine-readable source of truth and generate a det
   both chemistry tables.
 - The dashboard procedurally renders the complete dependency DAG as a
   deterministic SVG. Arrows run from prerequisites to dependents, and columns
-  are assigned from dependency depth.
+  are assigned from dependency depth. The feature tables precede the graph so
+  the primary release and validation overview appears first.
 - Small-molecule and PDB-derived corpora are selected from typed corpus
   `kind` metadata. Unregistered internal smoke sets never become dashboard columns.
 - Each chemistry section displays the exact reference codebase version found
@@ -81,3 +82,4 @@ Keep feature metadata as the machine-readable source of truth and generate a det
   enforce the feature dependency DAG and status compatibility, and render the
   generated graph in the HTML dashboard.
 - v12: Render only registered public corpora, allow required local-only baselines, and ignore or prune status evidence that has no current feature manifest.
+- v13: Place the generated feature dependency graph after all feature tables.

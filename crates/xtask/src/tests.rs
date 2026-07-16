@@ -614,6 +614,16 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains("<h2>Macromolecules</h2>"));
     assert!(dashboard.contains("<h2>Infrastructure and harness</h2>"));
     assert!(dashboard.contains("<h2>Feature dependency graph</h2>"));
+    let infrastructure_position = dashboard
+        .find("<h2>Infrastructure and harness</h2>")
+        .expect("infrastructure section should be present");
+    let graph_position = dashboard
+        .find("<h2>Feature dependency graph</h2>")
+        .expect("dependency graph should be present");
+    assert!(
+        infrastructure_position < graph_position,
+        "all feature tables should precede the dependency graph"
+    );
     assert!(dashboard.contains("class=\"feature-graph\""));
     assert!(dashboard.contains("marker-end=\"url(#feature-graph-arrow)\""));
     assert!(dashboard.contains("<a href=\"./z.feature/feature.md\">"));
