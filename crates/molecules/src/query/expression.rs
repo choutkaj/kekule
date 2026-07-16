@@ -209,6 +209,7 @@ pub enum BondPredicate {
 pub type AtomExpression = QueryExpression<AtomPredicate>;
 pub type BondExpression = QueryExpression<BondPredicate>;
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryExpressionError {
     ResourceLimit {

@@ -10,11 +10,14 @@ fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
         let span = token.span();
         span.start <= span.end && span.end <= input.len()
     }));
-    let molecule = smiles_api::interpret(&document).expect("document interprets");
+    let interpretation = smiles_api::interpret(&document).expect("document interprets");
+    let molecule = interpretation.molecule();
     assert_eq!(molecule.atom_count(), 2);
     assert_eq!(molecule.bond_count(), 0);
     assert_eq!(molecule.graph().connected_components().len(), 2);
     assert!(!molecule.graph().perception().has_valence());
+    assert_eq!(interpretation.report().atom_mappings().len(), 2);
+    assert!(interpretation.report().bond_mappings().is_empty());
 }
 
 #[test]
@@ -204,6 +207,15 @@ fn malformed_smiles_returns_errors_without_panicking() {
             .unwrap_or_else(|_| panic!("`{input}` panicked"));
         let error = parsed.expect_err("malformed SMILES should fail");
         assert!(!error.to_string().is_empty(), "message for `{input}`");
+    }
+}
+
+#[test]
+fn smiles_document_parser_rejects_incomplete_grammar_before_interpretation() {
+    for input in ["C=", "C(", "C1", "C..C"] {
+        let error = smiles_api::parse_str(input)
+            .expect_err("incomplete grammar must fail document parsing");
+        assert!(!error.message.is_empty(), "message for `{input}`");
     }
 }
 

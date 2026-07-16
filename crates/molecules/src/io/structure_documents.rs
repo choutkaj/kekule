@@ -1,9 +1,10 @@
 use std::fmt;
 
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 
-use super::v2000::parse_counts_line;
-use super::{read_mol_v2000_str, read_mol_v3000_str, SdfParseError};
+use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax, V2000Syntax};
+use super::v3000::{interpret_v3000_syntax, parse_v3000_syntax, V3000Syntax};
+use super::SdfParseError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MolfileVersion {
@@ -48,7 +49,7 @@ impl MolfileLine {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MolfileDocument {
     source: String,
     version: MolfileVersion,
@@ -57,6 +58,13 @@ pub struct MolfileDocument {
     bond_records: Vec<MolfileLine>,
     property_records: Vec<MolfileLine>,
     unsupported_records: Vec<MolfileLine>,
+    syntax: MolfileSyntax,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum MolfileSyntax {
+    V2000(V2000Syntax),
+    V3000(V3000Syntax),
 }
 
 impl MolfileDocument {
@@ -91,8 +99,8 @@ impl MolfileDocument {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MolfileParseError {
-    pub line: usize,
-    pub message: String,
+    pub(crate) line: usize,
+    pub(crate) message: String,
 }
 
 impl MolfileParseError {
@@ -101,6 +109,14 @@ impl MolfileParseError {
             line,
             message: message.into(),
         }
+    }
+
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -118,8 +134,18 @@ impl std::error::Error for MolfileParseError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MolfileInterpretError {
-    pub line: usize,
-    pub message: String,
+    pub(crate) line: usize,
+    pub(crate) message: String,
+}
+
+impl MolfileInterpretError {
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl fmt::Display for MolfileInterpretError {
@@ -140,6 +166,83 @@ impl From<SdfParseError> for MolfileInterpretError {
             line: error.line,
             message: error.message,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MolfileAtomMapping {
+    atom: crate::core::AtomId,
+    source_line: usize,
+}
+
+impl MolfileAtomMapping {
+    pub const fn atom(&self) -> crate::core::AtomId {
+        self.atom
+    }
+
+    pub const fn source_line(&self) -> usize {
+        self.source_line
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MolfileBondMapping {
+    bond: crate::core::BondId,
+    source_line: usize,
+}
+
+impl MolfileBondMapping {
+    pub const fn bond(&self) -> crate::core::BondId {
+        self.bond
+    }
+
+    pub const fn source_line(&self) -> usize {
+        self.source_line
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MolfileInterpretationReport {
+    atom_mappings: Vec<MolfileAtomMapping>,
+    bond_mappings: Vec<MolfileBondMapping>,
+    ignored_record_lines: Vec<usize>,
+}
+
+impl MolfileInterpretationReport {
+    pub fn atom_mappings(&self) -> &[MolfileAtomMapping] {
+        &self.atom_mappings
+    }
+
+    pub fn bond_mappings(&self) -> &[MolfileBondMapping] {
+        &self.bond_mappings
+    }
+
+    pub fn ignored_record_lines(&self) -> &[usize] {
+        &self.ignored_record_lines
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MolfileInterpretation {
+    molecule: SmallMolecule,
+    report: MolfileInterpretationReport,
+}
+
+impl MolfileInterpretation {
+    pub fn molecule(&self) -> &SmallMolecule {
+        &self.molecule
+    }
+
+    pub fn report(&self) -> &MolfileInterpretationReport {
+        &self.report
+    }
+
+    pub fn into_molecule(self) -> SmallMolecule {
+        self.molecule
+    }
+
+    pub fn into_parts(self) -> (SmallMolecule, MolfileInterpretationReport) {
+        (self.molecule, self.report)
     }
 }
 
@@ -245,6 +348,16 @@ pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfilePar
             }
         }
     }
+    let syntax = match version {
+        MolfileVersion::V2000 => MolfileSyntax::V2000(
+            parse_v2000_syntax(1, 1, &lines[..=end])
+                .map_err(|error| MolfileParseError::new(error.line, error.message))?,
+        ),
+        MolfileVersion::V3000 => MolfileSyntax::V3000(
+            parse_v3000_syntax(1, 1, &lines[..=end])
+                .map_err(|error| MolfileParseError::new(error.line, error.message))?,
+        ),
+    };
     Ok(MolfileDocument {
         source,
         version,
@@ -253,15 +366,76 @@ pub fn parse_molfile_document(input: &str) -> Result<MolfileDocument, MolfilePar
         bond_records,
         property_records,
         unsupported_records,
+        syntax,
     })
 }
 
 pub fn interpret_molfile_document(
     document: &MolfileDocument,
-) -> Result<SmallMolecule, MolfileInterpretError> {
-    match document.version {
-        MolfileVersion::V2000 => read_mol_v2000_str(&document.source),
-        MolfileVersion::V3000 => read_mol_v3000_str(&document.source),
-    }
-    .map_err(Into::into)
+) -> Result<MolfileInterpretation, MolfileInterpretError> {
+    let (molecule, atom_lines, bond_lines) = match &document.syntax {
+        MolfileSyntax::V2000(syntax) => (
+            interpret_v2000_syntax(syntax)?,
+            syntax
+                .atoms
+                .iter()
+                .map(|record| record.line)
+                .collect::<Vec<_>>(),
+            syntax
+                .bonds
+                .iter()
+                .map(|record| record.line)
+                .collect::<Vec<_>>(),
+        ),
+        MolfileSyntax::V3000(syntax) => (
+            interpret_v3000_syntax(syntax)?,
+            syntax
+                .atoms
+                .iter()
+                .map(|record| record.line)
+                .collect::<Vec<_>>(),
+            syntax
+                .bonds
+                .iter()
+                .map(|record| record.line)
+                .collect::<Vec<_>>(),
+        ),
+    };
+    let atom_mappings = atom_lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, source_line)| MolfileAtomMapping {
+            atom: crate::core::AtomId::new(index as u32),
+            source_line,
+        })
+        .collect();
+    let bond_mappings = bond_lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, source_line)| MolfileBondMapping {
+            bond: crate::core::BondId::new(index as u32),
+            source_line,
+        })
+        .collect();
+    let ignored_record_lines = document
+        .property_records
+        .iter()
+        .filter(|record| {
+            let mut fields = record.text.split_whitespace();
+            !matches!(
+                (fields.next(), fields.next()),
+                (Some("M"), Some("CHG" | "ISO" | "RAD"))
+            )
+        })
+        .chain(document.unsupported_records.iter())
+        .map(|record| record.number)
+        .collect();
+    Ok(MolfileInterpretation {
+        molecule,
+        report: MolfileInterpretationReport {
+            atom_mappings,
+            bond_mappings,
+            ignored_record_lines,
+        },
+    })
 }

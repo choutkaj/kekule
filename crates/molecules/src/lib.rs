@@ -1,4 +1,12 @@
+//! Pure-Rust molecular graph, structure I/O, perception, bioinformatics, and
+//! modelling foundations.
+//!
+//! The supported public surface is organized into focused facade modules.
+//! Parsing produces format documents, interpretation produces canonical domain
+//! objects plus reports, and perception or modelling preparation remains
+//! explicit.
 #![forbid(unsafe_code)]
+#![warn(rustdoc::broken_intra_doc_links)]
 
 mod algorithms;
 pub mod bio;
@@ -25,8 +33,9 @@ pub mod substructure {
 
 pub mod smiles {
     pub use crate::io::{
-        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, MolWriteError, SmilesDocument,
-        SmilesDocumentToken, SmilesDocumentTokenKind, SmilesInterpretError, SmilesParseError,
+        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, MolWriteError, SmilesAtomMapping,
+        SmilesBondMapping, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
+        SmilesInterpretError, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
         SmilesWriteOptions,
     };
     use crate::small::SmallMolecule;
@@ -35,7 +44,9 @@ pub mod smiles {
         crate::io::parse_smiles_document(input)
     }
 
-    pub fn interpret(document: &SmilesDocument) -> Result<SmallMolecule, SmilesInterpretError> {
+    pub fn interpret(
+        document: &SmilesDocument,
+    ) -> Result<SmilesInterpretation, SmilesInterpretError> {
         crate::io::interpret_smiles_document(document)
     }
 
@@ -75,7 +86,8 @@ pub mod smiles {
 
 pub mod molfile {
     pub use crate::io::{
-        MolWriteError, MolfileDocument, MolfileHeader, MolfileInterpretError, MolfileLine,
+        MolWriteError, MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader,
+        MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport, MolfileLine,
         MolfileParseError, MolfileVersion,
     };
 
@@ -85,7 +97,9 @@ pub mod molfile {
         crate::io::parse_molfile_document(input)
     }
 
-    pub fn interpret(document: &MolfileDocument) -> Result<SmallMolecule, MolfileInterpretError> {
+    pub fn interpret(
+        document: &MolfileDocument,
+    ) -> Result<MolfileInterpretation, MolfileInterpretError> {
         crate::io::interpret_molfile_document(document)
     }
 
@@ -100,15 +114,16 @@ pub mod molfile {
 
 pub mod sdf {
     pub use crate::io::{
-        MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfParseError,
-        SdfParseOptions, SdfRecord, SdfRecordDocument,
+        MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfInterpretation,
+        SdfInterpretationReport, SdfParseError, SdfParseOptions, SdfRecord, SdfRecordDocument,
+        SdfRecordInterpretationReport,
     };
 
     pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, SdfParseError> {
         crate::io::parse_sdf_document(input, options)
     }
 
-    pub fn interpret(document: &SdfDocument) -> Result<Vec<SdfRecord>, SdfInterpretError> {
+    pub fn interpret(document: &SdfDocument) -> Result<SdfInterpretation, SdfInterpretError> {
         crate::io::interpret_sdf_document(document)
     }
 
@@ -119,10 +134,11 @@ pub mod sdf {
 
 pub mod mmcif {
     pub use crate::io::{
-        MmcifAltLocPolicy, MmcifDataBlock, MmcifDocument, MmcifEntityKind, MmcifEntry,
-        MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
-        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
-        MmcifParseOptions, MmcifValue, MmcifWriteError, MmcifWriteOptions,
+        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifDataBlock, MmcifDocument, MmcifEntityKind,
+        MmcifEntry, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
+        MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifItem,
+        MmcifLoopTable, MmcifModelSelection, MmcifParseError, MmcifParseOptions, MmcifValue,
+        MmcifWriteError, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -157,23 +173,25 @@ pub mod perception {
 
     pub mod valence {
         pub use crate::algorithms::{
-            perceive_valence, perceive_valence_with_options, ValenceIssue, ValenceModel,
-            ValenceOptions, ValenceReport,
+            perceive_valence, perceive_valence_with_options, ValenceIssue, ValenceOptions,
+            ValenceReport,
         };
+        pub use crate::core::ValenceModel;
     }
 
     pub mod rings {
         pub use crate::algorithms::{
-            perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options, Ring,
-            RingMembership, RingPerceptionError, RingPerceptionOptions, RingSet, RingWork,
+            perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
+            RingPerceptionError, RingPerceptionOptions,
         };
+        pub use crate::core::{Ring, RingMembership, RingSet, RingWork};
     }
 
     pub mod aromaticity {
         pub use crate::algorithms::{
             perceive_aromaticity, perceive_aromaticity_with_ring_options, AromaticityError,
-            AromaticityModel,
         };
+        pub use crate::core::AromaticityModel;
     }
 
     pub mod stereo {
@@ -261,8 +279,9 @@ pub mod hydrogens {
 
 pub mod prelude {
     pub use crate::bio::{MacroMolecule, SmcraHierarchy};
+    pub use crate::chemistry::{SanitizeOptions, SanitizeReport};
     pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
-    pub use crate::small::{SanitizeOptions, SanitizeReport, SmallMolecule};
+    pub use crate::small::SmallMolecule;
     pub use crate::smiles::{
         CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, SmilesWriteOptions,
     };

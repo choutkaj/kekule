@@ -2,8 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
-use crate::algorithms::{AromaticityModel, RingMembership, RingSet, ValenceModel};
-
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -922,6 +920,7 @@ impl Bond {
 
 pub type Result<T> = std::result::Result<T, MoleculeError>;
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MoleculeError {
     InvalidAtomId(AtomId),

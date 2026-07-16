@@ -1,10 +1,10 @@
 use std::fmt;
 
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 
 use super::{
-    interpret_molfile_document, parse_molfile_document, MolfileDocument, SdfParseError,
-    SdfParseOptions,
+    interpret_molfile_document, parse_molfile_document, MolfileDocument,
+    MolfileInterpretationReport, SdfParseError, SdfParseOptions,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,10 +36,11 @@ impl SdfDataField {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SdfRecordDocument {
     molfile: MolfileDocument,
     data_fields: Vec<SdfDataField>,
+    source_start_line: usize,
 }
 
 impl SdfRecordDocument {
@@ -50,9 +51,13 @@ impl SdfRecordDocument {
     pub fn data_fields(&self) -> &[SdfDataField] {
         &self.data_fields
     }
+
+    pub const fn source_start_line(&self) -> usize {
+        self.source_start_line
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SdfDocument {
     records: Vec<SdfRecordDocument>,
 }
@@ -102,9 +107,23 @@ impl SdfRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdfInterpretError {
-    pub record: usize,
-    pub line: usize,
-    pub message: String,
+    pub(crate) record: usize,
+    pub(crate) line: usize,
+    pub(crate) message: String,
+}
+
+impl SdfInterpretError {
+    pub const fn record(&self) -> usize {
+        self.record
+    }
+
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl fmt::Display for SdfInterpretError {
@@ -118,6 +137,62 @@ impl fmt::Display for SdfInterpretError {
 }
 
 impl std::error::Error for SdfInterpretError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SdfRecordInterpretationReport {
+    record: usize,
+    source_start_line: usize,
+    molfile: MolfileInterpretationReport,
+}
+
+impl SdfRecordInterpretationReport {
+    pub const fn record(&self) -> usize {
+        self.record
+    }
+
+    pub const fn source_start_line(&self) -> usize {
+        self.source_start_line
+    }
+
+    pub fn molfile(&self) -> &MolfileInterpretationReport {
+        &self.molfile
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SdfInterpretationReport {
+    records: Vec<SdfRecordInterpretationReport>,
+}
+
+impl SdfInterpretationReport {
+    pub fn records(&self) -> &[SdfRecordInterpretationReport] {
+        &self.records
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SdfInterpretation {
+    records: Vec<SdfRecord>,
+    report: SdfInterpretationReport,
+}
+
+impl SdfInterpretation {
+    pub fn records(&self) -> &[SdfRecord] {
+        &self.records
+    }
+
+    pub fn report(&self) -> &SdfInterpretationReport {
+        &self.report
+    }
+
+    pub fn into_records(self) -> Vec<SdfRecord> {
+        self.records
+    }
+
+    pub fn into_parts(self) -> (Vec<SdfRecord>, SdfInterpretationReport) {
+        (self.records, self.report)
+    }
+}
 
 pub fn parse_sdf_document(
     input: &str,
@@ -205,6 +280,7 @@ fn parse_record_document(
     Ok(SdfRecordDocument {
         molfile,
         data_fields,
+        source_start_line: lines.first().map(|(line, _)| *line).unwrap_or(1),
     })
 }
 
@@ -215,23 +291,32 @@ fn sdf_field_name(line: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-pub fn interpret_sdf_document(document: &SdfDocument) -> Result<Vec<SdfRecord>, SdfInterpretError> {
-    document
-        .records
-        .iter()
-        .enumerate()
-        .map(|(index, record)| {
-            let molecule =
-                interpret_molfile_document(&record.molfile).map_err(|error| SdfInterpretError {
-                    record: index + 1,
-                    line: error.line,
-                    message: error.message,
-                })?;
-            Ok(SdfRecord::new(
-                record.molfile.header().title(),
-                molecule,
-                record.data_fields.clone(),
-            ))
-        })
-        .collect()
+pub fn interpret_sdf_document(
+    document: &SdfDocument,
+) -> Result<SdfInterpretation, SdfInterpretError> {
+    let mut records = Vec::with_capacity(document.records.len());
+    let mut reports = Vec::with_capacity(document.records.len());
+    for (index, record) in document.records.iter().enumerate() {
+        let interpretation =
+            interpret_molfile_document(&record.molfile).map_err(|error| SdfInterpretError {
+                record: index + 1,
+                line: record.source_start_line + error.line.saturating_sub(1),
+                message: error.message,
+            })?;
+        let (molecule, molfile) = interpretation.into_parts();
+        records.push(SdfRecord::new(
+            record.molfile.header().title(),
+            molecule,
+            record.data_fields.clone(),
+        ));
+        reports.push(SdfRecordInterpretationReport {
+            record: index + 1,
+            source_start_line: record.source_start_line,
+            molfile,
+        });
+    }
+    Ok(SdfInterpretation {
+        records,
+        report: SdfInterpretationReport { records: reports },
+    })
 }

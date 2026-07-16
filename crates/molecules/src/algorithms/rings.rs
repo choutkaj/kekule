@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
-use super::*;
 use crate::core::*;
 
 pub(super) fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize) {
@@ -147,12 +146,6 @@ fn ring_dfs_iterative(
     stack_peak
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ring {
-    pub atoms: Vec<AtomId>,
-    pub bonds: Vec<BondId>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RingPerceptionOptions {
     pub max_atoms: usize,
@@ -178,18 +171,7 @@ impl Default for RingPerceptionOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RingWork {
-    pub atom_count: usize,
-    pub bond_count: usize,
-    pub candidate_cycles: usize,
-    pub equivalent_shortest_paths: usize,
-    pub path_expansions: usize,
-    pub queue_peak: usize,
-    pub stack_peak: usize,
-    pub total_work: usize,
-}
-
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RingPerceptionError {
     ResourceLimit {
@@ -236,30 +218,6 @@ impl fmt::Display for RingPerceptionError {
 }
 
 impl std::error::Error for RingPerceptionError {}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RingSet {
-    rings: Vec<Ring>,
-    work: RingWork,
-}
-
-impl RingSet {
-    pub fn rings(&self) -> &[Ring] {
-        &self.rings
-    }
-
-    pub fn len(&self) -> usize {
-        self.rings.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.rings.is_empty()
-    }
-
-    pub fn work(&self) -> RingWork {
-        self.work
-    }
-}
 
 pub fn perceive_ring_set(mol: &mut Molecule) -> std::result::Result<RingSet, RingPerceptionError> {
     perceive_ring_set_with_options(mol, RingPerceptionOptions::default())

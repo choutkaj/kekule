@@ -479,7 +479,7 @@ pub(crate) fn read_small_records_by_suffix(
     ) {
         let document = molfile::parse_str(&input)?;
         let title = document.header().title().to_owned();
-        let molecule = molfile::interpret(&document)?;
+        let molecule = molfile::interpret(&document)?.into_molecule();
         return Ok(vec![IndexedSmallRecord {
             record_index: 0,
             title,
@@ -511,17 +511,17 @@ pub(crate) fn small_record(index: usize, record: SdfRecord) -> IndexedSmallRecor
 
 fn interpret_molfile(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
     let document = molfile::parse_str(input)?;
-    Ok(molfile::interpret(&document)?)
+    Ok(molfile::interpret(&document)?.into_molecule())
 }
 
 fn interpret_sdf(input: &str) -> Result<Vec<SdfRecord>, Box<dyn Error>> {
     let document = sdf::parse_str(input, SdfParseOptions::default())?;
-    Ok(sdf::interpret(&document)?)
+    Ok(sdf::interpret(&document)?.into_records())
 }
 
 fn interpret_smiles(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
-    Ok(smiles::interpret(&document)?)
+    Ok(smiles::interpret(&document)?.into_molecule())
 }
 
 pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {
@@ -602,7 +602,7 @@ pub(crate) fn read_stereo_records_by_suffix(
     }
     let document = molfile::parse_str(&input)?;
     let title = document.header().title().to_owned();
-    let molecule = molfile::interpret(&document)?;
+    let molecule = molfile::interpret(&document)?.into_molecule();
     Ok(vec![IndexedSmallRecord {
         record_index: 0,
         title,
@@ -1247,7 +1247,7 @@ pub(crate) fn isomeric_smiles_record_json(
                 "status": "write_error",
                 "title": record.title,
                 "input_smiles": record.input_smiles,
-                "message": error.message,
+                "message": error.message(),
             }));
         }
     };

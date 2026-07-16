@@ -266,6 +266,7 @@ fn result(
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum MinimizationError {
     InvalidOptions(&'static str),

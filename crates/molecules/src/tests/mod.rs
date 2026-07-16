@@ -1,4 +1,5 @@
 use crate::bio::*;
+use crate::chemistry::{SanitizeError, SanitizeOptions};
 use crate::core::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
@@ -21,14 +22,14 @@ pub(super) fn read_smiles(
     input: &str,
 ) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?)
+    Ok(smiles_api::interpret(&document)?.into_molecule())
 }
 
 pub(super) fn read_molfile(
     input: &str,
 ) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
     let document = molfile::parse_str(input)?;
-    Ok(molfile::interpret(&document)?)
+    Ok(molfile::interpret(&document)?.into_molecule())
 }
 
 pub(super) fn read_sdf_records(
@@ -42,7 +43,7 @@ pub(super) fn read_sdf_records_with_options(
     options: SdfParseOptions,
 ) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
     let document = sdf::parse_str(input, options)?;
-    Ok(sdf::interpret(&document)?)
+    Ok(sdf::interpret(&document)?.into_records())
 }
 
 pub(super) fn read_sdf_molecules(

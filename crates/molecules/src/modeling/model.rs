@@ -3,9 +3,11 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::bio::{MacroMolecule, SmcraAtomSite, SmcraAtomSiteId, SmcraHierarchy};
+use crate::bio::{
+    MacroMolecule, MacroValidateError, SmcraAtomSite, SmcraAtomSiteId, SmcraHierarchy,
+};
 use crate::core::{Atom, AtomId, Bond, BondId, ConformerId, Molecule, Point3, PropMap};
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ScaleValue, UnitError, MODEL_LENGTH_UNIT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -571,6 +573,9 @@ impl ModelBuilder {
         conformer: ConformerId,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        molecule
+            .validate()
+            .map_err(ModelBuildError::InvalidMacroMolecule)?;
         self.add_payload(
             MoleculeInstancePayload::Macro(molecule.clone()),
             conformer,
@@ -648,6 +653,7 @@ pub(crate) fn point_is_finite(point: Point3) -> bool {
     point.x.is_finite() && point.y.is_finite() && point.z.is_finite()
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelError {
     InvalidMoleculeInstanceId(MoleculeInstanceId),
@@ -669,6 +675,7 @@ impl fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum PositionError {
     InvalidAtomId(InstanceAtomId),
@@ -705,6 +712,7 @@ impl From<UnitError> for PositionError {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelBuildError {
     EmptyModel,
@@ -712,6 +720,7 @@ pub enum ModelBuildError {
     InvalidConformerId(ConformerId),
     MissingPosition { atom: AtomId },
     NonFinitePosition { atom: AtomId },
+    InvalidMacroMolecule(MacroValidateError),
     Unit(UnitError),
 }
 
@@ -726,6 +735,9 @@ impl fmt::Display for ModelBuildError {
             }
             Self::NonFinitePosition { atom } => {
                 write!(f, "source conformer position for atom {atom} is not finite")
+            }
+            Self::InvalidMacroMolecule(error) => {
+                write!(f, "invalid macro molecule: {error}")
             }
             Self::Unit(error) => write!(f, "invalid source conformer position unit: {error}"),
         }

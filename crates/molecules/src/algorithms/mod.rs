@@ -8,6 +8,7 @@ mod stereo;
 mod substructure;
 mod valence;
 
+pub(crate) use crate::core::{RingMembership, ValenceModel};
 pub use aromaticity::*;
 pub use canonical::*;
 pub use cip::*;

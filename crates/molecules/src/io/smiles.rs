@@ -8,13 +8,14 @@ use crate::algorithms::{
 };
 use crate::core::*;
 use crate::io::MolWriteError;
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SmilesDocument {
     source: String,
     tokens: Vec<SmilesDocumentToken>,
     components: Vec<Range<usize>>,
+    program: SmilesProgram,
 }
 
 impl SmilesDocument {
@@ -29,6 +30,31 @@ impl SmilesDocument {
     pub fn component_token_ranges(&self) -> &[Range<usize>] {
         &self.components
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SmilesProgram {
+    atoms: Vec<SmilesProgramAtom>,
+    bonds: Vec<SmilesProgramBond>,
+    imported_aromatic_atoms: BTreeSet<AtomId>,
+    bracket_atoms: Vec<AtomId>,
+    tetrahedral: Vec<PendingTetrahedral>,
+    tetrahedral_carriers: BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct SmilesProgramAtom {
+    atom: Atom,
+    span: Range<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SmilesProgramBond {
+    left: AtomId,
+    right: AtomId,
+    order: BondOrder,
+    stereo: Option<StereoBondMarkKind>,
+    offset: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,8 +98,8 @@ pub struct CanonicalSmilesWriteOptions;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesParseError {
-    pub offset: usize,
-    pub message: String,
+    pub(crate) offset: usize,
+    pub(crate) message: String,
 }
 
 impl SmilesParseError {
@@ -82,6 +108,14 @@ impl SmilesParseError {
             offset,
             message: message.into(),
         }
+    }
+
+    pub const fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -95,8 +129,18 @@ impl std::error::Error for SmilesParseError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesInterpretError {
-    pub offset: usize,
-    pub message: String,
+    pub(crate) offset: usize,
+    pub(crate) message: String,
+}
+
+impl SmilesInterpretError {
+    pub const fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl fmt::Display for SmilesInterpretError {
@@ -110,6 +154,78 @@ impl fmt::Display for SmilesInterpretError {
 }
 
 impl std::error::Error for SmilesInterpretError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmilesAtomMapping {
+    atom: AtomId,
+    source_span: Range<usize>,
+}
+
+impl SmilesAtomMapping {
+    pub const fn atom(&self) -> AtomId {
+        self.atom
+    }
+
+    pub fn source_span(&self) -> Range<usize> {
+        self.source_span.clone()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmilesBondMapping {
+    bond: BondId,
+    source_offset: usize,
+}
+
+impl SmilesBondMapping {
+    pub const fn bond(&self) -> BondId {
+        self.bond
+    }
+
+    pub const fn source_offset(&self) -> usize {
+        self.source_offset
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SmilesInterpretationReport {
+    atom_mappings: Vec<SmilesAtomMapping>,
+    bond_mappings: Vec<SmilesBondMapping>,
+}
+
+impl SmilesInterpretationReport {
+    pub fn atom_mappings(&self) -> &[SmilesAtomMapping] {
+        &self.atom_mappings
+    }
+
+    pub fn bond_mappings(&self) -> &[SmilesBondMapping] {
+        &self.bond_mappings
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmilesInterpretation {
+    molecule: SmallMolecule,
+    report: SmilesInterpretationReport,
+}
+
+impl SmilesInterpretation {
+    pub fn molecule(&self) -> &SmallMolecule {
+        &self.molecule
+    }
+
+    pub fn report(&self) -> &SmilesInterpretationReport {
+        &self.report
+    }
+
+    pub fn into_molecule(self) -> SmallMolecule {
+        self.molecule
+    }
+
+    pub fn into_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
+        (self.molecule, self.report)
+    }
+}
 
 pub fn parse_smiles_document(input: &str) -> std::result::Result<SmilesDocument, SmilesParseError> {
     if input.is_empty() {
@@ -205,25 +321,25 @@ pub fn parse_smiles_document(input: &str) -> std::result::Result<SmilesDocument,
         ));
     }
     components.push(component_start..tokens.len());
+    let program = parse_smiles_program(input)?;
     Ok(SmilesDocument {
         source: input.to_owned(),
         tokens,
         components,
+        program,
     })
 }
 
 pub fn interpret_smiles_document(
     document: &SmilesDocument,
-) -> std::result::Result<SmallMolecule, SmilesInterpretError> {
-    interpret_smiles_source(&document.source).map_err(|error| SmilesInterpretError {
-        offset: error.offset,
-        message: error.message,
-    })
+) -> std::result::Result<SmilesInterpretation, SmilesInterpretError> {
+    interpret_smiles_program(&document.program, document.source.len())
 }
 
-fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, SmilesParseError> {
+fn parse_smiles_program(input: &str) -> std::result::Result<SmilesProgram, SmilesParseError> {
     let chars = input.char_indices().collect::<Vec<_>>();
-    let mut mol = Molecule::new();
+    let mut atoms = Vec::<SmilesProgramAtom>::new();
+    let mut bonds = Vec::<SmilesProgramBond>::new();
     let mut imported_aromatic_atoms = BTreeSet::new();
     let mut current: Option<AtomId> = None;
     let mut stack = Vec::<AtomId>::new();
@@ -351,17 +467,11 @@ fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, Sm
                     let (order, stereo) = match close_bond.or(open_bond) {
                         Some((order, stereo)) => (order, stereo),
                         None => (
-                            default_smiles_bond_order(
-                                &mol,
-                                &imported_aromatic_atoms,
-                                other,
-                                atom,
-                                offset,
-                            )?,
+                            default_smiles_bond_order(&imported_aromatic_atoms, other, atom),
                             None,
                         ),
                     };
-                    add_smiles_bond(&mut mol, other, atom, order, stereo, offset)?;
+                    add_smiles_program_bond(&mut bonds, other, atom, order, stereo, offset)?;
                     resolve_tetrahedral_ring_carrier(
                         &mut tetrahedral_carriers,
                         other,
@@ -389,7 +499,15 @@ fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, Sm
             '[' => {
                 let (atom, aromatic, chirality, next_cursor) = parse_bracket_atom(&chars, cursor)?;
                 let explicit_hydrogens = atom.explicit_hydrogens;
-                let atom_id = mol.add_atom(atom);
+                let atom_id = AtomId::new(atoms.len() as u32);
+                let end = chars
+                    .get(next_cursor)
+                    .map(|(offset, _)| *offset)
+                    .unwrap_or(input.len());
+                atoms.push(SmilesProgramAtom {
+                    atom,
+                    span: offset..end,
+                });
                 if aromatic {
                     imported_aromatic_atoms.insert(atom_id);
                 }
@@ -411,17 +529,11 @@ fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, Sm
                     {
                         Some((order, stereo)) => (order, stereo),
                         None => (
-                            default_smiles_bond_order(
-                                &mol,
-                                &imported_aromatic_atoms,
-                                previous,
-                                atom_id,
-                                offset,
-                            )?,
+                            default_smiles_bond_order(&imported_aromatic_atoms, previous, atom_id),
                             None,
                         ),
                     };
-                    add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
+                    add_smiles_program_bond(&mut bonds, previous, atom_id, order, stereo, offset)?;
                     push_tetrahedral_carrier(
                         &mut tetrahedral_carriers,
                         previous,
@@ -442,7 +554,15 @@ fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, Sm
             }
             _ => {
                 let (atom, aromatic, next_cursor) = parse_organic_atom(&chars, cursor)?;
-                let atom_id = mol.add_atom(atom);
+                let atom_id = AtomId::new(atoms.len() as u32);
+                let end = chars
+                    .get(next_cursor)
+                    .map(|(offset, _)| *offset)
+                    .unwrap_or(input.len());
+                atoms.push(SmilesProgramAtom {
+                    atom,
+                    span: offset..end,
+                });
                 if aromatic {
                     imported_aromatic_atoms.insert(atom_id);
                 }
@@ -453,17 +573,11 @@ fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, Sm
                     {
                         Some((order, stereo)) => (order, stereo),
                         None => (
-                            default_smiles_bond_order(
-                                &mol,
-                                &imported_aromatic_atoms,
-                                previous,
-                                atom_id,
-                                offset,
-                            )?,
+                            default_smiles_bond_order(&imported_aromatic_atoms, previous, atom_id),
                             None,
                         ),
                     };
-                    add_smiles_bond(&mut mol, previous, atom_id, order, stereo, offset)?;
+                    add_smiles_program_bond(&mut bonds, previous, atom_id, order, stereo, offset)?;
                     push_tetrahedral_carrier(
                         &mut tetrahedral_carriers,
                         previous,
@@ -490,9 +604,59 @@ fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, Sm
     if matches!(previous, SmilesTokenKind::Dot | SmilesTokenKind::BranchOpen) {
         return Err(SmilesParseError::new(input.len(), "incomplete SMILES"));
     }
+    Ok(SmilesProgram {
+        atoms,
+        bonds,
+        imported_aromatic_atoms,
+        bracket_atoms,
+        tetrahedral: pending_tetrahedral,
+        tetrahedral_carriers,
+    })
+}
+
+fn interpret_smiles_program(
+    program: &SmilesProgram,
+    end_offset: usize,
+) -> std::result::Result<SmilesInterpretation, SmilesInterpretError> {
+    interpret_smiles_program_inner(program, end_offset).map_err(|error| SmilesInterpretError {
+        offset: error.offset,
+        message: error.message,
+    })
+}
+
+fn interpret_smiles_program_inner(
+    program: &SmilesProgram,
+    end_offset: usize,
+) -> std::result::Result<SmilesInterpretation, SmilesParseError> {
+    let mut mol = Molecule::new();
+    let mut atom_mappings = Vec::with_capacity(program.atoms.len());
+    for (index, record) in program.atoms.iter().enumerate() {
+        let atom_id = mol.add_atom(record.atom.clone());
+        debug_assert_eq!(atom_id, AtomId::new(index as u32));
+        atom_mappings.push(SmilesAtomMapping {
+            atom: atom_id,
+            source_span: record.span.clone(),
+        });
+    }
+    let mut bond_mappings = Vec::with_capacity(program.bonds.len());
+    for bond in &program.bonds {
+        let bond_id = add_smiles_bond(
+            &mut mol,
+            bond.left,
+            bond.right,
+            bond.order,
+            bond.stereo,
+            bond.offset,
+        )?;
+        bond_mappings.push(SmilesBondMapping {
+            bond: bond_id,
+            source_offset: bond.offset,
+        });
+    }
+
     mol.begin_aromaticity(AromaticityProvenance::Imported);
-    for atom_id in imported_aromatic_atoms {
-        mol.set_atom_aromatic(atom_id, true);
+    for atom_id in &program.imported_aromatic_atoms {
+        mol.set_atom_aromatic(*atom_id, true);
     }
     let imported_aromatic_bonds = mol
         .bonds()
@@ -501,14 +665,20 @@ fn interpret_smiles_source(input: &str) -> std::result::Result<SmallMolecule, Sm
     for bond_id in imported_aromatic_bonds {
         mol.set_bond_aromatic(bond_id, true);
     }
-    infer_smiles_bracket_radicals(&mut mol, &bracket_atoms, input.len())?;
+    infer_smiles_bracket_radicals(&mut mol, &program.bracket_atoms, end_offset)?;
     add_smiles_tetrahedral_elements(
         &mut mol,
-        pending_tetrahedral,
-        tetrahedral_carriers,
-        input.len(),
+        program.tetrahedral.clone(),
+        program.tetrahedral_carriers.clone(),
+        end_offset,
     )?;
-    Ok(SmallMolecule::from_graph(mol))
+    Ok(SmilesInterpretation {
+        molecule: SmallMolecule::from_graph(mol),
+        report: SmilesInterpretationReport {
+            atom_mappings,
+            bond_mappings,
+        },
+    })
 }
 
 fn infer_smiles_bracket_radicals(
@@ -578,7 +748,7 @@ fn add_smiles_bond(
     order: BondOrder,
     stereo: Option<StereoBondMarkKind>,
     offset: usize,
-) -> std::result::Result<(), SmilesParseError> {
+) -> std::result::Result<BondId, SmilesParseError> {
     let bond_id = mol
         .add_bond(left, right, order)
         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
@@ -590,6 +760,34 @@ fn add_smiles_bond(
         })
         .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
     }
+    Ok(bond_id)
+}
+
+fn add_smiles_program_bond(
+    bonds: &mut Vec<SmilesProgramBond>,
+    left: AtomId,
+    right: AtomId,
+    order: BondOrder,
+    stereo: Option<StereoBondMarkKind>,
+    offset: usize,
+) -> std::result::Result<(), SmilesParseError> {
+    if left == right {
+        return Err(SmilesParseError::new(offset, "self bond"));
+    }
+    let endpoints = ordered_atom_pair(left, right);
+    if bonds
+        .iter()
+        .any(|bond| ordered_atom_pair(bond.left, bond.right) == endpoints)
+    {
+        return Err(SmilesParseError::new(offset, "duplicate bond"));
+    }
+    bonds.push(SmilesProgramBond {
+        left,
+        right,
+        order,
+        stereo,
+        offset,
+    });
     Ok(())
 }
 
@@ -730,20 +928,14 @@ enum PendingStereoCarrier {
 }
 
 fn default_smiles_bond_order(
-    mol: &Molecule,
     imported_aromatic_atoms: &BTreeSet<AtomId>,
     left: AtomId,
     right: AtomId,
-    offset: usize,
-) -> std::result::Result<BondOrder, SmilesParseError> {
-    mol.atom(left)
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-    mol.atom(right)
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+) -> BondOrder {
     if imported_aromatic_atoms.contains(&left) && imported_aromatic_atoms.contains(&right) {
-        Ok(BondOrder::Aromatic)
+        BondOrder::Aromatic
     } else {
-        Ok(BondOrder::Single)
+        BondOrder::Single
     }
 }
 

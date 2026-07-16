@@ -2,13 +2,30 @@ use std::collections::BTreeMap;
 
 use crate::core::*;
 use crate::io::{preserve_molfile_tetrahedral_hydrogens, MolWriteError, SdfParseError};
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
-pub fn read_mol_v3000_str(input: &str) -> std::result::Result<SmallMolecule, SdfParseError> {
-    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
-    let lines = normalized.lines().collect::<Vec<_>>();
-    parse_mol_v3000_lines(1, 1, &lines)
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct V3000Syntax {
+    pub(super) atoms: Vec<V3000AtomSyntax>,
+    pub(super) bonds: Vec<V3000BondSyntax>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct V3000AtomSyntax {
+    pub(super) index: usize,
+    pub(super) atom: Atom,
+    pub(super) point: Point3,
+    pub(super) line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct V3000BondSyntax {
+    pub(super) a: usize,
+    pub(super) b: usize,
+    pub(super) order: BondOrder,
+    pub(super) stereo: Option<StereoBondMarkKind>,
+    pub(super) line: usize,
 }
 
 pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
@@ -95,11 +112,11 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
     Ok(out)
 }
 
-fn parse_mol_v3000_lines(
+pub(super) fn parse_v3000_syntax(
     record: usize,
     start_line: usize,
     lines: &[&str],
-) -> std::result::Result<SmallMolecule, SdfParseError> {
+) -> std::result::Result<V3000Syntax, SdfParseError> {
     if lines.len() < 4 {
         return Err(SdfParseError::new(
             record,
@@ -148,15 +165,12 @@ fn parse_mol_v3000_lines(
         ));
     }
 
-    let mut mol = Molecule::new();
-
-    let mut atom_ids = BTreeMap::<usize, AtomId>::new();
-    let mut conformer = Conformer::with_atom_capacity(atom_rows.len(), ANGSTROM)
-        .expect("angstrom is a length unit");
+    let mut atoms = Vec::with_capacity(atom_rows.len());
+    let mut atom_indices = BTreeMap::<usize, usize>::new();
     for row in atom_rows {
         let parsed = parse_v3000_atom(&row.body)
             .ok_or_else(|| SdfParseError::new(record, row.line, "invalid V3000 atom line"))?;
-        if atom_ids.contains_key(&parsed.index) {
+        if atom_indices.contains_key(&parsed.index) {
             return Err(SdfParseError::new(
                 record,
                 row.line,
@@ -173,26 +187,82 @@ fn parse_mol_v3000_lines(
         let mut atom = Atom::new(element);
         atom.atom_map = (parsed.atom_map != 0).then_some(parsed.atom_map);
         apply_v3000_atom_options(record, row.line, &mut atom, &parsed.options)?;
-        let atom_id = mol.add_atom(atom);
-        conformer
-            .set_position(atom_id, Quantity::new(parsed.point, ANGSTROM))
-            .expect("matching coordinate units");
-        atom_ids.insert(parsed.index, atom_id);
+        atom_indices.insert(parsed.index, atoms.len());
+        atoms.push(V3000AtomSyntax {
+            index: parsed.index,
+            atom,
+            point: parsed.point,
+            line: row.line,
+        });
     }
 
+    let mut bonds = Vec::with_capacity(bond_rows.len());
+    let mut endpoints = std::collections::BTreeSet::new();
     for row in bond_rows {
         let parsed = parse_v3000_bond(&row.body)
             .ok_or_else(|| SdfParseError::new(record, row.line, "invalid V3000 bond line"))?;
-        let a = *atom_ids.get(&parsed.a).ok_or_else(|| {
+        atom_indices.get(&parsed.a).ok_or_else(|| {
             SdfParseError::new(record, row.line, "bond endpoint outside atom block")
         })?;
-        let b = *atom_ids.get(&parsed.b).ok_or_else(|| {
+        atom_indices.get(&parsed.b).ok_or_else(|| {
             SdfParseError::new(record, row.line, "bond endpoint outside atom block")
+        })?;
+        if parsed.a == parsed.b {
+            return Err(SdfParseError::new(
+                record,
+                row.line,
+                "bond endpoints must be distinct",
+            ));
+        }
+        let ordered = if parsed.a < parsed.b {
+            (parsed.a, parsed.b)
+        } else {
+            (parsed.b, parsed.a)
+        };
+        if !endpoints.insert(ordered) {
+            return Err(SdfParseError::new(
+                record,
+                row.line,
+                "duplicate bond endpoints",
+            ));
+        }
+        bonds.push(V3000BondSyntax {
+            a: parsed.a,
+            b: parsed.b,
+            order: parsed.order,
+            stereo: parsed.stereo,
+            line: row.line,
+        });
+    }
+
+    Ok(V3000Syntax { atoms, bonds })
+}
+
+pub(super) fn interpret_v3000_syntax(
+    syntax: &V3000Syntax,
+) -> std::result::Result<SmallMolecule, SdfParseError> {
+    let mut mol = Molecule::new();
+    let mut atom_ids = BTreeMap::<usize, AtomId>::new();
+    let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
+        .expect("angstrom is a length unit");
+    for record in &syntax.atoms {
+        let atom_id = mol.add_atom(record.atom.clone());
+        conformer
+            .set_position(atom_id, Quantity::new(record.point, ANGSTROM))
+            .expect("matching coordinate units");
+        atom_ids.insert(record.index, atom_id);
+    }
+    for record in &syntax.bonds {
+        let a = *atom_ids.get(&record.a).ok_or_else(|| {
+            SdfParseError::new(1, record.line, "bond endpoint outside parsed atom records")
+        })?;
+        let b = *atom_ids.get(&record.b).ok_or_else(|| {
+            SdfParseError::new(1, record.line, "bond endpoint outside parsed atom records")
         })?;
         let bond_id = mol
-            .add_bond(a, b, parsed.order)
-            .map_err(|error| SdfParseError::new(record, row.line, error.to_string()))?;
-        if let Some(kind) = parsed.stereo {
+            .add_bond(a, b, record.order)
+            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
+        if let Some(kind) = record.stereo {
             mol.set_stereo_bond_mark(StereoBondMark {
                 bond: bond_id,
                 kind,

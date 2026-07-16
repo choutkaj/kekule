@@ -6,13 +6,17 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     let document = molfile::parse_str(molfile_text).expect("Molfile document parses");
     assert_eq!(document.header().title(), "Header title");
     assert_eq!(document.unsupported_records().len(), 1);
-    let molecule = molfile::interpret(&document).expect("Molfile interprets");
+    let interpretation = molfile::interpret(&document).expect("Molfile interprets");
+    let molecule = interpretation.molecule();
     assert!(molecule.graph().props().get("sdf.title").is_none());
+    assert_eq!(interpretation.report().atom_mappings().len(), 1);
+    assert_eq!(interpretation.report().ignored_record_lines(), &[6]);
 
     let sdf_text = format!("{molfile_text}>  <FIELD>\nvalue\n\n$$$$\n");
     let document = sdf::parse_str(&sdf_text, SdfParseOptions::default()).expect("SDF parses");
     assert_eq!(document.records()[0].data_fields()[0].value(), "value");
-    let records = sdf::interpret(&document).expect("SDF interprets");
+    let interpretation = sdf::interpret(&document).expect("SDF interprets");
+    let records = interpretation.records();
     assert_eq!(records[0].title(), "Header title");
     assert_eq!(records[0].data_fields()[0].name(), "FIELD");
     assert!(records[0]
@@ -21,6 +25,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
         .props()
         .get("sdf.field.FIELD")
         .is_none());
+    assert_eq!(interpretation.report().records().len(), 1);
 }
 
 #[test]
@@ -28,11 +33,12 @@ fn molfile_and_sdf_documents_parse_adjacent_three_digit_counts() {
     let mut molfile_text =
         String::from("Large\nprogram\ncomment\n999999  0  0  0  0            999 V2000\n");
     for _ in 0..999 {
-        molfile_text.push_str("atom record\n");
+        molfile_text.push_str("    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n");
     }
-    for _ in 0..999 {
-        molfile_text.push_str("bond record\n");
+    for atom in 1..999 {
+        molfile_text.push_str(&format!("{atom:>3}{:>3}  1  0  0  0  0\n", atom + 1));
     }
+    molfile_text.push_str("999  1  1  0  0  0  0\n");
     molfile_text.push_str("M  END\n");
 
     let document = molfile::parse_str(&molfile_text).expect("fixed-width counts parse");
@@ -44,6 +50,22 @@ fn molfile_and_sdf_documents_parse_adjacent_three_digit_counts() {
         .expect("SDF delegates to fixed-width Molfile counts parsing");
     assert_eq!(document.records()[0].molfile().atom_records().len(), 999);
     assert_eq!(document.records()[0].molfile().bond_records().len(), 999);
+}
+
+#[test]
+fn molfile_document_parser_validates_declared_atom_and_bond_records() {
+    let invalid_atom =
+        "Bad\nprogram\ncomment\n  1  0  0  0  0  0            999 V2000\natom record\nM  END\n";
+    let error =
+        molfile::parse_str(invalid_atom).expect_err("invalid atom syntax must fail parsing");
+    assert_eq!(error.line, 5);
+    assert!(error.message.contains("atom"));
+
+    let invalid_bond = "Bad\nprogram\ncomment\n  2  1  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  0  0  0  0  0\nbond record\nM  END\n";
+    let error =
+        molfile::parse_str(invalid_bond).expect_err("invalid bond syntax must fail parsing");
+    assert_eq!(error.line, 7);
+    assert!(error.message.contains("bond"));
 }
 
 #[test]

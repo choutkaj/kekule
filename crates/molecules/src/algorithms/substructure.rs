@@ -78,6 +78,7 @@ impl fmt::Display for QueryPerception {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubstructureMatchError {
     InvalidOptions(&'static str),

@@ -37,6 +37,16 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         .macro_molecule()
         .is_some());
     assert_eq!(interpreted.model().positions().len(), 2);
+    assert_eq!(interpreted.report().selected_model(), Some("1"));
+    assert_eq!(interpreted.report().instances().len(), 1);
+    let provenance = &interpreted.report().instances()[0];
+    assert_eq!(provenance.coordinate_model_id(), "1");
+    assert_eq!(provenance.atoms().len(), 2);
+    assert_eq!(provenance.atoms()[0].atom_name(), "C1");
+    assert_eq!(
+        provenance.atoms()[0].atom().molecule(),
+        provenance.molecule()
+    );
     let written = mmcif::write(interpreted.model(), MmcifWriteOptions::default())?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written, MmcifParseOptions::default()).is_ok());

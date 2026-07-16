@@ -3,11 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
-use crate::core::{
-    Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Molecule, Point3, PropValue,
+use crate::core::{Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Molecule, Point3};
+use crate::modeling::{
+    InstanceAtomId, Model, ModelBuilder, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole,
 };
-use crate::modeling::{Model, ModelBuilder, MoleculeInstanceMetadata, MoleculeRole};
-use crate::small::SmallMolecule;
+use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
@@ -63,16 +63,6 @@ impl MmcifEntityKind {
         }
     }
 
-    fn as_str(&self) -> &str {
-        match self {
-            Self::Polymer => "polymer",
-            Self::Branched => "branched",
-            Self::NonPolymer => "non-polymer",
-            Self::Water => "water",
-            Self::Other(value) => value,
-        }
-    }
-
     fn is_macro(&self) -> bool {
         matches!(self, Self::Polymer | Self::Branched)
     }
@@ -100,19 +90,147 @@ pub enum MmcifInterpretIssue {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MmcifAtomProvenance {
+    pub(crate) atom: InstanceAtomId,
+    pub(crate) source_line: usize,
+    pub(crate) atom_site_id: Option<String>,
+    pub(crate) atom_name: String,
+    pub(crate) component_id: String,
+    pub(crate) asym_id: String,
+    pub(crate) entity_id: Option<String>,
+}
+
+impl MmcifAtomProvenance {
+    pub const fn atom(&self) -> InstanceAtomId {
+        self.atom
+    }
+
+    pub const fn source_line(&self) -> usize {
+        self.source_line
+    }
+
+    pub fn atom_site_id(&self) -> Option<&str> {
+        self.atom_site_id.as_deref()
+    }
+
+    pub fn atom_name(&self) -> &str {
+        &self.atom_name
+    }
+
+    pub fn component_id(&self) -> &str {
+        &self.component_id
+    }
+
+    pub fn asym_id(&self) -> &str {
+        &self.asym_id
+    }
+
+    pub fn entity_id(&self) -> Option<&str> {
+        self.entity_id.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MmcifInstanceProvenance {
+    pub(crate) molecule: MoleculeInstanceId,
+    pub(crate) coordinate_model_id: String,
+    pub(crate) asym_ids: Vec<String>,
+    pub(crate) entity_ids: Vec<String>,
+    pub(crate) entity_kinds: Vec<MmcifEntityKind>,
+    pub(crate) atoms: Vec<MmcifAtomProvenance>,
+}
+
+impl MmcifInstanceProvenance {
+    pub const fn molecule(&self) -> MoleculeInstanceId {
+        self.molecule
+    }
+
+    pub fn coordinate_model_id(&self) -> &str {
+        &self.coordinate_model_id
+    }
+
+    pub fn asym_ids(&self) -> &[String] {
+        &self.asym_ids
+    }
+
+    pub fn entity_ids(&self) -> &[String] {
+        &self.entity_ids
+    }
+
+    pub fn entity_kinds(&self) -> &[MmcifEntityKind] {
+        &self.entity_kinds
+    }
+
+    pub fn atoms(&self) -> &[MmcifAtomProvenance] {
+        &self.atoms
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MmcifInterpretationReport {
-    pub data_block: String,
-    pub entity_definitions: usize,
-    pub coordinate_models: usize,
-    pub selected_model: Option<String>,
-    pub ignored_coordinate_models: Vec<String>,
-    pub macromolecules: usize,
-    pub small_molecules: usize,
-    pub solvent_molecules: usize,
-    pub applied_connections: usize,
-    pub template_bonds_pending: usize,
-    pub issues: Vec<MmcifInterpretIssue>,
+    pub(crate) data_block: String,
+    pub(crate) entity_definitions: usize,
+    pub(crate) coordinate_models: usize,
+    pub(crate) selected_model: Option<String>,
+    pub(crate) ignored_coordinate_models: Vec<String>,
+    pub(crate) macromolecules: usize,
+    pub(crate) small_molecules: usize,
+    pub(crate) solvent_molecules: usize,
+    pub(crate) applied_connections: usize,
+    pub(crate) template_bonds_pending: usize,
+    pub(crate) instances: Vec<MmcifInstanceProvenance>,
+    pub(crate) issues: Vec<MmcifInterpretIssue>,
+}
+
+impl MmcifInterpretationReport {
+    pub fn data_block(&self) -> &str {
+        &self.data_block
+    }
+
+    pub const fn entity_definitions(&self) -> usize {
+        self.entity_definitions
+    }
+
+    pub const fn coordinate_models(&self) -> usize {
+        self.coordinate_models
+    }
+
+    pub fn selected_model(&self) -> Option<&str> {
+        self.selected_model.as_deref()
+    }
+
+    pub fn ignored_coordinate_models(&self) -> &[String] {
+        &self.ignored_coordinate_models
+    }
+
+    pub const fn macromolecules(&self) -> usize {
+        self.macromolecules
+    }
+
+    pub const fn small_molecules(&self) -> usize {
+        self.small_molecules
+    }
+
+    pub const fn solvent_molecules(&self) -> usize {
+        self.solvent_molecules
+    }
+
+    pub const fn applied_connections(&self) -> usize {
+        self.applied_connections
+    }
+
+    pub const fn template_bonds_pending(&self) -> usize {
+        self.template_bonds_pending
+    }
+
+    pub fn instances(&self) -> &[MmcifInstanceProvenance] {
+        &self.instances
+    }
+
+    pub fn issues(&self) -> &[MmcifInterpretIssue] {
+        &self.issues
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -137,8 +255,8 @@ impl MmcifInterpretation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifInterpretError {
-    pub line: Option<usize>,
-    pub message: String,
+    pub(crate) line: Option<usize>,
+    pub(crate) message: String,
 }
 
 impl MmcifInterpretError {
@@ -147,6 +265,14 @@ impl MmcifInterpretError {
             line,
             message: message.into(),
         }
+    }
+
+    pub const fn line(&self) -> Option<usize> {
+        self.line
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -223,19 +349,23 @@ fn interpret_block(
                 molecule,
                 conformer,
                 metadata,
+                provenance,
             } => {
-                builder
+                let id = builder
                     .add_macro_molecule_with_metadata(&molecule, conformer, metadata)
                     .map_err(graph_error)?;
+                report.instances.push(provenance.qualify(id));
             }
             BuiltMolecule::Small {
                 molecule,
                 conformer,
                 metadata,
+                provenance,
             } => {
-                builder
+                let id = builder
                     .add_small_molecule_with_metadata(&molecule, conformer, metadata)
                     .map_err(graph_error)?;
+                report.instances.push(provenance.qualify(id));
             }
         }
     }
@@ -801,12 +931,57 @@ enum BuiltMolecule {
         molecule: SmallMolecule,
         conformer: ConformerId,
         metadata: MoleculeInstanceMetadata,
+        provenance: BuiltMoleculeProvenance,
     },
     Macro {
         molecule: MacroMolecule,
         conformer: ConformerId,
         metadata: MoleculeInstanceMetadata,
+        provenance: BuiltMoleculeProvenance,
     },
+}
+
+struct BuiltMoleculeProvenance {
+    coordinate_model_id: String,
+    asym_ids: Vec<String>,
+    entity_ids: Vec<String>,
+    entity_kinds: Vec<MmcifEntityKind>,
+    atoms: Vec<BuiltAtomProvenance>,
+}
+
+struct BuiltAtomProvenance {
+    atom: AtomId,
+    source_line: usize,
+    atom_site_id: Option<String>,
+    atom_name: String,
+    component_id: String,
+    asym_id: String,
+    entity_id: Option<String>,
+}
+
+impl BuiltMoleculeProvenance {
+    fn qualify(self, molecule: MoleculeInstanceId) -> MmcifInstanceProvenance {
+        MmcifInstanceProvenance {
+            molecule,
+            coordinate_model_id: self.coordinate_model_id,
+            asym_ids: self.asym_ids,
+            entity_ids: self.entity_ids,
+            entity_kinds: self.entity_kinds,
+            atoms: self
+                .atoms
+                .into_iter()
+                .map(|atom| MmcifAtomProvenance {
+                    atom: InstanceAtomId::new(molecule, atom.atom),
+                    source_line: atom.source_line,
+                    atom_site_id: atom.atom_site_id,
+                    atom_name: atom.atom_name,
+                    component_id: atom.component_id,
+                    asym_id: atom.asym_id,
+                    entity_id: atom.entity_id,
+                })
+                .collect(),
+        }
+    }
 }
 
 fn build_molecule(
@@ -844,18 +1019,6 @@ fn build_molecule(
     for (key, row) in &representative {
         let mut atom = Atom::new(row.element);
         atom.formal_charge = row.formal_charge;
-        atom.props.insert(
-            "mmcif.atom_id".into(),
-            PropValue::String(row.atom_name.clone()),
-        );
-        atom.props.insert(
-            "mmcif.comp_id".into(),
-            PropValue::String(row.comp_id.clone()),
-        );
-        atom.props.insert(
-            "mmcif.asym_id".into(),
-            PropValue::String(row.asym_id.clone()),
-        );
         atoms.insert(key.clone(), graph.add_atom(atom));
     }
     let model_id = group
@@ -864,9 +1027,6 @@ fn build_molecule(
         .map(|row| row.model_id.clone())
         .ok_or_else(|| MmcifInterpretError::new(None, "empty molecule group"))?;
     let mut conformer = Conformer::new(ANGSTROM).expect("angstrom is a length unit");
-    conformer
-        .props_mut()
-        .insert("mmcif.model_id".into(), PropValue::String(model_id));
     for row in &group.rows {
         let point = row.point.ok_or_else(|| {
             MmcifInterpretError::new(
@@ -915,35 +1075,34 @@ fn build_molecule(
         .map(|row| row.asym_id.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
-        .collect::<Vec<_>>()
-        .join(",");
+        .collect::<Vec<_>>();
     let entity_ids = representative
         .iter()
         .map(|(_, row)| row)
         .filter_map(|row| row.entity_id.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
-        .collect::<Vec<_>>()
-        .join(",");
-    graph
-        .props_mut()
-        .insert("mmcif.asym_ids".into(), PropValue::String(asym_ids));
-    if !entity_ids.is_empty() {
-        graph
-            .props_mut()
-            .insert("mmcif.entity_ids".into(), PropValue::String(entity_ids));
-    }
-    graph.props_mut().insert(
-        "mmcif.entity_kinds".into(),
-        PropValue::String(
-            group
-                .kinds
-                .iter()
-                .map(MmcifEntityKind::as_str)
-                .collect::<Vec<_>>()
-                .join(","),
-        ),
-    );
+        .collect::<Vec<_>>();
+    let entity_kinds = group.kinds.iter().cloned().collect::<Vec<_>>();
+    let atom_provenance = representative
+        .iter()
+        .map(|(key, row)| BuiltAtomProvenance {
+            atom: atoms[key],
+            source_line: row.line,
+            atom_site_id: row.atom_site_id.clone(),
+            atom_name: row.atom_name.clone(),
+            component_id: row.comp_id.clone(),
+            asym_id: row.asym_id.clone(),
+            entity_id: row.entity_id.clone(),
+        })
+        .collect();
+    let provenance = BuiltMoleculeProvenance {
+        coordinate_model_id: model_id,
+        asym_ids,
+        entity_ids,
+        entity_kinds,
+        atoms: atom_provenance,
+    };
     if graph.atom_count() > 1 {
         report.template_bonds_pending += 1;
     }
@@ -980,9 +1139,10 @@ fn build_molecule(
     if is_macro {
         let hierarchy = build_hierarchy(&graph, &representative, &atoms)?;
         Ok(BuiltMolecule::Macro {
-            molecule: MacroMolecule::from_parts(graph, hierarchy),
+            molecule: MacroMolecule::try_from_parts(graph, hierarchy).map_err(graph_error)?,
             conformer,
             metadata,
+            provenance,
         })
     } else {
         let molecule = SmallMolecule::from_graph(graph);
@@ -990,6 +1150,7 @@ fn build_molecule(
             molecule,
             conformer,
             metadata,
+            provenance,
         })
     }
 }

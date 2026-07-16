@@ -25,6 +25,7 @@ impl Default for MmcifWriteOptions {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MmcifWriteError {
     InvalidDataBlockName(String),

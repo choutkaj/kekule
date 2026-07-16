@@ -22,8 +22,8 @@ impl Default for MmcifParseOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifParseError {
-    pub line: usize,
-    pub message: String,
+    pub(crate) line: usize,
+    pub(crate) message: String,
 }
 
 impl MmcifParseError {
@@ -32,6 +32,14 @@ impl MmcifParseError {
             line,
             message: message.into(),
         }
+    }
+
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
