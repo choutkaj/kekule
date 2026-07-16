@@ -18,7 +18,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     validate_args(&args)?;
     let feature_selector = value_after_flag(&args, "--feature")
         .ok_or_else(|| boxed_error("missing required flag: --feature FEATURE_ID"))?;
-    let corpus_selector = value_after_flag(&args, "--corpus").unwrap_or("smoke");
+    let corpus_selector = validation_corpus_selector(&args);
     let fixture_selector = value_after_flag(&args, "--fixture");
     let update = args.iter().any(|arg| arg == "--update");
     let accept_goldens = args
@@ -233,4 +233,8 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         )));
     }
     Ok(())
+}
+
+pub(crate) fn validation_corpus_selector(args: &[String]) -> &str {
+    value_after_flag(args, "--corpus").unwrap_or("all")
 }

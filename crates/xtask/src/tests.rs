@@ -694,7 +694,19 @@ fn progress_bars_are_compact_and_deterministic() {
 }
 
 #[test]
-fn selectors_keep_local_only_corpora_explicit_and_all_routine() {
+fn validation_defaults_to_all_and_all_includes_manifest_backed_local_corpora() {
+    assert_eq!(validation_corpus_selector(&[]), "all");
+    assert_eq!(
+        validation_corpus_selector(&[
+            "--feature".to_owned(),
+            "all".to_owned(),
+            "--corpus".to_owned(),
+            "smoke".to_owned(),
+        ]),
+        "smoke"
+    );
+
+    let root = temp_feature_root("all-validation-corpora");
     let features = vec![
         Feature {
             id: "small".to_owned(),
@@ -718,30 +730,79 @@ fn selectors_keep_local_only_corpora_explicit_and_all_routine() {
             depends_on: Vec::new(),
             validation_required: vec!["smoke".to_owned()],
         },
+        Feature {
+            id: "planned".to_owned(),
+            title: "Planned".to_owned(),
+            area: "descriptors".to_owned(),
+            domains: vec![FeatureDomain::SmallMolecule],
+            version: 1,
+            implemented: false,
+            description: "Planned feature.".to_owned(),
+            depends_on: Vec::new(),
+            validation_required: Vec::new(),
+        },
     ];
+    for (feature, corpus) in [
+        ("small", "pubchem-100"),
+        ("small", "pubchem-100k"),
+        ("small", "enamine-diversity"),
+        ("macro", "pdb-100"),
+        ("planned", "smoke"),
+    ] {
+        let path = validation_manifest_path_from(&root, feature, corpus);
+        fs::create_dir_all(path.parent().expect("manifest parent"))
+            .expect("manifest directory should create");
+        fs::write(path, "").expect("manifest marker should write");
+    }
 
     assert_eq!(
-        validation_targets(&features, "all", "smoke")
+        validation_targets_from(&root, &features, "all", "smoke")
             .into_iter()
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
         vec![("small", "smoke".to_owned()), ("macro", "smoke".to_owned())]
     );
-    assert_eq!(validation_targets(&features, "small", "all").len(), 1);
     assert_eq!(
-        validation_targets(&features, "small", "pubchem-100k")
+        validation_targets_from(&root, &features, "all", "all")
+            .into_iter()
+            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
+            .collect::<Vec<_>>(),
+        vec![
+            ("small", "smoke".to_owned()),
+            ("small", "pubchem-100".to_owned()),
+            ("small", "pubchem-100k".to_owned()),
+            ("small", "enamine-diversity".to_owned()),
+            ("macro", "smoke".to_owned()),
+            ("macro", "pdb-100".to_owned()),
+        ]
+    );
+    assert_eq!(
+        validation_targets_from(&root, &features, "small", "all")
+            .into_iter()
+            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
+            .collect::<Vec<_>>(),
+        vec![
+            ("small", "smoke".to_owned()),
+            ("small", "pubchem-100".to_owned()),
+            ("small", "pubchem-100k".to_owned()),
+            ("small", "enamine-diversity".to_owned()),
+        ]
+    );
+    assert_eq!(
+        validation_targets_from(&root, &features, "small", "pubchem-100k")
             .into_iter()
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
         vec![("small", "pubchem-100k".to_owned())]
     );
     assert_eq!(
-        validation_targets(&features, "macro", "pubchem-100")
+        validation_targets_from(&root, &features, "macro", "pubchem-100")
             .into_iter()
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
         vec![("macro", "pubchem-100".to_owned())]
     );
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]

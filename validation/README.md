@@ -14,6 +14,7 @@ full, and even the default corpus check verifies all of its fixture bytes.
 cargo xtask corpus check --corpus all
 cargo xtask corpus check --corpus all --require-data
 cargo xtask validate --feature all --corpus smoke
+cargo xtask validate --feature all
 ```
 
 To diagnose one declared fixture without changing generated status, use
@@ -24,8 +25,11 @@ feature/corpus using a `*-manual-semantic` reference and is deliberately
 separate from `--update`; generator-backed RDKit and Biopython goldens cannot be
 replaced this way.
 
-The following command runs every required routine feature/corpus parity check
-and updates the recorded evidence and feature dashboard.
+The following command runs every required or implemented manifest-backed
+feature/corpus parity check across all registered corpora, including the ignored
+local-only large corpora, and updates the recorded evidence and feature
+dashboard. Omitting `--corpus` has the same all-corpus behavior. All local
+corpus data must already be present.
 ```bash
 cargo xtask validate --feature all --corpus all --update
 ```
