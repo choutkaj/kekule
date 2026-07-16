@@ -1,5 +1,7 @@
 use crate::*;
 
+const DEFAULT_VALIDATION_JOB_LIMIT: usize = 4;
+
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -48,7 +50,8 @@ pub(crate) fn validation_jobs(args: &[String]) -> Result<usize, Box<dyn Error>> 
     let Some(raw) = value_after_flag(args, "--jobs") else {
         return Ok(std::thread::available_parallelism()
             .map(usize::from)
-            .unwrap_or(1));
+            .unwrap_or(1)
+            .min(DEFAULT_VALIDATION_JOB_LIMIT));
     };
     let jobs = raw
         .parse::<usize>()

@@ -192,3 +192,6 @@ or manually curated external-reference golden data.
 - v34: Normalize expected and implementation JSON in place during comparison,
   eliminating two full-tree clones per parallel fixture and substantially
   reducing peak memory for broad structural-output validation.
+- v35: Cap the automatic fixture-worker default at four so machines with many
+  logical CPUs do not multiply large JSON comparison memory unexpectedly;
+  explicit `--jobs N` remains available for provisioned validation hosts.
