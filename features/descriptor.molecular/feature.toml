@@ -1,6 +1,7 @@
 id = "descriptor.molecular"
 title = "Molecular descriptors"
 area = "descriptors"
+domains = ["small-molecule"]
 version = 1
 implemented = false
 description = "Plan small-molecule descriptors such as formula and molecular weight."

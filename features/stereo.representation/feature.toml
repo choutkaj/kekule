@@ -1,6 +1,7 @@
 id = "stereo.representation"
 title = "Stereochemistry representation"
 area = "stereo"
+domains = ["small-molecule"]
 version = 11
 implemented = true
 description = "Store first-class stereo elements, relation groups, source bond marks, derived descriptor vocabulary, and atom, hydrogen, or lone-pair stereo carriers adjacent to the molecular graph, with PubChem, Enamine, and PL-REX semantic regression coverage."

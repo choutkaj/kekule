@@ -19,11 +19,12 @@ Canonical flow: add -> optional research -> plan -> implement.
 
 ## Feature metadata
 
-Feature metadata uses schema v3:
+Feature metadata uses schema v4:
 
 - `id`
 - `title`
 - `area`
+- `domains`
 - `version`
 - `implemented`
 - `description`
@@ -32,6 +33,10 @@ Feature metadata uses schema v3:
 
 Do not use `priority`, `status`, `last_ai_review`, or the removed global
 `validated` flag.
+
+`domains` is a non-empty list containing `small-molecule`, `macromolecule`, or
+`infrastructure`. Shared graph, API, unit, and modeling features declare both
+chemistry domains; infrastructure cannot be combined with a chemistry domain.
 
 Increment `version` only when behavior, public API, or validation contract intentionally changes. Set `implemented = true` only when implementation is complete. Let `cargo xtask validate ... --update` record per-corpus parity evidence.
 

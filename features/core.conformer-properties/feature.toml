@@ -1,6 +1,7 @@
 id = "core.conformer-properties"
 title = "Conformer properties"
 area = "core"
+domains = ["small-molecule", "macromolecule"]
 version = 1
 implemented = true
 description = "Attach arbitrary source and workflow metadata to individual conformers."

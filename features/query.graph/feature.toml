@@ -1,6 +1,7 @@
 id = "query.graph"
 title = "Syntax-independent query graph"
 area = "query"
+domains = ["small-molecule"]
 version = 1
 implemented = true
 description = "Represent bounded boolean atom and bond predicates on an immutable query topology without overloading concrete molecule payloads."

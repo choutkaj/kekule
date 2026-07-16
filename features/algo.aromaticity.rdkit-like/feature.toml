@@ -1,6 +1,7 @@
 id = "algo.aromaticity.rdkit-like"
 title = "RDKit-like aromaticity perception"
 area = "algorithms"
+domains = ["small-molecule"]
 version = 94
 implemented = true
 description = "Assign aromatic atom and bond flags with RDKit-style global donor classification, fused-ring subset evaluation, and bounded imported-aromatic normalization."

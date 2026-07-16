@@ -1,6 +1,7 @@
 id = "algo.canonical-ranking"
 title = "Canonical atom ranking"
 area = "algorithms"
+domains = ["small-molecule"]
 version = 5
 implemented = true
 description = "Assign deterministic RDKit-like non-stereo atom symmetry classes using local color refinement plus cyclic-topology invariants."

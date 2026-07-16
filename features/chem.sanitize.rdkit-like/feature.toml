@@ -1,6 +1,7 @@
 id = "chem.sanitize.rdkit-like"
 title = "RDKit-like sanitization pipeline"
 area = "chemistry"
+domains = ["small-molecule"]
 version = 14
 implemented = true
 description = "Run explicit valence, ring, aromaticity, and stereo perception as an opt-in small-molecule sanitization pipeline."

@@ -1,6 +1,7 @@
 id = "model.force-field.dreiding"
 title = "DREIDING force-field adapter"
 area = "modeling"
+domains = ["small-molecule", "macromolecule"]
 version = 6
 implemented = true
 description = "Prepare and evaluate fixed-charge DREIDING potentials for molecule-instance Model values."

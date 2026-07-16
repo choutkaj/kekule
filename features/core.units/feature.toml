@@ -1,6 +1,7 @@
 id = "core.units"
 title = "Physical quantities and units"
 area = "core"
+domains = ["small-molecule", "macromolecule"]
 version = 1
 implemented = true
 description = "Represent scalar and collection-valued physical quantities with composable runtime units and explicit compatible conversion."

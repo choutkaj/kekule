@@ -1,7 +1,8 @@
 id = "dashboard.feature-registry"
 title = "Feature registry and dashboard"
 area = "infrastructure"
-version = 9
+domains = ["infrastructure"]
+version = 10
 implemented = true
 description = "Keep feature metadata as the source of truth and generate a dashboard from it."
 depends_on = []

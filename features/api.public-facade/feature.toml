@@ -1,6 +1,7 @@
 id = "api.public-facade"
 title = "Public API facade"
 area = "api"
+domains = ["small-molecule", "macromolecule"]
 version = 14
 implemented = true
 description = "Expose the architecture-defined facade with focused public modules, a small prelude, and domain wrappers around the raw graph."

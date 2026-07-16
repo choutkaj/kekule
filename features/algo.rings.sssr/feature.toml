@@ -1,6 +1,7 @@
 id = "algo.rings.sssr"
 title = "Smallest-set ring basis"
 area = "algorithms"
+domains = ["small-molecule"]
 version = 11
 implemented = true
 description = "Compute a smallest-set ring basis for small-molecule workflows."

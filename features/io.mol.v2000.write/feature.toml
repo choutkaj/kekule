@@ -1,6 +1,7 @@
 id = "io.mol.v2000.write"
 title = "Molfile V2000 writer"
 area = "io"
+domains = ["small-molecule"]
 version = 10
 implemented = true
 description = "Write small molecules as V2000 Molfile blocks with coordinates, common atom metadata, and supported source bond stereo marks."

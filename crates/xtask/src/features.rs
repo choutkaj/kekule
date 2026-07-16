@@ -11,12 +11,21 @@ pub(crate) fn list_features() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum FeatureDomain {
+    SmallMolecule,
+    Macromolecule,
+    Infrastructure,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Feature {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) area: String,
+    pub(crate) domains: Vec<FeatureDomain>,
     pub(crate) version: u32,
     pub(crate) implemented: bool,
     pub(crate) description: String,
@@ -82,6 +91,27 @@ pub(crate) fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box
     if feature.version == 0 {
         return Err(boxed_error(format!(
             "{} has invalid zero `version` value",
+            path.display()
+        )));
+    }
+    if feature.domains.is_empty() {
+        return Err(boxed_error(format!(
+            "{} has empty required field `domains`",
+            path.display()
+        )));
+    }
+    let mut seen_domains = BTreeSet::new();
+    for domain in &feature.domains {
+        if !seen_domains.insert(domain) {
+            return Err(boxed_error(format!(
+                "{} lists feature domain `{domain:?}` more than once",
+                path.display()
+            )));
+        }
+    }
+    if feature.domains.contains(&FeatureDomain::Infrastructure) && feature.domains.len() != 1 {
+        return Err(boxed_error(format!(
+            "{} combines the `infrastructure` domain with a chemistry domain",
             path.display()
         )));
     }

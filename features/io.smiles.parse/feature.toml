@@ -1,6 +1,7 @@
 id = "io.smiles.parse"
 title = "SMILES parser"
 area = "io"
+domains = ["small-molecule"]
 version = 14
 implemented = true
 description = "Parse a practical SMILES subset, preserving supported local stereo and inferring bracket-atom radical multiplicity without implicit sanitization."

@@ -1,6 +1,7 @@
 id = "query.smarts"
 title = "SMARTS query parsing"
 area = "query"
+domains = ["small-molecule"]
 version = 2
 implemented = true
 description = "Parse a deliberately bounded, resource-limited SMARTS subset into the syntax-independent query graph."

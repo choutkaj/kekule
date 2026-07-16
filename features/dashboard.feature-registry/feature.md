@@ -13,11 +13,20 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 
 ## Implementation Notes
 
-- Feature metadata schema v3 requires `id`, `title`, `area`, `version`, `implemented`, `description`, `depends_on`, and `validation_required`.
+- Feature metadata schema v4 requires `id`, `title`, `area`, `domains`,
+  `version`, `implemented`, `description`, `depends_on`, and
+  `validation_required`.
 - Deprecated metadata keys `priority`, `status`, and `last_ai_review`, plus the
   removed global `validated` key, are rejected.
 - Each tracked feature directory must include `feature.md`.
-- The dashboard renders a generated HTML table with feature metadata and one column per known corpus.
+- The dashboard renders separate generated HTML tables for small molecules,
+  macromolecules, and infrastructure. Shared chemistry foundations appear in
+  both chemistry tables.
+- Small-molecule and PDB-derived corpora are selected from typed corpus
+  `kind` metadata. The mixed smoke corpus appears in both chemistry tables.
+- Each chemistry section displays the exact reference codebase version found
+  in its manifests, plus supplemental semantic reference labels where
+  applicable. Individual parity-cell tooltips identify their exact reference.
 - Dashboard cells report structurally valid recorded per-corpus parity evidence so generation is deterministic on clean checkouts without ignored large-corpus fixtures.
 - `cargo xtask validate` is the authority for checking parity against the current checkout; `cargo xtask features` lists feature metadata without deriving a global validation result.
 - Per-feature evidence is read from each corpus-owned `status.toml`.
@@ -53,3 +62,6 @@ Keep feature metadata as the machine-readable source of truth and generate a det
   tiers, as dashboard columns.
 - v9: Remove the global `validated` metadata flag and treat per-corpus parity
   evidence as the complete validation state.
+- v10: Split the dashboard into small-molecule, macromolecule, and
+  infrastructure tables; add explicit feature-domain metadata and display
+  versioned external reference information.

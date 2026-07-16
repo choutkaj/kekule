@@ -1,6 +1,7 @@
 id = "fp.morgan"
 title = "Morgan fingerprint"
 area = "fingerprints"
+domains = ["small-molecule"]
 version = 1
 implemented = false
 description = "Plan a Morgan-style circular fingerprint for small molecules."

@@ -1,11 +1,12 @@
 id = "area.name"
 title = "Human-readable feature title"
 area = "core"
+domains = ["small-molecule"]
 version = 1
 implemented = false
 description = "One-sentence description."
+depends_on = []
 validation_required = []
 
-# depends_on = ["core.graph"]
 # reference = ["rdkit.Chem.example"]
 # public_api = ["molecules::path::function"]

@@ -1,6 +1,7 @@
 id = "core.conformers"
 title = "Core conformer coordinate storage"
 area = "core"
+domains = ["small-molecule", "macromolecule"]
 version = 5
 implemented = true
 description = "Store molecule conformer coordinates behind stable conformer IDs on the shared core graph."

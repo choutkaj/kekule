@@ -1,6 +1,7 @@
 id = "io.sdf.v2000.parse"
 title = "SDF V2000 parser"
 area = "io"
+domains = ["small-molecule"]
 version = 12
 implemented = true
 description = "Parse multi-record SDF V2000 files through Molfile V2000 parsing, preserving source bond stereo marks and data fields."

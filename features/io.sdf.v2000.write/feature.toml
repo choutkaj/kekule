@@ -1,6 +1,7 @@
 id = "io.sdf.v2000.write"
 title = "SDF V2000 writer"
 area = "io"
+domains = ["small-molecule"]
 version = 8
 implemented = true
 description = "Write one or more small molecules as SDF V2000 records with data fields and supported source bond stereo marks."

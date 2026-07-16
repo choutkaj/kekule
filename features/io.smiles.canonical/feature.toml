@@ -1,6 +1,7 @@
 id = "io.smiles.canonical"
 title = "Canonical SMILES writer"
 area = "io"
+domains = ["small-molecule"]
 version = 30
 implemented = true
 description = "Write deterministic non-stereo canonical SMILES using canonical atom ranking and rank-guided graph traversal."

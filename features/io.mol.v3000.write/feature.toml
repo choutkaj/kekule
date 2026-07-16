@@ -1,6 +1,7 @@
 id = "io.mol.v3000.write"
 title = "Molfile V3000 writer"
 area = "io"
+domains = ["small-molecule"]
 version = 10
 implemented = true
 description = "Write deterministic Molfile V3000 CTAB output for the supported raw graph subset and source bond CFG marks."
