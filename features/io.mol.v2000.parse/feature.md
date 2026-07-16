@@ -9,14 +9,21 @@ as one `SmallMolecule` plus source mappings.
 
 - Exposes version-autodetecting `molfile::parse_str` and `molfile::interpret`
   with distinct `MolfileParseError` and `MolfileInterpretError`.
+- `molfile::parse_str_with_options` accepts `MolfileParseOptions` for input-byte
+  and V3000 allocation bounds; `parse_str` uses the documented defaults.
 - The document preserves headers, atom/bond/property records, unsupported
   records, source lines, original text, and a validated private typed CTAB
   representation without constructing a molecule.
+- Nonempty content after `M  END` remains visible as unsupported document
+  records and is included in the interpretation report instead of being
+  silently omitted from the structured view.
 - Interpretation returns `MolfileInterpretation`; its report maps source atom
   and bond records to stable canonical `AtomId` and `BondId` values.
 - Interpretation preserves atom coordinates, bond orders, atom maps, charges,
   isotopes, radicals, and supported source stereo marks. Headers remain document
   metadata rather than molecule properties.
+- Atom-block charge code 4 is preserved as a doublet radical; `M  RAD` records
+  continue to preserve explicit singlet, doublet, and triplet multiplicities.
 - Preserves the valence-implied hydrogen carrier on degree-three tetrahedral
   wedge centers as an explicit atom hydrogen, matching RDKit's CTfile parsing
   semantics without running general valence perception.
@@ -72,3 +79,10 @@ as one `SmallMolecule` plus source mappings.
 - v13: Parse and validate atom, bond, and supported property records into a
   typed V2000 syntax representation; interpretation consumes it without
   reparsing source lines and returns canonical mappings.
+- v14: Preserve atom-block charge code 4 as a doublet radical and reject
+  malformed or unsupported atom-block charge codes instead of silently
+  coercing them to neutral atoms.
+- v15: Add configurable Molfile input bounds and shared V3000 atom, bond, and
+  logical-line limits while retaining the existing default-bounded parser.
+- v16: Preserve and report nonempty records after `M  END` as unsupported
+  document content instead of retaining them only in the raw source string.

@@ -22,6 +22,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "mol_v3000"
+path = "fuzz_targets/mol_v3000.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "sdf_v2000"
 path = "fuzz_targets/sdf_v2000.rs"
 test = false

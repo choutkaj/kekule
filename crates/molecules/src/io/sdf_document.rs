@@ -3,7 +3,7 @@ use std::fmt;
 use crate::small::model::SmallMolecule;
 
 use super::{
-    interpret_molfile_document, parse_molfile_document, MolfileDocument,
+    interpret_molfile_document, parse_molfile_document_with_options, MolfileDocument,
     MolfileInterpretationReport, SdfParseError, SdfParseOptions,
 };
 
@@ -198,25 +198,49 @@ pub fn parse_sdf_document(
     input: &str,
     options: SdfParseOptions,
 ) -> Result<SdfDocument, SdfParseError> {
+    if input.len() > options.max_input_bytes {
+        return Err(SdfParseError::new(
+            1,
+            1,
+            "input exceeds configured byte limit",
+        ));
+    }
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
     let mut records = Vec::new();
     let mut current = Vec::<(usize, &str)>::new();
-    let mut saw_delimiter = false;
+    let mut current_bytes = 0usize;
     for (offset, line) in normalized.lines().enumerate() {
         let line_number = offset + 1;
         if line.trim() == "$$$$" {
-            saw_delimiter = true;
             if current.iter().any(|(_, line)| !line.trim().is_empty()) {
-                records.push(parse_record_document(records.len() + 1, &current)?);
+                push_record_document(&mut records, &current, options, true)?;
             }
             current.clear();
+            current_bytes = 0;
         } else {
+            current_bytes = current_bytes
+                .checked_add(line.len())
+                .and_then(|bytes| bytes.checked_add(1))
+                .ok_or_else(|| {
+                    SdfParseError::new(
+                        records.len() + 1,
+                        line_number,
+                        "SDF record byte count overflow",
+                    )
+                })?;
+            if current_bytes > options.max_record_bytes {
+                return Err(SdfParseError::new(
+                    records.len() + 1,
+                    line_number,
+                    "SDF record exceeds configured byte limit",
+                ));
+            }
             current.push((line_number, line));
         }
     }
     if current.iter().any(|(_, line)| !line.trim().is_empty()) {
-        if saw_delimiter || options.allow_missing_final_delimiter {
-            records.push(parse_record_document(records.len() + 1, &current)?);
+        if options.allow_missing_final_delimiter {
+            push_record_document(&mut records, &current, options, false)?;
         } else {
             return Err(SdfParseError::new(
                 records.len() + 1,
@@ -228,9 +252,33 @@ pub fn parse_sdf_document(
     Ok(SdfDocument { records })
 }
 
+fn push_record_document(
+    records: &mut Vec<SdfRecordDocument>,
+    lines: &[(usize, &str)],
+    options: SdfParseOptions,
+    ended_by_delimiter: bool,
+) -> Result<(), SdfParseError> {
+    if records.len() >= options.max_records {
+        return Err(SdfParseError::new(
+            records.len() + 1,
+            lines.first().map(|(line, _)| *line).unwrap_or(1),
+            "SDF record count exceeds configured limit",
+        ));
+    }
+    records.push(parse_record_document(
+        records.len() + 1,
+        lines,
+        options,
+        ended_by_delimiter,
+    )?);
+    Ok(())
+}
+
 fn parse_record_document(
     record: usize,
     lines: &[(usize, &str)],
+    options: SdfParseOptions,
+    ended_by_delimiter: bool,
 ) -> Result<SdfRecordDocument, SdfParseError> {
     let end = lines
         .iter()
@@ -248,28 +296,50 @@ fn parse_record_document(
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
-    let molfile = parse_molfile_document(&molfile_source)
-        .map_err(|error| SdfParseError::new(record, lines[0].0 + error.line - 1, error.message))?;
+    let molfile = parse_molfile_document_with_options(
+        &molfile_source,
+        super::MolfileParseOptions {
+            max_input_bytes: options.max_record_bytes,
+            ..super::MolfileParseOptions::default()
+        },
+    )
+    .map_err(|error| SdfParseError::new(record, lines[0].0 + error.line - 1, error.message))?;
     let mut data_fields = Vec::new();
     let mut index = end + 1;
     while index < lines.len() {
         let (line_number, line) = lines[index];
-        if !line.trim_start().starts_with('>') {
+        if line.trim().is_empty() {
             index += 1;
             continue;
+        }
+        if !line.trim_start().starts_with('>') {
+            return Err(SdfParseError::new(
+                record,
+                line_number,
+                "unexpected content outside an SDF data field",
+            ));
         }
         let name = sdf_field_name(line).ok_or_else(|| {
             SdfParseError::new(record, line_number, "invalid SDF data field header")
         })?;
         index += 1;
         let mut values = Vec::new();
-        while index < lines.len() && !lines[index].1.trim_start().starts_with('>') {
+        let mut terminated = false;
+        while index < lines.len() {
             if lines[index].1.is_empty() {
                 index += 1;
+                terminated = true;
                 break;
             }
             values.push(lines[index].1);
             index += 1;
+        }
+        if !terminated && !ended_by_delimiter {
+            return Err(SdfParseError::new(
+                record,
+                lines.last().map(|(line, _)| *line).unwrap_or(line_number),
+                "SDF data field is missing its terminating blank line",
+            ));
         }
         data_fields.push(SdfDataField {
             name,

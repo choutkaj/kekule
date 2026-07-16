@@ -68,6 +68,7 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let mut failures = Vec::new();
     let mut passed = 0;
     let mut update_corpora = BTreeSet::new();
+    let hash_cache = ValidationHashCache::default();
     for (target_index, (feature, corpus)) in targets.into_iter().enumerate() {
         progress.target_start(target_index + 1, &feature.id, &corpus);
         if update {
@@ -139,8 +140,13 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             }
             let worker_count = validation_worker_count(jobs, manifest.fixtures.len());
             let fixture_progress = FixtureProgress::start(manifest.fixtures.len(), worker_count);
-            let comparison_result =
-                validate_golden_outputs(&manifest_path, &manifest, jobs, Some(&fixture_progress));
+            let comparison_result = validate_golden_outputs_cached(
+                &manifest_path,
+                &manifest,
+                jobs,
+                Some(&fixture_progress),
+                &hash_cache,
+            );
             fixture_progress.finish();
             let comparison = comparison_result?;
             if comparison.failed_count > 0 {
@@ -164,7 +170,12 @@ pub(crate) fn validate(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                     manifest.fixtures.len()
                 )));
             }
-            let evidence = build_validation_evidence(Path::new("."), &manifest_path, &manifest)?;
+            let evidence = build_validation_evidence_cached(
+                Path::new("."),
+                &manifest_path,
+                &manifest,
+                &hash_cache,
+            )?;
             Ok(ValidationOutcome::Passed(ValidationRun {
                 fixture_count: manifest.fixtures.len(),
                 compared_count: comparison.compared_count,

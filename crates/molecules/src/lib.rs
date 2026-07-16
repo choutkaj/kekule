@@ -36,12 +36,19 @@ pub mod smiles {
         CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, MolWriteError, SmilesAtomMapping,
         SmilesBondMapping, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
         SmilesInterpretError, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
-        SmilesWriteOptions,
+        SmilesParseOptions, SmilesWriteOptions,
     };
     use crate::small::SmallMolecule;
 
     pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
         crate::io::parse_smiles_document(input)
+    }
+
+    pub fn parse_str_with_options(
+        input: &str,
+        options: SmilesParseOptions,
+    ) -> Result<SmilesDocument, SmilesParseError> {
+        crate::io::parse_smiles_document_with_options(input, options)
     }
 
     pub fn interpret(
@@ -88,13 +95,20 @@ pub mod molfile {
     pub use crate::io::{
         MolWriteError, MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader,
         MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport, MolfileLine,
-        MolfileParseError, MolfileVersion,
+        MolfileParseError, MolfileParseOptions, MolfileVersion,
     };
 
     use crate::small::SmallMolecule;
 
     pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
         crate::io::parse_molfile_document(input)
+    }
+
+    pub fn parse_str_with_options(
+        input: &str,
+        options: MolfileParseOptions,
+    ) -> Result<MolfileDocument, MolfileParseError> {
+        crate::io::parse_molfile_document_with_options(input, options)
     }
 
     pub fn interpret(

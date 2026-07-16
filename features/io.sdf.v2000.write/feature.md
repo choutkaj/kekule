@@ -12,6 +12,9 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - Inherits exact radical and supported source bond-stereo mark handling from the Molfile V2000 writer.
 - Inherits V2000 atom-block valence/no-implicit output and structured rejection
   of quartet/quintet radical multiplicity.
+- Rejects titles with line breaks, malformed field names, field values with
+  blank lines or carriage returns, and field values containing a `$$$$`
+  delimiter line instead of emitting SDF text that cannot round-trip safely.
 - Does not run sanitization, canonicalization, or perception.
 
 ## Implementation Notes
@@ -43,3 +46,5 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - v7: Hard break to canonical `SdfRecord` input and record-owned metadata.
 - v8: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
+- v9: Reject record metadata that is not representable by the line-oriented SDF
+  grammar and preserve value lines beginning with `>` on round trip.

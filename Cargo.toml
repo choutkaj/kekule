@@ -15,3 +15,24 @@ license = "MIT"
 readme = "README.md"
 keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]
 categories = ["science", "data-structures", "parser-implementations"]
+
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.crc32fast]
+opt-level = 3
+
+[profile.dev.package.serde_json]
+opt-level = 3
+
+[profile.dev.package.memchr]
+opt-level = 3
+
+[profile.dev.package.zmij]
+opt-level = 3

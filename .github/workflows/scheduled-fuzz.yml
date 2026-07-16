@@ -18,6 +18,7 @@ jobs:
       matrix:
         target:
           - mol_v2000
+          - mol_v3000
           - sdf_v2000
           - smiles
           - mmcif
@@ -26,10 +27,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo install cargo-fuzz --locked
       - name: Run bounded long campaign
-        run: cargo +nightly fuzz run "${{ matrix.target }}" -- -max_total_time=1800 -max_len=65536
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz run "$TARGET" -- -max_total_time=1800 -max_len=65536
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/${{ matrix.target }}/

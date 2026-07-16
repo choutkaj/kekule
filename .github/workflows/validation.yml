@@ -12,14 +12,6 @@ on:
         required: true
         default: smoke
         type: string
-      reference_tool:
-        description: Reference environment to prepare
-        required: true
-        default: rdkit
-        type: choice
-        options:
-          - rdkit
-          - biopython
 
 permissions:
   contents: read
@@ -31,34 +23,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - name: Select reference environment
-        id: reference
+      - name: Check corpus integrity
+        env:
+          CORPUS: ${{ inputs.corpus }}
         shell: bash
         run: |
-          set -euo pipefail
-          case "${{ inputs.reference_tool }}" in
-            rdkit)
-              echo "environment=validation/reference/rdkit/environment.yml" >> "$GITHUB_OUTPUT"
-              ;;
-            biopython)
-              echo "environment=validation/reference/biopython/environment.yml" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "unsupported reference tool: ${{ inputs.reference_tool }}" >&2
-              exit 1
-              ;;
-          esac
-      - uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-file: ${{ steps.reference.outputs.environment }}
-          cache-environment: true
-      - name: Check corpus integrity
-        run: cargo xtask corpus check --corpus "${{ inputs.corpus }}" --require-data 2>&1 | tee corpus-check.log
+          set -o pipefail
+          cargo xtask corpus check --corpus "$CORPUS" --require-data 2>&1 | tee corpus-check.log
       - name: Run validation
-        run: cargo xtask validate --feature "${{ inputs.feature }}" --corpus "${{ inputs.corpus }}" 2>&1 | tee validation.log
+        env:
+          CORPUS: ${{ inputs.corpus }}
+          FEATURE: ${{ inputs.feature }}
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo xtask validate --feature "$FEATURE" --corpus "$CORPUS" 2>&1 | tee validation.log
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: validation-logs
           path: |

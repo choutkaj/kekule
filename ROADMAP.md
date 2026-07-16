@@ -1,50 +1,28 @@
 # Roadmap
 
-## P0: repository and core foundation
+The canonical project status is the feature registry under `features/`. Its
+statuses and dependency graph are rendered procedurally into
+`features/DASHBOARD.html`; this document records release direction rather than
+duplicating that inventory.
 
-- Cargo workspace and CI.
-- Minimal `molecules` crate skeleton.
-- Feature registry, dashboard, and templates.
-- Codex skills for feature work and independent review.
-- Core atom/bond/graph/property/conformer data structures.
+## 0.1 release line
 
-## P0: first chemistry features
+The first release establishes the graph kernel, typed small- and
+macromolecules, fixed-coordinate `Model` workflows, staged structure I/O,
+sanitization and perception, stereochemistry, bounded query matching,
+macromolecular hierarchy and secondary-structure analysis, and the DREIDING
+adapter. Supported features and their current validation evidence are listed in
+the generated dashboard.
 
-- Molfile V2000 parse.
-- SDF V2000 parse and data field handling.
-- Valence and sanitization pipeline.
-- Fast ring membership detection.
-- SSSR ring basis.
-- RDKit-like aromaticity model.
+## Next tracked capabilities
 
-## P0: first macromolecule features
+Two feature contracts are currently reserved with `planned` status:
 
-- PDB parse.
-- mmCIF parse.
-- SMCRA-like hierarchy.
-- Atom-site labels and alternate locations.
-- Sequence extraction and selection API.
+- `descriptor.molecular`: explicit-policy molecular formula, mass, and related
+  descriptors.
+- `fp.morgan`: a defined-shape Morgan-style circular fingerprint with explicit
+  perception dependencies.
 
-## P1: practical usability
-
-- Molfile/SDF writing.
-- SMILES parse and noncanonical write.
-- Tetrahedral and double-bond stereochemistry representation.
-- Kabsch superposition and geometry helpers.
-- Component dictionary support for common biomolecular residue connectivity.
-
-## P2: deeper cheminformatics
-
-- V3000 parse/write.
-- Canonical ranking and canonical SMILES.
-- CIP stereochemistry.
-- SMARTS-like substructure search.
-- Fingerprints and molecular descriptors.
-
-## P3: advanced macromolecular support
-
-- Biological assemblies.
-- Symmetry records.
-- Secondary structure annotations.
-- Nucleic acid sequence support.
-- Ligand extraction and polymer connectivity refinement.
+Additional work should begin as a feature contract with explicit dependencies,
+resource limits, and validation requirements before it is treated as a release
+commitment.

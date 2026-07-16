@@ -760,9 +760,9 @@ fn validation_manifest_path_is_feature_scoped() {
 }
 
 #[test]
-fn validate_jobs_defaults_to_available_parallelism_and_accepts_override() {
+fn validate_jobs_uses_a_memory_safe_default_and_accepts_override() {
     let default_jobs = validation_jobs(&[]).expect("default worker count should resolve");
-    assert!(default_jobs >= 1);
+    assert!((1..=4).contains(&default_jobs));
     assert_eq!(
         validation_jobs(&["--jobs".to_owned(), "2".to_owned()])
             .expect("explicit jobs should parse"),

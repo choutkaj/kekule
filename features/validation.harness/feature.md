@@ -81,6 +81,28 @@ or manually curated external-reference golden data.
 - Evidence schema v2 includes cross-platform text line-ending normalization.
 - Repeated `--update` runs preserve timestamps when the evidence hash is unchanged.
 - The validation command uses the Rust implementation only; RDKit, Biopython, or manually pinned external sources are used to generate or curate goldens, not to run validation.
+- The manual GitHub validation workflow likewise checks committed fixtures and
+  goldens without installing unused RDKit or Biopython runtime environments.
+- Manual workflow inputs are passed through environment variables rather than
+  interpolated into shell source.
+- Manual workflow log capture enables shell pipeline failure propagation, so a
+  failed corpus check or validation command cannot be masked by `tee`.
+- The main CI release matrix exercises all workspace features against the
+  committed dependency lockfile.
+- Byte-exact fixture and corpus checks stream file contents through SHA-256
+  instead of loading entire broad-corpus packs into memory; SHA-256 is optimized
+  in development builds so local integrity checks remain practical.
+- One validation command caches exact and line-ending-normalized hashes for
+  immutable inputs, so features sharing broad-corpus fixtures verify the same
+  bytes without repeatedly reading them from disk.
+- Development builds optimize only the third-party hashing, gzip, and JSON
+  stack used by the harness, keeping project code debuggable while making large
+  golden verification practical.
+- Corpus integrity checks stream-decode golden JSON into a syntax sink instead
+  of materializing each complete expected-value tree when only structural
+  validity is required.
+- Independent compressed goldens are syntax-checked in parallel with stable
+  path-ordered error reporting.
 - Manual-semantic golden acceptance is an explicit review operation, not a way
   to make an unexplained failure pass; the motivating chemistry or file-format
   behavior must be independently checked before accepting the snapshot.
@@ -146,3 +168,30 @@ or manually curated external-reference golden data.
 - v24: Select manifest-backed validation targets from explicit feature release
   status, including experimental and deprecated implementations while
   excluding planned features.
+- v25: Remove unused reference-environment setup from the manual validation
+  workflow so it matches the harness's committed-golden execution model.
+- v26: Pass manual workflow inputs through environment variables to avoid
+  treating dispatch values as shell source.
+- v27: Enable explicit pipeline failure propagation for logged manual
+  validation commands.
+- v28: Run the main release checks with all workspace features and the committed
+  dependency lockfile.
+- v29: Stream byte-exact corpus hashes, remove a duplicate evidence-buffer copy,
+  and optimize SHA-256 in development builds for bounded, practical broad-corpus
+  checks.
+- v30: Cache exact and evidence-normalized input hashes for the duration of one
+  validation run, eliminating repeated broad-corpus reads across feature
+  targets without weakening per-input evidence.
+- v31: Optimize the harness's third-party hashing, gzip, and JSON dependencies
+  in development builds so broad validation spends time on chemistry rather
+  than debug-mode evidence decoding.
+- v32: Validate compressed golden JSON as a stream during corpus integrity
+  checks, avoiding unnecessary full expected-tree allocation.
+- v33: Parallelize independent golden syntax checks while preserving
+  deterministic path-ordered failures.
+- v34: Normalize expected and implementation JSON in place during comparison,
+  eliminating two full-tree clones per parallel fixture and substantially
+  reducing peak memory for broad structural-output validation.
+- v35: Cap the automatic fixture-worker default at four so machines with many
+  logical CPUs do not multiply large JSON comparison memory unexpectedly;
+  explicit `--jobs N` remains available for provisioned validation hosts.

@@ -7,7 +7,8 @@ interpret one record as one asserted `SmallMolecule` plus source mappings.
 
 ## Behavior/API
 
-- Exposes `smiles::parse_str(&str) -> SmilesDocument` and
+- Exposes `smiles::parse_str(&str) -> SmilesDocument`,
+  `smiles::parse_str_with_options(&str, SmilesParseOptions)`, and
   `smiles::interpret(&SmilesDocument) -> SmilesInterpretation` with distinct
   errors.
 - Preserves source text, tokens and UTF-8 spans, branch/ring/stereo marks, and
@@ -21,9 +22,11 @@ interpret one record as one asserted `SmallMolecule` plus source mappings.
   molecule; `[Na+].[Cl-]` is one `SmallMolecule`.
 - Interpretation may install imported aromatic annotations with input
   provenance. It never sanitizes or runs full perception.
+- `SmilesParseOptions` bounds input bytes plus parsed atom and bond counts.
+  Defaults permit large molecules while preventing unbounded parser allocation;
+  callers handling intentionally larger records can opt into higher limits.
 - `SmallMolecule::from_smiles` and `from_smiles_sanitized` remain deliberate
-  convenience orchestrators. Empty parse options and direct reader aliases are
-  removed.
+  convenience orchestrators and use the default parser limits.
 
 ## Validation
 
@@ -46,3 +49,5 @@ interpret one record as one asserted `SmallMolecule` plus source mappings.
 - v15: Make the parse/interpret boundary real: parsing validates the complete
   supported grammar into a private syntax program, interpretation consumes it
   without reparsing source text, and returns canonical atom/bond mappings.
+- v16: Add configurable input, atom, and bond resource limits while retaining
+  `parse_str` as the default-bounded convenience entry point.

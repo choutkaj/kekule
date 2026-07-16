@@ -11,6 +11,7 @@ fuzz_target!(|data: &[u8]| {
         input,
         SdfParseOptions {
             allow_missing_final_delimiter: true,
+            ..SdfParseOptions::default()
         },
     ) {
         let Ok(interpreted) = interpret(&document) else {

@@ -69,6 +69,27 @@ M  END
 }
 
 #[test]
+fn parser_resource_options_are_public() -> Result<(), Box<dyn std::error::Error>> {
+    let smiles = molecules::smiles::parse_str_with_options(
+        "CC",
+        molecules::smiles::SmilesParseOptions::default(),
+    )?;
+    assert_eq!(smiles.tokens().len(), 2);
+
+    let molfile = "methane\nmolecules\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
+    let document = molecules::molfile::parse_str_with_options(
+        molfile,
+        molecules::molfile::MolfileParseOptions::default(),
+    )?;
+    assert_eq!(document.atom_records().len(), 1);
+
+    let sdf = format!("{molfile}$$$$\n");
+    let document = molecules::sdf::parse_str(&sdf, molecules::sdf::SdfParseOptions::default())?;
+    assert_eq!(document.records().len(), 1);
+    Ok(())
+}
+
+#[test]
 fn hydrogen_normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut molecule = SmallMolecule::from_smiles_sanitized("C")?;
     let added = molecules::hydrogens::add_hydrogens(&mut molecule)?;

@@ -20,6 +20,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - SMILES, Molfile, SDF, and mmCIF expose format-specific Documents and explicit
   interpretation results with reports/mappings; superseded direct reader APIs
   are absent.
+- SMILES and Molfile retain simple default-bounded `parse_str` entry points and
+  expose focused parse-options overloads; SDF and mmCIF accept their parse
+  options directly.
 - `mmcif::write` exposes explicit supported `Model` serialization with
   format-specific options and structured rejection errors.
 - `Molecule` is one asserted entity and may have disconnected graph topology.
@@ -91,3 +94,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   results/reports, checked macromolecule lifecycle, private invariant-bearing
   hierarchy/provenance/error state, non-exhaustive extensible errors, and the
   published `0.1.0` contract.
+- v16: Expose configurable resource-bounded SMILES, Molfile, and SDF parsing
+  without widening the crate root or prelude.
