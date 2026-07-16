@@ -335,6 +335,10 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
                 label: "smoke".to_owned(),
                 title: "Checked-in external smoke corpus".to_owned(),
                 expected_count: 7,
+                feature_ids: BTreeSet::from([
+                    "failing.feature".to_owned(),
+                    "missing.feature".to_owned(),
+                ]),
             },
         ),
         (
@@ -344,6 +348,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
                 label: "PubChem 1k".to_owned(),
                 title: "PubChem deterministic 1000-compound corpus".to_owned(),
                 expected_count: 1000,
+                feature_ids: BTreeSet::from(["a.feature".to_owned()]),
             },
         ),
     ]);
@@ -374,7 +379,9 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains(
         "<span class=\"rotated-name\">smoke</span><br><span class=\"rotated-count\">(n=7)</span>"
     ));
-    assert!(!dashboard.contains("<span class=\"rotated-name\">pubchem-1k</span>"));
+    assert!(dashboard.contains(
+        "<span class=\"rotated-name\">pubchem-1k</span><br><span class=\"rotated-count\">(n=1000)</span>"
+    ));
     assert!(dashboard.contains("<code>a.feature</code>"));
     assert!(dashboard.contains("data-sort-value=\"0\""));
     assert!(dashboard.contains("<code>z.feature</code>"));
@@ -390,6 +397,51 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     ));
     assert!(dashboard.contains("button.addEventListener('click'"));
     assert!(dashboard.ends_with('\n'));
+}
+
+#[test]
+fn dashboard_corpus_cells_show_optional_manifest_evidence() {
+    let feature = Feature {
+        id: "optional.feature".to_owned(),
+        title: "Optional".to_owned(),
+        area: "validation".to_owned(),
+        version: 1,
+        implemented: true,
+        validated: false,
+        description: "Feature with optional corpus evidence.".to_owned(),
+        depends_on: Vec::new(),
+        validation_required: Vec::new(),
+    };
+    let passed = CorpusStatus {
+        passed: true,
+        fixture_count: 1,
+        compared_count: 1,
+        reference_tool: "rdkit".to_owned(),
+        reference_version: "RDKit test".to_owned(),
+        manifest_hash: "a".repeat(64),
+        failed_count: 0,
+        first_failure: None,
+        evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
+        evidence_hash: Some("b".repeat(64)),
+        evidence_inputs: vec![EvidenceInput {
+            path: "validation/corpora/pubchem-1k/features/optional.feature.toml".to_owned(),
+            sha256: "c".repeat(64),
+        }],
+        validated_at_unix: 1,
+    };
+    let status = ValidationStatus {
+        feature_id: feature.id.clone(),
+        corpora: BTreeMap::from([("pubchem-1k".to_owned(), passed)]),
+    };
+
+    assert!(
+        dashboard_corpus_cell(&feature, Some(&status), "pubchem-1k", true)
+            .contains("aria-label=\"passed\"")
+    );
+    assert!(dashboard_corpus_cell(&feature, None, "pubchem-1k", true)
+        .contains("title=\"no recorded validation status\""));
+    assert!(dashboard_corpus_cell(&feature, None, "pubchem-1k", false)
+        .contains("aria-label=\"not required\""));
 }
 
 #[test]

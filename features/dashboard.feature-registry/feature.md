@@ -20,6 +20,8 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - Dashboard cells and the cached overall `validated` flag report structurally valid recorded pass evidence so generation is deterministic on clean checkouts without ignored large-corpus fixtures.
 - `cargo xtask validate` and `cargo xtask features` remain the authority for whether recorded evidence is current for the files available in the checkout.
 - Per-feature evidence is read from each corpus-owned `status.toml`.
+- Manifest-backed local-only corpus cells display their recorded optional
+  evidence without contributing to the feature's overall `validated` flag.
 - Dashboard generation rejects drift between generated evidence and the cached overall `validated` field.
 - Boolean dashboard values render as check and cross marks, with compact failure counts only for recorded fixture-level validation failures.
 - Required validation with no current recorded status, stale or incomplete evidence, or no fixture-level failure count renders as an unknown `?` marker rather than a confirmed failure.
@@ -47,3 +49,5 @@ Keep feature metadata as the machine-readable source of truth and generate a det
 - v5: Make dashboard generation portable across clean checkouts while preserving content-addressed freshness checks in validation and feature listing.
 - v6: Publish the HTML dashboard through GitHub Pages, show corpus counts in headers, center rotated labels, and surface compact fixture failure counts.
 - v7: Distinguish uncertain required validation from confirmed fixture failures with a question-mark dashboard marker.
+- v8: Render all registered corpora, including local-only optional validation
+  tiers, as dashboard columns.

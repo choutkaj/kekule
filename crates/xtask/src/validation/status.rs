@@ -102,7 +102,11 @@ pub(crate) fn recorded_corpus_passed(
     {
         return false;
     }
-    let Some(corpus_status) = status.and_then(|status| status.corpora.get(corpus)) else {
+    recorded_corpus_status_passed(status.and_then(|status| status.corpora.get(corpus)))
+}
+
+pub(crate) fn recorded_corpus_status_passed(corpus_status: Option<&CorpusStatus>) -> bool {
+    let Some(corpus_status) = corpus_status else {
         return false;
     };
     corpus_status.passed

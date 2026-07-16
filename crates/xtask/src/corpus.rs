@@ -85,16 +85,37 @@ pub(crate) struct CorpusDashboardInfo {
     pub(crate) label: String,
     pub(crate) title: String,
     pub(crate) expected_count: usize,
+    pub(crate) feature_ids: BTreeSet<String>,
 }
 
 pub(crate) fn read_dashboard_corpus_info(
 ) -> Result<BTreeMap<String, CorpusDashboardInfo>, Box<dyn Error>> {
     let mut summaries = BTreeMap::new();
-    for corpus in VALIDATION_CORPORA
-        .iter()
-        .filter(|corpus| !corpus.local_only)
-    {
+    for corpus in VALIDATION_CORPORA {
         let descriptor = read_corpus_descriptor(corpus.id)?;
+        let manifest_dir = Path::new("validation")
+            .join("corpora")
+            .join(corpus.id)
+            .join("features");
+        let mut feature_ids = BTreeSet::new();
+        if manifest_dir.exists() {
+            for entry in fs::read_dir(&manifest_dir)? {
+                let path = entry?.path();
+                if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
+                    continue;
+                }
+                let feature_id =
+                    path.file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .ok_or_else(|| {
+                            boxed_error(format!(
+                                "{} has a non-UTF-8 validation manifest name",
+                                path.display()
+                            ))
+                        })?;
+                feature_ids.insert(feature_id.to_owned());
+            }
+        }
         summaries.insert(
             corpus.id.to_owned(),
             CorpusDashboardInfo {
@@ -102,6 +123,7 @@ pub(crate) fn read_dashboard_corpus_info(
                 label: corpus.label.to_owned(),
                 title: descriptor.title,
                 expected_count: descriptor.expected_count,
+                feature_ids,
             },
         );
     }

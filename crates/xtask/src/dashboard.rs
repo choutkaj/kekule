@@ -89,10 +89,7 @@ pub(crate) fn render_dashboard(
     out.push_str(&area_header());
     out.push_str(&rotated_header("Version", "Version", "number"));
     out.push_str(&rotated_header("Implemented", "Implemented", "number"));
-    for corpus in VALIDATION_CORPORA
-        .iter()
-        .filter(|corpus| !corpus.local_only)
-    {
+    for corpus in VALIDATION_CORPORA {
         let (visible, title) = corpus_header(corpus.id, corpus.label, corpus_info);
         out.push_str(&rotated_header(&visible, &title, "number"));
     }
@@ -122,11 +119,13 @@ pub(crate) fn render_dashboard(
             bool_sort_value(feature.implemented),
             dashboard_bool_marker(feature.implemented)
         ));
-        for corpus in VALIDATION_CORPORA
-            .iter()
-            .filter(|corpus| !corpus.local_only)
-        {
-            out.push_str(&dashboard_corpus_cell(feature, status, corpus.id));
+        for corpus in VALIDATION_CORPORA {
+            let applicable = corpus_info
+                .get(corpus.id)
+                .is_some_and(|info| info.feature_ids.contains(&feature.id));
+            out.push_str(&dashboard_corpus_cell(
+                feature, status, corpus.id, applicable,
+            ));
         }
         out.push_str("</tr>\n");
     }
@@ -220,19 +219,22 @@ pub(crate) fn dashboard_corpus_cell(
     feature: &Feature,
     status: Option<&ValidationStatus>,
     corpus: &str,
+    applicable: bool,
 ) -> String {
-    if !feature
+    let required = feature
         .validation_required
         .iter()
-        .any(|required| required == corpus)
-    {
+        .any(|required| required == corpus);
+    let corpus_status = status.and_then(|status| status.corpora.get(corpus));
+    if !required && !applicable && corpus_status.is_none() {
         return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not required\" title=\"not required\">-</span></td>".to_owned();
     }
-    if recorded_corpus_passed(feature, status, corpus) {
+    if (required && recorded_corpus_passed(feature, status, corpus))
+        || (!required && recorded_corpus_status_passed(corpus_status))
+    {
         return "<td class=\"marker\" data-sort-value=\"1\"><span class=\"ok\" aria-label=\"passed\" title=\"recorded evidence passed\">&#10003;</span></td>".to_owned();
     }
-    let failed_status = status.and_then(|status| status.corpora.get(corpus));
-    let marker = if let Some(corpus_status) = failed_status {
+    let marker = if let Some(corpus_status) = corpus_status {
         if !corpus_status.passed && corpus_status.failed_count > 0 {
             let title = corpus_status
                 .first_failure
