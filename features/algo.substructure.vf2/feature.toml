@@ -2,7 +2,7 @@ id = "algo.substructure.vf2"
 title = "VF2 substructure search"
 area = "algorithms"
 domains = ["small-molecule"]
-version = 2
+version = 3
 status = "supported"
 description = "Perform deterministic, resource-bounded non-induced substructure matching directly on syntax-independent query graphs."
 depends_on = [
@@ -12,4 +12,4 @@ depends_on = [
   "algo.rings.fast",
   "algo.aromaticity.rdkit-like",
 ]
-validation_required = ["smoke"]
+validation_required = []

@@ -106,3 +106,4 @@ not atom/bond payload flags.
   instead of repository-wide required evidence.
 - v11: Replace unchecked mutable stereo-element access with validated
   transactional replacement and reject empty or duplicate-member groups.
+- v12: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

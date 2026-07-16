@@ -2,6 +2,7 @@ use crate::*;
 
 pub(crate) fn list_features() -> Result<(), Box<dyn Error>> {
     let features = read_features()?;
+    validate_required_manifests(&features)?;
     for feature in &features {
         println!(
             "{}\t{}\tv{}\tstatus={}",
@@ -111,6 +112,29 @@ pub(crate) fn read_features_from(root: &Path) -> Result<Vec<Feature>, Box<dyn Er
     Ok(features)
 }
 
+pub(crate) fn validate_required_manifests(features: &[Feature]) -> Result<(), Box<dyn Error>> {
+    validate_required_manifests_from(Path::new("."), features)
+}
+
+pub(crate) fn validate_required_manifests_from(
+    root: &Path,
+    features: &[Feature],
+) -> Result<(), Box<dyn Error>> {
+    for feature in features {
+        for corpus in &feature.validation_required {
+            let path = validation_manifest_path_from(root, &feature.id, corpus);
+            if !path.exists() {
+                return Err(boxed_error(format!(
+                    "{} requires validation corpus `{corpus}` but manifest {} is missing",
+                    feature.id,
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn is_hidden_or_template(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -209,12 +233,6 @@ pub(crate) fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box
         if !is_known_corpus(corpus) {
             return Err(boxed_error(format!(
                 "{} requires unknown validation corpus `{corpus}`",
-                path.display()
-            )));
-        }
-        if validation_corpus(corpus).is_some_and(|registered| registered.local_only) {
-            return Err(boxed_error(format!(
-                "{} lists local-only validation corpus `{corpus}` in `validation_required`; local-only corpora may be run explicitly but cannot be required because a clean checkout cannot recompute their parity evidence",
                 path.display()
             )));
         }

@@ -46,16 +46,6 @@ pub(crate) struct ValidationCorpus {
 
 const VALIDATION_CORPORA: &[ValidationCorpus] = &[
     ValidationCorpus {
-        id: "smoke",
-        label: "Smoke",
-        local_only: false,
-    },
-    ValidationCorpus {
-        id: "pubchem-100",
-        label: "PubChem 100",
-        local_only: true,
-    },
-    ValidationCorpus {
         id: "pubchem-1k",
         label: "PubChem 1k",
         local_only: true,
@@ -76,13 +66,13 @@ const VALIDATION_CORPORA: &[ValidationCorpus] = &[
         local_only: true,
     },
     ValidationCorpus {
-        id: "pdb-10",
-        label: "PDB 10",
+        id: "pdb-100",
+        label: "PDB 100",
         local_only: true,
     },
     ValidationCorpus {
-        id: "pdb-100",
-        label: "PDB 100",
+        id: "pdb-1000",
+        label: "PDB 1000",
         local_only: true,
     },
 ];

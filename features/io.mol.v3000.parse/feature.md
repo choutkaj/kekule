@@ -49,8 +49,8 @@ Interpret V3000 records from the version-autodetected loss-preserving
 - A dedicated bounded fuzz target exercises V3000 parse, interpretation, write,
   and reparse in CI smoke tests and scheduled campaigns.
 - RDKit-generated goldens compare Molfile-preserved atom, bond, metadata, and coordinate records for the same external PubChem fixtures used by the V2000 parser tier.
-- All ignored non-smoke corpora remain available for explicit local-only
-  parity checks but are not selected as required routine evidence.
+- PubChem-1k is required baseline evidence; manifest-backed broader corpora
+  remain available for deliberate local parity checks.
 
 ## Out Of Scope
 
@@ -87,3 +87,4 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 - v16: Require exactly one CTAB, ATOM, and BOND section-control pair and place
   the sole COUNTS record before ATOM, closing remaining structural
   record-discard paths.
+- v17: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

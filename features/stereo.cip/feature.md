@@ -341,3 +341,4 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
   preserving node-budget resource failures.
 - v40: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
+- v41: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

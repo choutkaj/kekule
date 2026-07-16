@@ -23,8 +23,12 @@ Parse a structural mmCIF file into a format-level document before chemical inter
 ## Validation
 
 - Unit tests cover unknown scalar/loop content, quoted controls, multiline values, multiple blocks, lookup, malformed structure, resource limits, and deterministic mutation safety. The parser fuzz target exercises the public document API and bounded parse options.
-- The former Biopython goldens described the removed direct `MacroMolecule` reader and are not evidence for this document contract.
-- No external full-document parity evidence currently exists.
+- Biopython `MMCIF2Dict` goldens compare the nineteen canonical `_atom_site`
+  columns as format-level strings or missing values without asserting molecular
+  interpretation. PDB-100 is required baseline evidence and PDB-1000 is the
+  broad manifest-backed tier.
+- The former Biopython structure summaries described the removed direct
+  `MacroMolecule` reader and are intentionally excluded from this document contract.
 
 ## Out Of Scope
 
@@ -34,3 +38,4 @@ Parse a structural mmCIF file into a format-level document before chemical inter
 
 - v1-v7: Historical direct atom-site-to-`MacroMolecule` reader.
 - v8: Hard-break the historical reader and redefine the canonical parser as format-level `MmcifDocument` construction only.
+- v9: Add Biopython-backed PDB-100 atom-site document parity as required baseline validation.

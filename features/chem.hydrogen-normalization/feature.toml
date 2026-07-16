@@ -2,7 +2,7 @@ id = "chem.hydrogen-normalization"
 title = "Hydrogen topology normalization"
 area = "chemistry"
 domains = ["small-molecule"]
-version = 1
+version = 2
 status = "supported"
 description = "Materialize and collapse ordinary small-molecule hydrogens transactionally without hiding perception or losing protected hydrogen state."
 depends_on = [
@@ -12,4 +12,4 @@ depends_on = [
   "stereo.representation",
   "algo.valence.rdkit-like",
 ]
-validation_required = ["smoke"]
+validation_required = ["pubchem-1k"]

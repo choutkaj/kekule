@@ -59,3 +59,4 @@ Compute a compact ring basis for downstream small-molecule perception.
   an explicit coverage error separately from resource exhaustion; add a
   bounded fundamental-cycle fallback when edge-local shortest cycles leave a
   cyclic bond uncovered, while preserving RDKit cage-system ring counts.
+- v12: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

@@ -49,8 +49,8 @@ as one `SmallMolecule` plus source mappings.
 - Unit tests cover coordinates, `M  CHG`, `M  ISO`, radical multiplicities, supported and unsupported source bond stereo marks, atom maps, zero endpoints, non-ASCII/truncated fields, extreme counts, and malformed blocks.
 - The standalone `mol_v2000` fuzz target checks panic safety and successful parse/write/parse paths.
 - RDKit-generated goldens compare raw Molfile-preserved atom, bond, metadata, and coordinate records for external PubChem fixtures.
-- All ignored non-smoke corpora remain available for explicit local-only
-  parity checks but are not selected as required routine evidence.
+- PubChem-1k is required baseline evidence; manifest-backed broader corpora
+  remain available for deliberate local parity checks.
 
 ## Out Of Scope
 
@@ -86,3 +86,4 @@ as one `SmallMolecule` plus source mappings.
   logical-line limits while retaining the existing default-bounded parser.
 - v16: Preserve and report nonempty records after `M  END` as unsupported
   document content instead of retaining them only in the raw source string.
+- v17: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

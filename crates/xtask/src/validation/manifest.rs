@@ -224,6 +224,7 @@ pub(crate) fn validation_targets_from<'a>(
         return features
             .iter()
             .filter(|feature| feature_selector == "all" || feature.id == feature_selector)
+            .filter(|feature| feature.status.has_implementation())
             .filter(|feature| {
                 feature_selector != "all"
                     || validation_manifest_path_from(root, &feature.id, corpus_selector).exists()

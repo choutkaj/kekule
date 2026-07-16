@@ -36,9 +36,11 @@ SDF_SHARD_URL = (
 )
 SDF_FEATURES = (
     "algo.aromaticity.rdkit-like",
+    "algo.canonical-ranking",
     "algo.rings.fast",
     "algo.rings.sssr",
     "algo.valence.rdkit-like",
+    "chem.hydrogen-normalization",
     "chem.sanitize.rdkit-like",
     "core.conformers",
     "io.mol.v2000.parse",
@@ -47,8 +49,16 @@ SDF_FEATURES = (
     "io.mol.v3000.write",
     "io.sdf.v2000.parse",
     "io.sdf.v2000.write",
+    "stereo.cip",
+    "stereo.perception",
+    "stereo.representation",
 )
-SMILES_FEATURES = ("io.smiles.parse", "io.smiles.write", "io.smiles.canonical")
+SMILES_FEATURES = (
+    "io.smiles.parse",
+    "io.smiles.write",
+    "io.smiles.canonical",
+    "io.smiles.isomeric",
+)
 
 
 def main() -> int:
@@ -72,8 +82,6 @@ def main() -> int:
         for category in CATEGORIES
     ]
     build_tier(corpus_root / "pubchem-1k", ordered, snapshot, sdf_shard)
-    build_tier(corpus_root / "pubchem-100", ordered[:100], snapshot, sdf_shard)
-    generate_goldens(repo, "pubchem-100")
     generate_goldens(repo, "pubchem-1k")
     return 0
 
@@ -199,7 +207,10 @@ def build_tier(root: Path, entries: list[dict], snapshot: Path, sdf_shard: Path)
         shutil.rmtree(data)
     (data / "raw").mkdir(parents=True)
     (data / "packs").mkdir(parents=True)
-    (root / "features").mkdir(parents=True, exist_ok=True)
+    feature_dir = root / "features"
+    if feature_dir.exists():
+        shutil.rmtree(feature_dir)
+    feature_dir.mkdir(parents=True)
     lock_entries = []
     for item in entries:
         cid = item["id"]
@@ -302,6 +313,9 @@ def write_manifests(root: Path, features: tuple[str, ...], fixtures: list[str]) 
 def generate_goldens(repo: Path, corpus: str) -> None:
     script = repo / "validation" / "reference" / "rdkit" / "run_feature.py"
     for feature in (*SDF_FEATURES, *SMILES_FEATURES):
+        output_dir = repo / "validation" / "corpora" / corpus / "golden" / feature
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
         subprocess.run(
             [sys.executable, str(script), "--feature", feature, "--corpus", corpus],
             cwd=repo,

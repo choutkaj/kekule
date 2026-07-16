@@ -54,3 +54,4 @@ prefilters, parallel search, and motif-specific chemical exceptions.
 - v1: Feature contract reserved.
 - v2: Implement deterministic bounded matching on `query.graph` and remove the
   dependency on the SMARTS frontend.
+- v3: Remove the retired smoke requirement; query matching remains covered by focused regression fixtures until an appropriate independent query corpus is registered.

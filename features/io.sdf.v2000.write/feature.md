@@ -27,8 +27,8 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 
 - Unit tests cover multi-record round trips, multiline data fields, and Molfile metadata symmetry.
 - RDKit-generated goldens compare SDF writer records for external PubChem fixtures.
-- All ignored non-smoke corpora remain available for explicit local-only
-  parity checks but are not selected as required routine evidence.
+- PubChem-1k is required baseline evidence; manifest-backed broader corpora
+  remain available for deliberate local parity checks.
 
 ## Out Of Scope
 
@@ -48,3 +48,4 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
   tier while retaining every ignored corpus on demand.
 - v9: Reject record metadata that is not representable by the line-oriented SDF
   grammar and preserve value lines beginning with `>` on round trip.
+- v10: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

@@ -89,7 +89,7 @@ Keep feature docs concise and current. Do not recreate stale phase-specific plan
 
 Molecular validation fixtures must be externally supplied and provenance-pinned. Keep corpus descriptors, source locks, inputs, feature manifests, goldens, and evidence under `validation/corpora/<corpus-id>/`.
 
-The `smoke` corpus is a fast wiring/regression tier, not broad validation by itself. During routine coding work, primarily validate against `smoke`, `pubchem-100`, `pubchem-1k`, `pdb-10`, `pdb-100`, and `pl-rex` where applicable. Treat `pubchem-100k` and `enamine-diversity` as large, occasional validation runs; do not run them routinely unless the user asks for them or the change clearly needs large-corpus coverage. Plain validation is read-only; use `--update` only after implementation-versus-golden comparison passes and should become committed evidence.
+Use `pubchem-1k` and `pdb-100` as the normal required baselines where their external parity contracts apply. Treat `pubchem-100k`, `enamine-diversity`, `pdb-1000`, and domain-specific `pl-rex` as deliberate broader runs. Historical smoke sets are internal regression fixtures, not validation corpora. Plain validation is read-only; use `--update` only after implementation-versus-golden comparison passes and should become committed evidence.
 
 ## Checks
 
@@ -102,8 +102,8 @@ cargo test --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask corpus check --corpus smoke --require-data
-cargo xtask validate --feature <feature-id> --corpus smoke
+cargo xtask corpus check --corpus <corpus-id> --require-data
+cargo xtask validate --feature <feature-id> --corpus <corpus-id>
 ```
 
 If metadata changes, run `cargo xtask dashboard` before `cargo xtask dashboard --check`.

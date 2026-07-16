@@ -81,3 +81,4 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   motif-specific fused exceptions, localize imported components before one
   shared donor/candidate/Huckel pass, make the direct API transactional, widen
   electron counts, and distinguish matching limits from invalid chemistry.
+- v95: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

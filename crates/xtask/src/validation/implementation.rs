@@ -2,11 +2,12 @@ use crate::*;
 
 pub(crate) fn implementation_expected(
     feature: &str,
-    corpus: &str,
+    _corpus: &str,
     fixture_path: &Path,
 ) -> Result<Value, Box<dyn Error>> {
     match feature {
         "bio.secondary-structure.dssp" => dssp_record_json(fixture_path),
+        "io.mmcif.parse" => mmcif_document_json(fixture_path),
         "io.sdf.v2000.parse" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(sdf_record_json).collect::<Vec<_>>() }))
@@ -114,7 +115,7 @@ pub(crate) fn implementation_expected(
         }
         "io.smiles.canonical" => {
             let records = read_canonical_smiles_records(fixture_path)?;
-            let exact_smiles = corpus == "smoke";
+            let exact_smiles = false;
             Ok(json!({
                 "records": records
                     .iter()
@@ -124,7 +125,7 @@ pub(crate) fn implementation_expected(
         }
         "io.smiles.isomeric" => {
             let records = read_canonical_smiles_records(fixture_path)?;
-            let stereo_only = corpus != "smoke";
+            let stereo_only = true;
             Ok(json!({
                 "records": records
                     .iter()
@@ -227,6 +228,57 @@ pub(crate) fn implementation_expected(
     }
 }
 
+const MMCIF_ATOM_SITE_FIELDS: &[&str] = &[
+    "group_PDB",
+    "id",
+    "type_symbol",
+    "label_atom_id",
+    "auth_atom_id",
+    "label_alt_id",
+    "label_comp_id",
+    "auth_comp_id",
+    "label_asym_id",
+    "auth_asym_id",
+    "label_seq_id",
+    "auth_seq_id",
+    "pdbx_PDB_ins_code",
+    "occupancy",
+    "B_iso_or_equiv",
+    "Cartn_x",
+    "Cartn_y",
+    "Cartn_z",
+    "pdbx_PDB_model_num",
+];
+
+fn mmcif_document_json(fixture_path: &Path) -> Result<Value, Box<dyn Error>> {
+    let input = fs::read_to_string(fixture_path)?;
+    let document = mmcif::parse_str(&input, MmcifParseOptions::default())?;
+    let table = document
+        .blocks()
+        .iter()
+        .find_map(|block| block.loop_with_tag("_atom_site.id"));
+    let row_count = table.map_or(0, |table| table.row_count());
+    let rows = (0..row_count)
+        .map(|row_index| {
+            let mut row = serde_json::Map::new();
+            for field in MMCIF_ATOM_SITE_FIELDS {
+                let tag = format!("_atom_site.{field}");
+                let value = table
+                    .and_then(|table| table.value(row_index, &tag))
+                    .and_then(|value| value.optional_text());
+                row.insert((*field).to_owned(), json!(value));
+            }
+            Value::Object(row)
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "atom_site_rows": {
+            "status": "ok",
+            "row_count": row_count,
+            "rows": rows,
+        }
+    }))
+}
 fn dssp_record_json(fixture_path: &Path) -> Result<Value, Box<dyn Error>> {
     let input = fs::read_to_string(fixture_path)?;
     let document = mmcif::parse_str(&input, MmcifParseOptions::default())?;

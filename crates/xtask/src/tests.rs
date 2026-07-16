@@ -1,11 +1,11 @@
 use super::*;
 
 #[test]
-fn committed_smoke_corpus_always_requires_fixture_data() {
-    assert!(corpus_requires_data("smoke", false));
-    assert!(corpus_requires_data("smoke", true));
-    assert!(!corpus_requires_data("pubchem-100", false));
-    assert!(corpus_requires_data("pubchem-100", true));
+fn corpus_data_is_required_only_when_requested() {
+    assert!(!corpus_requires_data("pubchem-1k", false));
+    assert!(corpus_requires_data("pubchem-1k", true));
+    assert!(!corpus_requires_data("pdb-1000", false));
+    assert!(corpus_requires_data("pdb-1000", true));
 }
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -75,13 +75,12 @@ fn feature_status_parses_the_release_vocabulary() {
 fn local_only_corpus_descriptors_match_the_registry() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for corpus_id in [
-        "pubchem-100",
         "pubchem-1k",
         "pubchem-100k",
         "pl-rex",
         "enamine-diversity",
-        "pdb-10",
         "pdb-100",
+        "pdb-1000",
     ] {
         let path = workspace_root
             .join("validation/corpora")
@@ -97,41 +96,62 @@ fn local_only_corpus_descriptors_match_the_registry() {
 }
 
 #[test]
-fn read_feature_rejects_local_only_required_corpora() {
+fn read_feature_accepts_local_only_required_corpora() {
     let root = temp_feature_root("local-only-required-corpus");
     write_feature(
         &root,
-        "bad.requirement",
-        r#"id = "bad.requirement"
-title = "Bad requirement"
+        "valid.requirement",
+        r#"id = "valid.requirement"
+title = "Valid requirement"
 area = "infrastructure"
 domains = ["infrastructure"]
 version = 1
 status = "supported"
-description = "Invalid local-only validation requirement."
+description = "Valid local-only validation requirement."
 depends_on = []
-validation_required = ["pubchem-100"]
+validation_required = ["pubchem-1k"]
 "#,
     );
 
-    let error = read_feature(&root.join("bad.requirement").join("feature.toml"))
-        .expect_err("local-only corpora cannot be required");
-    assert!(error
-        .to_string()
-        .contains("local-only validation corpus `pubchem-100` in `validation_required`"));
-    assert!(
-        validation_corpus("enamine-diversity")
-            .expect("Enamine corpus should be registered")
-            .local_only
-    );
-    assert!(
-        !validation_corpus("smoke")
-            .expect("smoke corpus should be registered")
-            .local_only
-    );
+    let feature = read_feature(&root.join("valid.requirement").join("feature.toml"))
+        .expect("known local-only corpora may be required");
+    assert_eq!(feature.validation_required, vec!["pubchem-1k"]);
+    assert!(VALIDATION_CORPORA.iter().all(|corpus| corpus.local_only));
+    assert!(validation_corpus("smoke").is_none());
+    assert!(validation_corpus("pubchem-100").is_none());
+    assert!(validation_corpus("pdb-10").is_none());
     fs::remove_dir_all(root).ok();
 }
 
+#[test]
+fn required_validation_assignments_need_manifests() {
+    let root = temp_feature_root("required-validation-manifest");
+    let feature = Feature {
+        id: "required.feature".to_owned(),
+        title: "Required".to_owned(),
+        area: "validation".to_owned(),
+        domains: vec![FeatureDomain::SmallMolecule],
+        version: 1,
+        status: FeatureStatus::Supported,
+        description: "Required validation feature.".to_owned(),
+        depends_on: Vec::new(),
+        validation_required: vec!["pubchem-1k".to_owned()],
+    };
+
+    let error = validate_required_manifests_from(&root, std::slice::from_ref(&feature))
+        .expect_err("missing required manifest should fail");
+    assert!(error
+        .to_string()
+        .contains("requires validation corpus `pubchem-1k`"));
+
+    let manifest = validation_manifest_path_from(&root, &feature.id, "pubchem-1k");
+    fs::create_dir_all(manifest.parent().expect("manifest parent"))
+        .expect("manifest directory should create");
+    fs::write(&manifest, "").expect("manifest marker should write");
+    validate_required_manifests_from(&root, &[feature])
+        .expect("present required manifest should pass");
+    fs::remove_dir_all(root).ok();
+}
 #[test]
 fn read_feature_rejects_required_validation_for_planned_features() {
     let root = temp_feature_root("planned-required-validation");
@@ -146,7 +166,7 @@ version = 1
 status = "planned"
 description = "Planned features cannot require validation."
 depends_on = []
-validation_required = ["smoke"]
+validation_required = ["pubchem-1k"]
 "#,
     );
 
@@ -462,7 +482,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             status: FeatureStatus::Deprecated,
             description: "Feature with counted failures.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["smoke".to_owned()],
+            validation_required: vec!["pubchem-1k".to_owned()],
         },
         Feature {
             id: "missing.feature".to_owned(),
@@ -473,7 +493,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
             status: FeatureStatus::Experimental,
             description: "Feature without recorded status.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["smoke".to_owned()],
+            validation_required: vec!["pdb-100".to_owned()],
         },
         Feature {
             id: "harness.feature".to_owned(),
@@ -492,7 +512,7 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
         ValidationStatus {
             feature_id: "failing.feature".to_owned(),
             corpora: BTreeMap::from([(
-                "smoke".to_owned(),
+                "pubchem-1k".to_owned(),
                 CorpusStatus::from_failed_run(FailedValidationRun {
                     fixture_count: 7,
                     compared_count: 4,
@@ -541,28 +561,37 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
                 title: "PubChem deterministic 1000-compound corpus".to_owned(),
                 kind: CorpusKind::SmallMolecule,
                 expected_count: 1000,
-                features: BTreeMap::from([(
-                    "a.feature".to_owned(),
-                    CorpusFeatureDashboardInfo {
-                        reference_tool: "rdkit".to_owned(),
-                        reference_version: "RDKit 2026.03.3".to_owned(),
-                    },
-                )]),
+                features: BTreeMap::from([
+                    (
+                        "a.feature".to_owned(),
+                        CorpusFeatureDashboardInfo {
+                            reference_tool: "rdkit".to_owned(),
+                            reference_version: "RDKit 2026.03.3".to_owned(),
+                        },
+                    ),
+                    (
+                        "failing.feature".to_owned(),
+                        CorpusFeatureDashboardInfo {
+                            reference_tool: "rdkit".to_owned(),
+                            reference_version: "RDKit 2026.03.3".to_owned(),
+                        },
+                    ),
+                ]),
             },
         ),
         (
-            "pdb-10".to_owned(),
+            "pdb-100".to_owned(),
             CorpusDashboardInfo {
-                id: "pdb-10".to_owned(),
-                label: "PDB 10".to_owned(),
-                title: "PDB deterministic 10-entry corpus".to_owned(),
+                id: "pdb-100".to_owned(),
+                label: "PDB 100".to_owned(),
+                title: "PDB deterministic 100-entry corpus".to_owned(),
                 kind: CorpusKind::Macromolecule,
-                expected_count: 10,
+                expected_count: 100,
                 features: BTreeMap::from([(
                     "missing.feature".to_owned(),
                     CorpusFeatureDashboardInfo {
                         reference_tool: "biopython".to_owned(),
-                        reference_version: "Biopython 1.87".to_owned(),
+                        reference_version: "Biopython 1.87 / mkdssp version 4.6.1".to_owned(),
                     },
                 )]),
             },
@@ -585,6 +614,16 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains("<h2>Macromolecules</h2>"));
     assert!(dashboard.contains("<h2>Infrastructure and harness</h2>"));
     assert!(dashboard.contains("<h2>Feature dependency graph</h2>"));
+    let infrastructure_position = dashboard
+        .find("<h2>Infrastructure and harness</h2>")
+        .expect("infrastructure section should be present");
+    let graph_position = dashboard
+        .find("<h2>Feature dependency graph</h2>")
+        .expect("dependency graph should be present");
+    assert!(
+        infrastructure_position < graph_position,
+        "all feature tables should precede the dependency graph"
+    );
     assert!(dashboard.contains("class=\"feature-graph\""));
     assert!(dashboard.contains("marker-end=\"url(#feature-graph-arrow)\""));
     assert!(dashboard.contains("<a href=\"./z.feature/feature.md\">"));
@@ -617,14 +656,12 @@ fn render_dashboard_is_stable_and_uses_compact_validation_cells() {
     assert!(dashboard.contains("overflow: hidden"));
     assert!(dashboard.contains("white-space: nowrap"));
     assert!(!dashboard.contains("Validated"));
-    assert!(dashboard.contains(
-        "<span class=\"rotated-name\">smoke</span><br><span class=\"rotated-count\">(n=7)</span>"
-    ));
+    assert!(!dashboard.contains("<span class=\"rotated-name\">smoke</span>"));
     assert!(dashboard.contains(
         "<span class=\"rotated-name\">pubchem-1k</span><br><span class=\"rotated-count\">(n=1000)</span>"
     ));
     assert!(dashboard.contains(
-        "<span class=\"rotated-name\">pdb-10</span><br><span class=\"rotated-count\">(n=10)</span>"
+        "<span class=\"rotated-name\">pdb-100</span><br><span class=\"rotated-count\">(n=100)</span>"
     ));
     assert_eq!(dashboard.matches("<code>a.feature</code>").count(), 2);
     assert!(dashboard.contains("data-sort-value=\"0\""));
@@ -700,6 +737,10 @@ fn dashboard_corpus_cells_show_optional_manifest_evidence() {
         dashboard_corpus_cell(&feature, None, "pubchem-1k", None, true)
             .contains("aria-label=\"not required\"")
     );
+    assert!(
+        dashboard_corpus_cell(&feature, Some(&status), "pubchem-1k", None, true)
+            .contains("aria-label=\"not required\"")
+    );
     assert!(dashboard_corpus_cell(
         &feature,
         Some(&status),
@@ -724,7 +765,7 @@ description: Builder skill.
 add -> optional research -> plan -> implement
 Use feature.md. Set status = "supported" with evidence, declare depends_on, and declare validation_required.
 Molecular validation fixtures must be externally supplied.
-Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id> --corpus smoke.
+Run cargo xtask dashboard --check and cargo xtask validate --feature <feature-id> --corpus <corpus-id>.
 "#,
     );
     write_skill(
@@ -736,7 +777,7 @@ description: Review skill.
 ---
 # Feature Review
 Independent audit for architecture and validation claims.
-Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <feature-id> --corpus smoke.
+Read feature.md. Run cargo test --workspace and cargo xtask validate --feature <feature-id> --corpus <corpus-id>.
 "#,
     );
 
@@ -847,9 +888,9 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
             "--feature".to_owned(),
             "all".to_owned(),
             "--corpus".to_owned(),
-            "smoke".to_owned(),
+            "pubchem-1k".to_owned(),
         ]),
-        "smoke"
+        "pubchem-1k"
     );
 
     let root = temp_feature_root("all-validation-corpora");
@@ -863,7 +904,7 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
             status: FeatureStatus::Supported,
             description: "Small feature.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["smoke".to_owned()],
+            validation_required: vec!["pubchem-1k".to_owned()],
         },
         Feature {
             id: "macro".to_owned(),
@@ -874,7 +915,7 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
             status: FeatureStatus::Experimental,
             description: "Macro feature.".to_owned(),
             depends_on: Vec::new(),
-            validation_required: vec!["smoke".to_owned()],
+            validation_required: vec!["pdb-100".to_owned()],
         },
         Feature {
             id: "planned".to_owned(),
@@ -900,12 +941,13 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
         },
     ];
     for (feature, corpus) in [
-        ("small", "pubchem-100"),
+        ("small", "pubchem-1k"),
         ("small", "pubchem-100k"),
         ("small", "enamine-diversity"),
         ("macro", "pdb-100"),
-        ("planned", "smoke"),
-        ("deprecated", "pubchem-100"),
+        ("macro", "pdb-1000"),
+        ("planned", "pubchem-1k"),
+        ("deprecated", "pubchem-100k"),
     ] {
         let path = validation_manifest_path_from(&root, feature, corpus);
         fs::create_dir_all(path.parent().expect("manifest parent"))
@@ -914,11 +956,11 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
     }
 
     assert_eq!(
-        validation_targets_from(&root, &features, "all", "smoke")
+        validation_targets_from(&root, &features, "all", "pubchem-1k")
             .into_iter()
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
-        vec![("small", "smoke".to_owned()), ("macro", "smoke".to_owned())]
+        vec![("small", "pubchem-1k".to_owned())]
     );
     assert_eq!(
         validation_targets_from(&root, &features, "all", "all")
@@ -926,13 +968,12 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
         vec![
-            ("small", "smoke".to_owned()),
-            ("small", "pubchem-100".to_owned()),
+            ("small", "pubchem-1k".to_owned()),
             ("small", "pubchem-100k".to_owned()),
             ("small", "enamine-diversity".to_owned()),
-            ("macro", "smoke".to_owned()),
             ("macro", "pdb-100".to_owned()),
-            ("deprecated", "pubchem-100".to_owned()),
+            ("macro", "pdb-1000".to_owned()),
+            ("deprecated", "pubchem-100k".to_owned()),
         ]
     );
     assert_eq!(
@@ -941,8 +982,7 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
         vec![
-            ("small", "smoke".to_owned()),
-            ("small", "pubchem-100".to_owned()),
+            ("small", "pubchem-1k".to_owned()),
             ("small", "pubchem-100k".to_owned()),
             ("small", "enamine-diversity".to_owned()),
         ]
@@ -955,15 +995,14 @@ fn validation_defaults_to_all_and_all_includes_available_manifest_backed_feature
         vec![("small", "pubchem-100k".to_owned())]
     );
     assert_eq!(
-        validation_targets_from(&root, &features, "macro", "pubchem-100")
+        validation_targets_from(&root, &features, "macro", "pubchem-1k")
             .into_iter()
             .map(|(feature, corpus)| (feature.id.as_str(), corpus))
             .collect::<Vec<_>>(),
-        vec![("macro", "pubchem-100".to_owned())]
+        vec![("macro", "pubchem-1k".to_owned())]
     );
     fs::remove_dir_all(root).ok();
 }
-
 #[test]
 fn implementation_dispatch_uses_current_molfile_feature_ids() {
     let root = temp_feature_root("mol-feature-dispatch");
@@ -976,8 +1015,8 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
         "io.mol.v3000.parse",
         "io.mol.v3000.write",
     ] {
-        let expected =
-            implementation_expected(feature, "smoke", &fixture).expect("feature should compare");
+        let expected = implementation_expected(feature, "pubchem-1k", &fixture)
+            .expect("feature should compare");
         assert_eq!(expected["records"][0]["status"], "ok");
     }
 
@@ -985,12 +1024,56 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
 }
 
 #[test]
+fn implementation_dispatch_supports_mmcif_document_rows() {
+    let root = temp_feature_root("mmcif-document-dispatch");
+    let fixture = root.join("fixture.cif");
+    fs::write(
+        &fixture,
+        r#"data_test
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.auth_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.auth_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 C CA CA . ALA ALA A A 1 1 ? 1.00 10.00 1.0 2.0 3.0 1
+"#,
+    )
+    .expect("fixture should write");
+
+    let expected = implementation_expected("io.mmcif.parse", "pdb-100", &fixture)
+        .expect("mmCIF document feature should compare");
+    let atom_site = &expected["atom_site_rows"];
+    assert_eq!(atom_site["status"], "ok");
+    assert_eq!(atom_site["row_count"], 1);
+    assert_eq!(atom_site["rows"][0]["id"], "1");
+    assert_eq!(atom_site["rows"][0]["label_alt_id"], Value::Null);
+    assert_eq!(atom_site["rows"][0]["pdbx_PDB_ins_code"], Value::Null);
+    assert_eq!(atom_site["rows"][0]["Cartn_z"], "3.0");
+
+    fs::remove_dir_all(root).ok();
+}
+#[test]
 fn implementation_dispatch_supports_hydrogen_normalization() {
     let root = temp_feature_root("hydrogen-normalization-dispatch");
     let fixture = root.join("fixture.sdf");
     fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
 
-    let expected = implementation_expected("chem.hydrogen-normalization", "smoke", &fixture)
+    let expected = implementation_expected("chem.hydrogen-normalization", "pubchem-1k", &fixture)
         .expect("feature should compare");
     let record = &expected["records"][0];
 
@@ -1011,7 +1094,7 @@ fn implementation_dispatch_supports_query_validation() {
     let smarts_fixture = root.join("fixture.smi");
     fs::write(&smarts_fixture, "CCO\nC1=CC=CC=C1\n").expect("fixture should write");
 
-    let parsed = implementation_expected("query.smarts", "smoke", &smarts_fixture)
+    let parsed = implementation_expected("query.smarts", "pubchem-1k", &smarts_fixture)
         .expect("SMARTS feature should compare");
     assert_eq!(parsed["records"][0]["status"], "ok");
     assert_eq!(parsed["records"][0]["atom_count"], 3);
@@ -1019,7 +1102,7 @@ fn implementation_dispatch_supports_query_validation() {
 
     let molecule_fixture = root.join("fixture.sdf");
     fs::write(&molecule_fixture, simple_sdf_record("methane")).expect("fixture should write");
-    let matched = implementation_expected("algo.substructure.vf2", "smoke", &molecule_fixture)
+    let matched = implementation_expected("algo.substructure.vf2", "pubchem-1k", &molecule_fixture)
         .expect("substructure feature should compare");
     assert_eq!(matched["records"][0]["status"], "ok");
     assert_eq!(matched["records"][0]["queries"][0]["smarts"], "[#6]");
@@ -1043,19 +1126,19 @@ fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
     )
     .expect("fixture should write");
 
-    let expected = implementation_expected("io.smiles.isomeric", "smoke", &fixture)
+    let expected = implementation_expected("io.smiles.isomeric", "pubchem-1k", &fixture)
         .expect("feature should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
 
-    assert_eq!(records.len(), 3);
+    assert_eq!(records.len(), 2);
     assert!(records.iter().all(|record| record["status"] == "ok"));
-    assert!(!records[1]["stereo"]["atom_descriptors"]
+    assert!(!records[0]["stereo"]["atom_descriptors"]
         .as_array()
         .expect("atom descriptors should be an array")
         .is_empty());
-    assert!(!records[2]["stereo"]["bond_descriptors"]
+    assert!(!records[1]["stereo"]["bond_descriptors"]
         .as_array()
         .expect("bond descriptors should be an array")
         .is_empty());
@@ -1108,8 +1191,8 @@ fn stereo_cip_validation_compares_only_descriptor_bearing_records() {
     )
     .expect("fixture should write");
 
-    let expected =
-        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
+        .expect("feature should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -1130,8 +1213,8 @@ fn stereo_cip_validation_uses_rdkit_default_hydrogen_indexing() {
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "[H][C@](F)(Cl)Br CID:explicit-h\n").expect("fixture should write");
 
-    let expected =
-        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
+        .expect("feature should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -1158,8 +1241,8 @@ fn stereo_cip_validation_reads_all_sdf_pack_records() {
     )
     .expect("fixture should write");
 
-    let expected =
-        implementation_expected("stereo.cip", "smoke", &fixture).expect("feature should compare");
+    let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
+        .expect("feature should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -1335,7 +1418,7 @@ fn dashboard_text_comparison_ignores_platform_line_endings() {
 }
 
 #[test]
-fn recorded_dashboard_status_is_portable_without_global_validation_state() {
+fn dashboard_status_requires_a_current_manifest() {
     let feature = Feature {
         id: "portable.feature".to_owned(),
         title: "Portable".to_owned(),
@@ -1345,12 +1428,12 @@ fn recorded_dashboard_status_is_portable_without_global_validation_state() {
         status: FeatureStatus::Supported,
         description: "Portable dashboard evidence.".to_owned(),
         depends_on: Vec::new(),
-        validation_required: vec!["smoke".to_owned()],
+        validation_required: vec!["pubchem-1k".to_owned()],
     };
     let status = ValidationStatus {
         feature_id: feature.id.clone(),
         corpora: BTreeMap::from([(
-            "smoke".to_owned(),
+            "pubchem-1k".to_owned(),
             CorpusStatus {
                 passed: true,
                 fixture_count: 1,
@@ -1370,13 +1453,66 @@ fn recorded_dashboard_status_is_portable_without_global_validation_state() {
             },
         )]),
     };
+    let reference = CorpusFeatureDashboardInfo {
+        reference_tool: "rdkit".to_owned(),
+        reference_version: "test".to_owned(),
+    };
 
     assert!(
-        dashboard_corpus_cell(&feature, Some(&status), "smoke", None, true)
-            .contains("aria-label=\"passed\"")
+        dashboard_corpus_cell(&feature, Some(&status), "pubchem-1k", None, true)
+            .contains("no recorded validation status")
     );
+    assert!(dashboard_corpus_cell(
+        &feature,
+        Some(&status),
+        "pubchem-1k",
+        Some(&reference),
+        true,
+    )
+    .contains("aria-label=\"passed\""));
 }
+#[test]
+fn status_writer_prunes_entries_without_manifests() {
+    let root = temp_feature_root("status-manifest-pruning");
+    let status_path = validation_status_path_from(&root, "pubchem-1k");
+    fs::create_dir_all(status_path.parent().expect("status parent"))
+        .expect("status directory should create");
+    fs::write(&status_path, "stale").expect("stale status should write");
 
+    let feature_status = CorpusStatus::from_failed_run(FailedValidationRun {
+        fixture_count: 1,
+        compared_count: 0,
+        failed_count: 1,
+        first_failure: "fixture differs".to_owned(),
+        reference_tool: "rdkit".to_owned(),
+        reference_version: "test".to_owned(),
+        manifest_hash: "0".repeat(64),
+    })
+    .expect("failed status should build");
+    let statuses = BTreeMap::from([(
+        "example.feature".to_owned(),
+        ValidationStatus {
+            feature_id: "example.feature".to_owned(),
+            corpora: BTreeMap::from([("pubchem-1k".to_owned(), feature_status)]),
+        },
+    )]);
+    let selected = BTreeSet::from(["pubchem-1k".to_owned()]);
+
+    write_validation_statuses_from(&root, &statuses, &selected)
+        .expect("status pruning should succeed");
+    assert!(!status_path.exists());
+
+    let manifest = validation_manifest_path_from(&root, "example.feature", "pubchem-1k");
+    fs::create_dir_all(manifest.parent().expect("manifest parent"))
+        .expect("manifest directory should create");
+    fs::write(&manifest, "").expect("manifest marker should write");
+    write_validation_statuses_from(&root, &statuses, &selected)
+        .expect("manifest-backed status should write");
+    let stored = read_corpus_status(&status_path).expect("written status should parse");
+    assert!(stored.features.contains_key("example.feature"));
+
+    fs::remove_dir_all(root).ok();
+}
 #[test]
 fn old_status_toml_defaults_failure_summary_fields() {
     let status: CorpusStatusFile = toml::from_str(

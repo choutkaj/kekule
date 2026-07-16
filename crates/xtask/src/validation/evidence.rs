@@ -44,6 +44,14 @@ impl ValidationHashCache {
     }
 }
 
+fn digest_hex(digest: impl AsRef<[u8]>) -> String {
+    digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 pub(crate) fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
     let file = fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
@@ -56,7 +64,7 @@ pub(crate) fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(digest_hex(hasher.finalize()))
 }
 
 #[cfg(test)]
@@ -161,7 +169,7 @@ pub(crate) fn build_validation_evidence_cached(
     });
     let mut hasher = Sha256::new();
     hasher.update(serde_json::to_vec(&evidence_document)?);
-    let sha256 = format!("{:x}", hasher.finalize());
+    let sha256 = digest_hex(hasher.finalize());
     let inputs = serde_json::from_value(
         evidence_document
             .get("inputs")
@@ -203,7 +211,7 @@ pub(crate) fn hash_evidence_file(path: &Path) -> Result<String, Box<dyn Error>> 
         Ok(text) => hasher.update(text),
         Err(error) => hasher.update(error.into_bytes()),
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(digest_hex(hasher.finalize()))
 }
 
 pub(crate) fn relative_path(repo_root: &Path, path: &Path) -> Result<String, Box<dyn Error>> {

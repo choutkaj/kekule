@@ -39,8 +39,6 @@ jobs:
       - run: cargo package -p molecules-dreiding --locked --no-verify
       - run: cargo xtask dashboard --check
       - run: cargo xtask skills --check
-      - run: cargo xtask corpus check --corpus smoke --require-data
-      - run: cargo xtask validate --feature all --corpus smoke
 
   fuzz-smoke:
     name: Parser fuzz smoke

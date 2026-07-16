@@ -64,3 +64,4 @@ Provide conservative valence perception for common organic molecules.
   fixed/unrestricted valence table and isoelectronic rules, restore RDKit-like
   hydrogens for neutral electropositive atoms, include radical electrons, and
   widen valence accounting to graph-sized integers.
+- v15: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.

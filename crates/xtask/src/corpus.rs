@@ -52,8 +52,8 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub(crate) fn corpus_requires_data(corpus: &str, requested: bool) -> bool {
-    requested || corpus == "smoke"
+pub(crate) fn corpus_requires_data(_corpus: &str, requested: bool) -> bool {
+    requested
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -542,7 +542,7 @@ pub(crate) fn check_data_file(
 pub(crate) fn check_nested_corpora(
     locks: &BTreeMap<String, SourceLock>,
 ) -> Result<(), Box<dyn Error>> {
-    for (child, parent) in [("pubchem-100", "pubchem-1k"), ("pdb-10", "pdb-100")] {
+    for (child, parent) in [("pdb-100", "pdb-1000")] {
         let (Some(child_lock), Some(parent_lock)) = (locks.get(child), locks.get(parent)) else {
             continue;
         };
