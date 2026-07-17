@@ -55,7 +55,14 @@ pub(crate) struct CorpusStatusFile {
 
 pub(crate) fn read_corpus_status(path: &Path) -> Result<CorpusStatusFile, Box<dyn Error>> {
     let text = fs::read_to_string(path)?;
-    toml::from_str(&text).map_err(|error| boxed_error(format!("{}: {error}", path.display())))
+    let mut status: CorpusStatusFile = toml::from_str(&text)
+        .map_err(|error| boxed_error(format!("{}: {error}", path.display())))?;
+    for feature in status.features.values_mut() {
+        if feature.evidence_input_count == 0 && !feature.legacy_evidence_inputs.is_empty() {
+            feature.evidence_input_count = feature.legacy_evidence_inputs.len();
+        }
+    }
+    Ok(status)
 }
 
 pub(crate) fn write_validation_statuses(
@@ -120,7 +127,8 @@ pub(crate) fn recorded_corpus_status_passed(corpus_status: Option<&CorpusStatus>
             .evidence_hash
             .as_deref()
             .is_some_and(is_sha256)
-        && !corpus_status.evidence_inputs.is_empty()
+        && (corpus_status.evidence_input_count > 0
+            || !corpus_status.legacy_evidence_inputs.is_empty())
 }
 pub(crate) fn write_atomic_text(path: &Path, text: &str) -> Result<(), Box<dyn Error>> {
     write_atomic_bytes(path, text.as_bytes())

@@ -9,7 +9,9 @@ Parse a structural mmCIF file into a format-level document before chemical inter
 - Exposes only `mmcif::parse_str` as the mmCIF reader, returning `MmcifDocument`.
 - Preserves every data block, scalar item, loop table, unknown category, missing-value marker, and value source line.
 - Offers case-insensitive lookup while preserving original data names and values.
-- Distinguishes quoted values from bare syntax controls and supports explicit `stop_` loop terminators.
+- Distinguishes quoted values from bare syntax controls, preserves `#` inside
+  bare values, recognizes comments only where a token may begin, and supports
+  explicit `stop_` loop terminators.
 - Rejects content outside a data block, unnamed blocks, missing scalar values, duplicate data names, duplicate loop tags, and ragged loop rows with structured parse errors.
 - Bounds input bytes, token count, token bytes, and atom-site rows through `MmcifParseOptions`.
 - Does not expose a direct whole-file `MacroMolecule` reader or any compatibility alias.
@@ -39,3 +41,4 @@ Parse a structural mmCIF file into a format-level document before chemical inter
 - v1-v7: Historical direct atom-site-to-`MacroMolecule` reader.
 - v8: Hard-break the historical reader and redefine the canonical parser as format-level `MmcifDocument` construction only.
 - v9: Add Biopython-backed PDB-100 atom-site document parity as required baseline validation.
+- v10: Preserve embedded hash characters in bare values while retaining token-boundary comments.

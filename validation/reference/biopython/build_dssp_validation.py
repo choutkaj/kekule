@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import shutil
@@ -82,6 +83,11 @@ def main() -> int:
             cwd=repo,
             check=True,
         )
+        fixtures, excluded = retain_successful_references(output_dir, fixtures)
+        manifest.write_text(
+            manifest_text(corpus, fixtures, executable_sha256, excluded),
+            encoding="utf-8",
+        )
     return 0
 
 
@@ -95,8 +101,48 @@ def corpus_fixtures(root: Path, corpus: str) -> list[str]:
     ]
 
 
-def manifest_text(corpus: str, fixtures: list[str], executable_sha256: str) -> str:
+def retain_successful_references(
+    output_dir: Path, fixtures: list[str]
+) -> tuple[list[str], list[str]]:
+    expected = set(fixtures)
+    seen = set()
+    successful = set()
+    excluded = []
+    for path in sorted(output_dir.glob("*.json.gz")):
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            record = json.load(handle)
+        fixture = record["fixture_path"]
+        if fixture not in expected:
+            raise RuntimeError(f"unexpected DSSP reference output for {fixture}")
+        if fixture in seen:
+            raise RuntimeError(f"duplicate DSSP reference output for {fixture}")
+        seen.add(fixture)
+        if record["expected"].get("status") == "reference_error":
+            excluded.append(fixture)
+            path.unlink()
+        else:
+            successful.add(fixture)
+    missing = expected - seen
+    if missing:
+        formatted = ", ".join(sorted(missing))
+        raise RuntimeError(f"missing DSSP reference output for: {formatted}")
+    return [fixture for fixture in fixtures if fixture in successful], sorted(excluded)
+
+
+def manifest_text(
+    corpus: str,
+    fixtures: list[str],
+    executable_sha256: str,
+    excluded: list[str] | None = None,
+) -> str:
     fixture_lines = "\n".join(f'  "{fixture}",' for fixture in fixtures)
+    exclusion_note = ""
+    if excluded:
+        exclusion_note = (
+            '  "Reference-error fixtures excluded: '
+            + ", ".join(excluded)
+            + '",\n'
+        )
     return (
         f'feature_id = "{FEATURE_ID}"\n'
         f'corpus_id = "{corpus}"\n'
@@ -107,10 +153,10 @@ def manifest_text(corpus: str, fixtures: list[str], executable_sha256: str) -> s
         f'  "DSSP executable SHA256: {executable_sha256}",\n'
         '  "Command: Bio.PDB.DSSP.DSSP(model, highest_occupancy_snapshot, dssp=mkdssp, file_type=MMCIF)",\n'
         '  "Extended command: mkdssp --output-format=mmcif --quiet highest_occupancy_snapshot annotated.cif",\n'
+        f"{exclusion_note}"
         ']\n\n'
         f"fixtures = [\n{fixture_lines}\n]\n"
     )
-
 
 def positive_int(value: str) -> int:
     parsed = int(value)

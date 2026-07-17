@@ -559,8 +559,8 @@ fn compare_one_golden(
                 )))
             }
         };
-    normalize_for_comparison_in_place(expected);
-    normalize_for_comparison_in_place(&mut actual);
+    normalize_feature_for_comparison_in_place(&manifest.feature_id, expected);
+    normalize_feature_for_comparison_in_place(&manifest.feature_id, &mut actual);
     if let Some(diff) = first_json_diff(&manifest.feature_id, "$", expected, &actual) {
         return Ok(FixtureComparison::Failed(format!(
             "{} differs from implementation output for fixture `{fixture}`: {diff}",

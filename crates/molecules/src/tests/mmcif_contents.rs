@@ -63,6 +63,79 @@ fn mmcif_parse_preserves_unknown_categories_without_chemistry() {
 }
 
 #[test]
+fn mmcif_parse_preserves_hashes_inside_bare_values() {
+    let document = parse("data_hash\nloop_\n_example.id\n_example.label\n1 sample-d2o#1\n#\n");
+    let table = document.blocks()[0]
+        .loop_with_tag("_example.label")
+        .expect("example loop");
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(
+        table.value(0, "_example.label").map(|value| value.text()),
+        Some("sample-d2o#1")
+    );
+}
+
+#[test]
+fn interpretation_preserves_first_source_occurrence_for_model_instances() {
+    let input = r#"
+data_order
+loop_
+_entity.id
+_entity.type
+1 polymer
+2 polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+Z 1
+A 2
+loop_
+_pdbx_poly_seq_scheme.asym_id
+_pdbx_poly_seq_scheme.seq_id
+Z 1
+A 1
+loop_
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_label_seq_id
+covale Z C1 1 A C1 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 C C1 GLY A 2 1 0.0 0.0 0.0 1
+ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
+"#;
+    let result = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.model().topology().molecule_count(), 1);
+    let instance = result.model().topology().molecules().next().unwrap().1;
+    let hierarchy = instance
+        .macro_molecule()
+        .expect("merged polymer chains remain a macro molecule")
+        .hierarchy();
+    let hierarchy_model = hierarchy.models().next().unwrap().1;
+    let chain_order = hierarchy_model
+        .chains()
+        .iter()
+        .map(|chain| hierarchy.chain(*chain).unwrap().label_id())
+        .collect::<Vec<_>>();
+    assert_eq!(chain_order, ["Z", "A"]);
+}
+
+#[test]
 fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
     let interpreted = mmcif::interpret(&parse(MIXED), MmcifInterpretOptions::default()).unwrap();
     let model = interpreted.model();
@@ -199,6 +272,31 @@ hydrog A N 1 W O .
     assert!(first.has_role(MoleculeRole::Polymer));
     assert!(first.has_role(MoleculeRole::NonPolymer));
     assert_eq!(result.report().applied_connections, 1);
+}
+
+#[test]
+fn symmetry_mate_connections_are_reported_unresolved() {
+    let connection = r#"
+loop_
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_symmetry
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_symmetry
+disulf A N 1 1_555 A N 1 15_545
+"#;
+    let input = format!("{MIXED}\n{connection}");
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections, 0);
+    assert!(result.report().issues.iter().any(|issue| matches!(
+        issue,
+        mmcif::MmcifInterpretIssue::ConnectionUnresolved { connection_type }
+            if connection_type == "disulf"
+    )));
 }
 
 #[test]

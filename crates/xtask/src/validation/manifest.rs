@@ -75,7 +75,9 @@ pub(crate) struct CorpusStatus {
     #[serde(default)]
     pub(crate) evidence_hash: Option<String>,
     #[serde(default)]
-    pub(crate) evidence_inputs: Vec<EvidenceInput>,
+    pub(crate) evidence_input_count: usize,
+    #[serde(default, rename = "evidence_inputs", skip_serializing)]
+    pub(crate) legacy_evidence_inputs: Vec<EvidenceInput>,
     pub(crate) validated_at_unix: u64,
 }
 
@@ -104,7 +106,8 @@ impl CorpusStatus {
             first_failure: None,
             evidence_schema_version: Some(run.evidence.schema_version),
             evidence_hash: Some(run.evidence.sha256),
-            evidence_inputs: run.evidence.inputs,
+            evidence_input_count: run.evidence.inputs.len(),
+            legacy_evidence_inputs: Vec::new(),
             validated_at_unix,
         })
     }
@@ -121,7 +124,8 @@ impl CorpusStatus {
             first_failure: Some(run.first_failure),
             evidence_schema_version: None,
             evidence_hash: None,
-            evidence_inputs: Vec::new(),
+            evidence_input_count: 0,
+            legacy_evidence_inputs: Vec::new(),
             validated_at_unix: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         })
     }

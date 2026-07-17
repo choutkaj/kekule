@@ -60,8 +60,11 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 - Use `SmcraHierarchy` chain and residue order plus atom-site labels to identify
   peptide backbone atoms. Preserve author and label identifiers only as source
   metadata; result identity is the qualified canonical residue key.
-- Treat a residue with the required `N`, `CA`, `C`, and `O` backbone positions
-  as analyzable. Determine peptide continuity with DSSP-compatible chain and
+- Treat a polymer-sequence residue with the required `N`, `CA`, `C`, and `O`
+  backbone positions as analyzable. A label sequence ID is the canonical
+  polymer-membership signal; covalently attached non-polymer components remain
+  ignored even when their atom names resemble a peptide backbone. Determine
+  peptide continuity with DSSP-compatible chain and
   coordinate checks because mmCIF interpretation does not infer template
   polymer bonds. Missing or discontinuous residues split local pattern
   recognition.
@@ -143,3 +146,4 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   and add explicit PDB-10/PDB-100 supplemental validation.
 - v1: Establish the planned DSSP 4-compatible, read-only analysis contract.
 - v3: Use PDB-100 as the required macromolecular baseline and retire smoke and PDB-10 as validation corpora.
+- v4: Ignore backbone-like non-polymer components, compare validation records by source residue identity, and exclude explicit reference-tool failures from generated manifests.
