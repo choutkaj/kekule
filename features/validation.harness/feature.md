@@ -103,6 +103,10 @@ or manually curated external-reference golden data.
 - Manual-semantic acceptance uses the same bounded worker-count policy as
   comparison and writes deterministic gzip streams with zero timestamps.
 - Fixture comparison uses a bounded worker pool while status writes and dashboard regeneration remain single-threaded.
+- Generated corpus status stores the aggregate evidence hash and input count,
+  while the complete ordered path/hash inventory remains transient during
+  validation. This preserves freshness semantics without committing thousands
+  of redundant evidence-input rows.
 - Progress output uses plain ASCII bars and throttled checkpoint updates so it stays readable in terminals and captured logs.
 - Biopython reference generation supports bounded process workers; the DSSP
   corpus builder defaults to four and allows an explicit `--jobs N` override
@@ -200,3 +204,4 @@ or manually curated external-reference golden data.
 - v37: Fail feature listing and dashboard generation when required corpus manifests are missing, and exclude planned features from explicit local-only corpus selection.
 - v38: Make PDB corpus selection category-aware through the RCSB Search API and add bounded process-parallel Biopython/DSSP golden generation.
 - v39: Exclude and document DSSP reference-tool failures procedurally instead of comparing them as implementation expectations.
+- v40: Compact generated validation status to an aggregate evidence hash and input count while retaining legacy status deserialization.

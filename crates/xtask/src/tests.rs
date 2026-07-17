@@ -706,10 +706,8 @@ fn dashboard_corpus_cells_show_optional_manifest_evidence() {
         first_failure: None,
         evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
         evidence_hash: Some("b".repeat(64)),
-        evidence_inputs: vec![EvidenceInput {
-            path: "validation/corpora/pubchem-1k/features/optional.feature.toml".to_owned(),
-            sha256: "c".repeat(64),
-        }],
+        evidence_input_count: 1,
+        legacy_evidence_inputs: Vec::new(),
         validated_at_unix: 1,
     };
     let status = ValidationStatus {
@@ -1395,7 +1393,8 @@ fn recorded_corpus_status_requires_known_nonempty_evidence() {
         first_failure: None,
         evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
         evidence_hash: Some(evidence.sha256),
-        evidence_inputs: evidence.inputs,
+        evidence_input_count: evidence.inputs.len(),
+        legacy_evidence_inputs: Vec::new(),
         validated_at_unix: 1,
     };
     assert!(recorded_corpus_status_passed(Some(&corpus_status)));
@@ -1405,6 +1404,10 @@ fn recorded_corpus_status_requires_known_nonempty_evidence() {
 
     corpus_status.evidence_schema_version = Some(VALIDATION_EVIDENCE_SCHEMA_VERSION);
     corpus_status.compared_count = 0;
+    assert!(!recorded_corpus_status_passed(Some(&corpus_status)));
+
+    corpus_status.compared_count = corpus_status.fixture_count;
+    corpus_status.evidence_input_count = 0;
     assert!(!recorded_corpus_status_passed(Some(&corpus_status)));
     fs::remove_dir_all(root).ok();
 }
@@ -1445,10 +1448,8 @@ fn dashboard_status_requires_a_current_manifest() {
                 first_failure: None,
                 evidence_schema_version: Some(VALIDATION_EVIDENCE_SCHEMA_VERSION),
                 evidence_hash: Some("1".repeat(64)),
-                evidence_inputs: vec![EvidenceInput {
-                    path: "missing.fixture".to_owned(),
-                    sha256: "2".repeat(64),
-                }],
+                evidence_input_count: 1,
+                legacy_evidence_inputs: Vec::new(),
                 validated_at_unix: 1,
             },
         )]),
@@ -1515,7 +1516,10 @@ fn status_writer_prunes_entries_without_manifests() {
 }
 #[test]
 fn old_status_toml_defaults_failure_summary_fields() {
-    let status: CorpusStatusFile = toml::from_str(
+    let root = temp_feature_root("legacy-status");
+    let path = root.join("status.toml");
+    fs::write(
+        &path,
         r#"
 corpus_id = "smoke"
 
@@ -1528,11 +1532,15 @@ reference_version = "RDKit test"
 manifest_hash = "0000000000000000000000000000000000000000000000000000000000000000"
 evidence_schema_version = 2
 evidence_hash = "1111111111111111111111111111111111111111111111111111111111111111"
-evidence_inputs = []
 validated_at_unix = 1
+
+[[features.example.evidence_inputs]]
+path = "validation/corpora/smoke/data/example.sdf"
+sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
 "#,
     )
-    .expect("old status shape should deserialize");
+    .expect("legacy status fixture should write");
+    let status = read_corpus_status(&path).expect("old status shape should deserialize");
     let corpus_status = status
         .features
         .get("example")
@@ -1540,6 +1548,13 @@ validated_at_unix = 1
 
     assert_eq!(corpus_status.failed_count, 0);
     assert_eq!(corpus_status.first_failure, None);
+    assert_eq!(corpus_status.evidence_input_count, 1);
+    assert_eq!(corpus_status.legacy_evidence_inputs.len(), 1);
+
+    let compact = toml::to_string(&status).expect("legacy status should reserialize");
+    assert!(compact.contains("evidence_input_count = 1"));
+    assert!(!compact.contains("evidence_inputs"));
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
