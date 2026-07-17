@@ -340,9 +340,10 @@ fn interpret_block(
     let selected = select_coordinate_model(selected, &options.model_selection, &mut report)?;
     let mut union = InstanceUnion::new(selected.iter().map(|row| row.instance_key.clone()));
     let connections = read_connections(block, &selected, &mut union, &mut report)?;
-    let groups = group_rows(selected, &mut union);
+    let polymer_asym_order = polymer_asym_order(block);
+    let groups = group_rows(selected, &mut union, &polymer_asym_order);
     let mut builder = ModelBuilder::new();
-    for (_, group) in groups {
+    for group in groups {
         let built = build_molecule(group, &connections, &mut report)?;
         match built {
             BuiltMolecule::Macro {
@@ -881,6 +882,10 @@ fn connection_partner<'a>(
     partner: usize,
     rows: &'a [AtomRow],
 ) -> Result<Option<&'a AtomRow>, MmcifInterpretError> {
+    let symmetry_tag = format!("_struct_conn.ptnr{partner}_symmetry");
+    if optional(table, row, &symmetry_tag).is_some_and(|symmetry| symmetry != "1_555") {
+        return Ok(None);
+    }
     let asym_tag = format!("_struct_conn.ptnr{partner}_label_asym_id");
     let atom_tag = format!("_struct_conn.ptnr{partner}_label_atom_id");
     let seq_tag = format!("_struct_conn.ptnr{partner}_label_seq_id");
@@ -910,19 +915,58 @@ struct MoleculeGroup {
     instance_keys: BTreeSet<String>,
 }
 
-fn group_rows(rows: Vec<AtomRow>, union: &mut InstanceUnion) -> BTreeMap<String, MoleculeGroup> {
-    let mut groups = BTreeMap::new();
+fn polymer_asym_order(block: &MmcifDataBlock) -> BTreeMap<String, usize> {
+    let mut order = BTreeMap::new();
+    let Some(table) = block.loop_with_tag("_pdbx_poly_seq_scheme.asym_id") else {
+        return order;
+    };
+    for row in 0..table.row_count() {
+        if let Some(asym_id) = optional(table, row, "_pdbx_poly_seq_scheme.asym_id") {
+            let next = order.len();
+            order.entry(asym_id.to_owned()).or_insert(next);
+        }
+    }
+    order
+}
+
+fn group_rows(
+    rows: Vec<AtomRow>,
+    union: &mut InstanceUnion,
+    polymer_asym_order: &BTreeMap<String, usize>,
+) -> Vec<MoleculeGroup> {
+    let mut group_indices = BTreeMap::new();
+    let mut groups = Vec::new();
     for row in rows {
         let root = union.find(&row.instance_key);
-        let group = groups.entry(root).or_insert_with(|| MoleculeGroup {
-            rows: Vec::new(),
-            kinds: BTreeSet::new(),
-            instance_keys: BTreeSet::new(),
+        let index = *group_indices.entry(root).or_insert_with(|| {
+            groups.push(MoleculeGroup {
+                rows: Vec::new(),
+                kinds: BTreeSet::new(),
+                instance_keys: BTreeSet::new(),
+            });
+            groups.len() - 1
         });
+        let group = &mut groups[index];
         group.kinds.insert(row.kind.clone());
         group.instance_keys.insert(row.instance_key.clone());
         group.rows.push(row);
     }
+    for group in &mut groups {
+        group.rows.sort_by_key(|row| {
+            polymer_asym_order
+                .get(&row.asym_id)
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+    }
+    groups.sort_by_key(|group| {
+        group
+            .rows
+            .iter()
+            .filter_map(|row| polymer_asym_order.get(&row.asym_id).copied())
+            .min()
+            .unwrap_or(usize::MAX)
+    });
     groups
 }
 

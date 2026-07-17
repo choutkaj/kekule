@@ -99,6 +99,80 @@ pub(crate) fn first_json_diff(
     }
 }
 
+pub(crate) fn normalize_feature_for_comparison_in_place(feature_id: &str, value: &mut Value) {
+    normalize_for_comparison_in_place(value);
+    if feature_id == "bio.secondary-structure.dssp" {
+        normalize_dssp_residue_order(value);
+    }
+}
+
+fn normalize_dssp_residue_order(value: &mut Value) {
+    let Some(residues) = value
+        .as_object_mut()
+        .and_then(|object| object.get_mut("residues"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    residues.sort_by_key(dssp_residue_sort_key);
+
+    let mut sheets = BTreeMap::new();
+    let mut strands = BTreeMap::new();
+    let mut ladders = BTreeMap::new();
+    for residue in residues {
+        let Some(residue) = residue.as_object_mut() else {
+            continue;
+        };
+        canonicalize_dssp_id(residue.get_mut("sheet"), &mut sheets);
+        canonicalize_dssp_id(residue.get_mut("strand"), &mut strands);
+        if let Some(values) = residue.get_mut("ladders").and_then(Value::as_array_mut) {
+            for value in values {
+                canonicalize_dssp_id(Some(value), &mut ladders);
+            }
+        }
+    }
+}
+
+fn canonicalize_dssp_id(value: Option<&mut Value>, ids: &mut BTreeMap<i64, i64>) {
+    let Some(value) = value else {
+        return;
+    };
+    let Some(id) = value.as_i64() else {
+        return;
+    };
+    let next = ids.len() as i64;
+    let canonical = *ids.entry(id).or_insert(next);
+    *value = json!(canonical);
+}
+
+fn dssp_residue_sort_key(value: &Value) -> (String, i64, String, String, i64, String) {
+    let field = |name: &str| value.get(name);
+    (
+        field("chain_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        field("sequence_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MIN),
+        field("insertion_code")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        field("label_chain_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        field("label_sequence_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MIN),
+        field("residue_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
 pub(crate) fn normalize_for_comparison_in_place(value: &mut Value) {
     match value {
         Value::Array(items) => {

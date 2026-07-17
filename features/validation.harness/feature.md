@@ -104,7 +104,12 @@ or manually curated external-reference golden data.
   comparison and writes deterministic gzip streams with zero timestamps.
 - Fixture comparison uses a bounded worker pool while status writes and dashboard regeneration remain single-threaded.
 - Progress output uses plain ASCII bars and throttled checkpoint updates so it stays readable in terminals and captured logs.
-- Biopython reference generation supports bounded process workers; the DSSP corpus builder defaults to four and allows an explicit `--jobs N` override on provisioned hosts.
+- Biopython reference generation supports bounded process workers; the DSSP
+  corpus builder defaults to four and allows an explicit `--jobs N` override
+  on provisioned hosts. After generation it removes explicit reference-error
+  outputs from both the manifest and golden set and records those exclusions
+  in manifest notes, so unavailable reference evidence is never treated as an
+  implementation failure or a passing comparison.
 - Reference tools are never Rust runtime dependencies.
 
 ## Validation
@@ -194,3 +199,4 @@ or manually curated external-reference golden data.
 - v36: Retire smoke, PubChem-100, and PDB-10 as public validation corpora; allow local-only corpora to be release-required; add PDB-1000; prune status entries without manifests; and keep hosted CI free of unverifiable parity claims.
 - v37: Fail feature listing and dashboard generation when required corpus manifests are missing, and exclude planned features from explicit local-only corpus selection.
 - v38: Make PDB corpus selection category-aware through the RCSB Search API and add bounded process-parallel Biopython/DSSP golden generation.
+- v39: Exclude and document DSSP reference-tool failures procedurally instead of comparing them as implementation expectations.

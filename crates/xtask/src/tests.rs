@@ -1632,6 +1632,27 @@ fn stereo_perception_validation_records_sanitize_errors_per_record() {
 }
 
 #[test]
+fn dssp_comparison_matches_residues_by_source_identity_not_container_order() {
+    let mut expected = json!({
+        "status": "ok",
+        "residues": [
+            {"chain_id": "B", "sequence_id": 1, "insertion_code": null, "label_chain_id": "B", "label_sequence_id": 1, "residue_name": "ALA", "sheet": 4, "strand": 8, "ladders": [19, null]},
+            {"chain_id": "D", "sequence_id": 1, "insertion_code": null, "label_chain_id": "D", "label_sequence_id": 1, "residue_name": "GLY", "sheet": 7, "strand": 9, "ladders": [21, 19]}
+        ]
+    });
+    let mut actual = json!({
+        "status": "ok",
+        "residues": [
+            {"chain_id": "D", "sequence_id": 1, "insertion_code": null, "label_chain_id": "D", "label_sequence_id": 1, "residue_name": "GLY", "sheet": 12, "strand": 16, "ladders": [31, 30]},
+            {"chain_id": "B", "sequence_id": 1, "insertion_code": null, "label_chain_id": "B", "label_sequence_id": 1, "residue_name": "ALA", "sheet": 10, "strand": 15, "ladders": [30, null]}
+        ]
+    });
+    normalize_feature_for_comparison_in_place("bio.secondary-structure.dssp", &mut expected);
+    normalize_feature_for_comparison_in_place("bio.secondary-structure.dssp", &mut actual);
+    assert_eq!(expected, actual);
+}
+
+#[test]
 fn comparison_normalizes_undirected_bonds_and_ring_order() {
     let expected = json!({
         "records": [{

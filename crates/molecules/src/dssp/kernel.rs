@@ -243,6 +243,7 @@ fn extract_backbones(
         generated_ladders: 0,
     };
     let mut chain_segments = 0;
+    let mut chains = Vec::new();
 
     for (molecule_id, instance) in model.topology().molecules() {
         let Some(macro_molecule) = instance.macro_molecule() else {
@@ -259,18 +260,38 @@ fn extract_backbones(
                             molecule: molecule_id,
                             message: error.to_string(),
                         })?;
-                extract_chain(
-                    model,
-                    molecule_id,
-                    hierarchy,
-                    chain,
-                    &mut residues,
-                    &mut report,
-                    &mut chain_segments,
-                    limits,
-                )?;
+                chains.push((chain.label_id.clone(), molecule_id, hierarchy, chain_id));
             }
         }
+    }
+
+    // mkdssp builds one global residue table in label-asym order, even when
+    // covalent links make non-adjacent chains members of the same molecule.
+    // Stable shortlex ordering matches the generated mmCIF label-asym series
+    // (A..Z, AA..) while preserving discovery order for duplicate labels.
+    chains.sort_by(|left, right| {
+        left.0
+            .len()
+            .cmp(&right.0.len())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    for (_, molecule_id, hierarchy, chain_id) in chains {
+        let chain = hierarchy
+            .chain(chain_id)
+            .map_err(|error| DsspError::InvalidHierarchy {
+                molecule: molecule_id,
+                message: error.to_string(),
+            })?;
+        extract_chain(
+            model,
+            molecule_id,
+            hierarchy,
+            chain,
+            &mut residues,
+            &mut report,
+            &mut chain_segments,
+            limits,
+        )?;
     }
     Ok((residues, report, chain_segments))
 }
@@ -298,6 +319,11 @@ fn extract_chain(
                     message: error.to_string(),
                 })?;
         let key = DsspResidueKey::new(molecule_id, residue_id);
+        if residue.label_seq_id.is_none() {
+            report.non_peptide_residues += 1;
+            forced_break = true;
+            continue;
+        }
         let source = residue_source(chain, residue);
         let mut backbone = [None; 4];
         let mut seen_backbone = 0;

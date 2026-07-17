@@ -435,10 +435,7 @@ fn tokenize_mmcif(
                 column += 1;
                 (value.to_owned(), false)
             } else {
-                while column < bytes.len()
-                    && !bytes[column].is_ascii_whitespace()
-                    && bytes[column] != b'#'
-                {
+                while column < bytes.len() && !bytes[column].is_ascii_whitespace() {
                     column += 1;
                 }
                 (line[start..column].to_owned(), true)

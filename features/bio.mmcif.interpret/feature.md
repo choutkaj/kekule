@@ -15,8 +15,9 @@ into a `Model` with distinct molecule instances and a report.
   alternate-location selection.
 - Treats `_atom_site.Cartn_*` coordinates as explicit angstrom quantities before
   model construction.
-- Uses entity, structural-instance, atom-site, and declared-connection metadata
-  to build Small/Macro instances. Only declared covalent links merge boundaries.
+- Uses entity, structural-instance, atom-site, polymer-sequence, and
+  declared-connection metadata to build Small/Macro instances. Only declared
+  local covalent links merge boundaries; symmetry-mate links remain unresolved.
 - Preserves `sing`, `doub`, `trip`, and `quad` values from
   `_struct_conn.pdbx_value_order`; a missing value defaults to single and an
   unsupported explicit value returns a structured interpretation error.
@@ -37,14 +38,18 @@ into a `Model` with distinct molecule instances and a report.
 - Polymer/branched instances establish conservative macro boundaries; nonpolymer
   and water occurrences remain distinct unless a declared covalent link joins
   them.
+- Within merged macro instances, hierarchy chains follow their first
+  `_pdbx_poly_seq_scheme.asym_id` occurrence rather than incidental atom-row or
+  map order.
 - The document remains the loss-preserving source representation.
 
 ## Validation
 
 - Tests cover mixed typed instances and roles, complete positions, default
   multi-model rejection, explicit selection, altloc policy/reporting, missing
-  coordinates, covalent merging, noncovalent separation, supported connection
-  order interpretation, and unknown-order rejection.
+  coordinates, covalent merging, noncovalent separation, symmetry-mate
+  rejection, deposited polymer-chain ordering, supported connection order
+  interpretation, and unknown-order rejection.
 - Successful bounded fuzz parses traverse the loss-preserving document and then
   exercise explicit selected-model interpretation and qualified model lookup.
 
@@ -68,3 +73,5 @@ into a `Model` with distinct molecule instances and a report.
 - v7: Move all mmCIF labels and source identity into structured,
   instance-qualified interpretation provenance and keep core property maps
   format-neutral.
+- v8: Preserve deposited polymer-chain order within merged instances and report
+  symmetry-mate connections as unresolved instead of creating local self-bonds.
