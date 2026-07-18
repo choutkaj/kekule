@@ -6,8 +6,27 @@ fn empty_molecule_has_no_atoms_or_bonds() {
 
     assert_eq!(mol.atom_count(), 0);
     assert_eq!(mol.bond_count(), 0);
+    assert_eq!(mol.formal_charge(), 0);
     assert!(mol.atoms().next().is_none());
     assert!(mol.bonds().next().is_none());
+}
+
+#[test]
+fn formal_charge_sums_only_live_atom_payloads() {
+    let mut mol = Molecule::new();
+    let positive = mol.add_atom(charged_atom("N", 3));
+    mol.add_atom(charged_atom("O", -1));
+    let deleted = mol.add_atom(charged_atom("Cl", -2));
+
+    assert_eq!(mol.formal_charge(), 0);
+    mol.delete_atom(deleted)
+        .expect("charged atom should delete");
+    assert_eq!(mol.formal_charge(), 2);
+
+    mol.atom_mut(positive)
+        .expect("nitrogen should exist")
+        .formal_charge = 1;
+    assert_eq!(mol.formal_charge(), 0);
 }
 
 #[test]

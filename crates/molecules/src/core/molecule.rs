@@ -219,6 +219,15 @@ impl Molecule {
         self.bonds.iter().flatten().count()
     }
 
+    /// Returns the sum of the asserted formal charges on all live atoms.
+    ///
+    /// This aggregate does not require sanitization or perception.
+    pub fn formal_charge(&self) -> i64 {
+        self.atoms()
+            .map(|(_, atom)| i64::from(atom.formal_charge))
+            .sum()
+    }
+
     pub fn add_atom(&mut self, atom: Atom) -> AtomId {
         let id = AtomId::new(self.atoms.len() as u32);
         self.atoms.push(Some(atom));
