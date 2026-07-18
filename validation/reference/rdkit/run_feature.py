@@ -22,6 +22,7 @@ SUPPORTED_FEATURES = {
     "chem.hydrogen-normalization",
     "chem.sanitize.rdkit-like",
     "core.conformers",
+    "descriptor.molecular",
     "io.mol.v2000.parse",
     "io.mol.v2000.write",
     "io.mol.v3000.parse",
@@ -121,13 +122,14 @@ def main() -> int:
 def import_rdkit() -> dict[str, Any]:
     try:
         from rdkit import Chem, RDLogger, rdBase
+        from rdkit.Chem import Descriptors
     except ImportError as error:
         raise SystemExit(
             "RDKit is not importable. Create the environment from "
             "validation/reference/rdkit/environment.yml before generating goldens."
         ) from error
     RDLogger.DisableLog("rdApp.*")
-    return {"Chem": Chem, "version": rdBase.rdkitVersion}
+    return {"Chem": Chem, "Descriptors": Descriptors, "version": rdBase.rdkitVersion}
 
 
 def read_manifest(path: Path) -> dict[str, Any]:
@@ -203,6 +205,14 @@ def generate_document(
     elif feature_id == "core.conformers":
         records = read_records_by_suffix(fixture_path, rdkit["Chem"])
         expected = {"records": [conformer_record(record) for record in records]}
+    elif feature_id == "descriptor.molecular":
+        records = read_sdf_records(fixture_path, rdkit["Chem"])
+        expected = {
+            "records": [
+                molecular_descriptor_record(record, rdkit["Chem"], rdkit["Descriptors"])
+                for record in records
+            ]
+        }
     elif feature_id == "io.smiles.parse":
         records = read_smiles_records(fixture_path, rdkit["Chem"], sanitize=False)
         expected = {"records": [smiles_parse_record(record) for record in records]}
@@ -379,6 +389,66 @@ def substructure_record(record: dict[str, Any], Chem: Any) -> dict[str, Any]:
         "status": "ok",
         "title": record["title"],
         "queries": queries,
+    }
+
+
+def molecular_descriptor_record(
+    record: dict[str, Any], Chem: Any, Descriptors: Any
+) -> dict[str, Any]:
+    if record["status"] != "ok" or record["mol"] is None:
+        return {
+            "record_index": record["record_index"],
+            "status": "parse_error",
+            "title": record["title"],
+        }
+    mol = Chem.Mol(record["mol"])
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception:
+        return {
+            "record_index": record["record_index"],
+            "status": "sanitize_error",
+            "title": record["title"],
+        }
+
+    counts: dict[tuple[str, int | None], int] = {}
+    charge = 0
+    for atom in mol.GetAtoms():
+        isotope = atom.GetIsotope() or None
+        key = (atom.GetSymbol(), isotope)
+        counts[key] = counts.get(key, 0) + 1
+        hydrogens = atom.GetNumExplicitHs() + atom.GetNumImplicitHs()
+        if hydrogens:
+            hydrogen_key = ("H", None)
+            counts[hydrogen_key] = counts.get(hydrogen_key, 0) + hydrogens
+        charge += atom.GetFormalCharge()
+
+    contains_carbon = any(symbol == "C" for symbol, _ in counts)
+
+    def hill_key(term: tuple[str, int | None]) -> tuple[int, str, int]:
+        symbol, isotope = term
+        if contains_carbon and symbol == "C":
+            element_key = (0, "")
+        elif contains_carbon and symbol == "H":
+            element_key = (1, "")
+        else:
+            element_key = (2 if contains_carbon else 0, symbol)
+        return (*element_key, isotope or 0)
+
+    terms = [
+        {"element": symbol, "isotope": isotope, "count": count}
+        for (symbol, isotope), count in sorted(counts.items(), key=lambda item: hill_key(item[0]))
+    ]
+    electron_mass_da = 5.485799090441e-4
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "formula": {"terms": terms, "formal_charge": charge},
+        # RDKit MolWt uses its standard-weight table but does not correct ions.
+        "average_mass_da": Descriptors.MolWt(mol) - charge * electron_mass_da,
+        # RDKit ExactMolWt already applies its electron-mass correction.
+        "monoisotopic_mass_da": Descriptors.ExactMolWt(mol),
     }
 
 

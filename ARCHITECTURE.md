@@ -251,6 +251,7 @@ mmcif       MmcifDocument parse/interpret and Model writing
 dssp        read-only DSSP 4 protein secondary-structure assignment over Model
 perception  explicit chemical perception and sanitization
 hydrogens   explicit small-molecule hydrogen topology normalization
+descriptors read-only formula and mass descriptors with explicit hydrogen policy
 query       syntax-neutral query graphs and bounded SMARTS parsing
 substructure query-graph matching algorithms
 canon       canonicalization algorithms
@@ -282,3 +283,8 @@ Hydrogen normalization is likewise explicit. `add_hydrogens` and
 parser or sanitizer side effects. They preserve retained stable atom IDs,
 report topology changes, and leave newly materialized hydrogen coordinates
 missing instead of inventing geometry.
+
+Molecular descriptors are read-only and policy-explicit. Formula, average-mass,
+and monoisotopic-mass calculation consume `&SmallMolecule`, never sanitize or
+perceive implicitly, preserve isotope and aggregate-charge semantics, and
+report unavailable perception or reference data structurally.
