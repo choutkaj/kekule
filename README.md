@@ -5,6 +5,12 @@
   </picture>
 </p>
 
+<p align="center">
+  <a href="https://github.com/choutkaj/molecules/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/molecules/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/choutkaj/molecules/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
+  <a href="https://github.com/choutkaj/molecules/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+</p>
+
 `molecules` is an experimental pure-Rust chemistry backend scoped for both small molecules and macromolecules. The capabilities are bundled into features, which are parity-checked against established codebases - RDKit for small molecules and Biopython for macromolecules. This project is human-architected and AI-coded.
 
 For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/molecules/).
