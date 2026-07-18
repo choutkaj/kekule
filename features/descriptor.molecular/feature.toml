@@ -2,8 +2,13 @@ id = "descriptor.molecular"
 title = "Molecular descriptors"
 area = "descriptors"
 domains = ["small-molecule"]
-version = 1
+version = 2
 status = "planned"
-description = "Plan small-molecule descriptors such as formula and molecular weight."
-depends_on = ["chem.sanitize.rdkit-like"]
+description = "Define explicit-policy molecular formula, average mass, and monoisotopic mass descriptors for small molecules."
+depends_on = [
+  "core.graph",
+  "core.atom-bond",
+  "core.units",
+  "algo.valence.rdkit-like",
+]
 validation_required = []
