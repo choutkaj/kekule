@@ -1,40 +1,3 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/choutkaj/molecules/main/assets/molecules-logo-dark.svg">
-    <img alt="MOLECULES - cheminformatics in Rust" src="https://raw.githubusercontent.com/choutkaj/molecules/main/assets/molecules-logo-light.svg" width="250">
-  </picture>
-</p>
-
-`molecules` is an experimental pure-Rust chemistry backend scoped for both small molecules and macromolecules. The capabilities are bundled into features, which are parity-checked against established codebases - RDKit for small molecules and Biopython for macromolecules. This project is human-architected and AI-coded.
-
-For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/molecules/).
-
-> [!NOTE]
-> `molecules` is in early development. Breaking API changes will happen without notice.
-
-
-## Concept
-
-The concept of this project is centered on molecules, which serve as a the most important unit of chemical information. The `Molecule` type is the foundational molecular graph of user-asserted molecular entity. It is usually a fully connected molecular graph of a single covalent structure, although disconnected graphs are allowed (for example for salts or complexes). `SmallMolecule` wraps one `Molecule` with ordinary cheminformatic workflows, while `MacroMolecule` pairs one `Molecule` with an `SmcraHierarchy` for biomolecular labels and structure work.
-
-`Model` is an actual physical model of one or more instances of `SmallMolecule` and/or `MacroMolecule`. It holds an immutable topology and mutable atomic positions. The molecules in `Model` are not flattened into a disorganized bucket of atoms; instead, molecule instances are tracked and can be recognized and deciphered throughout any modeling work. It is the foundational type for molecular modeling. 
-
-
-```text
-Molecule (raw chemical graph)
- ├ SmallMolecule (graph + parameters -> small-molecule cheminformatics)
- ├ MacroMolecule (graph + SMCRA Hierarchy -> macromolecular cheminformatics)   
- │
- └─> Model (immutable topology, mutable positions)
-     │
-     └─> Optimization ──> Model (with optimized positions)
-```
-
-## Basic Usage
-
-Load and inspect a ligand, minimize its coordinates with the DREIDING force field, and write the optimized structure back to SDF:
-
-```rust
 use std::{error::Error, fs};
 
 use molecules::{
@@ -117,8 +80,3 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::write("examples/ligand-minimized.sdf", output)?;
     Ok(())
 }
-```
-
-## License
-
-`molecules` is available under the MIT license.

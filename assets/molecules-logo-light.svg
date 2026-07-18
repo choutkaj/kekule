@@ -4,17 +4,17 @@
     <g transform="matrix(1,0,0,1,-880.953379,-285.421835)">
         <g transform="matrix(1,0,0,1,845.984575,269.479452)">
             <g>
-                <animateTransform attributeName="transform" type="translate" values="0 0;0 0;719 0;719 0" keyTimes="0;0.75;0.95;1" dur="10s" begin="0s" repeatCount="indefinite" calcMode="linear"/>
+                <animateTransform attributeName="transform" type="translate" values="0 0;0 0;719 0;719 0" keyTimes="0;0.75;0.95;1" dur="10s" begin="0.0s" repeatCount="indefinite" calcMode="linear"/>
                 <text x="-695.945px" y="34.497px" style="font-family:'Consolas', monospace;font-size:50px;">╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮</text>
                 <text x="23.055px" y="34.497px" style="font-family:'Consolas', monospace;font-size:50px;">╭┬╮╭─╮╷  ╭─╴╭─╴╷ ╷╷  ╭─╴╭─╮</text>
             </g>
             <g>
-                <animateTransform attributeName="transform" type="translate" values="0 0;0 0;719 0;719 0" keyTimes="0;0.75;0.95;1" dur="10s" begin="0.25s" repeatCount="indefinite" calcMode="linear"/>
+                <animateTransform attributeName="transform" type="translate" values="0 0;0 0;719 0;719 0" keyTimes="0;0.75;0.95;1" dur="10s" begin="1.0s" repeatCount="indefinite" calcMode="linear"/>
                 <text x="-695.945px" y="105.33px" style="font-family:'Consolas', monospace;font-size:50px;">││││ ││  ├╴ │  │ ││  ├╴ ╰─╮</text>
                 <text x="23.055px" y="105.33px" style="font-family:'Consolas', monospace;font-size:50px;">││││ ││  ├╴ │  │ ││  ├╴ ╰─╮</text>
             </g>
             <g>
-                <animateTransform attributeName="transform" type="translate" values="0 0;0 0;719 0;719 0" keyTimes="0;0.75;0.95;1" dur="10s" begin="0.5s" repeatCount="indefinite" calcMode="linear"/>
+                <animateTransform attributeName="transform" type="translate" values="0 0;0 0;719 0;719 0" keyTimes="0;0.75;0.95;1" dur="10s" begin="2.0s" repeatCount="indefinite" calcMode="linear"/>
                 <text x="-695.945px" y="176.164px" style="font-family:'Consolas', monospace;font-size:50px;">╵ ╵╰─╯╰─╴╰─╴╰─╴╰─╯╰─╴╰─╴╰─╯</text>
                 <text x="23.055px" y="176.164px" style="font-family:'Consolas', monospace;font-size:50px;">╵ ╵╰─╯╰─╴╰─╴╰─╴╰─╯╰─╴╰─╴╰─╯</text>
             </g>

@@ -14,6 +14,7 @@ These rules apply to AI agents working in this repository.
    ```text
    Co-authored-by: codex <codex@openai.com>
    ```
+7. Do not modify README.md without the consent of the human
 
 ## Branching and PR strategy
 
