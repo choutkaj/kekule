@@ -514,6 +514,53 @@ impl Model {
         Ok(())
     }
 
+    /// Copies one model instance's current positions into a molecule conformer.
+    ///
+    /// Local atom IDs are preserved when molecules enter a model, so they form
+    /// the mapping back to the target graph. The target must contain exactly the
+    /// same live atom IDs as the selected instance. Validation and unit
+    /// conversion complete before the conformer is replaced, leaving the target
+    /// unchanged on failure.
+    pub fn instance_to_conformer(
+        &self,
+        instance: MoleculeInstanceId,
+        target: &mut Molecule,
+        conformer: ConformerId,
+    ) -> Result<(), InstanceToConformerError> {
+        let source = self
+            .topology()
+            .molecule(instance)
+            .map_err(|_| InstanceToConformerError::InvalidMoleculeInstanceId(instance))?;
+        let mut updated = target
+            .conformer(conformer)
+            .map_err(|_| InstanceToConformerError::InvalidConformerId(conformer))?
+            .clone();
+
+        for atom in source.graph().atom_ids() {
+            if target.atom(atom).is_err() {
+                return Err(InstanceToConformerError::MissingTargetAtom(atom));
+            }
+        }
+        for atom in target.atom_ids() {
+            if source.graph().atom(atom).is_err() {
+                return Err(InstanceToConformerError::UnexpectedTargetAtom(atom));
+            }
+        }
+
+        for atom in source.graph().atom_ids() {
+            let qualified = InstanceAtomId::new(instance, atom);
+            let position = self
+                .position(qualified)
+                .map_err(|_| InstanceToConformerError::InvalidModelAtomId(qualified))?;
+            updated.set_position(atom, position)?;
+        }
+
+        *target
+            .conformer_mut(conformer)
+            .expect("validated conformer must remain live") = updated;
+        Ok(())
+    }
+
     pub(crate) fn positions_value(&self) -> &[Point3] {
         self.positions.value()
     }
@@ -707,6 +754,42 @@ impl fmt::Display for PositionError {
 impl std::error::Error for PositionError {}
 
 impl From<UnitError> for PositionError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstanceToConformerError {
+    InvalidMoleculeInstanceId(MoleculeInstanceId),
+    InvalidModelAtomId(InstanceAtomId),
+    InvalidConformerId(ConformerId),
+    MissingTargetAtom(AtomId),
+    UnexpectedTargetAtom(AtomId),
+    Unit(UnitError),
+}
+
+impl fmt::Display for InstanceToConformerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidMoleculeInstanceId(id) => write!(f, "invalid molecule instance: {id}"),
+            Self::InvalidModelAtomId(id) => write!(f, "invalid model atom id: {id}"),
+            Self::InvalidConformerId(id) => write!(f, "invalid target conformer id: {id}"),
+            Self::MissingTargetAtom(atom) => {
+                write!(f, "target molecule is missing model atom {atom}")
+            }
+            Self::UnexpectedTargetAtom(atom) => {
+                write!(f, "target molecule contains unexpected atom {atom}")
+            }
+            Self::Unit(error) => write!(f, "invalid target conformer position unit: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for InstanceToConformerError {}
+
+impl From<UnitError> for InstanceToConformerError {
     fn from(error: UnitError) -> Self {
         Self::Unit(error)
     }

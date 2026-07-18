@@ -139,11 +139,7 @@ impl PreparedInput {
                         .index()
                 })
                 .collect::<Vec<_>>();
-            let formal_charge = molecule
-                .graph()
-                .atoms()
-                .map(|(_, atom)| atom.formal_charge as f64)
-                .sum();
+            let formal_charge = molecule.graph().formal_charge() as f64;
             molecules.push(PreparedMolecule {
                 id,
                 system: system_from_model(model, Some(id))?,

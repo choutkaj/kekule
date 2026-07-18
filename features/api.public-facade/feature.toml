@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 16
+version = 17
 status = "supported"
-description = "Expose the release facade with focused modules, real interpretation results, checked lifecycles, and private invariant state."
+description = "Expose the release facade with focused modules, checked lifecycles, ergonomic graph queries, and model coordinate export."
 depends_on = [
   "core.units",
   "core.graph",

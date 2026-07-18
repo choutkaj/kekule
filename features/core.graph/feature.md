@@ -17,6 +17,8 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - Rejects empty stereo groups and duplicate group members.
 - Rejects invalid atom IDs, invalid bond IDs, self-bonds, and duplicate bonds.
 - Iterates live atoms, live bonds, neighbors, and incident bonds.
+- Reports the `i64` sum of asserted formal charges across live atoms without
+  requiring sanitization or perception.
 - Preserves stable `AtomId` and `BondId` values after deletion.
 - Returns scoped `AtomMut` and `BondMut` guards from mutable graph access.
 - Owns one internally consistent `PerceptionState` with read-only valence,
@@ -67,3 +69,5 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   replacement and enforce nonempty, duplicate-free stereo groups.
 - v8: Move all kernel-stored perception vocabulary into core so the graph has
   no physical dependency on algorithm implementations.
+- v9: Add `Molecule::formal_charge` as an overflow-safe aggregate over live
+  asserted atom payloads.

@@ -19,6 +19,8 @@ fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
     mol.sanitize()?;
     assert_eq!(mol.atom_count(), 7);
     assert_eq!(mol.bond_count(), 7);
+    let formal_charge: i64 = mol.graph().formal_charge();
+    assert_eq!(formal_charge, 0);
     let smiles = mol.to_canonical_smiles()?;
     assert!(!smiles.is_empty());
     Ok(())
@@ -224,7 +226,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         )
         .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    let mut molecule = SmallMolecule::from_graph(graph);
 
     let mut builder = Model::builder();
     let instance = builder.add_small_molecule(&molecule, conformer)?;
@@ -242,9 +244,22 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     )?;
     let result = minimize(&model, &mut potential, MinimizeOptions::default())?;
 
+    result
+        .model
+        .instance_to_conformer(instance, molecule.graph_mut(), conformer)?;
+
     assert_eq!(result.status, MinimizationStatus::Converged);
     assert!(result.final_energy < result.initial_energy);
     assert_eq!(model.positions()[1].x, 2.0);
+    assert!(
+        molecule
+            .graph()
+            .conformer(conformer)?
+            .position(oxygen)
+            .expect("oxygen position")
+            .x
+            < 2.0
+    );
     Ok(())
 }
 

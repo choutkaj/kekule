@@ -80,6 +80,8 @@ There is no stale state and no public freshness flag. Property and coordinate
 edits are perception-neutral. Failed transactional operations leave their input
 unchanged. Imported aromatic annotations may be installed with input provenance;
 full aromaticity perception replaces them with model provenance.
+Simple aggregates over asserted payload, such as `Molecule::formal_charge`, are
+available without sanitization or perception and include only live atoms.
 
 ### `SmallMolecule`
 
@@ -202,7 +204,9 @@ unchanged. Empty models, empty molecules, missing positions, non-finite
 positions, incompatible units, and invalid macro graph/hierarchy pairs are
 rejected transactionally. Once built, topology and instance ownership are
 immutable; only the complete finite position set may change. Position setters
-accept compatible length quantities.
+accept compatible length quantities. `Model::instance_to_conformer` explicitly
+maps one instance's current positions back to a graph with the same live local
+atom IDs and replaces the selected conformer transactionally.
 Clones share an opaque `ModelDefinitionKey`; coordinate updates preserve that
 key, while independently constructed models receive distinct keys even when
 their topology contents are structurally equal.

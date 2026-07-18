@@ -1,35 +1,32 @@
 use std::{error::Error, fs};
 
 use molecules::{
-    modeling::{minimize, InstanceAtomId, MinimizeOptions, Model},
-    perception,
+    modeling::{minimize, MinimizeOptions, Model},
     sdf::{self, SdfParseOptions, SdfRecord},
-    smiles,
     units::MODEL_GRADIENT_UNIT,
 };
 use molecules_dreiding::DreidingPotential;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Parse and interpret one SDF record without silently sanitizing it.
     let input = fs::read_to_string("examples/ligand.sdf")?;
     let document = sdf::parse_str(&input, SdfParseOptions::default())?;
     let mut records = sdf::interpret(&document)?.into_records();
     assert_eq!(records.len(), 1, "expected one ligand record");
 
+    // Preserve the record metadata while working on its molecule.
     let record = records.pop().expect("record count was checked");
     let title = record.title().to_owned();
     let data_fields = record.data_fields().to_vec();
     let mut ligand = record.into_molecule();
-    perception::sanitize(&mut ligand)?;
+    ligand.sanitize()?;
 
-    let charge: i32 = ligand
-        .atoms()
-        .map(|(_, atom)| i32::from(atom.formal_charge))
-        .sum();
+    // Inspect the sanitized ligand before modeling it.
     println!("atoms: {}", ligand.atom_count());
     println!("bonds: {}", ligand.bond_count());
-    println!("formal charge: {charge}");
-    println!("canonical SMILES: {}", smiles::write_canonical(&ligand)?);
+    println!("formal charge: {}", ligand.graph().formal_charge());
 
+    // Build a fixed-topology model from the ligand's first conformer.
     let conformer = ligand
         .graph()
         .first_conformer()
@@ -39,6 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let instance = builder.add_small_molecule(&ligand, conformer)?;
     let model = builder.build()?;
 
+    // Prepare DREIDING explicitly, then minimize a clone of the model.
     let mut potential = DreidingPotential::prepare(&model)?;
     let minimized = minimize(
         &model,
@@ -50,32 +48,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     )?;
     println!(
-        "minimization status: {:?} after {} iterations",
-        minimized.status, minimized.iterations
-    );
-    println!(
-        "energy: {} -> {} {}",
+        "{:?} after {} iterations: {} -> {} {}",
+        minimized.status,
+        minimized.iterations,
         minimized.initial_energy.value(),
         minimized.final_energy.value(),
         minimized.final_energy.unit()
     );
-    println!(
-        "final max gradient: {} {}",
-        minimized.final_max_gradient.value(),
-        minimized.final_max_gradient.unit()
-    );
 
-    let atom_ids = ligand.graph().atom_ids().collect::<Vec<_>>();
-    for atom in atom_ids {
-        let position = minimized
-            .model
-            .position(InstanceAtomId::new(instance, atom))?;
-        ligand
-            .graph_mut()
-            .conformer_mut(conformer)?
-            .set_position(atom, position)?;
-    }
+    // Copy the optimized instance positions back to the source conformer.
+    minimized
+        .model
+        .instance_to_conformer(instance, ligand.graph_mut(), conformer)?;
 
+    // Reassemble the original record metadata and write the optimized SDF.
     let output = sdf::write_v2000(&[SdfRecord::new(title, ligand, data_fields)])?;
     fs::write("examples/ligand-minimized.sdf", output)?;
     Ok(())

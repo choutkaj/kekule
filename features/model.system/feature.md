@@ -20,6 +20,9 @@ one complete mutable coordinate set.
   and removes conformers from stored instance topology without mutating sources.
 - Converts source coordinates once to `MODEL_LENGTH_UNIT`; model position
   getters and setters expose explicit quantities and accept compatible length units.
+- `Model::instance_to_conformer` maps current instance positions back through
+  preserved local atom IDs, converts them to the target conformer unit, and
+  commits only after the target live-atom set and all conversions validate.
 - Rejects empty models/molecules, invalid conformers, missing positions, and
   non-finite positions transactionally.
 - Validates every `MacroMolecule` graph/hierarchy pair before accepting it as a
@@ -32,6 +35,8 @@ one complete mutable coordinate set.
   multi-entity `Molecule`.
 - Built topology and ownership are immutable. Complete positions may change via
   validated setters.
+- Conformer export belongs to the modeling layer, validates exact live local
+  atom-ID compatibility, and does not mutate model topology or chemistry.
 - Clones share one opaque definition key; independently built models receive
   distinct keys even when structurally equal.
 - Construction never sanitizes, perceives, prepares, or merges source molecules.
@@ -40,7 +45,8 @@ one complete mutable coordinate set.
 
 - Unit tests cover mixed Small/Macro instances, repeated molecules, stable local
   IDs, tombstones, dense round-trips, qualified hierarchy lookup, roles, source
-  immutability, position mutation, and transactional failures.
+  immutability, position mutation, conformer export with unit conversion, and
+  transactional failures.
 
 ## Out Of Scope
 
@@ -61,3 +67,5 @@ one complete mutable coordinate set.
   positions and explicit compatible conversion at model boundaries.
 - v6: Make valid macromolecule structure a checked model-construction
   precondition.
+- v7: Add transactional `Model::instance_to_conformer` coordinate export using
+  preserved molecule-local atom IDs.

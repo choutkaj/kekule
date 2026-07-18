@@ -123,6 +123,56 @@ fn model_converts_source_conformer_units_once_without_mutating_the_source() {
 }
 
 #[test]
+fn instance_to_conformer_maps_local_ids_converts_units_and_is_transactional() {
+    let (small, conformer, a, b, _) = two_atom_small(1.5);
+    let mut builder = Model::builder();
+    let instance = builder.add_small_molecule(&small, conformer).unwrap();
+    let mut model = builder.build().unwrap();
+    model
+        .set_position(
+            InstanceAtomId::new(instance, a),
+            Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM),
+        )
+        .unwrap();
+    model
+        .set_position(
+            InstanceAtomId::new(instance, b),
+            Quantity::new(Point3::new(3.0, 0.0, 0.0), ANGSTROM),
+        )
+        .unwrap();
+
+    let mut target = small.clone();
+    let nanometer = Conformer::new(NANOMETER).unwrap();
+    let nanometer = target.graph_mut().add_conformer(nanometer).unwrap();
+    model
+        .instance_to_conformer(instance, target.graph_mut(), nanometer)
+        .unwrap();
+    let transferred = target.graph().conformer(nanometer).unwrap();
+    assert_eq!(transferred.unit(), NANOMETER);
+    assert!((transferred.position(a).unwrap().x - 0.2).abs() < 1.0e-12);
+    assert!((transferred.position(b).unwrap().x - 0.3).abs() < 1.0e-12);
+
+    let extra = target
+        .graph_mut()
+        .add_atom(Atom::new(Element::from_symbol("H").unwrap()));
+    let before = target.clone();
+    assert_eq!(
+        model.instance_to_conformer(instance, target.graph_mut(), nanometer),
+        Err(InstanceToConformerError::UnexpectedTargetAtom(extra))
+    );
+    assert_eq!(target, before);
+
+    let mut missing = small.clone();
+    missing.graph_mut().delete_atom(b).unwrap();
+    let before = missing.clone();
+    assert_eq!(
+        model.instance_to_conformer(instance, missing.graph_mut(), conformer),
+        Err(InstanceToConformerError::MissingTargetAtom(b))
+    );
+    assert_eq!(missing, before);
+}
+
+#[test]
 fn model_definition_identity_is_shared_only_by_clones() {
     let (small, conformer, _, b, _) = two_atom_small(1.5);
     let model = Model::from_small_molecule(&small, conformer).unwrap();

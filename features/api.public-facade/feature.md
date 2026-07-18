@@ -26,10 +26,14 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `mmcif::write` exposes explicit supported `Model` serialization with
   format-specific options and structured rejection errors.
 - `Molecule` is one asserted entity and may have disconnected graph topology.
+- `Molecule::formal_charge` exposes the asserted live-atom charge aggregate as
+  an `i64` without hiding sanitization or perception.
 - `mmcif::interpret` returns a selected-coordinate `Model` plus report;
   `MolecularContents` and `Solvent` are removed.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 - Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
+- `Model::instance_to_conformer` provides an explicit transactional path from
+  instance-qualified model positions back to a compatible local conformer.
 - Explicit small-molecule hydrogen topology transforms live under `hydrogens`
   and as `SmallMolecule` convenience methods; they are not hidden in parsing or
   sanitization.
@@ -96,3 +100,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   published `0.1.0` contract.
 - v16: Expose configurable resource-bounded SMILES, Molfile, and SDF parsing
   without widening the crate root or prelude.
+- v17: Add the core formal-charge aggregate, transactional model-instance
+  conformer export, and concise basic versus modeling public examples.
