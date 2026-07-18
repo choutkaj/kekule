@@ -70,6 +70,28 @@ pub(crate) fn first_json_diff(
             None
         }
         (Value::Number(expected), Value::Number(actual))
+            if feature_id == "descriptor.molecular"
+                && path.ends_with(".average_mass_da")
+                && expected
+                    .as_f64()
+                    .zip(actual.as_f64())
+                    .map(|(expected, actual)| (expected - actual).abs() <= 0.05)
+                    .unwrap_or(false) =>
+        {
+            None
+        }
+        (Value::Number(expected), Value::Number(actual))
+            if feature_id == "descriptor.molecular"
+                && path.ends_with(".monoisotopic_mass_da")
+                && expected
+                    .as_f64()
+                    .zip(actual.as_f64())
+                    .map(|(expected, actual)| (expected - actual).abs() <= 5.0e-5)
+                    .unwrap_or(false) =>
+        {
+            None
+        }
+        (Value::Number(expected), Value::Number(actual))
             if feature_id == "bio.secondary-structure.dssp"
                 && path.ends_with(".tco")
                 && expected
@@ -321,6 +343,29 @@ mod tests {
         assert!(
             first_json_diff("bio.secondary-structure.dssp", "$", &expected, &actual,).is_none()
         );
+        assert!(first_json_diff("unrelated.feature", "$", &expected, &actual).is_some());
+    }
+
+    #[test]
+    fn molecular_descriptor_mass_tolerances_are_field_specific() {
+        let expected = json!({
+            "average_mass_da": 100.0,
+            "monoisotopic_mass_da": 99.0,
+            "formal_charge": 0,
+        });
+        let actual = json!({
+            "average_mass_da": 100.049,
+            "monoisotopic_mass_da": 99.000049,
+            "formal_charge": 0,
+        });
+        assert!(first_json_diff("descriptor.molecular", "$", &expected, &actual).is_none());
+
+        let wrong_charge = json!({
+            "average_mass_da": 100.0,
+            "monoisotopic_mass_da": 99.0,
+            "formal_charge": 1,
+        });
+        assert!(first_json_diff("descriptor.molecular", "$", &expected, &wrong_charge).is_some());
         assert!(first_json_diff("unrelated.feature", "$", &expected, &actual).is_some());
     }
 }

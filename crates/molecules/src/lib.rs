@@ -12,6 +12,7 @@ mod algorithms;
 pub mod bio;
 mod chemistry;
 pub mod core;
+pub mod descriptors;
 pub mod dssp;
 mod io;
 pub mod modeling;

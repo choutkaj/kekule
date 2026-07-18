@@ -60,6 +60,15 @@ pub(crate) fn implementation_expected(
             let records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({ "records": records.iter().map(conformer_record_json).collect::<Vec<_>>() }))
         }
+        "descriptor.molecular" => {
+            let mut records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter_mut()
+                    .map(molecular_descriptor_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
         "io.mol.v2000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
@@ -747,6 +756,55 @@ pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
                 .collect::<Vec<_>>()
         }).collect::<Vec<_>>(),
         "atoms": mol.atoms().map(|(id, atom)| conformer_atom_json(mol, id, atom)).collect::<Vec<_>>(),
+    })
+}
+
+pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) -> Value {
+    if perception::sanitize(&mut record.molecule).is_err() {
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+        });
+    }
+    let policy = molecules::descriptors::HydrogenCountPolicy::IncludePerceived;
+    let result = (|| {
+        let formula = molecules::descriptors::molecular_formula(&record.molecule, policy)?;
+        let average = molecules::descriptors::average_mass(&record.molecule, policy)?;
+        let monoisotopic = molecules::descriptors::monoisotopic_mass(&record.molecule, policy)?;
+        Ok::<_, molecules::descriptors::MolecularDescriptorError>((
+            formula,
+            *average.value(),
+            *monoisotopic.value(),
+        ))
+    })();
+    let Ok((formula, average_mass_da, monoisotopic_mass_da)) = result else {
+        return json!({
+            "record_index": record.record_index,
+            "status": "descriptor_error",
+            "title": record.title,
+        });
+    };
+    let terms = formula
+        .terms()
+        .map(|(element, isotope, count)| {
+            json!({
+                "element": element.symbol(),
+                "isotope": isotope,
+                "count": count,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "formula": {
+            "terms": terms,
+            "formal_charge": formula.formal_charge(),
+        },
+        "average_mass_da": average_mass_da,
+        "monoisotopic_mass_da": monoisotopic_mass_da,
     })
 }
 

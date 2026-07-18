@@ -13,5 +13,6 @@ __pycache__/
 fuzz/artifacts/
 fuzz/target/
 validation/corpora/*/data/
+validation/reference/atomic_data/cache/
 !validation/corpora/tiny/data/
 !validation/corpora/tiny/data/**

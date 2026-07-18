@@ -7,7 +7,7 @@ monoisotopic mass descriptors for `SmallMolecule` values.
 
 ## Behavior/API
 
-- The planned `descriptors` facade exposes `MolecularFormula`,
+- The `descriptors` facade exposes `MolecularFormula`,
   `HydrogenCountPolicy`, `MolecularDescriptorError`, `molecular_formula`,
   `average_mass`, and `monoisotopic_mass`; it is not re-exported from the
   crate root or prelude.
@@ -65,6 +65,8 @@ monoisotopic mass descriptors for `SmallMolecule` values.
     [AME 2020](https://amdc.impcas.ac.cn/web/masseval.html);
   - electron mass from the
     [2022 CODATA recommended constants](https://physics.nist.gov/cuu/Constants/).
+- `validation/reference/atomic_data/generate.py` verifies the pinned source
+  SHA-256 values and expected row counts before reproducing the Rust tables.
 - Standard atomic weights describe normal materials and some are intervals.
   The average-mass contract deliberately uses CIAAW's abridged scalar values;
   uncertainty propagation and material-specific isotope distributions remain
@@ -74,9 +76,8 @@ monoisotopic mass descriptors for `SmallMolecule` values.
 
 ## Validation
 
-- Before promotion to `experimental`, add `pubchem-1k` as required validation
-  and generate provenance-pinned reference rows with the repository's pinned
-  RDKit environment.
+- `pubchem-1k` is the required validation corpus. Its provenance-pinned rows
+  are generated with the repository's RDKit 2026.03.3 reference environment.
 - Compare formula composition, isotope counts, total charge, average mass, and
   monoisotopic mass independently. Formula comparison is structured rather
   than relaxed string comparison; mass comparison uses explicit tolerances
@@ -111,3 +112,6 @@ monoisotopic mass descriptors for `SmallMolecule` values.
 - v2: Define the explicit hydrogen policy, structured formula representation,
   average and monoisotopic mass semantics, authoritative data provenance,
   charge correction, resource bounds, validation gate, and focused scope.
+- v3: Implement the read-only descriptor facade, checksum-pinned CIAAW 2024,
+  AME 2020, and CODATA 2022 tables, focused regressions, public API coverage,
+  and required PubChem-1k RDKit validation.

@@ -8,7 +8,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
-  `substructure`, `canon`, and `modeling`.
+  `substructure`, `canon`, `descriptors`, and `modeling`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -42,6 +42,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Syntax-independent query graphs and bounded SMARTS translation live under
   `query`; matching lives under `substructure`, preserving one-way dependency
   on the query IR. Neither namespace is added to the prelude.
+- Read-only molecular formula and mass calculation lives under `descriptors`,
+  requires an explicit hydrogen-count policy, and is not added to the prelude.
 
 ## Implementation Notes
 
@@ -106,3 +108,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   conformer export, and concise basic versus modeling public examples.
 - v18: Add consuming `MmcifInterpretation::into_model` access through the
   focused mmCIF facade.
+- v19: Add the focused `descriptors` facade for explicit-policy molecular
+  formula and mass calculation without expanding the prelude.

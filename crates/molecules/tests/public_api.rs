@@ -27,6 +27,38 @@ fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn molecular_descriptor_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use molecules::descriptors::{
+        average_mass, molecular_formula, monoisotopic_mass, HydrogenCountPolicy,
+        MolecularDescriptorError, MolecularFormula,
+    };
+    use molecules::units::DALTON;
+
+    let molecule = SmallMolecule::from_smiles_sanitized("[13CH3]CO")?;
+    let formula: MolecularFormula =
+        molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)?;
+    assert_eq!(formula.to_string(), "C[13C]H6O");
+    assert_eq!(
+        formula.isotope_count(Element::from_symbol("C").unwrap(), 13),
+        1
+    );
+    assert_eq!(formula.formal_charge(), 0);
+
+    let average = average_mass(&molecule, HydrogenCountPolicy::IncludePerceived)?;
+    let monoisotopic = monoisotopic_mass(&molecule, HydrogenCountPolicy::IncludePerceived)?;
+    assert!(average.value_in(DALTON)? > monoisotopic.value_in(DALTON)?);
+
+    let raw = SmallMolecule::from_smiles("C")?;
+    let error: MolecularDescriptorError =
+        molecular_formula(&raw, HydrogenCountPolicy::IncludePerceived).unwrap_err();
+    assert!(matches!(
+        error,
+        MolecularDescriptorError::MissingImplicitHydrogens { .. }
+    ));
+    Ok(())
+}
+
+#[test]
 fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
     let document = molecules::smiles::parse_str("CC(=O)O")?;
     let interpreted = molecules::smiles::interpret(&document)?;
