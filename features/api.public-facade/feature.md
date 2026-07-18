@@ -30,6 +30,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   an `i64` without hiding sanitization or perception.
 - `mmcif::interpret` returns a selected-coordinate `Model` plus report;
   `MolecularContents` and `Solvent` are removed.
+- `MmcifInterpretation::into_model` consumes an interpretation when callers do
+  not need to retain its report.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 - Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
 - `Model::instance_to_conformer` provides an explicit transactional path from
@@ -102,3 +104,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   without widening the crate root or prelude.
 - v17: Add the core formal-charge aggregate, transactional model-instance
   conformer export, and concise basic versus modeling public examples.
+- v18: Add consuming `MmcifInterpretation::into_model` access through the
+  focused mmCIF facade.

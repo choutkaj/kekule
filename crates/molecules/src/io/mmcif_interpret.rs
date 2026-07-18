@@ -248,6 +248,10 @@ impl MmcifInterpretation {
         &self.report
     }
 
+    pub fn into_model(self) -> Model {
+        self.model
+    }
+
     pub fn into_parts(self) -> (Model, MmcifInterpretationReport) {
         (self.model, self.report)
     }

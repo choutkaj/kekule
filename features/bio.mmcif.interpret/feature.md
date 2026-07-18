@@ -9,6 +9,8 @@ into a `Model` with distinct molecule instances and a report.
 
 - `mmcif::interpret` returns `MmcifInterpretation { model, report }` and never
   sanitizes or prepares chemistry.
+- `MmcifInterpretation::into_model` consumes the interpretation and returns its
+  canonical `Model` when the report is not needed.
 - `MmcifModelSelection::RequireSingle` is the default and rejects multiple model
   IDs; `Select(String)` and `First` are explicit alternatives.
 - Requires one complete finite position per interpreted atom after deterministic
@@ -75,3 +77,5 @@ into a `Model` with distinct molecule instances and a report.
   format-neutral.
 - v8: Preserve deposited polymer-chain order within merged instances and report
   symmetry-mate connections as unresolved instead of creating local self-bonds.
+- v9: Add `MmcifInterpretation::into_model` for direct consuming access to the
+  canonical model while retaining the report-bearing interpretation contract.
