@@ -47,7 +47,10 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         provenance.atoms()[0].atom().molecule(),
         provenance.molecule()
     );
-    let written = mmcif::write(interpreted.model(), MmcifWriteOptions::default())?;
+    let model = interpreted.into_model();
+    assert_eq!(model.topology().molecule_count(), 1);
+    assert_eq!(model.positions().len(), 2);
+    let written = mmcif::write(&model, MmcifWriteOptions::default())?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written, MmcifParseOptions::default()).is_ok());
 

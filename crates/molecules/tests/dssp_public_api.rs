@@ -16,8 +16,7 @@ fn crambin_model() -> molecules::modeling::Model {
         },
     )
     .expect("checked-in RCSB 1CRN fixture interprets")
-    .into_parts()
-    .0
+    .into_model()
 }
 
 #[test]
