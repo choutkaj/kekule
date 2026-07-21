@@ -17,7 +17,8 @@ from pathlib import Path
 import Bio
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 
-SEED = "molecules-pdb-v2"
+BASE_SEED = "molecular-pdb-v1"
+EXPANSION_SEED = "molecular-pdb-v2"
 CATEGORIES = (
     "multi-model",
     "protein-nucleic-complex",
@@ -35,88 +36,90 @@ SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query"
 def main() -> int:
     repo = Path(__file__).resolve().parents[3]
     corpus_root = repo / "validation" / "corpora"
+    small_root = corpus_root / "pdb-10"
     base_root = corpus_root / "pdb-100"
     target_root = corpus_root / "pdb-1000"
-    base_entries, base_lock_hash = load_base_entries(base_root)
-    selected = {
-        category: [item for item in base_entries if item["category"] == category]
-        for category in CATEGORIES
-    }
-    if any(len(items) != BASE_PER_CATEGORY for items in selected.values()):
-        raise SystemExit("pdb-100 no longer has exactly 20 entries in every category")
-
     holdings_bytes = fetch(HOLDINGS_URL)
     holdings_ids = set(json.loads(holdings_bytes))
-    base_ids = {item["id"] for item in base_entries}
     candidate_pools = {
-        category: sorted(
-            (
-                pdb_id
-                for pdb_id in search_entries(query)
-                if pdb_id in holdings_ids and pdb_id not in base_ids
-            ),
-            key=lambda pdb_id: hashlib.sha256(
-                f"{SEED}:{pdb_id}".encode()
-            ).digest(),
-        )
+        category: [
+            pdb_id for pdb_id in search_entries(query) if pdb_id in holdings_ids
+        ]
         for category, query in selection_queries().items()
     }
-    used_ids = set(base_ids)
-    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
-        for category in CATEGORIES:
-            examined = 0
-            candidates = [
-                pdb_id
-                for pdb_id in candidate_pools[category]
-                if pdb_id not in used_ids
-            ]
-            for start in range(0, len(candidates), 80):
-                batch = candidates[start : start + 80]
-                for result in executor.map(fetch_candidate, batch):
-                    examined += 1
-                    if result is None or result["category"] != category:
-                        continue
-                    selected[category].append(result)
-                    used_ids.add(result["id"])
-                print(
-                    f"category={category} examined={examined} "
-                    f"selected={len(selected[category])}",
-                    flush=True,
-                )
-                if len(selected[category]) >= TARGET_PER_CATEGORY:
-                    selected[category] = selected[category][:TARGET_PER_CATEGORY]
-                    break
-            if len(selected[category]) < TARGET_PER_CATEGORY:
-                raise SystemExit(
-                    f"RCSB candidate pool exhausted before {category} quota was filled"
-                )
-    ordered = base_entries + [
-        selected[category][index]
-        for index in range(BASE_PER_CATEGORY, TARGET_PER_CATEGORY)
-        for category in CATEGORIES
+
+    base_selected, used_ids = select_entries(
+        candidate_pools,
+        BASE_SEED,
+        BASE_PER_CATEGORY,
+        used_ids=set(),
+    )
+    expansion_selected, _ = select_entries(
+        candidate_pools,
+        EXPANSION_SEED,
+        TARGET_PER_CATEGORY - BASE_PER_CATEGORY,
+        used_ids=used_ids,
+    )
+    base_entries = interleave(base_selected, BASE_PER_CATEGORY)
+    small_entries = base_entries[: 2 * len(CATEGORIES)]
+    target_entries = [
+        *base_entries,
+        *interleave(expansion_selected, TARGET_PER_CATEGORY - BASE_PER_CATEGORY),
     ]
+
     holdings_hash = hashlib.sha256(holdings_bytes).hexdigest()
     candidate_pool_hash = hashlib.sha256(
         json.dumps(
-            candidate_pools, sort_keys=True, separators=(",", ":")
+            {category: sorted(ids) for category, ids in candidate_pools.items()},
+            sort_keys=True,
+            separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    source = (
+    base_source = (
         f"RCSB PDB holdings sha256:{holdings_hash}; "
-        f"RCSB Search API candidate pools sha256:{candidate_pool_hash}; "
-        f"pdb-100 lock sha256:{base_lock_hash}"
+        f"RCSB Search API candidate pools sha256:{candidate_pool_hash}"
     )
-    build_tier(target_root, ordered, source)
-    del ordered, selected, candidate_pools
-    write_manifest(base_root, base_entries)
-    del base_entries
+    build_tier(
+        small_root,
+        small_entries,
+        base_source,
+        seed=BASE_SEED,
+        include_mmcif_manifest=False,
+    )
+    build_tier(
+        base_root,
+        base_entries,
+        base_source,
+        seed=BASE_SEED,
+        include_mmcif_manifest=True,
+    )
+    base_lock_hash = hashlib.sha256(
+        (base_root / "sources.lock.json").read_bytes()
+    ).hexdigest()
+    target_source = f"{base_source}; pdb-100 lock sha256:{base_lock_hash}"
+    build_tier(
+        target_root,
+        target_entries,
+        target_source,
+        seed=EXPANSION_SEED,
+        include_mmcif_manifest=True,
+    )
+
     generate_golden(repo, "pdb-100")
     generate_golden(repo, "pdb-1000")
-    dssp_builder = repo / "validation" / "reference" / "biopython" / "build_dssp_validation.py"
+    dssp_builder = (
+        repo
+        / "validation"
+        / "reference"
+        / "biopython"
+        / "build_dssp_validation.py"
+    )
     subprocess.run(
         [
             sys.executable,
             str(dssp_builder),
+            "--corpus",
+            "pdb-10",
             "--corpus",
             "pdb-100",
             "--corpus",
@@ -125,38 +128,65 @@ def main() -> int:
         cwd=repo,
         check=True,
     )
-    mark_ready(target_root)
+    for root in (small_root, base_root, target_root):
+        mark_ready(root)
     return 0
 
 
-def load_base_entries(root: Path) -> tuple[list[dict], str]:
-    lock_path = root / "sources.lock.json"
-    lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    entries = []
-    for entry in lock["entries"]:
-        files = [
-            file for file in entry["files"] if file["record_type"] == "pdbx-mmcif"
-        ]
-        if len(files) != 1:
-            raise SystemExit(f"{entry['id']} does not have exactly one mmCIF file")
-        file = files[0]
-        path = root / file["path"]
-        payload = path.read_bytes() if path.exists() else fetch(file["url"])
-        digest = hashlib.sha256(payload).hexdigest()
-        if digest != file["sha256"]:
-            raise SystemExit(
-                f"{entry['id']} SHA256 mismatch: expected {file['sha256']}, found {digest}"
+def select_entries(
+    candidate_pools: dict[str, list[str]],
+    seed: str,
+    target_per_category: int,
+    *,
+    used_ids: set[str],
+) -> tuple[dict[str, list[dict]], set[str]]:
+    selected = {category: [] for category in CATEGORIES}
+    used = set(used_ids)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
+        for category in CATEGORIES:
+            examined = 0
+            candidates = sorted(
+                (pdb_id for pdb_id in candidate_pools[category] if pdb_id not in used),
+                key=lambda pdb_id: hashlib.sha256(
+                    f"{seed}:{pdb_id}".encode()
+                ).digest(),
             )
-        entries.append(
-            {
-                "id": entry["id"],
-                "category": entry["category"],
-                "url": file["url"],
-                "payload": payload,
-            }
-        )
-    canonical_lock = json.dumps(lock, sort_keys=True, separators=(",", ":")).encode()
-    return entries, hashlib.sha256(canonical_lock).hexdigest()
+            for start in range(0, len(candidates), 80):
+                batch = candidates[start : start + 80]
+                for result in executor.map(fetch_candidate, batch):
+                    examined += 1
+                    if (
+                        result is None
+                        or result["category"] != category
+                        or result["id"] in used
+                    ):
+                        continue
+                    selected[category].append(result)
+                    used.add(result["id"])
+                print(
+                    f"seed={seed} category={category} examined={examined} "
+                    f"selected={len(selected[category])}",
+                    flush=True,
+                )
+                if len(selected[category]) >= target_per_category:
+                    selected[category] = selected[category][:target_per_category]
+                    break
+            if len(selected[category]) < target_per_category:
+                raise SystemExit(
+                    f"RCSB candidate pool exhausted before {category} quota was filled "
+                    f"for seed {seed}"
+                )
+    return selected, used
+
+
+def interleave(
+    selected: dict[str, list[dict]], target_per_category: int
+) -> list[dict]:
+    return [
+        selected[category][index]
+        for index in range(target_per_category)
+        for category in CATEGORIES
+    ]
 
 
 def selection_queries() -> dict[str, dict]:
@@ -283,7 +313,7 @@ def column(raw: dict, name: str) -> list[str]:
 
 
 def fetch(url: str, *, timeout: int = 45, attempts: int = 5) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "molecules-validation/1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "molecular-validation/1"})
     for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -308,7 +338,7 @@ def post_json(url: str, payload: dict) -> dict:
         data=json.dumps(payload, separators=(",", ":")).encode(),
         headers={
             "Content-Type": "application/json",
-            "User-Agent": "molecules-validation/1",
+            "User-Agent": "molecular-validation/1",
         },
     )
     for attempt in range(5):
@@ -329,12 +359,21 @@ def post_json(url: str, payload: dict) -> dict:
     raise RuntimeError("unreachable")
 
 
-def build_tier(root: Path, entries: list[dict], source: str) -> None:
+def build_tier(
+    root: Path,
+    entries: list[dict],
+    source: str,
+    *,
+    seed: str,
+    include_mmcif_manifest: bool,
+) -> None:
     data = root / "data"
-    if data.exists():
-        shutil.rmtree(data)
-    data.mkdir(parents=True)
-    (root / "features").mkdir(parents=True, exist_ok=True)
+    feature_dir = root / "features"
+    golden_dir = root / "golden"
+    for generated_dir in (data, feature_dir, golden_dir):
+        if generated_dir.exists():
+            shutil.rmtree(generated_dir)
+        generated_dir.mkdir(parents=True)
     lock_entries = []
     for item in entries:
         path = data / f"{item['id']}.cif"
@@ -358,14 +397,15 @@ def build_tier(root: Path, entries: list[dict], source: str) -> None:
         "schema_version": 1,
         "corpus_id": root.name,
         "source": source,
-        "selection_seed": SEED,
+        "selection_seed": seed,
         "entries": lock_entries,
         "packs": [],
     }
     (root / "sources.lock.json").write_text(
         json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    write_manifest(root, entries)
+    if include_mmcif_manifest:
+        write_manifest(root, entries)
 
 
 def write_manifest(root: Path, entries: list[dict]) -> None:

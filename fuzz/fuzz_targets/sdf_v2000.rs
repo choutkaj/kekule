@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use molecules::sdf::{interpret, parse_str, write_v2000, SdfParseOptions};
+use molecular::sdf::{interpret, parse_str, write_v2000, SdfParseOptions};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {

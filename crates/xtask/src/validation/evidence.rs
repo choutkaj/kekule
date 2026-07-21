@@ -109,10 +109,10 @@ pub(crate) fn build_validation_evidence_cached(
     );
     paths.insert(repo_root.join("Cargo.toml"));
     paths.insert(repo_root.join("Cargo.lock"));
-    paths.insert(repo_root.join("crates/molecules/Cargo.toml"));
+    paths.insert(repo_root.join("crates/molecular/Cargo.toml"));
     paths.insert(repo_root.join("crates/xtask/Cargo.toml"));
 
-    collect_files(&repo_root.join("crates/molecules/src"), &mut paths)?;
+    collect_files(&repo_root.join("crates/molecular/src"), &mut paths)?;
     collect_files(&repo_root.join("crates/xtask/src"), &mut paths)?;
 
     match manifest.reference_tool.as_str() {

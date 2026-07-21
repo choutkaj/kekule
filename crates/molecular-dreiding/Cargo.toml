@@ -1,0 +1,17 @@
+[package]
+name = "molecular-dreiding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "DREIDING force-field adapter for molecular Model values."
+publish = true
+
+[dependencies]
+dreid-forge = { version = "=0.4.2", default-features = false }
+dreid-kernel = { version = "=0.4.2" }
+molecular = { version = "0.1.0", path = "../molecular" }

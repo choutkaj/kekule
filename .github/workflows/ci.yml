@@ -33,10 +33,10 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
       - name: Check packaged license copies
         run: |
-          cmp LICENSE crates/molecules/LICENSE
-          cmp LICENSE crates/molecules-dreiding/LICENSE
-      - run: cargo package -p molecules --locked
-      - run: cargo package -p molecules-dreiding --locked --no-verify
+          cmp LICENSE crates/molecular/LICENSE
+          cmp LICENSE crates/molecular-dreiding/LICENSE
+      - run: cargo package -p molecular --locked
+      - run: cargo package -p molecular-dreiding --locked --no-verify
       - run: cargo xtask dashboard --check
       - run: cargo xtask skills --check
 

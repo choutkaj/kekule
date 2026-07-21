@@ -9,4 +9,4 @@ depends_on = []
 validation_required = []
 
 # reference = ["rdkit.Chem.example"]
-# public_api = ["molecules::path::function"]
+# public_api = ["molecular::path::function"]

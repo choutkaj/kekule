@@ -7,6 +7,7 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Behavior/API
 
 - Exposes `molfile::write_v2000`.
+- Emits `molecular` as the generated Molfile program identifier.
 - Emits atom coordinates from the first conformer when present, explicitly
   converting compatible length quantities to angstroms.
 - Emits common bond orders plus `M  CHG`, `M  ISO`, and exact `M  RAD` records.

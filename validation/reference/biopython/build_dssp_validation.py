@@ -24,8 +24,8 @@ def main() -> int:
     parser.add_argument(
         "--corpus",
         action="append",
-        choices=("pdb-100", "pdb-1000"),
-        help="Corpus to generate. May be repeated; defaults to both public PDB tiers.",
+        choices=("pdb-10", "pdb-100", "pdb-1000"),
+        help="Corpus to generate. May be repeated; defaults to all PDB tiers.",
     )
     parser.add_argument(
         "--repo-root",
@@ -56,7 +56,7 @@ def main() -> int:
 
     repo = args.repo_root.resolve()
     script = repo / "validation" / "reference" / "biopython" / "run_feature.py"
-    for corpus in args.corpus or ["pdb-100", "pdb-1000"]:
+    for corpus in args.corpus or ["pdb-10", "pdb-100", "pdb-1000"]:
         root = repo / "validation" / "corpora" / corpus
         fixtures = corpus_fixtures(root, corpus)
         manifest = root / "features" / f"{FEATURE_ID}.toml"

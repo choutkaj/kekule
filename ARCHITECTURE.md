@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`molecules` is a pure-Rust foundation for cheminformatics, structural
+`molecular` is a pure-Rust foundation for cheminformatics, structural
 bioinformatics, and molecular modelling. It deliberately serves both small
 molecules and biomolecules without making either file-format records or
 simulation-engine particles the universal data model.
@@ -231,7 +231,7 @@ object may own them, but it must provide explicit mappings between its particles
 and `ModelAtomIndex`/`InstanceAtomId` and remain bound to the model topology it
 was prepared from.
 
-`molecules-dreiding` demonstrates this boundary: preparation iterates molecule
+`molecular-dreiding` demonstrates this boundary: preparation iterates molecule
 instances, performs QEq per instance, accepts eligible Small or Macro instances,
 and produces a topology-bound potential without sanitizing or mutating the model.
 

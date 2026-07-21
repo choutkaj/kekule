@@ -37,7 +37,7 @@ SUPPORTED_FEATURES = {
     "stereo.cip",
 }
 
-HYDROGEN_VALIDATION_INDEX_PROPERTY = "_moleculesValidationOriginalIndex"
+HYDROGEN_VALIDATION_INDEX_PROPERTY = "_molecularValidationOriginalIndex"
 
 BOUNDED_SUBSTRUCTURE_QUERIES = (
     "[#6]",

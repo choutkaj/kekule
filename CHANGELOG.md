@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The project follows Cargo semantic-versioning conventions. During the `0.x`
 series, breaking public API changes increment the minor version.
 
+## Unreleased
+
+- Hard-rename the repository and publishable crates from `molecules` to
+  `molecular`, including the DREIDING adapter, Rust import paths, validation
+  tooling, generated writer provenance, and project branding.
+
 ## 0.1.0 - 2026-07-16
 
 Initial release.

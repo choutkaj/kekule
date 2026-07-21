@@ -7,6 +7,20 @@ fn corpus_data_is_required_only_when_requested() {
     assert!(!corpus_requires_data("pdb-1000", false));
     assert!(corpus_requires_data("pdb-1000", true));
 }
+
+#[test]
+fn tracked_derived_corpora_have_matching_seeds_and_exact_prefixes() {
+    let mut locks = BTreeMap::new();
+    for corpus in ["pubchem-100", "pubchem-1k", "pdb-10", "pdb-100", "pdb-1000"] {
+        let descriptor =
+            read_tracked_corpus_descriptor(corpus).expect("tracked corpus descriptor should parse");
+        let lock = read_source_lock(corpus).expect("tracked source lock should parse");
+        check_corpus_lock(&descriptor, &lock)
+            .expect("tracked descriptor and source lock should agree");
+        locks.insert(corpus.to_owned(), lock);
+    }
+    check_nested_corpora(&locks).expect("derived corpora should be exact prefixes");
+}
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1313,7 +1327,7 @@ fn evidence_changes_after_material_input_changes() {
     let original =
         build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
 
-    fs::write(root.join("crates/molecules/src/lib.rs"), "changed source\n")
+    fs::write(root.join("crates/molecular/src/lib.rs"), "changed source\n")
         .expect("source should mutate");
     let source_changed =
         build_validation_evidence(&root, &manifest_path, &manifest).expect("evidence should build");
@@ -2080,7 +2094,7 @@ fn temp_feature_root(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time should be available")
         .as_nanos();
-    let root = env::temp_dir().join(format!("molecules-xtask-{label}-{}-{nonce}", process::id()));
+    let root = env::temp_dir().join(format!("molecular-xtask-{label}-{}-{nonce}", process::id()));
     fs::create_dir_all(&root).expect("temp feature root should create");
     root
 }
@@ -2141,9 +2155,9 @@ fn write_evidence_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml should write");
     fs::write(root.join("Cargo.lock"), "# lock\n").expect("cargo lock should write");
     for path in [
-        "crates/molecules/Cargo.toml",
+        "crates/molecular/Cargo.toml",
         "crates/xtask/Cargo.toml",
-        "crates/molecules/src/lib.rs",
+        "crates/molecular/src/lib.rs",
         "crates/xtask/src/main.rs",
         "validation/reference/rdkit/run_feature.py",
         "validation/reference/rdkit/environment.yml",

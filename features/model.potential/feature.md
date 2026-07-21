@@ -6,7 +6,7 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
 
 ## Behavior/API
 
-- Exposes `Potential`, `PotentialEvaluation`, `PotentialError`, `PotentialGeometryError`, and `Vector3` under `molecules::modeling::potential`.
+- Exposes `Potential`, `PotentialEvaluation`, `PotentialError`, `PotentialGeometryError`, and `Vector3` under `molecular::modeling::potential`.
 - Requires one finite Cartesian gradient vector per model atom and rejects non-finite energy or gradients.
 - Exposes `HarmonicBondParameter` and `HarmonicBondPotential` for explicit
   `InstanceBondId` parameters; atom errors use `InstanceAtomId` and gradients

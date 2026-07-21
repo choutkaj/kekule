@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use molecules::mmcif::{
+use molecular::mmcif::{
     interpret, parse_str, MmcifEntry, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
 };
 

@@ -1,11 +1,11 @@
 ---
 name: feature-work
-description: Add, plan, implement, or maintain molecules features through the canonical feature workflow. Use for feature metadata, feature.md, implementation, validation fixtures, or dashboard updates.
+description: Add, plan, implement, or maintain molecular features through the canonical feature workflow. Use for feature metadata, feature.md, implementation, validation fixtures, or dashboard updates.
 ---
 
 # Feature Work
 
-Use this skill for builder-mode work in `molecules`.
+Use this skill for builder-mode work in `molecular`.
 
 Canonical flow: add -> optional research -> plan -> implement.
 

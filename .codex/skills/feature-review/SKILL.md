@@ -1,6 +1,6 @@
 ---
 name: feature-review
-description: Independently audit molecules feature work for architecture compliance, correctness, validation claims, tests, resource safety, stale docs, metadata drift, and dashboard or skill synchronization.
+description: Independently audit molecular feature work for architecture compliance, correctness, validation claims, tests, resource safety, stale docs, metadata drift, and dashboard or skill synchronization.
 ---
 
 # Feature Review
