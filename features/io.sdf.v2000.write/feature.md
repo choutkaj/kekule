@@ -7,6 +7,7 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 ## Behavior/API
 
 - Exposes `sdf::write_v2000`.
+- Emits `molecular` as each generated Molfile program identifier.
 - Accepts `&[SdfRecord]`, writes each record title and ordered `SdfDataField`
   values, and never reads SDF metadata from molecule properties.
 - Inherits exact radical and supported source bond-stereo mark handling from the Molfile V2000 writer.

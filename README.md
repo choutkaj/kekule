@@ -1,22 +1,22 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/choutkaj/molecules/main/assets/molecules-logo-dark.svg">
-    <img alt="MOLECULES - cheminformatics in Rust" src="https://raw.githubusercontent.com/choutkaj/molecules/main/assets/molecules-logo-light.svg" width="250">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/choutkaj/molecular/main/assets/molecular-logo-dark.svg">
+    <img alt="MOLECULAR - cheminformatics in Rust" src="https://raw.githubusercontent.com/choutkaj/molecular/main/assets/molecular-logo-light.svg" width="250">
   </picture>
 </p>
 
 <p align="center">
-  <a href="https://github.com/choutkaj/molecules/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/molecules/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/choutkaj/molecules/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
-  <a href="https://github.com/choutkaj/molecules/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://github.com/choutkaj/molecular/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/molecular/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/choutkaj/molecular/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
+  <a href="https://github.com/choutkaj/molecular/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-`molecules` is an experimental pure-Rust chemistry backend scoped for both small molecules and macromolecules. The capabilities are bundled into features, which are parity-checked against established codebases - RDKit for small molecules and Biopython for macromolecules. This project is human-architected and AI-coded.
+`molecular` is an experimental pure-Rust chemistry backend scoped for both small molecules and macromolecules. The capabilities are bundled into features, which are parity-checked against established codebases - RDKit for small molecules and Biopython for macromolecules. This project is human-architected and AI-coded.
 
-For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/molecules/).
+For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/molecular/).
 
 > [!NOTE]
-> `molecules` is in early development. Breaking API changes will happen without notice.
+> `molecular` is in early development. Breaking API changes will happen without notice.
 
 
 ## Concept
@@ -43,7 +43,7 @@ Parse and inspect a simple chiral molecule, assign its stereochemistry, and writ
 ```rust
 use std::error::Error;
 
-use molecules::{perception::stereo, small::SmallMolecule};
+use molecular::{perception::stereo, small::SmallMolecule};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse a chiral amino acid and run the explicit sanitization workflow.
@@ -74,12 +74,12 @@ Load a ligand from SDF, minimize its coordinates with the DREIDING force field, 
 ```rust
 use std::{error::Error, fs};
 
-use molecules::{
+use molecular::{
     modeling::{minimize, MinimizeOptions, Model},
     sdf::{self, SdfParseOptions, SdfRecord},
     units::MODEL_GRADIENT_UNIT,
 };
-use molecules_dreiding::DreidingPotential;
+use molecular_dreiding::DreidingPotential;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and interpret one SDF record without silently sanitizing it.
@@ -144,4 +144,4 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ## License
 
-`molecules` is available under the MIT license.
+`molecular` is available under the MIT license.

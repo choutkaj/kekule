@@ -294,7 +294,7 @@ def dssp_summary(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = parser.get_structure(fixture_path.stem, str(fixture_path))[0]
-            with tempfile.TemporaryDirectory(prefix="molecules-dssp-") as temp_dir:
+            with tempfile.TemporaryDirectory(prefix="molecular-dssp-") as temp_dir:
                 selected_path = Path(temp_dir) / fixture_path.name
                 write_highest_occupancy_snapshot(
                     fixture_path, selected_path, MMCIF2Dict, MMCIFIO

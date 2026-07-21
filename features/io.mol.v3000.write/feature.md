@@ -7,6 +7,7 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 ## Behavior/API
 
 - Exposes `molfile::write_v3000`.
+- Emits `molecular` as the generated Molfile program identifier.
 - Emits three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND` sections in graph order.
 - Emits neutral generated headers plus coordinates from the first conformer,
   bond orders, maps, charges, isotopes, radicals, and supported source `CFG`

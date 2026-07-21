@@ -7,7 +7,7 @@ elements.
 
 ## Behavior/API
 
-`molecules::perception::stereo` exposes:
+`molecular::perception::stereo` exposes:
 
 - `assign_cip_descriptors`
 - `assign_cip_descriptors_with_options`

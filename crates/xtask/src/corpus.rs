@@ -48,6 +48,14 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         );
         locks.insert((*corpus_id).to_owned(), lock);
     }
+    for corpus_id in ["pubchem-100", "pubchem-1k", "pdb-10", "pdb-100", "pdb-1000"] {
+        if !locks.contains_key(corpus_id) {
+            let descriptor = read_tracked_corpus_descriptor(corpus_id)?;
+            let lock = read_source_lock(corpus_id)?;
+            check_corpus_lock(&descriptor, &lock)?;
+            locks.insert(corpus_id.to_owned(), lock);
+        }
+    }
     check_nested_corpora(&locks)?;
     Ok(())
 }
@@ -221,10 +229,8 @@ pub(crate) fn corpus_descriptor_path(corpus: &str) -> PathBuf {
 }
 
 pub(crate) fn read_corpus_descriptor(corpus: &str) -> Result<CorpusDescriptor, Box<dyn Error>> {
+    let descriptor = read_tracked_corpus_descriptor(corpus)?;
     let path = corpus_descriptor_path(corpus);
-    let text = fs::read_to_string(&path)?;
-    let descriptor: CorpusDescriptor = toml::from_str(&text)
-        .map_err(|error| boxed_error(format!("{}: {error}", path.display())))?;
     let registered = validation_corpus(corpus)
         .ok_or_else(|| boxed_error(format!("unknown validation corpus `{corpus}`")))?;
     if descriptor.id != registered.id {
@@ -241,6 +247,24 @@ pub(crate) fn read_corpus_descriptor(corpus: &str) -> Result<CorpusDescriptor, B
             path.display(),
             descriptor.local_only,
             registered.local_only
+        )));
+    }
+    Ok(descriptor)
+}
+
+pub(crate) fn read_tracked_corpus_descriptor(
+    corpus: &str,
+) -> Result<CorpusDescriptor, Box<dyn Error>> {
+    let path = corpus_descriptor_path(corpus);
+    let text = fs::read_to_string(&path)?;
+    let descriptor: CorpusDescriptor = toml::from_str(&text)
+        .map_err(|error| boxed_error(format!("{}: {error}", path.display())))?;
+    if descriptor.id != corpus {
+        return Err(boxed_error(format!(
+            "{} declares id `{}`, expected `{}`",
+            path.display(),
+            descriptor.id,
+            corpus
         )));
     }
     Ok(descriptor)
@@ -542,7 +566,11 @@ pub(crate) fn check_data_file(
 pub(crate) fn check_nested_corpora(
     locks: &BTreeMap<String, SourceLock>,
 ) -> Result<(), Box<dyn Error>> {
-    for (child, parent) in [("pdb-100", "pdb-1000")] {
+    for (child, parent) in [
+        ("pubchem-100", "pubchem-1k"),
+        ("pdb-10", "pdb-100"),
+        ("pdb-100", "pdb-1000"),
+    ] {
         let (Some(child_lock), Some(parent_lock)) = (locks.get(child), locks.get(parent)) else {
             continue;
         };

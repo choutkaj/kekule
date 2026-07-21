@@ -1,4 +1,4 @@
-name: molecules-biopython-reference
+name: molecular-biopython-reference
 channels:
   - conda-forge
 dependencies:

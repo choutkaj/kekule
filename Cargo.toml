@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/molecules",
-    "crates/molecules-dreiding",
+    "crates/molecular",
+    "crates/molecular-dreiding",
     "crates/xtask",
 ]
 
@@ -10,7 +10,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.89"
-repository = "https://github.com/choutkaj/molecules"
+repository = "https://github.com/choutkaj/molecular"
 license = "MIT"
 readme = "README.md"
 keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]

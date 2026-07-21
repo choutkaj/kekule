@@ -16,23 +16,23 @@ micromamba create -f validation/reference/biopython/environment.yml
 Run dependency checks through those environments:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus pubchem-1k --check-deps
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus pdb-100 --check-deps
+micromamba run -n molecular-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus pubchem-1k --check-deps
+micromamba run -n molecular-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus pdb-100 --check-deps
 ```
 
 Generate feature goldens:
 
 ```bash
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus pubchem-1k
-micromamba run -n molecules-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like --corpus pubchem-1k
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus pdb-100
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/build_dssp_validation.py --corpus pdb-100 --jobs 4
+micromamba run -n molecular-rdkit-reference python validation/reference/rdkit/run_feature.py --feature io.sdf.v2000.parse --corpus pubchem-1k
+micromamba run -n molecular-rdkit-reference python validation/reference/rdkit/run_feature.py --feature algo.aromaticity.rdkit-like --corpus pubchem-1k
+micromamba run -n molecular-biopython-reference python validation/reference/biopython/run_feature.py --feature io.mmcif.parse --corpus pdb-100
+micromamba run -n molecular-biopython-reference python validation/reference/biopython/build_dssp_validation.py --corpus pdb-100 --jobs 4
 ```
 
 Construct or refresh the nested macromolecular tiers with:
 
 ```bash
-micromamba run -n molecules-biopython-reference python validation/reference/biopython/build_corpus.py
+micromamba run -n molecular-biopython-reference python validation/reference/biopython/build_corpus.py
 ```
 
 The PDB builder intersects the current RCSB holdings with typed RCSB Search API candidate pools, ranks each category deterministically from the corpus seed, verifies the downloaded mmCIF records, and preserves PDB-100 as the exact prefix of PDB-1000.

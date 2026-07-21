@@ -8,7 +8,7 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 ## Behavior/API
 
 - Exposes `DreidingPotential` and `DreidingPrepareError` from the separate
-  `molecules-dreiding` crate.
+  `molecular-dreiding` crate.
 - Prepares a potential with `DreidingPotential::prepare(&Model)` and implements
   the core `Potential` evaluation contract.
 - Binds preparation to the source model definition, accepting coordinate-modified clones
@@ -26,7 +26,7 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
 - Uses the shared model-definition key rather than rebuilding an adapter-specific topology
   signature during each evaluation.
 - Maps aromatic-flagged localized single and double bonds to DREIDING aromatic bonds
-  without changing the bond orders stored by Molecules.
+  without changing the bond orders stored by Molecular.
 - Runs QEq separately for each molecule instance using its formal-charge sum and keeps the
   resulting charges fixed during evaluation and minimization.
 - Evaluates harmonic bonds, cosine angles, torsions, inversions, Lennard-Jones,

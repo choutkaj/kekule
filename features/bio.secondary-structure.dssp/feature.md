@@ -14,7 +14,7 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 
 ## Behavior/API
 
-- The public namespace is `molecules::dssp`.
+- The public namespace is `molecular::dssp`.
 - The primary entry point is
   `dssp::assign(&Model, DsspOptions) -> Result<DsspResult, DsspError>`.
 - Input is one already-constructed `Model`, whose positions are the sole
@@ -54,8 +54,8 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 
 ## Implementation Notes
 
-- The algorithm lives inside the `molecules` crate behind the focused
-  `molecules::dssp` facade. Do not create a separate DSSP crate or a runtime
+- The algorithm lives inside the `molecular` crate behind the focused
+  `molecular::dssp` facade. Do not create a separate DSSP crate or a runtime
   binding to `libdssp`.
 - Use `SmcraHierarchy` chain and residue order plus atom-site labels to identify
   peptide backbone atoms. Preserve author and label identifiers only as source

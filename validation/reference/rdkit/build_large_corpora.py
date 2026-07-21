@@ -17,7 +17,7 @@ from rdkit import Chem, RDLogger, rdBase
 
 RDLogger.DisableLog("rdApp.*")
 
-PUBCHEM_SEED = "molecules-pubchem-100k-v1"
+PUBCHEM_SEED = "molecular-pubchem-100k-v1"
 PUBCHEM_TARGET = 100_000
 PUBCHEM_CID_MAX = 500_000
 PUBCHEM_PACK_SIZE = 1_000
@@ -50,6 +50,9 @@ SDF_FEATURES = (
 )
 SMILES_FEATURES = ("io.smiles.parse", "io.smiles.write", "io.smiles.canonical")
 ENAMINE_SMILES_FEATURES = ("io.smiles.parse", "io.smiles.write")
+PUBCHEM_100K_SDF_FEATURES = (*SDF_FEATURES, "algo.canonical-ranking")
+PUBCHEM_100K_SMILES_FEATURES = (*SMILES_FEATURES, "stereo.cip")
+PUBCHEM_MANUAL_SMILES_FEATURES = ("stereo.perception", "stereo.representation")
 
 
 def main() -> int:
@@ -86,7 +89,12 @@ def main() -> int:
         elif corpus == "pubchem-100k":
             build_pubchem_100k(repo)
             if not args.skip_goldens:
-                generate_goldens(repo, corpus, (*SDF_FEATURES, *SMILES_FEATURES))
+                generate_goldens(
+                    repo,
+                    corpus,
+                    (*PUBCHEM_100K_SDF_FEATURES, *PUBCHEM_100K_SMILES_FEATURES),
+                )
+                generate_manual_goldens(repo, corpus)
     return 0
 
 
@@ -308,8 +316,9 @@ def build_pubchem_100k(repo: Path) -> None:
     )
     reset_dir(root / "features")
     reset_dir(root / "golden")
-    write_manifests(root, SDF_FEATURES, sdf_fixtures)
-    write_manifests(root, SMILES_FEATURES, smiles_fixtures)
+    write_manifests(root, PUBCHEM_100K_SDF_FEATURES, sdf_fixtures)
+    write_manifests(root, PUBCHEM_100K_SMILES_FEATURES, smiles_fixtures)
+    write_manual_manifests(root, smiles_fixtures)
 
 
 def load_pubchem_smiles(snapshot: Path) -> dict[str, str]:
@@ -484,6 +493,11 @@ def write_manifests(root: Path, features: tuple[str, ...], fixtures: list[str]) 
     manifest_dir.mkdir(parents=True, exist_ok=True)
     array = ",\n".join(f'  "{fixture}"' for fixture in fixtures)
     for feature in features:
+        notes = manifest_notes(root.name, feature)
+        notes_text = ""
+        if notes:
+            notes_array = "\n".join(f'  "{note}",' for note in notes)
+            notes_text = f"\nnotes = [\n{notes_array}\n]\n"
         text = (
             f'feature_id = "{feature}"\n'
             f'corpus_id = "{root.name}"\n'
@@ -491,8 +505,53 @@ def write_manifests(root: Path, features: tuple[str, ...], fixtures: list[str]) 
             f'reference_version = "RDKit {rdBase.rdkitVersion}"\n'
             'comparison_mode = "implementation-golden"\n\n'
             f"fixtures = [\n{array},\n]\n"
+            f"{notes_text}"
         )
         (manifest_dir / f"{feature}.toml").write_text(text, encoding="utf-8", newline="\n")
+
+
+def manifest_notes(corpus: str, feature: str) -> tuple[str, ...]:
+    if corpus == "pubchem-100k" and feature == "algo.canonical-ranking":
+        return (
+            "Reference RDKit goldens compare non-stereo atom symmetry partitions, not numeric rank labels.",
+        )
+    if corpus == "pubchem-100k" and feature == "stereo.cip":
+        return (
+            "Externally supplied PubChem isomeric SMILES packs provide large small-molecule CIP parity coverage.",
+            "Goldens compare RDKit-backed CIP atom and bond descriptor maps, not bytewise SMILES spelling or internal stereo element IDs.",
+        )
+    return ()
+
+
+def write_manual_manifests(root: Path, fixtures: list[str]) -> None:
+    manifest_dir = root / "features"
+    array = ",\n".join(f'  "{fixture}"' for fixture in fixtures)
+    subjects = {
+        "stereo.perception": (
+            "stereo perception regression coverage",
+            "semantic stereo perception reports and resulting stereo elements",
+        ),
+        "stereo.representation": (
+            "stereo representation regression coverage",
+            "semantic stereo elements, stereo groups, and source bond marks",
+        ),
+    }
+    for feature, (coverage, comparison) in subjects.items():
+        text = (
+            f'feature_id = "{feature}"\n'
+            f'corpus_id = "{root.name}"\n'
+            'reference_tool = "pubchem-manual-semantic"\n'
+            'reference_version = "PubChem PUG REST 2026-07-05"\n'
+            'comparison_mode = "implementation-golden"\n\n'
+            f"fixtures = [\n{array},\n]\n\n"
+            "notes = [\n"
+            f'  "Externally supplied PubChem isomeric SMILES packs provide large small-molecule {coverage}.",\n'
+            f'  "Goldens compare {comparison}, not bytewise SMILES spelling.",\n'
+            "]\n"
+        )
+        (manifest_dir / f"{feature}.toml").write_text(
+            text, encoding="utf-8", newline="\n"
+        )
 
 
 def generate_goldens(repo: Path, corpus: str, features: tuple[str, ...]) -> None:
@@ -504,6 +563,24 @@ def generate_goldens(repo: Path, corpus: str, features: tuple[str, ...]) -> None
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+        )
+
+
+def generate_manual_goldens(repo: Path, corpus: str) -> None:
+    for feature in PUBCHEM_MANUAL_SMILES_FEATURES:
+        subprocess.run(
+            [
+                "cargo",
+                "xtask",
+                "validate",
+                "--feature",
+                feature,
+                "--corpus",
+                corpus,
+                "--accept-implementation-goldens",
+            ],
+            cwd=repo,
+            check=True,
         )
 
 

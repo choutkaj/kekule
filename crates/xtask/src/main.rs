@@ -8,7 +8,7 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::{read::GzDecoder, Compression, GzBuilder};
-use molecules::{
+use molecular::{
     canon,
     core::{
         Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondId, BondOrder, DoubleBondOrientation,
