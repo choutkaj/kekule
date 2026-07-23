@@ -40,6 +40,39 @@ jobs:
       - run: cargo xtask dashboard --check
       - run: cargo xtask skills --check
 
+  molstudio-consumer:
+    name: MolStudio consumer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Molecular candidate
+        uses: actions/checkout@v7
+        with:
+          path: molecular
+
+      - name: Checkout MolStudio
+        uses: actions/checkout@v7
+        with:
+          repository: choutkaj/molstudio
+          path: molstudio
+
+      - uses: dtolnay/rust-toolchain@1.89.0
+
+      - name: Patch MolStudio to the Molecular candidate
+        run: |
+          mkdir -p molstudio/.cargo
+          cat > molstudio/.cargo/config.toml <<'EOF'
+          [patch."https://github.com/choutkaj/molecular.git"]
+          molecular = { path = "../../molecular/crates/molecular" }
+          EOF
+
+      - name: Check MolStudio against the candidate
+        working-directory: molstudio
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Test MolStudio against the candidate
+        working-directory: molstudio
+        run: cargo test --workspace --locked
+
   fuzz-smoke:
     name: Parser fuzz smoke
     runs-on: ubuntu-latest

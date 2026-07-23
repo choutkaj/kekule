@@ -221,7 +221,11 @@ pub(crate) struct SourcePack {
 }
 
 pub(crate) fn corpus_root(corpus: &str) -> PathBuf {
-    Path::new("validation").join("corpora").join(corpus)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("validation")
+        .join("corpora")
+        .join(corpus)
 }
 
 pub(crate) fn corpus_descriptor_path(corpus: &str) -> PathBuf {
