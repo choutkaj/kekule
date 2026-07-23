@@ -56,6 +56,19 @@ fn element_symbol_and_display_are_canonical() {
 }
 
 #[test]
+fn element_exposes_foundational_covalent_radii() {
+    let hydrogen = Element::from_symbol("H").expect("hydrogen");
+    let carbon = Element::from_symbol("C").expect("carbon");
+    let curium = Element::from_symbol("Cm").expect("curium");
+    let oganesson = Element::from_symbol("Og").expect("oganesson");
+
+    assert_eq!(hydrogen.covalent_radius_angstrom(), Some(0.31));
+    assert_eq!(carbon.covalent_radius_angstrom(), Some(0.76));
+    assert_eq!(curium.covalent_radius_angstrom(), Some(1.69));
+    assert_eq!(oganesson.covalent_radius_angstrom(), None);
+}
+
+#[test]
 fn atom_new_sets_chemically_general_defaults() {
     let atom = carbon();
 
