@@ -88,6 +88,10 @@ pub enum MmcifInterpretIssue {
         atom_name: String,
         alt_id: Option<String>,
     },
+    CovalentBondsInferred {
+        atom_count: usize,
+        bond_count: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +182,7 @@ pub struct MmcifInterpretationReport {
     pub(crate) small_molecules: usize,
     pub(crate) solvent_molecules: usize,
     pub(crate) applied_connections: usize,
+    pub(crate) inferred_bonds: usize,
     pub(crate) template_bonds_pending: usize,
     pub(crate) instances: Vec<MmcifInstanceProvenance>,
     pub(crate) issues: Vec<MmcifInterpretIssue>,
@@ -218,6 +223,10 @@ impl MmcifInterpretationReport {
 
     pub const fn applied_connections(&self) -> usize {
         self.applied_connections
+    }
+
+    pub const fn inferred_bonds(&self) -> usize {
+        self.inferred_bonds
     }
 
     pub const fn template_bonds_pending(&self) -> usize {
@@ -1117,6 +1126,16 @@ fn build_molecule(
             }
         }
     }
+    let inferred_bonds = infer_covalent_bonds(&mut graph, &representative, &atoms)?;
+    if inferred_bonds > 0 {
+        report.inferred_bonds += inferred_bonds;
+        report
+            .issues
+            .push(MmcifInterpretIssue::CovalentBondsInferred {
+                atom_count: graph.atom_count(),
+                bond_count: inferred_bonds,
+            });
+    }
     let asym_ids = representative
         .iter()
         .map(|(_, row)| row)
@@ -1201,6 +1220,96 @@ fn build_molecule(
             provenance,
         })
     }
+}
+
+const COVALENT_BOND_CELL_ANGSTROM: f64 = 2.1;
+const COVALENT_BOND_TOLERANCE_ANGSTROM: f64 = 0.45;
+const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
+const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
+
+fn infer_covalent_bonds(
+    graph: &mut Molecule,
+    representative: &[(String, AtomRow)],
+    atoms: &BTreeMap<String, AtomId>,
+) -> Result<usize, MmcifInterpretError> {
+    let mut cells = BTreeMap::<[i64; 3], Vec<usize>>::new();
+    let mut inferred = 0usize;
+
+    for (right_index, (right_key, right_row)) in representative.iter().enumerate() {
+        let right_point = right_row
+            .point
+            .expect("selected mmCIF atom rows have complete positions");
+        let right_cell = covalent_bond_cell(right_point);
+        for offset_x in -1..=1 {
+            for offset_y in -1..=1 {
+                for offset_z in -1..=1 {
+                    let neighbor = [
+                        right_cell[0] + offset_x,
+                        right_cell[1] + offset_y,
+                        right_cell[2] + offset_z,
+                    ];
+                    let Some(left_indexes) = cells.get(&neighbor) else {
+                        continue;
+                    };
+                    for &left_index in left_indexes {
+                        let (left_key, left_row) = &representative[left_index];
+                        let left_point = left_row
+                            .point
+                            .expect("selected mmCIF atom rows have complete positions");
+                        let distance_squared = point_distance_squared(left_point, right_point);
+                        if distance_squared <= MIN_COVALENT_BOND_DISTANCE_SQUARED {
+                            continue;
+                        }
+                        let left_radius = left_row
+                            .element
+                            .covalent_radius_angstrom()
+                            .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM);
+                        let right_radius = right_row
+                            .element
+                            .covalent_radius_angstrom()
+                            .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM);
+                        let cutoff =
+                            (left_radius + right_radius + COVALENT_BOND_TOLERANCE_ANGSTROM)
+                                .min(COVALENT_BOND_CELL_ANGSTROM);
+                        if distance_squared > cutoff * cutoff {
+                            continue;
+                        }
+
+                        let left = atoms[left_key];
+                        let right = atoms[right_key];
+                        if graph
+                            .bond_between(left, right)
+                            .map_err(graph_error)?
+                            .is_none()
+                        {
+                            graph
+                                .add_bond(left, right, BondOrder::Single)
+                                .map_err(graph_error)?;
+                            inferred += 1;
+                        }
+                    }
+                }
+            }
+        }
+        cells.entry(right_cell).or_default().push(right_index);
+    }
+
+    Ok(inferred)
+}
+
+fn covalent_bond_cell(point: Point3) -> [i64; 3] {
+    [
+        (point.x / COVALENT_BOND_CELL_ANGSTROM).floor() as i64,
+        (point.y / COVALENT_BOND_CELL_ANGSTROM).floor() as i64,
+        (point.z / COVALENT_BOND_CELL_ANGSTROM).floor() as i64,
+    ]
+}
+
+fn point_distance_squared(left: Point3, right: Point3) -> f64 {
+    let dx = left.x - right.x;
+    let dy = left.y - right.y;
+    let dz = left.z - right.z;
+    dx * dx + dy * dy + dz * dz
 }
 
 fn build_hierarchy(

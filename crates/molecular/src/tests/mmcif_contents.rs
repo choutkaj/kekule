@@ -176,6 +176,29 @@ fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
     assert_eq!(first_provenance.asym_ids, vec!["A"]);
     assert_eq!(first_provenance.entity_ids, vec!["1"]);
     assert_eq!(first_provenance.atoms[0].atom_name, "N");
+    assert_eq!(model.topology().bonds().count(), 1);
+    assert_eq!(interpreted.report().inferred_bonds(), 1);
+    assert!(interpreted.report().issues().iter().any(|issue| matches!(
+        issue,
+        mmcif::MmcifInterpretIssue::CovalentBondsInferred {
+            atom_count: 2,
+            bond_count: 1,
+        }
+    )));
+}
+
+#[test]
+fn mmcif_covalent_inference_connects_atoms_across_spatial_cells_without_contacts() {
+    let input = MIXED.replace(
+        "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
+        "ATOM 2 C CA GLY A 1 1 1.45 0.0 0.0 1\nATOM 5 C C GLY A 1 1 2.90 0.0 0.0 1",
+    );
+    let interpreted = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    let polymer = interpreted.model().topology().molecules().next().unwrap().1;
+
+    assert_eq!(polymer.graph().atom_count(), 3);
+    assert_eq!(polymer.graph().bond_count(), 2);
+    assert_eq!(interpreted.report().inferred_bonds(), 2);
 }
 
 #[test]
