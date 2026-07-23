@@ -54,6 +54,8 @@ jobs:
         with:
           repository: choutkaj/molstudio
           path: molstudio
+          token: ${{ secrets.MOLSTUDIO_READ_TOKEN }}
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@1.89.0
 
