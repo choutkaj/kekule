@@ -62,12 +62,14 @@ jobs:
           mkdir -p molstudio/.cargo
           cat > molstudio/.cargo/config.toml <<'EOF'
           [patch."https://github.com/choutkaj/molecular.git"]
-          molecular = { path = "../../molecular/crates/molecular" }
+          molecular = { path = "../molecular/crates/molecular" }
           EOF
 
       - name: Check MolStudio against the candidate
         working-directory: molstudio
-        run: cargo check --workspace --all-targets --locked
+        run: |
+          cargo update -p molecular
+          cargo check --workspace --all-targets --locked
 
       - name: Test MolStudio against the candidate
         working-directory: molstudio
