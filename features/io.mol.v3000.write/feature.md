@@ -29,26 +29,30 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
   quartet/quintet radicals return a structured error because V3000 defines no
   lossless code for them.
 
-## Validation
+## Tests
 
 - Unit tests cover writer parse-back preservation for metadata, coordinates, atom maps, charges, isotopes, radicals, and supported source bond stereo marks.
 - A dedicated bounded fuzz target exercises V3000 parse, interpretation, write,
   and reparse in CI smoke tests and scheduled campaigns.
+
+## Benchmarks
+
 - RDKit-generated goldens compare Molfile-preservable content for the same external PubChem fixtures used by the V2000 writer tier.
 - PubChem-1k is required baseline evidence; manifest-backed broader corpora
   remain available for deliberate local parity checks.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-
 SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom stereochemistry, enhanced stereochemistry collections, full MDL property coverage, sanitization, and runtime RDKit.
 
 ## Revision Notes
 
 - v1: Feature contract reserved.
 - v2: Molfile V3000 writer for the parser-supported raw graph subset.
-- v3: Declare the same required small-molecule validation corpora as V2000 Molfile writing.
+- v3: Declare the same required small-molecule benchmark corpora as V2000 Molfile writing.
 - v4: Move the public writer API under the `molfile` facade.
-- v5: Add PubChem-100k as required broad-corpus validation evidence.
+- v5: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v6: Read supported V3000 bond `CFG` output from source bond marks and reject stored stereo elements.
 - v7: Reject quartet/quintet radical multiplicity explicitly instead of
   silently mapping an unrepresentable high-spin state.
@@ -59,4 +63,5 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
 - v10: Convert explicit conformer length units to the CTfile angstrom convention.
 - v11: Add a dedicated bounded V3000 parse/interpret/write round-trip fuzz
   target to CI and scheduled campaigns.
-- v12: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v12: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

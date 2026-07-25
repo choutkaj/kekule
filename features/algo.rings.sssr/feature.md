@@ -31,11 +31,16 @@ Compute a compact ring basis for downstream small-molecule perception.
 - Defaults allow 1,000,000 atoms, 2,000,000 bonds, 100,000 candidates, 2,000,000 path expansions, 100,000 equivalent shortest paths, cycles up to 4,096 atoms, and 5,000,000 total work units.
 - The graph limits accommodate large sparse molecular inputs; candidate/path limits bound symmetric-cycle growth well above observed required corpora.
 
-## Validation
+## Tests
 
 - Unit tests cover monocyclic, fused, and disconnected cases.
 - Adversarial tests cover long chains, ladders, theta graphs, fused/bridged systems, symmetric cages, and disconnected mixtures using work counters rather than timing.
+
+## Benchmarks
+
 - RDKit-generated goldens compare ring atom sets for external PubChem fixtures.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -49,7 +54,7 @@ Compute a compact ring basis for downstream small-molecule perception.
 - v4: Hide and clear cached ring sets after invalidating mutations.
 - v5: Add bounded work instrumentation, structured resource errors, configurable limits, and iterative shortest-path reconstruction.
 - v6: Move the public expert API under the `perception::rings` facade.
-- v7: Add PubChem-100k as required broad-corpus validation evidence.
+- v7: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v8: Replace per-bond shortest-path enumeration with RDKit's degree-trimming
   candidate discovery and exact same-size, shared-bond,
   unique-bond-preserving SSSR replacement rule.
@@ -59,4 +64,5 @@ Compute a compact ring basis for downstream small-molecule perception.
   an explicit coverage error separately from resource exhaustion; add a
   bounded fundamental-cycle fallback when edge-local shortest cycles leave a
   cyclic bond uncovered, while preserving RDKit cage-system ring counts.
-- v12: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v12: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

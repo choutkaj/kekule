@@ -32,10 +32,15 @@ Provide conservative valence perception for common organic molecules.
   valence-implied tetrahedral hydrogen carriers during Molfile parsing.
 - Perception state is marked fresh only after the pass completes.
 
-## Validation
+## Tests
 
 - Unit tests cover neutral organics, charged species, and valence error reporting.
+
+## Benchmarks
+
 - RDKit-generated goldens compare valence status, explicit valence, and implicit hydrogen assignments for external PubChem fixtures.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -45,13 +50,13 @@ Provide conservative valence perception for common organic molecules.
 ## Revision Notes
 
 - v1: Conservative valence perception.
-- v2: Validation contract narrowed to valence-specific outputs and passes the RDKit-backed `smoke` corpus.
+- v2: Benchmark contract narrowed to valence-specific outputs and matched the RDKit-backed `smoke` corpus.
 - v3: Add corpus-driven RDKit-compatible valence cases for charged halides, boron anions, alkali counterions, hypervalent halogens, and simple mercury salts.
 - v4: Expand corpus-driven RDKit-compatible valence cases for PubChem-100 salts, silicon, phosphonium, and selected metal centers.
 - v5: Generalize pubchem-1k-driven valence handling for transition-metal coordination, group-14/group-15 heavy elements, oxonium centers, chalcogens, and radicals; pubchem-1k still requires further table coverage.
 - v6: Add aromatic imported-SMILES valence targets so lowercase aromatic systems sanitize with RDKit-like hydrogen counts.
 - v7: Move the public expert API under the `perception::valence` facade.
-- v8: Add PubChem-100k as required broad-corpus validation evidence.
+- v8: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v9: Expand RDKit-like simple-ion and main-group valence support for PubChem salts while leaving actinide and coordination-heavy cases as structured unsupported chemistry.
 - v10: Allow isolated unsupported atoms as zero-valence spectators so disconnected PubChem salt fragments do not block sanitization of descriptor-bearing organic components.
 - v11: Add strict/permissive options, charge-adjusted isoelectronic valence
@@ -64,4 +69,5 @@ Provide conservative valence perception for common organic molecules.
   fixed/unrestricted valence table and isoelectronic rules, restore RDKit-like
   hydrogens for neutral electropositive atoms, include radical electrons, and
   widen valence accounting to graph-sized integers.
-- v15: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v15: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v16: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

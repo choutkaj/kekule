@@ -35,7 +35,7 @@ Match a syntax-independent `QueryGraph` against a concrete `Molecule` with deter
   absolute stack-safety ceiling; callers may lower but not raise it.
 - Target and candidate iteration follow stable IDs, giving deterministic output.
 
-## Validation
+## Tests
 
 - Unit regressions cover programmatic IR matching, SMARTS-produced queries,
   logical precedence, non-induced and disconnected matching, automorphism

@@ -29,7 +29,7 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - Stores label and author component IDs separately on residues.
 - mmCIF interpretation populates hierarchy only after molecular boundaries and alternate locations have been resolved.
 
-## Validation
+## Tests
 
 - Unit tests cover hierarchy construction, checked assembly, transactional
   mutation, lookup, validation, and failed-commit rollback.

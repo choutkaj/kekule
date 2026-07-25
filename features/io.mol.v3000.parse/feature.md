@@ -43,26 +43,30 @@ Interpret V3000 records from the version-autodetected loss-preserving
 - Coordinates are interpreted as angstrom quantities and stored in the first
   conformer with that explicit unit.
 
-## Validation
+## Tests
 
 - Unit tests cover successful raw parsing, line continuations, metadata fields, no-perception behavior, malformed counts, count mismatches, non-finite coordinates, bad endpoints, supported source bond stereo marks, unsupported atom stereo, and unsupported bond types.
 - A dedicated bounded fuzz target exercises V3000 parse, interpretation, write,
   and reparse in CI smoke tests and scheduled campaigns.
+
+## Benchmarks
+
 - RDKit-generated goldens compare Molfile-preserved atom, bond, metadata, and coordinate records for the same external PubChem fixtures used by the V2000 parser tier.
 - PubChem-1k is required baseline evidence; manifest-backed broader corpora
   remain available for deliberate local parity checks.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-
 SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistry, enhanced stereochemistry collections, full MDL property coverage, sanitization, and runtime RDKit.
 
 ## Revision Notes
 
 - v1: Feature contract reserved.
 - v2: Raw Molfile V3000 parser for CTAB atoms, bonds, coordinates, common atom metadata, and supported bond stereo.
-- v3: Declare the same required small-molecule validation corpora as V2000 Molfile parsing.
+- v3: Declare the same required small-molecule benchmark corpora as V2000 Molfile parsing.
 - v4: Move the public parser API under the `molfile` facade.
-- v5: Add PubChem-100k as required broad-corpus validation evidence.
+- v5: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v6: Store supported V3000 bond `CFG` values as first-class source bond marks.
 - v7: Preserve valence-implied tetrahedral hydrogen carriers from V3000 `CFG`
   syntax using the shared RDKit-like allowed-valence table.
@@ -87,4 +91,5 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 - v16: Require exactly one CTAB, ATOM, and BOND section-control pair and place
   the sole COUNTS record before ATOM, closing remaining structural
   record-discard paths.
-- v17: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v17: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v18: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

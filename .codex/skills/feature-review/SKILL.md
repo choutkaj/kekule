@@ -1,6 +1,6 @@
 ---
 name: feature-review
-description: Independently audit molecular feature work for architecture compliance, correctness, validation claims, tests, resource safety, stale docs, metadata drift, and dashboard or skill synchronization.
+description: Independently audit molecular feature work for architecture compliance, correctness, benchmark claims, tests, resource safety, stale docs, metadata drift, and dashboard or skill synchronization.
 ---
 
 # Feature Review
@@ -10,7 +10,7 @@ Use this skill for independent audit, not builder-mode implementation.
 ## Start
 
 1. Read `ARCHITECTURE.md`, `AGENTS.md`, and every affected `features/<feature-id>/` directory.
-2. Read `feature.toml`, `feature.md`, related validation manifests, relevant code, and public examples.
+2. Read `feature.toml`, `feature.md`, related benchmark manifests when present, relevant code, and public examples.
 3. Keep the review scoped to the selected feature IDs and direct infrastructure support.
 
 ## Review focus
@@ -25,7 +25,8 @@ Lead with findings ordered by severity. Check:
 - Structured errors for untrusted input.
 - Non-lossy parser/writer round trips and explicit rejection of unsupported chemistry.
 - Algorithmic resource limits and stack safety where relevant.
-- Validation claims, per-corpus parity evidence, manifest hashes, and evidence freshness.
+- Benchmark claims and the exact scope/timestamp of any deliberately recorded
+  per-corpus observation. Treat snapshots as informational, not feature health.
 - Feature status accuracy and dependency-graph integrity, including maturity
   compatibility, unknown prerequisites, duplicates, self-dependencies, and
   cycles.
@@ -44,11 +45,19 @@ cargo test --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask corpus check --corpus <corpus-id> --require-data
-cargo xtask validate --feature <feature-id> --corpus <corpus-id>
 ```
 
 Report every check that was not run.
+
+If benchmark artifacts changed, verify the applicable optional integrity check:
+
+```bash
+cargo xtask corpus check --corpus <corpus-id> --require-data
+```
+
+Run `cargo xtask benchmark --feature <feature-id> --corpus <corpus-id>` only
+when specifically useful to the review. A benchmark match is not an acceptance
+gate, and a difference is not repository-health failure.
 
 ## Output
 

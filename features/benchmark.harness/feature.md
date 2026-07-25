@@ -83,9 +83,9 @@ release status, CI success, or whether the repository is ready for development.
 
 ## Revision Notes
 
-- v1-v40: Evolved the former required external-parity validation harness,
+- v1-v40: Evolved the former required external-parity harness,
   corpus layout, evidence snapshots, parallel comparison, and integrity tools.
-- v41: Rename external parity validation to optional benchmarking, remove the
+- v41: Recast the required external-parity layer as optional benchmarking, remove the
   validation CLI and required-manifest schema, default to PubChem-1k/PDB-100,
   record neutral match/difference/error observations, migrate legacy snapshots,
   and make input digests independent of repository identity.
