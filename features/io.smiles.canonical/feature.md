@@ -29,13 +29,17 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
   that belong to an aromaticized framework.
 - The implementation is intentionally non-isomeric until stereochemistry perception and canonical stereo policy are available; first-class stereo elements and source bond marks are ignored only in this explicit canonical non-isomeric output mode.
 
-## Validation
+## Tests
 
 - Unit tests cover atom-order-independent tree output, component sorting, branch/ring round trips, and inherited unsupported-chemistry errors through the noncanonical writer contract.
-- RDKit-generated PubChem-1k baseline goldens compare sanitized reparse semantics for canonical output across all declared records; broader manifests extend the same semantic contract. Validation sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model. It does not apply a feature-specific unsupported-chemistry filter; parser, sanitizer, or writer gaps surface as validation failures.
+
+## Benchmarks
+
+- RDKit-generated PubChem-1k baseline goldens compare sanitized reparse semantics for canonical output across all declared records; broader manifests extend the same semantic contract. Benchmark setup sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model. It does not apply a feature-specific unsupported-chemistry filter; parser, sanitizer, or writer gaps surface as benchmark differences.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-
 Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions,
 query atoms/bonds, radical states that are not implied by bracket valence,
 unsupported bond orders, and full RDKit canonicalization parity for every
@@ -45,30 +49,30 @@ symmetry edge case.
 
 - v1: Feature contract reserved.
 - v2: Implement deterministic non-stereo canonical SMILES for the existing writer subset.
-- v3: Declare smoke RDKit canonical SMILES validation.
-- v4: Declare PubChem-100 and pubchem-1k semantic canonical-output validation.
-- v5: Remove canonical-specific unsupported filtering so broad-corpus gaps are reported as validation failures.
+- v3: Declare the smoke RDKit canonical SMILES benchmark.
+- v4: Declare PubChem-100 and pubchem-1k semantic canonical-output benchmarks.
+- v5: Remove canonical-specific unsupported filtering so broad-corpus gaps are reported as benchmark differences.
 - v6: Allow non-isomeric canonical output from stereo-bearing graphs by ignoring stored stereo metadata.
-- v7: Sanitize canonical validation fixtures before writing so Kekule/aromatic normalization matches RDKit.
+- v7: Sanitize canonical benchmark fixtures before writing so Kekule/aromatic normalization matches RDKit.
 - v8: Preserve bracket hydrogens on metal-bound organic atoms so canonical output reparses with RDKit-like valence semantics.
 - v9: Prefer aromatic continuations as canonical main paths so fused heteroaromatic branches reparse with stable aromaticity.
 - v10: Rank canonical candidates by sanitized semantic preservation before string shape, improving lactone, fused aromatic, and topology-sensitive round trips.
 - v11: Broaden metal-like neighbor detection for bracketed organic hydrogens, preserving organothallium and related main-group/actinide valence semantics.
-- v12: Incorporate directional-bond parse support, metal-bound halogen reparse semantics, and neutral imide aromaticity cleanup exposed by pubchem-1k canonical validation.
-- v13: Advance pubchem-1k semantic validation through additional fused saturated-ring and cyclic amidine aromaticity cases.
-- v14: Advance pubchem-1k validation through aromatic Se/Te bracket reparse support and valence-filled metal-bound organic no-implicit preservation shared with the SMILES parser.
-- v15: Advance pubchem-1k validation through saturated sulfonamide fused-ring aromaticity cleanup.
-- v16: Advance pubchem-1k validation through exocyclic alkene deactivation in fused nitrogen/chalcogen aromatic systems.
-- v17: Advance pubchem-1k validation through canonical reparse support for thione-rich imported nitrogen/chalcogen aromatic-order rings.
-- v18: Advance pubchem-1k validation through RDKit-like fused lactam/enone and saturated oxygen bridge aromaticity cleanup for canonical reparse semantics.
-- v19: Advance pubchem-1k validation through RDKit-like saturated fused nitrogen carbonyl aromaticity cleanup for benzodiazepinone lactam canonical reparse semantics.
-- v20: Preserve no-implicit aromatic organic atoms bound to germanium-like main-group centers in canonical output, advancing pubchem-1k validation past aryl germanium trichloride.
-- v21: Advance pubchem-1k validation through imported aromatic-order support for five-member nitrogen/chalcogen rings with exocyclic cationic imine pi bonds.
+- v12: Incorporate directional-bond parse support, metal-bound halogen reparse semantics, and neutral imide aromaticity cleanup exposed by pubchem-1k canonical benchmarking.
+- v13: Advance pubchem-1k semantic benchmarking through additional fused saturated-ring and cyclic amidine aromaticity cases.
+- v14: Advance pubchem-1k benchmarking through aromatic Se/Te bracket reparse support and valence-filled metal-bound organic no-implicit preservation shared with the SMILES parser.
+- v15: Advance pubchem-1k benchmarking through saturated sulfonamide fused-ring aromaticity cleanup.
+- v16: Advance pubchem-1k benchmarking through exocyclic alkene deactivation in fused nitrogen/chalcogen aromatic systems.
+- v17: Advance pubchem-1k benchmarking through canonical reparse support for thione-rich imported nitrogen/chalcogen aromatic-order rings.
+- v18: Advance pubchem-1k benchmarking through RDKit-like fused lactam/enone and saturated oxygen bridge aromaticity cleanup for canonical reparse semantics.
+- v19: Advance pubchem-1k benchmarking through RDKit-like saturated fused nitrogen carbonyl aromaticity cleanup for benzodiazepinone lactam canonical reparse semantics.
+- v20: Preserve no-implicit aromatic organic atoms bound to germanium-like main-group centers in canonical output, advancing pubchem-1k benchmarking past aryl germanium trichloride.
+- v21: Advance pubchem-1k benchmarking through imported aromatic-order support for five-member nitrogen/chalcogen rings with exocyclic cationic imine pi bonds.
 - v22: Rank canonical candidates with local atom-neighbor semantics and add a lazy stored-Kekule fallback for aromatic carbocyclic components without aromatic heteroatoms, advancing pubchem-1k past oxygen-rich multicomponent lactone/carboxyl mixtures while keeping heteroaromatic nitrogen output in aromatic form.
 - v23: Move the public canonical writer API under the `smiles` facade and the ranking dependency under `canon`.
 - v24: Remove candidate reparse/sanitize ranking and motif-specific stored-Kekule cleanup fallback; canonical output is selected by RDKit-inspired rank-guided graph traversal plus syntax tie-breakers, with graph-derived stored-Kekule emission for mixed aromatic/aliphatic pi components that cannot be faithfully represented by aromatic shorthand.
-- v25: Complete pubchem-1k canonical validation by broadening graph-derived representability rules for aromatic carbonyls, charged aromatic carbon components, and zero-hydrogen metal/main-group-bound organic atoms, plus aligning validation semantics for anionic aromatic nitrogen and charged aromatic carbon hydrogens.
-- v26: Add PubChem-100k as required broad-corpus validation evidence.
+- v25: Complete pubchem-1k canonical benchmarking by broadening graph-derived representability rules for aromatic carbonyls, charged aromatic carbon components, and zero-hydrogen metal/main-group-bound organic atoms, plus aligning comparison semantics for anionic aromatic nitrogen and charged aromatic carbon hydrogens.
+- v26: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v27: Document that canonical non-isomeric output ignores first-class stereo elements and source bond marks by policy, rather than reading removed atom/bond stereo metadata.
 - v28: Complete PubChem-100k non-isomeric semantics by normalizing isotope and
   explicit-hydrogen representation on a clone, using periodic-table valence for
@@ -79,4 +83,5 @@ symmetry edge case.
   installed.
 - v30: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
-- v31: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v31: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v32: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

@@ -22,14 +22,14 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 - Atom fields stay chemically general and do not contain biomolecular hierarchy labels.
 - Bond order storage is descriptive and does not imply valence validation, sanitization, or stereochemical assignment.
 
-## Validation
+## Tests
 
 - Current coverage is unit-test based.
 - No RDKit or Biopython golden data is required for the representation feature.
 
 ## Out Of Scope
 
-- Valence validation, aromaticity assignment, stereochemistry representation or perception, parsing, and validation generation.
+- Valence validation, aromaticity assignment, stereochemistry representation or perception, parsing, and benchmark generation.
 - Runtime RDKit or Biopython dependency.
 
 ## Revision Notes

@@ -33,12 +33,12 @@ Represent molecular graph queries independently of any input syntax and independ
 - The IR deliberately describes chemical facts, not how a frontend spells
   them. Other query syntaxes can target the same representation.
 
-## Validation
+## Tests
 
 - Unit regressions cover expression normalization and hard depth bounds, query
   IDs and adjacency, duplicate/self-bond rejection, and disconnected graphs.
 - Syntax translation and chemical matching receive separate RDKit-backed
-  validation under `query.smarts` and `algo.substructure.vf2`.
+  benchmarking under `query.smarts` and `algo.substructure.vf2`.
 
 ## Out Of Scope
 

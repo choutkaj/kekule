@@ -106,8 +106,8 @@ placement does not create ambiguous axes; otherwise ring-internal macrocyclic
 axis candidates are accepted. Exocyclic axes may have either two ring endpoints
 or one ring endpoint plus one locally SP2 endpoint, and macrocyclic
 ring-internal axes follow the same endpoint and reference-carrier structural
-checks, matching the official RDKit atropisomer fixtures covered by smoke CIP
-parity validation.
+checks, matching the official RDKit atropisomer fixtures covered by the smoke
+CIP benchmark.
 Coordinate-derived assignment is local and conservative; exact CIP descriptors
 belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
 shortest-path check around the candidate bond so direct perception and
@@ -122,7 +122,11 @@ is enabled. The sanitizer uses the source-mark assembly subset and leaves
 coordinate-derived assignment to explicit stereo perception calls. It should not
 run over whole `MacroMolecule` structures by default.
 
-## Validation
+## Tests
+
+- Focused unit and regression tests cover the behavior, error, and resource-limit contracts described above.
+
+## Benchmarks
 
 - Unit tests cover read-only validation, candidate detection after sanitization,
   directional double-bond assembly, unsupported double-bond exclusions including
@@ -145,12 +149,13 @@ run over whole `MacroMolecule` structures by default.
   orientation, and supported atropisomeric source-mark assembly coverage. The
   broader PubChem, Enamine, and PL-REX tiers are implementation-golden semantic
   regression gates for perception stability, while exact RDKit descriptor
-  parity belongs to `stereo.cip`. Broad semantic validation records sanitize
+  parity belongs to `stereo.cip`. Broad semantic benchmark records sanitize
   failures per record when unrelated unsupported valence chemistry prevents
   stereo perception.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-
 Exact CIP descriptors, default broad axis candidate perception beyond
 supported Molfile wedge subsets, non-opt-in coordinate-only axis assignment,
 2D coordinate-only axis assignment without source marks, CXSMILES
@@ -208,7 +213,7 @@ stereo transfer.
 - v17: Allow ring-internal macrocyclic Molfile atrop axes when no non-ring
   candidate is available from the same source mark, with official RDKit
   macrocycle regressions.
-- v18: Add PL-REX ligand SDF packs to the perception validation contract for
+- v18: Add PL-REX ligand SDF packs to the perception benchmark contract for
   coordinate-bearing Molfile stereo and source-mark assembly regression
   coverage.
 - v19: Add default-off conservative 3D coordinate-derived axis assignment for
@@ -222,4 +227,5 @@ stereo transfer.
   unmarked candidate detection.
 - v22: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
-- v23: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v23: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v24: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

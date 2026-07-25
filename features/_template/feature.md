@@ -12,7 +12,7 @@ Describe public APIs, commands, file formats, or user-visible behavior.
 
 Describe internal data model, algorithm choices, mutation behavior, and architecture constraints.
 
-## Validation
+## Tests
 
 Describe unit tests, reference goldens, fixtures, tolerances, and required commands.
 

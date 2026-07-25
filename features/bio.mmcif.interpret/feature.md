@@ -45,7 +45,7 @@ into a `Model` with distinct molecule instances and a report.
   map order.
 - The document remains the loss-preserving source representation.
 
-## Validation
+## Tests
 
 - Tests cover mixed typed instances and roles, complete positions, default
   multi-model rejection, explicit selection, altloc policy/reporting, missing

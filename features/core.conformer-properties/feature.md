@@ -16,11 +16,11 @@ Attach arbitrary metadata to a conformer without placing coordinate-set identity
 - Format-specific coordinate-model identifiers and provenance remain in
   interpretation reports rather than this generic property map.
 
-## Validation
+## Tests
 
 - Unit tests verify generic conformer property storage independently of format
   provenance.
-- No external validation evidence is required for the generic metadata container.
+- No external benchmark is needed for the generic metadata container.
 
 ## Out Of Scope
 
