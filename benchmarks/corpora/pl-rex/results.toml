@@ -1,0 +1,257 @@
+# Historical benchmark observations migrated from validation status v2; replaced per target by the next benchmark run.
+corpus_id = "pl-rex"
+
+[features."algo.aromaticity.rdkit-like"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "af320213e87ee6881d4018758406752987243a7d452a4e067c4a370ab58f75da"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "57c164dfa35530d133cc9d3ee9f653079989100e8ab31e945d29dae92c8a4691"
+input_count = 93
+benchmarked_at_unix = 1784357599
+legacy_source = "validation-status-v2"
+
+[features."algo.canonical-ranking"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "43b79f9a4f4ca83cffafe64bbc7c28dc2ad1c8217ad17a0d8e65359b0b82ebcb"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "589c9b84631566719f1a61fd2b21411776d557cb642f9c14fec8bf9e705c4d9b"
+input_count = 93
+benchmarked_at_unix = 1784357663
+legacy_source = "validation-status-v2"
+
+[features."algo.rings.fast"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "c94f80e64e773878e97caefaeb54be5aa9d39756335e640444cf32e31f497598"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "d1302dded4958eb83e287c965ee58f6470a3e3dee6566a1061b98413c0b32f1a"
+input_count = 93
+benchmarked_at_unix = 1784357702
+legacy_source = "validation-status-v2"
+
+[features."algo.rings.sssr"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "b90ff5877f16325c973634b5018d9b61efd8de707b1abcb4eb866885a27a9bc5"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "aa42a25599307ddf038417df55f91a4be1f186b4ad45693db6868b68af001ad2"
+input_count = 93
+benchmarked_at_unix = 1784357740
+legacy_source = "validation-status-v2"
+
+[features."algo.valence.rdkit-like"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "14a77ccbdeaedd25d1f4bc4504eca0fbf5e7409c172d2a8e4e1efe711193482b"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "df44a87ed00aec20018671d274874c4b2689f0d4b00903e20df9d4eb736ebb35"
+input_count = 93
+benchmarked_at_unix = 1784357811
+legacy_source = "validation-status-v2"
+
+[features."chem.hydrogen-normalization"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "1102e58a08a461f87ce74018c4be7feaf8f3ef6fab9471e7b0041f54c6ee05af"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "c5c1721a770a462bd24ca6c633b8323057ffa5aea76692f4279284155dd226d3"
+input_count = 93
+benchmarked_at_unix = 1784358405
+legacy_source = "validation-status-v2"
+
+[features."chem.sanitize.rdkit-like"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "75638d0305edd14ce95cb400d989363f5a8b12ade8cb39e90fd73307c23cb892"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "eace4f181ddc37af90f2ef9c3baee3c00cb2a13d123477e8595dde57e5f02fb2"
+input_count = 93
+benchmarked_at_unix = 1784358488
+legacy_source = "validation-status-v2"
+
+[features."core.conformers"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "fd477228f13026a49e7b0ccf701866d26d85407963e2163f4ef4f5d33dfab148"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "a54d4fed9384ef065bea6a8517b088283e4b08e99a41c4b3f4a471859834faf9"
+input_count = 93
+benchmarked_at_unix = 1784358603
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v2000.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "29884a2c30587859cb1aa711b5a5c6e596ea7fd9f3c94a955c1aeb187260dd8e"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "ac88e1e4d45fb88daacceea263c640a8409f27084b782d8c0383b24a090025e6"
+input_count = 93
+benchmarked_at_unix = 1784358939
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v2000.write"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "2b73eb4abae6355d277259454cac38ab8acab604e959bd21287f1685a512da99"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "d42b0cae8b3bd9c88a992e3e27524f681fb4f2d70787c582aeb3cf7cc07d9595"
+input_count = 93
+benchmarked_at_unix = 1784359108
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v3000.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "ebcae7486d3855d95b97557f25781eeed8b32944794df9d2622b4e2fa1ce01b5"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "172167b435fbac3d8ceed2c862287fb4b53ee55c9ed31013353daaf7f155ff17"
+input_count = 93
+benchmarked_at_unix = 1784359267
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v3000.write"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "1eb1a101a7728f5fd9b3bfd4d25e85f4115bca890b1b2a09417827814ed1b70a"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "16bac474d93fb4805392340651f183127b98a6e6de108a3490618ab78f2ac665"
+input_count = 93
+benchmarked_at_unix = 1784359466
+legacy_source = "validation-status-v2"
+
+[features."io.sdf.v2000.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "e75fb9448d510f6df17f27313dec32284701f45cb198915e7cc019cc740e1dba"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "9970a1d5ce67aea5aabe4ee885f1e591c312d2d1080b7a6f0b91cb22ce43d6c2"
+input_count = 93
+benchmarked_at_unix = 1784359652
+legacy_source = "validation-status-v2"
+
+[features."io.sdf.v2000.write"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "a22ed85d2b4673ac7ce652407c565fbcd973b97f62fb7e37e617b2f208dbc7df"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "983419cf85bbe069f192f4923f8bc2edbf7c3d6e5249ddab9ad28e954c2b698b"
+input_count = 93
+benchmarked_at_unix = 1784359835
+legacy_source = "validation-status-v2"
+
+[features."stereo.cip"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "8e5c9dcdc9f455cbf992ee6dd34be4255131c7971990a1c283a6acdb67aaa781"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "ffe6d3db20757d8ff3863dd001d7e4f137e10894d9f25ef0eea49f0f60aca599"
+input_count = 93
+benchmarked_at_unix = 1784361460
+legacy_source = "validation-status-v2"
+
+[features."stereo.perception"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "pl-rex-manual-semantic"
+reference_version = "PL-REX 1.0.1 ligand corpus 2026-07-09"
+manifest_digest = "9c5806a00f4b3cfd67421141962287a6ada11dd4084c570339ab9ba1f49cadaa"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "c903efb1f21b2b9e6fbd49a45668a03ef552329ec179eebdd6236e462bf2e8ce"
+input_count = 91
+benchmarked_at_unix = 1784361509
+legacy_source = "validation-status-v2"
+
+[features."stereo.representation"]
+outcome = "match"
+scope = "full"
+fixture_count = 2
+compared_count = 2
+reference_tool = "pl-rex-manual-semantic"
+reference_version = "PL-REX 1.0.1 ligand corpus 2026-07-09"
+manifest_digest = "9536b39594179a2216518be0418209fedd88f02e4991deb0caec34f21c783720"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "795e57fcf3ba876c01133bf9a1af59f92a74193f49c4a87b0f7b233f12435e1d"
+input_count = 91
+benchmarked_at_unix = 1784361526
+legacy_source = "validation-status-v2"

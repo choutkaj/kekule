@@ -11,4 +11,3 @@ depends_on = [
   "model.system",
   "core.units",
 ]
-validation_required = []

@@ -1,0 +1,272 @@
+# Historical benchmark observations migrated from validation status v2; replaced per target by the next benchmark run.
+corpus_id = "enamine-diversity"
+
+[features."algo.aromaticity.rdkit-like"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "8ab843368b40a36aede4e9aa89f3b1ddbc7e459177ae1d4c8e9378622529f265"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "694702b777f7f5035f6da8ae352ffc50cd5c170ad4b117970b86ef7776c47673"
+input_count = 185
+benchmarked_at_unix = 1784357611
+legacy_source = "validation-status-v2"
+
+[features."algo.canonical-ranking"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "97415e3e34bcb95ccd50efb1325454767397eb3c417769b4c639c6aebedfa286"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "35912e48c7c1a177501929d07c0c0f89344bdee884f00a053c558becd6f2abce"
+input_count = 185
+benchmarked_at_unix = 1784357679
+legacy_source = "validation-status-v2"
+
+[features."algo.rings.fast"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "16e85ce473238f76d300218def1313b3304f539e6af7a902fcb6356753099db5"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "297aa7bbae9e116cc6d3fd60da1d3819dc509fa159a5ab888e9252665649fe6d"
+input_count = 185
+benchmarked_at_unix = 1784357710
+legacy_source = "validation-status-v2"
+
+[features."algo.rings.sssr"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "2292f2c0d79fcec6adc46dd4a508bc759d9056c29fe494008a6fa223bfe5eabf"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "13ffa2fa46b8a41e93930ca8f6bdc95152093694eb333967dc8e2ebf642bd154"
+input_count = 185
+benchmarked_at_unix = 1784357749
+legacy_source = "validation-status-v2"
+
+[features."algo.valence.rdkit-like"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "a32b3a1ea6de5189592c9323ea834f1ff105aeba3bb9d4f1908533838d4f22c0"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "b9870eeca55cdff64108cef3989a98ad334e148aa8ea31924111f0e4aefb07cf"
+input_count = 185
+benchmarked_at_unix = 1784357829
+legacy_source = "validation-status-v2"
+
+[features."chem.sanitize.rdkit-like"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "7967889c4b232e053a18ef47425d6039129412eac372d4a8bfeff6cf1aa8cf8f"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "cc4a8c1fe3ac3946ee060456688e1cb442d5c55e789b1664ec2886fdc3243e31"
+input_count = 185
+benchmarked_at_unix = 1784358512
+legacy_source = "validation-status-v2"
+
+[features."core.conformers"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "c44295eabe33be24179838727688af6d8b39427169241482735c3ef2a1273a5b"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "39ed392bacdf7c0665c62851fd3c1fb9c62c9ea919df7bae43cfe17eb6eb0444"
+input_count = 185
+benchmarked_at_unix = 1784358628
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v2000.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "4094affabeea8f2aa797d201732cbb51a8cf613f0078f039c74b1475114cb491"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "62ea5dd32cbd3713499a80339fa4fe32dd781e2ff1653426fc68bbd77850663a"
+input_count = 185
+benchmarked_at_unix = 1784358966
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v2000.write"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "48eb71498858186e0b35840bdaa6f3b6d3bbf16eda0fa1f78bea97fc0540f457"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "027f0b844c59fda6724660714e24f4a07d5ec6cf1751c31e4ea6f0ab2af720e1"
+input_count = 185
+benchmarked_at_unix = 1784359149
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v3000.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "8757c21bc6115c37689b77548c76e03d18c947309e87d7fef173c3f435232a9e"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "4a74f0927723b270e6cab410d8ce5b082e7b44a79926f386e9fb64759200238b"
+input_count = 185
+benchmarked_at_unix = 1784359308
+legacy_source = "validation-status-v2"
+
+[features."io.mol.v3000.write"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "2397e3dd905054c49e6ac0245fbfb21605f67079a7167f8d3b984ebedf1e5257"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "8fc28a2703273b725b4cfddf9f8f0001ad969f6ee7f19f6d5acd12aae136d770"
+input_count = 185
+benchmarked_at_unix = 1784359511
+legacy_source = "validation-status-v2"
+
+[features."io.sdf.v2000.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "0472ffde855263a2f478a9ae4b66708fcb7379c292a01ba1c234f6ad575b0f3e"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "2b754a0b394168e3d205e1fb6f6c4042a555a5df3ad55d6703c670249a39d701"
+input_count = 185
+benchmarked_at_unix = 1784359689
+legacy_source = "validation-status-v2"
+
+[features."io.sdf.v2000.write"]
+outcome = "match"
+scope = "full"
+fixture_count = 48
+compared_count = 48
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "1162f484a1ad709dc829e92518b2b4c2c232a15bcf41859986e42613c7d0fcd4"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "7612f53cf8cce7da49fe69eb5cbcf2aac4480525aac6f1116d764f4cdd11ef55"
+input_count = 185
+benchmarked_at_unix = 1784359873
+legacy_source = "validation-status-v2"
+
+[features."io.smiles.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 51
+compared_count = 51
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "c17c37e941f186b971dc6f60d5567a605a783f325d684e1a2baa3e77999f12b2"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "2c82ce79255f54bdfc09c1662f9570924179c441d47704ef5b98c448d3f52fa8"
+input_count = 191
+benchmarked_at_unix = 1784361210
+legacy_source = "validation-status-v2"
+
+[features."io.smiles.write"]
+outcome = "match"
+scope = "full"
+fixture_count = 51
+compared_count = 51
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "db0d8dcd00bb63fd8b1b9a0f437ca04b8bc252bd24df32a87572d942c4d4f529"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "729f92f3b1340be52b99cb2e7f6a774c150a83934baba6d2cae7145ae9e94ba5"
+input_count = 191
+benchmarked_at_unix = 1784361411
+legacy_source = "validation-status-v2"
+
+[features."stereo.cip"]
+outcome = "match"
+scope = "full"
+fixture_count = 51
+compared_count = 51
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+manifest_digest = "9cbf69eeef1a74520ba09eaf6b4200c1c783746ff2ae281e5935507f057bbe8d"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "01577329e1a66c97b1e33ae3c14c1ae22d948a1603cfa02a502680e4590410d3"
+input_count = 191
+benchmarked_at_unix = 1784361486
+legacy_source = "validation-status-v2"
+
+[features."stereo.perception"]
+outcome = "match"
+scope = "full"
+fixture_count = 51
+compared_count = 51
+reference_tool = "enamine-manual-semantic"
+reference_version = "Enamine Discovery Diversity Set 2026-07-05"
+manifest_digest = "80ce87182916365af12b31784e56b49955800155a1e0c25327d22e754946200a"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "b940a510c26bcd2df7f62af0647ea7204557f1d4d039e2d50ed5d4c5b8b9e06c"
+input_count = 189
+benchmarked_at_unix = 1784361521
+legacy_source = "validation-status-v2"
+
+[features."stereo.representation"]
+outcome = "match"
+scope = "full"
+fixture_count = 51
+compared_count = 51
+reference_tool = "enamine-manual-semantic"
+reference_version = "Enamine Discovery Diversity Set 2026-07-05"
+manifest_digest = "93b14ac9da05804f57431e6d4ab15f81b37661d68004df5c3932943065673321"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "4cdb195e0bfa9123bbb013c09975ecf89afe8ab5d6cf0ac4c40c3cc6586a3705"
+input_count = 189
+benchmarked_at_unix = 1784361528
+legacy_source = "validation-status-v2"

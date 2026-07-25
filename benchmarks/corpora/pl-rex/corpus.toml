@@ -1,0 +1,17 @@
+id = "pl-rex"
+title = "PL-REX 1.0.1 ligand corpus"
+kind = "small-molecule"
+ready = true
+expected_count = 164
+local_only = true
+selection_id = "pl-rex-primary-v1"
+formats = ["sdf-v2000", "pdb"]
+build_command = "micromamba run -n rdkit-benchmark-reference python benchmarks/reference/rdkit/build_large_corpora.py --corpus pl-rex"
+notes = [
+  "Uses the 164 primary refined ligand SDF files under each PL-REX target's structures directory.",
+  "AMBER and structures_small_model alternate geometries are intentionally excluded from this corpus.",
+  "This ignored corpus is local-only and participates in all-corpus benchmark when its local data is present.",
+]
+
+[categories]
+primary-ligand = 164

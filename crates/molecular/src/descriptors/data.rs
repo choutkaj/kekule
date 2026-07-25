@@ -1,5 +1,5 @@
 // This file is mechanically generated from the pinned sources below.
-// Regenerate with: python validation/reference/atomic_data/generate.py
+// Regenerate with: python tools/atomic-data/generate.py
 // CIAAW Abridged Standard Atomic Weights 2024:
 //   https://ciaaw.org/abridged-atomic-weights.htm
 //   SHA-256 f9e9554471749c55a624aec55151922470a7f4104c62811eb194fed9731b907d
