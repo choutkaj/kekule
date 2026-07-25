@@ -1,2 +1,2 @@
 # Provenance-pinned external fixtures must retain byte-exact source checksums.
-validation/corpora/*/data/** binary
+benchmarks/corpora/*/data/** binary

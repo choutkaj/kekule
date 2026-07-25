@@ -6,7 +6,6 @@ version = 1
 status = "planned"
 description = "One-sentence description."
 depends_on = []
-validation_required = []
 
 # reference = ["rdkit.Chem.example"]
 # public_api = ["molecular::path::function"]

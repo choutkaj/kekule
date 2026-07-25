@@ -45,13 +45,18 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - Propagates imported-aromatic matching-budget exhaustion distinctly from an
   invalid aromatic representation while retaining whole-pipeline rollback.
 
-## Validation
+## Tests
 
 - Unit tests cover parse-without-sanitize behavior, every option combination,
   cleanup invalidation, idempotence, default and skipped stereo perception,
   coordinate-only stereo staying outside sanitization, and exact rollback after
   valence, aromaticity, or stereo failure.
+
+## Benchmarks
+
 - RDKit-generated goldens compare sanitized atom state for external PubChem fixtures.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -69,7 +74,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v6: Sanitize imported aromatic SMILES with corrected aromatic valence and atom-contribution aromaticity behavior.
 - v7: Accept explicit ring-work limits and preserve transactional rollback on ring resource errors.
 - v8: Move the public small-molecule sanitizer API under the `perception` facade.
-- v9: Add PubChem-100k as required broad-corpus validation evidence.
+- v9: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v10: Normalize pyrrolic aromatic nitrogen donor hydrogens to RDKit-style sanitized `nH` atom state.
 - v11: Add stereo perception as an explicit sanitizer stage with options,
   reporting, freshness-state handling, and transactional rollback on stereo
@@ -82,4 +87,5 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   instead of repository-wide required evidence.
 - v14: Inherit the exact RDKit valence-table cleanup and unified transactional
   aromaticity engine, including structured imported-aromatic matching limits.
-- v15: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v15: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v16: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

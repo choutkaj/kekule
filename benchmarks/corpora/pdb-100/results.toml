@@ -1,0 +1,32 @@
+# Historical benchmark observations migrated from validation status v2; replaced per target by the next benchmark run.
+corpus_id = "pdb-100"
+
+[features."bio.secondary-structure.dssp"]
+outcome = "match"
+scope = "full"
+fixture_count = 100
+compared_count = 100
+reference_tool = "biopython"
+reference_version = "Biopython 1.87 / mkdssp version 4.6.1"
+manifest_digest = "3f2a2bfa141b1196a4d1a4bc7147b9815d061a5339145df275e3cf1eb446b698"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "7749e931ef1e6fefadcecf9ee81835b9ea356efec297d5ed5f8c6fa1c765f9a7"
+input_count = 289
+benchmarked_at_unix = 1784357914
+legacy_source = "validation-status-v2"
+
+[features."io.mmcif.parse"]
+outcome = "match"
+scope = "full"
+fixture_count = 100
+compared_count = 100
+reference_tool = "biopython"
+reference_version = "Biopython 1.87"
+manifest_digest = "9f9d4742d2f977d345ee07375d3802b9b637ac4d18161895d1ea7769137ba7de"
+difference_count = 0
+input_digest_schema_version = 2
+input_digest = "fa4bb76ccc4530cd05d25a13191f17cc7c18af76548f2bc3592b45b6fb1f460a"
+input_count = 289
+benchmarked_at_unix = 1784358644
+legacy_source = "validation-status-v2"

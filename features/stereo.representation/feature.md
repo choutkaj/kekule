@@ -61,11 +61,14 @@ not atom/bond payload flags.
   small-molecule stereo perception is a later explicit workflow and should not
   run over whole `MacroMolecule` structures by default.
 
-## Validation
+## Tests
 
 - Unit tests cover stereo element, group, and source bond mark CRUD; invalid
   references; mutation invalidation; topology-aware pruning; and parser/writer
   adapter behavior.
+
+## Benchmarks
+
 - Smoke, PubChem 100, PubChem 1k, PubChem 100k, Enamine diversity, and PL-REX
   validation record semantic stereo JSON for externally supplied isomeric
   SMILES fixtures, including `stereo_elements`, `stereo_groups`,
@@ -75,6 +78,8 @@ not atom/bond payload flags.
   Enamine, and PL-REX tiers are implementation-golden semantic regression gates
   for representation stability, while exact RDKit descriptor parity belongs to
   `stereo.cip`.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -100,10 +105,11 @@ not atom/bond payload flags.
   stereo representation over externally supplied isomeric SMILES.
 - v8: Add PubChem 100k and Enamine diversity semantic regression requirements
   for broader drug-like stereo representation preservation coverage.
-- v9: Add PL-REX ligand SDF packs to the representation validation contract for
+- v9: Add PL-REX ligand SDF packs to the representation benchmark contract for
   coordinate- and Molfile-stereo source-mark regression coverage.
 - v10: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
 - v11: Replace unchecked mutable stereo-element access with validated
   transactional replacement and reject empty or duplicate-member groups.
-- v12: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v12: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

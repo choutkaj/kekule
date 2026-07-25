@@ -1,0 +1,18 @@
+feature_id = "io.smiles.parse"
+corpus_id = "pubchem-1k"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.smi",
+  "data/packs/pack_02.smi",
+  "data/packs/pack_03.smi",
+  "data/packs/pack_04.smi",
+  "data/packs/pack_05.smi",
+  "data/packs/pack_06.smi",
+  "data/packs/pack_07.smi",
+  "data/packs/pack_08.smi",
+  "data/packs/pack_09.smi",
+  "data/packs/pack_10.smi",
+]

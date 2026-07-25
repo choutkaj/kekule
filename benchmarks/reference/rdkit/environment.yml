@@ -1,0 +1,6 @@
+name: rdkit-benchmark-reference
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - rdkit=2026.03.3

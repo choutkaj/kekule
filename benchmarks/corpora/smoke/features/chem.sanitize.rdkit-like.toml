@@ -1,0 +1,18 @@
+corpus_id = "smoke"
+feature_id = "chem.sanitize.rdkit-like"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem/cid_702.sdf",
+  "data/pubchem/cid_241.sdf",
+  "data/pubchem/cid_2244.sdf",
+  "data/pubchem/cid_2519.sdf",
+]
+
+
+notes = [
+  "Reference RDKit goldens compare sanitized atom state.",
+  "All molecule fixtures are externally supplied PubChem records.",
+]

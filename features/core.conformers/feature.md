@@ -24,10 +24,15 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 - Parsers may attach a conformer without running sanitization or perception.
 - The mmCIF parser stores coordinates from all models in one conformer because each atom-site row is a distinct graph atom; model identity remains in `SmcraHierarchy`.
 
-## Validation
+## Tests
 
 - Unit tests cover insertion, lookup, and SDF/Molfile coordinate preservation.
+
+## Benchmarks
+
 - RDKit-generated goldens compare conformer coordinate preservation for external PubChem fixtures.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -36,11 +41,12 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 ## Revision Notes
 
 - v1: Shared conformer storage.
-- v2: Add PubChem-100k as required broad-corpus validation evidence.
+- v2: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v3: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
 - v4: Make conformer attachment fallible and reject coordinates for non-live
   graph atoms without inserting a partial conformer.
 - v5: Require explicit length units for conformer construction and coordinate
   access through `Quantity<Point3>`.
-- v6: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v6: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v7: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

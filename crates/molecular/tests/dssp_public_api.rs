@@ -3,7 +3,7 @@ use molecular::dssp::{
 };
 use molecular::mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions};
 
-const CRAMBIN_MMCIF: &str = include_str!("../../../validation/corpora/smoke/data/rcsb/1CRN.cif");
+const CRAMBIN_MMCIF: &str = include_str!("../../../benchmarks/corpora/smoke/data/rcsb/1CRN.cif");
 
 fn crambin_model() -> molecular::modeling::Model {
     let document = mmcif::parse_str(CRAMBIN_MMCIF, MmcifParseOptions::default())

@@ -1,0 +1,16 @@
+corpus_id = "smoke"
+feature_id = "io.smiles.isomeric"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem_smiles/cid_702.txt",
+  "data/pubchem_smiles/cid_5950.txt",
+  "data/pubchem_smiles/cid_5462921.txt",
+]
+
+notes = [
+  "Reference RDKit goldens compare semantic output after noncanonical isomeric SMILES write and reparse.",
+  "Smoke fixtures cover absent stereo, tetrahedral stereo, and explicit directional double-bond stereo.",
+]

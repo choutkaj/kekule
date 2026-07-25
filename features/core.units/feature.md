@@ -33,11 +33,11 @@ paired with a composable runtime unit.
 - The modelling layer declares its preferred length, molar-energy, gradient,
   and force-constant units as explicit public constants.
 
-## Validation
+## Tests
 
 - Focused unit tests cover scalar and collection conversion, incompatible
   dimensions, composite units, and scalar quantity arithmetic.
-- This feature intentionally has no validation-harness requirement and remains
+- This feature intentionally has no benchmark manifest and remains
   no external parity result is recorded.
 
 ## Out Of Scope

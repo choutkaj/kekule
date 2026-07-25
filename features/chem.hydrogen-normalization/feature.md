@@ -43,18 +43,23 @@ implicit hydrogens.
 - Topology changes invalidate installed perception; callers may explicitly
   sanitize or perceive the result afterward.
 
-## Validation
+## Tests
 
 - Unit and downstream API tests cover implicit and explicit-count addition,
   resource-limit and missing-perception transactionality, methane and aromatic
   bracket-hydrogen collapse, stereo carrier preservation, conformer behavior,
   and conservative retention of lossy hydrogen cases.
+
+## Benchmarks
+
 - RDKit-generated PubChem-1k baseline and PL-REX broad goldens compare
   per-parent added hydrogen counts, retained graph topology, atom identity,
   charges, isotopes, maps, stable original-index connectivity, and total
   encoded hydrogen counts.
   Explicit-versus-implicit count storage and unrelated perception caches are
   deliberately normalized away.
+- Optional external-reference manifests are available for `pubchem-1k`, `pl-rex`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -67,4 +72,5 @@ implicit hydrogens.
 
 - v1: Add bounded transactional hydrogen materialization and conservative
   collapse with mappings, stereo preservation, and explicit coordinate policy.
-- v2: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v2: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v3: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

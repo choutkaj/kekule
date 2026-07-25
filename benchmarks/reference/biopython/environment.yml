@@ -1,0 +1,7 @@
+name: biopython-dssp-benchmark-reference
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - biopython=1.87
+  - dssp=4.6.1

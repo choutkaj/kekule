@@ -1,0 +1,14 @@
+feature_id = "stereo.perception"
+corpus_id = "pubchem-100"
+reference_tool = "pubchem-manual-semantic"
+reference_version = "PubChem PUG REST 2026-07-05"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.smi",
+]
+
+notes = [
+  "Externally supplied PubChem isomeric SMILES pack provides broader small-molecule stereo perception regression coverage.",
+  "Goldens compare semantic stereo perception reports and resulting stereo elements, not bytewise SMILES spelling.",
+]

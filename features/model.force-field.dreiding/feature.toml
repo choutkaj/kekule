@@ -6,4 +6,3 @@ version = 6
 status = "supported"
 description = "Prepare and evaluate fixed-charge DREIDING potentials for molecule-instance Model values."
 depends_on = ["model.system", "model.potential", "core.units"]
-validation_required = []

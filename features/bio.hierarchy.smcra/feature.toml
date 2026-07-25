@@ -6,4 +6,3 @@ version = 8
 status = "supported"
 description = "Represent biomolecular hierarchy as a graph sidecar with checked MacroMolecule construction and transactional coordinated editing."
 depends_on = ["core.graph"]
-validation_required = []

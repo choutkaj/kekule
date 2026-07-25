@@ -33,4 +33,3 @@ depends_on = [
   "model.potential",
   "algo.geometry-minimization",
 ]
-validation_required = []

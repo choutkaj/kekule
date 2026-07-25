@@ -1,0 +1,18 @@
+corpus_id = "smoke"
+feature_id = "chem.hydrogen-normalization"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem/cid_702.sdf",
+  "data/pubchem/cid_2244.sdf",
+  "data/pubchem/cid_2519.sdf",
+]
+
+notes = [
+  "RDKit AddHs and parameterized RemoveHs define the reference hydrogen topology transforms.",
+  "Mapped and semantically unrepresented wedged hydrogens remain protected; defining double-bond hydrogens are collapsible.",
+  "Comparison covers per-parent additions, stable original-index topology, connectivity, and total encoded hydrogen counts.",
+  "All molecule fixtures are externally supplied PubChem records.",
+]

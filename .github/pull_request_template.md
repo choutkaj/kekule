@@ -4,7 +4,7 @@
 
 ## Summary
 
-## Validation
+## Tests
 
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
@@ -13,8 +13,13 @@
 - [ ] `cargo xtask dashboard --check`
 - [ ] `cargo xtask skills --check`
 - [ ] Targeted `cargo xtask corpus check --corpus <id> --require-data`, if applicable
-- [ ] Targeted `cargo xtask validate --feature <id> --corpus <id>`, if applicable
-- [ ] Broad or full reference validation, if release scope requires it
+
+## Optional Benchmarks
+
+- [ ] Targeted `cargo xtask benchmark --feature <id> --corpus <id>`, if deliberately run
+- [ ] Broad benchmark, if deliberately run
+
+<!-- Benchmark results are informational and are never required for PR health. -->
 
 ## Notes
 
@@ -24,5 +29,5 @@
 
 ## Release-Sensitive Files
 
-- [ ] Changes under `.github/`, validation generators/locks/goldens, corpus
+- [ ] Changes under `.github/`, benchmark generators/locks/goldens, corpus
       descriptors, or feature metadata received owner review.

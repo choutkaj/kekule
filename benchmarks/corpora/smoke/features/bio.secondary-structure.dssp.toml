@@ -1,0 +1,14 @@
+feature_id = "bio.secondary-structure.dssp"
+corpus_id = "smoke"
+reference_tool = "biopython"
+reference_version = "Biopython 1.87 / mkdssp version 4.6.1"
+comparison_mode = "implementation-golden"
+notes = [
+  "DSSP executable SHA256: 963f7e3bfc46818817639430485ad698faee3fd4d26a75d25d895af8925b3d1f",
+  "Command: Bio.PDB.DSSP.DSSP(model, highest_occupancy_snapshot, dssp=mkdssp, file_type=MMCIF)",
+  "Extended command: mkdssp --output-format=mmcif --quiet highest_occupancy_snapshot annotated.cif",
+]
+
+fixtures = [
+  "data/rcsb/1CRN.cif",
+]

@@ -42,7 +42,7 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - Molecule, atom, and bond property maps are stored on the core data structures.
 - Local stereo state is graph-adjacent storage on `Molecule`, separate from atom and bond payloads and from derived CIP descriptors.
 
-## Validation
+## Tests
 
 - Current coverage is unit-test based.
 - Tests cover empty molecules, insertion, deletion, invalid IDs, self-bonds, duplicates, iteration, stable IDs, counts, chemistry invalidation, state-neutral property/coordinate edits, stereo CRUD, and stereo pruning.
@@ -51,7 +51,7 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 ## Out Of Scope
 
 - SDF, PDB, or mmCIF parsing.
-- Ring detection, aromaticity, valence perception, stereochemistry perception, canonicalization, and validation generation.
+- Ring detection, aromaticity, valence perception, stereochemistry perception, canonicalization, and benchmark generation.
 - Runtime RDKit or Biopython dependency.
 
 ## Revision Notes

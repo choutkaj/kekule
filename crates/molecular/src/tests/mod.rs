@@ -247,50 +247,50 @@ M  END
 }
 
 pub(super) fn rdkit_rp6306_atrop_molblock() -> &'static str {
-    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop1.mol")
+    include_str!("../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop1.mol")
 }
 
 pub(super) fn rdkit_rp6306_atrop3_molblock() -> &'static str {
-    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop3.mol")
+    include_str!("../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop3.mol")
 }
 
 pub(super) fn rdkit_rp6306_atrop4_molblock() -> &'static str {
-    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol")
+    include_str!("../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol")
 }
 
 pub(super) fn rdkit_bms986142_atrop4_molblock() -> &'static str {
     include_str!(
-        "../../../../validation/corpora/smoke/data/rdkit_atropisomers/BMS-986142_atrop4.mol"
+        "../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/BMS-986142_atrop4.mol"
     )
 }
 
 pub(super) fn rdkit_bms986142_atrop5_molblock() -> &'static str {
     include_str!(
-        "../../../../validation/corpora/smoke/data/rdkit_atropisomers/BMS-986142_atrop5.mol"
+        "../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/BMS-986142_atrop5.mol"
     )
 }
 
 pub(super) fn rdkit_jdq443_atrop1_molblock() -> &'static str {
-    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/JDQ443_atrop1.mol")
+    include_str!("../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/JDQ443_atrop1.mol")
 }
 
 pub(super) fn rdkit_zm374979_atrop1_molblock() -> &'static str {
-    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/ZM374979_atrop1.mol")
+    include_str!("../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/ZM374979_atrop1.mol")
 }
 
 pub(super) fn rdkit_zm374979_atrop2_molblock() -> &'static str {
-    include_str!("../../../../validation/corpora/smoke/data/rdkit_atropisomers/ZM374979_atrop2.mol")
+    include_str!("../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/ZM374979_atrop2.mol")
 }
 
 pub(super) fn rdkit_macrocycle8_ortho_wedge_molblock() -> &'static str {
     include_str!(
-        "../../../../validation/corpora/smoke/data/rdkit_atropisomers/macrocycle-8-ortho-wedge.mol"
+        "../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/macrocycle-8-ortho-wedge.mol"
     )
 }
 
 pub(super) fn rdkit_macrocycle8_ortho_hash_molblock() -> &'static str {
     include_str!(
-        "../../../../validation/corpora/smoke/data/rdkit_atropisomers/macrocycle-8-ortho-hash.mol"
+        "../../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/macrocycle-8-ortho-hash.mol"
     )
 }
 

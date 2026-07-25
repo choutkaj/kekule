@@ -24,7 +24,7 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 - Default limits are 1000 iterations, `1e-4` kJ/mol/angstrom gradient tolerance, `0.1` angstrom initial step, `1e-8` angstrom minimum step, factor `0.5`, Armijo coefficient `1e-4`, and 24 backtracks.
 - The input model remains unchanged on success, non-convergence, or error.
 
-## Validation
+## Tests
 
 - Unit tests minimize distorted multi-instance harmonic systems and verify energy
   decrease, convergence reports, dense gradient ordering, and source immutability.

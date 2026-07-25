@@ -1,0 +1,17 @@
+corpus_id = "smoke"
+feature_id = "io.sdf.v2000.write"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem/cid_702.sdf",
+  "data/pubchem/cid_2244.sdf",
+  "data/pubchem/cid_2519.sdf",
+]
+
+
+notes = [
+  "Reference RDKit goldens compare SDF writer records.",
+  "All molecule fixtures are externally supplied PubChem records.",
+]
