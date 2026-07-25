@@ -1,9 +1,6 @@
 name: Deploy dashboard to GitHub Pages
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -13,7 +10,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -34,6 +31,7 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+          retention-days: 1
 
   deploy:
     runs-on: ubuntu-latest
