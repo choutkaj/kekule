@@ -65,7 +65,7 @@ monoisotopic mass descriptors for `SmallMolecule` values.
     [AME 2020](https://amdc.impcas.ac.cn/web/masseval.html);
   - electron mass from the
     [2022 CODATA recommended constants](https://physics.nist.gov/cuu/Constants/).
-- `validation/reference/atomic_data/generate.py` verifies the pinned source
+- `benchmarks/reference/atomic_data/generate.py` verifies the pinned source
   SHA-256 values and expected row counts before reproducing the Rust tables.
 - Standard atomic weights describe normal materials and some are intervals.
   The average-mass contract deliberately uses CIAAW's abridged scalar values;
@@ -74,23 +74,28 @@ monoisotopic mass descriptors for `SmallMolecule` values.
 - Public errors are non-exhaustive and identify the atom and unavailable
   element/isotope or missing implicit-hydrogen state where applicable.
 
-## Validation
+## Tests
 
-- `pubchem-1k` is the required validation corpus. Its provenance-pinned rows
-  are generated with the repository's RDKit 2026.03.3 reference environment.
 - Compare formula composition, isotope counts, total charge, average mass, and
   monoisotopic mass independently. Formula comparison is structured rather
   than relaxed string comparison; mass comparison uses explicit tolerances
   narrow enough to detect table or hydrogen-count drift.
+- Focused unit regressions cover Hill ordering with and without carbon,
+  disconnected salts, explicit and perceived hydrogens, isotope labels,
+  positive and negative ions, radicals, empty molecules, missing perception,
+  unavailable standard weights or isotopes, and checked count overflow.
+
+## Benchmarks
+
+- `pubchem-1k` is the required benchmark corpus. Its provenance-pinned rows
+  are generated with the repository's RDKit 2026.03.3 reference environment.
 - RDKit `CalcMolFormula` with separated, non-abbreviated isotopes, `MolWt`, and
   `ExactMolWt` are the common-organic reference behavior. Differences caused
   by newer pinned standards, charge-mass correction, or deliberate rejection
   of elements without defined reference values must be explicit expected
   outcomes, not silently excluded records.
-- Focused unit regressions cover Hill ordering with and without carbon,
-  disconnected salts, explicit and perceived hydrogens, isotope labels,
-  positive and negative ions, radicals, empty molecules, missing perception,
-  unavailable standard weights or isotopes, and checked count overflow.
+- Optional external-reference manifests are available for `pubchem-1k`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -115,3 +120,4 @@ monoisotopic mass descriptors for `SmallMolecule` values.
 - v3: Implement the read-only descriptor facade, checksum-pinned CIAAW 2024,
   AME 2020, and CODATA 2022 tables, focused regressions, public API coverage,
   and required PubChem-1k RDKit validation.
+- v4: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

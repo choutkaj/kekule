@@ -1,6 +1,6 @@
 ---
 name: feature-work
-description: Add, plan, implement, or maintain molecular features through the canonical feature workflow. Use for feature metadata, feature.md, implementation, validation fixtures, or dashboard updates.
+description: Add, plan, implement, or maintain molecular features through the canonical feature workflow. Use for feature metadata, feature.md, implementation, tests, optional benchmark fixtures, or dashboard updates.
 ---
 
 # Feature Work
@@ -19,7 +19,7 @@ Canonical flow: add -> optional research -> plan -> implement.
 
 ## Feature metadata
 
-Feature metadata uses schema v5:
+Feature metadata uses schema v4:
 
 - `id`
 - `title`
@@ -29,10 +29,10 @@ Feature metadata uses schema v5:
 - `status`
 - `description`
 - `depends_on`
-- `validation_required`
 
 Do not use `priority`, `implemented`, `last_ai_review`, or the removed global
-`validated` flag. `status` is one of:
+`validated` flag. The removed `validation_required` key has no replacement.
+`status` is one of:
 
 - `planned`: tracked design intent with no usable implementation.
 - `experimental`: usable implementation whose contract may still change.
@@ -50,14 +50,14 @@ self-dependencies are invalid. A `supported` feature may depend only on
 or `supported` features; a `deprecated` feature may depend on any implemented
 feature; a `planned` feature may depend on any registered feature.
 
-Increment `version` only when behavior, public API, or validation contract
+Increment `version` only when behavior, public API, test contract, or benchmark contract
 intentionally changes. Set `status = "supported"` only when the public contract
-is release-quality. Let `cargo xtask validate ... --update` record per-corpus
-parity evidence.
+is release-quality. Benchmark availability and observations never determine
+release status.
 
 Feature IDs and titles describe long-term capabilities, not temporary maturity
-levels. Use `version`, `status`, the Validation section, per-corpus evidence,
-and Revision Notes to describe partial coverage or missing goldens.
+levels. Use `version`, `status`, Tests, optional Benchmarks, and Revision Notes
+to describe the current contract.
 
 ## Feature docs
 
@@ -66,11 +66,13 @@ Every feature has `features/<feature-id>/feature.md` with:
 - Summary
 - Behavior/API
 - Implementation Notes
-- Validation
+- Tests
+- Benchmarks (optional)
 - Out Of Scope
 - Revision Notes
 
-Keep feature docs concise and current. Do not recreate stale phase-specific planning, algorithm, specification, or validation documents.
+Keep feature docs concise and current. Do not recreate stale phase-specific
+planning, algorithm, specification, or external-parity documents.
 
 ## Implementation guardrails
 
@@ -83,13 +85,20 @@ Keep feature docs concise and current. Do not recreate stale phase-specific plan
 - Failed transactional operations must leave inputs unchanged.
 - Parsers return structured errors rather than panics.
 - Writers reject chemistry they cannot encode faithfully.
-- RDKit and Biopython are reference tools only, not Rust runtime dependencies.
+- RDKit, Biopython, and DSSP are benchmark/reference tools only, not Rust runtime dependencies.
 
-## Validation data
+## Benchmark data
 
-Molecular validation fixtures must be externally supplied and provenance-pinned. Keep corpus descriptors, source locks, inputs, feature manifests, goldens, and evidence under `validation/corpora/<corpus-id>/`.
+Benchmark fixtures must be externally supplied and provenance-pinned. Keep
+corpus descriptors, source locks, inputs, feature manifests, goldens, and
+observations under `benchmarks/corpora/<corpus-id>/`.
 
-Use `pubchem-1k` and `pdb-100` as the normal required baselines where their external parity contracts apply. Treat `pubchem-100k`, `enamine-diversity`, `pdb-1000`, and domain-specific `pl-rex` as deliberate broader runs. Historical smoke sets are internal regression fixtures, not validation corpora. Plain validation is read-only; use `--update` only after implementation-versus-golden comparison passes and should become committed evidence.
+Benchmark manifests are optional. Omitted `--corpus` selects manifest-backed
+`pubchem-1k` and `pdb-100` targets; explicit `--corpus all` also considers
+`pubchem-100k`, `enamine-diversity`, `pdb-1000`, and domain-specific `pl-rex`.
+Historical smoke sets are internal fixtures. Run `cargo xtask benchmark` only
+when the comparison is useful; its result is informational and never a routine
+acceptance condition.
 
 ## Checks
 
@@ -102,10 +111,23 @@ cargo test --workspace
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo xtask dashboard --check
 cargo xtask skills --check
-cargo xtask corpus check --corpus <corpus-id> --require-data
-cargo xtask validate --feature <feature-id> --corpus <corpus-id>
 ```
 
 If metadata changes, run `cargo xtask dashboard` before `cargo xtask dashboard --check`.
+
+When corpus metadata, locks, manifests, or goldens change, also run the
+applicable optional integrity check:
+
+```bash
+cargo xtask corpus check --corpus <corpus-id> --require-data
+```
+
+A deliberately requested comparison may use:
+
+```bash
+cargo xtask benchmark --feature <feature-id> --corpus <corpus-id>
+```
+
+Do not make that benchmark an acceptance gate.
 
 Report every command that was not run and why.

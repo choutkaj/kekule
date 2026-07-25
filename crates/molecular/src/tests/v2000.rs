@@ -396,7 +396,7 @@ $$$$
 fn mol_v2000_preserves_coordinates_charges_isotopes_radicals_and_atom_maps() {
     let input = "\
 charged radical
-molecular validation
+molecular benchmark
 metadata fixture
   2  1  0  0  0  0            999 V2000
     0.1000    0.2000    0.3000 N   0  0  0  0  0  0  0  0  0  7  0  0
@@ -657,7 +657,7 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
 fn mol_and_sdf_v2000_writers_round_trip_metadata_and_fields() {
     let input = "\
 ammonium_acetate_like
-molecular validation
+molecular benchmark
 M CHG and M ISO fixture
   4  2  0  0  0  0            999 V2000
     0.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0

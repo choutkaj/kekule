@@ -7,8 +7,12 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Reclassify RDKit, Biopython, and DSSP external parity from a required
+  repository gate to optional benchmarking; preserve corpora and goldens, add
+  neutral result observations, and remove repository identity from benchmark
+  input digests and corpus selection identifiers.
 - Hard-rename the repository and publishable crates from `molecules` to
-  `molecular`, including the DREIDING adapter, Rust import paths, validation
+  `molecular`, including the DREIDING adapter, Rust import paths, benchmark
   tooling, generated writer provenance, and project branding.
 
 ## 0.1.0 - 2026-07-16
@@ -25,6 +29,6 @@ Initial release.
 - Explicit sanitization, hydrogen normalization, query, substructure,
   canonicalization, and modelling workflows.
 - Bounded parser fuzz smoke tests in CI and longer scheduled campaigns.
-- Generated feature/corpus validation matrix with PubChem-1k and PDB-100
-  baselines, broader PubChem/Enamine/PL-REX/PDB-1000 tiers, and reproducible
+- Generated feature/corpus benchmark matrix with PubChem-1k and PDB-100
+  defaults, broader PubChem/Enamine/PL-REX/PDB-1000 tiers, and reproducible
   RDKit/Biopython/mkdssp reference artifacts.

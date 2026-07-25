@@ -24,7 +24,7 @@ Provide a minimal object-safe energy-and-gradient contract for fixed-topology mo
 - Coincident bonded atoms return a structured coordinate-geometry failure because a nonzero-rest-length harmonic gradient has no defined Cartesian direction there.
 - The built-in potential performs no parameter inference and contains no angle, torsion, or nonbonded interactions.
 
-## Validation
+## Tests
 
 - Unit tests compare analytic harmonic gradients against central finite differences in arbitrary orientations.
 - Tests cover invalid bonds, duplicate or invalid parameters, malformed evaluations, topology mismatch, additive terms, and coincident atoms.

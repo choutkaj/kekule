@@ -11,10 +11,9 @@ pub(crate) struct DashboardSection {
 pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let check = args.iter().any(|arg| arg == "--check");
     let features = read_features()?;
-    validate_required_manifests(&features)?;
-    let statuses = read_validation_statuses(&features)?;
+    let results = read_benchmark_results(&features)?;
     let corpus_info = read_dashboard_corpus_info()?;
-    let rendered = render_dashboard(&features, &statuses, &corpus_info);
+    let rendered = render_dashboard(&features, &results, &corpus_info);
     let path = Path::new(DASHBOARD_PATH);
 
     if check {
@@ -32,7 +31,7 @@ pub(crate) fn dashboard(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
 pub(crate) fn render_dashboard(
     features: &[Feature],
-    statuses: &BTreeMap<String, ValidationStatus>,
+    results: &BTreeMap<String, BenchmarkResults>,
     corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
 ) -> String {
     let mut out = String::new();
@@ -43,8 +42,8 @@ pub(crate) fn render_dashboard(
     out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n");
     out.push_str("<title>Feature Dashboard</title>\n");
     out.push_str("<style>\n");
-    out.push_str(":root { color-scheme: light dark; --border: #d0d7de; --head: #f6f8fa; --ok: #1a7f37; --bad: #cf222e; --unknown: #9a6700; --muted: #656d76; --text: #24292f; --bg: #ffffff; --planned: #656d76; --experimental: #9a6700; --supported: #1a7f37; --deprecated: #8250df; }\n");
-    out.push_str("@media (prefers-color-scheme: dark) { :root { --border: #30363d; --head: #161b22; --ok: #3fb950; --bad: #ff7b72; --unknown: #d29922; --muted: #8b949e; --text: #c9d1d9; --bg: #0d1117; --planned: #8b949e; --experimental: #d29922; --supported: #3fb950; --deprecated: #d2a8ff; } }\n");
+    out.push_str(":root { color-scheme: light dark; --border: #d0d7de; --head: #f6f8fa; --available: #57606a; --match: #0969da; --differences: #9a6700; --error-observation: #8250df; --muted: #656d76; --text: #24292f; --bg: #ffffff; --planned: #656d76; --experimental: #9a6700; --supported: #1a7f37; --deprecated: #8250df; }\n");
+    out.push_str("@media (prefers-color-scheme: dark) { :root { --border: #30363d; --head: #161b22; --available: #8b949e; --match: #58a6ff; --differences: #d29922; --error-observation: #d2a8ff; --muted: #8b949e; --text: #c9d1d9; --bg: #0d1117; --planned: #8b949e; --experimental: #d29922; --supported: #3fb950; --deprecated: #d2a8ff; } }\n");
     out.push_str("body { margin: 24px; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }\n");
     out.push_str("h1 { margin: 0 0 4px; font-size: 24px; }\n");
     out.push_str("h2 { margin: 30px 0 4px; font-size: 20px; }\n");
@@ -90,10 +89,11 @@ pub(crate) fn render_dashboard(
     );
     out.push_str("th[aria-sort=\"ascending\"] button.sort::after { content: \" \\25B2\"; font-size: 10px; color: var(--muted); }\n");
     out.push_str("th[aria-sort=\"descending\"] button.sort::after { content: \" \\25BC\"; font-size: 10px; color: var(--muted); }\n");
-    out.push_str(".ok { color: var(--ok); font-weight: 700; }\n");
-    out.push_str(".bad { color: var(--bad); font-weight: 700; }\n");
-    out.push_str(".unknown { color: var(--unknown); font-weight: 700; }\n");
-    out.push_str(".count { display: inline-block; min-width: 1.2em; margin-left: 2px; font-size: 12px; font-weight: 650; color: var(--bad); }\n");
+    out.push_str(".available { color: var(--available); font-weight: 650; }\n");
+    out.push_str(".match { color: var(--match); font-weight: 650; }\n");
+    out.push_str(".differences { color: var(--differences); font-weight: 650; }\n");
+    out.push_str(".error-observation { color: var(--error-observation); font-weight: 650; }\n");
+    out.push_str(".count { display: inline-block; min-width: 1.2em; margin-left: 2px; font-size: 12px; font-weight: 650; }\n");
     out.push_str(".na { color: var(--muted); }\n");
     out.push_str(".legend { margin-top: -8px; font-size: 12px; }\n");
     out.push_str(".legend span { margin-right: 3px; }\n");
@@ -107,9 +107,9 @@ pub(crate) fn render_dashboard(
     out.push_str("</head>\n");
     out.push_str("<body>\n");
     out.push_str("<h1>Feature Dashboard</h1>\n");
-    out.push_str("<p>Generated from feature metadata and recorded per-corpus parity status. Run cargo xtask validate to compare against the current checkout. Do not hand-edit this file.</p>\n");
-    out.push_str("<p class=\"legend\"><span class=\"ok\">&#10003;</span>passed <span class=\"bad\">&#10007;</span>failed <span class=\"unknown\">?</span>unknown <span class=\"na\">-</span>not required</p>\n");
-    out.push_str("<p>Features shared by both molecular domains are intentionally shown in both chemistry tables. Validation columns come only from the registered typed small-molecule and macromolecule corpora.</p>\n");
+    out.push_str("<p>Generated from feature metadata, benchmark manifests, and optional result snapshots. Benchmark observations are informational and never affect feature status or release health. Run cargo xtask benchmark when you want a fresh comparison. Do not hand-edit this file.</p>\n");
+    out.push_str("<p class=\"legend\"><span class=\"available\">A</span>available <span class=\"match\">M</span>last match <span class=\"differences\">D</span>last differences <span class=\"error-observation\">E</span>last error <span class=\"na\">-</span>not available</p>\n");
+    out.push_str("<p>Features shared by both molecular domains are intentionally shown in both chemistry tables. Benchmark columns come only from registered manifests for typed small-molecule and macromolecule corpora.</p>\n");
     render_dashboard_section(
         &mut out,
         DashboardSection {
@@ -119,7 +119,7 @@ pub(crate) fn render_dashboard(
             include_corpora: true,
         },
         features,
-        statuses,
+        results,
         corpus_info,
     );
     render_dashboard_section(
@@ -131,7 +131,7 @@ pub(crate) fn render_dashboard(
             include_corpora: true,
         },
         features,
-        statuses,
+        results,
         corpus_info,
     );
     render_dashboard_section(
@@ -143,7 +143,7 @@ pub(crate) fn render_dashboard(
             include_corpora: false,
         },
         features,
-        statuses,
+        results,
         corpus_info,
     );
     render_feature_graph(&mut out, features);
@@ -285,7 +285,7 @@ pub(crate) fn render_dashboard_section(
     out: &mut String,
     section: DashboardSection,
     features: &[Feature],
-    statuses: &BTreeMap<String, ValidationStatus>,
+    results: &BTreeMap<String, BenchmarkResults>,
     corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
 ) {
     let corpora = if section.include_corpora {
@@ -300,10 +300,10 @@ pub(crate) fn render_dashboard_section(
     if section.include_corpora {
         let description = match section.domain {
             FeatureDomain::SmallMolecule => {
-                "Small-molecule features with small-molecule validation corpora."
+                "Small-molecule features with small-molecule benchmark corpora."
             }
             FeatureDomain::Macromolecule => {
-                "Macromolecular features with PDB-derived validation corpora."
+                "Macromolecular features with PDB-derived benchmark corpora."
             }
             FeatureDomain::Infrastructure => unreachable!("infrastructure has no corpora"),
         };
@@ -318,7 +318,7 @@ pub(crate) fn render_dashboard_section(
             corpus_info,
         ));
     } else {
-        out.push_str("<p class=\"section-description\">Repository feature-registry and validation-harness capabilities. These rows do not use an external chemistry reference codebase.</p>\n");
+        out.push_str("<p class=\"section-description\">Repository feature-registry and benchmark-harness capabilities. These rows do not use an external chemistry reference codebase.</p>\n");
     }
     out.push_str("<div class=\"dashboard-wrap\">\n");
     let table_class = if section.include_corpora {
@@ -346,7 +346,7 @@ pub(crate) fn render_dashboard_section(
         .iter()
         .filter(|feature| feature.domains.contains(&section.domain))
     {
-        let status = statuses.get(&feature.id);
+        let result = results.get(&feature.id);
         out.push_str(&format!(
             "<tr><td class=\"text\" data-sort-value=\"{0}\"><code>{0}</code></td>",
             escape_html(&feature.id)
@@ -386,7 +386,7 @@ pub(crate) fn render_dashboard_section(
             };
             out.push_str(&dashboard_corpus_cell(
                 feature,
-                status,
+                result,
                 corpus.id,
                 reference,
                 domain_applicable,
@@ -400,8 +400,8 @@ pub(crate) fn render_dashboard_section(
 pub(crate) fn dashboard_corpora(
     domain: FeatureDomain,
     corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
-) -> Vec<&'static ValidationCorpus> {
-    VALIDATION_CORPORA
+) -> Vec<&'static BenchmarkCorpus> {
+    BENCHMARK_CORPORA
         .iter()
         .filter(|corpus| {
             corpus_info.get(corpus.id).is_some_and(|info| match domain {
@@ -420,7 +420,7 @@ pub(crate) fn dashboard_corpora(
 pub(crate) fn dashboard_reference_summary(
     domain: FeatureDomain,
     features: &[Feature],
-    corpora: &[&ValidationCorpus],
+    corpora: &[&BenchmarkCorpus],
     corpus_info: &BTreeMap<String, CorpusDashboardInfo>,
 ) -> String {
     let feature_ids = features
@@ -590,30 +590,25 @@ pub(crate) fn dashboard_status_marker(status: FeatureStatus) -> String {
 }
 
 pub(crate) fn dashboard_corpus_cell(
-    feature: &Feature,
-    status: Option<&ValidationStatus>,
+    _feature: &Feature,
+    results: Option<&BenchmarkResults>,
     corpus: &str,
     manifest_reference: Option<&CorpusFeatureDashboardInfo>,
     domain_applicable: bool,
 ) -> String {
     if !domain_applicable {
-        return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not required\" title=\"not required\">-</span></td>".to_owned();
+        return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not available\" title=\"not available for this domain\">-</span></td>".to_owned();
     }
-    let required = feature
-        .validation_required
-        .iter()
-        .any(|required| required == corpus);
-    let corpus_status =
-        manifest_reference.and_then(|_| status.and_then(|status| status.corpora.get(corpus)));
-    if !required && manifest_reference.is_none() {
-        return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not required\" title=\"not required\">-</span></td>".to_owned();
+    if manifest_reference.is_none() {
+        return "<td class=\"marker\" data-sort-value=\"-1\"><span class=\"na\" aria-label=\"not available\" title=\"no benchmark manifest\">-</span></td>".to_owned();
     }
-    let reference = corpus_status
-        .map(|status| {
-            (
-                status.reference_tool.as_str(),
-                status.reference_version.as_str(),
-            )
+    let corpus_result = results.and_then(|results| results.corpora.get(corpus));
+    let reference = corpus_result
+        .and_then(|result| {
+            result
+                .reference_tool
+                .as_deref()
+                .zip(result.reference_version.as_deref())
         })
         .or_else(|| {
             manifest_reference.map(|reference| {
@@ -623,47 +618,38 @@ pub(crate) fn dashboard_corpus_cell(
                 )
             })
         });
-    if recorded_corpus_status_passed(corpus_status) {
-        let title = dashboard_cell_title("recorded evidence passed", reference);
+    let Some(result) = corpus_result else {
+        let title = dashboard_cell_title("benchmark available; no recorded result", reference);
         return format!(
-            "<td class=\"marker\" data-sort-value=\"1\"><span class=\"ok\" aria-label=\"passed\" title=\"{}\">&#10003;</span></td>",
+            "<td class=\"marker\" data-sort-value=\"0\"><span class=\"available\" aria-label=\"available\" title=\"{}\">A</span></td>",
             escape_html(&title)
         );
-    }
-    let marker = if let Some(corpus_status) = corpus_status {
-        if !corpus_status.passed && corpus_status.failed_count > 0 {
-            let failure_title = corpus_status
-                .first_failure
-                .as_deref()
-                .map(|failure| {
-                    format!(
-                        "{} non-passing case(s); first failure: {}",
-                        corpus_status.failed_count, failure
-                    )
-                })
-                .unwrap_or_else(|| format!("{} non-passing case(s)", corpus_status.failed_count));
-            let title = dashboard_cell_title(&failure_title, reference);
-            format!(
-                "<span class=\"bad\" aria-label=\"failed: {} non-passing case(s)\" title=\"{}\">&#10007;<span class=\"count\">{}</span></span>",
-                corpus_status.failed_count,
-                escape_html(&title),
-                corpus_status.failed_count
-            )
-        } else {
-            let title = if corpus_status.passed {
-                "recorded evidence is stale or incomplete"
-            } else {
-                "validation did not record fixture-level failures"
-            };
-            dashboard_unknown_marker(&dashboard_cell_title(title, reference))
-        }
-    } else {
-        dashboard_unknown_marker(&dashboard_cell_title(
-            "no recorded validation status",
-            reference,
-        ))
     };
-    format!("<td class=\"marker\" data-sort-value=\"0\">{marker}</td>")
+    let mut observation = format!(
+        "scope: {}; recorded at Unix timestamp {}; compared {} of {} fixture(s)",
+        result.scope, result.benchmarked_at_unix, result.compared_count, result.fixture_count
+    );
+    if let Some(source) = &result.legacy_source {
+        observation.push_str(&format!("; historical legacy source: {source}"));
+    }
+    if let Some(detail) = &result.first_detail {
+        observation.push_str(&format!("; first observation: {detail}"));
+    }
+    let (class, marker, label, sort_value) = match result.outcome {
+        BenchmarkResultOutcome::Match => ("match", "M".to_owned(), "last match", 3),
+        BenchmarkResultOutcome::Differences => (
+            "differences",
+            format!("D<span class=\"count\">{}</span>", result.difference_count),
+            "last differences",
+            2,
+        ),
+        BenchmarkResultOutcome::Error => ("error-observation", "E".to_owned(), "last error", 1),
+    };
+    let title = dashboard_cell_title(&format!("{label}; {observation}"), reference);
+    format!(
+        "<td class=\"marker\" data-sort-value=\"{sort_value}\"><span class=\"{class}\" aria-label=\"{label}\" title=\"{}\">{marker}</span></td>",
+        escape_html(&title)
+    )
 }
 
 pub(crate) fn dashboard_cell_title(base: &str, reference: Option<(&str, &str)>) -> String {
@@ -675,13 +661,6 @@ pub(crate) fn dashboard_cell_title(base: &str, reference: Option<(&str, &str)>) 
                 dashboard_reference_label(tool, version)
             )
         },
-    )
-}
-
-pub(crate) fn dashboard_unknown_marker(title: &str) -> String {
-    format!(
-        "<span class=\"unknown\" aria-label=\"unknown\" title=\"{}\">?</span>",
-        escape_html(title)
     )
 }
 

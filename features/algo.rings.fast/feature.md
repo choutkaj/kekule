@@ -21,10 +21,15 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - Handles disconnected components.
 - Topology or chemistry mutation clears cached membership rather than exposing stale results.
 
-## Validation
+## Tests
 
 - Unit tests cover core graph-cycle membership behavior.
+
+## Benchmarks
+
 - RDKit-generated goldens compare ring membership for external PubChem fixtures.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -37,8 +42,9 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - v2: Hide and clear cached membership after invalidating mutations.
 - v3: Replace recursive bridge traversal with an explicit stack for very large graphs.
 - v4: Move the public expert API under the `perception::rings` facade.
-- v5: Add PubChem-100k as required broad-corpus validation evidence.
-- v6: Mark current broad-corpus validation evidence as passing in feature metadata.
+- v5: Add PubChem-100k as required broad-corpus external-parity evidence.
+- v6: Mark current broad-corpus external-parity evidence as matching in feature metadata.
 - v8: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
-- v9: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v9: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v10: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

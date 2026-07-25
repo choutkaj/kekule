@@ -83,7 +83,7 @@ following RDKit's digraph expansion rule. For fully equivalent tetrahedral
 carrier sets, Rule 6 retries all atom carriers that can produce a complete
 ranking and accepts the result only when every successful reference choice
 preserves the same carrier permutation parity. Natural atomic weights are
-stored as integer-scaled ranking values matching RDKit reference validation,
+stored as integer-scaled ranking values matching RDKit reference benchmarks,
 while duplicate nodes keep zero Rule 2 mass.
 
 Assignment is descriptor-aware and iterative. Each assignment round evaluates
@@ -163,7 +163,7 @@ The layer validates existing stereo by default and returns structured issues
 instead of guessing when the current graph cannot support the stored local
 stereo or when the implemented ranking rules cannot distinguish carriers.
 
-## Validation
+## Tests
 
 Unit tests cover tetrahedral descriptors, double-bond descriptors, recursive
 Rule 1a/1b/2 ordering, mancude fractional atomic-number ordering, Rule 3
@@ -193,8 +193,8 @@ natural atoms versus indicated isotopes and duplicate-node zero mass.
 Equivalent-ring regressions cover isolated unsubstituted ring bridges that
 must not become stereogenic through atom-id tie breaking.
 
-Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity validation
-use externally supplied isomeric SMILES fixtures. Smoke validation also includes
+Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity benchmarks
+use externally supplied isomeric SMILES fixtures. The smoke benchmark also includes
 official RDKit atropisomer Molfile fixtures with bond-centered `P`
 descriptors, including alternate wedged substituent placement around the same
 exocyclic axis, all-carbon aromatic source-Kekule variants for RP-6306 and
@@ -202,26 +202,30 @@ BMS-986142, redundant same-axis wedge marks, a JDQ443 heteromancude guardrail,
 Mrtx1719 and ZM374979 axes, one-ring-endpoint SP2 axes, plus BMS, Sotorasib,
 and ZM374979 fixtures that combine exocyclic Molfile atrop axes with
 implicit-H tetrahedral centers adjacent to those axes.
-Smoke validation also includes V3000 RDKit macrocycle atropisomer fixtures
+The smoke benchmark also includes V3000 RDKit macrocycle atropisomer fixtures
 that exercise ring-internal Molfile axis perception and bond-centered `M`/`P`
 assignment.
-PL-REX validation uses externally supplied ligand SDF packs to cover Molfile
+The PL-REX benchmark uses externally supplied ligand SDF packs to cover Molfile
 and coordinate-bearing records. CIP goldens are generated with RDKit and
 compare atom and bond
 descriptor maps, not bytewise SMILES spelling or internal stereo element IDs.
-Validation records include molecules where RDKit or the implementation assigns
+Benchmark records include molecules where RDKit or the implementation assigns
 at least one CIP descriptor; no-descriptor molecules are filtered out so broad
-CIP validation is not dominated by unrelated parser or sanitizer coverage for
+CIP benchmarking is not dominated by unrelated parser or sanitizer coverage for
 structures with no stereochemical labels. Bond descriptors are keyed by
 endpoint atom indexes and descriptor instead of parser-local bond IDs, because
-SMILES bond insertion order is not a portable chemical identity. Molecules
-validation maps removable plain explicit hydrogens out of descriptor records
+SMILES bond insertion order is not a portable chemical identity. Benchmarking
+maps removable plain explicit hydrogens out of descriptor records
 to match RDKit default atom indexing. PubChem 100k, the Enamine Discovery
-Diversity Set, and PL-REX are enabled as broad RDKit parity gates for current
+Diversity Set, and PL-REX are available as broad RDKit parity targets for current
 descriptor-bearing coverage.
 
-## Out Of Scope
+## Benchmarks
 
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
+
+## Out Of Scope
 Full exact machine-oriented CIP coverage remains out of scope for this version:
 perception of sequence cis/trans source descriptors outside assigned
 double-bond CIP labels, kekulization of
@@ -233,7 +237,7 @@ kekulization for every alternate aromatic Molfile layout, default
 coordinate-only axis assignment without source marks, non-tetrahedral
 geometries beyond stored axis descriptors, enhanced
 stereo relation semantics, parity beyond the current descriptor-bearing
-validation corpora, isomeric SMILES emission, and stereo enumeration.
+benchmark corpora, isomeric SMILES emission, and stereo enumeration.
 
 ## Revision Notes
 
@@ -246,21 +250,21 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
   atoms before deeper substituent atoms are considered.
 - v5: Add RDKit-aligned terminal duplicate nodes, Rule 1b ring-duplicate
   priority before isotope priority, and zero isotope mass for duplicate nodes.
-- v6: Switch CIP validation to RDKit-backed descriptor maps and require smoke,
-  PubChem 100, and PubChem 1k parity corpora.
+- v6: Switch CIP benchmarking to RDKit-backed descriptor maps across smoke,
+  PubChem 100, and PubChem 1k corpora.
 - v7: Use branch-preserving paired breadth-first ligand comparison, normalize
   SMILES directional double-bond marks through stereo perception, and key CIP
-  bond validation by endpoint atoms rather than parser-local bond IDs. Raise
+  bond comparison by endpoint atoms rather than parser-local bond IDs. Raise
   the default CIP node budget to cover larger fused-ring PubChem parity cases
   while preserving explicit resource-limit failures.
-- v8: Compare descriptor-bearing records in CIP validation and add PubChem 100k
-  as a broad RDKit parity gate. The large gate exposes remaining exact-CIP
+- v8: Compare descriptor-bearing records in CIP benchmarking and add PubChem 100k
+  as a broad RDKit parity target. The large corpus exposes remaining exact-CIP
   ligand-ordering mismatches after unrelated no-descriptor parse/sanitize noise
   is filtered out.
 - v9: Apply recursive RDKit-like Rule 1a, then Rule 1b, then Rule 2 comparison;
   add implicit lone-pair carrier support for supported heteroatom centers;
   suppress root-adjacent multiple-bond duplicates; skip unsupported aromatic
-  and endocyclic hetero double-bond stereo; and align validation output with
+  and endocyclic hetero double-bond stereo; and align benchmark output with
   RDKit default explicit-hydrogen indexing.
 - v10: Add descriptor-aware iterative assignment and RDKit-like Rule 3 ordering
   for embedded `Z` versus `E` double-bond descriptors.
@@ -286,8 +290,8 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v20: Add deferred path-aware auxiliary tetrahedral descriptors so coupled
   pseudoasymmetric ligand paths can use local digraph labels instead of only
   molecule-level primary descriptors.
-- v21: Promote Enamine diversity SMILES packs into the CIP validation contract
-  as a broad RDKit parity gate for drug-like descriptor-bearing molecules.
+- v21: Promote Enamine diversity SMILES packs into the CIP benchmark contract
+  as a broad RDKit parity target for drug-like descriptor-bearing molecules.
 - v22: Replace path-only auxiliary descriptor lookup with a root-centered
   auxiliary occurrence graph, virtual local re-rooting, absolute-before-pseudo
   deferred assignment, and Enamine regressions for fused, spiro, and coupled
@@ -295,21 +299,21 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v23: Apply the RDKit-like rule that double bonds in rings smaller than eight
   atoms are not E/Z stereogenic while preserving cyclooctene and larger
   endocyclic alkene assignment.
-- v24: Add PL-REX ligand SDF packs to the CIP validation contract and compare
+- v24: Add PL-REX ligand SDF packs to the CIP benchmark contract and compare
   every descriptor-bearing SDF record against RDKit-backed atom and bond
   descriptor maps.
 - v25: Assign `M`/`P` CIP descriptors for structurally valid stored axis
   elements by ranking endpoint anchors and applying RDKit-like atropisomeric
   clockwise/counterclockwise handedness.
-- v26: Validate Molfile wedge-derived atropisomeric axes against RDKit smoke
+- v26: Benchmark Molfile wedge-derived atropisomeric axes against RDKit smoke
   goldens using the official RP-6306 atropisomer fixture.
 - v27: Add an official RP-6306 alternate wedged substituent fixture to smoke
-  parity validation, covering exocyclic-axis selection when ring-internal
+  parity references, covering exocyclic-axis selection when ring-internal
   single bonds are also adjacent to the marked endpoint.
 - v28: Use virtual implicit-H geometry for Molfile wedge-derived tetrahedral
   centers, store Molfile atrop axes with RDKit-style lowest-neighbor endpoint
-  references, and add official BMS/Sotorasib atrop fixtures to smoke parity
-  validation.
+  references, and add official BMS/Sotorasib atrop fixtures to the smoke
+  parity benchmark.
 - v29: Normalize all-carbon aromatic duplicate counts during stored-axis
   endpoint ranking and add RP-6306/BMS source-Kekule atrop regressions plus a
   JDQ443 heteromancude guardrail.
@@ -339,6 +343,7 @@ validation corpora, isomeric SMILES emission, and stereo enumeration.
 - v38: Retry final equivalent-ligand and endpoint tie classification at
   connected-component depth before reporting unresolved priority, while still
   preserving node-budget resource failures.
-- v40: Keep every ignored non-smoke corpus as explicit local-only validation
+- v40: Keep every ignored non-smoke corpus as an explicit local-only benchmark
   instead of repository-wide required evidence.
-- v41: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v41: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public benchmark selection.
+- v42: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

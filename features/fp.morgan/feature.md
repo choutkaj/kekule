@@ -12,9 +12,9 @@ No public API is implemented yet.
 
 This feature should define bit-vector shape, invariants, and aromaticity dependence before implementation.
 
-## Validation
+## Tests
 
-Future validation should compare selected RDKit Morgan fingerprint outputs or documented manual expectations.
+An optional future benchmark may compare selected RDKit Morgan fingerprint outputs or documented manual expectations.
 
 ## Out Of Scope
 
