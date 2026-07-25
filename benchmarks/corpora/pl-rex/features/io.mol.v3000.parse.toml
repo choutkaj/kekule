@@ -1,0 +1,10 @@
+feature_id = "io.mol.v3000.parse"
+corpus_id = "pl-rex"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.sdf",
+  "data/packs/pack_02.sdf",
+]

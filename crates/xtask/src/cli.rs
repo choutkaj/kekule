@@ -1,12 +1,12 @@
 use crate::*;
 
-const DEFAULT_VALIDATION_JOB_LIMIT: usize = 4;
+const DEFAULT_BENCHMARK_JOB_LIMIT: usize = 4;
 
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("dashboard") => crate::dashboard::dashboard(args.collect()),
-        Some("validate") => validate(args.collect()),
+        Some("benchmark") => benchmark(args.collect()),
         Some("corpus") => crate::corpus::corpus(args.collect()),
         Some("features") => list_features(),
         Some("skills") => skills(args.collect()),
@@ -19,7 +19,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
 
 pub(crate) fn print_help() {
     eprintln!(
-        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask validate --feature FEATURE_ID|all [--corpus CORPUS_ID|all (default: all)] [--fixture PATH] [--update] [--accept-implementation-goldens] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
+        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask benchmark --feature FEATURE_ID|all [--corpus CORPUS_ID|all (default: baseline)] [--fixture PATH] [--accept-implementation-goldens] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask skills --check\n  cargo xtask features"
     );
 }
 
@@ -29,7 +29,7 @@ pub(crate) fn value_after_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a
         .map(|window| window[1].as_str())
 }
 
-pub(crate) fn validate_args(args: &[String]) -> Result<(), Box<dyn Error>> {
+pub(crate) fn benchmark_args(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -39,19 +39,19 @@ pub(crate) fn validate_args(args: &[String]) -> Result<(), Box<dyn Error>> {
                 }
                 index += 2;
             }
-            "--update" | "--accept-implementation-goldens" => index += 1,
-            arg => return Err(boxed_error(format!("unknown validate argument: {arg}"))),
+            "--accept-implementation-goldens" => index += 1,
+            arg => return Err(boxed_error(format!("unknown benchmark argument: {arg}"))),
         }
     }
     Ok(())
 }
 
-pub(crate) fn validation_jobs(args: &[String]) -> Result<usize, Box<dyn Error>> {
+pub(crate) fn benchmark_jobs(args: &[String]) -> Result<usize, Box<dyn Error>> {
     let Some(raw) = value_after_flag(args, "--jobs") else {
         return Ok(std::thread::available_parallelism()
             .map(usize::from)
             .unwrap_or(1)
-            .min(DEFAULT_VALIDATION_JOB_LIMIT));
+            .min(DEFAULT_BENCHMARK_JOB_LIMIT));
     };
     let jobs = raw
         .parse::<usize>()

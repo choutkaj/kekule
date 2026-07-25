@@ -44,13 +44,18 @@ as one `SmallMolecule` plus source mappings.
 - Coordinates are interpreted as angstrom quantities and stored in the first
   conformer with that explicit unit.
 
-## Validation
+## Tests
 
 - Unit tests cover coordinates, `M  CHG`, `M  ISO`, radical multiplicities, supported and unsupported source bond stereo marks, atom maps, zero endpoints, non-ASCII/truncated fields, extreme counts, and malformed blocks.
 - The standalone `mol_v2000` fuzz target checks panic safety and successful parse/write/parse paths.
+
+## Benchmarks
+
 - RDKit-generated goldens compare raw Molfile-preserved atom, bond, metadata, and coordinate records for external PubChem fixtures.
 - PubChem-1k is required baseline evidence; manifest-backed broader corpora
   remain available for deliberate local parity checks.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -63,7 +68,7 @@ as one `SmallMolecule` plus source mappings.
 - v3: Make structural parsing byte-safe and checked, reject malformed counts/endpoints/M records, and add fuzz coverage.
 - v4: Preserve exact V2000 radical multiplicity and supported single-/double-bond stereo mappings.
 - v5: Move the public parser API under the `molfile` facade.
-- v6: Add PubChem-100k as required broad-corpus validation evidence.
+- v6: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v7: Store supported V2000 bond stereo codes as first-class source bond marks.
 - v8: Preserve populated atom-block valence/no-implicit semantics and
   valence-implied tetrahedral hydrogen carriers from V2000 wedge syntax using
@@ -86,4 +91,5 @@ as one `SmallMolecule` plus source mappings.
   logical-line limits while retaining the existing default-bounded parser.
 - v16: Preserve and report nonempty records after `M  END` as unsupported
   document content instead of retaining them only in the raw source string.
-- v17: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v17: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v18: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

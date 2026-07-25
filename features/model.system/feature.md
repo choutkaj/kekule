@@ -41,7 +41,7 @@ one complete mutable coordinate set.
   distinct keys even when structurally equal.
 - Construction never sanitizes, perceives, prepares, or merges source molecules.
 
-## Validation
+## Tests
 
 - Unit tests cover mixed Small/Macro instances, repeated molecules, stable local
   IDs, tombstones, dense round-trips, qualified hierarchy lookup, roles, source

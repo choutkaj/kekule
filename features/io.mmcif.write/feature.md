@@ -44,13 +44,13 @@ block without hiding validation, perception, sanitization, or preparation.
 - Work and temporary memory are linear in the number of atoms, bonds, and
   hierarchy records. Output is currently accumulated in one `String`.
 
-## Validation
+## Tests
 
 - Unit tests cover public-facade writing, writer-output parsing, supported model
   round trips, all four supported bond orders, explicit unknown-order rejection,
   unsupported aromatic connectivity, missing atom-site rejection, duplicate atom
   identities, and unencodable model roles.
-- No external writer golden is currently accepted by the validation harness, so
+- No external writer golden is currently accepted by the benchmark harness, so
   no external writer parity result is recorded despite targeted unit regression
   coverage.
 

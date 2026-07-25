@@ -27,10 +27,15 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
   the valence state and the parser reconstructs doublet through quintet
   multiplicity deterministically.
 
-## Validation
+## Tests
 
 - Unit tests cover parse/write/parse round trips for branches, rings, brackets, fragments, aromatic examples, and unsupported lossy bond/stereo cases from the graph-adjacent stereo model.
+
+## Benchmarks
+
 - RDKit-generated goldens compare sanitize/write/reparse atom identity, labeled-neighbor topology, bond order/aromaticity, charge, isotope, hydrogen, map, and valence records for external PubChem SMILES fixtures rather than exact RDKit noncanonical traversal strings.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -43,10 +48,11 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - v3: Make writer output self-readable for aromatic SMILES, preserve aromatic donor `[nH]`, and reject unencoded lossy bond/stereo representations.
 - v4: Make graph-size-dependent writer traversals iterative while preserving deterministic output.
 - v5: Move the public noncanonical writer API under the `smiles` facade.
-- v6: Add PubChem-100k as required broad-corpus validation evidence.
+- v6: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v7: Reject first-class stereo elements and source bond marks instead of reading removed atom/bond payload flags.
 - v8: Round-trip valence-implied bracket radicals through quintet while
   rejecting radical multiplicities that the emitted atom valence cannot encode.
 - v9: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
-- v10: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v10: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v11: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

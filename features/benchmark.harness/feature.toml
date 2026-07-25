@@ -1,0 +1,8 @@
+id = "benchmark.harness"
+title = "Optional reference benchmark harness"
+area = "infrastructure"
+domains = ["infrastructure"]
+version = 41
+status = "supported"
+description = "Provide optional, parallel, fixture-isolatable comparisons against generated or manually curated external-reference goldens across explicit baseline and broad benchmark corpora."
+depends_on = []

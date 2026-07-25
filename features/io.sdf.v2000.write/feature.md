@@ -24,12 +24,17 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - Records are emitted in input slice order.
 - Unsupported Molfile representations in any record return a structured error and no SDF text is returned.
 
-## Validation
+## Tests
 
 - Unit tests cover multi-record round trips, multiline data fields, and Molfile metadata symmetry.
+
+## Benchmarks
+
 - RDKit-generated goldens compare SDF writer records for external PubChem fixtures.
 - PubChem-1k is required baseline evidence; manifest-backed broader corpora
   remain available for deliberate local parity checks.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -40,7 +45,7 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - v1: SDF V2000 writer.
 - v2: Preserve exact Molfile radical and supported bond-stereo semantics in SDF records.
 - v3: Move the public writer API under the `sdf` facade.
-- v4: Add PubChem-100k as required broad-corpus validation evidence.
+- v4: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v5: Inherit first-class source bond stereo marks from Molfile V2000 writing.
 - v6: Inherit atom-block valence/no-implicit output and lossless high-spin
   radical rejection from Molfile V2000 writing.
@@ -49,4 +54,5 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
   tier while retaining every ignored corpus on demand.
 - v9: Reject record metadata that is not representable by the line-oriented SDF
   grammar and preserve value lines beginning with `>` on round trip.
-- v10: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v10: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v11: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

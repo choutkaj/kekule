@@ -29,12 +29,17 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
   code 1, doublet code 2, and triplet code 3. Quartet and quintet are rejected
   because V2000 has no lossless code for them.
 
-## Validation
+## Tests
 
 - Unit tests cover Molfile parse/write/parse round trips for radical multiplicity, supported source bond stereo marks, charge codes, isotope/map records, coordinates, and unsupported representations.
+
+## Benchmarks
+
 - RDKit-generated goldens compare Molfile-preservable atoms, bonds, coordinates, charges, isotopes, atom maps, and headers for external PubChem fixtures.
 - PubChem-1k is required baseline evidence; manifest-backed broader corpora
   remain available for deliberate local parity checks.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -43,10 +48,10 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Revision Notes
 
 - v1: V2000 writer.
-- v2: Validation contract excludes SDF data fields and passes the RDKit-backed `smoke` corpus.
+- v2: Benchmark contract excludes SDF data fields and matched the RDKit-backed `smoke` corpus.
 - v3: Write exact radical multiplicities and supported V2000 bond stereo codes; reject unsupported stereo/order combinations.
 - v4: Move the public writer API under the `molfile` facade.
-- v5: Add PubChem-100k as required broad-corpus validation evidence.
+- v5: Add PubChem-100k as required broad-corpus external-parity evidence.
 - v6: Read supported V2000 stereo output from source bond marks and reject stored stereo elements.
 - v7: Preserve explicit no-implicit valence through the atom-block valence
   field and return a structured error for quartet/quintet radicals rather than
@@ -55,4 +60,5 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 - v9: Make the committed smoke corpus the CI-reproducible required evidence
   tier while retaining every ignored corpus on demand.
 - v10: Convert explicit conformer length units to the CTfile angstrom convention.
-- v11: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v11: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v12: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

@@ -34,7 +34,7 @@ Translate a deliberately bounded SMARTS subset into `query::QueryGraph` without 
 - Default limits are 16,384 input bytes, 256 atoms, 512 bonds, branch depth 64,
   128 ring closures, 512 nodes per atom expression, and expression depth 32.
 
-## Validation
+## Tests
 
 - Regression tests cover supported topology and logic, precedence, structured
   spans, unsupported constructs, malformed inputs, and every resource class.

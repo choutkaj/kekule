@@ -31,13 +31,18 @@ per-record reports.
   content is rejected rather than discarded.
 - Parsing and interpretation never sanitize or run chemical perception.
 
-## Validation
+## Tests
 
 - Tests cover ordered records, raw headers/data fields, record round trips,
   V2000 metadata/stereo inheritance, malformed input, and absence of implicit
   perception. Existing external corpora remain the reference evidence.
+
+## Benchmarks
+
 - PubChem-1k is required baseline evidence; manifest-backed broader corpora
   remain available for deliberate local parity checks.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -64,4 +69,5 @@ per-record reports.
 - v17: Accept the common, unambiguous SDF form where `$$$$` directly terminates
   the final data field while still rejecting a field that reaches bare
   end-of-input without a blank line.
-- v18: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v18: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v19: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

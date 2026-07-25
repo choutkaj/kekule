@@ -337,7 +337,7 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
     use molecular::perception::{self, stereo};
 
     let input = include_str!(
-        "../../../validation/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
+        "../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
     );
     let document = molecular::molfile::parse_str(input)?;
     let mut molecule = molecular::molfile::interpret(&document)?.into_molecule();

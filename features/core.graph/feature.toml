@@ -6,4 +6,3 @@ version = 9
 status = "supported"
 description = "Store stable-ID molecular graphs with formal-charge aggregation, graph-adjacent stereo, and private perception state."
 depends_on = []
-validation_required = []

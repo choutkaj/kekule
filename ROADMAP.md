@@ -11,8 +11,8 @@ The first release establishes the graph kernel, typed small- and
 macromolecules, fixed-coordinate `Model` workflows, staged structure I/O,
 sanitization and perception, stereochemistry, bounded query matching,
 macromolecular hierarchy and secondary-structure analysis, and the DREIDING
-adapter. Supported features and their current validation evidence are listed in
-the generated dashboard.
+adapter. Supported features and optional benchmark availability/observations
+are listed separately in the generated dashboard.
 
 ## Next tracked capabilities
 
@@ -24,5 +24,6 @@ Two feature contracts are currently reserved with `planned` status:
   perception dependencies.
 
 Additional work should begin as a feature contract with explicit dependencies,
-resource limits, and validation requirements before it is treated as a release
-commitment.
+resource limits, and tests before it is treated as a release commitment.
+External-reference benchmarks may be added where useful, but they are not a
+release-status requirement.

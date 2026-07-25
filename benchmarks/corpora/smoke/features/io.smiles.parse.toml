@@ -1,0 +1,20 @@
+corpus_id = "smoke"
+feature_id = "io.smiles.parse"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem_smiles/cid_702.txt",
+  "data/pubchem_smiles/cid_241.txt",
+  "data/pubchem_smiles/cid_931.txt",
+  "data/pubchem_smiles/cid_2519.txt",
+  "data/pubchem_smiles/cid_2244.txt",
+  "data/pubchem_smiles/cid_8029.txt",
+]
+
+
+notes = [
+  "Reference RDKit goldens compare parsed graph records.",
+  "All molecule fixtures are externally supplied PubChem SMILES records.",
+]

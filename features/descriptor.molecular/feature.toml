@@ -2,7 +2,7 @@ id = "descriptor.molecular"
 title = "Molecular descriptors"
 area = "descriptors"
 domains = ["small-molecule"]
-version = 3
+version = 4
 status = "experimental"
 description = "Calculate explicit-policy molecular formula, average mass, and monoisotopic mass descriptors for small molecules."
 depends_on = [
@@ -11,4 +11,3 @@ depends_on = [
   "core.units",
   "algo.valence.rdkit-like",
 ]
-validation_required = ["pubchem-1k"]

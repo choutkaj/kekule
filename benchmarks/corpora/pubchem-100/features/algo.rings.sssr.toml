@@ -1,0 +1,9 @@
+feature_id = "algo.rings.sssr"
+corpus_id = "pubchem-100"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.sdf",
+]

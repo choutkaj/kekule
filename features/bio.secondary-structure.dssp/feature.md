@@ -91,14 +91,23 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   ([DOI 10.1002/bip.360221211](https://doi.org/10.1002/bip.360221211)) and
   DSSP 4 ([DOI 10.1002/pro.70208](https://doi.org/10.1002/pro.70208)). The
   official [PDB-REDO DSSP implementation](https://github.com/PDB-REDO/dssp)
-  is the validation reference, not a Rust runtime dependency.
+  is the benchmark reference, not a Rust runtime dependency.
 
-## Validation
+## Tests
+
+- Focused regressions directly cover the complete nine-state alphabet,
+  alpha/3-10/pi/polyproline-II construction, parallel and antiparallel bridge
+  formulas, deterministic top-two retention, snapshot immutability, and every
+  resource-limit class.
+- Exact categorical fields must match the pinned reference. Floating-point
+  tolerances may not be widened merely to make mismatches pass.
+
+## Benchmarks
 
 - Golden generation is pinned to Biopython 1.87 and `mkdssp version 4.6.1`.
   The Windows reference executable used for the committed evidence has SHA256
   `963f7e3bfc46818817639430485ad698faee3fd4d26a75d25d895af8925b3d1f`.
-  `validation/reference/biopython/environment.yml` recreates the version-pinned
+  `benchmarks/reference/biopython/environment.yml` recreates the version-pinned
   reference environment, and each manifest and golden records the command,
   executable checksum, fixture checksum, and `runtime_dependency = false`.
 - The reference runner first constructs the same highest-occupancy coordinate
@@ -111,19 +120,16 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   helix-position flags, sheet/strand/ladder topology and orientation, and both
   retained donor/acceptor slots. Phi, psi, kappa, and alpha use a 0.15 degree
   tolerance; TCO uses 0.0015; one-decimal legacy hydrogen-bond energies use
-  0.051 kcal/mol. Tolerances were fixed before broad validation.
-- Required baseline evidence uses all 100 fixtures in the provenance-pinned
+  0.051 kcal/mol. Tolerances were fixed before broad benchmarking.
+- The default benchmark uses all 100 fixtures in the provenance-pinned
   `pdb-100` corpus. The nested `pdb-1000` corpus supplies deliberate broad
   macromolecular coverage across the same five structural categories. Both
-  source datasets are local-only and must be built before validation.
-- Focused regressions directly cover the complete nine-state alphabet,
-  alpha/3-10/pi/polyproline-II construction, parallel and antiparallel bridge
-  formulas, deterministic top-two retention, snapshot immutability, and every
-  resource-limit class. The broad external corpora additionally exercise chain
-  gaps, termini, proline donors, incomplete and non-standard residues,
-  inter-chain interactions, turns/bends, and multi-sheet topology.
-- Exact categorical fields must match the pinned reference. Floating-point
-  tolerances may not be widened merely to make mismatches pass.
+  source datasets are local-only and must be built before benchmarking.
+- The broad external corpora exercise chain gaps, termini, proline donors,
+  incomplete and non-standard residues, inter-chain interactions, turns/bends,
+  and multi-sheet topology.
+- Optional external-reference manifests are available for `pdb-100`, `pdb-1000`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -145,5 +151,6 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   1.87 plus DSSP 4.6.1 reference generation, require checked-in smoke evidence,
   and add explicit PDB-10/PDB-100 supplemental validation.
 - v1: Establish the planned DSSP 4-compatible, read-only analysis contract.
-- v3: Use PDB-100 as the required macromolecular baseline and retire smoke and PDB-10 as validation corpora.
-- v4: Ignore backbone-like non-polymer components, compare validation records by source residue identity, and exclude explicit reference-tool failures from generated manifests.
+- v3: Use PDB-100 as the required macromolecular baseline and retire smoke and PDB-10 as benchmark corpora.
+- v4: Ignore backbone-like non-polymer components, compare benchmark records by source residue identity, and exclude explicit reference-tool failures from generated manifests.
+- v5: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

@@ -1,0 +1,14 @@
+feature_id = "stereo.cip"
+corpus_id = "pubchem-100"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.smi",
+]
+
+notes = [
+  "Externally supplied PubChem isomeric SMILES pack provides broader small-molecule CIP parity coverage.",
+  "Goldens compare RDKit-backed CIP atom and bond descriptor maps, not bytewise SMILES spelling or internal stereo element IDs.",
+]

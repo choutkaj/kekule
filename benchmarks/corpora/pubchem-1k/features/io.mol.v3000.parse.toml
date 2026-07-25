@@ -1,0 +1,18 @@
+feature_id = "io.mol.v3000.parse"
+corpus_id = "pubchem-1k"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.sdf",
+  "data/packs/pack_02.sdf",
+  "data/packs/pack_03.sdf",
+  "data/packs/pack_04.sdf",
+  "data/packs/pack_05.sdf",
+  "data/packs/pack_06.sdf",
+  "data/packs/pack_07.sdf",
+  "data/packs/pack_08.sdf",
+  "data/packs/pack_09.sdf",
+  "data/packs/pack_10.sdf",
+]

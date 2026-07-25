@@ -22,7 +22,7 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         return Err(boxed_error(format!("unknown corpus: {selector}")));
     }
 
-    let corpora = VALIDATION_CORPORA
+    let corpora = BENCHMARK_CORPORA
         .iter()
         .map(|corpus| corpus.id)
         .filter(|id| selector == "all" || selector == *id)
@@ -43,7 +43,7 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             &descriptor.build_command,
         )?;
         println!(
-            "corpus `{corpus_id}` has {} pinned entries and passed integrity checks",
+            "corpus `{corpus_id}` has {} pinned entries; integrity checks completed",
             lock.entries.len()
         );
         locks.insert((*corpus_id).to_owned(), lock);
@@ -85,7 +85,7 @@ pub(crate) struct CorpusDescriptor {
     #[serde(default)]
     pub(crate) parent: Option<String>,
     #[serde(default)]
-    pub(crate) seed: Option<String>,
+    pub(crate) selection_id: Option<String>,
     #[serde(default)]
     pub(crate) formats: Vec<String>,
     #[serde(default)]
@@ -114,9 +114,9 @@ pub(crate) struct CorpusDashboardInfo {
 pub(crate) fn read_dashboard_corpus_info(
 ) -> Result<BTreeMap<String, CorpusDashboardInfo>, Box<dyn Error>> {
     let mut summaries = BTreeMap::new();
-    for corpus in VALIDATION_CORPORA {
+    for corpus in BENCHMARK_CORPORA {
         let descriptor = read_corpus_descriptor(corpus.id)?;
-        let manifest_dir = Path::new("validation")
+        let manifest_dir = Path::new("benchmarks")
             .join("corpora")
             .join(corpus.id)
             .join("features");
@@ -132,11 +132,11 @@ pub(crate) fn read_dashboard_corpus_info(
                         .and_then(|stem| stem.to_str())
                         .ok_or_else(|| {
                             boxed_error(format!(
-                                "{} has a non-UTF-8 validation manifest name",
+                                "{} has a non-UTF-8 benchmark manifest name",
                                 path.display()
                             ))
                         })?;
-                let manifest = read_validation_manifest(&path)?;
+                let manifest = read_benchmark_manifest(&path)?;
                 if manifest.feature_id != feature_id {
                     return Err(boxed_error(format!(
                         "{} declares feature_id `{}`, expected `{feature_id}`",
@@ -182,7 +182,7 @@ pub(crate) struct SourceLock {
     pub(crate) schema_version: u32,
     pub(crate) corpus_id: String,
     pub(crate) source: String,
-    pub(crate) selection_seed: String,
+    pub(crate) selection_id: String,
     pub(crate) entries: Vec<SourceEntry>,
     #[serde(default)]
     pub(crate) packs: Vec<SourcePack>,
@@ -223,7 +223,7 @@ pub(crate) struct SourcePack {
 pub(crate) fn corpus_root(corpus: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("validation")
+        .join("benchmarks")
         .join("corpora")
         .join(corpus)
 }
@@ -235,8 +235,8 @@ pub(crate) fn corpus_descriptor_path(corpus: &str) -> PathBuf {
 pub(crate) fn read_corpus_descriptor(corpus: &str) -> Result<CorpusDescriptor, Box<dyn Error>> {
     let descriptor = read_tracked_corpus_descriptor(corpus)?;
     let path = corpus_descriptor_path(corpus);
-    let registered = validation_corpus(corpus)
-        .ok_or_else(|| boxed_error(format!("unknown validation corpus `{corpus}`")))?;
+    let registered = benchmark_corpus(corpus)
+        .ok_or_else(|| boxed_error(format!("unknown benchmark corpus `{corpus}`")))?;
     if descriptor.id != registered.id {
         return Err(boxed_error(format!(
             "{} declares id `{}`, expected `{}`",
@@ -247,7 +247,7 @@ pub(crate) fn read_corpus_descriptor(corpus: &str) -> Result<CorpusDescriptor, B
     }
     if descriptor.local_only != registered.local_only {
         return Err(boxed_error(format!(
-            "{} declares local_only={}, expected {} from the validation corpus registry",
+            "{} declares local_only={}, expected {} from the benchmark corpus registry",
             path.display(),
             descriptor.local_only,
             registered.local_only
@@ -308,9 +308,9 @@ pub(crate) fn check_corpus_lock(
             descriptor.id
         )));
     }
-    if descriptor.seed.as_deref() != Some(lock.selection_seed.as_str()) {
+    if descriptor.selection_id.as_deref() != Some(lock.selection_id.as_str()) {
         return Err(boxed_error(format!(
-            "{} selection seed does not match corpus.toml",
+            "{} selection ID does not match corpus.toml",
             descriptor.id
         )));
     }
@@ -370,7 +370,7 @@ pub(crate) fn check_corpus_artifacts(
         if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
             continue;
         }
-        let manifest = read_validation_manifest(&path)?;
+        let manifest = read_benchmark_manifest(&path)?;
         if manifest.corpus_id != corpus {
             return Err(boxed_error(format!(
                 "{} declares corpus `{}`",
@@ -395,8 +395,8 @@ pub(crate) fn check_corpus_artifacts(
     }
     golden_paths.sort();
     validate_gzip_json_files(&golden_paths)?;
-    if validation_status_path(corpus).exists() {
-        read_corpus_status(&validation_status_path(corpus))?;
+    if benchmark_results_path(corpus).exists() {
+        read_corpus_results(&benchmark_results_path(corpus))?;
     }
     if !require_data {
         return Ok(());

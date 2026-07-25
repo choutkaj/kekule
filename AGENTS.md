@@ -6,7 +6,7 @@ These rules apply to AI agents working in this repository.
 
 1. Start from one canonical feature ID under `features/`; list every affected feature ID if the work spans direct dependencies.
 2. Read `ARCHITECTURE.md`, this file, and the selected feature directories before editing code.
-3. Keep the change scoped. Update feature metadata or docs only when behavior, public API, or validation contracts change.
+3. Keep the change scoped. Update feature metadata or docs only when behavior, public API, test contracts, or benchmark contracts change.
 4. Add or update a regression test for every defect fix or API/behavior contract change.
 5. Run applicable checks before handoff and report every command that was not run, with the reason.
 6. Commit logical chunks. End every commit message with:
@@ -67,14 +67,21 @@ Use trunk-based development with short-lived feature branches.
 - Keep biomolecular labels and structure metadata in `SmcraHierarchy`, not core `Atom` or `Bond`, unless chemically general.
 - Topology or chemistry-relevant mutation must invalidate affected computed state. Failed transactional operations must leave inputs unchanged.
 - Parsers must return structured errors for malformed input. Writers must reject unsupported chemistry rather than silently coercing it.
-- RDKit and Biopython are validation/reference tools only, not Rust runtime dependencies.
+- RDKit, Biopython, and DSSP are benchmark/reference tools only, not Rust runtime dependencies.
 - Algorithms must document assumptions, edge cases, and resource limits.
 
-## Validation guardrails
+## Test and benchmark guardrails
 
 - Every tracked feature must have canonical `feature.toml` and `feature.md`.
-- Do not claim feature/corpus parity without current generated evidence or documented manual evidence accepted by the validation harness.
-- Molecular validation fixtures must be externally supplied and provenance-pinned; toy molecules are allowed only for focused unit regressions.
+- Every feature document must have a `Tests` section. An optional `Benchmarks`
+  section documents external-reference coverage where manifests exist.
+- Do not claim feature/corpus parity without a deliberately run current
+  benchmark or documented manual evidence accepted by the benchmark harness.
+- Benchmark fixtures must be externally supplied and provenance-pinned; toy
+  molecules are allowed only for focused unit regressions.
+- Benchmarks are informational conveniences. Do not require benchmark
+  manifests, results, or matching snapshots for feature health, routine
+  development, release status, CI, dashboard generation, or agent handoff.
 - Do not weaken comparisons, remove asserted fields, delete regression tests, or regenerate goldens merely to make failures disappear.
 - The dashboard is generated from feature metadata; do not hand-edit `features/DASHBOARD.html`.
 - Do not claim a check, workflow, branch-protection rule, corpus result, or repository setting was verified unless it was actually inspected or run.
