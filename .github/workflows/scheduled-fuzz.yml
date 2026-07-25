@@ -2,36 +2,45 @@ name: Scheduled parser fuzzing
 
 on:
   workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  fuzz:
-    name: ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
+    inputs:
+      target:
+        description: Parser target to fuzz
+        required: true
+        default: smiles
+        type: choice
+        options:
           - mol_v2000
           - mol_v3000
           - sdf_v2000
           - smiles
           - mmcif
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parser-fuzz-${{ inputs.target }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo install cargo-fuzz --locked
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-fuzz
       - name: Run bounded long campaign
         env:
-          TARGET: ${{ matrix.target }}
-        run: cargo +nightly fuzz run "$TARGET" -- -max_total_time=1800 -max_len=65536
+          TARGET: ${{ inputs.target }}
+        run: cargo +nightly fuzz run "$TARGET" -- -max_total_time=300 -max_len=65536
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fuzz-artifacts-${{ matrix.target }}
-          path: fuzz/artifacts/${{ matrix.target }}/
+          name: fuzz-artifacts-${{ inputs.target }}
+          path: fuzz/artifacts/${{ inputs.target }}/
           if-no-files-found: ignore
+          retention-days: 1
