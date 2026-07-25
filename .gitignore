@@ -12,7 +12,9 @@ __pycache__/
 .mypy_cache/
 fuzz/artifacts/
 fuzz/target/
-validation/corpora/*/data/
-validation/reference/atomic_data/cache/
-!validation/corpora/tiny/data/
-!validation/corpora/tiny/data/**
+benchmarks/corpora/*/data/
+tools/atomic-data/cache/
+!benchmarks/corpora/smoke/data/
+!benchmarks/corpora/smoke/data/**
+!benchmarks/corpora/tiny/data/
+!benchmarks/corpora/tiny/data/**

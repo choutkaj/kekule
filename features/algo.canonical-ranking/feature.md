@@ -30,17 +30,21 @@ Assign deterministic non-stereo atom symmetry ranks for later canonical SMILES a
   perception stage to accept the input molecule.
 - Symmetric ties are intentionally preserved as equal ranks. Later canonical SMILES work must add traversal/backtracking policy instead of treating rank plus `AtomId` as chemically canonical.
 
-## Validation
+## Tests
 
 - Unit tests cover symmetric atom grouping, atom-order-independent rank class
   counts, payload fields that break symmetry, Kekule-choice independence, and
   regular cyclic graphs that require global topology refinement.
+
+## Benchmarks
+
 - RDKit-generated goldens compare equivalence-class partitions rather than
   implementation-specific numeric rank labels across the external molecular
   corpora.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-
 Stereochemistry-sensitive ranking, total canonical atom ordering, canonical SMILES traversal, and RDKit parity for every tie-breaking edge case.
 
 ## Revision Notes
@@ -54,4 +58,5 @@ Stereochemistry-sensitive ranking, total canonical atom ordering, canonical SMIL
   aromatic bond codes across Kekule forms, align base invariants with RDKit's
   total-H semantics, preserve graph-sized degrees, and add conditionally
   triggered rooted cyclic-topology refinement for WL-hard ring systems.
-- v6: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v6: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v7: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

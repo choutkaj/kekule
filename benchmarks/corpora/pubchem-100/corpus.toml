@@ -1,0 +1,22 @@
+id = "pubchem-100"
+title = "PubChem deterministic 100-compound corpus"
+kind = "small-molecule"
+ready = true
+expected_count = 100
+local_only = true
+parent = "pubchem-1k"
+selection_id = "pubchem-v1"
+formats = ["sdf-v2000", "smiles"]
+build_command = "micromamba run -n rdkit-benchmark-reference python benchmarks/reference/rdkit/build_corpus.py"
+notes = [
+  "Locked membership was originally selected from ranked hash candidates occurring in the official CID 1-500000 CURRENT-Full shard.",
+  "Structures are official PubChem 2D V2000 records because PUG REST 3D retrieval was unavailable during corpus construction.",
+  "This ignored corpus is local-only and participates in all-corpus benchmark when its local data is present.",
+]
+
+[categories]
+disconnected = 20
+charged = 20
+multi-ring = 20
+heteroatom-rich = 20
+remaining = 20

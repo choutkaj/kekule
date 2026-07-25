@@ -59,7 +59,7 @@ This mirrors the perception layer's endpoint-relative normalization and lets a
 shared directional bond report a conflict instead of silently dropping one
 constraint.
 
-## Validation
+## Tests
 
 Unit tests cover tetrahedral marker emission, marker flipping under odd writer
 carrier-order permutations, round-trip parsing of emitted tetrahedral SMILES,
@@ -68,21 +68,25 @@ elements, semantic round-trip perception of emitted double-bond stereo, and
 implicit-carrier double-bond output, plus rejection of unperceived source bond
 marks and explicit unknown stereo.
 
-Smoke validation compares semantic output against externally generated RDKit
+The smoke benchmark compares semantic output against externally generated RDKit
 goldens after noncanonical isomeric SMILES write and reparse. The comparison
 includes sanitized graph semantics plus CIP descriptor-bearing stereo semantics,
-not bytewise SMILES spelling. PubChem 100 and PubChem 1k validation use the
+not bytewise SMILES spelling. PubChem 100 and PubChem 1k benchmarks use the
 same semantic comparison over sanitized records from the externally supplied
 PubChem SMILES packs whose source SMILES contains isomeric stereo syntax, so
 the broader tiers exercise stereochemical round-trip behavior without being
-dominated by unrelated non-stereo SMILES valence and aromaticity parity.
+dominated by unrelated non-stereo SMILES valence and aromaticity differences.
+
+## Benchmarks
+
+- Optional external-reference manifests are available for `pubchem-1k`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-
 Canonical isomeric SMILES, ambiguous or nonprintable implicit-hydrogen
 double-bond carrier output, axial SMILES extensions, enhanced stereo groups,
-stereo enumeration, query stereochemistry, and broad RDKit isomeric SMILES
-parity validation.
+stereo enumeration, query stereochemistry, and exhaustive RDKit isomeric SMILES
+parity benchmarking.
 
 ## Revision Notes
 
@@ -92,13 +96,13 @@ parity validation.
 - v2: Emit endpoint-normalized slash/backslash marks for explicit-carrier
   double-bond stereo elements while rejecting unassembled source marks and
   unsupported implicit-carrier double-bond output.
-- v3: Add smoke-corpus implementation validation against RDKit semantic goldens
+- v3: Add a smoke-corpus implementation benchmark against RDKit semantic goldens
   for absent, tetrahedral, and double-bond isomeric SMILES cases.
 - v4: Encode implicit-hydrogen double-bond carriers by marking the unique
   opposite explicit substituent bond with inverted local direction.
-- v5: Add PubChem 100 RDKit semantic validation over source-stereo isomeric
+- v5: Add PubChem 100 RDKit semantic benchmarking over source-stereo isomeric
   SMILES records.
-- v6: Add PubChem 1k RDKit semantic validation over source-stereo isomeric
+- v6: Add PubChem 1k RDKit semantic benchmarking over source-stereo isomeric
   SMILES records, allow inert directional source marks next to non-stereogenic
   alkenes, and use stored-Kekule atom style for components that retain stored
   Kekule bond orders.
@@ -106,4 +110,5 @@ parity validation.
   from the noncanonical SMILES writer.
 - v8: Keep every ignored non-smoke corpus as explicit local-only validation
   instead of repository-wide required evidence.
-- v9: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v9: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v10: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

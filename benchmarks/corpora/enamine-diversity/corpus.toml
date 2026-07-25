@@ -1,0 +1,17 @@
+id = "enamine-diversity"
+title = "Enamine Discovery Diversity Set 50"
+kind = "small-molecule"
+ready = true
+expected_count = 50240
+local_only = true
+selection_id = "enamine-diversity-20260524"
+formats = ["sdf-v2000", "smiles", "csv"]
+build_command = "micromamba run -n rdkit-benchmark-reference python benchmarks/reference/rdkit/build_large_corpora.py --corpus enamine-diversity"
+notes = [
+  "Pins all 50240 plated compounds from the 20260524 SDF, SMILES, and CSV files.",
+  "SMILES benchmark packs cover all 50240 records; SDF V2000 benchmark packs cover the 47359 source records that are V2000.",
+  "This large corpus is local-only and participates in all-corpus benchmark when its local data is present.",
+]
+
+[categories]
+diversity = 50240

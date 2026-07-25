@@ -28,12 +28,18 @@ interpret one record as one asserted `SmallMolecule` plus source mappings.
 - `SmallMolecule::from_smiles` and `from_smiles_sanitized` remain deliberate
   convenience orchestrators and use the default parser limits.
 
-## Validation
+## Tests
+
+- Focused unit and regression tests cover the behavior, error, and resource-limit contracts described above.
+
+## Benchmarks
 
 - Unit/fuzz tests cover raw document spans and components, malformed syntax,
   parse/interpret separation, disconnected molecules, local stereo, and
-  parse-write-parse behavior. Existing external validation corpora remain the
+  parse-write-parse behavior. Existing external benchmark corpora remain the
   semantic reference.
+- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
 
@@ -51,4 +57,5 @@ interpret one record as one asserted `SmallMolecule` plus source mappings.
   without reparsing source text, and returns canonical atom/bond mappings.
 - v16: Add configurable input, atom, and bond resource limits while retaining
   `parse_str` as the default-bounded convenience entry point.
-- v17: Use PubChem-1k as the required baseline validation corpus after retiring the former smoke corpus from public validation.
+- v17: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
+- v18: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.

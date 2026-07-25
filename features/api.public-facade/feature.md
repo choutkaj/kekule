@@ -53,7 +53,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `graph_mut()` itself is state-neutral; chemistry and topology mutators on the
   returned graph perform their own targeted invalidation, allowing perception
   operations to consume already-installed prerequisite state.
-- Internal validation tooling uses the same public namespaces as user code.
+- Internal benchmark tooling uses the same public namespaces as user code.
 - Invariant-bearing hierarchy, provenance, document, model, and structured
   error state is private behind accessors or checked constructors.
 - Extensible public error enums are non-exhaustive. Deliberate value, options,
@@ -61,10 +61,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Published crates start at `0.1.0`; breaking changes in the `0.x` line require
   a minor version increment.
 
-## Validation
+## Tests
 
 - External integration tests compile public happy-path, namespaced, low-level graph, and macro-molecule API examples as downstream user code.
-- Workspace tests exercise the migrated validation tooling and existing chemistry/IO behavior through the new wrapper accessors.
+- Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
 
 ## Out Of Scope
 

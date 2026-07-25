@@ -36,7 +36,7 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
   pairs. Nonbonded work is all-pairs and therefore O(N^2).
 - Preparation never sanitizes, adds hydrogens, or mutates the source model.
 
-## Validation
+## Tests
 
 - Unit tests compare Cartesian gradients with central finite differences and cover
   molecule-instance charge isolation, exclusions, topology binding, singular geometry, and

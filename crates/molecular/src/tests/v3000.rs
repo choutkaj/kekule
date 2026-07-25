@@ -4,7 +4,7 @@ use super::*;
 fn mol_v3000_parses_raw_atoms_bonds_coordinates_and_metadata() {
     let input = "\
 charged radical
-molecular validation
+molecular benchmark
 metadata fixture
   0  0  0  0  0  0            999 V3000
 M  V30 BEGIN CTAB

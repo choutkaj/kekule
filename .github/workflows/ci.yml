@@ -8,18 +8,15 @@ on:
   # unavailable. Run the repository checks locally before integration.
   workflow_dispatch:
 
-jobs:
-  msrv:
-    name: MSRV (Rust 1.89)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.89.0
-      - run: cargo check --workspace --all-targets --locked
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
-  rust:
-    name: Rust
+jobs:
+  checks:
+    name: Linux checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

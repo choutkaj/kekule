@@ -1,0 +1,16 @@
+feature_id = "io.smiles.canonical"
+corpus_id = "pubchem-100"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.smi",
+]
+
+notes = [
+  "Reference RDKit goldens compare sanitized reparse semantics for canonical output across all declared records.",
+  "Implementation benchmark sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model.",
+  "Canonical benchmark applies no feature-specific unsupported-chemistry filter; parser or writer gaps surface as benchmark failures.",
+  "Exact canonical SMILES string parity remains validated only for the smoke non-fused-ring subset.",
+]
