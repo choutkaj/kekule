@@ -7,6 +7,11 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Begin the deliberate 0.2.0 topology-centered API transition: promote an
+  immutable coordinate-free `Topology`, separate configurations from topology,
+  add finite ensembles and streaming-first trajectories, bind selections and
+  prepared potentials to exact topology identity, and remove the obsolete
+  model-topology vocabulary once consumers are migrated.
 - Reclassify RDKit, Biopython, and DSSP external parity from a required
   repository gate to optional benchmarking; preserve corpora and goldens, add
   neutral result observations, and remove repository identity from benchmark
