@@ -2,8 +2,8 @@ id = "model.topology"
 title = "Topology construction and identity"
 area = "modeling"
 domains = ["small-molecule", "macromolecule"]
-version = 1
-status = "planned"
+version = 2
+status = "supported"
 description = "Construct immutable coordinate-free molecular systems with reusable definitions, exact identity, dense ordering, mappings, and bound selections."
 depends_on = [
   "core.graph",

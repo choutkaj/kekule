@@ -6,7 +6,8 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 
 ## Behavior/API
 
-- Exposes `Point3`, `Conformer`, `ConformerId`, and conformer accessors on `Molecule`.
+- Exposes `Conformer`, `ConformerId`, and conformer accessors on `Molecule`;
+  the shared `Point3` type lives at `geometry::Point3`.
 - Conformers store optional coordinates keyed by `AtomId` plus one explicit
   compatible length unit for the complete coordinate array.
 - Position setters accept `Quantity<Point3>`, convert to the conformer's unit,
@@ -22,7 +23,8 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
   hidden coordinate convention.
 - Stable conformer IDs use slot storage, matching atom and bond ID behavior.
 - Parsers may attach a conformer without running sanitization or perception.
-- The mmCIF parser stores coordinates from all models in one conformer because each atom-site row is a distinct graph atom; model identity remains in `SmcraHierarchy`.
+- Molecule-local conformers remain convenience coordinate storage. System-wide
+  models, ensembles, and trajectories use the topology-bound structure layer.
 
 ## Tests
 
@@ -50,3 +52,5 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
   access through `Quantity<Point3>`.
 - v6: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v7: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v8: Move `Point3` to the shared `geometry` module and distinguish local
+  molecule conformers from topology-bound configurations and trajectories.

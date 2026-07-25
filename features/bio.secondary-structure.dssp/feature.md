@@ -2,10 +2,10 @@
 
 ## Summary
 
-Assign protein secondary structure from one explicit three-dimensional `Model`
-coordinate snapshot using the DSSP hydrogen-bond and geometric definitions. The
-feature is structural analysis, not sequence-based secondary-structure
-prediction.
+Assign protein secondary structure from one borrowed three-dimensional
+topology-plus-configuration snapshot using the DSSP hydrogen-bond and geometric
+definitions. The feature is structural analysis, not sequence-based
+secondary-structure prediction.
 
 The implementation targets DSSP 4.6.1 behavior, including polyproline-II
 (kappa) helices. Analysis is read-only and returns a derived result; it never
@@ -16,16 +16,18 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 
 - The public namespace is `molecular::dssp`.
 - The primary entry point is
-  `dssp::assign(&Model, DsspOptions) -> Result<DsspResult, DsspError>`.
-- Input is one already-constructed `Model`, whose positions are the sole
-  authoritative coordinate set. DSSP does not parse files, choose an mmCIF
-  model or alternate location, infer molecular boundaries, sanitize chemistry,
-  or repair hierarchy data.
+  `dssp::assign(ModelView, DsspOptions) -> Result<DsspResult, DsspError>`;
+  `assign_model` is the owned-model convenience wrapper.
+- Input is one borrowed exact-topology structural view, whose positions are the
+  sole authoritative coordinate set. This permits direct analysis of models,
+  ensemble members, trajectory frames, and frame buffers. DSSP does not parse
+  files, choose an mmCIF model or alternate location, infer molecular
+  boundaries, sanitize chemistry, or repair hierarchy data.
 - All macro-molecule instances are considered together so hydrogen bonds and
   beta-sheet topology may cross chain and molecule-instance boundaries. Small
   molecules and non-peptide residues are ignored and counted in the report.
 - `DsspResidueKey` qualifies each local `SmcraResidueId` with its
-  `MoleculeInstanceId`. Results never flatten or renumber model topology.
+  `MoleculeInstanceId`. Results never flatten or renumber topology.
 - `DsspSecondaryStructure` represents the complete DSSP 4 summary alphabet:
   loop (` `), alpha helix (`H`), isolated beta bridge (`B`), extended beta
   strand (`E`), 3-10 helix (`G`), pi helix (`I`), polyproline-II/kappa helix
@@ -99,6 +101,8 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   alpha/3-10/pi/polyproline-II construction, parallel and antiparallel bridge
   formulas, deterministic top-two retention, snapshot immutability, and every
   resource-limit class.
+- Public integration and benchmark-adapter tests exercise the borrowed-view
+  entry point without owned-model reconstruction.
 - Exact categorical fields must match the pinned reference. Floating-point
   tolerances may not be widened merely to make mismatches pass.
 
@@ -121,10 +125,11 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   retained donor/acceptor slots. Phi, psi, kappa, and alpha use a 0.15 degree
   tolerance; TCO uses 0.0015; one-decimal legacy hydrogen-bond energies use
   0.051 kcal/mol. Tolerances were fixed before broad benchmarking.
-- The default benchmark uses all 100 fixtures in the provenance-pinned
-  `pdb-100` corpus. The nested `pdb-1000` corpus supplies deliberate broad
-  macromolecular coverage across the same five structural categories. Both
-  source datasets are local-only and must be built before benchmarking.
+- The default benchmark uses the provenance-pinned `pdb-100` corpus. Its
+  current manifest compares 98 fixtures and explicitly excludes two
+  reference-tool failures; the nested `pdb-1000` corpus supplies deliberate
+  broad macromolecular coverage across the same five structural categories.
+  Both source datasets are local-only and must be built before benchmarking.
 - The broad external corpora exercise chain gaps, termini, proline donors,
   incomplete and non-standard residues, inter-chain interactions, turns/bends,
   and multi-sheet topology.
@@ -154,3 +159,5 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 - v3: Use PDB-100 as the required macromolecular baseline and retire smoke and PDB-10 as benchmark corpora.
 - v4: Ignore backbone-like non-polymer components, compare benchmark records by source residue identity, and exclude explicit reference-tool failures from generated manifests.
 - v5: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v6: Move the primary kernel to borrowed `ModelView` input so any compatible
+  configuration container can be analyzed without coordinate copying.

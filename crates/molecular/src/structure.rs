@@ -1299,7 +1299,7 @@ impl From<PositionError> for EnsembleError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, Element, Molecule};
+    use crate::core::{Atom, Conformer, Element, Molecule};
     use crate::geometry::Vector3;
     use crate::units::{ANGSTROM, NANOMETER};
 
@@ -1427,6 +1427,45 @@ mod tests {
         assert_eq!(
             ensemble.push(EnsembleMember::new(configuration(&independent, 3.0))),
             Err(EnsembleError::TopologyIdentityMismatch)
+        );
+    }
+
+    #[test]
+    fn ensemble_from_conformers_preserves_source_order_without_copying_conformers_to_topology() {
+        let mut graph = Molecule::new();
+        let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+        let mut first = Conformer::new(ANGSTROM).unwrap();
+        first
+            .set_position(atom, Quantity::new(Point3::new(1.0, 0.0, 0.0), ANGSTROM))
+            .unwrap();
+        let first = graph.add_conformer(first).unwrap();
+        let mut second = Conformer::new(ANGSTROM).unwrap();
+        second
+            .set_position(atom, Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM))
+            .unwrap();
+        let second = graph.add_conformer(second).unwrap();
+        let molecule = SmallMolecule::from_graph(graph);
+
+        let ensemble =
+            Ensemble::from_small_molecule_conformers(&molecule, [second, first]).unwrap();
+        assert_eq!(
+            ensemble
+                .views()
+                .map(|view| view.positions().value()[0].x)
+                .collect::<Vec<_>>(),
+            vec![2.0, 1.0]
+        );
+        assert_eq!(
+            ensemble
+                .topology()
+                .definitions()
+                .next()
+                .unwrap()
+                .1
+                .graph()
+                .conformers()
+                .count(),
+            0
         );
     }
 }

@@ -1643,10 +1643,26 @@ mod tests {
         let first = builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
+        let small = SmallMolecule::from_smiles_sanitized("O").unwrap();
+        let small_definition = builder.add_small_molecule_definition(&small).unwrap();
+        builder
+            .add_instance(small_definition, MoleculeInstanceMetadata::default())
+            .unwrap();
         let second = builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
         let topology = builder.build().unwrap();
+        assert_eq!(topology.definition_count(), 2);
+        assert!(topology
+            .definition(definition)
+            .unwrap()
+            .macro_molecule()
+            .is_some());
+        assert!(topology
+            .definition(small_definition)
+            .unwrap()
+            .small_molecule()
+            .is_some());
         assert_eq!(
             AtomSelection::for_chain_label(&topology, "A")
                 .unwrap()

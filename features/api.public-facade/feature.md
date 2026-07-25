@@ -8,7 +8,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
-  `substructure`, `canon`, `descriptors`, and `modeling`.
+  `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
+  `trajectory`, and `modeling`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -30,10 +31,14 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   an `i64` without hiding sanitization or perception.
 - `mmcif::interpret` returns a selected-coordinate `Model` plus report;
   `MolecularContents` and `Solvent` are removed.
+- `mmcif::interpret_ensemble` is a separate shared-topology multi-model path
+  that rejects inconsistent atom identity or topology.
 - `MmcifInterpretation::into_model` consumes an interpretation when callers do
   not need to retain its report.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
-- Fixed-topology modelling types, potentials, and minimization live under `modeling` and are not added to the prelude.
+- Immutable system structure, coordinate containers, and frames live under
+  `topology`, `structure`, and `trajectory`; potentials and minimization remain
+  under `modeling`. These focused types are not added to the prelude.
 - `Model::instance_to_conformer` provides an explicit transactional path from
   instance-qualified model positions back to a compatible local conformer.
 - Explicit small-molecule hydrogen topology transforms live under `hydrogens`
@@ -58,12 +63,14 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   error state is private behind accessors or checked constructors.
 - Extensible public error enums are non-exhaustive. Deliberate value, options,
   and report payloads may retain direct public fields.
-- Published crates start at `0.1.0`; breaking changes in the `0.x` line require
-  a minor version increment.
+- The topology-centered hard break is released as `0.2.0`; later breaking
+  changes in the `0.x` line likewise require a minor version increment.
 
 ## Tests
 
-- External integration tests compile public happy-path, namespaced, low-level graph, and macro-molecule API examples as downstream user code.
+- External integration tests compile public happy-path, namespaced, low-level
+  graph, macro-molecule, topology/configuration/model, mmCIF, and borrowed-view
+  examples as downstream user code.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
 
 ## Out Of Scope
@@ -80,7 +87,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v5: Add staged mmCIF document interpretation and molecular-content containers without expanding the prelude.
 - v6: Hard-break the historical direct mmCIF reader and all compatibility re-exports.
 - v7: Molecule-first hard break: format Documents, private `PerceptionState`,
-  instance-based `ModelTopology`, mmCIF model output, and deletion of all
+  instance-qualified system structure, mmCIF model output, and deletion of all
   superseded readers/components/content containers.
 - v8: Make wrapper mutable graph access state-neutral and rely on concrete graph
   mutators for invalidation, preventing perception prerequisites from being
@@ -110,3 +117,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   focused mmCIF facade.
 - v19: Add the focused `descriptors` facade for explicit-policy molecular
   formula and mass calculation without expanding the prelude.
+- v20: Add the 0.2 `geometry`, `topology`, `structure`, and `trajectory`
+  modules; remove obsolete model-owned topology concepts; expose separate
+  mmCIF ensemble interpretation; and migrate DSSP/potentials to borrowed views.

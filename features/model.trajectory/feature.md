@@ -7,7 +7,7 @@ trajectories through reusable caller-owned buffers.
 
 ## Behavior/API
 
-- The planned trajectory module provides topology-bound frames with required
+- The `trajectory` module provides topology-bound frames with required
   positions and optional cell, velocities, forces, time, step, observation
   state, and frame metadata.
 - In-memory `Trajectory` stores ordered frames directly rather than as
@@ -27,7 +27,7 @@ trajectories through reusable caller-owned buffers.
 
 ## Tests
 
-- Planned tests cover complete optional arrays, variable cells, topology and
+- Tests cover complete optional arrays, variable cells, topology and
   atom-count mismatches, buffer allocation reuse, end-of-stream, random-access
   separation, writer rejection, and reference round trips.
 
@@ -39,3 +39,6 @@ trajectories through reusable caller-owned buffers.
 ## Revision Notes
 
 - v1: Track the fixed-topology frame and streaming-I/O contract.
+- v2: Implement owned frames, reusable frame buffers, fixed-topology in-memory
+  trajectories, sequential/seekable/writer traits, memory adapters, and an
+  atom-order-asserted coordinate-only reference reader.

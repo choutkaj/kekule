@@ -1437,30 +1437,30 @@ rather than only compilation.
 
 The refactor is complete only when all statements below are true:
 
-- [ ] `Topology` is public and independent of coordinates.
-- [ ] `Topology` is cheap-clone and immutable.
-- [ ] Molecule definitions and instances are distinct.
-- [ ] Explicit definition reuse works.
-- [ ] Dense atom and bond indices belong to topology.
-- [ ] Exact identity and structural equivalence are distinct.
-- [ ] Topology construction is linear and transactional.
-- [ ] `Model` is topology plus one configuration.
-- [ ] `Ensemble` shares one topology across members.
-- [ ] `Trajectory` shares one topology across ordered frames.
-- [ ] Streaming frame reads reuse a buffer.
-- [ ] Periodic cells and dynamic arrays are not topology state.
-- [ ] Static SMCRA hierarchy is coordinate-independent.
-- [ ] Observation-specific mmCIF data is outside topology.
-- [ ] DSSP and potentials operate on borrowed structural views.
-- [ ] Prepared potentials bind to topology identity.
-- [ ] DREIDING evaluates multiple configurations without re-preparation.
-- [ ] Molecule instances are not conflated with connected components.
-- [ ] Topology edits use explicit mappings.
-- [ ] mmCIF single-model interpretation remains explicit.
-- [ ] Multi-model mmCIF has a separate ensemble path.
-- [ ] No obsolete public model-topology types remain.
-- [ ] Workspace version has the required minor bump.
-- [ ] Feature contracts and generated dashboard agree.
-- [ ] Full workspace checks pass.
-- [ ] MolStudio validation is reported.
-- [ ] Every command not run is listed with a reason.
+- [x] `Topology` is public and independent of coordinates.
+- [x] `Topology` is cheap-clone and immutable.
+- [x] Molecule definitions and instances are distinct.
+- [x] Explicit definition reuse works.
+- [x] Dense atom and bond indices belong to topology.
+- [x] Exact identity and structural equivalence are distinct.
+- [x] Topology construction is linear and transactional.
+- [x] `Model` is topology plus one configuration.
+- [x] `Ensemble` shares one topology across members.
+- [x] `Trajectory` shares one topology across ordered frames.
+- [x] Streaming frame reads reuse a buffer.
+- [x] Periodic cells and dynamic arrays are not topology state.
+- [x] Static SMCRA hierarchy is coordinate-independent.
+- [x] Observation-specific mmCIF data is outside topology.
+- [x] DSSP and potentials operate on borrowed structural views.
+- [x] Prepared potentials bind to topology identity.
+- [x] DREIDING evaluates multiple configurations without re-preparation.
+- [x] Molecule instances are not conflated with connected components.
+- [x] Topology edits use explicit mappings.
+- [x] mmCIF single-model interpretation remains explicit.
+- [x] Multi-model mmCIF has a separate ensemble path.
+- [x] No obsolete public model-topology types remain.
+- [x] Workspace version has the required minor bump.
+- [x] Feature contracts and generated dashboard agree.
+- [x] Full workspace checks pass.
+- [x] MolStudio validation is reported.
+- [x] Every command not run is listed with a reason.

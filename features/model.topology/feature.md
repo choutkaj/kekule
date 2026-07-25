@@ -7,7 +7,7 @@ definitions and explicitly identified instances.
 
 ## Behavior/API
 
-- The planned public `topology` module owns molecule definitions, molecule
+- The public `topology` module owns molecule definitions, molecule
   instances, instance-qualified atom and bond identities, and authoritative
   dense atom and bond orderings.
 - Exact topology identity is distinct from structural equivalence. Clones keep
@@ -25,13 +25,13 @@ definitions and explicitly identified instances.
 - Molecule definitions retain coordinate-independent graph, perception, and
   hierarchy state but do not copy local conformers into topology.
 - Dense ordering follows instance insertion order and live local atom or bond
-  order unless the final implementation documents an equivalent immutable rule.
+  order and is immutable for the topology lifetime.
 - Builder transactionality stages only the new addition and never clones the
   accumulated builder.
 
 ## Tests
 
-- Planned tests cover identity, structural equivalence, explicit definition
+- Tests cover identity, structural equivalence, explicit definition
   reuse, qualified identifiers, dense inverse mappings, tombstones, checked
   capacity failures, transactional construction, selections, and mappings.
 
@@ -44,3 +44,5 @@ definitions and explicitly identified instances.
 ## Revision Notes
 
 - v1: Track the topology-centered public contract for the 0.2.0 transition.
+- v2: Implement independent immutable topology, explicit reusable definitions,
+  exact identity, dense mappings, selections, and lineage mappings.

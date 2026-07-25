@@ -5,6 +5,21 @@
 //! Parsing produces format documents, interpretation produces canonical domain
 //! objects plus reports, and perception or modelling preparation remains
 //! explicit.
+//!
+//! System structure is coordinate-free and immutable in [`topology`].
+//! Dynamic structure follows three explicit relationships:
+//!
+//! - [`structure::Model`] = one [`topology::Topology`] plus one
+//!   [`structure::Configuration`];
+//! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
+//! - [`trajectory::Trajectory`] = one topology plus ordered frames.
+//!
+//! Coordinate-dependent kernels consume borrowed [`structure::ModelView`]
+//! values, allowing the same analysis or prepared potential to operate over a
+//! model, ensemble member, trajectory frame, or reusable frame buffer without
+//! copying coordinates. Exact topology identity is distinct from structural
+//! equivalence and is required by positions, selections, buffers, and prepared
+//! systems.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 

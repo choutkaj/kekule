@@ -7,7 +7,7 @@ that share one exact topology.
 
 ## Behavior/API
 
-- The planned `Ensemble` owns one topology and stable-order
+- `Ensemble` owns one topology and stable-order
   `EnsembleMember` values.
 - Every member contains one complete compatible configuration, optional typed
   observation state, optional finite non-negative weight, and member metadata.
@@ -23,7 +23,7 @@ that share one exact topology.
 
 ## Tests
 
-- Planned tests cover topology mismatch, stable order, weight validation and
+- Tests cover topology mismatch, stable order, weight validation and
   normalization, conformer conversion, observation state, and borrowed-view
   analysis.
 
@@ -35,3 +35,5 @@ that share one exact topology.
 ## Revision Notes
 
 - v1: Track the finite shared-topology ensemble contract.
+- v2: Implement exact-topology ensemble members, observations, metadata,
+  explicit weight normalization, conformer conversion, and borrowed views.

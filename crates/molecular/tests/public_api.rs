@@ -296,6 +296,75 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
+fn topology_ensemble_and_streaming_trajectory_public_api() -> Result<(), Box<dyn std::error::Error>>
+{
+    use molecular::geometry::Point3;
+    use molecular::structure::{Configuration, Ensemble, EnsembleMember, Model, Positions};
+    use molecular::topology::{
+        AtomSelection, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
+    };
+    use molecular::trajectory::{
+        FrameBuffer, MemoryTrajectoryReader, Trajectory, TrajectoryFrame, TrajectoryReader,
+    };
+    use molecular::units::{Quantity, ANGSTROM};
+
+    let water = SmallMolecule::from_smiles_sanitized("O")?;
+    let mut topology_builder = TopologyBuilder::new();
+    let definition = topology_builder.add_small_molecule_definition(&water)?;
+    let mut metadata = MoleculeInstanceMetadata::default();
+    metadata.insert_role(MoleculeRole::Solvent);
+    topology_builder.add_instance(definition, metadata.clone())?;
+    topology_builder.add_instance(definition, metadata)?;
+    let topology = topology_builder.build()?;
+
+    let first_positions = Positions::new(
+        &topology,
+        Quantity::new(
+            vec![Point3::new(0.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)],
+            ANGSTROM,
+        ),
+    )?;
+    let second_positions = Positions::new(
+        &topology,
+        Quantity::new(
+            vec![Point3::new(0.1, 0.0, 0.0), Point3::new(3.1, 0.0, 0.0)],
+            ANGSTROM,
+        ),
+    )?;
+    let first = Model::new(
+        topology.clone(),
+        Configuration::new(first_positions.clone()),
+    )?;
+    let second = Model::new(
+        topology.clone(),
+        Configuration::new(second_positions.clone()),
+    )?;
+    assert!(first.topology().same_identity(second.topology()));
+
+    let solvent = AtomSelection::for_roles(&topology, [MoleculeRole::Solvent])?;
+    assert_eq!(solvent.indices().len(), 2);
+    let ensemble = Ensemble::from_members(
+        topology.clone(),
+        [
+            EnsembleMember::new(Configuration::new(first_positions)),
+            EnsembleMember::new(Configuration::new(second_positions.clone())),
+        ],
+    )?;
+    assert_eq!(ensemble.views().count(), 2);
+
+    let trajectory = Trajectory::from_frames(
+        topology.clone(),
+        [TrajectoryFrame::new(Configuration::new(second_positions))],
+    )?;
+    let mut reader = MemoryTrajectoryReader::new(&trajectory);
+    let mut buffer = FrameBuffer::new(topology);
+    assert!(reader.read_next(&mut buffer)?);
+    assert_eq!(buffer.model_view().positions().value()[0].x, 0.1);
+    assert!(!reader.read_next(&mut buffer)?);
+    Ok(())
+}
+
+#[test]
 fn production_smiles_stereo_uses_installed_perception_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use molecular::perception::{self, stereo, SanitizeOptions};

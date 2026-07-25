@@ -13,7 +13,7 @@ paired with a composable runtime unit.
   static so `Unit` stays a small copyable value.
 - Provides predefined molecular and SI-scale units for length, area, mass,
   time, temperature, amount, charge, angle, energy, molar energy, gradients,
-  and force constants.
+  force constants, model forces, model velocities, and model time.
 - Converts only between compatible dimensions and applies one scale factor to
   a complete scalar or collection value.
 - Provides explicit exact-equivalence and tolerance-based scalar comparison;
@@ -31,7 +31,7 @@ paired with a composable runtime unit.
 - `ScaleValue` supports recursive conversion of arrays, options, and vectors;
   geometry types implement it at their owning module boundary.
 - The modelling layer declares its preferred length, molar-energy, gradient,
-  and force-constant units as explicit public constants.
+  force, force-constant, velocity, and time units as explicit public constants.
 
 ## Tests
 
@@ -49,3 +49,5 @@ paired with a composable runtime unit.
 ## Revision Notes
 
 - v1: Add the runtime `Quantity<T>` and composable `Unit` foundation.
+- v2: Add explicit canonical force, velocity, and time units for topology-bound
+  trajectory state.

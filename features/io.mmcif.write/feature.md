@@ -10,16 +10,16 @@ block without hiding validation, perception, sanitization, or preparation.
 - Exposes `mmcif::write(model, MmcifWriteOptions)` and returns structured
   `MmcifWriteError` failures.
 - Emits deterministic `_entity`, `_struct_asym`, `_atom_site`, and optional
-  `_struct_conn` loops in model topology order.
+  `_struct_conn` loops in topology instance and dense order.
 - Reads coordinates only from the authoritative `Model` position array;
   `coordinate_precision` controls fixed-decimal output and defaults to three
   decimal places.
 - Explicitly converts model length quantities to the mmCIF Cartesian angstrom
   convention before formatting.
-- Preserves supported macro hierarchy labels, residue identifiers, selected
-  alternate-location metadata, occupancy, B-factor, element, formal charge, and
-  author identifiers. Small-molecule instances receive deterministic structural
-  labels required by mmCIF.
+- Preserves supported static macro hierarchy labels and residue identifiers,
+  plus selected alternate-location metadata, occupancy, B-factor, and source
+  atom-site identity from `StructureObservation`. Small-molecule instances
+  receive deterministic structural labels required by mmCIF.
 - Emits explicit single, double, triple, and quadruple bonds through
   `_struct_conn.pdbx_value_order`.
 - Preserves `Polymer`, `Branched`, `NonPolymer`, and `Solvent` as mmCIF entity
@@ -36,8 +36,9 @@ block without hiding validation, perception, sanitization, or preparation.
 - The writer targets `Model`, not `MacroMolecule`, because model
   positions are complete and authoritative and one structure may contain
   multiple Small and Macro molecule instances.
-- Macro atom sites remain a `SmcraHierarchy` sidecar over local `AtomId`s; writer
-  rows qualify them only while resolving model positions and connectivity.
+- Macro atom sites remain a coordinate-independent `SmcraHierarchy` sidecar
+  over local `AtomId`s; writer rows qualify them only while resolving topology,
+  positions, observation state, and connectivity.
 - Values are emitted as single CIF tokens. Source formatting, comments,
   unknown categories, and original atom-site row IDs belong to `MmcifDocument`
   rather than canonical-model writing.
@@ -72,3 +73,6 @@ block without hiding validation, perception, sanitization, or preparation.
   changing emitted mmCIF semantics.
 - v3: Convert explicit model length quantities to the mmCIF Cartesian angstrom
   convention before serialization.
+- v4: Read immutable definitions/instances from `Topology`, coordinates from
+  `Configuration`, and alternate-location/occupancy/B-factor/source-row values
+  from `StructureObservation`.

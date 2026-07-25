@@ -1,3 +1,4 @@
+use super::deterministic_text_mutations;
 use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
 use crate::core::{Atom, BondOrder, Conformer, Element, Molecule};
 use crate::geometry::Point3;
@@ -74,6 +75,39 @@ HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2
 
 fn parse(input: &str) -> mmcif::MmcifDocument {
     mmcif::parse_str(input, MmcifParseOptions::default()).expect("mmCIF parses")
+}
+
+#[test]
+fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
+    for seed in [MIXED, MULTI_MODEL] {
+        for input in deterministic_text_mutations(seed) {
+            std::panic::catch_unwind(|| {
+                let Ok(document) = mmcif::parse_str(
+                    &input,
+                    MmcifParseOptions {
+                        max_input_bytes: 64 * 1024,
+                        max_tokens: 16 * 1024,
+                        max_token_bytes: 16 * 1024,
+                        max_atom_site_rows: 4 * 1024,
+                    },
+                ) else {
+                    return;
+                };
+                let _ = mmcif::interpret(
+                    &document,
+                    MmcifInterpretOptions {
+                        model_selection: MmcifModelSelection::First,
+                        ..MmcifInterpretOptions::default()
+                    },
+                );
+                let _ = mmcif::interpret_ensemble(
+                    &document,
+                    mmcif::MmcifEnsembleInterpretOptions::default(),
+                );
+            })
+            .expect("mmCIF parser or interpreter smoke mutation panicked");
+        }
+    }
 }
 
 #[test]

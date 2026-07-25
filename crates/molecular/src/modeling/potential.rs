@@ -88,7 +88,7 @@ pub trait Potential {
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Explicit parameter for one harmonic bond term.
 pub struct HarmonicBondParameter {
-    /// Bond in the model topology.
+    /// Bond in the exact topology used to prepare the potential.
     pub bond: InstanceBondId,
     /// Equilibrium bond length.
     pub equilibrium_length: Quantity<f64>,

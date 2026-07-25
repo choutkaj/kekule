@@ -1,8 +1,8 @@
 id = "model.system"
-title = "Fixed-topology molecular model"
+title = "Topology-bound molecular model"
 area = "modeling"
 domains = ["small-molecule", "macromolecule"]
-version = 7
+version = 8
 status = "supported"
-description = "Represent validated Small or Macro instances as immutable topology plus mutable positions with transactional conformer export."
-depends_on = ["core.graph", "core.atom-bond", "core.conformers", "core.units", "stereo.representation", "bio.hierarchy.smcra"]
+description = "Represent one concrete molecular model as an immutable Topology plus one validated Configuration and optional observation state."
+depends_on = ["model.topology", "core.conformers", "core.units"]
