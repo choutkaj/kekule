@@ -1,0 +1,16 @@
+corpus_id = "smoke"
+feature_id = "io.mol.v2000.parse"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem/cid_702.sdf",
+  "data/pubchem/cid_2244.sdf",
+]
+
+
+notes = [
+  "Reference RDKit goldens compare Molfile-preserved atom, bond, metadata, and coordinate records.",
+  "All molecule fixtures are externally supplied PubChem records.",
+]

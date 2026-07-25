@@ -12,4 +12,3 @@ depends_on = [
   "algo.rings.fast",
   "algo.aromaticity.rdkit-like",
 ]
-validation_required = []

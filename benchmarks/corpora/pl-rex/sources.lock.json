@@ -1,0 +1,2160 @@
+{
+  "corpus_id": "pl-rex",
+  "entries": [
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NXG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a2fe6d1a3b821187f546c17e1b715c426033a1b358859c2d76070c97fc4d1529",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NXG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NXI/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "ae2b09f224937c64134927228f76a5b8f4f5e457dc094a9017e3cc6c36bd3dea",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NXI"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NXO/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "8866b9f04816d23558b2160ce2feaca26f038076d999ac9db4d4866afc432b13",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NXO"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NXP/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "dc696a3cd6d5f15b7ced04d702d9d705473f8090f28f30cca352e9d380793d79",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NXP"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NXV/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "092cee23f309f58d5ba89e3728e8de37c5389a6f8521deea42a02acac421d26b",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NXV"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NXW/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "f1268d5a9ff9840c5e5100c35e7a3d478d0ee7d6fea9a01e14a28f0288072775",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NXW"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NY1/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "534734dbb3e46323da5445fc8e5ee8ae8e8be9903df235029ac6c435a91642cd",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NY1"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NY3/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "ddd51547bab8140d56a42173f8a28e10925dbc75d7076d86dccb53ca76cb4a28",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NY3"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NY6/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "063ca6b23b2e35bdd523e9598225b5e59b037ae8a60b2cd8024e99bec9a2e5be",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NY6"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/001-CA2/structures/5NYA/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "805ee3f9602105d7fdaed93ad31556bbc4f6025de273f7baf42e7f7c9c5df488",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "001-CA2:5NYA"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/1HSG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "8f63e5570988246c0a94af2c5bc33951e48bb8cf7c6f659216f46d9a7747169d",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:1HSG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/1HXW/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "29c75ad7e2ab705f785eb182f22784ef47e11425a1300eec272b1efe90474088",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:1HXW"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/1IZH/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "f9ef0afbf2dd7fd4a363e20ed2168ad96a12a0a2e779af547f39e2a5e1b31a7b",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:1IZH"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/1T3R/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "21d521578e66fd7117778de9fb58afa05bf8bbf59effc151fd2cc56cc68ebe34",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:1T3R"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/2Q54/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "9bfb42a41b71b08ed5ad1da6a706cb67c3ffb107112754aa65afe8e7661354c7",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:2Q54"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/2Q55/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2d1f8401238a95d3519f20f0d212c933bc278ece5ae87d349e739a0a9ae312e7",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:2Q55"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/2Q5K/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a913d9803b569e929becad9c889e3b767b24673acc6ed825e05145bdeddd8513",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:2Q5K"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/3EKX/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2b5b6c5163fb9d15c432b7f2c677ab1b93ea261e858206d15d35932658305e79",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:3EKX"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/3EL1/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "b2ff718dcc8ff5fc9df9dad634070a27bdf8705ae9e1273f423d049ea75a3e27",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:3EL1"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/3NU3/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "1a3d92084437bff1879acac6d51735951f2f3ec4e724efff7f38c7aaae38a02f",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:3NU3"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/3OXC/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "c58b8e18d719e985cb631c76b0510b2240d6c4ecbab00875c46a5be879daa9a9",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:3OXC"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/5HVP/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a4cb55160501c394fb34411c38f1c63466f46db42507e8b9d1398d144ff5a5bd",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:5HVP"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model13a/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2bcf782bba26412e2f5a1d973686972e5ab6998d50f4c51d2e59a6191cdbd14e",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model13a"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model13c/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "925153e0d3969f35c71e6ab977763793f09cf8162303cdd3a203037bc79d998e",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model13c"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model13d/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "7c8383293f5cbf765340179aa23728b42c6baa086b901253d0d89bfe4e34ea55",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model13d"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model16a/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "0a800ccd836e2a144c3687d9b860dc4e8f768d5f2e4a77f4e25702fe846f03b3",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model16a"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model16e/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "ff9f4f04ca9b018a9fb1095f75bb2fccfed79632bf693f52253475d954c46fe9",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model16e"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model16f/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6adc5b3349249231201eec57b10696a03a0eec950d513fb48c083699f7385e8e",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model16f"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model22a/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "8952eccb022c445c7cceb69d8f202cbba9dc5f60e36d79e04661760bc5813dac",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model22a"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model22d/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "442ed90de7047e8ba1aa3a65d7eb15a8646fb54e515d2ec1e448d88018e077e8",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model22d"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model23a/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "f2e1c486985a1315b1dafc53b1661281a6239c520540bb52f3ac4706274f63c7",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model23a"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/002-HIV-PR/structures/model25d/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "49b087394716a2e0bf09ab8c084b897784543704134e3f079413d8b9a11e7646",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "002-HIV-PR:model25d"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1F0Q/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "39639b69f59a0b57e9bf15f753c55570983fb4a43430f38c9c4cea0d0e4ac45b",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1F0Q"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1J91/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "0cbf96775412e8995bb308e7f916e58b878ff4679e19bf40e6c037dbbfc7f1bc",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1J91"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1M2P/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "0b25dd08200f7740f98e4232eebf6c5d83dacbe16e4527310ab91fa9c04055ae",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1M2P"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1M2Q/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "0ef7306049c74c39afbf3f0c56befb5842701a6970d0f60d12e49df88b4ec2ae",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1M2Q"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1M2R/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "00dfafa1f1a1f8ec9849d344c4cec42136c27951f8b139f5805b761d727d4e64",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1M2R"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1ZOE/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "ca286189adf55559843578953591b338678fc916fc21178187ba098719705d1d",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1ZOE"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1ZOG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "77f160c0d7edb5b9890088b39d0ba8d26799864c5003ddeec142beba86f0019e",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1ZOG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/1ZOH/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "32e533a266ae097cefb596bddc73330ac941ae7f0e763710634a562f97ad22d0",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:1ZOH"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/2OXD/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "1e110917173537e6afccf57f56f4ab39be08f89855de97608c1f2bb73718a09c",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:2OXD"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/2OXX/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "8efc0d043b46b31eff67aa2dc33cfb4abb58cb68d3fb549a81b3c2e3b868bc52",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:2OXX"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/2OXY/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "884cbb51e4ee7c91970dbf207b2920502bd9e6c1c8e2c5521f1d65f05bd30b8d",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:2OXY"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/3KXG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "9398bb619c61e484f378dab2b6096091d0becd2b65aca2dabed191936a359414",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:3KXG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/3KXH/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "c9231af97ef744bb84af2b16fd3d4fb2c17256a85b3bdddfc43ad4b8c36cd693",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:3KXH"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/3KXM/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "4b14f81013055a8c0d5de8fa22372b6e11831a012ade356563301506b5d1f029",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:3KXM"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/3KXN/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "367abcfd15cdb923bfaed2d3088172137804f7276b8fdddbee2d45d50d21eaa6",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:3KXN"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/003-CK2/structures/3PVG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "f3b1b10ca93654747a585446deaff6f20b928754836db295976d3a17b3e2f8f2",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "003-CK2:3PVG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/1US0/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "8ba1ca60c8e5a4291218bfd2ffcab39641762baf0f048d2f94d1bef89e922343",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:1US0"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/2IKG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "35c57a9a6dc89ba63e3bad41b911a6ecc2da15a3ae923acd0ba612d0f8e39beb",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:2IKG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/2IKH/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a1a1d1b53d64427b5008fc98156d86ed6fb0e150e756fbde4ee1ffad67dc5c14",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:2IKH"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/2IKI/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5e9a24a9984b56a6af40a4f80d9849b520daf795678b91e7af3a5d51cc83b10f",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:2IKI"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/2IKJ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "68e719acd03713bf67fa127dc1c1ea726d88d3a09ac4953273c6b69d4af52757",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:2IKJ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4LAU/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6fe11bd321bd530beb4e7560a17a75f12f6c86acdc8066dca3500819cc5a22a9",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4LAU"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4LAZ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6a8b329261b9c9e4827bafc685f038e82a9b4656cd7acac7acacfca95cd4fa16",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4LAZ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4LB3/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "b2cc0af27f4eb6a94c57068a036c0cec25424036d5e3ee9ba1f8fd67ef048af5",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4LB3"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4LB4/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "d6593870d8150d5c80ddb769f383962ce9d3332cf688736ae8ee974b114c3858",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4LB4"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4LBR/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2ce6ba406811b95715781f95bf551b05d31d7baa9b8223b911e24743f741fd66",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4LBR"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4LBS/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "92613f6982d5521d4030ba55622e9a4257a3a3a96dfcf2043285a8792eac652f",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4LBS"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4QXI/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "3adb33247a718b87f5a4ea0cb4380b0a0c481360e5414ff89aa1aff4d89717ec",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4QXI"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4XZH/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "63365e93278c53df75e192b4a88e3580a1eb12977001495ea0af80fbcf83be2c",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4XZH"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/004-AR/structures/4XZI/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "970115feaceec6188a6980e3203d811750c9ce9fa9b498661d007844693c4b1d",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "004-AR:4XZI"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/6QBG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "38640c6c67fefe8b360e308242d0971a948b4d3d9b0bb1655e781a372d28bcc7",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:6QBG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/6QBH/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "05c500210892abceafb2088a9e76188a33309297741cbc9795f685c80c7909e5",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:6QBH"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/6QCB/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5b3a17a587fadc2e34a8c9283c03b1d66c3e53d3bd6afa9a19a5d5d9bfcc064a",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:6QCB"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/model08/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a803cac7dc8df0a5edd9e3e4644cae5bd0bad2349c0681ce67e260892b811281",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:model08"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/model22/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "38140c4c7772bad68d499b0bd2e966b33d6ade48cefed34999fa9889b68e8faa",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:model22"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/model24/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "65fe18b37a01213012f80d75f457cfa1a30223ab85e4f136fb01166fc5a49464",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:model24"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/model25/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6c9d287d119fe83fb4d568141260cc66b44d411d85d79928dbd1b40c37b64810",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:model25"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/model31/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "077e9bc77f59ff04f418f6f53b3fdf3a4d76becc38f7a0bc198a889a308f6269",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:model31"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/model35/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "462ffe4e1c2f2ba1bfa8edb292a570e94060bc3ce13de9991df0d29c302196c8",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:model35"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/005-Cath-D/structures/model36/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "ed22b1d164592f29b1f4202a0774349c365a23411cf2ab53863d72d3a6c78cf5",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "005-Cath-D:model36"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCO/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5dbc93ca234ca6d20718833798a0886bdea4747b173a9808b414b1667cb2494d",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCO"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCP/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2e9f90474149832b456ed939a5039d11ccab07ae69915790a33d781a55c28981",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCP"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCR/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5962e2f064383050c7a61a370fdbc700a780e6e84a3f4a24eed6ed66d437a4f3",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCR"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCT/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a4db894ad7d3dfc241c5aeb8e50d5386dfdbab7a0ffe51b7f2ceede5fc11ab36",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCT"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCU/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6025be3e889abb27f75d4da826eb7f1fc2a289e43977c2db455548a116637ca2",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCU"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCV/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "e3101aa7fb59dade93e7bd302aca5bb4699f9b176a09d9203b7ab93e545a0d10",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCV"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCX/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "1330c5cd2708ea38b15b52f32429485f96f408ff74931d9d91e014b2de0ab6f1",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCX"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCY/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "28cff49391ea49359d84604046a64766e2d74bf36eb949d53309ae11273fa849",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCY"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QCZ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "19e7254386875f8a538c9600273f2840d5f1195840d84858f91d4025d4381790",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QCZ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QD0/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "296da364e25551206b8b785e07555d62b128e7ea952744de63d5a6677f7aabce",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QD0"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QD1/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a0b3dfcc19998886e137abdce05f67f8184c6150b3e155cf10545fd06fd3275a",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QD1"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QD2/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6740153c3a8a4746f63d0d83894da9f183a66078fecc02c1ff44e7b64f4e730a",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QD2"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QD3/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "3641c7e9fea4c98c9e586c6f1106c1b73800caa0af437d716edeb0179c7d0623",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QD3"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QD5/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "e0f8556cbb05f43abe3c3249f9d5285a30dfff7ed5a01518d0d2c89ac6cabba7",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QD5"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QD9/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6d9aac05cea72aa230ea7c3061bae8291a1c3e2d5b03d2a9d67dc0e3ae80112e",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QD9"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/006-BACE1-D3R/structures/5QDA/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5a752541b68417a5dcf01b7677365e109dc7995ac585a6dd1311e2fbc36e8726",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "006-BACE1-D3R:5QDA"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4E4L/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "acc738c1f13ae07e3950d632011dc5ffc763a21dcb0a8e3e94820c23c120c186",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4E4L"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4E4N/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a58e0d78dd3de939fdeaf6689ca4f53a2334368b3ea78b2ad6c25a32d730830b",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4E4N"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4E5W/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "e4815750e0a9067bd6dc130ef6b4cd22605d4a2ab26f8d1a0f2201f465574c47",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4E5W"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4EHZ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "3cb48c774931ec0303d448ba98d8cd1ba8d84e7488f7b543e0b104420263df62",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4EHZ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4EI4/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "4376c9f072d190c84a08c6b05793e1bf67e83bc09c3055a7453218dc5de43afd",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4EI4"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4FK6/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "f2604e117b27f986f3c841fe1b7a38c17890636363fd7c86797abdcf59df3c31",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4FK6"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4I5C/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "cb59005a5dabd541632f5d2174852890bb086348c7509c5ccd50a893968cf065",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4I5C"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4IVB/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "313e729e90c3f051b8aaae9ebad59009f9e18c7fd379e2e8a22dc115abec9b98",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4IVB"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4IVC/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "403360a0eb3f39d12abaf829d41fb32c3bfea050e2887e65d2300e60b405056d",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4IVC"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4IVD/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "0b50302bb014323c8248f00799e8658ea689ffaff7b3154ff8c53900cf18e30b",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4IVD"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4K6Z/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "ec7703b18faaabc7a22d599f64ddfa907faaf4993b766d27614ce5cefcbd8662",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4K6Z"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/007-JAK1/structures/4K77/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "4eac52c44e2853340d20fbb47479669b0ea9c42cc85ce2e652fe39775a7325c8",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "007-JAK1:4K77"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/1K1I/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "0d9b893258e098ad34ed06f6e342da9f4ef393e67a8769749bf6424b59c3b07f",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:1K1I"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/1K1J/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "27437b4714df3cac8c842207036ded3d1a3a0b0dbc90c1375ee5fe46244fd972",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:1K1J"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/1K1L/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "24610a5bd82d4269597d63637973530cca2e3a95ea82dcd9d1ec8895d4d8b780",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:1K1L"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/1K1M/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "8da6ce3e447385f8e7a4a14c45b24ee5c995e04f3d8a696b1e8f30a5ff59e3c8",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:1K1M"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/1K1N/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "c02e1127f0d955aa6eec0ace31701e836605181114baec4837f76939dbf3d69a",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:1K1N"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/2ZHD/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6c387724adc143e78faccfc21b8e16dd67d5318bf7915b485f855c632cd308e1",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:2ZHD"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/2ZQ2/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "c0585e5aeacc4117b7691294469858f7ba8b086e70e35b80d5ac523c01c833a1",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:2ZQ2"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/3LJJ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6dfdfb71b2c3bb97eaff01d6d693d1e4bd9153d0fbe726e1e4cbf1a7472c1370",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:3LJJ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/3LJO/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2515f199556bb7f35dda3ef6b456a6fb577ae497c0333e0b8b1e9a6907e915d6",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:3LJO"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/5MNG/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "c938a4a66e2894ea7d69f71870ab606e1d519cde25a2b5eb3694b849a6f8b6cc",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:5MNG"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/5MO2/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "7f86713298c2b006ed2f2715c130f0b20986e5be758a4ad6f024aa1fc73d4c74",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:5MO2"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/6SY3/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "4a78a09cf5f2c3a18724c5be703d4379ed00aba16fec6960104667e55ca5809f",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:6SY3"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/6T0M/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "9cf8a9a6fce728d4b17099ffd5f0dafd65db4d2ac85d1e904806d2d154992875",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:6T0M"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/6T0P/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "131563ac637934a1765083101796d7d63ea9b1fe2f6a66efee8426a132a1c338",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:6T0P"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/008-Trypsin/structures/6T5W/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "14dfe97079a869acd5b6856bd1d11339b7a0247984de1217ccbac0b4e8d721f4",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "008-Trypsin:6T5W"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QQK/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2a21418f76bf3ede7bfabf65bb82b70723fa76995d1712b66e1dca3304e4a75b",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QQK"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QTQ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "233364b2e75af38a37d528a8cd7e64319f673edae21d76fae9f6e2f487e646ec",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QTQ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QTR/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2b50bffe347907a43e4005e8b27769ea8c2e2b085e8b3fc8887114895471f291",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QTR"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QTS/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "2aa7a1dd5392739b0a67c0169317bf79b184352f9c5a58ab6a94a06e426f2e41",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QTS"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QTU/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "80599582198437295acf9e7dd06e528ad9ec41ab40cbe76da7995c5f96ede7e3",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QTU"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QTW/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "f22c44f713b9a0294e98348a1b84aa55b400b27ee0f3d0ba5d7b7b0ac6211afc",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QTW"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QTX/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "7a95ab7ec59ba186cee7fc044440694d2d68b6ceb236059b20ae32166f59e9bf",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QTX"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QTZ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6090616e7445b2551b361a7395ccf02727467547cfe32f0322f4baff18b93cdb",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QTZ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QU0/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "0bc122bfba209d3cd3b209fad9d62d0d8b6dbfcb5d904e8f8c19111b2e483347",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QU0"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3QXP/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "e3e25f6f9750fd42dfca4477d1dd5911a384bad7405328360ce4e2fb1b8d9c18",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3QXP"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3R8U/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "a4cca3ff8f32f7f927417bd15635d167469b12f4fd7afb3bb6d02604a142495a",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3R8U"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3R8V/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5147e978a3993c53da968784be377a71913750ea1bf7ce9955fbcbc581bad071",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3R8V"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3R8Z/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "23add5ce2dd26f7e34e9dd5abeceda6d9f8a30031f6a70981e4e8e1ed7392b07",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3R8Z"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3R9D/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "64f8a4a506a6d0a4b0efffc7af848771814b5f64088038532e5d4b877df160ba",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3R9D"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3R9N/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "fad4874eb5b0ed9cf6033a885fc2929deb9fc41d2338028e6373a9894a667d58",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3R9N"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RAH/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "53561b36ec1e35118767fd1e900064c95d6da347242a8aee20e6bf472b55ec77",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RAH"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RAK/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "18755d109b896ee326319aba91387a835029af283057311e79563e4d69ad6d83",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RAK"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RAL/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "50730ac0780545879d79077b5cebc77f770f737fe5dcd0bc2612e49746c2fe86",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RAL"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RJC/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "df6473bc481f22ed1789e619555a46d42fa88146825956b7c03ab4cef353a463",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RJC"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RK5/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5e3ceaa2bf2ae04b4ee744314fe87c981a77d4a49dba2423c6762affdd81b0b2",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RK5"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RK7/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "32256c0653dff88d432139534e7b045b3fbc1053f0fa99441ea577f1a3f91d5a",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RK7"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RK9/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "be3337f2c06ce96af43a91b6115706512b96eac294924cbff2f53374e1cbf5b5",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RK9"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RKB/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "4a7c33ed9df10b7e1c4f21a334edc26ca1a065b59f0157e3b05a7ab20a6adb53",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RKB"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RMF/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5fff4618273a420590f078b91c17f1fb9b396aa53fd01a9319852a1a0514893a",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RMF"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RNI/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "d8e7f8e40d8068126b5a8b004bcae593a9e525fa7a39c3b337137ae15f3b4a77",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RNI"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RPV/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6358c720dc81ab9aac7d75bdbbea32b8c42fdbceea9b01523a9730d7abd95f71",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RPV"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3RPY/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "11f75ae4d5774a8e9e9179715afb4296b08c30b1d27a371cd1dd1452fcabb106",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3RPY"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3S00/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "1a91da8abdda34f9071a15974a2a941ba2a5f8c1a584c3d6507c7670fe2cbee8",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3S00"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3S0O/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "8c64f0ccfdd770867542a298b937eb1562d9f6efaaccd45cda07ad9d1fe43ce5",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3S0O"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3S1H/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "3089731b59281c4c40549fcf9e28364f2c37daa39628262d99cb27c39a5e8690",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3S1H"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/009-CDK2/structures/3SQQ/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "1831a0de9e2c4a0cad9795b6ae1013dee3b59d358fbb824247f9a327d1c80400",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "009-CDK2:3SQQ"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3EHX/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "5a000becc8eb74ab541e9a72e82f80b3f572be3a81c3602ab0f047e691cf677d",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3EHX"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3EHY/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "7297191d77a9f4e8ad59fc29d431b1d9613446e685a90b2f1acf2ad1d1189941",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3EHY"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3F15/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "08bf37d7a117a2cffab2364f0f7fde03387f8e7493fea6de2e0d7eb353c1a88b",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3F15"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3F16/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "7030c013229ba1336e29123385f3f99d2ce06b29ddf06ad129f0e5e3912963bb",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3F16"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3F17/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "96d2e2291b494a107ed3888474d9485b0391b71a98ba12e642330835106e614f",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3F17"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3F18/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "09f2cde943ca86f2be4043b06c9559206f824fcdcb6980bd5a92b81b125ed991",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3F18"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3F19/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "b158f0cfd2c43049dc19b6003dceed1f00222fc7fccc6b71a5e10d0316081cad",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3F19"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3F1A/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "1f940b1789f73ed14b42cb7e66253f94fdb93502ee5505aff6d9f04475419279",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3F1A"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3LK8/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "1b818a0932ef01802150e1330ec126d968eb52381ef482d3f70d7613695872bd",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3LK8"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3N2U/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "666adb42429b3437d6732f2a74962a3d0523a0686be4a6d60d55c584b699cdc7",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3N2U"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3N2V/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6213300bfc90674df9ea03e365f980b72c13a22419d61f72970511e1f1c86cec",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3N2V"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3NX7/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "83e8a799b2ac7c8f697616e5c98d90049f0e6c3d30b1882ed98b7789ce7c5140",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3NX7"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3RTS/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "fad7af787b86394197c4c72a2853d1537d16d9f536ee9727053bfa565b3a9267",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3RTS"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/3RTT/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "221dc209a1743efa2a98535ee05e9087e132f07d8b4ab62a366a077aefa56eb8",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:3RTT"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/4GUY/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "68d1116411df5e49cfb3793dc104b5b94ad3ce60fabb1bd9ceef899f09a3a98f",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:4GUY"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/5LAB/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "6288c220eb3fc1ec89a6eacbbe920da693a91e30950c869122bc16c9dbdf22f7",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:5LAB"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/6RD0/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "b2521dd6353f6fea82487b71e9ee17f3fa1e32b35594dee1fb6289e2e2f95d2e",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:6RD0"
+    },
+    {
+      "category": "primary-ligand",
+      "files": [
+        {
+          "path": "data/010-MMP12/structures/6RLY/ligand.sdf",
+          "record_type": "pl-rex-primary-ligand-sdf",
+          "sha256": "631e31108afffa9d0e9fa4f6ac122a405179a77642016f77cde346a4d4aec2ae",
+          "url": "https://doi.org/10.26434/chemrxiv-2023-zh03k"
+        }
+      ],
+      "id": "010-MMP12:6RLY"
+    }
+  ],
+  "packs": [
+    {
+      "count": 100,
+      "format": "sdf-v2000",
+      "member_id_property": "PL_REX_ID",
+      "members": [
+        "001-CA2:5NXG",
+        "001-CA2:5NXI",
+        "001-CA2:5NXO",
+        "001-CA2:5NXP",
+        "001-CA2:5NXV",
+        "001-CA2:5NXW",
+        "001-CA2:5NY1",
+        "001-CA2:5NY3",
+        "001-CA2:5NY6",
+        "001-CA2:5NYA",
+        "002-HIV-PR:1HSG",
+        "002-HIV-PR:1HXW",
+        "002-HIV-PR:1IZH",
+        "002-HIV-PR:1T3R",
+        "002-HIV-PR:2Q54",
+        "002-HIV-PR:2Q55",
+        "002-HIV-PR:2Q5K",
+        "002-HIV-PR:3EKX",
+        "002-HIV-PR:3EL1",
+        "002-HIV-PR:3NU3",
+        "002-HIV-PR:3OXC",
+        "002-HIV-PR:5HVP",
+        "002-HIV-PR:model13a",
+        "002-HIV-PR:model13c",
+        "002-HIV-PR:model13d",
+        "002-HIV-PR:model16a",
+        "002-HIV-PR:model16e",
+        "002-HIV-PR:model16f",
+        "002-HIV-PR:model22a",
+        "002-HIV-PR:model22d",
+        "002-HIV-PR:model23a",
+        "002-HIV-PR:model25d",
+        "003-CK2:1F0Q",
+        "003-CK2:1J91",
+        "003-CK2:1M2P",
+        "003-CK2:1M2Q",
+        "003-CK2:1M2R",
+        "003-CK2:1ZOE",
+        "003-CK2:1ZOG",
+        "003-CK2:1ZOH",
+        "003-CK2:2OXD",
+        "003-CK2:2OXX",
+        "003-CK2:2OXY",
+        "003-CK2:3KXG",
+        "003-CK2:3KXH",
+        "003-CK2:3KXM",
+        "003-CK2:3KXN",
+        "003-CK2:3PVG",
+        "004-AR:1US0",
+        "004-AR:2IKG",
+        "004-AR:2IKH",
+        "004-AR:2IKI",
+        "004-AR:2IKJ",
+        "004-AR:4LAU",
+        "004-AR:4LAZ",
+        "004-AR:4LB3",
+        "004-AR:4LB4",
+        "004-AR:4LBR",
+        "004-AR:4LBS",
+        "004-AR:4QXI",
+        "004-AR:4XZH",
+        "004-AR:4XZI",
+        "005-Cath-D:6QBG",
+        "005-Cath-D:6QBH",
+        "005-Cath-D:6QCB",
+        "005-Cath-D:model08",
+        "005-Cath-D:model22",
+        "005-Cath-D:model24",
+        "005-Cath-D:model25",
+        "005-Cath-D:model31",
+        "005-Cath-D:model35",
+        "005-Cath-D:model36",
+        "006-BACE1-D3R:5QCO",
+        "006-BACE1-D3R:5QCP",
+        "006-BACE1-D3R:5QCR",
+        "006-BACE1-D3R:5QCT",
+        "006-BACE1-D3R:5QCU",
+        "006-BACE1-D3R:5QCV",
+        "006-BACE1-D3R:5QCX",
+        "006-BACE1-D3R:5QCY",
+        "006-BACE1-D3R:5QCZ",
+        "006-BACE1-D3R:5QD0",
+        "006-BACE1-D3R:5QD1",
+        "006-BACE1-D3R:5QD2",
+        "006-BACE1-D3R:5QD3",
+        "006-BACE1-D3R:5QD5",
+        "006-BACE1-D3R:5QD9",
+        "006-BACE1-D3R:5QDA",
+        "007-JAK1:4E4L",
+        "007-JAK1:4E4N",
+        "007-JAK1:4E5W",
+        "007-JAK1:4EHZ",
+        "007-JAK1:4EI4",
+        "007-JAK1:4FK6",
+        "007-JAK1:4I5C",
+        "007-JAK1:4IVB",
+        "007-JAK1:4IVC",
+        "007-JAK1:4IVD",
+        "007-JAK1:4K6Z",
+        "007-JAK1:4K77"
+      ],
+      "path": "data/packs/pack_01.sdf",
+      "sha256": "b390268d78c72c76c4e00fd53bddeffd5c8e02c18fe5f5e0c5a661c2a4d6893f"
+    },
+    {
+      "count": 64,
+      "format": "sdf-v2000",
+      "member_id_property": "PL_REX_ID",
+      "members": [
+        "008-Trypsin:1K1I",
+        "008-Trypsin:1K1J",
+        "008-Trypsin:1K1L",
+        "008-Trypsin:1K1M",
+        "008-Trypsin:1K1N",
+        "008-Trypsin:2ZHD",
+        "008-Trypsin:2ZQ2",
+        "008-Trypsin:3LJJ",
+        "008-Trypsin:3LJO",
+        "008-Trypsin:5MNG",
+        "008-Trypsin:5MO2",
+        "008-Trypsin:6SY3",
+        "008-Trypsin:6T0M",
+        "008-Trypsin:6T0P",
+        "008-Trypsin:6T5W",
+        "009-CDK2:3QQK",
+        "009-CDK2:3QTQ",
+        "009-CDK2:3QTR",
+        "009-CDK2:3QTS",
+        "009-CDK2:3QTU",
+        "009-CDK2:3QTW",
+        "009-CDK2:3QTX",
+        "009-CDK2:3QTZ",
+        "009-CDK2:3QU0",
+        "009-CDK2:3QXP",
+        "009-CDK2:3R8U",
+        "009-CDK2:3R8V",
+        "009-CDK2:3R8Z",
+        "009-CDK2:3R9D",
+        "009-CDK2:3R9N",
+        "009-CDK2:3RAH",
+        "009-CDK2:3RAK",
+        "009-CDK2:3RAL",
+        "009-CDK2:3RJC",
+        "009-CDK2:3RK5",
+        "009-CDK2:3RK7",
+        "009-CDK2:3RK9",
+        "009-CDK2:3RKB",
+        "009-CDK2:3RMF",
+        "009-CDK2:3RNI",
+        "009-CDK2:3RPV",
+        "009-CDK2:3RPY",
+        "009-CDK2:3S00",
+        "009-CDK2:3S0O",
+        "009-CDK2:3S1H",
+        "009-CDK2:3SQQ",
+        "010-MMP12:3EHX",
+        "010-MMP12:3EHY",
+        "010-MMP12:3F15",
+        "010-MMP12:3F16",
+        "010-MMP12:3F17",
+        "010-MMP12:3F18",
+        "010-MMP12:3F19",
+        "010-MMP12:3F1A",
+        "010-MMP12:3LK8",
+        "010-MMP12:3N2U",
+        "010-MMP12:3N2V",
+        "010-MMP12:3NX7",
+        "010-MMP12:3RTS",
+        "010-MMP12:3RTT",
+        "010-MMP12:4GUY",
+        "010-MMP12:5LAB",
+        "010-MMP12:6RD0",
+        "010-MMP12:6RLY"
+      ],
+      "path": "data/packs/pack_02.sdf",
+      "sha256": "1e49bdaa6718aaf168e47cf23bdfa9c4c542a937352f2db48a14f66e4c7fc680"
+    }
+  ],
+  "schema_version": 1,
+  "selection_id": "pl-rex-primary-v1",
+  "source": "PL-REX 1.0.1 primary refined ligand SDF files"
+}

@@ -1,0 +1,18 @@
+corpus_id = "smoke"
+feature_id = "io.smiles.write"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem_smiles/cid_702.txt",
+  "data/pubchem_smiles/cid_241.txt",
+  "data/pubchem_smiles/cid_931.txt",
+  "data/pubchem_smiles/cid_2519.txt",
+]
+
+
+notes = [
+  "Reference RDKit goldens compare noncanonical output SMILES.",
+  "All molecule fixtures are externally supplied PubChem SMILES records.",
+]

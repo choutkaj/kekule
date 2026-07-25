@@ -1,0 +1,18 @@
+corpus_id = "smoke"
+feature_id = "algo.aromaticity.rdkit-like"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/pubchem/cid_241.sdf",
+  "data/pubchem/cid_8029.sdf",
+  "data/pubchem/cid_931.sdf",
+  "data/pubchem/cid_2519.sdf",
+]
+
+
+notes = [
+  "Reference RDKit goldens compare aromatic atom and bond flags.",
+  "All molecule fixtures are externally supplied PubChem records.",
+]

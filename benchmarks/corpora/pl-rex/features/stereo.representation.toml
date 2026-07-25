@@ -1,0 +1,15 @@
+feature_id = "stereo.representation"
+corpus_id = "pl-rex"
+reference_tool = "pl-rex-manual-semantic"
+reference_version = "PL-REX 1.0.1 ligand corpus 2026-07-09"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.sdf",
+  "data/packs/pack_02.sdf",
+]
+
+notes = [
+  "Externally supplied PL-REX ligand SDF packs provide manually reviewed coordinate- and Molfile-stereo representation regression coverage over curated protein-ligand benchmark structures.",
+  "Goldens compare semantic stereo elements, groups, and source bond marks, not bytewise SDF spelling or parser-local IDs.",
+]

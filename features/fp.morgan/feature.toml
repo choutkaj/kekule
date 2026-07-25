@@ -6,4 +6,3 @@ version = 1
 status = "planned"
 description = "Plan a Morgan-style circular fingerprint for small molecules."
 depends_on = ["chem.sanitize.rdkit-like"]
-validation_required = []

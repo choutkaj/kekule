@@ -2,7 +2,6 @@ use crate::*;
 
 pub(crate) fn list_features() -> Result<(), Box<dyn Error>> {
     let features = read_features()?;
-    validate_required_manifests(&features)?;
     for feature in &features {
         println!(
             "{}\t{}\tv{}\tstatus={}",
@@ -87,7 +86,6 @@ pub(crate) struct Feature {
     pub(crate) status: FeatureStatus,
     pub(crate) description: String,
     pub(crate) depends_on: Vec<String>,
-    pub(crate) validation_required: Vec<String>,
 }
 
 pub(crate) fn read_features() -> Result<Vec<Feature>, Box<dyn Error>> {
@@ -110,29 +108,6 @@ pub(crate) fn read_features_from(root: &Path) -> Result<Vec<Feature>, Box<dyn Er
     features.sort_by(|a, b| a.id.cmp(&b.id));
     validate_feature_set(&features)?;
     Ok(features)
-}
-
-pub(crate) fn validate_required_manifests(features: &[Feature]) -> Result<(), Box<dyn Error>> {
-    validate_required_manifests_from(Path::new("."), features)
-}
-
-pub(crate) fn validate_required_manifests_from(
-    root: &Path,
-    features: &[Feature],
-) -> Result<(), Box<dyn Error>> {
-    for feature in features {
-        for corpus in &feature.validation_required {
-            let path = validation_manifest_path_from(root, &feature.id, corpus);
-            if !path.exists() {
-                return Err(boxed_error(format!(
-                    "{} requires validation corpus `{corpus}` but manifest {} is missing",
-                    feature.id,
-                    path.display()
-                )));
-            }
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn is_hidden_or_template(path: &Path) -> bool {
@@ -227,27 +202,6 @@ pub(crate) fn validate_feature(feature: &Feature, path: &Path) -> Result<(), Box
                 path.display()
             )));
         }
-    }
-    let mut seen_corpora = BTreeSet::new();
-    for corpus in &feature.validation_required {
-        if !is_known_corpus(corpus) {
-            return Err(boxed_error(format!(
-                "{} requires unknown validation corpus `{corpus}`",
-                path.display()
-            )));
-        }
-        if !seen_corpora.insert(corpus) {
-            return Err(boxed_error(format!(
-                "{} lists validation corpus `{corpus}` more than once",
-                path.display()
-            )));
-        }
-    }
-    if feature.status == FeatureStatus::Planned && !feature.validation_required.is_empty() {
-        return Err(boxed_error(format!(
-            "{} has status `planned` but declares required validation; planned features have no implementation to validate",
-            path.display()
-        )));
     }
     let feature_doc = path.with_file_name("feature.md");
     if !feature_doc.exists() {

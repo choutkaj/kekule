@@ -1,0 +1,15 @@
+feature_id = "stereo.cip"
+corpus_id = "pl-rex"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.sdf",
+  "data/packs/pack_02.sdf",
+]
+
+notes = [
+  "Externally supplied PL-REX ligand SDF packs provide coordinate- and Molfile-stereo CIP parity coverage over curated protein-ligand benchmark structures.",
+  "Goldens compare RDKit-backed CIP atom and bond descriptor maps across every SDF record in each pack.",
+]

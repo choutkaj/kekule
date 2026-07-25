@@ -1,0 +1,14 @@
+id = "pubchem-100k"
+title = "PubChem deterministic 100000-compound corpus"
+kind = "small-molecule"
+ready = true
+expected_count = 100000
+local_only = true
+selection_id = "pubchem-100k-v1"
+formats = ["sdf-v2000", "smiles"]
+build_command = "micromamba run -n rdkit-benchmark-reference python benchmarks/reference/rdkit/build_large_corpora.py --corpus pubchem-100k"
+notes = [
+  "Selected deterministically from valid V2000 records in the official PubChem CID 1-500000 CURRENT-Full shard.",
+  "Structures are official PubChem 2D V2000 records because PUG REST 3D retrieval was unavailable during corpus construction.",
+  "This large corpus is intended for explicit broad benchmark runs, not routine coding loops.",
+]

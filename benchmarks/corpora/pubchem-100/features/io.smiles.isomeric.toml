@@ -1,0 +1,14 @@
+feature_id = "io.smiles.isomeric"
+corpus_id = "pubchem-100"
+reference_tool = "rdkit"
+reference_version = "RDKit 2026.03.3"
+comparison_mode = "implementation-golden"
+
+fixtures = [
+  "data/packs/pack_01.smi",
+]
+
+notes = [
+  "Externally supplied PubChem isomeric SMILES pack provides broader noncanonical isomeric SMILES writer parity coverage for sanitized records with source stereo syntax.",
+  "Goldens compare semantic output after write and reparse, including sanitized graph semantics plus CIP descriptor-bearing stereo semantics.",
+]
