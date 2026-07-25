@@ -3,6 +3,7 @@ use std::fmt;
 
 use crate::algorithms::explicit_valence;
 use crate::core::*;
+use crate::geometry::Point3;
 use crate::io::preserve_molfile_tetrahedral_hydrogens;
 use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};

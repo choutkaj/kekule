@@ -1,24 +1,6 @@
 use super::*;
-use crate::units::{Quantity, ScaleValue, Unit, UnitError, ANGSTROM};
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Point3 {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-}
-
-impl Point3 {
-    pub const fn new(x: f64, y: f64, z: f64) -> Self {
-        Self { x, y, z }
-    }
-}
-
-impl ScaleValue for Point3 {
-    fn scaled(self, factor: f64) -> Self {
-        Self::new(self.x * factor, self.y * factor, self.z * factor)
-    }
-}
+use crate::geometry::Point3;
+use crate::units::{Quantity, Unit, UnitError, ANGSTROM};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Conformer {

@@ -175,8 +175,7 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
         Element::from_symbol("C").expect("carbon is a known element"),
     ));
 
-    let model = builder.hierarchy_mut().add_model("1");
-    let chain = builder.hierarchy_mut().add_chain(model, "A", None)?;
+    let chain = builder.hierarchy_mut().add_chain("A", None)?;
     let residue =
         builder
             .hierarchy_mut()
@@ -189,20 +188,19 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let macro_mol = builder.build()?;
 
     let validate = macro_mol.validate()?;
-    assert_eq!(validate.models_checked, 1);
+    assert_eq!(validate.chains_checked, 1);
     assert_eq!(validate.atom_sites_checked, 1);
     Ok(())
 }
 
 #[test]
-fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error>> {
-    use molecular::bio::{SmcraHierarchy, SmcraModel};
-    use molecular::modeling::Model;
+fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::Error>> {
+    use molecular::bio::SmcraHierarchy;
+    use molecular::structure::Model;
 
     let mut hierarchy = SmcraHierarchy::new();
-    let hierarchy_model_id = hierarchy.add_model("1");
-    let hierarchy_model: &SmcraModel = hierarchy.model(hierarchy_model_id)?;
-    assert_eq!(hierarchy_model.model_id(), "1");
+    let chain = hierarchy.add_chain("A", None)?;
+    assert_eq!(hierarchy.chain(chain)?.label_id(), "A");
 
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(
@@ -213,7 +211,7 @@ fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error
         .set_position(
             atom,
             molecular::units::Quantity::new(
-                molecular::core::Point3::new(0.0, 0.0, 0.0),
+                molecular::geometry::Point3::new(0.0, 0.0, 0.0),
                 molecular::units::ANGSTROM,
             ),
         )
@@ -228,7 +226,9 @@ fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error
 #[test]
 fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use molecular::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
-    use molecular::modeling::{minimize, MinimizationStatus, MinimizeOptions, Model};
+    use molecular::modeling::{minimize, MinimizationStatus, MinimizeOptions};
+    use molecular::structure::Model;
+    use molecular::topology::InstanceBondId;
 
     let mut graph = Molecule::new();
     let carbon = graph.add_atom(Atom::new(
@@ -243,7 +243,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         .set_position(
             carbon,
             molecular::units::Quantity::new(
-                molecular::core::Point3::new(0.0, 0.0, 0.0),
+                molecular::geometry::Point3::new(0.0, 0.0, 0.0),
                 molecular::units::ANGSTROM,
             ),
         )
@@ -252,7 +252,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         .set_position(
             oxygen,
             molecular::units::Quantity::new(
-                molecular::core::Point3::new(2.0, 0.0, 0.0),
+                molecular::geometry::Point3::new(2.0, 0.0, 0.0),
                 molecular::units::ANGSTROM,
             ),
         )
@@ -264,10 +264,10 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
     let cloned = model.clone();
-    assert_eq!(model.definition_key(), cloned.definition_key());
-    let model_bond = molecular::modeling::InstanceBondId::new(instance, bond);
+    assert!(model.topology().same_identity(cloned.topology()));
+    let model_bond = InstanceBondId::new(instance, bond);
     let mut potential = HarmonicBondPotential::new(
-        &model,
+        model.topology(),
         [HarmonicBondParameter::new(
             model_bond,
             molecular::units::Quantity::new(1.2, molecular::units::ANGSTROM),

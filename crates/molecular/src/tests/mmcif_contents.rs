@@ -1,11 +1,13 @@
 use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
-use crate::core::{Atom, BondOrder, Conformer, Element, Molecule, Point3};
+use crate::core::{Atom, BondOrder, Conformer, Element, Molecule};
+use crate::geometry::Point3;
 use crate::mmcif::{
     self, MmcifAltLocPolicy, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
     MmcifWriteError, MmcifWriteOptions,
 };
-use crate::modeling::{Model, ModelBuilder, MoleculeInstanceMetadata, MoleculeRole};
 use crate::small::SmallMolecule;
+use crate::structure::{Model, ModelBuilder};
+use crate::topology::{MoleculeInstanceMetadata, MoleculeRole};
 
 const MIXED: &str = r#"
 data_mixed
@@ -42,6 +44,32 @@ loop_
 _audit_author.name
 _audit_author.pdbx_ordinal
 'Example Author' 1
+"#;
+
+const MULTI_MODEL: &str = r#"
+data_multi
+loop_
+_entity.id
+_entity.type
+1 non-polymer
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.pdbx_PDB_model_num
+HETATM 1 C C1 LIG A 1 0.0 0.0 0.0 0.40 10.0 1
+HETATM 2 O O1 LIG A 1 1.2 0.0 0.0 0.50 11.0 1
+HETATM 3 C C1 LIG A 1 5.0 0.0 0.0 0.80 20.0 2
+HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2
 "#;
 
 fn parse(input: &str) -> mmcif::MmcifDocument {
@@ -120,17 +148,15 @@ ATOM 1 C C1 GLY A 2 1 0.0 0.0 0.0 1
 ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
 "#;
     let result = mmcif::interpret(&parse(input), MmcifInterpretOptions::default()).unwrap();
-    assert_eq!(result.model().topology().molecule_count(), 1);
-    let instance = result.model().topology().molecules().next().unwrap().1;
-    let hierarchy = instance
+    assert_eq!(result.model().topology().instance_count(), 1);
+    let definition = result.model().topology().definitions().next().unwrap().1;
+    let hierarchy = definition
         .macro_molecule()
         .expect("merged polymer chains remain a macro molecule")
         .hierarchy();
-    let hierarchy_model = hierarchy.models().next().unwrap().1;
-    let chain_order = hierarchy_model
+    let chain_order = hierarchy
         .chains()
-        .iter()
-        .map(|chain| hierarchy.chain(*chain).unwrap().label_id())
+        .map(|(_, chain)| chain.label_id())
         .collect::<Vec<_>>();
     assert_eq!(chain_order, ["Z", "A"]);
 }
@@ -139,20 +165,28 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
 fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
     let interpreted = mmcif::interpret(&parse(MIXED), MmcifInterpretOptions::default()).unwrap();
     let model = interpreted.model();
-    assert_eq!(model.topology().molecule_count(), 3);
+    assert_eq!(model.topology().instance_count(), 3);
     assert_eq!(model.atom_count(), 4);
     assert_eq!(model.positions().len(), 4);
     assert!(model.positions().iter().all(|point| point.x.is_finite()));
     let instances = model
         .topology()
-        .molecules()
-        .map(|(_, molecule)| molecule)
+        .instances()
+        .map(|(id, instance)| {
+            (
+                instance,
+                model
+                    .topology()
+                    .definition_for_instance(id)
+                    .expect("instance definition"),
+            )
+        })
         .collect::<Vec<_>>();
-    assert!(instances[0].macro_molecule().is_some());
-    assert!(instances[0].has_role(MoleculeRole::Polymer));
-    assert!(instances[1].small_molecule().is_some());
-    assert!(instances[1].has_role(MoleculeRole::NonPolymer));
-    assert!(instances[2].has_role(MoleculeRole::Solvent));
+    assert!(instances[0].1.macro_molecule().is_some());
+    assert!(instances[0].0.has_role(MoleculeRole::Polymer));
+    assert!(instances[1].1.small_molecule().is_some());
+    assert!(instances[1].0.has_role(MoleculeRole::NonPolymer));
+    assert!(instances[2].0.has_role(MoleculeRole::Solvent));
     assert_eq!(interpreted.report().selected_model.as_deref(), Some("1"));
     assert_eq!(interpreted.report().instances.len(), 3);
     assert_eq!(
@@ -164,9 +198,9 @@ fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
             .sum::<usize>(),
         4
     );
-    for instance in &instances {
-        assert!(instance.graph().props().is_empty());
-        assert!(instance
+    for (_, definition) in &instances {
+        assert!(definition.graph().props().is_empty());
+        assert!(definition
             .graph()
             .atoms()
             .all(|(_, atom)| atom.props.keys().all(|key| !key.starts_with("mmcif."))));
@@ -176,29 +210,35 @@ fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
     assert_eq!(first_provenance.asym_ids, vec!["A"]);
     assert_eq!(first_provenance.entity_ids, vec!["1"]);
     assert_eq!(first_provenance.atoms[0].atom_name, "N");
-    assert_eq!(model.topology().bonds().count(), 1);
-    assert_eq!(interpreted.report().inferred_bonds(), 1);
+    assert_eq!(model.topology().bonds().count(), 0);
+    assert_eq!(interpreted.report().connectivity_candidates(), 1);
     assert!(interpreted.report().issues().iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::CovalentBondsInferred {
-            atom_count: 2,
-            bond_count: 1,
+        mmcif::MmcifInterpretIssue::ConnectivityCandidatesInferred {
+            candidate_count: 1,
+            ..
         }
     )));
 }
 
 #[test]
-fn mmcif_covalent_inference_connects_atoms_across_spatial_cells_without_contacts() {
+fn mmcif_connectivity_candidates_do_not_create_bonds() {
     let input = MIXED.replace(
         "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
         "ATOM 2 C CA GLY A 1 1 1.45 0.0 0.0 1\nATOM 5 C C GLY A 1 1 2.90 0.0 0.0 1",
     );
     let interpreted = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
-    let polymer = interpreted.model().topology().molecules().next().unwrap().1;
+    let polymer = interpreted
+        .model()
+        .topology()
+        .definitions()
+        .next()
+        .unwrap()
+        .1;
 
     assert_eq!(polymer.graph().atom_count(), 3);
-    assert_eq!(polymer.graph().bond_count(), 2);
-    assert_eq!(interpreted.report().inferred_bonds(), 2);
+    assert_eq!(polymer.graph().bond_count(), 0);
+    assert_eq!(interpreted.report().connectivity_candidates(), 2);
 }
 
 #[test]
@@ -233,6 +273,60 @@ fn multiple_coordinate_models_require_explicit_selection() {
     )
     .unwrap();
     assert_eq!(first.report().selected_model.as_deref(), Some("1"));
+}
+
+#[test]
+fn multimodel_interpretation_builds_shared_topology_with_distinct_observations() {
+    let interpreted = mmcif::interpret_ensemble(
+        &parse(MULTI_MODEL),
+        mmcif::MmcifEnsembleInterpretOptions::default(),
+    )
+    .expect("consistent coordinate models form an ensemble");
+    let ensemble = interpreted.ensemble();
+    assert_eq!(ensemble.len(), 2);
+    assert_eq!(interpreted.reports().len(), 2);
+    assert_eq!(
+        ensemble
+            .members()
+            .map(|member| member.configuration().positions().values().value()[0].x)
+            .collect::<Vec<_>>(),
+        vec![0.0, 5.0]
+    );
+
+    let observations = ensemble
+        .members()
+        .map(|member| member.observation().expect("mmCIF observation"))
+        .collect::<Vec<_>>();
+    assert_eq!(observations[0].source_model_id(), Some("1"));
+    assert_eq!(observations[1].source_model_id(), Some("2"));
+    let first_atom = ensemble.topology().atom_ids()[0];
+    assert_eq!(
+        observations[0]
+            .atom(ensemble.topology(), first_atom)
+            .unwrap()
+            .occupancy(),
+        Some(0.4)
+    );
+    assert_eq!(
+        observations[1]
+            .atom(ensemble.topology(), first_atom)
+            .unwrap()
+            .b_factor(),
+        Some(20.0)
+    );
+}
+
+#[test]
+fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
+    let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
+    assert!(matches!(
+        mmcif::interpret_ensemble(
+            &parse(&inconsistent),
+            mmcif::MmcifEnsembleInterpretOptions::default(),
+        ),
+        Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
+            if model_id == "2"
+    ));
 }
 
 #[test]
@@ -289,11 +383,16 @@ hydrog A N 1 W O .
 "#;
     let input = format!("{MIXED}\n{connections}");
     let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
-    assert_eq!(result.model().topology().molecule_count(), 2);
-    let first = result.model().topology().molecules().next().unwrap().1;
-    assert!(first.macro_molecule().is_some());
-    assert!(first.has_role(MoleculeRole::Polymer));
-    assert!(first.has_role(MoleculeRole::NonPolymer));
+    assert_eq!(result.model().topology().instance_count(), 2);
+    let (first_id, first_instance) = result.model().topology().instances().next().unwrap();
+    let first_definition = result
+        .model()
+        .topology()
+        .definition_for_instance(first_id)
+        .unwrap();
+    assert!(first_definition.macro_molecule().is_some());
+    assert!(first_instance.has_role(MoleculeRole::Polymer));
+    assert!(first_instance.has_role(MoleculeRole::NonPolymer));
     assert_eq!(result.report().applied_connections, 1);
 }
 
@@ -338,7 +437,7 @@ covale A N 1 A CA 1 doub
 "#;
     let input = format!("{MIXED}\n{connection}");
     let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
-    let first = result.model().topology().molecules().next().unwrap().1;
+    let first = result.model().topology().definitions().next().unwrap().1;
     assert_eq!(
         first.graph().bonds().next().expect("declared bond").1.order,
         BondOrder::Double
@@ -391,10 +490,15 @@ covale A N 1 A CA 1 doub
         .expect("writer emits atom-site loop");
     assert_eq!(atom_sites.row_count(), 4);
     let round_trip = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
-    assert_eq!(round_trip.model().topology().molecule_count(), 3);
+    assert_eq!(round_trip.model().topology().instance_count(), 3);
     assert_eq!(round_trip.model().positions(), original.model().positions());
-    let first = round_trip.model().topology().molecules().next().unwrap().1;
-    assert!(first.has_role(MoleculeRole::Polymer));
+    let (first_id, first_instance) = round_trip.model().topology().instances().next().unwrap();
+    let first = round_trip
+        .model()
+        .topology()
+        .definition_for_instance(first_id)
+        .unwrap();
+    assert!(first_instance.has_role(MoleculeRole::Polymer));
     assert_eq!(
         first
             .graph()
@@ -429,8 +533,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
         .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let mut hierarchy = SmcraHierarchy::new();
-    let model = hierarchy.add_model("1");
-    let chain = hierarchy.add_chain(model, "A", None).unwrap();
+    let chain = hierarchy.add_chain("A", None).unwrap();
     hierarchy
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
@@ -457,7 +560,7 @@ fn mmcif_writer_preserves_supported_bond_orders() {
         let round_trip = interpreted
             .model()
             .topology()
-            .molecules()
+            .definitions()
             .next()
             .unwrap()
             .1
@@ -492,8 +595,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
         .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
     let mut hierarchy = SmcraHierarchy::new();
-    let model = hierarchy.add_model("1");
-    let chain = hierarchy.add_chain(model, "A", None).unwrap();
+    let chain = hierarchy.add_chain("A", None).unwrap();
     let residue = hierarchy
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();

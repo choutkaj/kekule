@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::core::*;
+use crate::geometry::Point3;
 use crate::io::{
     preserve_molfile_tetrahedral_hydrogens, MolWriteError, MolfileParseOptions, SdfParseError,
 };

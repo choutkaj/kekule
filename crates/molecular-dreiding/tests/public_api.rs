@@ -1,8 +1,10 @@
-use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3};
+use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
+use molecular::geometry::Point3;
 use molecular::modeling::potential::{Potential, PotentialError};
-use molecular::modeling::{InstanceAtomId, Model, MoleculeInstanceId};
 use molecular::small::SmallMolecule;
-use molecular_dreiding::DreidingPotential;
+use molecular::structure::Model;
+use molecular::topology::{InstanceAtomId, MoleculeInstanceId};
+use molecular_dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 #[test]
 fn downstream_preparation_and_evaluation() {
@@ -50,15 +52,20 @@ fn downstream_preparation_and_evaluation() {
     let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     let independently_built = Model::from_small_molecule(&molecule, conformer).unwrap();
-    let mut potential = DreidingPotential::prepare(&model).unwrap();
-    let evaluation = potential.evaluate(&model).unwrap();
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    let evaluation = potential.evaluate(model.view()).unwrap();
     let oxygen = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(0));
     assert!(evaluation.energy().is_finite());
     assert_eq!(evaluation.gradient().len(), model.atom_count());
     assert!(potential.atom_type(oxygen).is_some());
     assert!(potential.partial_charge(oxygen).unwrap().is_finite());
     assert_eq!(
-        potential.evaluate(&independently_built),
-        Err(PotentialError::IncompatibleModel)
+        potential.evaluate(independently_built.view()),
+        Err(PotentialError::IncompatibleTopology)
     );
 }

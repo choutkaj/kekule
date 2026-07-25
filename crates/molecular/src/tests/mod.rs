@@ -1,6 +1,7 @@
 use crate::bio::*;
 use crate::chemistry::{SanitizeError, SanitizeOptions};
 use crate::core::*;
+use crate::geometry::Point3;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
     stereo as stereo_api, stereo::*, valence as valence_api, valence::*,

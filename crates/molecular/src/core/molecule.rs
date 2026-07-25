@@ -849,6 +849,21 @@ impl Molecule {
         self
     }
 
+    /// Clones coordinate-independent molecular state without cloning conformers.
+    pub(crate) fn clone_without_conformers(&self) -> Self {
+        Self {
+            atoms: self.atoms.clone(),
+            bonds: self.bonds.clone(),
+            adjacency: self.adjacency.clone(),
+            conformers: Vec::new(),
+            stereo_elements: self.stereo_elements.clone(),
+            stereo_groups: self.stereo_groups.clone(),
+            stereo_bond_marks: self.stereo_bond_marks.clone(),
+            props: self.props.clone(),
+            perception: self.perception.clone(),
+        }
+    }
+
     fn validate_stereo_element_refs(&self, element: &StereoElement) -> Result<()> {
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {

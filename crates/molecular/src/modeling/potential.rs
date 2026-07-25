@@ -1,53 +1,13 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use super::{InstanceAtomId, InstanceBondId, Model, ModelDefinitionKey};
+use crate::geometry::Vector3;
+use crate::structure::ModelView;
+use crate::topology::{InstanceAtomId, InstanceBondId, Topology, TopologyIdentity};
 use crate::units::{
-    Quantity, ScaleValue, UnitError, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT,
-    MODEL_GRADIENT_UNIT, MODEL_LENGTH_UNIT,
+    Quantity, UnitError, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
+    MODEL_LENGTH_UNIT,
 };
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-/// Three-dimensional Cartesian vector used for energy gradients.
-pub struct Vector3 {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-}
-
-impl Vector3 {
-    pub const fn new(x: f64, y: f64, z: f64) -> Self {
-        Self { x, y, z }
-    }
-
-    pub const fn zero() -> Self {
-        Self::new(0.0, 0.0, 0.0)
-    }
-
-    pub fn norm(self) -> f64 {
-        self.dot(self).sqrt()
-    }
-
-    pub fn dot(self, other: Self) -> f64 {
-        self.x * other.x + self.y * other.y + self.z * other.z
-    }
-
-    pub(crate) fn is_finite(self) -> bool {
-        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
-    }
-
-    pub(crate) fn add_scaled(&mut self, other: Self, scale: f64) {
-        self.x += other.x * scale;
-        self.y += other.y * scale;
-        self.z += other.z * scale;
-    }
-}
-
-impl ScaleValue for Vector3 {
-    fn scaled(self, factor: f64) -> Self {
-        Self::new(self.x * factor, self.y * factor, self.z * factor)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 /// Validated energy and Cartesian gradient from a [`Potential`].
@@ -55,13 +15,14 @@ impl ScaleValue for Vector3 {
 /// Values are converted once to the modelling kernel's explicit canonical
 /// energy and gradient units.
 pub struct PotentialEvaluation {
+    topology: TopologyIdentity,
     energy: Quantity<f64>,
     gradient: Quantity<Vec<Vector3>>,
 }
 
 impl PotentialEvaluation {
     pub fn new(
-        model: &Model,
+        model: ModelView<'_>,
         energy: Quantity<f64>,
         gradient: Quantity<Vec<Vector3>>,
     ) -> Result<Self, PotentialError> {
@@ -83,7 +44,11 @@ impl PotentialEvaluation {
                 });
             }
         }
-        Ok(Self { energy, gradient })
+        Ok(Self {
+            topology: model.topology().identity(),
+            energy,
+            gradient,
+        })
     }
 
     pub fn energy(&self) -> Quantity<f64> {
@@ -94,7 +59,14 @@ impl PotentialEvaluation {
         Quantity::new(self.gradient.value().as_slice(), self.gradient.unit())
     }
 
-    pub fn gradient_for(&self, model: &Model, atom: InstanceAtomId) -> Option<Quantity<Vector3>> {
+    pub fn gradient_for(
+        &self,
+        model: ModelView<'_>,
+        atom: InstanceAtomId,
+    ) -> Option<Quantity<Vector3>> {
+        if self.topology != model.topology().identity() {
+            return None;
+        }
         let index = model.topology().atom_index(atom)?;
         self.gradient
             .value()
@@ -104,14 +76,13 @@ impl PotentialEvaluation {
     }
 }
 
-/// Energy-and-gradient evaluator for a fixed-topology molecular model.
+/// Energy-and-gradient evaluator for a borrowed structural view.
 ///
 /// Implementations may retain mutable caches between calls. Every returned
-/// evaluation must contain one finite gradient vector per model atom. Prepared
-/// implementations should bind to [`Model::definition_key`] and return
-/// [`PotentialError::IncompatibleModel`] for a different definition.
+/// evaluation must contain one finite gradient vector per topology atom.
+/// Prepared implementations bind to exact topology identity.
 pub trait Potential {
-    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError>;
+    fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -145,7 +116,7 @@ impl HarmonicBondParameter {
 /// Each term contributes `0.5 * k * (r - r0)^2`. No parameters are inferred,
 /// and angle, torsion, and nonbonded interactions are intentionally absent.
 pub struct HarmonicBondPotential {
-    definition: ModelDefinitionKey,
+    topology: TopologyIdentity,
     terms: Vec<HarmonicBondTerm>,
 }
 
@@ -159,7 +130,7 @@ struct HarmonicBondTerm {
 
 impl HarmonicBondPotential {
     pub fn new(
-        model: &Model,
+        topology: &Topology,
         parameters: impl IntoIterator<Item = HarmonicBondParameter>,
     ) -> Result<Self, PotentialError> {
         let mut seen = BTreeSet::new();
@@ -188,8 +159,7 @@ impl HarmonicBondPotential {
                     parameter: "force constant must be finite and positive",
                 });
             }
-            let bond = model
-                .topology()
+            let bond = topology
                 .bond(parameter.bond)
                 .map_err(|_| PotentialError::InvalidBondId(parameter.bond))?;
             let (a, b) = bond.endpoints();
@@ -203,27 +173,27 @@ impl HarmonicBondPotential {
             });
         }
         Ok(Self {
-            definition: model.definition_key().clone(),
+            topology: topology.identity(),
             terms,
         })
     }
 }
 
 impl Potential for HarmonicBondPotential {
-    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError> {
-        if &self.definition != model.definition_key() {
-            return Err(PotentialError::IncompatibleModel);
+    fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
+        if self.topology != model.topology().identity() {
+            return Err(PotentialError::IncompatibleTopology);
         }
         let mut energy = 0.0;
         let mut gradient = vec![Vector3::zero(); model.atom_count()];
         for term in &self.terms {
             let a = model
                 .position(term.a)
-                .map_err(|_| PotentialError::IncompatibleModel)?
+                .map_err(|_| PotentialError::IncompatibleTopology)?
                 .into_value();
             let b = model
                 .position(term.b)
-                .map_err(|_| PotentialError::IncompatibleModel)?
+                .map_err(|_| PotentialError::IncompatibleTopology)?
                 .into_value();
             let displacement = Vector3::new(a.x - b.x, a.y - b.y, a.z - b.z);
             let distance = displacement.norm();
@@ -286,7 +256,7 @@ pub enum PotentialError {
         bond: InstanceBondId,
         parameter: &'static str,
     },
-    IncompatibleModel,
+    IncompatibleTopology,
     InvalidGeometry {
         interaction: &'static str,
         atoms: Vec<InstanceAtomId>,
@@ -343,9 +313,9 @@ impl fmt::Display for PotentialError {
             Self::InvalidBondParameter { bond, parameter } => {
                 write!(f, "invalid harmonic parameter for bond {bond}: {parameter}")
             }
-            Self::IncompatibleModel => write!(
+            Self::IncompatibleTopology => write!(
                 f,
-                "model definition differs from the definition bound to the potential"
+                "model view belongs to a different exact topology than the potential"
             ),
             Self::InvalidGeometry {
                 interaction,

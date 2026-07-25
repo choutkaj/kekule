@@ -1,4 +1,5 @@
 use crate::core::*;
+use crate::geometry::Point3;
 
 use super::RingMembership;
 

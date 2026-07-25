@@ -1,13 +1,19 @@
 use super::*;
 use crate::bio::{MacroMolecule, SmcraAtomSiteId, SmcraAtomSiteMetadata, SmcraHierarchy};
-use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Conformer, ConformerId, Element, Molecule, Point3,
-};
+use crate::core::{Atom, AtomId, BondId, BondOrder, Conformer, ConformerId, Element, Molecule};
+use crate::geometry::{Point3, Vector3};
 use crate::modeling::potential::{
     HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError, PotentialEvaluation,
-    PotentialGeometryError, Vector3,
+    PotentialGeometryError,
 };
 use crate::small::SmallMolecule;
+use crate::structure::{
+    InstanceToConformerError, Model, ModelBuildError, ModelView, PositionError,
+};
+use crate::topology::{
+    InstanceAtomId, InstanceBondId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole,
+    TopologyBuildError,
+};
 use crate::units::{
     Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
     NANOMETER,
@@ -50,8 +56,7 @@ fn one_atom_macro() -> (MacroMolecule, ConformerId, AtomId, SmcraAtomSiteId) {
         .unwrap();
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
     let mut hierarchy = SmcraHierarchy::new();
-    let model = hierarchy.add_model("1");
-    let chain = hierarchy.add_chain(model, "A", None).unwrap();
+    let chain = hierarchy.add_chain("A", None).unwrap();
     let residue = hierarchy
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
@@ -173,7 +178,7 @@ fn instance_to_conformer_maps_local_ids_converts_units_and_is_transactional() {
 }
 
 #[test]
-fn model_definition_identity_is_shared_only_by_clones() {
+fn topology_identity_is_shared_only_by_clones() {
     let (small, conformer, _, b, _) = two_atom_small(1.5);
     let model = Model::from_small_molecule(&small, conformer).unwrap();
     let mut cloned = model.clone();
@@ -185,10 +190,11 @@ fn model_definition_identity_is_shared_only_by_clones() {
         .unwrap();
     let rebuilt = Model::from_small_molecule(&small, conformer).unwrap();
 
-    assert_eq!(model.definition_key(), cloned.definition_key());
-    assert_ne!(model.definition_key(), rebuilt.definition_key());
+    assert!(model.topology().same_identity(cloned.topology()));
+    assert!(!model.topology().same_identity(rebuilt.topology()));
+    assert!(model.topology().structurally_equivalent(rebuilt.topology()));
     assert_ne!(model, cloned);
-    assert_eq!(model, rebuilt);
+    assert_ne!(model, rebuilt);
 }
 
 #[test]
@@ -208,15 +214,10 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
     assert_ne!(small_id, macro_id);
     assert!(model
         .topology()
-        .molecule(small_id)
+        .instance(small_id)
         .unwrap()
         .has_role(MoleculeRole::Ligand));
-    let hierarchy = model
-        .topology()
-        .molecule(macro_id)
-        .unwrap()
-        .smcra_hierarchy()
-        .unwrap();
+    let hierarchy = model.topology().hierarchy(macro_id).unwrap().unwrap();
     assert_eq!(
         hierarchy.atom_for_site(site).unwrap(),
         InstanceAtomId::new(macro_id, atom)
@@ -235,7 +236,7 @@ fn repeated_molecules_get_distinct_instance_ids() {
         InstanceAtomId::new(first, atom),
         InstanceAtomId::new(second, atom)
     );
-    assert_eq!(model.topology().molecule_count(), 2);
+    assert_eq!(model.topology().instance_count(), 2);
 }
 
 #[test]
@@ -255,7 +256,7 @@ fn construction_copies_positions_and_preserves_sources() {
     assert_eq!(
         model
             .topology()
-            .molecule(MoleculeInstanceId::new(0))
+            .definition_for_instance(MoleculeInstanceId::new(0))
             .unwrap()
             .graph()
             .conformers()
@@ -266,14 +267,26 @@ fn construction_copies_positions_and_preserves_sources() {
 
 #[test]
 fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
-    assert_eq!(Model::builder().build(), Err(ModelBuildError::EmptyModel));
+    assert!(matches!(
+        Model::builder().build(),
+        Err(ModelBuildError::Topology(
+            TopologyBuildError::NoMoleculeInstances
+        ))
+    ));
     let empty = SmallMolecule::new();
     let mut builder = Model::builder();
     assert!(matches!(
         builder.add_small_molecule(&empty, ConformerId::new(0)),
-        Err(ModelBuildError::EmptyMolecule)
+        Err(ModelBuildError::Topology(
+            TopologyBuildError::EmptyMoleculeDefinition
+        ))
     ));
-    assert_eq!(builder.build(), Err(ModelBuildError::EmptyModel));
+    assert!(matches!(
+        builder.build(),
+        Err(ModelBuildError::Topology(
+            TopologyBuildError::NoMoleculeInstances
+        ))
+    ));
 
     let (mut small, conformer, a, _, _) = two_atom_small(1.0);
     small
@@ -286,7 +299,12 @@ fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
     assert!(
         matches!(builder.add_small_molecule(&small, conformer), Err(ModelBuildError::NonFinitePosition { atom }) if atom == a)
     );
-    assert_eq!(builder.build(), Err(ModelBuildError::EmptyModel));
+    assert!(matches!(
+        builder.build(),
+        Err(ModelBuildError::Topology(
+            TopologyBuildError::NoMoleculeInstances
+        ))
+    ));
 }
 
 #[test]
@@ -313,7 +331,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     let model = Model::from_small_molecule(&small, conformer).unwrap();
     let qualified = InstanceBondId::new(MoleculeInstanceId::new(0), bond);
     let mut potential = HarmonicBondPotential::new(
-        &model,
+        model.topology(),
         [HarmonicBondParameter::new(
             qualified,
             Quantity::new(1.0, ANGSTROM),
@@ -321,7 +339,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
         )],
     )
     .unwrap();
-    let initial = potential.evaluate(&model).unwrap();
+    let initial = potential.evaluate(model.view()).unwrap();
     assert!((initial.energy().into_value() - 50.0).abs() < 1.0e-10);
     let result = minimize(&model, &mut potential, MinimizeOptions::default()).unwrap();
     assert!(result.final_energy < result.initial_energy);
@@ -329,8 +347,8 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
 
     let rebuilt = Model::from_small_molecule(&small, conformer).unwrap();
     assert_eq!(
-        potential.evaluate(&rebuilt),
-        Err(PotentialError::IncompatibleModel)
+        potential.evaluate(rebuilt.view()),
+        Err(PotentialError::IncompatibleTopology)
     );
 
     let mut coincident = model.clone();
@@ -342,7 +360,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
         )
         .unwrap();
     assert_eq!(
-        potential.evaluate(&coincident),
+        potential.evaluate(coincident.view()),
         Err(PotentialError::InvalidGeometry {
             interaction: "harmonic bond",
             atoms: vec![
@@ -357,7 +375,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
 struct RecoverableGeometryPotential;
 
 impl Potential for RecoverableGeometryPotential {
-    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError> {
+    fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
         let coordinate = model.positions()[1].x;
         if coordinate <= 0.25 {
             return Err(PotentialError::invalid_geometry(
@@ -382,7 +400,7 @@ struct BackendFailurePotential {
 }
 
 impl Potential for BackendFailurePotential {
-    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError> {
+    fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
         self.calls += 1;
         if self.calls > 1 {
             return Err(PotentialError::backend("test backend", "evaluation failed"));

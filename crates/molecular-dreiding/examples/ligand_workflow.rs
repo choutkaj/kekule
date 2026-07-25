@@ -1,11 +1,12 @@
 use std::{error::Error, fs};
 
 use molecular::{
-    modeling::{minimize, MinimizeOptions, Model},
+    modeling::{minimize, MinimizeOptions},
     sdf::{self, SdfParseOptions, SdfRecord},
+    structure::Model,
     units::MODEL_GRADIENT_UNIT,
 };
-use molecular_dreiding::DreidingPotential;
+use molecular_dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and interpret one SDF record without silently sanitizing it.
@@ -37,7 +38,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let model = builder.build()?;
 
     // Prepare DREIDING explicitly, then minimize a clone of the model.
-    let mut potential = DreidingPotential::prepare(&model)?;
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )?;
     let minimized = minimize(
         &model,
         &mut potential,

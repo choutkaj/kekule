@@ -534,7 +534,11 @@ pub const KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM: Unit = Unit::named(
 pub const MODEL_LENGTH_UNIT: Unit = ANGSTROM;
 pub const MODEL_ENERGY_UNIT: Unit = KILOJOULE_PER_MOLE;
 pub const MODEL_GRADIENT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_ANGSTROM;
+pub const MODEL_FORCE_UNIT: Unit = KILOJOULE_PER_MOLE_PER_ANGSTROM;
 pub const MODEL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM;
+pub const MODEL_VELOCITY_UNIT: Unit =
+    Unit::named(Dimension::new([1, 0, -1, 0, 0, 0, 0]), 1.0e2, "A/ps");
+pub const MODEL_TIME_UNIT: Unit = PICOSECOND;
 
 #[cfg(test)]
 mod tests {

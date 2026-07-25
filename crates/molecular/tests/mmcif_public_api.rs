@@ -26,11 +26,11 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
-    assert_eq!(interpreted.model().topology().molecule_count(), 1);
+    assert_eq!(interpreted.model().topology().instance_count(), 1);
     assert!(interpreted
         .model()
         .topology()
-        .molecules()
+        .definitions()
         .next()
         .unwrap()
         .1
@@ -48,7 +48,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         provenance.molecule()
     );
     let model = interpreted.into_model();
-    assert_eq!(model.topology().molecule_count(), 1);
+    assert_eq!(model.topology().instance_count(), 1);
     assert_eq!(model.positions().len(), 2);
     let written = mmcif::write(&model, MmcifWriteOptions::default())?;
     assert!(written.starts_with("data_model\n"));

@@ -1,10 +1,13 @@
 use molecular::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
-use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3};
+use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
+use molecular::geometry::Point3;
 use molecular::modeling::potential::{Potential, PotentialError};
-use molecular::modeling::{InstanceAtomId, Model, MoleculeInstanceId};
 use molecular::small::SmallMolecule;
+use molecular::structure::{Ensemble, Model};
+use molecular::topology::{InstanceAtomId, MoleculeInstanceId};
+use molecular::trajectory::TrajectoryFrame;
 
-use crate::{DreidingPotential, DreidingPrepareError};
+use crate::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions, QeqGrouping};
 
 fn explicit_atom(symbol: &str) -> Atom {
     let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
@@ -54,8 +57,13 @@ fn water(offset: f64) -> (SmallMolecule, molecular::core::ConformerId) {
 fn preparation_and_evaluation_are_finite() {
     let (water, conformer) = water(0.0);
     let model = Model::from_small_molecule(&water, conformer).unwrap();
-    let mut potential = DreidingPotential::prepare(&model).unwrap();
-    let evaluation = potential.evaluate(&model).unwrap();
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    let evaluation = potential.evaluate(model.view()).unwrap();
     let oxygen = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(0));
     assert!(evaluation.energy().is_finite());
     assert_eq!(evaluation.gradient().len(), 3);
@@ -71,7 +79,13 @@ fn qeq_is_prepared_per_molecule_instance() {
     let first_id = builder.add_small_molecule(&first, first_conf).unwrap();
     let second_id = builder.add_small_molecule(&second, second_conf).unwrap();
     let model = builder.build().unwrap();
-    let potential = DreidingPotential::prepare(&model).unwrap();
+    let potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(potential.qeq_grouping(), QeqGrouping::MoleculeInstances);
     for instance in [first_id, second_id] {
         let total = (0..3)
             .map(|atom| {
@@ -88,6 +102,65 @@ fn qeq_is_prepared_per_molecule_instance() {
         9,
         "two waters have nine inter-instance pairs and no intramolecular nonbonded pairs"
     );
+}
+
+#[test]
+fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
+    let (water, conformer) = water(0.0);
+    let model = Model::from_small_molecule(&water, conformer).unwrap();
+    let mut displaced = model.clone();
+    let hydrogen = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(1));
+    displaced
+        .set_position(
+            hydrogen,
+            molecular::units::Quantity::new(
+                Point3::new(1.05, 0.0, 0.0),
+                molecular::units::ANGSTROM,
+            ),
+        )
+        .unwrap();
+    let ensemble = Ensemble::from_models(&[model.clone(), displaced.clone()]).unwrap();
+    let frame = TrajectoryFrame::new(displaced.configuration().clone());
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+
+    let energies = ensemble
+        .views()
+        .map(|view| potential.evaluate(view).unwrap().energy().into_value())
+        .collect::<Vec<_>>();
+    assert_eq!(energies.len(), 2);
+    assert!(energies.iter().all(|energy| energy.is_finite()));
+    let frame_view = frame.view(model.topology()).unwrap();
+    assert!(potential
+        .evaluate(frame_view.model_view())
+        .unwrap()
+        .energy()
+        .is_finite());
+}
+
+#[test]
+fn qeq_grouping_policy_is_explicit() {
+    let (water, conformer) = water(0.0);
+    let model = Model::from_small_molecule(&water, conformer).unwrap();
+    for grouping in [
+        QeqGrouping::WholeTopology,
+        QeqGrouping::MoleculeInstances,
+        QeqGrouping::ConnectedComponents,
+    ] {
+        let potential = DreidingPotential::prepare(
+            model.topology(),
+            model.view(),
+            DreidingPrepareOptions {
+                qeq_grouping: grouping,
+            },
+        )
+        .unwrap();
+        assert_eq!(potential.qeq_grouping(), grouping);
+    }
 }
 
 #[test]
@@ -132,7 +205,12 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
     let model = Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer).unwrap();
 
-    let potential = DreidingPotential::prepare(&model).unwrap();
+    let potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
     assert!(potential.nonbonded.is_empty());
 }
 
@@ -140,8 +218,7 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
 fn eligible_macro_molecules_are_supported() {
     let (small, conformer) = water(0.0);
     let mut hierarchy = SmcraHierarchy::new();
-    let model = hierarchy.add_model("1");
-    let chain = hierarchy.add_chain(model, "A", None).unwrap();
+    let chain = hierarchy.add_chain("A", None).unwrap();
     let residue = hierarchy
         .add_residue(chain, "HOH", None, None, None)
         .unwrap();
@@ -152,8 +229,17 @@ fn eligible_macro_molecules_are_supported() {
     }
     let macromolecule = MacroMolecule::try_from_parts(small.graph().clone(), hierarchy).unwrap();
     let model = Model::from_macro_molecule(&macromolecule, conformer).unwrap();
-    let mut potential = DreidingPotential::prepare(&model).unwrap();
-    assert!(potential.evaluate(&model).unwrap().energy().is_finite());
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    assert!(potential
+        .evaluate(model.view())
+        .unwrap()
+        .energy()
+        .is_finite());
 }
 
 #[test]
@@ -172,7 +258,11 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let model =
         Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
     assert!(matches!(
-        DreidingPotential::prepare(&model),
+        DreidingPotential::prepare(
+            model.topology(),
+            model.view(),
+            DreidingPrepareOptions::default(),
+        ),
         Err(DreidingPrepareError::UnresolvedImplicitHydrogens { atom })
             if atom == InstanceAtomId::new(MoleculeInstanceId::new(0), id)
     ));
@@ -192,20 +282,29 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let model =
         Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
     assert!(matches!(
-        DreidingPotential::prepare(&model),
+        DreidingPotential::prepare(
+            model.topology(),
+            model.view(),
+            DreidingPrepareOptions::default(),
+        ),
         Err(DreidingPrepareError::CountedHydrogens { .. })
     ));
 }
 
 #[test]
-fn prepared_potential_uses_model_definition_identity() {
+fn prepared_potential_uses_exact_topology_identity() {
     let (combined, combined_conf) = molecule(
         &["C", "C"],
         &[],
         &[Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 0.0, 0.0)],
     );
     let combined_model = Model::from_small_molecule(&combined, combined_conf).unwrap();
-    let mut potential = DreidingPotential::prepare(&combined_model).unwrap();
+    let mut potential = DreidingPotential::prepare(
+        combined_model.topology(),
+        combined_model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
 
     let (one, one_conf) = molecule(&["C"], &[], &[Point3::new(0.0, 0.0, 0.0)]);
     let mut builder = Model::builder();
@@ -213,8 +312,8 @@ fn prepared_potential_uses_model_definition_identity() {
     builder.add_small_molecule(&one, one_conf).unwrap();
     let split_model = builder.build().unwrap();
     assert_eq!(
-        potential.evaluate(&split_model),
-        Err(PotentialError::IncompatibleModel)
+        potential.evaluate(split_model.view()),
+        Err(PotentialError::IncompatibleTopology)
     );
 
     let mut singular = combined_model.clone();
@@ -225,7 +324,7 @@ fn prepared_potential_uses_model_definition_identity() {
         )
         .unwrap();
     assert!(matches!(
-        potential.evaluate(&singular),
+        potential.evaluate(singular.view()),
         Err(PotentialError::InvalidGeometry { .. })
     ));
 }

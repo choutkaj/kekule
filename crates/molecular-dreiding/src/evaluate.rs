@@ -3,11 +3,12 @@ use dreid_kernel::potentials::bonded::{
 };
 use dreid_kernel::potentials::nonbonded::{Coulomb, HydrogenBond, LennardJones};
 use dreid_kernel::{AngleKernel, HybridKernel, PairKernel, TorsionKernel};
-use molecular::core::Point3;
+use molecular::geometry::{Point3, Vector3};
 use molecular::modeling::potential::{
-    Potential, PotentialError, PotentialEvaluation, PotentialGeometryError, Vector3,
+    Potential, PotentialError, PotentialEvaluation, PotentialGeometryError,
 };
-use molecular::modeling::{InstanceAtomId, Model};
+use molecular::structure::ModelView;
+use molecular::topology::InstanceAtomId;
 use molecular::units::{Quantity, MODEL_ENERGY_UNIT, MODEL_GRADIENT_UNIT};
 
 use crate::geometry::{
@@ -16,9 +17,9 @@ use crate::geometry::{
 use crate::prepare::{AngleTerm, DreidingPotential, InversionTerm};
 
 impl Potential for DreidingPotential {
-    fn evaluate(&mut self, model: &Model) -> Result<PotentialEvaluation, PotentialError> {
-        if &self.definition != model.definition_key() {
-            return Err(PotentialError::IncompatibleModel);
+    fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
+        if self.topology != model.topology().identity() {
+            return Err(PotentialError::IncompatibleTopology);
         }
 
         let positions = model.positions().into_value();

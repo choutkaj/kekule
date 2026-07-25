@@ -7,8 +7,9 @@ use dreid_forge::{
     VdwPairPotential, VdwPotentialType,
 };
 use molecular::core::BondOrder;
-use molecular::modeling::{
-    InstanceAtomId, InstanceBondId, Model, ModelDefinitionKey, MoleculeInstanceId,
+use molecular::structure::ModelView;
+use molecular::topology::{
+    InstanceAtomId, InstanceBondId, MoleculeInstanceId, Topology, TopologyIdentity,
 };
 use molecular::units::{Quantity, ELEMENTARY_CHARGE};
 
@@ -17,13 +18,38 @@ use crate::DreidingPrepareError;
 pub(crate) const KCAL_TO_KJ: f64 = 4.184;
 pub(crate) const COULOMB_KJ_ANGSTROM_PER_MOL_E2: f64 = 1_389.354_576_443_82;
 
-/// A prepared, fixed-charge DREIDING potential for one compatible model topology.
+/// Scope used for fixed QEq charge preparation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QeqGrouping {
+    WholeTopology,
+    MoleculeInstances,
+    ConnectedComponents,
+}
+
+/// Explicit DREIDING preparation policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DreidingPrepareOptions {
+    pub qeq_grouping: QeqGrouping,
+}
+
+impl Default for DreidingPrepareOptions {
+    fn default() -> Self {
+        Self {
+            qeq_grouping: QeqGrouping::MoleculeInstances,
+        }
+    }
+}
+
+/// A prepared, fixed-charge DREIDING potential for one exact topology.
 ///
-/// Preparation assigns DREIDING atom types and component-local QEq charges once.
-/// Evaluation does not mutate the model, update charges, or change topology.
+/// The reference view is used explicitly for the geometry-dependent QEq
+/// preparation performed by `dreid-forge`. Evaluation can then consume any
+/// model, ensemble member, or trajectory frame with the same exact topology.
 #[derive(Debug, Clone)]
 pub struct DreidingPotential {
-    pub(crate) definition: ModelDefinitionKey,
+    pub(crate) topology: TopologyIdentity,
+    pub(crate) qeq_grouping: QeqGrouping,
     pub(crate) atom_ids: Vec<InstanceAtomId>,
     pub(crate) atom_indexes: BTreeMap<InstanceAtomId, usize>,
     pub(crate) atom_types: Vec<String>,
@@ -37,30 +63,37 @@ pub struct DreidingPotential {
 }
 
 impl DreidingPotential {
-    /// Prepares standard DREIDING parameters and fixed component-local QEq charges.
-    pub fn prepare(model: &Model) -> Result<Self, DreidingPrepareError> {
-        let prepared = PreparedInput::new(model)?;
+    /// Prepares standard DREIDING parameters and fixed QEq charges.
+    pub fn prepare(
+        topology: &Topology,
+        reference: ModelView<'_>,
+        options: DreidingPrepareOptions,
+    ) -> Result<Self, DreidingPrepareError> {
+        if !topology.same_identity(reference.topology()) {
+            return Err(DreidingPrepareError::TopologyIdentityMismatch);
+        }
+        let prepared = PreparedInput::new(topology, reference, options.qeq_grouping)?;
         let total_charge = prepared
-            .molecules
+            .groups
             .iter()
-            .map(|molecule| molecule.formal_charge)
+            .map(|group| group.formal_charge)
             .sum();
         let whole = forge_system(&prepared.whole, total_charge, None)?;
         let whole_types = per_atom_types(&whole)?;
 
-        let mut partial_charges = vec![0.0; model.atom_count()];
-        for molecule in &prepared.molecules {
-            let forged = forge_system(&molecule.system, molecule.formal_charge, Some(molecule.id))?;
+        let mut partial_charges = vec![0.0; topology.atom_count()];
+        for group in &prepared.groups {
+            let forged = forge_system(&group.system, group.formal_charge, group.instance)?;
             let local_types = per_atom_types(&forged)?;
-            for (local, &global) in molecule.global_atoms.iter().enumerate() {
+            for (local, &global) in group.global_atoms.iter().enumerate() {
                 let whole_type = &whole_types[global];
-                let molecule_type = &local_types[local];
-                if whole_type != molecule_type {
+                let group_type = &local_types[local];
+                if whole_type != group_type {
                     return Err(DreidingPrepareError::AtomTypeMismatch {
-                        molecule: molecule.id,
-                        atom: model.topology().atom_ids()[global],
+                        molecule: group.instance,
+                        atom: topology.atom_ids()[global],
                         whole_model: whole_type.clone(),
-                        component_model: molecule_type.clone(),
+                        component_model: group_type.clone(),
                     });
                 }
                 partial_charges[global] = forged.atom_properties[local].charge;
@@ -68,20 +101,20 @@ impl DreidingPotential {
         }
         require_finite_slice("partial charge", &partial_charges)?;
 
-        let adjacency = adjacency(model);
+        let adjacency = adjacency(topology);
         let exclusions = nonbonded_exclusions(&adjacency);
         let bonds = prepare_bonds(&whole)?;
         let angles = prepare_angles(&whole)?;
         let torsions = prepare_torsions(&whole)?;
         let inversions = prepare_inversions(&whole)?;
-        let nonbonded = prepare_nonbonded(model, &whole, &partial_charges, &exclusions)?;
+        let nonbonded = prepare_nonbonded(topology, &whole, &partial_charges, &exclusions)?;
         let hydrogen_bonds = prepare_hydrogen_bonds(&whole, &adjacency, &exclusions)?;
 
         Ok(Self {
-            definition: model.definition_key().clone(),
-            atom_ids: model.topology().atom_ids().to_vec(),
-            atom_indexes: model
-                .topology()
+            topology: topology.identity(),
+            qeq_grouping: options.qeq_grouping,
+            atom_ids: topology.atom_ids().to_vec(),
+            atom_indexes: topology
                 .atom_ids()
                 .iter()
                 .enumerate()
@@ -96,6 +129,10 @@ impl DreidingPotential {
             nonbonded,
             hydrogen_bonds,
         })
+    }
+
+    pub const fn qeq_grouping(&self) -> QeqGrouping {
+        self.qeq_grouping
     }
 
     /// Returns the DREIDING type assigned to a model atom.
@@ -117,54 +154,95 @@ impl DreidingPotential {
 #[derive(Debug)]
 struct PreparedInput {
     whole: System,
-    molecules: Vec<PreparedMolecule>,
+    groups: Vec<PreparedChargeGroup>,
 }
 
 impl PreparedInput {
-    fn new(model: &Model) -> Result<Self, DreidingPrepareError> {
-        validate_atoms(model)?;
-        validate_bonds(model)?;
+    fn new(
+        topology: &Topology,
+        reference: ModelView<'_>,
+        grouping: QeqGrouping,
+    ) -> Result<Self, DreidingPrepareError> {
+        validate_atoms(topology)?;
+        validate_bonds(topology)?;
 
-        let whole = system_from_model(model, None)?;
-        let mut molecules = Vec::new();
-        for (id, molecule) in model.topology().molecules() {
-            let global_atoms = molecule
-                .graph()
-                .atom_ids()
-                .map(|atom| {
-                    model
-                        .topology()
-                        .atom_index(InstanceAtomId::new(id, atom))
-                        .expect("model molecule atom must have a dense index")
-                        .index()
+        let whole_atoms = topology.atom_ids().to_vec();
+        let whole = system_from_selection(topology, reference, &whole_atoms)?;
+        let selections = match grouping {
+            QeqGrouping::WholeTopology => vec![(None, whole_atoms)],
+            QeqGrouping::MoleculeInstances => topology
+                .instances()
+                .map(|(id, _)| {
+                    let atoms = topology
+                        .graph_for_instance(id)
+                        .expect("validated topology instance")
+                        .atom_ids()
+                        .map(|atom| InstanceAtomId::new(id, atom))
+                        .collect();
+                    (Some(id), atoms)
                 })
-                .collect::<Vec<_>>();
-            let formal_charge = molecule.graph().formal_charge() as f64;
-            molecules.push(PreparedMolecule {
-                id,
-                system: system_from_model(model, Some(id))?,
-                global_atoms,
-                formal_charge,
-            });
-        }
-        Ok(Self { whole, molecules })
+                .collect(),
+            QeqGrouping::ConnectedComponents => {
+                let mut selections = Vec::new();
+                for (id, _) in topology.instances() {
+                    for component in topology
+                        .connected_components(id)
+                        .expect("validated topology instance")
+                    {
+                        selections.push((Some(id), component));
+                    }
+                }
+                selections
+            }
+        };
+        let groups = selections
+            .into_iter()
+            .map(|(instance, atoms)| {
+                let global_atoms = atoms
+                    .iter()
+                    .map(|atom| {
+                        topology
+                            .atom_index(*atom)
+                            .expect("charge-group atom has a dense index")
+                            .index()
+                    })
+                    .collect::<Vec<_>>();
+                let formal_charge = atoms
+                    .iter()
+                    .map(|atom| {
+                        f64::from(
+                            topology
+                                .atom(*atom)
+                                .expect("charge-group atom is live")
+                                .formal_charge,
+                        )
+                    })
+                    .sum();
+                Ok(PreparedChargeGroup {
+                    instance,
+                    system: system_from_selection(topology, reference, &atoms)?,
+                    global_atoms,
+                    formal_charge,
+                })
+            })
+            .collect::<Result<Vec<_>, DreidingPrepareError>>()?;
+        Ok(Self { whole, groups })
     }
 }
 
 #[derive(Debug)]
-struct PreparedMolecule {
-    id: MoleculeInstanceId,
+struct PreparedChargeGroup {
+    instance: Option<MoleculeInstanceId>,
     system: System,
     global_atoms: Vec<usize>,
     formal_charge: f64,
 }
 
-fn validate_atoms(model: &Model) -> Result<(), DreidingPrepareError> {
-    for (atom_id, atom) in model.topology().atoms() {
-        let implicit = model
-            .topology()
+fn validate_atoms(topology: &Topology) -> Result<(), DreidingPrepareError> {
+    for (atom_id, atom) in topology.atoms() {
+        let implicit = topology
             .implicit_hydrogens(atom_id)
-            .expect("model atom perception lookup");
+            .expect("topology atom perception lookup");
         if atom.explicit_hydrogens != 0 || implicit.is_some_and(|count| count != 0) {
             return Err(DreidingPrepareError::CountedHydrogens {
                 atom: atom_id,
@@ -182,56 +260,45 @@ fn validate_atoms(model: &Model) -> Result<(), DreidingPrepareError> {
     Ok(())
 }
 
-fn validate_bonds(model: &Model) -> Result<(), DreidingPrepareError> {
-    for (bond_id, bond) in model.topology().bonds() {
-        let aromatic = model
-            .topology()
+fn validate_bonds(topology: &Topology) -> Result<(), DreidingPrepareError> {
+    for (bond_id, bond) in topology.bonds() {
+        let aromatic = topology
             .bond_is_aromatic(bond_id)
-            .expect("model bond perception lookup")
+            .expect("topology bond perception lookup")
             .unwrap_or(false);
         forge_bond_order(bond_id, bond.order, aromatic)?;
     }
     Ok(())
 }
 
-fn system_from_model(
-    model: &Model,
-    selection: Option<MoleculeInstanceId>,
+fn system_from_selection(
+    topology: &Topology,
+    reference: ModelView<'_>,
+    selected: &[InstanceAtomId],
 ) -> Result<System, DreidingPrepareError> {
-    let selected = match selection {
-        Some(molecule_id) => model
-            .topology()
-            .molecule(molecule_id)
-            .expect("selected model molecule")
-            .graph()
-            .atom_ids()
-            .map(|atom| InstanceAtomId::new(molecule_id, atom))
-            .collect(),
-        None => model.topology().atom_ids().to_vec(),
-    };
     let local_by_global = selected
         .iter()
         .enumerate()
         .map(|(local, atom)| (*atom, local))
         .collect::<BTreeMap<_, _>>();
     let mut system = System::new();
-    for &atom_id in &selected {
-        let atom = model.topology().atom(atom_id).expect("model atom");
+    for &atom_id in selected {
+        let atom = topology.atom(atom_id).expect("topology atom");
         let element = atom.element.symbol().parse().map_err(|_| {
             DreidingPrepareError::UnsupportedElement {
                 atom: atom_id,
                 symbol: atom.element.symbol().to_owned(),
             }
         })?;
-        let point = model
+        let point = reference
             .position(atom_id)
-            .expect("complete model positions")
+            .expect("complete reference positions")
             .into_value();
         system
             .atoms
             .push(ForgeAtom::new(element, [point.x, point.y, point.z]));
     }
-    for (bond_id, bond) in model.topology().bonds() {
+    for (bond_id, bond) in topology.bonds() {
         let (a, b) = bond.endpoints();
         let a = InstanceAtomId::new(bond_id.molecule(), a);
         let b = InstanceAtomId::new(bond_id.molecule(), b);
@@ -245,10 +312,9 @@ fn system_from_model(
             forge_bond_order(
                 bond_id,
                 bond.order,
-                model
-                    .topology()
+                topology
                     .bond_is_aromatic(bond_id)
-                    .expect("model bond perception lookup")
+                    .expect("topology bond perception lookup")
                     .unwrap_or(false),
             )?,
         ));
@@ -423,7 +489,7 @@ fn prepare_inversions(forged: &ForgedSystem) -> Result<Vec<InversionTerm>, Dreid
 }
 
 fn prepare_nonbonded(
-    model: &Model,
+    topology: &Topology,
     forged: &ForgedSystem,
     charges: &[f64],
     exclusions: &BTreeSet<(usize, usize)>,
@@ -452,8 +518,8 @@ fn prepare_nonbonded(
     }
 
     let mut terms = Vec::new();
-    for first in 0..model.atom_count() {
-        for second in (first + 1)..model.atom_count() {
+    for first in 0..topology.atom_count() {
+        for second in (first + 1)..topology.atom_count() {
             if exclusions.contains(&(first, second)) {
                 continue;
             }
@@ -461,8 +527,8 @@ fn prepare_nonbonded(
             let second_type = forged.atom_properties[second].type_idx;
             let &(d0, r0_sq) = vdw.get(&ordered_pair(first_type, second_type)).ok_or(
                 DreidingPrepareError::MissingVdwParameters {
-                    first: model.topology().atom_ids()[first],
-                    second: model.topology().atom_ids()[second],
+                    first: topology.atom_ids()[first],
+                    second: topology.atom_ids()[second],
                 },
             )?;
             let coulomb = COULOMB_KJ_ANGSTROM_PER_MOL_E2 * charges[first] * charges[second];
@@ -540,19 +606,17 @@ fn prepare_hydrogen_bonds(
     Ok(terms)
 }
 
-fn adjacency(model: &Model) -> Vec<Vec<usize>> {
-    let mut adjacency = vec![Vec::new(); model.atom_count()];
-    for (bond_id, bond) in model.topology().bonds() {
+fn adjacency(topology: &Topology) -> Vec<Vec<usize>> {
+    let mut adjacency = vec![Vec::new(); topology.atom_count()];
+    for (bond_id, bond) in topology.bonds() {
         let (a, b) = bond.endpoints();
-        let a = model
-            .topology()
+        let a = topology
             .atom_index(InstanceAtomId::new(bond_id.molecule(), a))
-            .expect("model bond endpoint must have a dense atom index")
+            .expect("topology bond endpoint must have a dense atom index")
             .index();
-        let b = model
-            .topology()
+        let b = topology
             .atom_index(InstanceAtomId::new(bond_id.molecule(), b))
-            .expect("model bond endpoint must have a dense atom index")
+            .expect("topology bond endpoint must have a dense atom index")
             .index();
         adjacency[a].push(b);
         adjacency[b].push(a);

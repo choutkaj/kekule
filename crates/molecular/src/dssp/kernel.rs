@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::bio::{SmcraChain, SmcraChainId, SmcraHierarchy, SmcraResidue};
-use crate::core::Point3;
-use crate::modeling::{InstanceAtomId, Model, MoleculeInstanceId};
+use crate::geometry::Point3;
+use crate::structure::ModelView;
+use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 
 use super::*;
 
@@ -165,7 +166,7 @@ struct BetaCounts {
     ladders: usize,
 }
 
-pub(super) fn assign(model: &Model, options: DsspOptions) -> Result<DsspResult, DsspError> {
+pub(super) fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, DsspError> {
     if !matches!(options.min_polyproline_stretch, 2 | 3) {
         return Err(DsspError::InvalidPolyprolineStretch {
             value: options.min_polyproline_stretch,
@@ -229,7 +230,7 @@ pub(super) fn assign(model: &Model, options: DsspOptions) -> Result<DsspResult, 
 }
 
 fn extract_backbones(
-    model: &Model,
+    model: ModelView<'_>,
     limits: DsspLimits,
 ) -> Result<(Vec<BackboneResidue>, DsspReport, usize), DsspError> {
     let mut residues = Vec::new();
@@ -245,23 +246,23 @@ fn extract_backbones(
     let mut chain_segments = 0;
     let mut chains = Vec::new();
 
-    for (molecule_id, instance) in model.topology().molecules() {
-        let Some(macro_molecule) = instance.macro_molecule() else {
+    for (molecule_id, _) in model.topology().instances() {
+        let definition = model
+            .topology()
+            .definition_for_instance(molecule_id)
+            .expect("topology instance references a validated definition");
+        let Some(macro_molecule) = definition.macro_molecule() else {
             report.ignored_instances.push(molecule_id);
             continue;
         };
         let hierarchy = macro_molecule.hierarchy();
-        for (_, hierarchy_model) in hierarchy.models() {
-            for &chain_id in &hierarchy_model.chains {
-                let chain =
-                    hierarchy
-                        .chain(chain_id)
-                        .map_err(|error| DsspError::InvalidHierarchy {
-                            molecule: molecule_id,
-                            message: error.to_string(),
-                        })?;
-                chains.push((chain.label_id.clone(), molecule_id, hierarchy, chain_id));
-            }
+        for (chain_id, chain) in hierarchy.chains() {
+            chains.push((
+                chain.label_id().to_owned(),
+                molecule_id,
+                hierarchy,
+                chain_id,
+            ));
         }
     }
 
@@ -298,7 +299,7 @@ fn extract_backbones(
 
 #[allow(clippy::too_many_arguments)]
 fn extract_chain(
-    model: &Model,
+    model: ModelView<'_>,
     molecule_id: MoleculeInstanceId,
     hierarchy: &SmcraHierarchy,
     chain: &SmcraChain,

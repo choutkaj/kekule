@@ -3,11 +3,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
-use crate::core::{Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Molecule, Point3};
-use crate::modeling::{
-    InstanceAtomId, Model, ModelBuilder, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole,
-};
+use crate::core::{Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Molecule};
+use crate::geometry::Point3;
 use crate::small::model::SmallMolecule;
+use crate::structure::{
+    AtomObservation, Configuration, Ensemble, EnsembleError, EnsembleMember, Model, ModelBuilder,
+    Positions, StructureObservation,
+};
+use crate::topology::{
+    InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole, Topology,
+    TopologyAtomIndex, TopologyMapping,
+};
 use crate::units::{Quantity, ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
@@ -88,9 +94,9 @@ pub enum MmcifInterpretIssue {
         atom_name: String,
         alt_id: Option<String>,
     },
-    CovalentBondsInferred {
+    ConnectivityCandidatesInferred {
         atom_count: usize,
-        bond_count: usize,
+        candidate_count: usize,
     },
 }
 
@@ -182,7 +188,7 @@ pub struct MmcifInterpretationReport {
     pub(crate) small_molecules: usize,
     pub(crate) solvent_molecules: usize,
     pub(crate) applied_connections: usize,
-    pub(crate) inferred_bonds: usize,
+    pub(crate) connectivity_candidates: usize,
     pub(crate) template_bonds_pending: usize,
     pub(crate) instances: Vec<MmcifInstanceProvenance>,
     pub(crate) issues: Vec<MmcifInterpretIssue>,
@@ -225,8 +231,8 @@ impl MmcifInterpretationReport {
         self.applied_connections
     }
 
-    pub const fn inferred_bonds(&self) -> usize {
-        self.inferred_bonds
+    pub const fn connectivity_candidates(&self) -> usize {
+        self.connectivity_candidates
     }
 
     pub const fn template_bonds_pending(&self) -> usize {
@@ -255,6 +261,18 @@ impl MmcifInterpretation {
 
     pub fn report(&self) -> &MmcifInterpretationReport {
         &self.report
+    }
+
+    pub fn topology(&self) -> &Topology {
+        self.model.topology()
+    }
+
+    pub fn configuration(&self) -> &Configuration {
+        self.model.configuration()
+    }
+
+    pub fn observation(&self) -> Option<&StructureObservation> {
+        self.model.observation()
     }
 
     pub fn into_model(self) -> Model {
@@ -356,6 +374,7 @@ fn interpret_block(
     let polymer_asym_order = polymer_asym_order(block);
     let groups = group_rows(selected, &mut union, &polymer_asym_order);
     let mut builder = ModelBuilder::new();
+    let mut atom_observations = Vec::new();
     for group in groups {
         let built = build_molecule(group, &connections, &mut report)?;
         match built {
@@ -368,7 +387,9 @@ fn interpret_block(
                 let id = builder
                     .add_macro_molecule_with_metadata(&molecule, conformer, metadata)
                     .map_err(graph_error)?;
-                report.instances.push(provenance.qualify(id));
+                let (provenance, observations) = provenance.qualify(id);
+                report.instances.push(provenance);
+                atom_observations.extend(observations);
             }
             BuiltMolecule::Small {
                 molecule,
@@ -379,27 +400,70 @@ fn interpret_block(
                 let id = builder
                     .add_small_molecule_with_metadata(&molecule, conformer, metadata)
                     .map_err(graph_error)?;
-                report.instances.push(provenance.qualify(id));
+                let (provenance, observations) = provenance.qualify(id);
+                report.instances.push(provenance);
+                atom_observations.extend(observations);
             }
         }
     }
-    let model = builder.build().map_err(graph_error)?;
+    let mut model = builder.build().map_err(graph_error)?;
+    let mut observations = vec![AtomObservation::default(); model.topology().atom_count()];
+    for (atom, observation) in atom_observations {
+        let index = model
+            .topology()
+            .atom_index(atom)
+            .expect("interpreted atom has a dense topology index");
+        observations[index.index()] = observation;
+    }
+    let mut observation =
+        StructureObservation::new(model.topology(), observations).map_err(graph_error)?;
+    observation.set_source_model_id(report.selected_model.clone());
+    model
+        .set_observation(Some(observation))
+        .map_err(graph_error)?;
     report.macromolecules = model
         .topology()
-        .molecules()
-        .filter(|(_, molecule)| molecule.macro_molecule().is_some())
+        .instances()
+        .filter(|(id, _)| {
+            model
+                .topology()
+                .definition_for_instance(*id)
+                .is_ok_and(|definition| definition.macro_molecule().is_some())
+        })
         .count();
     report.small_molecules = model
         .topology()
-        .molecules()
-        .filter(|(_, molecule)| molecule.small_molecule().is_some())
+        .instances()
+        .filter(|(id, _)| {
+            model
+                .topology()
+                .definition_for_instance(*id)
+                .is_ok_and(|definition| definition.small_molecule().is_some())
+        })
         .count();
     report.solvent_molecules = model
         .topology()
-        .molecules()
+        .instances()
         .filter(|(_, molecule)| molecule.has_role(MoleculeRole::Solvent))
         .count();
     Ok(MmcifInterpretation { model, report })
+}
+
+fn coordinate_model_ids(block: &MmcifDataBlock) -> Result<Vec<String>, MmcifInterpretError> {
+    let table = block
+        .loop_with_tag("_atom_site.type_symbol")
+        .ok_or_else(|| MmcifInterpretError::new(None, "data block has no atom-site loop"))?;
+    let mut seen = BTreeSet::new();
+    let mut models = Vec::new();
+    for row in 0..table.row_count() {
+        let model = optional(table, row, "_atom_site.pdbx_PDB_model_num")
+            .unwrap_or("1")
+            .to_owned();
+        if seen.insert(model.clone()) {
+            models.push(model);
+        }
+    }
+    Ok(models)
 }
 
 fn read_entity_types(
@@ -1014,11 +1078,277 @@ struct BuiltAtomProvenance {
     component_id: String,
     asym_id: String,
     entity_id: Option<String>,
+    observation: AtomObservation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MmcifEnsembleInterpretOptions {
+    pub strict_entity_metadata: bool,
+    pub altloc_policy: MmcifAltLocPolicy,
+    /// `None` selects all coordinate models in source order.
+    pub model_ids: Option<Vec<String>>,
+}
+
+impl Default for MmcifEnsembleInterpretOptions {
+    fn default() -> Self {
+        Self {
+            strict_entity_metadata: false,
+            altloc_policy: MmcifAltLocPolicy::HighestOccupancy,
+            model_ids: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MmcifEnsembleInterpretation {
+    ensemble: Ensemble,
+    reports: Vec<MmcifInterpretationReport>,
+}
+
+impl MmcifEnsembleInterpretation {
+    pub fn ensemble(&self) -> &Ensemble {
+        &self.ensemble
+    }
+
+    pub fn reports(&self) -> &[MmcifInterpretationReport] {
+        &self.reports
+    }
+
+    pub fn into_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
+        (self.ensemble, self.reports)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum MmcifEnsembleInterpretError {
+    NoCoordinateModels,
+    DuplicateRequestedModel(String),
+    UnknownRequestedModel(String),
+    Model {
+        model_id: String,
+        error: MmcifInterpretError,
+    },
+    InconsistentTopology {
+        model_id: String,
+    },
+    InconsistentAtomSet {
+        model_id: String,
+    },
+    InconsistentDenseAtomOrder {
+        model_id: String,
+    },
+    Ensemble(Box<EnsembleError>),
+    Position(crate::structure::PositionError),
+}
+
+impl fmt::Display for MmcifEnsembleInterpretError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoCoordinateModels => {
+                formatter.write_str("mmCIF document contains no coordinate models")
+            }
+            Self::DuplicateRequestedModel(model) => {
+                write!(formatter, "coordinate model `{model}` was requested more than once")
+            }
+            Self::UnknownRequestedModel(model) => {
+                write!(formatter, "coordinate model `{model}` is not present")
+            }
+            Self::Model { model_id, error } => {
+                write!(formatter, "cannot interpret coordinate model `{model_id}`: {error}")
+            }
+            Self::InconsistentTopology { model_id } => write!(
+                formatter,
+                "coordinate model `{model_id}` has inconsistent molecule partition, chemistry, connectivity, or hierarchy"
+            ),
+            Self::InconsistentAtomSet { model_id } => write!(
+                formatter,
+                "coordinate model `{model_id}` has an inconsistent atom identity set"
+            ),
+            Self::InconsistentDenseAtomOrder { model_id } => write!(
+                formatter,
+                "coordinate model `{model_id}` has an inconsistent dense atom identity order"
+            ),
+            Self::Ensemble(error) => write!(formatter, "cannot assemble mmCIF ensemble: {error}"),
+            Self::Position(error) => {
+                write!(formatter, "cannot transfer mmCIF member positions: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MmcifEnsembleInterpretError {}
+
+/// Interprets explicitly selected or all coordinate models as one
+/// shared-topology non-temporal ensemble.
+pub fn interpret_mmcif_ensemble(
+    document: &MmcifDocument,
+    options: MmcifEnsembleInterpretOptions,
+) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+    let block = document
+        .blocks()
+        .iter()
+        .find(|block| block.loop_with_tag("_atom_site.type_symbol").is_some())
+        .ok_or(MmcifEnsembleInterpretError::NoCoordinateModels)?;
+    let available =
+        coordinate_model_ids(block).map_err(|error| MmcifEnsembleInterpretError::Model {
+            model_id: "<model inventory>".to_owned(),
+            error,
+        })?;
+    if available.is_empty() {
+        return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
+    }
+    let selected = options.model_ids.unwrap_or_else(|| available.clone());
+    let mut seen = BTreeSet::new();
+    for model in &selected {
+        if !seen.insert(model.clone()) {
+            return Err(MmcifEnsembleInterpretError::DuplicateRequestedModel(
+                model.clone(),
+            ));
+        }
+        if !available.contains(model) {
+            return Err(MmcifEnsembleInterpretError::UnknownRequestedModel(
+                model.clone(),
+            ));
+        }
+    }
+
+    let mut interpreted = Vec::with_capacity(selected.len());
+    for model_id in &selected {
+        let interpretation = interpret_mmcif(
+            document,
+            MmcifInterpretOptions {
+                strict_entity_metadata: options.strict_entity_metadata,
+                altloc_policy: options.altloc_policy.clone(),
+                model_selection: MmcifModelSelection::Select(model_id.clone()),
+            },
+        )
+        .map_err(|error| MmcifEnsembleInterpretError::Model {
+            model_id: model_id.clone(),
+            error,
+        })?;
+        interpreted.push(interpretation);
+    }
+
+    let first = interpreted
+        .first()
+        .expect("selected coordinate model list is non-empty");
+    let shared_topology = first.model.topology().clone();
+    let shared_atom_identity = provenance_identity(&first.report);
+    let mut ensemble = Ensemble::new(shared_topology.clone());
+    let mut reports = Vec::with_capacity(interpreted.len());
+    for interpretation in interpreted {
+        let (model, report) = interpretation.into_parts();
+        let model_id = report.selected_model().unwrap_or("<unknown>").to_owned();
+        let atom_identity = provenance_identity(&report);
+        if atom_identity != shared_atom_identity {
+            let error = if atom_identity.sorted_atoms() != shared_atom_identity.sorted_atoms() {
+                MmcifEnsembleInterpretError::InconsistentAtomSet { model_id }
+            } else {
+                MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id }
+            };
+            return Err(error);
+        }
+        if !shared_topology.structurally_equivalent(model.topology()) {
+            return Err(MmcifEnsembleInterpretError::InconsistentTopology { model_id });
+        }
+        if shared_topology.atom_ids() != model.topology().atom_ids()
+            || shared_topology.bond_ids() != model.topology().bond_ids()
+        {
+            return Err(MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id });
+        }
+        TopologyMapping::between_equivalent(model.topology(), &shared_topology).map_err(|_| {
+            MmcifEnsembleInterpretError::InconsistentTopology {
+                model_id: model_id.clone(),
+            }
+        })?;
+        let positions = Positions::new(&shared_topology, model.positions())
+            .map_err(MmcifEnsembleInterpretError::Position)?;
+        let configuration = match model.cell().copied() {
+            Some(cell) => Configuration::with_cell(positions, cell),
+            None => Configuration::new(positions),
+        };
+        let mut member = EnsembleMember::new(configuration);
+        if let Some(observation) = model.observation() {
+            let atoms = (0..shared_topology.atom_count())
+                .map(|index| {
+                    observation
+                        .atom_at(TopologyAtomIndex::new(index as u32))
+                        .expect("observation is complete")
+                        .clone()
+                })
+                .collect();
+            let mut rebound =
+                StructureObservation::new(&shared_topology, atoms).map_err(|error| {
+                    MmcifEnsembleInterpretError::Model {
+                        model_id: model_id.clone(),
+                        error: graph_error(error),
+                    }
+                })?;
+            rebound.set_source_model_id(observation.source_model_id().map(str::to_owned));
+            rebound.props_mut().clone_from(observation.props());
+            member
+                .set_observation(Some(rebound))
+                .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+        }
+        ensemble
+            .push(member)
+            .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+        reports.push(report);
+    }
+    Ok(MmcifEnsembleInterpretation { ensemble, reports })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ProvenanceAtomIdentity {
+    molecule: MoleculeInstanceId,
+    atom_name: String,
+    component_id: String,
+    asym_id: String,
+    entity_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProvenanceIdentity {
+    atoms: Vec<ProvenanceAtomIdentity>,
+}
+
+impl ProvenanceIdentity {
+    fn sorted_atoms(&self) -> Vec<ProvenanceAtomIdentity> {
+        let mut atoms = self.atoms.clone();
+        atoms.sort_unstable();
+        atoms
+    }
+}
+
+fn provenance_identity(report: &MmcifInterpretationReport) -> ProvenanceIdentity {
+    ProvenanceIdentity {
+        atoms: report
+            .instances
+            .iter()
+            .flat_map(|instance| {
+                instance.atoms.iter().map(|atom| ProvenanceAtomIdentity {
+                    molecule: instance.molecule,
+                    atom_name: atom.atom_name.clone(),
+                    component_id: atom.component_id.clone(),
+                    asym_id: atom.asym_id.clone(),
+                    entity_id: atom.entity_id.clone(),
+                })
+            })
+            .collect(),
+    }
 }
 
 impl BuiltMoleculeProvenance {
-    fn qualify(self, molecule: MoleculeInstanceId) -> MmcifInstanceProvenance {
-        MmcifInstanceProvenance {
+    fn qualify(
+        self,
+        molecule: MoleculeInstanceId,
+    ) -> (
+        MmcifInstanceProvenance,
+        Vec<(InstanceAtomId, AtomObservation)>,
+    ) {
+        let mut observations = Vec::with_capacity(self.atoms.len());
+        let provenance = MmcifInstanceProvenance {
             molecule,
             coordinate_model_id: self.coordinate_model_id,
             asym_ids: self.asym_ids,
@@ -1027,17 +1357,22 @@ impl BuiltMoleculeProvenance {
             atoms: self
                 .atoms
                 .into_iter()
-                .map(|atom| MmcifAtomProvenance {
-                    atom: InstanceAtomId::new(molecule, atom.atom),
-                    source_line: atom.source_line,
-                    atom_site_id: atom.atom_site_id,
-                    atom_name: atom.atom_name,
-                    component_id: atom.component_id,
-                    asym_id: atom.asym_id,
-                    entity_id: atom.entity_id,
+                .map(|atom| {
+                    let qualified = InstanceAtomId::new(molecule, atom.atom);
+                    observations.push((qualified, atom.observation));
+                    MmcifAtomProvenance {
+                        atom: qualified,
+                        source_line: atom.source_line,
+                        atom_site_id: atom.atom_site_id,
+                        atom_name: atom.atom_name,
+                        component_id: atom.component_id,
+                        asym_id: atom.asym_id,
+                        entity_id: atom.entity_id,
+                    }
                 })
                 .collect(),
-        }
+        };
+        (provenance, observations)
     }
 }
 
@@ -1126,14 +1461,14 @@ fn build_molecule(
             }
         }
     }
-    let inferred_bonds = infer_covalent_bonds(&mut graph, &representative, &atoms)?;
-    if inferred_bonds > 0 {
-        report.inferred_bonds += inferred_bonds;
+    let connectivity_candidates = infer_covalent_bonds(&graph, &representative, &atoms)?;
+    if connectivity_candidates > 0 {
+        report.connectivity_candidates += connectivity_candidates;
         report
             .issues
-            .push(MmcifInterpretIssue::CovalentBondsInferred {
+            .push(MmcifInterpretIssue::ConnectivityCandidatesInferred {
                 atom_count: graph.atom_count(),
-                bond_count: inferred_bonds,
+                candidate_count: connectivity_candidates,
             });
     }
     let asym_ids = representative
@@ -1153,14 +1488,30 @@ fn build_molecule(
     let entity_kinds = group.kinds.iter().cloned().collect::<Vec<_>>();
     let atom_provenance = representative
         .iter()
-        .map(|(key, row)| BuiltAtomProvenance {
-            atom: atoms[key],
-            source_line: row.line,
-            atom_site_id: row.atom_site_id.clone(),
-            atom_name: row.atom_name.clone(),
-            component_id: row.comp_id.clone(),
-            asym_id: row.asym_id.clone(),
-            entity_id: row.entity_id.clone(),
+        .map(|(key, row)| {
+            let mut observation = AtomObservation::default();
+            observation.set_group_pdb(row.group_pdb.clone());
+            observation.set_source_atom_site_id(row.atom_site_id.clone());
+            observation.set_alternate_location(row.alt_id.clone());
+            observation
+                .set_occupancy(row.occupancy)
+                .expect("parsed occupancy is finite");
+            observation.set_occupancy_raw(row.occupancy_raw.clone());
+            observation
+                .set_b_factor(row.b_factor)
+                .expect("parsed B-factor is finite");
+            observation.set_b_factor_raw(row.b_factor_raw.clone());
+            observation.set_cartesian_raw(row.point_raw.clone());
+            BuiltAtomProvenance {
+                atom: atoms[key],
+                source_line: row.line,
+                atom_site_id: row.atom_site_id.clone(),
+                atom_name: row.atom_name.clone(),
+                component_id: row.comp_id.clone(),
+                asym_id: row.asym_id.clone(),
+                entity_id: row.entity_id.clone(),
+                observation,
+            }
         })
         .collect();
     let provenance = BuiltMoleculeProvenance {
@@ -1228,12 +1579,12 @@ const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
 const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
 
 fn infer_covalent_bonds(
-    graph: &mut Molecule,
+    graph: &Molecule,
     representative: &[(String, AtomRow)],
     atoms: &BTreeMap<String, AtomId>,
 ) -> Result<usize, MmcifInterpretError> {
     let mut cells = BTreeMap::<[i64; 3], Vec<usize>>::new();
-    let mut inferred = 0usize;
+    let mut candidates = 0usize;
 
     for (right_index, (right_key, right_row)) in representative.iter().enumerate() {
         let right_point = right_row
@@ -1282,10 +1633,7 @@ fn infer_covalent_bonds(
                             .map_err(graph_error)?
                             .is_none()
                         {
-                            graph
-                                .add_bond(left, right, BondOrder::Single)
-                                .map_err(graph_error)?;
-                            inferred += 1;
+                            candidates += 1;
                         }
                     }
                 }
@@ -1294,7 +1642,7 @@ fn infer_covalent_bonds(
         cells.entry(right_cell).or_default().push(right_index);
     }
 
-    Ok(inferred)
+    Ok(candidates)
 }
 
 fn covalent_bond_cell(point: Point3) -> [i64; 3] {
@@ -1318,7 +1666,6 @@ fn build_hierarchy(
     atoms: &BTreeMap<String, AtomId>,
 ) -> Result<SmcraHierarchy, MmcifInterpretError> {
     let mut hierarchy = SmcraHierarchy::new();
-    let model = hierarchy.add_model("structure");
     let mut chains = BTreeMap::new();
     let mut residues = BTreeMap::new();
     for (key, row) in representative {
@@ -1326,7 +1673,7 @@ fn build_hierarchy(
             *chain
         } else {
             let chain = hierarchy
-                .add_chain(model, row.asym_id.clone(), row.auth_asym_id.clone())
+                .add_chain(row.asym_id.clone(), row.auth_asym_id.clone())
                 .map_err(hierarchy_error)?;
             chains.insert(row.asym_id.clone(), chain);
             chain
@@ -1357,21 +1704,11 @@ fn build_hierarchy(
                 residue,
                 atom,
                 SmcraAtomSiteMetadata {
-                    group_pdb: row.group_pdb.clone(),
-                    atom_site_id: row.atom_site_id.clone(),
                     type_symbol: Some(row.element.symbol().to_owned()),
                     label_asym_id: Some(row.asym_id.clone()),
                     auth_asym_id: row.auth_asym_id.clone(),
                     label_atom_id: Some(row.atom_name.clone()),
                     auth_atom_id: row.auth_atom_name.clone(),
-                    label_alt_id: row.alt_id.clone(),
-                    occupancy: row.occupancy,
-                    occupancy_raw: row.occupancy_raw.clone(),
-                    b_factor: row.b_factor,
-                    b_factor_raw: row.b_factor_raw.clone(),
-                    cartn_x_raw: row.point_raw[0].clone(),
-                    cartn_y_raw: row.point_raw[1].clone(),
-                    cartn_z_raw: row.point_raw[2].clone(),
                 },
             )
             .map_err(hierarchy_error)?;

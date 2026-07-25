@@ -1,12 +1,13 @@
 use std::fmt;
 
 use molecular::core::BondOrder;
-use molecular::modeling::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
+use molecular::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
 
 /// Failure while converting and parameterizing a molecular model with DREIDING.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DreidingPrepareError {
+    TopologyIdentityMismatch,
     UnresolvedImplicitHydrogens {
         atom: InstanceAtomId,
     },
@@ -34,7 +35,7 @@ pub enum DreidingPrepareError {
         message: String,
     },
     AtomTypeMismatch {
-        molecule: MoleculeInstanceId,
+        molecule: Option<MoleculeInstanceId>,
         atom: InstanceAtomId,
         whole_model: String,
         component_model: String,
@@ -52,6 +53,9 @@ pub enum DreidingPrepareError {
 impl fmt::Display for DreidingPrepareError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::TopologyIdentityMismatch => f.write_str(
+                "DREIDING reference configuration belongs to a different exact topology",
+            ),
             Self::UnresolvedImplicitHydrogens { atom } => write!(
                 f,
                 "atom {atom} has an unresolved implicit-hydrogen count; DREIDING preparation requires an explicit zero count or no-implicit-hydrogens assertion"
@@ -101,10 +105,16 @@ impl fmt::Display for DreidingPrepareError {
                 atom,
                 whole_model,
                 component_model,
-            } => write!(
-                f,
-                "DREIDING atom type for {atom} in {molecule} differs between whole-model ({whole_model}) and molecule-local ({component_model}) preparation"
-            ),
+            } => match molecule {
+                Some(molecule) => write!(
+                    f,
+                    "DREIDING atom type for {atom} in {molecule} differs between whole-topology ({whole_model}) and charge-group ({component_model}) preparation"
+                ),
+                None => write!(
+                    f,
+                    "DREIDING atom type for {atom} differs between whole-topology ({whole_model}) and charge-group ({component_model}) preparation"
+                ),
+            },
             Self::MissingVdwParameters { first, second } => write!(
                 f,
                 "DREIDING produced no van der Waals parameters for pair {first}-{second}"

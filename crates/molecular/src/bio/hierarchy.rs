@@ -48,8 +48,11 @@ impl MacroMolecule {
         self
     }
 
-    pub fn models(&self) -> impl Iterator<Item = (SmcraModelId, &SmcraModel)> {
-        self.hierarchy.models()
+    pub(crate) fn clone_without_conformers(&self) -> Self {
+        Self {
+            graph: self.graph.clone_without_conformers(),
+            hierarchy: self.hierarchy.clone(),
+        }
     }
 
     pub fn chains(&self) -> impl Iterator<Item = (SmcraChainId, &SmcraChain)> {
@@ -181,7 +184,6 @@ impl Default for MacroValidateOptions {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MacroValidateReport {
-    pub models_checked: usize,
     pub chains_checked: usize,
     pub residues_checked: usize,
     pub atom_sites_checked: usize,
@@ -192,10 +194,6 @@ pub struct MacroValidateReport {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MacroValidateError {
-    InvalidChainModel {
-        chain: SmcraChainId,
-        model: SmcraModelId,
-    },
     InvalidResidueChain {
         residue: SmcraResidueId,
         chain: SmcraChainId,
@@ -215,12 +213,6 @@ pub enum MacroValidateError {
     MissingAtomSiteForAtom {
         atom: AtomId,
     },
-    InvalidAtomSiteOccupancy {
-        site: SmcraAtomSiteId,
-    },
-    InvalidAtomSiteBFactor {
-        site: SmcraAtomSiteId,
-    },
     InvalidConformerAtom {
         conformer: ConformerId,
         atom: AtomId,
@@ -230,14 +222,6 @@ pub enum MacroValidateError {
 impl fmt::Display for MacroValidateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidChainModel { chain, model } => {
-                write!(
-                    f,
-                    "chain {} references invalid model {}",
-                    chain.raw(),
-                    model.raw()
-                )
-            }
             Self::InvalidResidueChain { residue, chain } => write!(
                 f,
                 "residue {} references invalid chain {}",
@@ -262,12 +246,6 @@ impl fmt::Display for MacroValidateError {
             Self::MissingAtomSiteForAtom { atom } => {
                 write!(f, "macro-molecule atom {atom} has no hierarchy atom-site")
             }
-            Self::InvalidAtomSiteOccupancy { site } => {
-                write!(f, "atom-site {} has non-finite occupancy", site.raw())
-            }
-            Self::InvalidAtomSiteBFactor { site } => {
-                write!(f, "atom-site {} has non-finite B-factor", site.raw())
-            }
             Self::InvalidConformerAtom { conformer, atom } => write!(
                 f,
                 "conformer {} stores coordinates for invalid atom {atom}",
@@ -284,7 +262,6 @@ fn validate_macro_molecule(
     options: MacroValidateOptions,
 ) -> std::result::Result<MacroValidateReport, MacroValidateError> {
     let mut report = MacroValidateReport {
-        models_checked: molecule.hierarchy.models().count(),
         chains_checked: 0,
         residues_checked: 0,
         atom_sites_checked: 0,
@@ -292,13 +269,7 @@ fn validate_macro_molecule(
         coordinates_checked: 0,
     };
 
-    for (chain_id, chain) in molecule.hierarchy.chains() {
-        molecule.hierarchy.model(chain.model).map_err(|_| {
-            MacroValidateError::InvalidChainModel {
-                chain: chain_id,
-                model: chain.model,
-            }
-        })?;
+    for _ in molecule.hierarchy.chains() {
         report.chains_checked += 1;
     }
     for (residue_id, residue) in molecule.hierarchy.residues() {
@@ -332,20 +303,6 @@ fn validate_macro_molecule(
                 site: site_id,
                 atom: site.atom,
             })?;
-        if site
-            .metadata
-            .occupancy
-            .is_some_and(|value| !value.is_finite())
-        {
-            return Err(MacroValidateError::InvalidAtomSiteOccupancy { site: site_id });
-        }
-        if site
-            .metadata
-            .b_factor
-            .is_some_and(|value| !value.is_finite())
-        {
-            return Err(MacroValidateError::InvalidAtomSiteBFactor { site: site_id });
-        }
         report.atom_sites_checked += 1;
     }
     for atom in molecule.graph.atom_ids() {
@@ -376,23 +333,6 @@ fn validate_macro_molecule(
         }
     }
     Ok(report)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SmcraModelId(u32);
-
-impl SmcraModelId {
-    pub const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -448,7 +388,6 @@ impl SmcraAtomSiteId {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SmcraHierarchy {
-    models: Vec<SmcraModel>,
     chains: Vec<SmcraChain>,
     pub(crate) residues: Vec<SmcraResidue>,
     atom_sites: Vec<SmcraAtomSite>,
@@ -461,34 +400,19 @@ impl SmcraHierarchy {
         Self::default()
     }
 
-    pub fn add_model(&mut self, model_id: impl Into<String>) -> SmcraModelId {
-        let id = SmcraModelId::new(self.models.len() as u32);
-        self.models.push(SmcraModel {
-            id,
-            model_id: model_id.into(),
-            chains: Vec::new(),
-            props: PropMap::new(),
-        });
-        id
-    }
-
     pub fn add_chain(
         &mut self,
-        model: SmcraModelId,
         label_id: impl Into<String>,
         author_id: Option<String>,
     ) -> std::result::Result<SmcraChainId, SmcraHierarchyError> {
-        self.model(model)?;
         let id = SmcraChainId::new(self.chains.len() as u32);
         self.chains.push(SmcraChain {
             id,
-            model,
             label_id: label_id.into(),
             author_id,
             residues: Vec::new(),
             props: PropMap::new(),
         });
-        self.models[model.index()].chains.push(id);
         Ok(id)
     }
 
@@ -542,12 +466,6 @@ impl SmcraHierarchy {
         Ok(id)
     }
 
-    pub fn model(&self, id: SmcraModelId) -> std::result::Result<&SmcraModel, SmcraHierarchyError> {
-        self.models
-            .get(id.index())
-            .ok_or(SmcraHierarchyError::InvalidModelId(id))
-    }
-
     pub fn chain(&self, id: SmcraChainId) -> std::result::Result<&SmcraChain, SmcraHierarchyError> {
         self.chains
             .get(id.index())
@@ -578,10 +496,6 @@ impl SmcraHierarchy {
             .and_then(|id| self.atom_sites.get(id.index()))
     }
 
-    pub fn models(&self) -> impl Iterator<Item = (SmcraModelId, &SmcraModel)> {
-        self.models.iter().map(|model| (model.id, model))
-    }
-
     pub fn chains(&self) -> impl Iterator<Item = (SmcraChainId, &SmcraChain)> {
         self.chains.iter().map(|chain| (chain.id, chain))
     }
@@ -604,35 +518,8 @@ impl SmcraHierarchy {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SmcraModel {
-    pub(crate) id: SmcraModelId,
-    pub(crate) model_id: String,
-    pub(crate) chains: Vec<SmcraChainId>,
-    pub(crate) props: PropMap,
-}
-
-impl SmcraModel {
-    pub const fn id(&self) -> SmcraModelId {
-        self.id
-    }
-
-    pub fn model_id(&self) -> &str {
-        &self.model_id
-    }
-
-    pub fn chains(&self) -> &[SmcraChainId] {
-        &self.chains
-    }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct SmcraChain {
     pub(crate) id: SmcraChainId,
-    pub(crate) model: SmcraModelId,
     pub(crate) label_id: String,
     pub(crate) author_id: Option<String>,
     pub(crate) residues: Vec<SmcraResidueId>,
@@ -642,10 +529,6 @@ pub struct SmcraChain {
 impl SmcraChain {
     pub const fn id(&self) -> SmcraChainId {
         self.id
-    }
-
-    pub const fn model(&self) -> SmcraModelId {
-        self.model
     }
 
     pub fn label_id(&self) -> &str {
@@ -754,27 +637,16 @@ impl SmcraAtomSite {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SmcraAtomSiteMetadata {
-    pub group_pdb: Option<String>,
-    pub atom_site_id: Option<String>,
     pub type_symbol: Option<String>,
     pub label_asym_id: Option<String>,
     pub auth_asym_id: Option<String>,
     pub label_atom_id: Option<String>,
     pub auth_atom_id: Option<String>,
-    pub label_alt_id: Option<String>,
-    pub occupancy: Option<f64>,
-    pub occupancy_raw: Option<String>,
-    pub b_factor: Option<f64>,
-    pub b_factor_raw: Option<String>,
-    pub cartn_x_raw: Option<String>,
-    pub cartn_y_raw: Option<String>,
-    pub cartn_z_raw: Option<String>,
 }
 
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmcraHierarchyError {
-    InvalidModelId(SmcraModelId),
     InvalidChainId(SmcraChainId),
     InvalidResidueId(SmcraResidueId),
     InvalidAtomSiteId(SmcraAtomSiteId),
@@ -785,7 +657,6 @@ pub enum SmcraHierarchyError {
 impl fmt::Display for SmcraHierarchyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidModelId(id) => write!(f, "invalid model id: {}", id.raw()),
             Self::InvalidChainId(id) => write!(f, "invalid chain id: {}", id.raw()),
             Self::InvalidResidueId(id) => write!(f, "invalid residue id: {}", id.raw()),
             Self::InvalidAtomSiteId(id) => write!(f, "invalid atom-site id: {}", id.raw()),
