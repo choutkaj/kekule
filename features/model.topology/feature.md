@@ -33,6 +33,12 @@ definitions and explicitly identified instances.
   `TopologyMapping` lineage rather than mutating existing coordinate
   containers. Added and removed definitions, instances, atoms, and bonds are
   derived from the validated maps.
+- Validated mappings expose exact source/target identity checks and stable
+  source-order traversal across definition, instance, atom, bond, and dense
+  index pairs for explicit remapping kernels.
+- `topology::transform::{retain_instances, remove_instances}` creates
+  deterministic immutable subsets of complete molecule instances while
+  preserving reused definitions and no-op exact identity.
 - Compiled atom selections bind to exact topology identity and reusable dense
   indices while chemical query syntax remains a separate concern.
 
@@ -59,6 +65,10 @@ definitions and explicitly identified instances.
 - Macro regressions cover successful coordinate-free construction with many
   unused invalid conformers and verify that stored definitions contain no
   conformers while sources remain unchanged.
+- Whole-instance transformation regressions cover invalid and duplicate
+  requests, empty and no-op results, reused definitions, filtered source order,
+  tombstoned local identifiers, roles, properties, hierarchy, and complete
+  lineage.
 
 ## Out Of Scope
 
@@ -84,3 +94,5 @@ definitions and explicitly identified instances.
 - v5: Replace string-labelled capacity failures with
   `IdentifierCapacityExceeded(TopologyIdKind)` and add synthetic boundary
   regressions for every topology identifier space.
+- v6: Add stable checked mapping traversal and deterministic immutable
+  whole-instance retain/remove transformations.

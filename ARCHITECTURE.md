@@ -475,6 +475,16 @@ prepared systems. Remapping coordinate state is a separate explicit operation.
 Added atoms may remain without coordinates until a geometry-building operation
 supplies them; topology transforms do not invent geometry silently.
 
+Complete molecule instances can be retained or removed through the focused
+`topology::transform` namespace. These immutable deletion-only edits preserve
+filtered source definition and instance order, explicit definition reuse, and
+local atom and bond identifiers while returning complete checked lineage.
+Positions, configurations, observations, models, compiled atom selections,
+finite ensembles, owned frames, in-memory trajectories, and borrowed frame
+state in reusable target buffers provide explicit remapping operations. Every
+operation checks exact source and target identity; complete dense arrays reject
+unmapped target atoms, and selection loss requires an explicit policy.
+
 ### Construction
 
 `TopologyBuilder` constructs topology without requiring coordinates.

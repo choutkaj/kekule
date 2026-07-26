@@ -20,6 +20,12 @@ trajectories through reusable caller-owned buffers.
   coordinate-only readers use this reset after filling positions.
 - Frame and buffer views can be consumed by structural analyses and prepared
   potentials without owned-model construction or coordinate copying.
+- Owned frames and finite in-memory trajectories remap through exact checked
+  topology lineage while preserving order, positions, cells, velocities,
+  forces, time, step, observations, and properties.
+- `FrameBuffer::copy_remapped_from` transactionally copies borrowed source
+  frame state into an exact target-bound buffer without constructing a model
+  and reuses position, velocity, and force allocations.
 
 ## Implementation Notes
 
@@ -35,6 +41,10 @@ trajectories through reusable caller-owned buffers.
   separation, writer rejection, reference round trips, and complete dynamic
   state clearing by coordinate-only readers while preserving the positions
   allocation.
+- Transformation regressions cover complete owned and borrowed frame transfer,
+  frame-index error context, target-buffer identity rejection, unchanged
+  destinations on failure, and stable dense-array pointers and capacities over
+  repeated remaps.
 
 ## Out Of Scope
 
@@ -50,3 +60,5 @@ trajectories through reusable caller-owned buffers.
 - v3: Centralize reusable-buffer dynamic-state reset so coordinate-only reads
   clear stale properties and every optional field without reallocating
   positions.
+- v4: Add exact-lineage owned frame and finite trajectory remapping plus
+  transactional allocation-reusing borrowed-frame copies into target buffers.

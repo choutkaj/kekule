@@ -9,20 +9,30 @@ compatible topology-bound structure state through checked lineage.
 
 - `topology::transform` retains or removes complete molecule instances without
   mutating the source topology.
+- Duplicate requests are normalized; source definition and instance order is
+  filtered deterministically; empty results are rejected; and exact identity is
+  preserved only for no-op edits.
 - Transform results contain one exact target topology and a complete checked
-  `TopologyMapping`.
+  `TopologyMapping` across definitions, instances, qualified atoms and bonds,
+  and dense atom and bond indices.
 - Topology-bound positions, configurations, observations, models, atom
   selections, ensembles, trajectory frames, in-memory trajectories, and
   reusable frame buffers can be remapped explicitly.
 - Every remap validates exact source, mapping-source, mapping-target, and target
   topology identity.
 - Removed selected atoms require an explicit strict or drop policy.
+- Periodic cells, observation provenance and properties, ensemble weights and
+  properties, velocities, forces, time, step, frame properties, and source
+  order are preserved.
+- Target atoms lacking mapped source state are rejected. Prepared potentials
+  remain bound to their original exact topology and are never remapped.
 
 ## Implementation Notes
 
 - Subset membership is normalized before construction. Source definition and
   instance order determine target order, and retained reusable definitions are
-  cloned once.
+  cloned once. Membership, filtered construction, and state transfer use
+  single-pass dense storage; no graph correspondence is inferred.
 - Local atom and bond identifiers are preserved; new topology-level semantic
   and dense identifiers are recorded by the returned mapping.
 - Remapping is complete and transactional. Missing target atom state is an
@@ -32,13 +42,14 @@ compatible topology-bound structure state through checked lineage.
 
 - Focused unit and downstream public-API tests cover deterministic subsetting,
   complete lineage, identity checks, state preservation, transactional
-  failures, reusable buffers, and solvent-rich linear scaling.
+  failures, strict/drop selection policy, member/frame error context, and
+  reusable buffer allocation stability.
 
 ## Benchmarks
 
-- A synthetic solvent-rich regression exercises many instances sharing one
-  definition and records practical linear-scaling evidence without requiring
-  external benchmark data.
+- A synthetic regression subsets 20,000 solvent instances sharing one
+  definition, verifies definition reuse and complete mapping cardinality, and
+  provides practical scaling evidence without external benchmark data.
 
 ## Out Of Scope
 
