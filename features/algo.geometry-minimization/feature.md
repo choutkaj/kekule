@@ -12,7 +12,8 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
   quantity-valued energy and gradient diagnostics.
 - Treats convergence, maximum iterations, and line-search stalling as explicit non-error statuses.
 - Rejects invalid optimizer options and propagates structured potential or position errors.
-- Backtracks trial evaluations that report coordinate-only invalid geometry while propagating incompatible-model and backend failures.
+- Backtracks trial evaluations that report coordinate-only invalid geometry
+  while propagating incompatible-topology and backend failures.
 
 ## Implementation Notes
 
@@ -44,3 +45,5 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 - v4: Migrate minimization input and result signatures to the renamed `Model`
   API.
 - v5: Replace optimizer and result unit conventions with explicit quantities.
+- v6: Evaluate the minimizer's working configurations through borrowed
+  `ModelView` values while retaining owned-model input/output semantics.

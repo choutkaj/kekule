@@ -131,12 +131,14 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
 #[test]
 fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
-    let left_high = mol.add_atom(element_atom("I"));
-    let left_low = mol.add_atom(carbon());
-    let right_a = mol.add_atom(carbon());
-    let right_b = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_high = mol
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
+    let left_low = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
     for carrier in [left_high, left_low] {
         mol.add_bond(left, carrier, BondOrder::Single)
@@ -396,12 +398,16 @@ fn axis_stereo_graph(
     orientation: AxisOrientation,
 ) -> (Molecule, StereoElementId) {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
-    let left_high = mol.add_atom(element_atom("I"));
-    let left_low = mol.add_atom(carbon());
-    let right_high = mol.add_atom(element_atom("Br"));
-    let right_low = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_high = mol
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
+    let left_low = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right_high = mol
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
+    let right_low = mol.add_atom(carbon()).expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
     mol.add_bond(left, left_high, BondOrder::Single)
         .expect("left high");
@@ -572,7 +578,9 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
 #[test]
 fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
     let mut mol = Molecule::new();
-    let atoms = (0..6).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    let atoms = (0..6)
+        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
     let double_bond = mol
         .add_bond(atoms[0], atoms[1], BondOrder::Double)
         .expect("double bond");
@@ -620,15 +628,19 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
 #[test]
 fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = mol
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
-    let fluorine = mol.add_atom(element_atom("F"));
-    let chlorine = mol.add_atom(element_atom("Cl"));
-    let methyl_a = mol.add_atom(carbon());
-    let methyl_b = mol.add_atom(carbon());
+    let fluorine = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let chlorine = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let methyl_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let methyl_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     for carrier in [fluorine, chlorine] {
         mol.add_bond(left, carrier, BondOrder::Single)
             .expect("left carrier bond");
@@ -810,15 +822,19 @@ fn pseudoasymmetric_double_bond_graph(
     orientation: DoubleBondOrientation,
 ) -> (Molecule, StereoElementId) {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = mol
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
     let (child_r, _) = add_enantiomorphic_tetrahedral_carriers(&mut mol, left);
 
-    let chlorine = mol.add_atom(element_atom("Cl"));
-    let fluorine = mol.add_atom(element_atom("F"));
+    let chlorine = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let fluorine = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
 
     for carrier in [chlorine, fluorine] {
         mol.add_bond(right, carrier, BondOrder::Single)
@@ -843,13 +859,17 @@ fn pseudoasymmetric_double_bond_graph(
 
 fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, StereoElementId) {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
     let (child_r, _child_s) = add_enantiomorphic_tetrahedral_carriers(&mut mol, left);
 
-    let chlorine = mol.add_atom(element_atom("Cl"));
-    let fluorine = mol.add_atom(element_atom("F"));
+    let chlorine = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let fluorine = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
     for carrier in [chlorine, fluorine] {
         mol.add_bond(right, carrier, BondOrder::Single)
             .expect("right carrier bond");
@@ -872,15 +892,23 @@ fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, Stere
 fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -> (AtomId, AtomId) {
     let mut child_r_atom = carbon();
     child_r_atom.implicit_hydrogens = Some(1);
-    let child_r = mol.add_atom(child_r_atom);
-    let child_r_oxygen = mol.add_atom(oxygen());
-    let child_r_nitrogen = mol.add_atom(element_atom("N"));
+    let child_r = mol
+        .add_atom(child_r_atom)
+        .expect("atom identifier capacity");
+    let child_r_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let child_r_nitrogen = mol
+        .add_atom(element_atom("N"))
+        .expect("atom identifier capacity");
 
     let mut child_s_atom = carbon();
     child_s_atom.implicit_hydrogens = Some(1);
-    let child_s = mol.add_atom(child_s_atom);
-    let child_s_oxygen = mol.add_atom(oxygen());
-    let child_s_nitrogen = mol.add_atom(element_atom("N"));
+    let child_s = mol
+        .add_atom(child_s_atom)
+        .expect("atom identifier capacity");
+    let child_s_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let child_s_nitrogen = mol
+        .add_atom(element_atom("N"))
+        .expect("atom identifier capacity");
 
     for carrier in [child_r, child_s] {
         mol.add_bond(parent, carrier, BondOrder::Single)
@@ -933,21 +961,33 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
     let mut mol = Molecule::new();
     let mut center_atom = carbon();
     center_atom.implicit_hydrogens = Some(0);
-    let center = mol.add_atom(center_atom);
-    let chlorine = mol.add_atom(element_atom("Cl"));
-    let fluorine = mol.add_atom(element_atom("F"));
+    let center = mol.add_atom(center_atom).expect("atom identifier capacity");
+    let chlorine = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let fluorine = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
 
     let mut child_r_atom = carbon();
     child_r_atom.implicit_hydrogens = Some(1);
-    let child_r = mol.add_atom(child_r_atom);
-    let child_r_oxygen = mol.add_atom(oxygen());
-    let child_r_nitrogen = mol.add_atom(element_atom("N"));
+    let child_r = mol
+        .add_atom(child_r_atom)
+        .expect("atom identifier capacity");
+    let child_r_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let child_r_nitrogen = mol
+        .add_atom(element_atom("N"))
+        .expect("atom identifier capacity");
 
     let mut child_s_atom = carbon();
     child_s_atom.implicit_hydrogens = Some(1);
-    let child_s = mol.add_atom(child_s_atom);
-    let child_s_oxygen = mol.add_atom(oxygen());
-    let child_s_nitrogen = mol.add_atom(element_atom("N"));
+    let child_s = mol
+        .add_atom(child_s_atom)
+        .expect("atom identifier capacity");
+    let child_s_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let child_s_nitrogen = mol
+        .add_atom(element_atom("N"))
+        .expect("atom identifier capacity");
 
     for carrier in [chlorine, fluorine, child_r, child_s] {
         mol.add_bond(center, carrier, BondOrder::Single)
@@ -1433,13 +1473,17 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
     let mut mol = Molecule::new();
     let mut center_atom = carbon();
     center_atom.implicit_hydrogens = Some(1);
-    let center = mol.add_atom(center_atom);
-    let bromine = mol.add_atom(element_atom("Br"));
+    let center = mol.add_atom(center_atom).expect("atom identifier capacity");
+    let bromine = mol
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
     let mut carbon_13 = carbon();
     carbon_13.isotope = Some(13);
-    let isotope_carbon = mol.add_atom(carbon_13);
-    let substituted_carbon = mol.add_atom(carbon());
-    let iodine = mol.add_atom(element_atom("I"));
+    let isotope_carbon = mol.add_atom(carbon_13).expect("atom identifier capacity");
+    let substituted_carbon = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let iodine = mol
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
 
     for carrier in [bromine, isotope_carbon, substituted_carbon] {
         mol.add_bond(center, carrier, BondOrder::Single)
@@ -1654,11 +1698,15 @@ fn cip_skips_endocyclic_hetero_double_bond_stereo() {
 #[test]
 fn cip_skips_equivalent_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let fluorine = mol.add_atom(element_atom("F"));
-    let chlorine = mol.add_atom(element_atom("Cl"));
-    let methyl_a = mol.add_atom(carbon());
-    let methyl_b = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let fluorine = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let chlorine = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let methyl_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let methyl_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     for carrier in [fluorine, chlorine, methyl_a, methyl_b] {
         mol.add_bond(center, carrier, BondOrder::Single)
             .expect("carrier bond");
@@ -1699,11 +1747,15 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
 #[test]
 fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let fluorine = mol.add_atom(element_atom("F"));
-    let chlorine = mol.add_atom(element_atom("Cl"));
-    let chain_a = mol.add_atom(carbon());
-    let chain_b = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let fluorine = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let chlorine = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let chain_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let chain_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     for carrier in [fluorine, chlorine, chain_a, chain_b] {
         mol.add_bond(center, carrier, BondOrder::Single)
             .expect("carrier bond");
@@ -1711,7 +1763,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
     for chain in [chain_a, chain_b] {
         let mut previous = chain;
         for _ in 1..18 {
-            let next = mol.add_atom(carbon());
+            let next = mol.add_atom(carbon()).expect("atom identifier capacity");
             mol.add_bond(previous, next, BondOrder::Single)
                 .expect("chain bond");
             previous = next;
@@ -1755,15 +1807,19 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
 #[test]
 fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = mol
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
-    let fluorine = mol.add_atom(element_atom("F"));
-    let chlorine = mol.add_atom(element_atom("Cl"));
-    let chain_a = mol.add_atom(carbon());
-    let chain_b = mol.add_atom(carbon());
+    let fluorine = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let chlorine = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let chain_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let chain_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     for carrier in [fluorine, chlorine] {
         mol.add_bond(left, carrier, BondOrder::Single)
             .expect("left carrier bond");
@@ -1811,13 +1867,17 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
 #[test]
 fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
-    let iodine = mol.add_atom(element_atom("I"));
-    let bromine = mol.add_atom(element_atom("Br"));
-    let chain_a = mol.add_atom(carbon());
-    let chain_b = mol.add_atom(carbon());
+    let iodine = mol
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
+    let bromine = mol
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
+    let chain_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let chain_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     for carrier in [iodine, bromine] {
         mol.add_bond(left, carrier, BondOrder::Single)
             .expect("left carrier bond");
@@ -1862,7 +1922,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
 fn add_carbon_chain(mol: &mut Molecule, start: AtomId, length: usize) {
     let mut previous = start;
     for _ in 1..length {
-        let next = mol.add_atom(carbon());
+        let next = mol.add_atom(carbon()).expect("atom identifier capacity");
         mol.add_bond(previous, next, BondOrder::Single)
             .expect("chain bond");
         previous = next;
@@ -1872,13 +1932,17 @@ fn add_carbon_chain(mol: &mut Molecule, start: AtomId, length: usize) {
 #[test]
 fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let nitrogen = mol.add_atom(element_atom("N"));
-    let hydrogen = mol.add_atom(element_atom("H"));
-    let ring_a = mol.add_atom(carbon());
-    let ring_b = mol.add_atom(carbon());
-    let ring_c = mol.add_atom(carbon());
-    let ring_d = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let nitrogen = mol
+        .add_atom(element_atom("N"))
+        .expect("atom identifier capacity");
+    let hydrogen = mol
+        .add_atom(element_atom("H"))
+        .expect("atom identifier capacity");
+    let ring_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let ring_b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let ring_c = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let ring_d = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     for carrier in [nitrogen, hydrogen, ring_a, ring_b] {
         mol.add_bond(center, carrier, BondOrder::Single)
@@ -1969,7 +2033,10 @@ fn cip_descriptors_are_cleared_by_stereo_invalidating_mutations() {
         Some(StereoDescriptor::S)
     );
 
-    molecule.graph_mut().add_atom(oxygen());
+    molecule
+        .graph_mut()
+        .add_atom(oxygen())
+        .expect("atom identifier capacity");
 
     assert_eq!(
         molecule

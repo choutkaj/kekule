@@ -16,6 +16,8 @@ not atom/bond payload flags.
 - `Molecule` stores stereo elements, stereo groups, and source bond marks with
   focused insertion, lookup, iteration, removal, and topology-aware pruning
   methods.
+- Stereo-element and stereo-group insertion checks the fixed-width ID space
+  before commit and returns the focused molecule capacity error when exhausted.
 - Stereo-element replacement validates every carrier and central reference
   before commit. An element already in a relation group cannot change group
   membership implicitly; callers must use the group operations explicitly.
@@ -64,8 +66,8 @@ not atom/bond payload flags.
 ## Tests
 
 - Unit tests cover stereo element, group, and source bond mark CRUD; invalid
-  references; mutation invalidation; topology-aware pruning; and parser/writer
-  adapter behavior.
+  references; synthetic ID-capacity boundaries; mutation invalidation;
+  topology-aware pruning; and parser/writer adapter behavior.
 
 ## Benchmarks
 
@@ -113,3 +115,5 @@ not atom/bond payload flags.
   transactional replacement and reject empty or duplicate-member groups.
 - v12: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v14: Check stereo-element and stereo-group identifier capacity before
+  transactional insertion and iterate their stable slots without narrowing.

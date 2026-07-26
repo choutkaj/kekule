@@ -155,10 +155,10 @@ fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut graph = Molecule::new();
     let carbon = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
     let oxygen = graph.add_atom(Atom::new(
         Element::from_symbol("O").expect("oxygen is a known element"),
-    ));
+    ))?;
 
     let bond = graph.add_bond(carbon, oxygen, BondOrder::Double)?;
 
@@ -173,10 +173,9 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = MacroMolecule::builder();
     let atom = builder.graph_mut().add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
 
-    let model = builder.hierarchy_mut().add_model("1");
-    let chain = builder.hierarchy_mut().add_chain(model, "A", None)?;
+    let chain = builder.hierarchy_mut().add_chain("A", None)?;
     let residue =
         builder
             .hierarchy_mut()
@@ -189,31 +188,30 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let macro_mol = builder.build()?;
 
     let validate = macro_mol.validate()?;
-    assert_eq!(validate.models_checked, 1);
+    assert_eq!(validate.chains_checked, 1);
     assert_eq!(validate.atom_sites_checked, 1);
     Ok(())
 }
 
 #[test]
-fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error>> {
-    use molecular::bio::{SmcraHierarchy, SmcraModel};
-    use molecular::modeling::Model;
+fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::Error>> {
+    use molecular::bio::SmcraHierarchy;
+    use molecular::structure::Model;
 
     let mut hierarchy = SmcraHierarchy::new();
-    let hierarchy_model_id = hierarchy.add_model("1");
-    let hierarchy_model: &SmcraModel = hierarchy.model(hierarchy_model_id)?;
-    assert_eq!(hierarchy_model.model_id(), "1");
+    let chain = hierarchy.add_chain("A", None)?;
+    assert_eq!(hierarchy.chain(chain)?.label_id(), "A");
 
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
     let mut conformer = Conformer::new(molecular::units::ANGSTROM).unwrap();
     conformer
         .set_position(
             atom,
             molecular::units::Quantity::new(
-                molecular::core::Point3::new(0.0, 0.0, 0.0),
+                molecular::geometry::Point3::new(0.0, 0.0, 0.0),
                 molecular::units::ANGSTROM,
             ),
         )
@@ -227,23 +225,28 @@ fn model_and_smcra_model_names_coexist() -> Result<(), Box<dyn std::error::Error
 
 #[test]
 fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>> {
-    use molecular::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
-    use molecular::modeling::{minimize, MinimizationStatus, MinimizeOptions, Model};
+    use molecular::geometry::{PeriodicCell, Vector3};
+    use molecular::modeling::potential::{
+        HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError,
+    };
+    use molecular::modeling::{minimize, MinimizationStatus, MinimizeOptions};
+    use molecular::structure::Model;
+    use molecular::topology::InstanceBondId;
 
     let mut graph = Molecule::new();
     let carbon = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
     let oxygen = graph.add_atom(Atom::new(
         Element::from_symbol("O").expect("oxygen is a known element"),
-    ));
+    ))?;
     let bond = graph.add_bond(carbon, oxygen, BondOrder::Single)?;
     let mut conformer = Conformer::new(molecular::units::ANGSTROM).unwrap();
     conformer
         .set_position(
             carbon,
             molecular::units::Quantity::new(
-                molecular::core::Point3::new(0.0, 0.0, 0.0),
+                molecular::geometry::Point3::new(0.0, 0.0, 0.0),
                 molecular::units::ANGSTROM,
             ),
         )
@@ -252,7 +255,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         .set_position(
             oxygen,
             molecular::units::Quantity::new(
-                molecular::core::Point3::new(2.0, 0.0, 0.0),
+                molecular::geometry::Point3::new(2.0, 0.0, 0.0),
                 molecular::units::ANGSTROM,
             ),
         )
@@ -264,10 +267,10 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
     let cloned = model.clone();
-    assert_eq!(model.definition_key(), cloned.definition_key());
-    let model_bond = molecular::modeling::InstanceBondId::new(instance, bond);
+    assert!(model.topology().same_identity(cloned.topology()));
+    let model_bond = InstanceBondId::new(instance, bond);
     let mut potential = HarmonicBondPotential::new(
-        &model,
+        model.topology(),
         [HarmonicBondParameter::new(
             model_bond,
             molecular::units::Quantity::new(1.2, molecular::units::ANGSTROM),
@@ -275,6 +278,15 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         )],
     )?;
     let result = minimize(&model, &mut potential, MinimizeOptions::default())?;
+    let mut periodic = model.clone();
+    periodic.set_cell(Some(PeriodicCell::orthorhombic(
+        molecular::units::Quantity::new(Vector3::new(10.0, 10.0, 10.0), molecular::units::ANGSTROM),
+        [true; 3],
+    )?));
+    assert_eq!(
+        potential.evaluate(periodic.view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
 
     result
         .model
@@ -292,6 +304,99 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
             .x
             < 2.0
     );
+    Ok(())
+}
+
+#[test]
+fn topology_ensemble_and_streaming_trajectory_public_api() -> Result<(), Box<dyn std::error::Error>>
+{
+    use molecular::geometry::Point3;
+    use molecular::structure::{Configuration, Ensemble, EnsembleMember, Model, Positions};
+    use molecular::topology::{
+        AtomSelection, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
+    };
+    use molecular::trajectory::{
+        FrameBuffer, MemoryTrajectoryReader, Trajectory, TrajectoryFrame, TrajectoryReader,
+    };
+    use molecular::units::{Quantity, ANGSTROM};
+
+    let water = SmallMolecule::from_smiles_sanitized("O")?;
+    let mut topology_builder = TopologyBuilder::new();
+    let definition = topology_builder.add_small_molecule_definition(&water)?;
+    let mut metadata = MoleculeInstanceMetadata::default();
+    metadata.insert_role(MoleculeRole::Solvent);
+    topology_builder.add_instance(definition, metadata.clone())?;
+    topology_builder.add_instance(definition, metadata)?;
+    let topology = topology_builder.build()?;
+
+    let first_positions = Positions::new(
+        &topology,
+        Quantity::new(
+            vec![Point3::new(0.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)],
+            ANGSTROM,
+        ),
+    )?;
+    let second_positions = Positions::new(
+        &topology,
+        Quantity::new(
+            vec![Point3::new(0.1, 0.0, 0.0), Point3::new(3.1, 0.0, 0.0)],
+            ANGSTROM,
+        ),
+    )?;
+    let first = Model::new(
+        topology.clone(),
+        Configuration::new(first_positions.clone()),
+    )?;
+    let second = Model::new(
+        topology.clone(),
+        Configuration::new(second_positions.clone()),
+    )?;
+    assert!(first.topology().same_identity(second.topology()));
+
+    let solvent = AtomSelection::for_roles(&topology, [MoleculeRole::Solvent])?;
+    assert_eq!(solvent.indices().len(), 2);
+    let ensemble = Ensemble::from_members(
+        topology.clone(),
+        [
+            EnsembleMember::new(Configuration::new(first_positions)),
+            EnsembleMember::new(Configuration::new(second_positions.clone())),
+        ],
+    )?;
+    assert_eq!(ensemble.views().count(), 2);
+
+    let trajectory = Trajectory::from_frames(
+        topology.clone(),
+        [TrajectoryFrame::new(Configuration::new(second_positions))],
+    )?;
+    let mut reader = MemoryTrajectoryReader::new(&trajectory);
+    let mut buffer = FrameBuffer::new(topology);
+    assert!(reader.read_next(&mut buffer)?);
+    assert_eq!(buffer.model_view().positions().value()[0].x, 0.1);
+    assert!(!reader.read_next(&mut buffer)?);
+    Ok(())
+}
+
+#[test]
+fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use molecular::topology::{
+        MoleculeInstanceMetadata, TopologyBuilder, TopologyEditResult, TopologyMapping,
+    };
+
+    let water = SmallMolecule::from_smiles_sanitized("O")?;
+    let build = || -> Result<_, Box<dyn std::error::Error>> {
+        let mut builder = TopologyBuilder::new();
+        let definition = builder.add_small_molecule_definition(&water)?;
+        builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+        Ok(builder.build()?)
+    };
+    let source = build()?;
+    let target = build()?;
+
+    assert!(!source.same_identity(&target));
+    assert!(source.same_layout(&target));
+    let mapping = TopologyMapping::between_identical_layouts(&source, &target)?;
+    let result = TopologyEditResult::new(target.clone(), mapping)?;
+    assert!(result.topology().same_identity(&target));
     Ok(())
 }
 

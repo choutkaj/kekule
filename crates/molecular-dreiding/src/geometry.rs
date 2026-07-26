@@ -1,4 +1,4 @@
-use molecular::core::Point3;
+use molecular::geometry::Point3;
 
 const MIN_NORM_SQ: f64 = 1.0e-24;
 

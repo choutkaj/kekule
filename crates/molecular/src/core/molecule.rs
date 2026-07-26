@@ -228,12 +228,21 @@ impl Molecule {
             .sum()
     }
 
-    pub fn add_atom(&mut self, atom: Atom) -> AtomId {
-        let id = AtomId::new(self.atoms.len() as u32);
+    /// Inserts an atom and returns its stable identifier.
+    ///
+    /// The insertion fails without changing the molecule when the fixed-width
+    /// atom identifier space is exhausted.
+    pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
+        self.add_atom_at_slot(atom, self.atoms.len())
+    }
+
+    fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId> {
+        let id = checked_molecule_id(slot, MoleculeIdKind::Atom, AtomId::new)?;
+        debug_assert_eq!(slot, self.atoms.len());
         self.atoms.push(Some(atom));
         self.adjacency.push(Vec::new());
         self.invalidate_topology();
-        id
+        Ok(id)
     }
 
     pub fn delete_atom(&mut self, id: AtomId) -> Result<Atom> {
@@ -278,16 +287,18 @@ impl Molecule {
     }
 
     pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
-        self.atoms
-            .iter()
-            .enumerate()
-            .filter_map(|(index, atom)| atom.as_ref().map(|atom| (AtomId::new(index as u32), atom)))
+        (0..=u32::MAX)
+            .zip(self.atoms.iter())
+            .filter_map(|(raw, atom)| atom.as_ref().map(|atom| (AtomId::new(raw), atom)))
     }
 
     pub fn atom_ids(&self) -> impl Iterator<Item = AtomId> + '_ {
         self.atoms().map(|(id, _)| id)
     }
 
+    /// Inserts a bond after validating its endpoints and identifier capacity.
+    ///
+    /// Every failure leaves the molecule unchanged.
     pub fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
         self.atom(a)?;
         self.atom(b)?;
@@ -297,7 +308,7 @@ impl Molecule {
         if self.bond_between(a, b)?.is_some() {
             return Err(MoleculeError::DuplicateBond { a, b });
         }
-        let id = BondId::new(self.bonds.len() as u32);
+        let id = checked_molecule_id(self.bonds.len(), MoleculeIdKind::Bond, BondId::new)?;
         self.bonds.push(Some(Bond::new(a, b, order)));
         self.adjacency[a.index()].push(id);
         self.adjacency[b.index()].push(id);
@@ -335,10 +346,9 @@ impl Molecule {
     }
 
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
-        self.bonds
-            .iter()
-            .enumerate()
-            .filter_map(|(index, bond)| bond.as_ref().map(|bond| (BondId::new(index as u32), bond)))
+        (0..=u32::MAX)
+            .zip(self.bonds.iter())
+            .filter_map(|(raw, bond)| bond.as_ref().map(|bond| (BondId::new(raw), bond)))
     }
 
     pub fn bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
@@ -457,16 +467,29 @@ impl Molecule {
         self.perception.ring_set()
     }
 
+    /// Attaches a conformer after validating its atom slots and identifier capacity.
     pub fn add_conformer(&mut self, mut conformer: Conformer) -> Result<ConformerId> {
-        for (index, position) in conformer.positions.iter().enumerate() {
-            if position.is_some() && self.atoms.get(index).and_then(Option::as_ref).is_none() {
-                return Err(MoleculeError::InvalidAtomId(AtomId::new(index as u32)));
+        checked_fixed_id_collection_len(0, conformer.positions.len())
+            .map_err(|_| MoleculeError::IdentifierCapacityExceeded(MoleculeIdKind::Atom))?;
+        let id = checked_molecule_id(
+            self.conformers.len(),
+            MoleculeIdKind::Conformer,
+            ConformerId::new,
+        )?;
+        for (raw, position) in (0..=u32::MAX).zip(conformer.positions.iter()) {
+            if position.is_some()
+                && self
+                    .atoms
+                    .get(AtomId::new(raw).index())
+                    .and_then(Option::as_ref)
+                    .is_none()
+            {
+                return Err(MoleculeError::InvalidAtomId(AtomId::new(raw)));
             }
         }
         if conformer.positions.len() < self.atoms.len() {
             conformer.positions.resize(self.atoms.len(), None);
         }
-        let id = ConformerId::new(self.conformers.len() as u32);
         self.conformers.push(Some(conformer));
         Ok(id)
     }
@@ -486,13 +509,12 @@ impl Molecule {
     }
 
     pub fn conformers(&self) -> impl Iterator<Item = (ConformerId, &Conformer)> {
-        self.conformers
-            .iter()
-            .enumerate()
-            .filter_map(|(index, conformer)| {
+        (0..=u32::MAX)
+            .zip(self.conformers.iter())
+            .filter_map(|(raw, conformer)| {
                 conformer
                     .as_ref()
-                    .map(|conformer| (ConformerId::new(index as u32), conformer))
+                    .map(|conformer| (ConformerId::new(raw), conformer))
             })
     }
 
@@ -500,9 +522,14 @@ impl Molecule {
         self.conformers().next()
     }
 
+    /// Inserts a validated stereo element without narrowing its collection slot.
     pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
         self.validate_stereo_element_refs(&element)?;
-        let id = StereoElementId::new(self.stereo_elements.len() as u32);
+        let id = checked_molecule_id(
+            self.stereo_elements.len(),
+            MoleculeIdKind::StereoElement,
+            StereoElementId::new,
+        )?;
         self.stereo_elements.push(Some(element));
         self.invalidate_stereo();
         Ok(id)
@@ -555,13 +582,12 @@ impl Molecule {
     }
 
     pub fn stereo_elements(&self) -> impl Iterator<Item = (StereoElementId, &StereoElement)> {
-        self.stereo_elements
-            .iter()
-            .enumerate()
-            .filter_map(|(index, element)| {
+        (0..=u32::MAX)
+            .zip(self.stereo_elements.iter())
+            .filter_map(|(raw, element)| {
                 element
                     .as_ref()
-                    .map(|element| (StereoElementId::new(index as u32), element))
+                    .map(|element| (StereoElementId::new(raw), element))
             })
     }
 
@@ -569,6 +595,7 @@ impl Molecule {
         self.stereo_elements().map(|(id, _)| id)
     }
 
+    /// Inserts a validated stereo group transactionally.
     pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
         if group.members.is_empty() {
             return Err(MoleculeError::InvalidStereoReference(
@@ -588,7 +615,11 @@ impl Molecule {
                 ));
             }
         }
-        let id = StereoGroupId::new(self.stereo_groups.len() as u32);
+        let id = checked_molecule_id(
+            self.stereo_groups.len(),
+            MoleculeIdKind::StereoGroup,
+            StereoGroupId::new,
+        )?;
         for member in &group.members {
             self.stereo_elements[member.index()]
                 .as_mut()
@@ -629,14 +660,9 @@ impl Molecule {
     }
 
     pub fn stereo_groups(&self) -> impl Iterator<Item = (StereoGroupId, &StereoGroup)> {
-        self.stereo_groups
-            .iter()
-            .enumerate()
-            .filter_map(|(index, group)| {
-                group
-                    .as_ref()
-                    .map(|group| (StereoGroupId::new(index as u32), group))
-            })
+        (0..=u32::MAX)
+            .zip(self.stereo_groups.iter())
+            .filter_map(|(raw, group)| group.as_ref().map(|group| (StereoGroupId::new(raw), group)))
     }
 
     pub fn set_stereo_bond_mark(&mut self, mark: StereoBondMark) -> Result<()> {
@@ -695,10 +721,9 @@ impl Molecule {
         implicit_hydrogens: BTreeMap<AtomId, u8>,
     ) {
         #[cfg(test)]
-        for (index, atom) in self.atoms.iter_mut().enumerate() {
+        for (raw, atom) in (0..=u32::MAX).zip(self.atoms.iter_mut()) {
             if let Some(atom) = atom {
-                atom.implicit_hydrogens =
-                    implicit_hydrogens.get(&AtomId::new(index as u32)).copied();
+                atom.implicit_hydrogens = implicit_hydrogens.get(&AtomId::new(raw)).copied();
             }
         }
         self.perception.valence = Some(ValencePerception {
@@ -849,6 +874,21 @@ impl Molecule {
         self
     }
 
+    /// Clones coordinate-independent molecular state without cloning conformers.
+    pub(crate) fn clone_without_conformers(&self) -> Self {
+        Self {
+            atoms: self.atoms.clone(),
+            bonds: self.bonds.clone(),
+            adjacency: self.adjacency.clone(),
+            conformers: Vec::new(),
+            stereo_elements: self.stereo_elements.clone(),
+            stereo_groups: self.stereo_groups.clone(),
+            stereo_bond_marks: self.stereo_bond_marks.clone(),
+            props: self.props.clone(),
+            perception: self.perception.clone(),
+        }
+    }
+
     fn validate_stereo_element_refs(&self, element: &StereoElement) -> Result<()> {
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
@@ -929,6 +969,34 @@ impl Bond {
 
 pub type Result<T> = std::result::Result<T, MoleculeError>;
 
+/// Fixed-width identifier spaces owned by [`Molecule`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoleculeIdKind {
+    /// Stable atom slots.
+    Atom,
+    /// Stable bond slots.
+    Bond,
+    /// Stable conformer slots.
+    Conformer,
+    /// Stable stereo-element slots.
+    StereoElement,
+    /// Stable stereo-group slots.
+    StereoGroup,
+}
+
+impl fmt::Display for MoleculeIdKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Atom => "atom",
+            Self::Bond => "bond",
+            Self::Conformer => "conformer",
+            Self::StereoElement => "stereo element",
+            Self::StereoGroup => "stereo group",
+        })
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MoleculeError {
@@ -939,7 +1007,12 @@ pub enum MoleculeError {
     InvalidStereoGroupId(StereoGroupId),
     InvalidStereoReference(&'static str),
     SelfBond(AtomId),
-    DuplicateBond { a: AtomId, b: AtomId },
+    DuplicateBond {
+        a: AtomId,
+        b: AtomId,
+    },
+    /// A new value cannot be represented by the fixed-width ID for `kind`.
+    IdentifierCapacityExceeded(MoleculeIdKind),
     UnsupportedFeature(&'static str),
 }
 
@@ -956,9 +1029,101 @@ impl fmt::Display for MoleculeError {
             }
             Self::SelfBond(id) => write!(f, "cannot create a bond from atom {id} to itself"),
             Self::DuplicateBond { a, b } => write!(f, "duplicate bond between {a} and {b}"),
+            Self::IdentifierCapacityExceeded(kind) => {
+                write!(f, "{kind} identifier capacity exceeded")
+            }
             Self::UnsupportedFeature(name) => write!(f, "unsupported feature: {name}"),
         }
     }
 }
 
 impl std::error::Error for MoleculeError {}
+
+fn checked_molecule_id<T>(
+    length: usize,
+    kind: MoleculeIdKind,
+    construct: impl FnOnce(u32) -> T,
+) -> Result<T> {
+    checked_raw_id(length)
+        .map(construct)
+        .map_err(|_| MoleculeError::IdentifierCapacityExceeded(kind))
+}
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod capacity_tests {
+    use super::*;
+
+    fn max_slot() -> usize {
+        usize::try_from(u64::from(u32::MAX)).expect("64-bit usize")
+    }
+
+    fn first_unsupported_slot() -> usize {
+        usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize")
+    }
+
+    #[test]
+    fn every_molecule_identifier_space_checks_its_boundary() {
+        assert_eq!(
+            checked_molecule_id(max_slot(), MoleculeIdKind::Atom, AtomId::new),
+            Ok(AtomId::new(u32::MAX))
+        );
+        assert_eq!(
+            checked_molecule_id(first_unsupported_slot(), MoleculeIdKind::Atom, AtomId::new,),
+            Err(MoleculeError::IdentifierCapacityExceeded(
+                MoleculeIdKind::Atom
+            ))
+        );
+        assert_eq!(
+            checked_molecule_id(first_unsupported_slot(), MoleculeIdKind::Bond, BondId::new,),
+            Err(MoleculeError::IdentifierCapacityExceeded(
+                MoleculeIdKind::Bond
+            ))
+        );
+        assert_eq!(
+            checked_molecule_id(
+                first_unsupported_slot(),
+                MoleculeIdKind::Conformer,
+                ConformerId::new,
+            ),
+            Err(MoleculeError::IdentifierCapacityExceeded(
+                MoleculeIdKind::Conformer
+            ))
+        );
+        assert_eq!(
+            checked_molecule_id(
+                first_unsupported_slot(),
+                MoleculeIdKind::StereoElement,
+                StereoElementId::new,
+            ),
+            Err(MoleculeError::IdentifierCapacityExceeded(
+                MoleculeIdKind::StereoElement
+            ))
+        );
+        assert_eq!(
+            checked_molecule_id(
+                first_unsupported_slot(),
+                MoleculeIdKind::StereoGroup,
+                StereoGroupId::new,
+            ),
+            Err(MoleculeError::IdentifierCapacityExceeded(
+                MoleculeIdKind::StereoGroup
+            ))
+        );
+    }
+
+    #[test]
+    fn capacity_rejection_does_not_mutate_molecule_state() {
+        let mut molecule = Molecule::new();
+        let before = molecule.clone();
+        assert_eq!(
+            molecule.add_atom_at_slot(
+                Atom::new(Element::from_atomic_number(6).expect("carbon")),
+                first_unsupported_slot(),
+            ),
+            Err(MoleculeError::IdentifierCapacityExceeded(
+                MoleculeIdKind::Atom
+            ))
+        );
+        assert_eq!(molecule, before);
+    }
+}

@@ -8,9 +8,9 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     assert!(empty_membership.ring_bond_ids().next().is_none());
 
     let mut chain = Molecule::new();
-    let a = chain.add_atom(carbon());
-    let b = chain.add_atom(carbon());
-    let c = chain.add_atom(carbon());
+    let a = chain.add_atom(carbon()).expect("atom identifier capacity");
+    let b = chain.add_atom(carbon()).expect("atom identifier capacity");
+    let c = chain.add_atom(carbon()).expect("atom identifier capacity");
     let ab = chain
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
@@ -29,9 +29,9 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
 #[test]
 fn ring_membership_marks_triangle_atoms_and_bonds() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
@@ -48,10 +48,10 @@ fn ring_membership_marks_triangle_atoms_and_bonds() {
 #[test]
 fn ring_membership_excludes_tail_from_ring() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(carbon());
-    let tail = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let tail = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
@@ -71,12 +71,12 @@ fn ring_membership_excludes_tail_from_ring() {
 #[test]
 fn ring_membership_handles_fused_and_disconnected_components() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(carbon());
-    let d = mol.add_atom(carbon());
-    let isolated_a = mol.add_atom(oxygen());
-    let isolated_b = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let d = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let isolated_a = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let isolated_b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
@@ -102,9 +102,9 @@ fn ring_membership_handles_fused_and_disconnected_components() {
 #[test]
 fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
@@ -326,7 +326,7 @@ fn aromaticity_rejects_ring_atom_above_rdkit_default_valence() {
             BondOrder::Single,
         ],
     );
-    let methyl = mol.add_atom(carbon());
+    let methyl = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(atoms[0], methyl, BondOrder::Single)
         .expect("phosphorus substituent bond");
 
@@ -433,8 +433,8 @@ fn aromaticity_rejects_tetracoordinate_ring_atom_candidate() {
     mol.atom_mut(atoms[0])
         .expect("ring atom exists")
         .formal_charge = 1;
-    let methyl_a = mol.add_atom(carbon());
-    let methyl_b = mol.add_atom(carbon());
+    let methyl_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let methyl_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(atoms[0], methyl_a, BondOrder::Single)
         .expect("first substituent bond");
     mol.add_bond(atoms[0], methyl_b, BondOrder::Single)
@@ -541,7 +541,9 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
 #[test]
 fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
     let mut mol = Molecule::new();
-    let atoms = (0..10).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    let atoms = (0..10)
+        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
     let orders = [
         BondOrder::Double,
         BondOrder::Single,
@@ -589,18 +591,22 @@ fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
 #[test]
 fn aromaticity_keeps_aromatic_heteroring_bond_shared_with_saturated_ring() {
     let mut mol = Molecule::new();
-    let c0 = mol.add_atom(carbon());
-    let c1 = mol.add_atom(carbon());
-    let c2 = mol.add_atom(carbon());
-    let n3 = mol.add_atom(Atom::new(
-        Element::from_symbol("N").expect("nitrogen should be available"),
-    ));
-    let n4 = mol.add_atom(Atom::new(
-        Element::from_symbol("N").expect("nitrogen should be available"),
-    ));
-    let saturated_a = mol.add_atom(carbon());
-    let saturated_b = mol.add_atom(carbon());
-    let saturated_c = mol.add_atom(carbon());
+    let c0 = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c1 = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c2 = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let n3 = mol
+        .add_atom(Atom::new(
+            Element::from_symbol("N").expect("nitrogen should be available"),
+        ))
+        .expect("atom identifier capacity");
+    let n4 = mol
+        .add_atom(Atom::new(
+            Element::from_symbol("N").expect("nitrogen should be available"),
+        ))
+        .expect("atom identifier capacity");
+    let saturated_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let saturated_b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let saturated_c = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     let aromatic_bonds = [
         mol.add_bond(c0, c1, BondOrder::Double)
@@ -659,9 +665,11 @@ fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
             .expect("ring atom exists")
             .formal_charge = -1;
     }
-    let hydrogen = mol.add_atom(Atom::new(
-        Element::from_symbol("H").expect("hydrogen should be available"),
-    ));
+    let hydrogen = mol
+        .add_atom(Atom::new(
+            Element::from_symbol("H").expect("hydrogen should be available"),
+        ))
+        .expect("atom identifier capacity");
     mol.add_bond(atoms[0], hydrogen, BondOrder::Single)
         .expect("explicit hydrogen bond should be valid");
 
@@ -701,9 +709,9 @@ fn aromaticity_rejects_neutral_saturated_carbon_in_conjugated_ring() {
 #[test]
 fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(a, b, BondOrder::Double).expect("bond");
     mol.add_bond(b, c, BondOrder::Single).expect("bond");
 
@@ -752,7 +760,7 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("benzene should be supported");
 
-    mol.add_atom(oxygen());
+    mol.add_atom(oxygen()).expect("atom identifier capacity");
     assert!(!mol.perception().has_aromaticity());
     assert!(atoms
         .iter()
@@ -762,9 +770,11 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
 #[test]
 fn stereo_validation_reports_invalid_local_elements_without_mutating() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let a = mol.add_atom(oxygen());
-    let b = mol.add_atom(element_atom("N"));
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let b = mol
+        .add_atom(element_atom("N"))
+        .expect("atom identifier capacity");
     mol.add_bond(center, a, BondOrder::Single).expect("bond");
     mark_all_fresh(&mut mol);
     let element = mol
@@ -1111,10 +1121,14 @@ fn stereo_perception_assigns_tetrahedral_from_3d_coordinates() {
 #[test]
 fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
-    let left_carrier = mol.add_atom(element_atom("F"));
-    let right_carrier = mol.add_atom(element_atom("Cl"));
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_carrier = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let right_carrier = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
     let double_bond = mol.add_bond(left, right, BondOrder::Double).expect("bond");
     mol.add_bond(left, left_carrier, BondOrder::Single)
         .expect("left carrier");
@@ -1233,8 +1247,8 @@ fn stereo_perception_leaves_coordinate_axes_opt_in_by_default() {
 #[test]
 fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     let mut marked = Molecule::new();
-    let a = marked.add_atom(carbon());
-    let b = marked.add_atom(carbon());
+    let a = marked.add_atom(carbon()).expect("atom identifier capacity");
+    let b = marked.add_atom(carbon()).expect("atom identifier capacity");
     let bond = marked.add_bond(a, b, BondOrder::Single).expect("bond");
     marked
         .set_stereo_bond_mark(StereoBondMark {
@@ -1254,8 +1268,12 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     assert!(marked.stereo_elements().next().is_none());
 
     let mut unsupported = Molecule::new();
-    let c = unsupported.add_atom(carbon());
-    let d = unsupported.add_atom(carbon());
+    let c = unsupported
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let d = unsupported
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let double_bond = unsupported.add_bond(c, d, BondOrder::Double).expect("bond");
     unsupported
         .set_stereo_bond_mark(StereoBondMark {
@@ -1273,10 +1291,18 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     ));
 
     let mut unknown = Molecule::new();
-    let left = unknown.add_atom(carbon());
-    let right = unknown.add_atom(carbon());
-    let left_carrier = unknown.add_atom(carbon());
-    let right_carrier = unknown.add_atom(carbon());
+    let left = unknown
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let right = unknown
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let left_carrier = unknown
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let right_carrier = unknown
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let unknown_bond = unknown
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
@@ -1305,8 +1331,8 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
     ));
 
     let mut absent = Molecule::new();
-    let x = absent.add_atom(carbon());
-    let y = absent.add_atom(carbon());
+    let x = absent.add_atom(carbon()).expect("atom identifier capacity");
+    let y = absent.add_atom(carbon()).expect("atom identifier capacity");
     absent.add_bond(x, y, BondOrder::Single).expect("bond");
     let absent_report = stereo_api::perceive_stereo(&mut absent);
     assert!(absent_report.is_ok());
@@ -1317,10 +1343,14 @@ fn stereo_perception_reports_unassembled_marks_and_preserves_absence() {
 #[test]
 fn stereo_validation_accepts_structural_axis_elements() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
-    let left_carrier = mol.add_atom(element_atom("I"));
-    let right_carrier = mol.add_atom(element_atom("Br"));
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_carrier = mol
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
+    let right_carrier = mol
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
     mol.add_bond(left, left_carrier, BondOrder::Single)
         .expect("left carrier");
@@ -1512,11 +1542,11 @@ fn stereo_perception_assembles_ring_internal_molfile_atrop_axis() {
 
 fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let carriers = ["F", "Cl", "Br", "I"]
         .into_iter()
         .map(element_atom)
-        .map(|atom| mol.add_atom(atom))
+        .map(|atom| mol.add_atom(atom).expect("atom identifier capacity"))
         .collect::<Vec<_>>();
     let mut bonds = Vec::new();
     for carrier in &carriers {

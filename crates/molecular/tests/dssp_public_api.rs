@@ -5,7 +5,7 @@ use molecular::mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifPa
 
 const CRAMBIN_MMCIF: &str = include_str!("../../../benchmarks/corpora/smoke/data/rcsb/1CRN.cif");
 
-fn crambin_model() -> molecular::modeling::Model {
+fn crambin_model() -> molecular::structure::Model {
     let document = mmcif::parse_str(CRAMBIN_MMCIF, MmcifParseOptions::default())
         .expect("checked-in RCSB 1CRN fixture parses");
     mmcif::interpret(
@@ -21,7 +21,8 @@ fn crambin_model() -> molecular::modeling::Model {
 
 #[test]
 fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
-    let result = dssp::assign(&crambin_model(), DsspOptions::default())
+    let model = crambin_model();
+    let result = dssp::assign(model.view(), DsspOptions::default())
         .expect("crambin has an analyzable protein backbone");
     let residues = result.residues().collect::<Vec<_>>();
     let codes = residues
@@ -52,7 +53,7 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
 fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_model() {
     let mut model = crambin_model();
     let before = model.clone();
-    let assigned = dssp::assign(&model, DsspOptions::default()).expect("initial assignment");
+    let assigned = dssp::assign(model.view(), DsspOptions::default()).expect("initial assignment");
     assert_eq!(model, before);
 
     let first_atom = model.topology().atom_ids()[0];
@@ -74,7 +75,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(&model, options),
+        dssp::assign(model.view(), options),
         Err(DsspError::InvalidPolyprolineStretch { value: 4 })
     );
 
@@ -86,7 +87,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(&model, options),
+        dssp::assign(model.view(), options),
         Err(DsspError::ResourceLimitExceeded {
             resource: DsspResource::Residues,
             limit: 2,
@@ -101,7 +102,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(&model, options),
+        dssp::assign(model.view(), options),
         Err(DsspError::ResourceLimitExceeded {
             resource: DsspResource::CandidatePairs,
             limit: 0,
@@ -116,7 +117,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
         ..DsspOptions::default()
     };
     assert_eq!(
-        dssp::assign(&model, options),
+        dssp::assign(model.view(), options),
         Err(DsspError::ResourceLimitExceeded {
             resource: DsspResource::Ladders,
             limit: 0,
@@ -135,7 +136,7 @@ fn dssp_rejects_coordinates_outside_its_spatial_index_range_without_panicking() 
         .expect("coordinate remains finite in the model");
 
     assert!(matches!(
-        dssp::assign(&model, DsspOptions::default()),
+        dssp::assign(model.view(), DsspOptions::default()),
         Err(DsspError::CoordinateOutOfRange {
             quantity: "backbone coordinate",
             ..

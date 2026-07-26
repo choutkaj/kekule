@@ -1,8 +1,10 @@
-use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule, Point3};
+use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
+use molecular::geometry::{PeriodicCell, Point3, Vector3};
 use molecular::modeling::potential::{Potential, PotentialError};
-use molecular::modeling::{InstanceAtomId, Model, MoleculeInstanceId};
 use molecular::small::SmallMolecule;
-use molecular_dreiding::DreidingPotential;
+use molecular::structure::Model;
+use molecular::topology::{InstanceAtomId, MoleculeInstanceId};
+use molecular_dreiding::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions};
 
 #[test]
 fn downstream_preparation_and_evaluation() {
@@ -10,7 +12,7 @@ fn downstream_preparation_and_evaluation() {
     let mut explicit_atom = |symbol: &str| {
         let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
         atom.no_implicit_hydrogens = true;
-        graph.add_atom(atom)
+        graph.add_atom(atom).expect("atom identifier capacity")
     };
     let oxygen = explicit_atom("O");
     let first_hydrogen = explicit_atom("H");
@@ -50,15 +52,43 @@ fn downstream_preparation_and_evaluation() {
     let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     let independently_built = Model::from_small_molecule(&molecule, conformer).unwrap();
-    let mut potential = DreidingPotential::prepare(&model).unwrap();
-    let evaluation = potential.evaluate(&model).unwrap();
+    let mut periodic = model.clone();
+    periodic.set_cell(Some(
+        PeriodicCell::orthorhombic(
+            molecular::units::Quantity::new(
+                Vector3::new(10.0, 10.0, 10.0),
+                molecular::units::ANGSTROM,
+            ),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    assert!(matches!(
+        DreidingPotential::prepare(
+            periodic.topology(),
+            periodic.view(),
+            DreidingPrepareOptions::default(),
+        ),
+        Err(DreidingPrepareError::UnsupportedPeriodicCell)
+    ));
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    let evaluation = potential.evaluate(model.view()).unwrap();
     let oxygen = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(0));
     assert!(evaluation.energy().is_finite());
     assert_eq!(evaluation.gradient().len(), model.atom_count());
     assert!(potential.atom_type(oxygen).is_some());
     assert!(potential.partial_charge(oxygen).unwrap().is_finite());
     assert_eq!(
-        potential.evaluate(&independently_built),
-        Err(PotentialError::IncompatibleModel)
+        potential.evaluate(periodic.view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+    assert_eq!(
+        potential.evaluate(independently_built.view()),
+        Err(PotentialError::IncompatibleTopology)
     );
 }

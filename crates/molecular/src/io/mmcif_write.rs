@@ -2,9 +2,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 use crate::bio::{MacroValidateOptions, SmcraAtomSite, SmcraHierarchy};
-use crate::core::{AtomId, BondOrder, Point3};
-use crate::modeling::{
-    InstanceAtomId, InstanceBondId, Model, MoleculeInstance, MoleculeInstanceId, MoleculeRole,
+use crate::core::{AtomId, BondOrder};
+use crate::geometry::Point3;
+use crate::structure::{AtomObservation, Model};
+use crate::topology::{
+    InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
+    MoleculeRole,
 };
 use crate::units::ANGSTROM;
 
@@ -255,25 +258,37 @@ fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> 
 
 fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
     let mut reserved_asym_ids = BTreeSet::new();
-    for (_, molecule) in model.topology().molecules() {
-        if let Some(hierarchy) = molecule.hierarchy() {
+    for (id, molecule) in model.topology().instances() {
+        let definition = model
+            .topology()
+            .definition_for_instance(id)
+            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+        if let Some(hierarchy) = definition.hierarchy() {
             for (_, chain) in hierarchy.chains() {
-                if chain.label_id.is_empty() {
+                if chain.label_id().is_empty() {
                     return Err(invalid_hierarchy(molecule, "chain label ID is empty"));
                 }
-                if !reserved_asym_ids.insert(chain.label_id.clone()) {
-                    return Err(MmcifWriteError::DuplicateAsymId(chain.label_id.clone()));
+                if !reserved_asym_ids.insert(chain.label_id().to_owned()) {
+                    return Err(MmcifWriteError::DuplicateAsymId(
+                        chain.label_id().to_owned(),
+                    ));
                 }
             }
         }
     }
 
     let mut small_asym_ids = BTreeMap::new();
-    for (id, molecule) in model.topology().molecules() {
-        if molecule.small_molecule().is_none() {
+    for (id, _) in model.topology().instances() {
+        if model
+            .topology()
+            .definition_for_instance(id)
+            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+            .small_molecule()
+            .is_none()
+        {
             continue;
         }
-        let base = format!("M{}", id.raw() + 1);
+        let base = format!("M{}", one_based_serial(id.raw()));
         let mut candidate = base.clone();
         let mut suffix = 2usize;
         while reserved_asym_ids.contains(&candidate) {
@@ -288,18 +303,23 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
     let mut asyms = Vec::new();
     let mut atoms = Vec::new();
     let mut asym_seen = BTreeSet::new();
-    for (id, molecule) in model.topology().molecules() {
-        validate_graph_chemistry(molecule)?;
-        let entity_id = (id.raw() + 1).to_string();
-        let kind = entity_kind(molecule)?;
+    for (id, molecule) in model.topology().instances() {
+        let definition = model
+            .topology()
+            .definition_for_instance(id)
+            .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
+        validate_graph_chemistry(molecule, definition)?;
+        let entity_id = one_based_serial(id.raw()).to_string();
+        let kind = entity_kind(molecule, definition)?;
         entities.push(EntityRow {
             id: entity_id.clone(),
             kind,
         });
-        if let Some(hierarchy) = molecule.hierarchy() {
+        if let Some(hierarchy) = definition.hierarchy() {
             collect_macro_rows(
                 model,
                 molecule,
+                definition,
                 hierarchy,
                 &entity_id,
                 kind,
@@ -317,7 +337,9 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
                 entity_id: entity_id.clone(),
             });
             asym_seen.insert(asym_id.clone());
-            collect_small_rows(model, molecule, &entity_id, &asym_id, kind, &mut atoms)?;
+            collect_small_rows(
+                model, molecule, definition, &entity_id, &asym_id, kind, &mut atoms,
+            )?;
         }
     }
 
@@ -332,7 +354,7 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
         let order = supported_bond_order(bond_id, bond.order)?;
         let molecule = model
             .topology()
-            .molecule(bond_id.molecule())
+            .instance(bond_id.molecule())
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
         let left = molecule.qualify_atom(bond.a());
         let right = molecule.qualify_atom(bond.b());
@@ -355,7 +377,10 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
     })
 }
 
-fn entity_kind(molecule: &MoleculeInstance) -> Result<EntityKind, MmcifWriteError> {
+fn entity_kind(
+    molecule: &MoleculeInstance,
+    definition: &MoleculeDefinition,
+) -> Result<EntityKind, MmcifWriteError> {
     for role in [MoleculeRole::Ligand, MoleculeRole::Cofactor] {
         if molecule.has_role(role) {
             return Err(MmcifWriteError::UnsupportedMoleculeRole {
@@ -364,8 +389,8 @@ fn entity_kind(molecule: &MoleculeInstance) -> Result<EntityKind, MmcifWriteErro
             });
         }
     }
-    let inferred_ion = molecule.graph().atom_count() == 1
-        && molecule
+    let inferred_ion = definition.graph().atom_count() == 1
+        && definition
             .graph()
             .atoms()
             .next()
@@ -394,18 +419,21 @@ fn entity_kind(molecule: &MoleculeInstance) -> Result<EntityKind, MmcifWriteErro
         Some(MoleculeRole::NonPolymer) => EntityKind::NonPolymer,
         Some(MoleculeRole::Solvent) => EntityKind::Water,
         Some(_) => unreachable!("primary roles are exhaustive"),
-        None if molecule.macro_molecule().is_some() => EntityKind::Polymer,
+        None if definition.macro_molecule().is_some() => EntityKind::Polymer,
         None => EntityKind::NonPolymer,
     };
     let macro_kind = matches!(kind, EntityKind::Polymer | EntityKind::Branched);
-    if macro_kind != molecule.macro_molecule().is_some() {
+    if macro_kind != definition.macro_molecule().is_some() {
         return Err(MmcifWriteError::EntityRolePayloadMismatch(molecule.id()));
     }
     Ok(kind)
 }
 
-fn validate_graph_chemistry(molecule: &MoleculeInstance) -> Result<(), MmcifWriteError> {
-    let graph = molecule.graph();
+fn validate_graph_chemistry(
+    molecule: &MoleculeInstance,
+    definition: &MoleculeDefinition,
+) -> Result<(), MmcifWriteError> {
+    let graph = definition.graph();
     if graph.stereo_elements().next().is_some()
         || graph.stereo_groups().next().is_some()
         || graph.stereo_bond_marks().next().is_some()
@@ -458,6 +486,7 @@ fn validate_graph_chemistry(molecule: &MoleculeInstance) -> Result<(), MmcifWrit
 fn collect_macro_rows(
     model: &Model,
     molecule: &MoleculeInstance,
+    definition: &MoleculeDefinition,
     hierarchy: &SmcraHierarchy,
     entity_id: &str,
     kind: EntityKind,
@@ -465,20 +494,13 @@ fn collect_macro_rows(
     asym_seen: &mut BTreeSet<String>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), MmcifWriteError> {
-    molecule
+    definition
         .macro_molecule()
         .expect("hierarchy implies macro molecule")
         .validate_with_options(MacroValidateOptions {
             validate_coordinates: false,
         })
         .map_err(|error| invalid_hierarchy(molecule, error.to_string()))?;
-    if hierarchy.models().count() != 1 {
-        return Err(invalid_hierarchy(
-            molecule,
-            "foundational mmCIF writing requires exactly one hierarchy model",
-        ));
-    }
-
     let mut sites = BTreeMap::<AtomId, &SmcraAtomSite>::new();
     for (_, site) in hierarchy.atom_sites() {
         if sites.insert(site.atom, site).is_some() {
@@ -496,7 +518,7 @@ fn collect_macro_rows(
         }
     }
 
-    for (atom_id, atom) in molecule.graph().atoms() {
+    for (atom_id, atom) in definition.graph().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let site = sites
             .get(&atom_id)
@@ -539,9 +561,10 @@ fn collect_macro_rows(
                 field: "type_symbol",
             });
         }
+        let observation = atom_observation(model, qualified);
         let group_pdb = normalized_group_pdb(
             qualified,
-            site.metadata.group_pdb.as_deref(),
+            observation.and_then(AtomObservation::group_pdb),
             kind.default_group_pdb(),
         )?;
         let label_atom_id = site
@@ -562,7 +585,9 @@ fn collect_macro_rows(
             group_pdb,
             type_symbol: atom.element.symbol().to_owned(),
             label_atom_id: label_atom_id.clone(),
-            label_alt_id: site.metadata.label_alt_id.clone(),
+            label_alt_id: observation
+                .and_then(AtomObservation::alternate_location)
+                .map(str::to_owned),
             label_comp_id: label_comp_id.clone(),
             label_seq_id: residue.label_seq_id,
             insertion_code: residue.insertion_code.clone(),
@@ -571,8 +596,8 @@ fn collect_macro_rows(
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
                 .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
-            occupancy: site.metadata.occupancy,
-            b_factor: site.metadata.b_factor,
+            occupancy: observation.and_then(AtomObservation::occupancy),
+            b_factor: observation.and_then(AtomObservation::b_factor),
             formal_charge: atom.formal_charge,
             auth_seq_id: residue
                 .author_seq_id
@@ -594,6 +619,7 @@ fn collect_macro_rows(
 fn collect_small_rows(
     model: &Model,
     molecule: &MoleculeInstance,
+    definition: &MoleculeDefinition,
     entity_id: &str,
     asym_id: &str,
     kind: EntityKind,
@@ -604,17 +630,24 @@ fn collect_small_rows(
     } else {
         "MOL"
     };
-    for (atom_id, atom) in molecule.graph().atoms() {
+    for (atom_id, atom) in definition.graph().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let atom_name = generated_atom_name(atom.element.symbol(), atom_id);
+        let observation = atom_observation(model, qualified);
         rows.push(AtomRow {
             atom: qualified,
             entity_id: entity_id.to_owned(),
             asym_id: asym_id.to_owned(),
-            group_pdb: kind.default_group_pdb().to_owned(),
+            group_pdb: normalized_group_pdb(
+                qualified,
+                observation.and_then(AtomObservation::group_pdb),
+                kind.default_group_pdb(),
+            )?,
             type_symbol: atom.element.symbol().to_owned(),
             label_atom_id: atom_name.clone(),
-            label_alt_id: None,
+            label_alt_id: observation
+                .and_then(AtomObservation::alternate_location)
+                .map(str::to_owned),
             label_comp_id: component_id.to_owned(),
             label_seq_id: None,
             insertion_code: None,
@@ -623,8 +656,8 @@ fn collect_small_rows(
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
                 .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
-            occupancy: None,
-            b_factor: None,
+            occupancy: observation.and_then(AtomObservation::occupancy),
+            b_factor: observation.and_then(AtomObservation::b_factor),
             formal_charge: atom.formal_charge,
             auth_seq_id: None,
             auth_comp_id: component_id.to_owned(),
@@ -633,6 +666,12 @@ fn collect_small_rows(
         });
     }
     Ok(())
+}
+
+fn atom_observation(model: &Model, atom: InstanceAtomId) -> Option<&AtomObservation> {
+    model
+        .observation()
+        .and_then(|observation| observation.atom(model.topology(), atom).ok())
 }
 
 fn normalized_group_pdb(
@@ -654,7 +693,11 @@ fn normalized_group_pdb(
 }
 
 fn generated_atom_name(symbol: &str, atom: AtomId) -> String {
-    format!("{symbol}{}", atom.raw() + 1)
+    format!("{symbol}{}", one_based_serial(atom.raw()))
+}
+
+fn one_based_serial(raw: u32) -> u64 {
+    u64::from(raw) + 1
 }
 
 fn supported_bond_order(
@@ -729,7 +772,7 @@ fn validate_instance_boundaries(
         .iter()
         .map(|row| (row.atom, row))
         .collect::<BTreeMap<_, _>>();
-    for (molecule_id, molecule) in model.topology().molecules() {
+    for (molecule_id, molecule) in model.topology().instances() {
         let asym_ids = atoms
             .iter()
             .filter(|row| row.atom.molecule() == molecule_id)
@@ -841,12 +884,12 @@ fn render_model(
         "_atom_site.pdbx_PDB_model_num",
     ];
     write_loop_header(&mut output, ATOM_TAGS);
-    for (index, atom) in model.atoms.iter().enumerate() {
+    for (serial, atom) in (1u64..).zip(model.atoms.iter()) {
         write_row(
             &mut output,
             vec![
                 atom.group_pdb.clone(),
-                (index + 1).to_string(),
+                serial.to_string(),
                 cif_value(&atom.type_symbol, "_atom_site.type_symbol")?,
                 cif_value(&atom.label_atom_id, "_atom_site.label_atom_id")?,
                 optional_cif_value(atom.label_alt_id.as_deref(), "_atom_site.label_alt_id")?,
@@ -895,13 +938,13 @@ fn render_model(
             "_struct_conn.pdbx_value_order",
         ];
         write_loop_header(&mut output, CONNECTION_TAGS);
-        for (index, connection) in model.connections.iter().enumerate() {
+        for (serial, connection) in (1u64..).zip(model.connections.iter()) {
             let left = &model.atoms[indexes[&connection.left]];
             let right = &model.atoms[indexes[&connection.right]];
             write_row(
                 &mut output,
                 vec![
-                    format!("conn{}", index + 1),
+                    format!("conn{serial}"),
                     "covale".to_owned(),
                     cif_value(&left.asym_id, "_struct_conn.ptnr1_label_asym_id")?,
                     cif_value(&left.label_comp_id, "_struct_conn.ptnr1_label_comp_id")?,
@@ -990,5 +1033,16 @@ fn bond_order_code(order: BondOrder) -> &'static str {
         BondOrder::Zero | BondOrder::Aromatic | BondOrder::Dative => {
             unreachable!("unsupported bond order was rejected")
         }
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::one_based_serial;
+
+    #[test]
+    fn one_based_serials_widen_before_incrementing() {
+        assert_eq!(one_based_serial(0), 1);
+        assert_eq!(one_based_serial(u32::MAX), u64::from(u32::MAX) + 1);
     }
 }

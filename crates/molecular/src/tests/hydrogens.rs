@@ -240,25 +240,27 @@ fn added_hydrogens_have_explicitly_missing_conformer_positions() {
 #[test]
 fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
     let mut graph = Molecule::new();
-    let first_carbon = graph.add_atom(carbon());
+    let first_carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
 
     let mut isotope = element_atom("H");
     isotope.isotope = Some(2);
-    let isotope = graph.add_atom(isotope);
+    let isotope = graph.add_atom(isotope).expect("atom identifier capacity");
     graph
         .add_bond(first_carbon, isotope, BondOrder::Single)
         .expect("isotope bond");
 
-    let second_carbon = graph.add_atom(carbon());
+    let second_carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
     let mut mapped = element_atom("H");
     mapped.atom_map = Some(7);
-    let mapped = graph.add_atom(mapped);
+    let mapped = graph.add_atom(mapped).expect("atom identifier capacity");
     graph
         .add_bond(second_carbon, mapped, BondOrder::Single)
         .expect("mapped bond");
 
-    let third_carbon = graph.add_atom(carbon());
-    let property_hydrogen = graph.add_atom(element_atom("H"));
+    let third_carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
+    let property_hydrogen = graph
+        .add_atom(element_atom("H"))
+        .expect("atom identifier capacity");
     graph
         .atom_mut(property_hydrogen)
         .expect("property hydrogen")
@@ -293,8 +295,10 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
     let mut parent = carbon();
     parent.explicit_hydrogens = u8::MAX;
     parent.no_implicit_hydrogens = true;
-    let parent = graph.add_atom(parent);
-    let hydrogen = graph.add_atom(element_atom("H"));
+    let parent = graph.add_atom(parent).expect("atom identifier capacity");
+    let hydrogen = graph
+        .add_atom(element_atom("H"))
+        .expect("atom identifier capacity");
     graph
         .add_bond(parent, hydrogen, BondOrder::Single)
         .expect("hydrogen bond");
@@ -315,24 +319,32 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
 #[test]
 fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
     let mut graph = Molecule::new();
-    let left = graph.add_atom(carbon());
-    let right = graph.add_atom(carbon());
+    let left = graph.add_atom(carbon()).expect("atom identifier capacity");
+    let right = graph.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = graph
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
-    let hydrogen = graph.add_atom(element_atom("H"));
+    let hydrogen = graph
+        .add_atom(element_atom("H"))
+        .expect("atom identifier capacity");
     graph
         .add_bond(left, hydrogen, BondOrder::Single)
         .expect("hydrogen bond");
-    let fluorine = graph.add_atom(element_atom("F"));
+    let fluorine = graph
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
     graph
         .add_bond(left, fluorine, BondOrder::Single)
         .expect("fluorine bond");
-    let chlorine = graph.add_atom(element_atom("Cl"));
+    let chlorine = graph
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
     graph
         .add_bond(right, chlorine, BondOrder::Single)
         .expect("chlorine bond");
-    let bromine = graph.add_atom(element_atom("Br"));
+    let bromine = graph
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
     graph
         .add_bond(right, bromine, BondOrder::Single)
         .expect("bromine bond");
@@ -375,8 +387,10 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
 #[test]
 fn remove_hydrogens_retains_source_marked_bonds() {
     let mut graph = Molecule::new();
-    let parent = graph.add_atom(carbon());
-    let hydrogen = graph.add_atom(element_atom("H"));
+    let parent = graph.add_atom(carbon()).expect("atom identifier capacity");
+    let hydrogen = graph
+        .add_atom(element_atom("H"))
+        .expect("atom identifier capacity");
     let bond = graph
         .add_bond(parent, hydrogen, BondOrder::Single)
         .expect("hydrogen bond");

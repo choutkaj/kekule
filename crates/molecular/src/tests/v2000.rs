@@ -595,8 +595,14 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
     }
 
     let mut molecule = SmallMolecule::default();
-    let a = molecule.graph_mut().add_atom(carbon());
-    let b = molecule.graph_mut().add_atom(carbon());
+    let a = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let b = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let bond = molecule
         .graph_mut()
         .add_bond(a, b, BondOrder::Double)
@@ -748,7 +754,10 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         atom.isotope = Some(13 + index as u16);
         atom.radical = Some(AtomRadical::Doublet);
         atom.atom_map = Some(index + 1);
-        let atom_id = molecule.graph_mut().add_atom(atom);
+        let atom_id = molecule
+            .graph_mut()
+            .add_atom(atom)
+            .expect("atom identifier capacity");
         conformer
             .set_position(
                 atom_id,

@@ -1228,7 +1228,10 @@ mod tests {
     fn inconsistent_ring_membership_returns_structured_coverage_error() {
         let mut mol = Molecule::new();
         let atoms = (0..2)
-            .map(|_| mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon"))))
+            .map(|_| {
+                mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
+                    .expect("atom identifier capacity")
+            })
             .collect::<Vec<_>>();
         let bond = mol
             .add_bond(atoms[0], atoms[1], BondOrder::Single)

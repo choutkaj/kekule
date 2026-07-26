@@ -11,7 +11,11 @@
   <a href="https://github.com/choutkaj/molecular/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-`molecular` is an experimental pure-Rust chemistry backend scoped for both small molecules and macromolecules. The capabilities are bundled into features, which are parity-checked against established codebases - RDKit for small molecules and Biopython for macromolecules. This project is human-architected and AI-coded.
+`molecular` is an experimental pure-Rust chemistry backend scoped for both
+small molecules and macromolecules. Capabilities are tracked in canonical
+feature contracts; optional external-reference benchmarks use tools such as
+RDKit, Biopython, and DSSP without making them runtime dependencies or release
+gates. This project is human-architected and AI-coded.
 
 For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/molecular/).
 
@@ -21,19 +25,31 @@ For feature overview and parity checks, see the [feature dashboard](https://chou
 
 ## Concept
 
-The concept of this project is centered on molecules, which serve as a the most important unit of chemical information. The `Molecule` type is the foundational molecular graph of user-asserted molecular entity. It is usually a fully connected molecular graph of a single covalent structure, although disconnected graphs are allowed (for example for salts or complexes). `SmallMolecule` wraps one `Molecule` with ordinary cheminformatic workflows, while `MacroMolecule` pairs one `Molecule` with an `SmcraHierarchy` for biomolecular labels and structure work.
+The `Molecule` type is the raw graph kernel for one user-asserted molecular
+entity. It is usually connected, although disconnected graphs are allowed for
+salts and complexes. `SmallMolecule` adds ordinary cheminformatics workflows;
+`MacroMolecule` pairs a graph with a coordinate-independent `SmcraHierarchy`.
 
-`Model` is an actual physical model of one or more instances of `SmallMolecule` and/or `MacroMolecule`. It holds an immutable topology and mutable atomic positions. The molecules in `Model` are not flattened into a disorganized bucket of atoms; instead, molecule instances are tracked and can be recognized and deciphered throughout any modeling work. It is the foundational type for molecular modeling. 
+System structure is represented separately by `Topology`: an immutable,
+coordinate-free collection of reusable molecule definitions and explicit
+molecule instances. Qualified atom/bond IDs retain chemical meaning, while
+topology-owned dense indices define the array order used by coordinates and
+gradients. Exact topology identity controls compatibility.
+`Topology::same_layout` compares complete static layout, including semantic
+identifiers and dense order; general order-independent structural equivalence
+and isomorphism mapping are planned future capabilities.
 
+`Model`, `Ensemble`, and `Trajectory` reuse that structure:
 
 ```text
-Molecule (raw chemical graph)
- ├ SmallMolecule (graph + parameters -> small-molecule cheminformatics)
- ├ MacroMolecule (graph + SMCRA Hierarchy -> macromolecular cheminformatics)   
- │
- └─> Model (immutable topology, mutable positions)
-     │
-     └─> Optimization ──> Model (with optimized positions)
+Molecule
+|- SmallMolecule
+`- MacroMolecule + SmcraHierarchy
+
+Topology = reusable definitions + explicit instances + dense ordering
+|- Model      = Topology + one Configuration
+|- Ensemble   = Topology + finite non-temporal members
+`- Trajectory = Topology + ordered frames / reusable streaming buffers
 ```
 
 ## Basic Usage
@@ -75,11 +91,12 @@ Load a ligand from SDF, minimize its coordinates with the DREIDING force field, 
 use std::{error::Error, fs};
 
 use molecular::{
-    modeling::{minimize, MinimizeOptions, Model},
+    modeling::{minimize, MinimizeOptions},
     sdf::{self, SdfParseOptions, SdfRecord},
+    structure::Model,
     units::MODEL_GRADIENT_UNIT,
 };
-use molecular_dreiding::DreidingPotential;
+use molecular_dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and interpret one SDF record without silently sanitizing it.
@@ -111,7 +128,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let model = builder.build()?;
 
     // Prepare DREIDING explicitly, then minimize a clone of the model.
-    let mut potential = DreidingPotential::prepare(&model)?;
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )?;
     let minimized = minimize(
         &model,
         &mut potential,

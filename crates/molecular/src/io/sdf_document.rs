@@ -366,10 +366,10 @@ pub fn interpret_sdf_document(
 ) -> Result<SdfInterpretation, SdfInterpretError> {
     let mut records = Vec::with_capacity(document.records.len());
     let mut reports = Vec::with_capacity(document.records.len());
-    for (index, record) in document.records.iter().enumerate() {
+    for (record_number, record) in (1usize..).zip(document.records.iter()) {
         let interpretation =
             interpret_molfile_document(&record.molfile).map_err(|error| SdfInterpretError {
-                record: index + 1,
+                record: record_number,
                 line: record.source_start_line + error.line.saturating_sub(1),
                 message: error.message,
             })?;
@@ -380,7 +380,7 @@ pub fn interpret_sdf_document(
             record.data_fields.clone(),
         ));
         reports.push(SdfRecordInterpretationReport {
-            record: index + 1,
+            record: record_number,
             source_start_line: record.source_start_line,
             molfile,
         });

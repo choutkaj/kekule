@@ -1,6 +1,7 @@
 use crate::bio::*;
 use crate::chemistry::{SanitizeError, SanitizeOptions};
 use crate::core::*;
+use crate::geometry::Point3;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
     stereo as stereo_api, stereo::*, valence as valence_api, valence::*,
@@ -83,12 +84,24 @@ pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
 
 pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondId) {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(aromatic_carbon_no_hydrogens());
-    let right = mol.add_atom(aromatic_carbon_no_hydrogens());
-    let left_reference = mol.add_atom(element_atom("Br"));
-    let left_other = mol.add_atom(element_atom("F"));
-    let right_reference = mol.add_atom(element_atom("Cl"));
-    let right_other = mol.add_atom(element_atom("F"));
+    let left = mol
+        .add_atom(aromatic_carbon_no_hydrogens())
+        .expect("atom identifier capacity");
+    let right = mol
+        .add_atom(aromatic_carbon_no_hydrogens())
+        .expect("atom identifier capacity");
+    let left_reference = mol
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
+    let left_other = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let right_reference = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let right_other = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
     let axis = mol.add_bond(left, right, BondOrder::Single).expect("axis");
     mol.add_bond(left, left_reference, BondOrder::Single)
         .expect("left reference");
@@ -170,6 +183,7 @@ pub(super) fn ring_molecule(
             mol.add_atom(Atom::new(
                 Element::from_symbol(symbol).expect("test element should be available"),
             ))
+            .expect("atom identifier capacity")
         })
         .collect::<Vec<_>>();
     let mut bonds = Vec::new();

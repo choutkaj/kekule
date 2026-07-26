@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::bio::SmcraResidueId;
-use crate::modeling::{Model, MoleculeInstanceId};
+use crate::structure::{Model, ModelView};
+use crate::topology::MoleculeInstanceId;
 
 mod kernel;
 
@@ -16,8 +17,13 @@ mod kernel;
 ///
 /// The returned value is a snapshot. Updating the model coordinates does not
 /// update an existing result; callers must run assignment again explicitly.
-pub fn assign(model: &Model, options: DsspOptions) -> Result<DsspResult, DsspError> {
+pub fn assign(model: ModelView<'_>, options: DsspOptions) -> Result<DsspResult, DsspError> {
     kernel::assign(model, options)
+}
+
+/// Convenience wrapper for assigning one owned model.
+pub fn assign_model(model: &Model, options: DsspOptions) -> Result<DsspResult, DsspError> {
+    assign(model.view(), options)
 }
 
 /// DSSP 4 summary assignment.

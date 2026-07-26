@@ -20,6 +20,8 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 ## Implementation Notes
 
 - Atom and bond output follows current graph insertion order.
+- Generated one-based atom and bond serials use `u64` ranges and never narrow
+  a graph collection index.
 - Compatible conformer length quantities are converted to angstroms; missing
   coordinates write as zero coordinates.
 - Supported bond orders match the parser subset: zero, single, double, triple, aromatic, and dative.
@@ -65,3 +67,5 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
   target to CI and scheduled campaigns.
 - v12: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v14: Generate V3000 atom and bond serials directly in `u64` so one-based
+  formatting cannot overflow fixed-width graph identifiers.

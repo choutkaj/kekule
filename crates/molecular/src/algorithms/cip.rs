@@ -2555,13 +2555,16 @@ fn apply_mancude_neighbor_averages(
     for part in resonance_parts {
         let mut numerator = 0u32;
         let mut denominator = 0u32;
-        for (index, fraction) in fractions.iter_mut().enumerate().take(mol.atoms.len()) {
-            if parts.get(index).copied() != Some(part) {
+        for (raw, fraction) in (0..=u32::MAX)
+            .zip(fractions.iter_mut())
+            .take(mol.atoms.len())
+        {
+            let atom_id = AtomId::new(raw);
+            if parts.get(atom_id.index()).copied() != Some(part) {
                 continue;
             }
             *fraction = AtomicNumberFraction::new(numerator, denominator);
             denominator += 1;
-            let atom_id = AtomId::new(index as u32);
             if let Ok(incident) = mol.incident_bonds(atom_id) {
                 for (bond_id, bond) in incident {
                     let neighbor = bond.other_atom(atom_id);
@@ -2714,7 +2717,7 @@ fn bond_order_duplicate_count(order: u8) -> usize {
 }
 
 fn ring_duplicate_priority(reference_depth: usize) -> u32 {
-    let depth = reference_depth.min(u32::MAX as usize) as u32;
+    let depth = u32::try_from(reference_depth).unwrap_or(u32::MAX);
     u32::MAX.saturating_sub(depth)
 }
 
@@ -3728,7 +3731,7 @@ mod tests {
         let mut mol = Molecule::new();
         let mut isotope = Atom::new(Element::from_symbol("C").expect("carbon"));
         isotope.isotope = Some(13);
-        let atom = mol.add_atom(isotope);
+        let atom = mol.add_atom(isotope).expect("atom identifier capacity");
 
         let normal = LigandNode::Atom {
             atom,
@@ -3759,7 +3762,7 @@ mod tests {
                 let symbol = if index == 3 { "N" } else { "C" };
                 let mut atom = Atom::new(Element::from_symbol(symbol).expect("element"));
                 atom.implicit_hydrogens = Some(if index == 3 { 0 } else { 1 });
-                mol.add_atom(atom)
+                mol.add_atom(atom).expect("atom identifier capacity")
             })
             .collect::<Vec<_>>();
         for (left, right, order) in [
@@ -3848,9 +3851,15 @@ mod tests {
     #[test]
     fn higher_order_bond_expansion_creates_terminal_duplicate_nodes() {
         let mut mol = Molecule::new();
-        let root = mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")));
-        let carbon = mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")));
-        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("oxygen")));
+        let root = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
+            .expect("atom identifier capacity");
+        let carbon = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
+            .expect("atom identifier capacity");
+        let oxygen = mol
+            .add_atom(Atom::new(Element::from_symbol("O").expect("oxygen")))
+            .expect("atom identifier capacity");
         mol.add_bond(root, carbon, BondOrder::Single)
             .expect("root bond");
         mol.add_bond(carbon, oxygen, BondOrder::Double)
@@ -3897,7 +3906,7 @@ mod tests {
                 if index == 2 {
                     atom.formal_charge = -1;
                 }
-                mol.add_atom(atom)
+                mol.add_atom(atom).expect("atom identifier capacity")
             })
             .collect::<Vec<_>>();
         for (left, right, order) in [

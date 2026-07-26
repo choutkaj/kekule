@@ -1,10 +1,10 @@
 use std::fmt;
 
-use crate::core::Point3;
+use crate::geometry::{Point3, Vector3};
+use crate::structure::{Model, PositionError};
 use crate::units::{Quantity, UnitError, MODEL_GRADIENT_UNIT, MODEL_LENGTH_UNIT};
 
-use super::potential::{Potential, PotentialError, PotentialEvaluation, Vector3};
-use super::{Model, PositionError};
+use super::potential::{Potential, PotentialError, PotentialEvaluation};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Controls normalized steepest descent with Armijo backtracking.
@@ -71,7 +71,7 @@ pub fn minimize(
 ) -> Result<MinimizationResult, MinimizationError> {
     let validated = validate_options(options)?;
     let mut working = model.clone();
-    let mut evaluation = potential.evaluate(&working)?;
+    let mut evaluation = potential.evaluate(working.view())?;
     let initial_energy = evaluation.energy();
     let mut evaluations = 1;
     let mut iterations = 0;
@@ -131,7 +131,7 @@ pub fn minimize(
             }
             let trial_positions = displaced_positions(&current_positions, &direction, step);
             working.set_positions(Quantity::new(trial_positions, MODEL_LENGTH_UNIT))?;
-            let trial_result = potential.evaluate(&working);
+            let trial_result = potential.evaluate(working.view());
             evaluations += 1;
             let trial = match trial_result {
                 Ok(trial) => trial,

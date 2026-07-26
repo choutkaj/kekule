@@ -8,10 +8,10 @@ license.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "DREIDING force-field adapter for molecular Model values."
+description = "DREIDING force-field adapter for molecular topology-bound structural views."
 publish = true
 
 [dependencies]
 dreid-forge = { version = "=0.4.2", default-features = false }
 dreid-kernel = { version = "=0.4.2" }
-molecular = { version = "0.1.0", path = "../molecular" }
+molecular = { version = "0.2.0", path = "../molecular" }

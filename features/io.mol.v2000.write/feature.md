@@ -20,6 +20,9 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 ## Implementation Notes
 
 - Writer preserves current graph iteration order.
+- Writer-generated one-based atom serials use `u64`; endpoint and `M` record
+  formatting never increments a fixed-width public ID or narrows a collection
+  index.
 - Writes neutral generated header lines; parsed record headers are owned by
   `MolfileDocument`/`SdfRecord`, not `Molecule::props`.
 - Unsupported bond-order and source-mark combinations are rejected rather than silently downgraded.
@@ -62,3 +65,5 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
 - v10: Convert explicit conformer length units to the CTfile angstrom convention.
 - v11: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v12: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v13: Generate one-based atom, endpoint, and property-record serials in `u64`
+  after the existing 999-record representability check.

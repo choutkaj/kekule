@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 19
+version = 22
 status = "supported"
-description = "Expose the release facade with focused modules, checked lifecycles, ergonomic graph queries, and model coordinate export."
+description = "Expose the 0.2 release facade with focused topology, structure, trajectory, modeling, chemistry, and format modules."
 depends_on = [
   "core.units",
   "core.graph",
@@ -29,7 +29,10 @@ depends_on = [
   "io.sdf.v2000.parse",
   "io.sdf.v2000.write",
   "algo.canonical-ranking",
+  "model.topology",
   "model.system",
+  "model.ensemble",
+  "model.trajectory",
   "model.potential",
   "algo.geometry-minimization",
 ]
