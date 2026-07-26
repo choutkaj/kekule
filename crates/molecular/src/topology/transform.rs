@@ -4,13 +4,12 @@
 //! do not split molecules, infer correspondence, or transfer coordinate state
 //! implicitly.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use super::{
-    InstanceAtomId, InstanceBondId, MoleculeDefinitionId, MoleculeDefinitionPayload,
-    MoleculeInstanceId, SelectionError, Topology, TopologyBuildError, TopologyBuilder,
-    TopologyEditResult, TopologyMapping, TopologyMappingError,
+    InstanceAtomId, InstanceBondId, MoleculeDefinitionPayload, MoleculeInstanceId, SelectionError,
+    Topology, TopologyBuildError, TopologyBuilder, TopologyEditResult, TopologyMapping,
+    TopologyMappingError,
 };
 
 /// Retains complete molecule instances in source topology order.
@@ -63,53 +62,80 @@ pub fn remove_instances(
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<TopologyEditResult, TopologyTransformError> {
     let removed = validate_instances(topology, instances)?;
-    let retained = topology
-        .instances()
-        .map(|(id, _)| id)
-        .filter(|id| !removed.contains(id))
-        .collect::<BTreeSet<_>>();
+    let retained = InstanceMembership {
+        members: removed
+            .members
+            .into_iter()
+            .map(|removed| !removed)
+            .collect(),
+        len: topology.instance_count() - removed.len,
+    };
     retain_normalized(topology, &retained)
+}
+
+struct InstanceMembership {
+    members: Vec<bool>,
+    len: usize,
+}
+
+impl InstanceMembership {
+    fn contains(&self, instance: MoleculeInstanceId) -> bool {
+        self.members[instance.index()]
+    }
 }
 
 fn validate_instances(
     topology: &Topology,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
-) -> Result<BTreeSet<MoleculeInstanceId>, TopologyTransformError> {
-    let instances = instances.into_iter().collect::<BTreeSet<_>>();
-    for instance in &instances {
-        if topology.instance(*instance).is_err() {
-            return Err(TopologyTransformError::InvalidSourceInstance(*instance));
+) -> Result<InstanceMembership, TopologyTransformError> {
+    let mut normalized = InstanceMembership {
+        members: vec![false; topology.instance_count()],
+        len: 0,
+    };
+    for instance in instances {
+        if topology.instance(instance).is_err() {
+            return Err(TopologyTransformError::InvalidSourceInstance(instance));
+        }
+        if !normalized.members[instance.index()] {
+            normalized.members[instance.index()] = true;
+            normalized.len += 1;
         }
     }
-    Ok(instances)
+    Ok(normalized)
 }
 
 fn retain_normalized(
     topology: &Topology,
-    retained: &BTreeSet<MoleculeInstanceId>,
+    retained: &InstanceMembership,
 ) -> Result<TopologyEditResult, TopologyTransformError> {
-    if retained.is_empty() {
+    if retained.len == 0 {
         return Err(TopologyTransformError::EmptyTargetTopology);
     }
-    if retained.len() == topology.instance_count() {
+    if retained.len == topology.instance_count() {
         let mapping = TopologyMapping::between_identical_layouts(topology, topology)?;
         return Ok(TopologyEditResult::new(topology.clone(), mapping)?);
     }
 
-    let referenced_definitions = topology
-        .instances()
-        .filter(|(id, _)| retained.contains(id))
-        .map(|(_, instance)| instance.definition())
-        .collect::<BTreeSet<_>>();
+    let mut referenced_definitions = vec![false; topology.definition_count()];
+    for (instance_id, instance) in topology.instances() {
+        if retained.contains(instance_id) {
+            referenced_definitions[instance.definition().index()] = true;
+        }
+    }
+    let retained_definition_count = referenced_definitions
+        .iter()
+        .filter(|referenced| **referenced)
+        .count();
 
     let mut builder = TopologyBuilder::new();
-    builder.reserve_definitions(referenced_definitions.len())?;
-    builder.reserve_instances(retained.len())?;
+    builder.reserve_definitions(retained_definition_count)?;
+    builder.reserve_instances(retained.len)?;
 
-    let mut definitions = BTreeMap::<MoleculeDefinitionId, MoleculeDefinitionId>::new();
+    let mut definition_targets = vec![None; topology.definition_count()];
+    let mut definitions = Vec::with_capacity(retained_definition_count);
     for (source_id, definition) in topology
         .definitions()
-        .filter(|(id, _)| referenced_definitions.contains(id))
+        .filter(|(id, _)| referenced_definitions[id.index()])
     {
         let target_id = match definition.payload() {
             MoleculeDefinitionPayload::Small(molecule) => {
@@ -119,12 +145,17 @@ fn retain_normalized(
                 builder.add_macro_molecule_definition(molecule)?
             }
         };
-        definitions.insert(source_id, target_id);
+        definition_targets[source_id.index()] = Some(target_id);
+        definitions.push((source_id, target_id));
     }
 
-    let mut instances = Vec::with_capacity(retained.len());
-    for (source_id, instance) in topology.instances().filter(|(id, _)| retained.contains(id)) {
-        let target_definition = definitions[&instance.definition()];
+    let mut instances = Vec::with_capacity(retained.len);
+    for (source_id, instance) in topology
+        .instances()
+        .filter(|(id, _)| retained.contains(*id))
+    {
+        let target_definition = definition_targets[instance.definition().index()]
+            .expect("retained instance has a retained definition");
         let target_id = builder.add_instance(target_definition, instance.metadata().clone())?;
         instances.push((source_id, target_id));
     }

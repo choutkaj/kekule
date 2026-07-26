@@ -6,10 +6,11 @@ use std::fmt;
 use crate::core::PropMap;
 use crate::geometry::{Point3, Vector3};
 use crate::structure::{
-    Configuration, ConfigurationView, ModelError, ModelView, ObservationError, PositionError,
-    Positions, StructureObservation,
+    remap_dense_values, validate_state_mapping, Configuration, ConfigurationView, ModelError,
+    ModelView, ObservationError, PositionError, Positions, StructureObservation,
+    TopologyRemapError,
 };
-use crate::topology::{InstanceAtomId, Topology, TopologyIdentity};
+use crate::topology::{InstanceAtomId, Topology, TopologyIdentity, TopologyMapping};
 use crate::units::{
     Quantity, Unit, UnitError, MODEL_FORCE_UNIT, MODEL_TIME_UNIT, MODEL_VELOCITY_UNIT,
 };
@@ -98,6 +99,35 @@ impl TopologyVectors {
             *destination = Vector3::new(source.x * factor, source.y * factor, source.z * factor);
         }
         Ok(())
+    }
+
+    fn remap_to(
+        &self,
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TrajectoryRemapError> {
+        if !self.is_compatible(source) {
+            return Err(TrajectoryRemapError::SourceFrameTopologyMismatch);
+        }
+        Ok(Self {
+            topology: target.identity(),
+            values: remap_dense_values(&self.values, source, target, mapping)?,
+            unit: self.unit,
+        })
+    }
+
+    fn copy_remapped_from_validated(
+        &mut self,
+        source: Quantity<&[Vector3]>,
+        mapping: &TopologyMapping,
+        factor: f64,
+    ) {
+        for (source_index, target_index) in mapping.atom_index_pairs() {
+            let vector = source.value()[source_index.index()];
+            self.values[target_index.index()] =
+                Vector3::new(vector.x * factor, vector.y * factor, vector.z * factor);
+        }
     }
 }
 
@@ -285,6 +315,43 @@ impl TrajectoryFrame {
             step: self.step,
             observation: self.observation.as_ref(),
             props: &self.props,
+        })
+    }
+
+    /// Remaps this owned frame to an explicitly related target topology.
+    pub fn remap_to(
+        &self,
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TrajectoryRemapError> {
+        if self.validate(source).is_err() {
+            return Err(TrajectoryRemapError::SourceFrameTopologyMismatch);
+        }
+        let configuration = self.configuration.remap_to(source, target, mapping)?;
+        let velocities = self
+            .velocities
+            .as_ref()
+            .map(|values| values.0.remap_to(source, target, mapping).map(Velocities))
+            .transpose()?;
+        let forces = self
+            .forces
+            .as_ref()
+            .map(|values| values.0.remap_to(source, target, mapping).map(Forces))
+            .transpose()?;
+        let observation = self
+            .observation
+            .as_ref()
+            .map(|observation| observation.remap_to(source, target, mapping))
+            .transpose()?;
+        Ok(Self {
+            configuration,
+            velocities,
+            forces,
+            time: self.time,
+            step: self.step,
+            observation,
+            props: self.props.clone(),
         })
     }
 }
@@ -506,6 +573,95 @@ impl FrameBuffer {
         self.props = frame.props.clone();
         Ok(())
     }
+
+    /// Copies a borrowed source frame through explicit topology lineage.
+    ///
+    /// All fallible validation and metadata staging completes before
+    /// destination-visible state changes. Position, velocity, and force
+    /// allocations owned by this buffer are reused.
+    pub fn copy_remapped_from(
+        &mut self,
+        frame: TrajectoryFrameView<'_>,
+        mapping: &TopologyMapping,
+    ) -> Result<(), TrajectoryRemapError> {
+        if !mapping.is_target(&self.topology) {
+            return Err(TrajectoryRemapError::IncompatibleDestinationBuffer);
+        }
+        if !frame
+            .configuration
+            .positions()
+            .is_compatible(frame.topology)
+            || frame
+                .observation
+                .is_some_and(|observation| !observation.is_compatible(frame.topology))
+        {
+            return Err(TrajectoryRemapError::SourceFrameTopologyMismatch);
+        }
+        validate_state_mapping(frame.topology, &self.topology, mapping)?;
+        validate_borrowed_array(frame.velocities, frame.topology)?;
+        validate_borrowed_array(frame.forces, frame.topology)?;
+
+        let velocity_factor = frame
+            .velocities
+            .map(|values| values.unit().conversion_factor_to(MODEL_VELOCITY_UNIT))
+            .transpose()?;
+        let force_factor = frame
+            .forces
+            .map(|values| values.unit().conversion_factor_to(MODEL_FORCE_UNIT))
+            .transpose()?;
+        let observation = frame
+            .observation
+            .map(|observation| observation.remap_to(frame.topology, &self.topology, mapping))
+            .transpose()?;
+        let props = frame.props.clone();
+
+        self.configuration
+            .positions_mut()
+            .copy_remapped_from_validated(frame.configuration.positions(), mapping);
+        self.configuration
+            .set_cell(frame.configuration.cell().copied());
+        match (frame.velocities, velocity_factor) {
+            (Some(values), Some(factor)) => {
+                self.velocities
+                    .0
+                    .copy_remapped_from_validated(values, mapping, factor);
+                self.has_velocities = true;
+            }
+            (None, None) => self.has_velocities = false,
+            _ => unreachable!("velocity factor is staged with its source array"),
+        }
+        match (frame.forces, force_factor) {
+            (Some(values), Some(factor)) => {
+                self.forces
+                    .0
+                    .copy_remapped_from_validated(values, mapping, factor);
+                self.has_forces = true;
+            }
+            (None, None) => self.has_forces = false,
+            _ => unreachable!("force factor is staged with its source array"),
+        }
+        self.time = frame.time;
+        self.step = frame.step;
+        self.observation = observation;
+        self.props = props;
+        Ok(())
+    }
+}
+
+fn validate_borrowed_array(
+    values: Option<Quantity<&[Vector3]>>,
+    source: &Topology,
+) -> Result<(), TrajectoryRemapError> {
+    if let Some(values) = values {
+        if values.value().len() != source.atom_count() {
+            return Err(TopologyRemapError::SourceAtomCountMismatch {
+                expected: source.atom_count(),
+                actual: values.value().len(),
+            }
+            .into());
+        }
+    }
+    Ok(())
 }
 
 /// Deliberately loaded finite in-memory trajectory.
@@ -581,6 +737,36 @@ impl Trajectory {
             previous = Some(value);
         }
         Ok(())
+    }
+
+    /// Remaps every frame to one exact target topology while preserving order
+    /// and complete frame state.
+    pub fn remap_to(
+        &self,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TrajectoryRemapError> {
+        if !mapping.is_source(&self.topology) {
+            return Err(TopologyRemapError::MappingSourceMismatch.into());
+        }
+        if !mapping.is_target(target) {
+            return Err(TopologyRemapError::MappingTargetMismatch.into());
+        }
+        let mut frames = Vec::with_capacity(self.frames.len());
+        for (frame_index, frame) in self.frames.iter().enumerate() {
+            frames.push(
+                frame
+                    .remap_to(&self.topology, target, mapping)
+                    .map_err(|error| TrajectoryRemapError::Frame {
+                        frame: frame_index,
+                        error: Box::new(error),
+                    })?,
+            );
+        }
+        Ok(Self {
+            topology: target.clone(),
+            frames,
+        })
     }
 }
 
@@ -784,6 +970,59 @@ impl TrajectoryReader for CoordinateFrameReader {
     }
 }
 
+/// Failure to remap owned or borrowed fixed-topology trajectory state.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum TrajectoryRemapError {
+    /// An owned or borrowed source frame is not bound to the supplied source.
+    SourceFrameTopologyMismatch,
+    /// A caller-owned destination buffer is not bound to the mapping target.
+    IncompatibleDestinationBuffer,
+    /// Complete topology-bound state could not be remapped.
+    Topology(TopologyRemapError),
+    /// One trajectory frame could not be remapped.
+    Frame {
+        frame: usize,
+        error: Box<TrajectoryRemapError>,
+    },
+    /// A borrowed vector array has an incompatible unit.
+    Unit(UnitError),
+}
+
+impl fmt::Display for TrajectoryRemapError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SourceFrameTopologyMismatch => {
+                formatter.write_str("source frame does not belong to the supplied topology")
+            }
+            Self::IncompatibleDestinationBuffer => {
+                formatter.write_str("destination buffer does not match the mapping target")
+            }
+            Self::Topology(error) => {
+                write!(formatter, "cannot remap topology-bound state: {error}")
+            }
+            Self::Frame { frame, error } => {
+                write!(formatter, "cannot remap trajectory frame {frame}: {error}")
+            }
+            Self::Unit(error) => write!(formatter, "cannot remap trajectory units: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for TrajectoryRemapError {}
+
+impl From<TopologyRemapError> for TrajectoryRemapError {
+    fn from(error: TopologyRemapError) -> Self {
+        Self::Topology(error)
+    }
+}
+
+impl From<UnitError> for TrajectoryRemapError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum FrameError {
@@ -915,7 +1154,7 @@ mod tests {
     use super::*;
     use crate::core::{Atom, Element, Molecule, PropValue};
     use crate::small::SmallMolecule;
-    use crate::topology::{MoleculeInstanceMetadata, TopologyBuilder};
+    use crate::topology::{transform::retain_instances, MoleculeInstanceMetadata, TopologyBuilder};
     use crate::units::{ANGSTROM, PICOSECOND};
 
     fn one_atom_topology() -> Topology {
@@ -1162,5 +1401,87 @@ mod tests {
             positions_pointer
         );
         assert_eq!(buffer.model_view().positions().value()[0].x, 7.0);
+    }
+
+    #[test]
+    fn repeated_borrowed_remaps_reuse_all_dense_buffer_allocations() {
+        let mut graph = Molecule::new();
+        graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
+        let molecule = SmallMolecule::from_graph(graph);
+        let mut builder = TopologyBuilder::new();
+        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        builder
+            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        let retained = builder
+            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        let source = builder.build().unwrap();
+        let edit = retain_instances(&source, [retained]).unwrap();
+        let positions = Positions::new(
+            &source,
+            Quantity::new(
+                vec![Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)],
+                ANGSTROM,
+            ),
+        )
+        .unwrap();
+        let mut frame = TrajectoryFrame::new(Configuration::new(positions));
+        frame
+            .set_velocities(Some(
+                Velocities::new(
+                    &source,
+                    Quantity::new(
+                        vec![Vector3::new(3.0, 0.0, 0.0), Vector3::new(4.0, 0.0, 0.0)],
+                        MODEL_VELOCITY_UNIT,
+                    ),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        frame
+            .set_forces(Some(
+                Forces::new(
+                    &source,
+                    Quantity::new(
+                        vec![Vector3::new(5.0, 0.0, 0.0), Vector3::new(6.0, 0.0, 0.0)],
+                        MODEL_FORCE_UNIT,
+                    ),
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+
+        let mut buffer = FrameBuffer::new(edit.topology().clone());
+        let view = frame.view(&source).unwrap();
+        buffer
+            .copy_remapped_from(view, edit.mapping())
+            .expect("warm-up remap");
+        let position_pointer = buffer.configuration.positions().values().value().as_ptr();
+        let velocity_pointer = buffer.velocities.0.values.as_ptr();
+        let force_pointer = buffer.forces.0.values.as_ptr();
+        let position_capacity = buffer.configuration.positions().capacity();
+        let velocity_capacity = buffer.velocities.0.values.capacity();
+        let force_capacity = buffer.forces.0.values.capacity();
+
+        for _ in 0..32 {
+            buffer
+                .copy_remapped_from(view, edit.mapping())
+                .expect("repeated remap");
+            assert_eq!(
+                buffer.configuration.positions().values().value().as_ptr(),
+                position_pointer
+            );
+            assert_eq!(buffer.velocities.0.values.as_ptr(), velocity_pointer);
+            assert_eq!(buffer.forces.0.values.as_ptr(), force_pointer);
+            assert_eq!(
+                buffer.configuration.positions().capacity(),
+                position_capacity
+            );
+            assert_eq!(buffer.velocities.0.values.capacity(), velocity_capacity);
+            assert_eq!(buffer.forces.0.values.capacity(), force_capacity);
+        }
     }
 }
