@@ -1,6 +1,8 @@
 //! Immutable coordinate-free molecular systems, qualified identities, dense
 //! orderings, mappings, and compiled selections.
 
+pub mod transform;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -1180,6 +1182,43 @@ impl AtomSelection {
             })
             .collect())
     }
+
+    /// Remaps this selection through explicit topology-edit lineage.
+    ///
+    /// Removed atoms either produce a typed error or are discarded according
+    /// to `policy`; removal is never implicit.
+    pub fn remap_to(
+        &self,
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+        policy: transform::RemovedSelectionPolicy,
+    ) -> Result<Self, transform::SelectionRemapError> {
+        if self.topology != source.identity {
+            return Err(transform::SelectionRemapError::SourceTopologyMismatch);
+        }
+        if !mapping.is_source(source) {
+            return Err(transform::SelectionRemapError::MappingSourceMismatch);
+        }
+        if !mapping.is_target(target) {
+            return Err(transform::SelectionRemapError::MappingTargetMismatch);
+        }
+
+        let mut indices = Vec::with_capacity(self.indices.len());
+        for source_index in &self.indices {
+            match mapping.map_atom_index(*source_index) {
+                Some(target_index) => indices.push(target_index),
+                None if policy == transform::RemovedSelectionPolicy::Drop => {}
+                None => {
+                    let atom = source
+                        .atom_id(*source_index)
+                        .expect("validated selection index belongs to source topology");
+                    return Err(transform::SelectionRemapError::RemovedSelectedAtom(atom));
+                }
+            }
+        }
+        Self::from_indices(target, indices).map_err(transform::SelectionRemapError::Selection)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1402,6 +1441,66 @@ impl TopologyMapping {
 
     pub fn new_identity(&self) -> &TopologyIdentity {
         &self.new
+    }
+
+    /// Returns whether this mapping's source is exactly `topology`.
+    pub fn is_source(&self, topology: &Topology) -> bool {
+        self.old == topology.identity
+    }
+
+    /// Returns whether this mapping's target is exactly `topology`.
+    pub fn is_target(&self, topology: &Topology) -> bool {
+        self.new == topology.identity
+    }
+
+    /// Iterates definition pairs in source identifier order.
+    pub fn definition_pairs(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (MoleculeDefinitionId, MoleculeDefinitionId)> + '_ {
+        self.definitions
+            .iter()
+            .map(|(source, target)| (*source, *target))
+    }
+
+    /// Iterates instance pairs in source identifier order.
+    pub fn instance_pairs(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, MoleculeInstanceId)> + '_ {
+        self.instances
+            .iter()
+            .map(|(source, target)| (*source, *target))
+    }
+
+    /// Iterates qualified atom pairs in source identifier order.
+    pub fn atom_pairs(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (InstanceAtomId, InstanceAtomId)> + '_ {
+        self.atoms.iter().map(|(source, target)| (*source, *target))
+    }
+
+    /// Iterates qualified bond pairs in source identifier order.
+    pub fn bond_pairs(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (InstanceBondId, InstanceBondId)> + '_ {
+        self.bonds.iter().map(|(source, target)| (*source, *target))
+    }
+
+    /// Iterates dense atom-index pairs in source index order.
+    pub fn atom_index_pairs(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (TopologyAtomIndex, TopologyAtomIndex)> + '_ {
+        self.atom_indices
+            .iter()
+            .map(|(source, target)| (*source, *target))
+    }
+
+    /// Iterates dense bond-index pairs in source index order.
+    pub fn bond_index_pairs(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (TopologyBondIndex, TopologyBondIndex)> + '_ {
+        self.bond_indices
+            .iter()
+            .map(|(source, target)| (*source, *target))
     }
 
     pub fn map_definition(&self, id: MoleculeDefinitionId) -> Option<MoleculeDefinitionId> {

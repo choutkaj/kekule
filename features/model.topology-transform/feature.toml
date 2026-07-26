@@ -1,0 +1,13 @@
+id = "model.topology-transform"
+title = "Topology instance-subset transformations"
+area = "modeling"
+domains = ["small-molecule", "macromolecule"]
+version = 1
+status = "experimental"
+description = "Create immutable molecule-instance subsets with explicit topology lineage and remap compatible topology-bound structure state."
+depends_on = [
+  "model.topology",
+  "model.system",
+  "model.ensemble",
+  "model.trajectory",
+]
