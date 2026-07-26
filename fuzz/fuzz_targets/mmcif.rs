@@ -60,5 +60,12 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
         }
+        let _ = interpret_ensemble(
+            &document,
+            MmcifEnsembleInterpretOptions {
+                model_ids: Some(Vec::new()),
+                ..MmcifEnsembleInterpretOptions::default()
+            },
+        );
     }
 });

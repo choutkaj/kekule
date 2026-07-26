@@ -1085,7 +1085,8 @@ struct BuiltAtomProvenance {
 pub struct MmcifEnsembleInterpretOptions {
     pub strict_entity_metadata: bool,
     pub altloc_policy: MmcifAltLocPolicy,
-    /// `None` selects all coordinate models in source order.
+    /// `None` selects all coordinate models in source order. `Some` must
+    /// contain at least one model ID.
     pub model_ids: Option<Vec<String>>,
 }
 
@@ -1123,6 +1124,8 @@ impl MmcifEnsembleInterpretation {
 #[non_exhaustive]
 pub enum MmcifEnsembleInterpretError {
     NoCoordinateModels,
+    EmptyModelSelection,
+    MultipleAtomSiteDataBlocks,
     DuplicateRequestedModel(String),
     UnknownRequestedModel(String),
     Model {
@@ -1148,6 +1151,11 @@ impl fmt::Display for MmcifEnsembleInterpretError {
             Self::NoCoordinateModels => {
                 formatter.write_str("mmCIF document contains no coordinate models")
             }
+            Self::EmptyModelSelection => {
+                formatter.write_str("explicit mmCIF coordinate model selection is empty")
+            }
+            Self::MultipleAtomSiteDataBlocks => formatter
+                .write_str("mmCIF document has atom-site data in more than one data block"),
             Self::DuplicateRequestedModel(model) => {
                 write!(formatter, "coordinate model `{model}` was requested more than once")
             }
@@ -1185,11 +1193,21 @@ pub fn interpret_mmcif_ensemble(
     document: &MmcifDocument,
     options: MmcifEnsembleInterpretOptions,
 ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
-    let block = document
+    if options.model_ids.as_ref().is_some_and(Vec::is_empty) {
+        return Err(MmcifEnsembleInterpretError::EmptyModelSelection);
+    }
+    let blocks = document
         .blocks()
         .iter()
-        .find(|block| block.loop_with_tag("_atom_site.type_symbol").is_some())
-        .ok_or(MmcifEnsembleInterpretError::NoCoordinateModels)?;
+        .filter(|block| block.loop_with_tag("_atom_site.type_symbol").is_some())
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        return Err(MmcifEnsembleInterpretError::NoCoordinateModels);
+    }
+    if blocks.len() > 1 {
+        return Err(MmcifEnsembleInterpretError::MultipleAtomSiteDataBlocks);
+    }
+    let block = blocks[0];
     let available =
         coordinate_model_ids(block).map_err(|error| MmcifEnsembleInterpretError::Model {
             model_id: "<model inventory>".to_owned(),
@@ -1232,7 +1250,7 @@ pub fn interpret_mmcif_ensemble(
 
     let first = interpreted
         .first()
-        .expect("selected coordinate model list is non-empty");
+        .ok_or(MmcifEnsembleInterpretError::EmptyModelSelection)?;
     let shared_topology = first.model.topology().clone();
     let shared_atom_identity = provenance_identity(&first.report);
     let mut ensemble = Ensemble::new(shared_topology.clone());
@@ -1590,15 +1608,15 @@ fn infer_covalent_bonds(
         let right_point = right_row
             .point
             .expect("selected mmCIF atom rows have complete positions");
-        let right_cell = covalent_bond_cell(right_point);
-        for offset_x in -1..=1 {
-            for offset_y in -1..=1 {
-                for offset_z in -1..=1 {
-                    let neighbor = [
-                        right_cell[0] + offset_x,
-                        right_cell[1] + offset_y,
-                        right_cell[2] + offset_z,
-                    ];
+        let right_cell = covalent_bond_cell(right_point, right_row.line)?;
+        for offset_x in -1_i64..=1 {
+            for offset_y in -1_i64..=1 {
+                for offset_z in -1_i64..=1 {
+                    let neighbor = covalent_bond_neighbor(
+                        right_cell,
+                        [offset_x, offset_y, offset_z],
+                        right_row.line,
+                    )?;
                     let Some(left_indexes) = cells.get(&neighbor) else {
                         continue;
                     };
@@ -1645,12 +1663,45 @@ fn infer_covalent_bonds(
     Ok(candidates)
 }
 
-fn covalent_bond_cell(point: Point3) -> [i64; 3] {
-    [
-        (point.x / COVALENT_BOND_CELL_ANGSTROM).floor() as i64,
-        (point.y / COVALENT_BOND_CELL_ANGSTROM).floor() as i64,
-        (point.z / COVALENT_BOND_CELL_ANGSTROM).floor() as i64,
-    ]
+fn covalent_bond_cell(point: Point3, line: usize) -> Result<[i64; 3], MmcifInterpretError> {
+    Ok([
+        covalent_bond_cell_axis(point.x, "x", line)?,
+        covalent_bond_cell_axis(point.y, "y", line)?,
+        covalent_bond_cell_axis(point.z, "z", line)?,
+    ])
+}
+
+fn covalent_bond_cell_axis(
+    coordinate: f64,
+    axis: &str,
+    line: usize,
+) -> Result<i64, MmcifInterpretError> {
+    let cell = (coordinate / COVALENT_BOND_CELL_ANGSTROM).floor();
+    if !cell.is_finite() || cell <= i64::MIN as f64 || cell >= i64::MAX as f64 {
+        return Err(MmcifInterpretError::new(
+            Some(line),
+            format!(
+                "_atom_site.Cartn_{axis} coordinate is outside the supported covalent-connectivity diagnostic cell range"
+            ),
+        ));
+    }
+    Ok(cell as i64)
+}
+
+fn covalent_bond_neighbor(
+    cell: [i64; 3],
+    offset: [i64; 3],
+    line: usize,
+) -> Result<[i64; 3], MmcifInterpretError> {
+    let checked = |axis: usize| {
+        cell[axis].checked_add(offset[axis]).ok_or_else(|| {
+            MmcifInterpretError::new(
+                Some(line),
+                "atom-site coordinate exceeds the covalent-connectivity diagnostic neighbor range",
+            )
+        })
+    };
+    Ok([checked(0)?, checked(1)?, checked(2)?])
 }
 
 fn point_distance_squared(left: Point3, right: Point3) -> f64 {

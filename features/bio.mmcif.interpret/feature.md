@@ -16,6 +16,10 @@ report, or use a separate path for a verified shared-topology ensemble.
   models, proves molecule partition, chemistry, connectivity, semantic atom
   identity, and dense order consistency, and returns one shared-topology
   `Ensemble`; inconsistent atom sets or topology fail structurally.
+- Single-model and ensemble interpretation require exactly one data block with
+  atom-site data. Multiple atom-containing blocks are rejected as ambiguous.
+- An explicit ensemble model selection must contain at least one model ID;
+  empty, duplicate, and unknown selections return dedicated structured errors.
 - `MmcifModelSelection::RequireSingle` is the default and rejects multiple model
   IDs; `Select(String)` and `First` are explicit alternatives.
 - Requires one complete finite position per interpreted atom after deterministic
@@ -43,6 +47,8 @@ report, or use a separate path for a verified shared-topology ensemble.
   `StructureObservation` records rather than static hierarchy.
 - Distance heuristics report connectivity candidates but do not assert
   authoritative single bonds without evidence-backed bond order.
+- Connectivity diagnostics reject finite Cartesian coordinates whose spatial
+  cell index cannot safely support the complete neighbor search.
 
 ## Implementation Notes
 
@@ -65,9 +71,12 @@ report, or use a separate path for a verified shared-topology ensemble.
   interpretation, and unknown-order rejection.
 - Multi-model tests cover shared-topology ensemble construction, distinct
   per-member source IDs/occupancy/B-factors, and structured inconsistent atom
-  set rejection.
+  set, empty selection, and multi-data-block rejection.
 - Successful bounded fuzz parses traverse the loss-preserving document and then
-  exercise explicit selected-model interpretation and qualified model lookup.
+  exercise explicit selected-model interpretation, empty ensemble selection,
+  extreme finite coordinates, and qualified model lookup.
+- Connectivity-diagnostic regressions cover finite coordinates immediately
+  within and beyond both supported spatial-cell boundaries without panics.
 
 ## Out Of Scope
 
@@ -96,3 +105,6 @@ report, or use a separate path for a verified shared-topology ensemble.
 - v10: Separate topology, configuration, and observation state; report
   distance-based connectivity only as candidates; and add a distinct,
   consistency-proving multi-model ensemble interpretation path.
+- v11: Make spatial connectivity diagnostics overflow-safe, reject empty
+  explicit ensemble selections, and reject ambiguous multi-block atom-site
+  documents consistently across single-model and ensemble interpretation.

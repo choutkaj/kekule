@@ -462,6 +462,18 @@ impl FrameBuffer {
         &mut self.props
     }
 
+    /// Clears all per-frame state except positions while retaining reusable
+    /// array allocations and the bound topology.
+    pub fn reset_dynamic_state(&mut self) {
+        self.configuration.set_cell(None);
+        self.has_velocities = false;
+        self.has_forces = false;
+        self.time = None;
+        self.step = None;
+        self.observation = None;
+        self.props.clear();
+    }
+
     pub fn model_view(&self) -> ModelView<'_> {
         ModelView::new(&self.topology, self.configuration.view())
             .expect("frame buffer configuration is bound to its topology")
@@ -766,12 +778,7 @@ impl TrajectoryReader for CoordinateFrameReader {
             frame.as_slice(),
             crate::units::MODEL_LENGTH_UNIT,
         ))?;
-        destination.set_cell(None);
-        destination.set_velocities::<&[Vector3]>(None)?;
-        destination.set_forces::<&[Vector3]>(None)?;
-        destination.set_time(None)?;
-        destination.set_step(None);
-        destination.set_observation(None)?;
+        destination.reset_dynamic_state();
         self.cursor += 1;
         Ok(true)
     }
@@ -906,7 +913,7 @@ impl From<ModelError> for TrajectoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, Element, Molecule};
+    use crate::core::{Atom, Element, Molecule, PropValue};
     use crate::small::SmallMolecule;
     use crate::topology::{MoleculeInstanceMetadata, TopologyBuilder};
     use crate::units::{ANGSTROM, PICOSECOND};
@@ -1095,5 +1102,63 @@ mod tests {
         assert!(reader.read_next(&mut buffer).unwrap());
         assert_eq!(buffer.model_view().positions().value()[0].x, 5.0);
         assert!(!reader.read_next(&mut buffer).unwrap());
+    }
+
+    #[test]
+    fn coordinate_only_reader_clears_all_dynamic_state_without_reallocating_positions() {
+        let topology = one_atom_topology();
+        let assertion = AtomOrderAssertion::new(&topology, topology.atom_ids()).unwrap();
+        let mut reader = CoordinateFrameReader::new(
+            topology.clone(),
+            assertion,
+            [Quantity::new(vec![Point3::new(7.0, 0.0, 0.0)], ANGSTROM)],
+        )
+        .unwrap();
+        let mut buffer = FrameBuffer::new(topology.clone());
+        let cell = crate::geometry::PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
+            [true; 3],
+        )
+        .unwrap();
+        buffer.set_cell(Some(cell));
+        buffer
+            .set_velocities(Some(Quantity::new(
+                vec![Vector3::new(1.0, 2.0, 3.0)],
+                MODEL_VELOCITY_UNIT,
+            )))
+            .unwrap();
+        buffer
+            .set_forces(Some(Quantity::new(
+                vec![Vector3::new(4.0, 5.0, 6.0)],
+                MODEL_FORCE_UNIT,
+            )))
+            .unwrap();
+        buffer
+            .set_time(Some(Quantity::new(2.0, PICOSECOND)))
+            .unwrap();
+        buffer.set_step(Some(3));
+        buffer
+            .set_observation(Some(StructureObservation::empty(&topology)))
+            .unwrap();
+        buffer
+            .props_mut()
+            .insert("source".to_owned(), PropValue::String("stale".to_owned()));
+        let positions_pointer = buffer.configuration().positions().values().value().as_ptr();
+
+        assert!(reader.read_next(&mut buffer).unwrap());
+
+        let frame = buffer.frame_view();
+        assert_eq!(frame.configuration().cell(), None);
+        assert_eq!(frame.velocities(), None);
+        assert_eq!(frame.forces(), None);
+        assert_eq!(frame.time(), None);
+        assert_eq!(frame.step(), None);
+        assert_eq!(frame.observation(), None);
+        assert!(frame.props().is_empty());
+        assert_eq!(
+            buffer.configuration().positions().values().value().as_ptr(),
+            positions_pointer
+        );
+        assert_eq!(buffer.model_view().positions().value()[0].x, 7.0);
     }
 }

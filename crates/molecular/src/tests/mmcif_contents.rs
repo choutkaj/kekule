@@ -73,13 +73,28 @@ HETATM 3 C C1 LIG A 1 5.0 0.0 0.0 0.80 20.0 2
 HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2
 "#;
 
+const EXTREME_COORDINATE: &str = r#"
+data_extreme
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 C C1 LIG A 1.936908127739503e19 0.0 0.0
+"#;
+
 fn parse(input: &str) -> mmcif::MmcifDocument {
     mmcif::parse_str(input, MmcifParseOptions::default()).expect("mmCIF parses")
 }
 
 #[test]
 fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
-    for seed in [MIXED, MULTI_MODEL] {
+    for seed in [MIXED, MULTI_MODEL, EXTREME_COORDINATE] {
         for input in deterministic_text_mutations(seed) {
             std::panic::catch_unwind(|| {
                 let Ok(document) = mmcif::parse_str(
@@ -103,6 +118,13 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
                 let _ = mmcif::interpret_ensemble(
                     &document,
                     mmcif::MmcifEnsembleInterpretOptions::default(),
+                );
+                let _ = mmcif::interpret_ensemble(
+                    &document,
+                    mmcif::MmcifEnsembleInterpretOptions {
+                        model_ids: Some(Vec::new()),
+                        ..mmcif::MmcifEnsembleInterpretOptions::default()
+                    },
                 );
             })
             .expect("mmCIF parser or interpreter smoke mutation panicked");
@@ -276,6 +298,47 @@ fn mmcif_connectivity_candidates_do_not_create_bonds() {
 }
 
 #[test]
+fn connectivity_diagnostic_cell_boundaries_are_finite_and_panic_free() {
+    const CELL_ANGSTROM: f64 = 2.1;
+    let near_positive = ((i64::MAX as f64) - 4_096.0) * CELL_ANGSTROM;
+    let near_negative = ((i64::MIN as f64) + 4_096.0) * CELL_ANGSTROM;
+    let beyond_positive = (i64::MAX as f64) * CELL_ANGSTROM;
+    let beyond_negative = (i64::MIN as f64) * CELL_ANGSTROM;
+
+    let with_coordinate = |coordinate: f64| {
+        MIXED.replace(
+            "ATOM 1 N N GLY A 1 1 0.0 0.0 0.0 1",
+            &format!("ATOM 1 N N GLY A 1 1 {coordinate:e} 0.0 0.0 1"),
+        )
+    };
+
+    for coordinate in [near_positive, near_negative] {
+        let document = parse(&with_coordinate(coordinate));
+        let result = std::panic::catch_unwind(|| {
+            mmcif::interpret(&document, MmcifInterpretOptions::default())
+        });
+        assert!(
+            matches!(result, Ok(Ok(_))),
+            "supported finite coordinate {coordinate:e} must interpret without panicking"
+        );
+    }
+
+    for coordinate in [beyond_positive, beyond_negative] {
+        let document = parse(&with_coordinate(coordinate));
+        let result = std::panic::catch_unwind(|| {
+            mmcif::interpret(&document, MmcifInterpretOptions::default())
+        });
+        let error = result
+            .expect("out-of-range finite coordinate must not panic")
+            .expect_err("out-of-range finite coordinate must be rejected");
+        assert!(error.line().is_some());
+        assert!(error
+            .message()
+            .contains("supported covalent-connectivity diagnostic cell range"));
+    }
+}
+
+#[test]
 fn multiple_coordinate_models_require_explicit_selection() {
     let input = MIXED.replace(
         "HETATM 4 O O HOH W 3 . 3.0 0.0 0.0 1",
@@ -307,6 +370,52 @@ fn multiple_coordinate_models_require_explicit_selection() {
     )
     .unwrap();
     assert_eq!(first.report().selected_model.as_deref(), Some("1"));
+}
+
+#[test]
+fn ensemble_interpretation_rejects_empty_explicit_model_selection_without_panicking() {
+    let document = parse(MULTI_MODEL);
+    let result = std::panic::catch_unwind(|| {
+        mmcif::interpret_ensemble(
+            &document,
+            mmcif::MmcifEnsembleInterpretOptions {
+                model_ids: Some(Vec::new()),
+                ..mmcif::MmcifEnsembleInterpretOptions::default()
+            },
+        )
+    });
+    assert!(matches!(
+        result,
+        Ok(Err(mmcif::MmcifEnsembleInterpretError::EmptyModelSelection))
+    ));
+}
+
+#[test]
+fn ensemble_interpretation_rejects_multiple_atom_site_data_blocks() {
+    let second_block = r#"
+data_second
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 C C1 LIG B 0.0 0.0 0.0
+"#;
+    let document = parse(&format!("{MIXED}\n{second_block}"));
+    let single_error = mmcif::interpret(&document, MmcifInterpretOptions::default())
+        .expect_err("ambiguous blocks");
+    assert!(single_error
+        .message()
+        .contains("atom-site data in more than one data block"));
+    assert!(matches!(
+        mmcif::interpret_ensemble(&document, mmcif::MmcifEnsembleInterpretOptions::default(),),
+        Err(mmcif::MmcifEnsembleInterpretError::MultipleAtomSiteDataBlocks)
+    ));
 }
 
 #[test]

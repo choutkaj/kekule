@@ -15,6 +15,9 @@ trajectories through reusable caller-owned buffers.
 - `TrajectoryReader` fills a caller-owned `FrameBuffer`;
   `SeekableTrajectoryReader` adds explicit random access; `TrajectoryWriter`
   validates topology and supported state.
+- `FrameBuffer::reset_dynamic_state` clears cell, velocities, forces, time,
+  step, observation, and properties without replacing its positions allocation;
+  coordinate-only readers use this reset after filling positions.
 - Frame and buffer views can be consumed by structural analyses and prepared
   potentials without owned-model construction or coordinate copying.
 
@@ -29,7 +32,9 @@ trajectories through reusable caller-owned buffers.
 
 - Tests cover complete optional arrays, variable cells, topology and
   atom-count mismatches, buffer allocation reuse, end-of-stream, random-access
-  separation, writer rejection, and reference round trips.
+  separation, writer rejection, reference round trips, and complete dynamic
+  state clearing by coordinate-only readers while preserving the positions
+  allocation.
 
 ## Out Of Scope
 
@@ -42,3 +47,6 @@ trajectories through reusable caller-owned buffers.
 - v2: Implement owned frames, reusable frame buffers, fixed-topology in-memory
   trajectories, sequential/seekable/writer traits, memory adapters, and an
   atom-order-asserted coordinate-only reference reader.
+- v3: Centralize reusable-buffer dynamic-state reset so coordinate-only reads
+  clear stale properties and every optional field without reallocating
+  positions.
