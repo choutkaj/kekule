@@ -27,6 +27,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `mmcif::write` exposes explicit supported `Model` serialization with
   format-specific options and structured rejection errors.
 - `Molecule` is one asserted entity and may have disconnected graph topology.
+- `Molecule::add_atom` is fallible. Graph, conformer, stereo, SMCRA hierarchy,
+  and topology insertion surfaces report focused fixed-width identifier
+  capacity errors before mutation rather than truncating or panicking.
 - `Molecule::formal_charge` exposes the asserted live-atom charge aggregate as
   an `i64` without hiding sanitization or perception.
 - `mmcif::interpret` returns a selected-coordinate `Model` plus report;
@@ -129,3 +132,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v21: Replace the misleading topology structural-equivalence names with
   complete static-layout semantics and expose checked mapping/edit-result
   construction.
+- v22: Make core atom insertion fallible, expose structured identifier-capacity
+  error kinds across graph, conformer, hierarchy, and topology APIs, and remove
+  unchecked ID reconstruction and one-based writer arithmetic.

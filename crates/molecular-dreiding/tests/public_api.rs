@@ -12,7 +12,7 @@ fn downstream_preparation_and_evaluation() {
     let mut explicit_atom = |symbol: &str| {
         let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
         atom.no_implicit_hydrogens = true;
-        graph.add_atom(atom)
+        graph.add_atom(atom).expect("atom identifier capacity")
     };
     let oxygen = explicit_atom("O");
     let first_hydrogen = explicit_atom("H");

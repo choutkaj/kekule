@@ -692,9 +692,9 @@ fn next_smiles_atom_id(
             "SMILES atom count exceeds configured limit",
         ));
     }
-    Ok(AtomId::new(
-        u32::try_from(atom_count).expect("validated SMILES atom limit fits u32"),
-    ))
+    let raw = crate::core::checked_raw_id(atom_count)
+        .map_err(|_| SmilesParseError::new(offset, "SMILES atom identifier capacity exceeded"))?;
+    Ok(AtomId::new(raw))
 }
 
 fn interpret_smiles_program(
@@ -714,8 +714,10 @@ fn interpret_smiles_program_inner(
     let mut mol = Molecule::new();
     let mut atom_mappings = Vec::with_capacity(program.atoms.len());
     for (index, record) in program.atoms.iter().enumerate() {
-        let atom_id = mol.add_atom(record.atom.clone());
-        debug_assert_eq!(atom_id, AtomId::new(index as u32));
+        let atom_id = mol.add_atom(record.atom.clone()).map_err(|error| {
+            SmilesParseError::new(record.span.start, format!("invalid graph atom: {error}"))
+        })?;
+        debug_assert_eq!(atom_id.index(), index);
         atom_mappings.push(SmilesAtomMapping {
             atom: atom_id,
             source_span: record.span.clone(),
@@ -1668,7 +1670,7 @@ struct SmilesWritePlan {
 #[derive(Debug, Clone, Copy)]
 struct SmilesRingClosure {
     bond: BondId,
-    number: usize,
+    number: u64,
     order: BondOrder,
     other: AtomId,
 }
@@ -1713,8 +1715,7 @@ fn plan_smiles_write(
     }
 
     let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (index, (bond_id, first, second, order)) in ring_bonds.into_iter().enumerate() {
-        let number = index + 1;
+    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds.into_iter()) {
         closures.entry(first).or_default().push(SmilesRingClosure {
             bond: bond_id,
             number,
@@ -2070,8 +2071,7 @@ fn plan_canonical_smiles_component(
     }
 
     let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (index, (bond_id, first, second, order)) in ring_bonds.into_iter().enumerate() {
-        let number = index + 1;
+    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds.into_iter()) {
         closures.entry(first).or_default().push(SmilesRingClosure {
             bond: bond_id,
             number,
@@ -2966,7 +2966,7 @@ fn reverse_bond_order_code(order: BondOrder) -> u8 {
     u8::MAX - bond_order_code(order)
 }
 
-fn smiles_ring_number(number: usize) -> String {
+fn smiles_ring_number(number: u64) -> String {
     if number < 10 {
         number.to_string()
     } else {

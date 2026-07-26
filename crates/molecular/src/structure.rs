@@ -4,7 +4,7 @@
 use std::fmt;
 
 use crate::bio::MacroMolecule;
-use crate::core::{AtomId, ConformerId, Molecule, PropMap};
+use crate::core::{AtomId, ConformerError, ConformerId, Molecule, PropMap};
 use crate::geometry::{PeriodicCell, PeriodicCellError, Point3};
 use crate::small::SmallMolecule;
 use crate::topology::{
@@ -160,9 +160,8 @@ fn validate_position_count(topology: &Topology, actual: usize) -> Result<(), Pos
             actual,
         });
     }
-    if u32::try_from(actual).is_err() && actual != (u32::MAX as usize) + 1 {
-        return Err(PositionError::CapacityOverflow);
-    }
+    crate::core::checked_fixed_id_collection_len(0, actual)
+        .map_err(|_| PositionError::CapacityOverflow)?;
     Ok(())
 }
 
@@ -1021,6 +1020,7 @@ pub enum InstanceToConformerError {
     MissingTargetAtom(AtomId),
     UnexpectedTargetAtom(AtomId),
     Position(PositionError),
+    Conformer(ConformerError),
     Unit(UnitError),
 }
 
@@ -1038,6 +1038,7 @@ impl fmt::Display for InstanceToConformerError {
                 write!(formatter, "target molecule contains unexpected atom {atom}")
             }
             Self::Position(error) => write!(formatter, "cannot read model position: {error}"),
+            Self::Conformer(error) => write!(formatter, "cannot update target conformer: {error}"),
             Self::Unit(error) => write!(formatter, "invalid target conformer unit: {error}"),
         }
     }
@@ -1048,6 +1049,12 @@ impl std::error::Error for InstanceToConformerError {}
 impl From<PositionError> for InstanceToConformerError {
     fn from(error: PositionError) -> Self {
         Self::Position(error)
+    }
+}
+
+impl From<ConformerError> for InstanceToConformerError {
+    fn from(error: ConformerError) -> Self {
+        Self::Conformer(error)
     }
 }
 
@@ -1306,7 +1313,9 @@ mod tests {
 
     fn one_atom_topology() -> Topology {
         let mut graph = Molecule::new();
-        graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+        graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
         let molecule = SmallMolecule::from_graph(graph);
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
@@ -1434,7 +1443,9 @@ mod tests {
     #[test]
     fn ensemble_from_conformers_preserves_source_order_without_copying_conformers_to_topology() {
         let mut graph = Molecule::new();
-        let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+        let atom = graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
         let mut first = Conformer::new(ANGSTROM).unwrap();
         first
             .set_position(atom, Quantity::new(Point3::new(1.0, 0.0, 0.0), ANGSTROM))

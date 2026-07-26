@@ -380,12 +380,18 @@ mod tests {
         let mut graph = Molecule::new();
         let mut carbon_13 = Atom::new(element("C"));
         carbon_13.isotope = Some(13);
-        graph.add_atom(carbon_13.clone());
-        graph.add_atom(Atom::new(element("O")));
-        graph.add_atom(Atom::new(element("C")));
+        graph
+            .add_atom(carbon_13.clone())
+            .expect("atom identifier capacity");
+        graph
+            .add_atom(Atom::new(element("O")))
+            .expect("atom identifier capacity");
+        graph
+            .add_atom(Atom::new(element("C")))
+            .expect("atom identifier capacity");
         let mut carbon_12 = carbon_13;
         carbon_12.isotope = Some(12);
-        graph.add_atom(carbon_12);
+        graph.add_atom(carbon_12).expect("atom identifier capacity");
         let formula = molecular_formula(
             &SmallMolecule::from_graph(graph),
             HydrogenCountPolicy::StoredOnly,
@@ -483,7 +489,7 @@ mod tests {
         let mut graph = Molecule::new();
         let mut carbon = Atom::new(element("C"));
         carbon.radical = Some(AtomRadical::Doublet);
-        graph.add_atom(carbon);
+        graph.add_atom(carbon).expect("atom identifier capacity");
         let molecule = SmallMolecule::from_graph(graph);
         assert_eq!(
             molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
@@ -534,7 +540,9 @@ mod tests {
         let mut graph = Molecule::new();
         let mut impossible = Atom::new(element("C"));
         impossible.isotope = Some(999);
-        graph.add_atom(impossible);
+        graph
+            .add_atom(impossible)
+            .expect("atom identifier capacity");
         assert!(matches!(
             monoisotopic_mass(
                 &SmallMolecule::from_graph(graph),

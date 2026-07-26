@@ -400,15 +400,26 @@ impl SmcraHierarchy {
         Self::default()
     }
 
+    /// Adds a chain or returns a structured capacity error without mutation.
     pub fn add_chain(
         &mut self,
         label_id: impl Into<String>,
         author_id: Option<String>,
     ) -> std::result::Result<SmcraChainId, SmcraHierarchyError> {
-        let id = SmcraChainId::new(self.chains.len() as u32);
+        self.add_chain_at_slot(label_id.into(), author_id, self.chains.len())
+    }
+
+    fn add_chain_at_slot(
+        &mut self,
+        label_id: String,
+        author_id: Option<String>,
+        slot: usize,
+    ) -> std::result::Result<SmcraChainId, SmcraHierarchyError> {
+        let id = checked_hierarchy_id(slot, SmcraIdKind::Chain, SmcraChainId::new)?;
+        debug_assert_eq!(slot, self.chains.len());
         self.chains.push(SmcraChain {
             id,
-            label_id: label_id.into(),
+            label_id,
             author_id,
             residues: Vec::new(),
             props: PropMap::new(),
@@ -416,6 +427,7 @@ impl SmcraHierarchy {
         Ok(id)
     }
 
+    /// Adds a residue to an existing chain transactionally.
     pub fn add_residue(
         &mut self,
         chain: SmcraChainId,
@@ -426,7 +438,11 @@ impl SmcraHierarchy {
     ) -> std::result::Result<SmcraResidueId, SmcraHierarchyError> {
         self.chain(chain)?;
         let name = name.into();
-        let id = SmcraResidueId::new(self.residues.len() as u32);
+        let id = checked_hierarchy_id(
+            self.residues.len(),
+            SmcraIdKind::Residue,
+            SmcraResidueId::new,
+        )?;
         self.residues.push(SmcraResidue {
             id,
             chain,
@@ -443,6 +459,7 @@ impl SmcraHierarchy {
         Ok(id)
     }
 
+    /// Adds one atom site after validating residue, atom placement, and capacity.
     pub fn add_atom_site(
         &mut self,
         residue: SmcraResidueId,
@@ -453,7 +470,11 @@ impl SmcraHierarchy {
         if self.atom_lookup.contains_key(&atom) {
             return Err(SmcraHierarchyError::DuplicateAtomPlacement(atom));
         }
-        let id = SmcraAtomSiteId::new(self.atom_sites.len() as u32);
+        let id = checked_hierarchy_id(
+            self.atom_sites.len(),
+            SmcraIdKind::AtomSite,
+            SmcraAtomSiteId::new,
+        )?;
         self.atom_sites.push(SmcraAtomSite {
             id,
             residue,
@@ -644,6 +665,28 @@ pub struct SmcraAtomSiteMetadata {
     pub auth_atom_id: Option<String>,
 }
 
+/// Fixed-width identifier spaces owned by [`SmcraHierarchy`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmcraIdKind {
+    /// Chain identifiers.
+    Chain,
+    /// Residue identifiers.
+    Residue,
+    /// Atom-site identifiers.
+    AtomSite,
+}
+
+impl fmt::Display for SmcraIdKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Chain => "chain",
+            Self::Residue => "residue",
+            Self::AtomSite => "atom-site",
+        })
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmcraHierarchyError {
@@ -652,6 +695,8 @@ pub enum SmcraHierarchyError {
     InvalidAtomSiteId(SmcraAtomSiteId),
     InvalidAtomId(AtomId),
     DuplicateAtomPlacement(AtomId),
+    /// A new hierarchy node cannot be represented by the fixed-width ID for `kind`.
+    IdentifierCapacityExceeded(SmcraIdKind),
 }
 
 impl fmt::Display for SmcraHierarchyError {
@@ -662,11 +707,24 @@ impl fmt::Display for SmcraHierarchyError {
             Self::InvalidAtomSiteId(id) => write!(f, "invalid atom-site id: {}", id.raw()),
             Self::InvalidAtomId(id) => write!(f, "invalid hierarchy atom id: {id}"),
             Self::DuplicateAtomPlacement(id) => write!(f, "duplicate hierarchy placement for {id}"),
+            Self::IdentifierCapacityExceeded(kind) => {
+                write!(f, "{kind} identifier capacity exceeded")
+            }
         }
     }
 }
 
 impl std::error::Error for SmcraHierarchyError {}
+
+fn checked_hierarchy_id<T>(
+    length: usize,
+    kind: SmcraIdKind,
+    construct: impl FnOnce(u32) -> T,
+) -> std::result::Result<T, SmcraHierarchyError> {
+    crate::core::checked_raw_id(length)
+        .map(construct)
+        .map_err(|_| SmcraHierarchyError::IdentifierCapacityExceeded(kind))
+}
 
 #[cfg(test)]
 mod coordinate_independence_tests {
@@ -680,7 +738,9 @@ mod coordinate_independence_tests {
         invalid_count: usize,
     ) -> (MacroMolecule, AtomId, ConformerId, ConformerId) {
         let mut graph = Molecule::new();
-        let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+        let atom = graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
 
         let mut valid = Conformer::new(ANGSTROM).unwrap();
         valid
@@ -779,5 +839,47 @@ mod coordinate_independence_tests {
             .value()
             .x
             .is_nan());
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn hierarchy_identifier_boundaries_are_structured_and_transactional() {
+        let max_slot = usize::try_from(u64::from(u32::MAX)).expect("64-bit usize");
+        let first_unsupported_slot =
+            usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
+        assert_eq!(
+            checked_hierarchy_id(max_slot, SmcraIdKind::Chain, SmcraChainId::new),
+            Ok(SmcraChainId::new(u32::MAX))
+        );
+        assert_eq!(
+            checked_hierarchy_id(
+                first_unsupported_slot,
+                SmcraIdKind::Residue,
+                SmcraResidueId::new,
+            ),
+            Err(SmcraHierarchyError::IdentifierCapacityExceeded(
+                SmcraIdKind::Residue
+            ))
+        );
+        assert_eq!(
+            checked_hierarchy_id(
+                first_unsupported_slot,
+                SmcraIdKind::AtomSite,
+                SmcraAtomSiteId::new,
+            ),
+            Err(SmcraHierarchyError::IdentifierCapacityExceeded(
+                SmcraIdKind::AtomSite
+            ))
+        );
+
+        let mut hierarchy = SmcraHierarchy::new();
+        let before = hierarchy.clone();
+        assert_eq!(
+            hierarchy.add_chain_at_slot("A".to_owned(), None, first_unsupported_slot,),
+            Err(SmcraHierarchyError::IdentifierCapacityExceeded(
+                SmcraIdKind::Chain
+            ))
+        );
+        assert_eq!(hierarchy, before);
     }
 }

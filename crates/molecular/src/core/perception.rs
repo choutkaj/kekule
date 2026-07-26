@@ -29,17 +29,15 @@ impl RingMembership {
     }
 
     pub fn ring_atom_ids(&self) -> impl Iterator<Item = AtomId> + '_ {
-        self.atom_flags
-            .iter()
-            .enumerate()
-            .filter_map(|(index, in_ring)| in_ring.then_some(AtomId::new(index as u32)))
+        (0..=u32::MAX)
+            .zip(self.atom_flags.iter())
+            .filter_map(|(raw, in_ring)| in_ring.then_some(AtomId::new(raw)))
     }
 
     pub fn ring_bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
-        self.bond_flags
-            .iter()
-            .enumerate()
-            .filter_map(|(index, in_ring)| in_ring.then_some(BondId::new(index as u32)))
+        (0..=u32::MAX)
+            .zip(self.bond_flags.iter())
+            .filter_map(|(raw, in_ring)| in_ring.then_some(BondId::new(raw)))
     }
 }
 

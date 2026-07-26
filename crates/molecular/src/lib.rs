@@ -22,6 +22,11 @@
 //! compares complete static layout, including semantic IDs and dense order;
 //! general order-independent structural equivalence and isomorphism mapping
 //! remain future capabilities.
+//!
+//! Collection-backed public identifiers are fixed-width and every insertion
+//! that creates one is fallible. Exhausting an atom, bond, conformer, stereo,
+//! hierarchy, definition, instance, or dense topology index space returns the
+//! corresponding structured capacity error before canonical state is changed.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 

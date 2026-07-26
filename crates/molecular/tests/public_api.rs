@@ -155,10 +155,10 @@ fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut graph = Molecule::new();
     let carbon = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
     let oxygen = graph.add_atom(Atom::new(
         Element::from_symbol("O").expect("oxygen is a known element"),
-    ));
+    ))?;
 
     let bond = graph.add_bond(carbon, oxygen, BondOrder::Double)?;
 
@@ -173,7 +173,7 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = MacroMolecule::builder();
     let atom = builder.graph_mut().add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
 
     let chain = builder.hierarchy_mut().add_chain("A", None)?;
     let residue =
@@ -205,7 +205,7 @@ fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::
     let mut graph = Molecule::new();
     let atom = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
     let mut conformer = Conformer::new(molecular::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -236,10 +236,10 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let mut graph = Molecule::new();
     let carbon = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
-    ));
+    ))?;
     let oxygen = graph.add_atom(Atom::new(
         Element::from_symbol("O").expect("oxygen is a known element"),
-    ));
+    ))?;
     let bond = graph.add_bond(carbon, oxygen, BondOrder::Single)?;
     let mut conformer = Conformer::new(molecular::units::ANGSTROM).unwrap();
     conformer

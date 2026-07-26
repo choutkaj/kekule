@@ -1468,6 +1468,8 @@ The refactor is complete only when all statements below are true:
 - [x] Molecule definitions and instances are distinct.
 - [x] Explicit definition reuse works.
 - [x] Dense atom and bond indices belong to topology.
+- [x] Every collection-backed fixed-width public identifier is created through
+  checked conversion with a structured, transactional capacity failure.
 - [x] Exact identity and complete static-layout equality are distinct.
 - [x] Order-independent structural equivalence and ambiguity-aware isomorphism
   mapping are documented as future capabilities rather than claimed.
@@ -1486,6 +1488,7 @@ The refactor is complete only when all statements below are true:
 - [x] Topology edits use explicit mappings.
 - [x] mmCIF single-model interpretation remains explicit.
 - [x] Multi-model mmCIF has a separate ensemble path.
+- [x] Writer-generated one-based numeric serials widen before arithmetic.
 - [x] No obsolete public model-topology types remain.
 - [x] Workspace version has the required minor bump.
 - [x] Feature contracts and generated dashboard agree.

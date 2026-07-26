@@ -44,13 +44,15 @@ block without hiding validation, perception, sanitization, or preparation.
   rather than canonical-model writing.
 - Work and temporary memory are linear in the number of atoms, bonds, and
   hierarchy records. Output is currently accumulated in one `String`.
+- Generated one-based entity, atom-site, and connection serials are widened to
+  `u64` before incrementing, including identifiers at `u32::MAX`.
 
 ## Tests
 
 - Unit tests cover public-facade writing, writer-output parsing, supported model
   round trips, all four supported bond orders, explicit unknown-order rejection,
   unsupported aromatic connectivity, missing atom-site rejection, duplicate atom
-  identities, and unencodable model roles.
+  identities, unencodable model roles, and maximum fixed-width serial widening.
 - No external writer golden is currently accepted by the benchmark harness, so
   no external writer parity result is recorded despite targeted unit regression
   coverage.
@@ -76,3 +78,5 @@ block without hiding validation, perception, sanitization, or preparation.
 - v4: Read immutable definitions/instances from `Topology`, coordinates from
   `Configuration`, and alternate-location/occupancy/B-factor/source-row values
   from `StructureObservation`.
+- v5: Widen generated one-based serials before arithmetic so maximum public IDs
+  cannot wrap during mmCIF formatting.

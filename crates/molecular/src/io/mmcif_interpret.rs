@@ -1348,10 +1348,11 @@ pub fn interpret_mmcif_ensemble(
         };
         let mut member = EnsembleMember::new(configuration);
         if let Some(observation) = model.observation() {
-            let atoms = (0..shared_topology.atom_count())
-                .map(|index| {
+            let atoms = (0..=u32::MAX)
+                .take(shared_topology.atom_count())
+                .map(|raw| {
                     observation
-                        .atom_at(TopologyAtomIndex::new(index as u32))
+                        .atom_at(TopologyAtomIndex::new(raw))
                         .expect("observation is complete")
                         .clone()
                 })
@@ -1505,7 +1506,7 @@ fn build_molecule(
     for (key, row) in &representative {
         let mut atom = Atom::new(row.element);
         atom.formal_charge = row.formal_charge;
-        atoms.insert(key.clone(), graph.add_atom(atom));
+        atoms.insert(key.clone(), graph.add_atom(atom).map_err(graph_error)?);
     }
     let model_id = group
         .rows

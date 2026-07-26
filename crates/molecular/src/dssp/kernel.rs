@@ -1204,10 +1204,11 @@ mod tests {
 
     fn backbone(count: usize) -> Vec<BackboneResidue> {
         let mut residues = (0..count)
-            .map(|index| BackboneResidue {
+            .zip(0..=u32::MAX)
+            .map(|(index, raw)| BackboneResidue {
                 key: DsspResidueKey::new(
                     MoleculeInstanceId::new(0),
-                    crate::bio::SmcraResidueId::new(index as u32),
+                    crate::bio::SmcraResidueId::new(raw),
                 ),
                 source: DsspResidueSource {
                     residue_name: "ALA".to_owned(),

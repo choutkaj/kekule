@@ -111,8 +111,7 @@ fn compress_signatures<T: Clone + Ord>(mol: &Molecule, signatures: Vec<(AtomId, 
 
     let rank_by_signature = ordered
         .into_iter()
-        .enumerate()
-        .map(|(rank, signature)| (signature, rank as u32))
+        .zip(0..=u32::MAX)
         .collect::<BTreeMap<_, _>>();
 
     let mut ranks = vec![u32::MAX; mol.atoms.len()];
@@ -331,7 +330,9 @@ mod tests {
     #[test]
     fn atom_signature_preserves_large_graph_degree() {
         let mut mol = Molecule::new();
-        let atom = mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")));
+        let atom = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
+            .expect("atom identifier capacity");
         let degree = usize::from(u16::MAX) + 1;
 
         let signature = atom_signature(&mol, atom, mol.atom(atom).expect("atom"), degree);
@@ -343,7 +344,10 @@ mod tests {
     fn ring_topology_refines_regular_graphs_without_breaking_true_ties() {
         let mut mol = Molecule::new();
         let atoms = (0..8)
-            .map(|_| mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon"))))
+            .map(|_| {
+                mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
+                    .expect("atom identifier capacity")
+            })
             .collect::<Vec<_>>();
 
         // Two K4 graphs with one edge removed from each, joined across the

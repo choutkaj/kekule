@@ -89,7 +89,10 @@ fn smcra_hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
 #[test]
 fn macro_molecule_validates_atom_site_atom_ids() {
     let mut builder = MacroMolecule::builder();
-    let atom = builder.graph_mut().add_atom(carbon());
+    let atom = builder
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let chain = builder
         .hierarchy_mut()
         .add_chain("A", Some("authA".to_owned()))
@@ -123,7 +126,10 @@ fn macro_molecule_validates_atom_site_atom_ids() {
 
 fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
     let mut builder = MacroMolecule::builder();
-    let atom = builder.graph_mut().add_atom(carbon());
+    let atom = builder
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -260,15 +266,24 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
 #[test]
 fn wrappers_share_the_core_molecule_graph() {
     let mut small = SmallMolecule::default();
-    let a = small.graph_mut().add_atom(carbon());
-    let b = small.graph_mut().add_atom(oxygen());
+    let a = small
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let b = small
+        .graph_mut()
+        .add_atom(oxygen())
+        .expect("atom identifier capacity");
     small
         .graph_mut()
         .add_bond(a, b, BondOrder::Single)
         .expect("small molecule graph should accept bonds");
 
     let mut builder = MacroMolecule::builder();
-    let c = builder.graph_mut().add_atom(carbon());
+    let c = builder
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let chain = builder.hierarchy_mut().add_chain("A", None).expect("chain");
     let residue = builder
         .hierarchy_mut()

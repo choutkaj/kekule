@@ -218,7 +218,7 @@ pub(crate) fn add_hydrogens_to_molecule(
         {
             let mut atom = Atom::new(hydrogen);
             atom.no_implicit_hydrogens = true;
-            let hydrogen_id = staged.add_atom(atom);
+            let hydrogen_id = staged.add_atom(atom)?;
             staged.add_bond(parent, hydrogen_id, BondOrder::Single)?;
             added_by_parent.entry(parent).or_default().push(hydrogen_id);
             report.added.push(AddedHydrogen {

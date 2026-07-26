@@ -150,10 +150,10 @@ fn bond_payload_fields_can_be_set_and_read() {
 #[test]
 fn stereo_elements_groups_and_bond_marks_live_on_molecule() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let a = mol.add_atom(oxygen());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let bond = mol.add_bond(center, a, BondOrder::Single).expect("bond");
     mol.add_bond(center, b, BondOrder::Single).expect("bond");
     mol.add_bond(center, c, BondOrder::Single).expect("bond");
@@ -210,10 +210,10 @@ fn stereo_elements_groups_and_bond_marks_live_on_molecule() {
 #[test]
 fn stereo_replacement_and_group_creation_preserve_graph_references() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let a = mol.add_atom(oxygen());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let element = mol
         .add_stereo_element(StereoElement::specified(
             StereoElementKind::Tetrahedral(TetrahedralStereo {
@@ -263,9 +263,9 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
 #[test]
 fn topology_deletions_prune_referencing_stereo_state() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let ab = mol.add_bond(a, b, BondOrder::Double).expect("double bond");
     let ac = mol.add_bond(a, c, BondOrder::Single).expect("single bond");
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("single bond");
@@ -333,8 +333,8 @@ fn prop_value_equality_covers_all_initial_variants() {
 #[test]
 fn mutable_payload_access_invalidates_fresh_perception() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
@@ -351,7 +351,9 @@ fn mutable_payload_access_invalidates_fresh_perception() {
 #[test]
 fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     let mut methane = Molecule::new();
-    methane.add_atom(carbon());
+    methane
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     mark_all_fresh(&mut methane);
 
     let report = valence_api::perceive_valence(&mut methane, ValenceModel::RdkitLike);

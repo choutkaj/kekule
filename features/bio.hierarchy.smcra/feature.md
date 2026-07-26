@@ -24,6 +24,9 @@ sidecar over the shared core molecule graph.
 - Every live graph atom must have exactly one atom site, and every atom site
   must reference a live graph atom.
 - Atom-site insertion validates that referenced core atoms exist.
+- Chain, residue, and atom-site insertion checks fixed-width capacity before
+  mutating parent/lookup state and reports
+  `SmcraHierarchyError::IdentifierCapacityExceeded` with the affected ID kind.
 - Atom-site metadata preserves static type, label/auth chain, and label/auth
   atom identity. Coordinate-model-specific fields live in
   `StructureObservation`.
@@ -41,7 +44,8 @@ sidecar over the shared core molecule graph.
 
 - Unit tests cover hierarchy construction, checked assembly, transactional
   mutation, lookup, full versus static-only validation reports, unused
-  conformer skipping, and failed-commit rollback.
+  conformer skipping, synthetic ID-capacity boundaries, capacity rollback, and
+  failed-commit rollback.
 - The former Biopython evidence exercised the removed whole-file reader rather
   than the format-neutral hierarchy contract, so no current hierarchy parity
   evidence is recorded pending a replacement comparison.
@@ -70,3 +74,5 @@ sidecar over the shared core molecule graph.
 - v10: Document static-only validation for coordinate-independent topology
   consumers while retaining all-conformer validation as the standalone
   `MacroMolecule::validate` default.
+- v11: Add structured chain, residue, and atom-site capacity errors and verify
+  hierarchy insertion remains transactional at the fixed-width boundary.

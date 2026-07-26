@@ -602,17 +602,25 @@ impl TopologyBuilder {
     }
 
     pub fn reserve_definitions(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
-        checked_future_len(self.definitions.len(), additional)?;
-        self.definitions
-            .try_reserve(additional)
-            .map_err(|_| TopologyBuildError::CapacityOverflow("molecule definitions"))
+        checked_future_len(
+            self.definitions.len(),
+            additional,
+            TopologyIdKind::MoleculeDefinition,
+        )?;
+        self.definitions.try_reserve(additional).map_err(|_| {
+            TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::MoleculeDefinition)
+        })
     }
 
     pub fn reserve_instances(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
-        checked_future_len(self.instances.len(), additional)?;
-        self.instances
-            .try_reserve(additional)
-            .map_err(|_| TopologyBuildError::CapacityOverflow("molecule instances"))
+        checked_future_len(
+            self.instances.len(),
+            additional,
+            TopologyIdKind::MoleculeInstance,
+        )?;
+        self.instances.try_reserve(additional).map_err(|_| {
+            TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::MoleculeInstance)
+        })
     }
 
     pub fn definition(
@@ -669,7 +677,10 @@ impl TopologyBuilder {
     ) -> Result<MoleculeInstanceId, TopologyBuildError> {
         self.definition(definition)?;
         self.reserve_instances(1)?;
-        let id = checked_id::<MoleculeInstanceId>(self.instances.len(), "molecule instances")?;
+        let id = checked_id::<MoleculeInstanceId>(
+            self.instances.len(),
+            TopologyIdKind::MoleculeInstance,
+        )?;
         self.instances.push(MoleculeInstance {
             id,
             definition,
@@ -717,9 +728,11 @@ impl TopologyBuilder {
                         .graph()
                         .atom_count(),
                 )
-                .ok_or(TopologyBuildError::CapacityOverflow("topology atoms"))
+                .ok_or(TopologyBuildError::IdentifierCapacityExceeded(
+                    TopologyIdKind::Atom,
+                ))
         })?;
-        checked_future_len(0, atom_count)?;
+        checked_future_len(0, atom_count, TopologyIdKind::Atom)?;
         let bond_count = self.instances.iter().try_fold(0usize, |count, instance| {
             count
                 .checked_add(
@@ -727,9 +740,11 @@ impl TopologyBuilder {
                         .graph()
                         .bond_count(),
                 )
-                .ok_or(TopologyBuildError::CapacityOverflow("topology bonds"))
+                .ok_or(TopologyBuildError::IdentifierCapacityExceeded(
+                    TopologyIdKind::Bond,
+                ))
         })?;
-        checked_future_len(0, bond_count)?;
+        checked_future_len(0, bond_count, TopologyIdKind::Bond)?;
 
         let mut atom_order = Vec::new();
         let mut bond_order = Vec::new();
@@ -737,22 +752,24 @@ impl TopologyBuilder {
         let mut bond_indices = BTreeMap::new();
         atom_order
             .try_reserve_exact(atom_count)
-            .map_err(|_| TopologyBuildError::CapacityOverflow("topology atoms"))?;
+            .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::Atom))?;
         bond_order
             .try_reserve_exact(bond_count)
-            .map_err(|_| TopologyBuildError::CapacityOverflow("topology bonds"))?;
+            .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::Bond))?;
 
         for instance in &self.instances {
             let graph = self.definitions[instance.definition.index()].graph();
             for atom in graph.atom_ids() {
                 let qualified = instance.qualify_atom(atom);
-                let index = checked_id::<TopologyAtomIndex>(atom_order.len(), "topology atoms")?;
+                let index =
+                    checked_id::<TopologyAtomIndex>(atom_order.len(), TopologyIdKind::Atom)?;
                 atom_indices.insert(qualified, index);
                 atom_order.push(qualified);
             }
             for bond in graph.bond_ids() {
                 let qualified = instance.qualify_bond(bond);
-                let index = checked_id::<TopologyBondIndex>(bond_order.len(), "topology bonds")?;
+                let index =
+                    checked_id::<TopologyBondIndex>(bond_order.len(), TopologyIdKind::Bond)?;
                 bond_indices.insert(qualified, index);
                 bond_order.push(qualified);
             }
@@ -776,8 +793,10 @@ impl TopologyBuilder {
         payload: MoleculeDefinitionPayload,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
         self.reserve_definitions(1)?;
-        let id =
-            checked_id::<MoleculeDefinitionId>(self.definitions.len(), "molecule definitions")?;
+        let id = checked_id::<MoleculeDefinitionId>(
+            self.definitions.len(),
+            TopologyIdKind::MoleculeDefinition,
+        )?;
         self.definitions.push(MoleculeDefinition { id, payload });
         Ok(id)
     }
@@ -789,10 +808,14 @@ impl TopologyBuilder {
     ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
         self.reserve_definitions(1)?;
         self.reserve_instances(1)?;
-        let definition =
-            checked_id::<MoleculeDefinitionId>(self.definitions.len(), "molecule definitions")?;
-        let instance =
-            checked_id::<MoleculeInstanceId>(self.instances.len(), "molecule instances")?;
+        let definition = checked_id::<MoleculeDefinitionId>(
+            self.definitions.len(),
+            TopologyIdKind::MoleculeDefinition,
+        )?;
+        let instance = checked_id::<MoleculeInstanceId>(
+            self.instances.len(),
+            TopologyIdKind::MoleculeInstance,
+        )?;
         self.definitions.push(MoleculeDefinition {
             id: definition,
             payload,
@@ -834,24 +857,19 @@ impl FromRawId for TopologyBondIndex {
     }
 }
 
-fn checked_id<T: FromRawId>(
-    length: usize,
-    capacity: &'static str,
-) -> Result<T, TopologyBuildError> {
-    let raw = u32::try_from(length).map_err(|_| TopologyBuildError::CapacityOverflow(capacity))?;
+fn checked_id<T: FromRawId>(length: usize, kind: TopologyIdKind) -> Result<T, TopologyBuildError> {
+    let raw = crate::core::checked_raw_id(length)
+        .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))?;
     Ok(T::from_raw(raw))
 }
 
-fn checked_future_len(current: usize, additional: usize) -> Result<(), TopologyBuildError> {
-    let final_len = current
-        .checked_add(additional)
-        .ok_or(TopologyBuildError::CapacityOverflow("topology collection"))?;
-    if final_len > (u32::MAX as usize) + 1 {
-        return Err(TopologyBuildError::CapacityOverflow(
-            "fixed-width topology identifiers",
-        ));
-    }
-    Ok(())
+fn checked_future_len(
+    current: usize,
+    additional: usize,
+    kind: TopologyIdKind,
+) -> Result<(), TopologyBuildError> {
+    crate::core::checked_fixed_id_collection_len(current, additional)
+        .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))
 }
 
 fn validate_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
@@ -871,6 +889,31 @@ fn validate_macro(molecule: &MacroMolecule) -> Result<(), TopologyBuildError> {
     Ok(())
 }
 
+/// Fixed-width identifier spaces owned by [`Topology`].
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyIdKind {
+    /// Reusable molecule definitions.
+    MoleculeDefinition,
+    /// Explicit molecule instances.
+    MoleculeInstance,
+    /// Authoritative dense atom indices.
+    Atom,
+    /// Authoritative dense bond indices.
+    Bond,
+}
+
+impl fmt::Display for TopologyIdKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::MoleculeDefinition => "molecule definition",
+            Self::MoleculeInstance => "molecule instance",
+            Self::Atom => "topology atom",
+            Self::Bond => "topology bond",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TopologyBuildError {
@@ -878,7 +921,8 @@ pub enum TopologyBuildError {
     EmptyMoleculeDefinition,
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     InvalidMacroMolecule(MacroValidateError),
-    CapacityOverflow(&'static str),
+    /// A topology collection exceeded the fixed-width identifier space for `kind`.
+    IdentifierCapacityExceeded(TopologyIdKind),
 }
 
 impl fmt::Display for TopologyBuildError {
@@ -896,11 +940,8 @@ impl fmt::Display for TopologyBuildError {
             Self::InvalidMacroMolecule(error) => {
                 write!(formatter, "invalid macromolecule definition: {error}")
             }
-            Self::CapacityOverflow(collection) => {
-                write!(
-                    formatter,
-                    "{collection} exceed fixed-width topology capacity"
-                )
+            Self::IdentifierCapacityExceeded(kind) => {
+                write!(formatter, "{kind} identifier capacity exceeded")
             }
         }
     }
@@ -1732,9 +1773,15 @@ mod tests {
 
     fn tombstoned_molecule() -> (SmallMolecule, AtomId, AtomId, BondId) {
         let mut graph = Molecule::new();
-        let carbon = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
-        let tombstone = graph.add_atom(Atom::new(Element::from_symbol("H").unwrap()));
-        let oxygen = graph.add_atom(Atom::new(Element::from_symbol("O").unwrap()));
+        let carbon = graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
+        let tombstone = graph
+            .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
+            .expect("atom identifier capacity");
+        let oxygen = graph
+            .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+            .expect("atom identifier capacity");
         graph.delete_atom(tombstone).unwrap();
         let deleted_bond = graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
         graph.delete_bond(deleted_bond).unwrap();
@@ -1938,8 +1985,59 @@ mod tests {
         assert_eq!(topology.definition_count(), 2);
         assert_eq!(topology.instance_count(), 2);
         assert_eq!(
-            checked_future_len(usize::MAX, 1),
-            Err(TopologyBuildError::CapacityOverflow("topology collection"))
+            checked_future_len(usize::MAX, 1, TopologyIdKind::Atom),
+            Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::Atom
+            ))
+        );
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn every_topology_identifier_space_checks_its_boundary() {
+        let max_slot = usize::try_from(u64::from(u32::MAX)).expect("64-bit usize");
+        let first_unsupported_slot =
+            usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
+
+        assert_eq!(
+            checked_id::<MoleculeDefinitionId>(max_slot, TopologyIdKind::MoleculeDefinition,),
+            Ok(MoleculeDefinitionId::new(u32::MAX))
+        );
+        assert_eq!(
+            checked_id::<MoleculeDefinitionId>(
+                first_unsupported_slot,
+                TopologyIdKind::MoleculeDefinition,
+            ),
+            Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::MoleculeDefinition
+            ))
+        );
+        assert_eq!(
+            checked_id::<MoleculeInstanceId>(
+                first_unsupported_slot,
+                TopologyIdKind::MoleculeInstance,
+            ),
+            Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::MoleculeInstance
+            ))
+        );
+        assert_eq!(
+            checked_id::<TopologyAtomIndex>(first_unsupported_slot, TopologyIdKind::Atom,),
+            Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::Atom
+            ))
+        );
+        assert_eq!(
+            checked_id::<TopologyBondIndex>(first_unsupported_slot, TopologyIdKind::Bond,),
+            Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::Bond
+            ))
+        );
+        assert_eq!(
+            checked_future_len(first_unsupported_slot, 1, TopologyIdKind::Atom),
+            Err(TopologyBuildError::IdentifierCapacityExceeded(
+                TopologyIdKind::Atom
+            ))
         );
     }
 
@@ -1990,7 +2088,8 @@ mod tests {
         let mut macro_builder = MacroMolecule::builder();
         let atom = macro_builder
             .graph_mut()
-            .add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
         let chain = macro_builder.hierarchy_mut().add_chain("A", None).unwrap();
         let residue = macro_builder
             .hierarchy_mut()
@@ -2058,7 +2157,9 @@ mod tests {
         let old = old_builder.build().unwrap();
 
         let mut new_graph = Molecule::new();
-        let new_carbon = new_graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+        let new_carbon = new_graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
         let new_molecule = SmallMolecule::from_graph(new_graph);
         let mut new_builder = TopologyBuilder::new();
         let new_definition = new_builder

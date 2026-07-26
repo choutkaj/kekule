@@ -23,10 +23,16 @@ use crate::units::{
 fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId, BondId) {
     let mut graph = Molecule::new();
     let carbon = Element::from_symbol("C").unwrap();
-    let a = graph.add_atom(Atom::new(carbon));
-    let tombstone = graph.add_atom(Atom::new(carbon));
+    let a = graph
+        .add_atom(Atom::new(carbon))
+        .expect("atom identifier capacity");
+    let tombstone = graph
+        .add_atom(Atom::new(carbon))
+        .expect("atom identifier capacity");
     graph.delete_atom(tombstone).unwrap();
-    let b = graph.add_atom(Atom::new(carbon));
+    let b = graph
+        .add_atom(Atom::new(carbon))
+        .expect("atom identifier capacity");
     let bond = graph.add_bond(a, b, BondOrder::Single).unwrap();
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
@@ -47,7 +53,9 @@ fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId,
 
 fn one_atom_macro() -> (MacroMolecule, ConformerId, AtomId, SmcraAtomSiteId) {
     let mut graph = Molecule::new();
-    let atom = graph.add_atom(Atom::new(Element::from_symbol("N").unwrap()));
+    let atom = graph
+        .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -100,7 +108,9 @@ fn model_preserves_local_ids_and_dense_round_trips() {
 #[test]
 fn model_converts_source_conformer_units_once_without_mutating_the_source() {
     let mut graph = Molecule::new();
-    let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let atom = graph
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(NANOMETER).unwrap();
     conformer
         .set_position(atom, Quantity::new(Point3::new(0.15, 0.0, 0.0), NANOMETER))
@@ -160,7 +170,8 @@ fn instance_to_conformer_maps_local_ids_converts_units_and_is_transactional() {
 
     let extra = target
         .graph_mut()
-        .add_atom(Atom::new(Element::from_symbol("H").unwrap()));
+        .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
+        .expect("atom identifier capacity");
     let before = target.clone();
     assert_eq!(
         model.instance_to_conformer(instance, target.graph_mut(), nanometer),

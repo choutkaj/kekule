@@ -14,6 +14,9 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
   and position accessors return quantities retaining that unit.
 - `Molecule::add_conformer` is fallible and transactionally rejects coordinates
   assigned to invalid, deleted, or otherwise non-live atom IDs.
+- `Conformer::new`, `with_atom_capacity`, and `set_position` return
+  `ConformerError`; position arrays outside the `AtomId` addressable range fail
+  with `PositionCapacityExceeded` before allocation or mutation.
 - Adding or deleting topology invalidates coordinate-bearing conformers only when the topology operation removes atoms.
 
 ## Implementation Notes
@@ -28,7 +31,8 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 
 ## Tests
 
-- Unit tests cover insertion, lookup, and SDF/Molfile coordinate preservation.
+- Unit tests cover insertion, lookup, synthetic position-capacity boundaries,
+  and SDF/Molfile coordinate preservation.
 
 ## Benchmarks
 
@@ -54,3 +58,5 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 - v7: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v8: Move `Point3` to the shared `geometry` module and distinguish local
   molecule conformers from topology-bound configurations and trajectories.
+- v9: Add structured conformer position-capacity errors and remove unchecked
+  slot reconstruction from conformer coordinate iteration.

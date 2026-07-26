@@ -267,7 +267,9 @@ pub(super) fn interpret_v2000_syntax(
     let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
         .expect("angstrom is a length unit");
     for record in &syntax.atoms {
-        let atom_id = mol.add_atom(record.atom.clone());
+        let atom_id = mol.add_atom(record.atom.clone()).map_err(|error| {
+            SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
+        })?;
         conformer
             .set_position(atom_id, Quantity::new(record.point, ANGSTROM))
             .expect("matching coordinate units");
@@ -613,8 +615,8 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let bonds = mol.bond_ids().collect::<Vec<_>>();
     let mut atom_index = BTreeMap::new();
-    for (index, atom_id) in atoms.iter().enumerate() {
-        atom_index.insert(*atom_id, index + 1);
+    for (serial, atom_id) in (1u64..).zip(atoms.iter()) {
+        atom_index.insert(*atom_id, serial);
     }
 
     let title = "";
@@ -677,7 +679,7 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .filter_map(|id| {
                 let atom = mol.atom(*id).ok()?;
                 (atom.formal_charge != 0)
-                    .then_some((*atom_index.get(id)? as i32, atom.formal_charge as i32))
+                    .then_some((*atom_index.get(id)?, i32::from(atom.formal_charge)))
             })
             .collect(),
     );
@@ -690,8 +692,8 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
                 let atom = mol.atom(*id).ok()?;
                 atom.isotope.map(|isotope| {
                     (
-                        *atom_index.get(id).expect("atom indexed") as i32,
-                        isotope as i32,
+                        *atom_index.get(id).expect("atom indexed"),
+                        i32::from(isotope),
                     )
                 })
             })
@@ -708,7 +710,7 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
         let index = *atom_index
             .get(id)
             .ok_or_else(|| MolWriteError::new("atom missing from V2000 atom table"))?;
-        radical_records.push((index as i32, v2000_radical_code(radical)?));
+        radical_records.push((index, v2000_radical_code(radical)?));
     }
     push_m_record(&mut out, "RAD", radical_records);
     out.push_str("M  END\n");
@@ -846,7 +848,7 @@ fn v2000_radical_code(radical: AtomRadical) -> std::result::Result<i32, MolWrite
     }
 }
 
-fn push_m_record(out: &mut String, code: &str, pairs: Vec<(i32, i32)>) {
+fn push_m_record(out: &mut String, code: &str, pairs: Vec<(u64, i32)>) {
     for chunk in pairs.chunks(8) {
         if chunk.is_empty() {
             continue;

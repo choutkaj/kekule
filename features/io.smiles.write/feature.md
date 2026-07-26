@@ -21,6 +21,8 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 
 - The writer targets readability and deterministic output, not canonical ranking.
 - A deterministic DFS tree is rendered with preassigned ring closures at both endpoints and branch children before the selected continuation path.
+- One-based ring-closure labels are assigned in `u64` after enforcing the
+  supported maximum of 99 simultaneous closures.
 - Tree collection, subtree sizing, and component emission use explicit stacks so graph depth does not consume the Rust call stack.
 - Unsupported stereo/query details are read from the first-class stereo representation and return structured write errors until isomeric SMILES support can encode them faithfully.
 - Representable radicals need no nonstandard token: bracket atom syntax carries
@@ -56,3 +58,5 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
   instead of repository-wide required evidence.
 - v10: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v11: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v12: Generate one-based ring labels in `u64` so formatting never relies on
+  overflow-prone collection-index arithmetic.

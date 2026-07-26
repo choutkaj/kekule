@@ -920,7 +920,9 @@ mod tests {
 
     fn one_atom_topology() -> Topology {
         let mut graph = Molecule::new();
-        graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+        graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .expect("atom identifier capacity");
         let molecule = SmallMolecule::from_graph(graph);
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();

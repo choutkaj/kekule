@@ -34,6 +34,10 @@ series, breaking public API changes increment the minor version.
   macromolecular graph/hierarchy state; model construction validates only its
   selected source conformer, while explicit standalone macro validation retains
   full-conformer checking.
+- Make every collection-backed public ID insertion checked and transactional:
+  `Molecule::add_atom` is now fallible, graph/conformer/stereo/SMCRA/topology
+  capacity failures are structured by identifier kind, iterators avoid
+  narrowing slot indices, and writer-generated one-based serials use `u64`.
 - Move DSSP and potential evaluation to borrowed structural views. Bind
   harmonic and DREIDING preparation to exact topology identity; DREIDING now
   exposes explicit whole-topology, molecule-instance, and connected-component

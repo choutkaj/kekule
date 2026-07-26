@@ -288,7 +288,7 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
         {
             continue;
         }
-        let base = format!("M{}", id.raw() + 1);
+        let base = format!("M{}", one_based_serial(id.raw()));
         let mut candidate = base.clone();
         let mut suffix = 2usize;
         while reserved_asym_ids.contains(&candidate) {
@@ -309,7 +309,7 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
             .definition_for_instance(id)
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
         validate_graph_chemistry(molecule, definition)?;
-        let entity_id = (id.raw() + 1).to_string();
+        let entity_id = one_based_serial(id.raw()).to_string();
         let kind = entity_kind(molecule, definition)?;
         entities.push(EntityRow {
             id: entity_id.clone(),
@@ -693,7 +693,11 @@ fn normalized_group_pdb(
 }
 
 fn generated_atom_name(symbol: &str, atom: AtomId) -> String {
-    format!("{symbol}{}", atom.raw() + 1)
+    format!("{symbol}{}", one_based_serial(atom.raw()))
+}
+
+fn one_based_serial(raw: u32) -> u64 {
+    u64::from(raw) + 1
 }
 
 fn supported_bond_order(
@@ -880,12 +884,12 @@ fn render_model(
         "_atom_site.pdbx_PDB_model_num",
     ];
     write_loop_header(&mut output, ATOM_TAGS);
-    for (index, atom) in model.atoms.iter().enumerate() {
+    for (serial, atom) in (1u64..).zip(model.atoms.iter()) {
         write_row(
             &mut output,
             vec![
                 atom.group_pdb.clone(),
-                (index + 1).to_string(),
+                serial.to_string(),
                 cif_value(&atom.type_symbol, "_atom_site.type_symbol")?,
                 cif_value(&atom.label_atom_id, "_atom_site.label_atom_id")?,
                 optional_cif_value(atom.label_alt_id.as_deref(), "_atom_site.label_alt_id")?,
@@ -934,13 +938,13 @@ fn render_model(
             "_struct_conn.pdbx_value_order",
         ];
         write_loop_header(&mut output, CONNECTION_TAGS);
-        for (index, connection) in model.connections.iter().enumerate() {
+        for (serial, connection) in (1u64..).zip(model.connections.iter()) {
             let left = &model.atoms[indexes[&connection.left]];
             let right = &model.atoms[indexes[&connection.right]];
             write_row(
                 &mut output,
                 vec![
-                    format!("conn{}", index + 1),
+                    format!("conn{serial}"),
                     "covale".to_owned(),
                     cif_value(&left.asym_id, "_struct_conn.ptnr1_label_asym_id")?,
                     cif_value(&left.label_comp_id, "_struct_conn.ptnr1_label_comp_id")?,
@@ -1029,5 +1033,16 @@ fn bond_order_code(order: BondOrder) -> &'static str {
         BondOrder::Zero | BondOrder::Aromatic | BondOrder::Dative => {
             unreachable!("unsupported bond order was rejected")
         }
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::one_based_serial;
+
+    #[test]
+    fn one_based_serials_widen_before_incrementing() {
+        assert_eq!(one_based_serial(0), 1);
+        assert_eq!(one_based_serial(u32::MAX), u64::from(u32::MAX) + 1);
     }
 }

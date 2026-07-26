@@ -19,6 +19,9 @@ definitions and explicitly identified instances.
 - `TopologyBuilder` is independently usable without coordinates, supports
   explicit definition reuse, uses checked fixed-width identifiers, and commits
   additions only after validation.
+- Capacity failures identify definitions, instances, dense atoms, or dense
+  bonds through `TopologyIdKind`; shared checked conversion is used for both
+  insertion and reservation limits.
 - Macro definitions receive static graph/hierarchy validation with coordinate
   checking disabled. Topology construction neither scans nor validates source
   conformers and strips them only from the stored definition clone.
@@ -78,3 +81,6 @@ definitions and explicitly identified instances.
   identity.
 - v4: Make macro topology construction strictly coordinate-independent through
   static-only graph/hierarchy validation that performs no unused-conformer work.
+- v5: Replace string-labelled capacity failures with
+  `IdentifierCapacityExceeded(TopologyIdKind)` and add synthetic boundary
+  regressions for every topology identifier space.

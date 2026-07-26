@@ -142,6 +142,10 @@ It owns:
 
 Deletion leaves tombstones and stable local identifiers are never reused.
 `Molecule` may be disconnected, unsanitized, incomplete, or chemically invalid.
+Atom, bond, conformer, stereo-element, and stereo-group insertion checks the
+fixed-width identifier slot before mutation and returns a focused structured
+capacity error when exhausted. Iteration never reconstructs these identifiers
+through unchecked narrowing from platform-sized collection indices.
 
 Graph connectedness is not the definition of a molecular entity. A salt such as
 `[Na+].[Cl-]`, a coordination compound such as ferrocene, and an ordinary
@@ -203,6 +207,8 @@ atom site, every atom site references a live graph atom, hierarchy parentage is
 consistent, and static identifiers satisfy their documented invariants.
 Construction uses checked builders or checked assembly from parts.
 Coordinated graph-and-hierarchy mutation is transactional.
+Chain, residue, and atom-site capacity failures are structured and occur before
+parent lists or lookup maps are changed.
 
 Macromolecule validation is separate from small-molecule sanitization.
 Chemically general algorithms operate on `Molecule` where practical.
@@ -854,6 +860,8 @@ selection, ignored records, and source classification remain visible in
 reports and provenance. Interpretation must not assert fabricated bond orders.
 
 Text writers operate on canonical objects and reject unsupported semantics.
+Writer-generated one-based numeric serials use widened integer arithmetic;
+formatting never increments a `u32` identifier in place.
 Trajectory codecs use streaming reader and writer interfaces rather than
 forcing a loss-preserving whole-file document abstraction for binary data.
 

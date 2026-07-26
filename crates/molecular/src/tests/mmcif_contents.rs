@@ -876,7 +876,9 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
     ));
 
     let mut graph = Molecule::new();
-    let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let atom = graph
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -931,8 +933,12 @@ fn mmcif_writer_preserves_supported_bond_orders() {
 fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
     let carbon = Element::from_symbol("C").unwrap();
     let mut graph = Molecule::new();
-    let left = graph.add_atom(Atom::new(carbon));
-    let right = graph.add_atom(Atom::new(carbon));
+    let left = graph
+        .add_atom(Atom::new(carbon))
+        .expect("atom identifier capacity");
+    let right = graph
+        .add_atom(Atom::new(carbon))
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -988,8 +994,12 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
 
 fn small_model_with_bond(order: BondOrder) -> Model {
     let mut graph = Molecule::new();
-    let left = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
-    let right = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let left = graph
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .expect("atom identifier capacity");
+    let right = graph
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .expect("atom identifier capacity");
     graph.add_bond(left, right, order).unwrap();
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
@@ -1013,7 +1023,9 @@ fn small_model_with_bond(order: BondOrder) -> Model {
 
 fn small_model_with_metadata(metadata: MoleculeInstanceMetadata) -> Model {
     let mut graph = Molecule::new();
-    let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+    let atom = graph
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(

@@ -23,7 +23,11 @@ fn molecule(
     let mut graph = Molecule::new();
     let atoms = elements
         .iter()
-        .map(|symbol| graph.add_atom(explicit_atom(symbol)))
+        .map(|symbol| {
+            graph
+                .add_atom(explicit_atom(symbol))
+                .expect("atom identifier capacity")
+        })
         .collect::<Vec<_>>();
     for &(a, b, order) in bonds {
         graph.add_bond(atoms[a], atoms[b], order).unwrap();
@@ -232,10 +236,18 @@ fn qeq_grouping_policy_is_explicit() {
 #[test]
 fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
     let mut graph = Molecule::new();
-    let oxygen = graph.add_atom(explicit_atom("O"));
-    let tombstone = graph.add_atom(explicit_atom("H"));
-    let first_hydrogen = graph.add_atom(explicit_atom("H"));
-    let second_hydrogen = graph.add_atom(explicit_atom("H"));
+    let oxygen = graph
+        .add_atom(explicit_atom("O"))
+        .expect("atom identifier capacity");
+    let tombstone = graph
+        .add_atom(explicit_atom("H"))
+        .expect("atom identifier capacity");
+    let first_hydrogen = graph
+        .add_atom(explicit_atom("H"))
+        .expect("atom identifier capacity");
+    let second_hydrogen = graph
+        .add_atom(explicit_atom("H"))
+        .expect("atom identifier capacity");
     graph.delete_atom(tombstone).unwrap();
     graph
         .add_bond(oxygen, first_hydrogen, BondOrder::Single)
@@ -312,7 +324,9 @@ fn eligible_macro_molecules_are_supported() {
 fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let mut atom = Atom::new(Element::from_symbol("C").unwrap());
     let mut graph = Molecule::new();
-    let id = graph.add_atom(atom.clone());
+    let id = graph
+        .add_atom(atom.clone())
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(molecular::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -336,7 +350,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     atom.no_implicit_hydrogens = true;
     atom.explicit_hydrogens = 1;
     let mut graph = Molecule::new();
-    let id = graph.add_atom(atom);
+    let id = graph.add_atom(atom).expect("atom identifier capacity");
     let mut conformer = Conformer::new(molecular::units::ANGSTROM).unwrap();
     conformer
         .set_position(
