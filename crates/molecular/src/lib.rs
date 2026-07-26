@@ -175,12 +175,12 @@ pub mod sdf {
 
 pub mod mmcif {
     pub use crate::io::{
-        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifDataBlock, MmcifDocument,
-        MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
-        MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance, MmcifInterpretError,
-        MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport,
-        MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError, MmcifParseOptions,
-        MmcifValue, MmcifWriteError, MmcifWriteOptions,
+        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason, MmcifDataBlock,
+        MmcifDocument, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
+        MmcifEnsembleInterpretation, MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance,
+        MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
+        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
+        MmcifParseOptions, MmcifValue, MmcifWriteError, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.

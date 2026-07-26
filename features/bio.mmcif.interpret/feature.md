@@ -29,14 +29,24 @@ report, or use a separate path for a verified shared-topology ensemble.
 - Uses entity, structural-instance, atom-site, polymer-sequence, and
   declared-connection metadata to build Small/Macro instances. Only declared
   local covalent links merge boundaries; symmetry-mate links remain unresolved.
+- Resolves each `_struct_conn` partner against every supplied non-missing label
+  and author selector: asymmetry, component, sequence, atom, insertion code, and
+  alternate location. Label and author fields must identify one common
+  selected-model atom; zero and multiple candidates remain distinct report
+  issues and never merge instances or create topology bonds.
+- Declared connections are never disambiguated by atom-row order or spatial
+  proximity. An explicitly named alternate location omitted by selection is
+  reported rather than rebound to the retained alternate location.
 - Preserves `sing`, `doub`, `trip`, and `quad` values from
   `_struct_conn.pdbx_value_order`; a missing value defaults to single and an
   unsupported explicit value returns a structured interpretation error.
 - Assigns conservative evidence-backed roles and exposes exact source
   classifications through report/provenance data.
 - Reports selected and ignored models, altloc omissions, inferred entity kinds,
-  applied/ignored/unresolved connections, pending template connectivity, and
-  distance-based connectivity candidates.
+  applied/ignored/unresolved/ambiguous connections, pending template
+  connectivity, and distance-based connectivity candidates. Connection issues
+  retain the source connection ID, type, partner number, line, candidate count
+  where applicable, and a structured resolution reason.
 - Reports every interpreted atom through `MmcifAtomProvenance`, qualified by
   `MoleculeInstanceId` and `InstanceAtomId`, with source line, atom-site,
   component, label/auth asymmetry, entity, residue sequence, insertion,
@@ -61,6 +71,10 @@ report, or use a separate path for a verified shared-topology ensemble.
 
 - `SmcraHierarchy` maps labels to local `AtomId`; model insertion provides the
   instance-qualified view.
+- Connection resolution preserves true label and author atom-site fields
+  separately rather than matching label selectors against author fallbacks.
+  Explicit altloc diagnostics compare selected atoms with the selected model's
+  pre-altloc rows without using coordinates as evidence.
 - Polymer/branched instances establish conservative macro boundaries; nonpolymer
   and water occurrences remain distinct unless a declared covalent link joins
   them.
@@ -76,6 +90,12 @@ report, or use a separate path for a verified shared-topology ensemble.
   coordinates, covalent merging, noncovalent separation, symmetry-mate
   rejection, deposited polymer-chain ordering, supported connection order
   interpretation, and unknown-order rejection.
+- Declared-connection regressions cover repeated label atom names distinguished
+  by label sequence, repeated author sequences distinguished by insertion code,
+  auth-only and consistent mixed label/auth selectors, conflicting selector
+  families, zero and multiple candidates, selected-out alternate locations,
+  atom-row reordering, ordinary unique links, default single bond order,
+  unsupported explicit bond order, and unsupported symmetry mates.
 - Multi-model tests cover shared-topology ensemble construction, distinct
   per-member source IDs/occupancy/B-factors, repeated residue/atom names,
   insertion-code variants, repeated sequence-free non-polymer occurrences,
@@ -84,7 +104,8 @@ report, or use a separate path for a verified shared-topology ensemble.
   rejection.
 - Successful bounded fuzz parses traverse the loss-preserving document and then
   exercise explicit selected-model interpretation, empty ensemble selection,
-  extreme finite coordinates, and qualified model lookup.
+  extreme finite coordinates, ambiguous and auth-only declared connections,
+  and qualified model lookup.
 - Connectivity-diagnostic regressions cover finite coordinates immediately
   within and beyond both supported spatial-cell boundaries without panics.
 
@@ -121,3 +142,7 @@ report, or use a separate path for a verified shared-topology ensemble.
 - v12: Extend atom provenance and ensemble identity with residue sequence,
   insertion, auth asymmetry, sequence-free occurrence, and selected-altloc
   identity; stop relying on derived molecule insertion order.
+- v13: Replace first-match `_struct_conn` partner lookup with complete
+  label/author selector resolution, distinguish unresolved and ambiguous
+  candidates in source-aware reports, and prevent omitted altlocs from binding
+  to retained conformers.

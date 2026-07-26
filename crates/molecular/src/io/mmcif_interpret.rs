@@ -74,6 +74,11 @@ impl MmcifEntityKind {
     }
 }
 
+/// Non-fatal scientific interpretation issues retained in the mmCIF report.
+///
+/// Connection issues preserve source identity and distinguish unresolved
+/// selectors from ambiguous selectors. Neither case creates a topology bond.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MmcifInterpretIssue {
     EntityTypeInferred {
@@ -83,8 +88,22 @@ pub enum MmcifInterpretIssue {
     ConnectionIgnored {
         connection_type: String,
     },
+    /// One declared connection partner matched no selected-model atom.
     ConnectionUnresolved {
+        connection_id: Option<String>,
         connection_type: String,
+        partner: u8,
+        source_line: Option<usize>,
+        reason: MmcifConnectionResolutionReason,
+    },
+    /// One declared connection partner matched more than one selected-model atom.
+    ConnectionAmbiguous {
+        connection_id: Option<String>,
+        connection_type: String,
+        partner: u8,
+        source_line: Option<usize>,
+        candidates: usize,
+        reason: MmcifConnectionResolutionReason,
     },
     CoordinateModelIgnored {
         model_id: String,
@@ -98,6 +117,51 @@ pub enum MmcifInterpretIssue {
         atom_count: usize,
         candidate_count: usize,
     },
+}
+
+/// Why a `_struct_conn` partner could not be resolved uniquely.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MmcifConnectionResolutionReason {
+    /// The record requests a symmetry mate outside the asymmetric unit.
+    UnsupportedSymmetry { symmetry: String },
+    /// No label or author atom-identity selector was supplied.
+    MissingSelector,
+    /// Alias fields for the same selector supplied conflicting values.
+    ConflictingSelectorValues { selector: &'static str },
+    /// Label and author selector families matched disjoint atom sets.
+    ConflictingLabelAndAuthorSelectors,
+    /// An explicitly named alternate location existed before selection but was omitted.
+    AlternateLocationOmitted { alternate_location: String },
+    /// No selected-model atom satisfied every supplied selector field.
+    NoMatchingAtom,
+    /// More than one selected-model atom satisfied every supplied selector field.
+    MultipleMatchingAtoms,
+}
+
+impl fmt::Display for MmcifConnectionResolutionReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedSymmetry { symmetry } => {
+                write!(formatter, "unsupported symmetry mate `{symmetry}`")
+            }
+            Self::MissingSelector => formatter.write_str("missing partner atom selector"),
+            Self::ConflictingSelectorValues { selector } => {
+                write!(formatter, "conflicting values for {selector}")
+            }
+            Self::ConflictingLabelAndAuthorSelectors => {
+                formatter.write_str("label and author selectors identify different atoms")
+            }
+            Self::AlternateLocationOmitted { alternate_location } => write!(
+                formatter,
+                "alternate location `{alternate_location}` was omitted by selection policy"
+            ),
+            Self::NoMatchingAtom => formatter.write_str("no atom matches the partner selector"),
+            Self::MultipleMatchingAtoms => {
+                formatter.write_str("multiple atoms match the partner selector")
+            }
+        }
+    }
 }
 
 /// Stable source correspondence for one interpreted mmCIF atom.
@@ -220,6 +284,11 @@ impl MmcifInstanceProvenance {
     }
 }
 
+/// Structured record of one mmCIF interpretation.
+///
+/// Applied connection counts include only uniquely resolved local covalent
+/// records. [`Self::issues`] retains source-aware unresolved and ambiguous
+/// partner diagnostics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MmcifInterpretationReport {
     pub(crate) data_block: String,
@@ -270,6 +339,7 @@ impl MmcifInterpretationReport {
         self.solvent_molecules
     }
 
+    /// Returns the number of uniquely resolved covalent connection records.
     pub const fn applied_connections(&self) -> usize {
         self.applied_connections
     }
@@ -286,6 +356,10 @@ impl MmcifInterpretationReport {
         &self.instances
     }
 
+    /// Returns source-aware non-fatal interpretation issues.
+    ///
+    /// Unresolved and ambiguous `_struct_conn` partners are reported here and
+    /// never create molecule merges or topology bonds.
     pub fn issues(&self) -> &[MmcifInterpretIssue] {
         &self.issues
     }
@@ -410,10 +484,21 @@ fn interpret_block(
         ..MmcifInterpretationReport::default()
     };
     let rows = read_atom_rows(atom_table, &entities, &asym_entities, &options, &mut report)?;
-    let selected = select_alt_locations(rows, &options.altloc_policy, &mut report)?;
+    let selected = select_alt_locations(&rows, &options.altloc_policy, &mut report)?;
     let selected = select_coordinate_model(selected, &options.model_selection, &mut report)?;
+    let selected_model = report
+        .selected_model
+        .clone()
+        .ok_or_else(|| MmcifInterpretError::new(None, "coordinate model selection was lost"))?;
     let mut union = InstanceUnion::new(selected.iter().map(|row| row.instance_key.clone()));
-    let connections = read_connections(block, &selected, &mut union, &mut report)?;
+    let connections = read_connections(
+        block,
+        &selected,
+        &rows,
+        &selected_model,
+        &mut union,
+        &mut report,
+    )?;
     let polymer_asym_order = polymer_asym_order(block);
     let groups = group_rows(selected, &mut union, &polymer_asym_order);
     let mut builder = ModelBuilder::new();
@@ -572,6 +657,7 @@ struct AtomRow {
     entity_id: Option<String>,
     kind: MmcifEntityKind,
     instance_key: String,
+    label_asym_id: Option<String>,
     asym_id: String,
     auth_asym_id: Option<String>,
     residue_key: String,
@@ -579,8 +665,10 @@ struct AtomRow {
     auth_seq_id: Option<String>,
     insertion_code: Option<String>,
     occurrence: Option<usize>,
+    label_comp_id: Option<String>,
     comp_id: String,
     auth_comp_id: Option<String>,
+    label_atom_name: Option<String>,
     atom_name: String,
     auth_atom_name: Option<String>,
     atom_site_id: Option<String>,
@@ -630,16 +718,22 @@ fn read_atom_rows(
                     format!("unknown atom-site element `{type_symbol}`"),
                 )
             })?;
-        let asym_id = optional(table, row, "_atom_site.label_asym_id")
+        let label_asym_id = optional(table, row, "_atom_site.label_asym_id").map(str::to_owned);
+        let asym_id = label_asym_id
+            .as_deref()
             .or_else(|| optional(table, row, "_atom_site.auth_asym_id"))
             .ok_or_else(|| row_error(table, row, "missing atom-site chain identifier"))?
             .to_owned();
         let auth_asym_id = optional(table, row, "_atom_site.auth_asym_id").map(str::to_owned);
-        let comp_id = optional(table, row, "_atom_site.label_comp_id")
+        let label_comp_id = optional(table, row, "_atom_site.label_comp_id").map(str::to_owned);
+        let comp_id = label_comp_id
+            .as_deref()
             .or_else(|| optional(table, row, "_atom_site.auth_comp_id"))
             .ok_or_else(|| row_error(table, row, "missing atom-site component identifier"))?
             .to_owned();
-        let atom_name = optional(table, row, "_atom_site.label_atom_id")
+        let label_atom_name = optional(table, row, "_atom_site.label_atom_id").map(str::to_owned);
+        let atom_name = label_atom_name
+            .as_deref()
             .or_else(|| optional(table, row, "_atom_site.auth_atom_id"))
             .ok_or_else(|| row_error(table, row, "missing atom-site atom identifier"))?
             .to_owned();
@@ -737,6 +831,7 @@ fn read_atom_rows(
             entity_id,
             kind,
             instance_key,
+            label_asym_id,
             asym_id,
             auth_asym_id,
             residue_key,
@@ -744,8 +839,10 @@ fn read_atom_rows(
             auth_seq_id,
             insertion_code,
             occurrence,
+            label_comp_id,
             comp_id,
             auth_comp_id: optional(table, row, "_atom_site.auth_comp_id").map(str::to_owned),
+            label_atom_name,
             atom_name,
             auth_atom_name: optional(table, row, "_atom_site.auth_atom_id").map(str::to_owned),
             atom_site_id: optional(table, row, "_atom_site.id").map(str::to_owned),
@@ -788,11 +885,11 @@ fn canonical_mmcif_element_symbol(symbol: &str) -> String {
 }
 
 fn select_alt_locations(
-    rows: Vec<AtomRow>,
+    rows: &[AtomRow],
     policy: &MmcifAltLocPolicy,
     report: &mut MmcifInterpretationReport,
 ) -> Result<Vec<AtomRow>, MmcifInterpretError> {
-    let mut grouped = BTreeMap::<(String, String, String), Vec<AtomRow>>::new();
+    let mut grouped = BTreeMap::<(String, String, String), Vec<&AtomRow>>::new();
     for row in rows {
         grouped
             .entry((
@@ -842,13 +939,20 @@ fn select_alt_locations(
                         .unwrap_or(Ordering::Equal)
                         .then_with(|| right.alt_id.cmp(&left.alt_id))
                 })
-                .cloned(),
+                .map(|row| (**row).clone()),
             MmcifAltLocPolicy::SelectLabel(label) => candidates
                 .iter()
                 .find(|row| row.alt_id.as_deref() == Some(label.as_str()))
-                .cloned()
-                .or_else(|| candidates.iter().find(|row| row.alt_id.is_none()).cloned()),
-            MmcifAltLocPolicy::ErrorOnAlternateLocations => candidates.first().cloned(),
+                .map(|row| (**row).clone())
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .find(|row| row.alt_id.is_none())
+                        .map(|row| (**row).clone())
+                }),
+            MmcifAltLocPolicy::ErrorOnAlternateLocations => {
+                candidates.first().map(|row| (**row).clone())
+            }
         };
         let Some(chosen) = chosen else {
             return Err(MmcifInterpretError::new(
@@ -946,6 +1050,8 @@ struct DeclaredConnection {
 fn read_connections(
     block: &MmcifDataBlock,
     rows: &[AtomRow],
+    all_rows: &[AtomRow],
+    selected_model: &str,
     union: &mut InstanceUnion,
     report: &mut MmcifInterpretationReport,
 ) -> Result<Vec<DeclaredConnection>, MmcifInterpretError> {
@@ -955,31 +1061,86 @@ fn read_connections(
     let mut connections = Vec::new();
     for row in 0..table.row_count() {
         let kind = required(table, row, "_struct_conn.conn_type_id")?.to_owned();
+        let connection_id = optional(table, row, "_struct_conn.id").map(str::to_owned);
+        let source_line = table
+            .row(row)
+            .and_then(|values| values.first())
+            .map(MmcifValue::line);
         if !is_covalent_connection(&kind) {
             report.issues.push(MmcifInterpretIssue::ConnectionIgnored {
                 connection_type: kind,
             });
             continue;
         }
-        let left = connection_partner(table, row, 1, rows)?;
-        let right = connection_partner(table, row, 2, rows)?;
+        let order = connection_bond_order(table, row)?;
+        let left = connection_partner(table, row, 1, rows, all_rows, selected_model)?;
+        let right = connection_partner(table, row, 2, rows, all_rows, selected_model)?;
+        let left = report_connection_partner_resolution(
+            left,
+            connection_id.as_deref(),
+            &kind,
+            1,
+            source_line,
+            report,
+        );
+        let right = report_connection_partner_resolution(
+            right,
+            connection_id.as_deref(),
+            &kind,
+            2,
+            source_line,
+            report,
+        );
         let (Some(left), Some(right)) = (left, right) else {
-            report
-                .issues
-                .push(MmcifInterpretIssue::ConnectionUnresolved {
-                    connection_type: kind,
-                });
             continue;
         };
         union.union(&left.instance_key, &right.instance_key);
         connections.push(DeclaredConnection {
             left_atom: left.atom_key(),
             right_atom: right.atom_key(),
-            order: connection_bond_order(table, row)?,
+            order,
         });
         report.applied_connections += 1;
     }
     Ok(connections)
+}
+
+fn report_connection_partner_resolution<'a>(
+    resolution: ConnectionPartnerResolution<'a>,
+    connection_id: Option<&str>,
+    connection_type: &str,
+    partner: u8,
+    source_line: Option<usize>,
+    report: &mut MmcifInterpretationReport,
+) -> Option<&'a AtomRow> {
+    match resolution {
+        ConnectionPartnerResolution::Resolved(atom) => Some(atom),
+        ConnectionPartnerResolution::Unresolved(reason) => {
+            report
+                .issues
+                .push(MmcifInterpretIssue::ConnectionUnresolved {
+                    connection_id: connection_id.map(str::to_owned),
+                    connection_type: connection_type.to_owned(),
+                    partner,
+                    source_line,
+                    reason,
+                });
+            None
+        }
+        ConnectionPartnerResolution::Ambiguous { candidates, reason } => {
+            report
+                .issues
+                .push(MmcifInterpretIssue::ConnectionAmbiguous {
+                    connection_id: connection_id.map(str::to_owned),
+                    connection_type: connection_type.to_owned(),
+                    partner,
+                    source_line,
+                    candidates,
+                    reason,
+                });
+            None
+        }
+    }
 }
 
 fn connection_bond_order(
@@ -1007,36 +1168,287 @@ fn is_covalent_connection(kind: &str) -> bool {
     kind.starts_with("covale") || kind == "disulf" || kind == "modres"
 }
 
+#[derive(Debug, Default)]
+struct LabelConnectionSelector {
+    asym_id: Option<String>,
+    component_id: Option<String>,
+    sequence_id: Option<i32>,
+    atom_id: Option<String>,
+    alternate_location: Option<String>,
+}
+
+impl LabelConnectionSelector {
+    fn is_empty(&self) -> bool {
+        self.asym_id.is_none()
+            && self.component_id.is_none()
+            && self.sequence_id.is_none()
+            && self.atom_id.is_none()
+            && self.alternate_location.is_none()
+    }
+
+    fn matches(&self, candidate: &AtomRow) -> bool {
+        self.asym_id
+            .as_deref()
+            .is_none_or(|expected| candidate.label_asym_id.as_deref() == Some(expected))
+            && self
+                .component_id
+                .as_deref()
+                .is_none_or(|expected| candidate.label_comp_id.as_deref() == Some(expected))
+            && self
+                .sequence_id
+                .is_none_or(|expected| candidate.label_seq_id == Some(expected))
+            && self
+                .atom_id
+                .as_deref()
+                .is_none_or(|expected| candidate.label_atom_name.as_deref() == Some(expected))
+            && self
+                .alternate_location
+                .as_deref()
+                .is_none_or(|expected| candidate.alt_id.as_deref() == Some(expected))
+    }
+}
+
+#[derive(Debug, Default)]
+struct AuthorConnectionSelector {
+    asym_id: Option<String>,
+    component_id: Option<String>,
+    sequence_id: Option<String>,
+    atom_id: Option<String>,
+    insertion_code: Option<String>,
+    alternate_location: Option<String>,
+}
+
+impl AuthorConnectionSelector {
+    fn is_empty(&self) -> bool {
+        self.asym_id.is_none()
+            && self.component_id.is_none()
+            && self.sequence_id.is_none()
+            && self.atom_id.is_none()
+            && self.insertion_code.is_none()
+            && self.alternate_location.is_none()
+    }
+
+    fn matches(&self, candidate: &AtomRow) -> bool {
+        self.asym_id
+            .as_deref()
+            .is_none_or(|expected| candidate.auth_asym_id.as_deref() == Some(expected))
+            && self
+                .component_id
+                .as_deref()
+                .is_none_or(|expected| candidate.auth_comp_id.as_deref() == Some(expected))
+            && self
+                .sequence_id
+                .as_deref()
+                .is_none_or(|expected| candidate.auth_seq_id.as_deref() == Some(expected))
+            && self
+                .atom_id
+                .as_deref()
+                .is_none_or(|expected| candidate.auth_atom_name.as_deref() == Some(expected))
+            && self
+                .insertion_code
+                .as_deref()
+                .is_none_or(|expected| candidate.insertion_code.as_deref() == Some(expected))
+            && self
+                .alternate_location
+                .as_deref()
+                .is_none_or(|expected| candidate.alt_id.as_deref() == Some(expected))
+    }
+}
+
+#[derive(Debug, Default)]
+struct ConnectionPartnerSelector {
+    label: LabelConnectionSelector,
+    author: AuthorConnectionSelector,
+    conflict: Option<MmcifConnectionResolutionReason>,
+}
+
+impl ConnectionPartnerSelector {
+    fn is_empty(&self) -> bool {
+        self.label.is_empty() && self.author.is_empty()
+    }
+
+    fn matches(&self, candidate: &AtomRow) -> bool {
+        self.label.matches(candidate) && self.author.matches(candidate)
+    }
+
+    fn explicit_alternate_location(&self) -> Option<&str> {
+        self.label
+            .alternate_location
+            .as_deref()
+            .or(self.author.alternate_location.as_deref())
+    }
+}
+
+#[derive(Debug)]
+enum ConnectionPartnerResolution<'a> {
+    Resolved(&'a AtomRow),
+    Unresolved(MmcifConnectionResolutionReason),
+    Ambiguous {
+        candidates: usize,
+        reason: MmcifConnectionResolutionReason,
+    },
+}
+
 fn connection_partner<'a>(
     table: &MmcifLoopTable,
     row: usize,
-    partner: usize,
-    rows: &'a [AtomRow],
-) -> Result<Option<&'a AtomRow>, MmcifInterpretError> {
+    partner: u8,
+    selected_rows: &'a [AtomRow],
+    all_rows: &[AtomRow],
+    selected_model: &str,
+) -> Result<ConnectionPartnerResolution<'a>, MmcifInterpretError> {
     let symmetry_tag = format!("_struct_conn.ptnr{partner}_symmetry");
-    if optional(table, row, &symmetry_tag).is_some_and(|symmetry| symmetry != "1_555") {
-        return Ok(None);
+    if let Some(symmetry) = optional(table, row, &symmetry_tag) {
+        if symmetry != "1_555" {
+            return Ok(ConnectionPartnerResolution::Unresolved(
+                MmcifConnectionResolutionReason::UnsupportedSymmetry {
+                    symmetry: symmetry.to_owned(),
+                },
+            ));
+        }
     }
-    let asym_tag = format!("_struct_conn.ptnr{partner}_label_asym_id");
-    let atom_tag = format!("_struct_conn.ptnr{partner}_label_atom_id");
-    let seq_tag = format!("_struct_conn.ptnr{partner}_label_seq_id");
-    let asym = optional(table, row, &asym_tag);
-    let atom = optional(table, row, &atom_tag);
-    let seq = optional(table, row, &seq_tag);
-    let (Some(asym), Some(atom)) = (asym, atom) else {
-        return Ok(None);
+
+    let label_alt_tag = format!("_struct_conn.ptnr{partner}_label_alt_id");
+    let pdbx_label_alt_tag = format!("_struct_conn.pdbx_ptnr{partner}_label_alt_id");
+    let label_alt = optional(table, row, &label_alt_tag);
+    let pdbx_label_alt = optional(table, row, &pdbx_label_alt_tag);
+    let (alternate_location, conflict) = match (label_alt, pdbx_label_alt) {
+        (Some(left), Some(right)) if left != right => (
+            Some(left.to_owned()),
+            Some(MmcifConnectionResolutionReason::ConflictingSelectorValues {
+                selector: "label alternate-location aliases",
+            }),
+        ),
+        (Some(value), _) | (_, Some(value)) => (Some(value.to_owned()), None),
+        (None, None) => (None, None),
     };
-    Ok(rows.iter().find(|candidate| {
-        candidate.asym_id == asym
-            && candidate.atom_name == atom
-            && seq.is_none_or(|seq| {
-                candidate
-                    .label_seq_id
-                    .map(|value| value.to_string())
-                    .as_deref()
-                    == Some(seq)
-            })
-    }))
+
+    let mut selector = ConnectionPartnerSelector {
+        label: LabelConnectionSelector {
+            asym_id: optional(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_label_asym_id"),
+            )
+            .map(str::to_owned),
+            component_id: optional(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_label_comp_id"),
+            )
+            .map(str::to_owned),
+            sequence_id: optional_i32(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_label_seq_id"),
+            )?,
+            atom_id: optional(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_label_atom_id"),
+            )
+            .map(str::to_owned),
+            alternate_location,
+        },
+        author: AuthorConnectionSelector {
+            asym_id: optional(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_auth_asym_id"),
+            )
+            .map(str::to_owned),
+            component_id: optional(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_auth_comp_id"),
+            )
+            .map(str::to_owned),
+            sequence_id: optional(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_auth_seq_id"),
+            )
+            .map(str::to_owned),
+            atom_id: optional(
+                table,
+                row,
+                &format!("_struct_conn.ptnr{partner}_auth_atom_id"),
+            )
+            .map(str::to_owned),
+            insertion_code: optional(
+                table,
+                row,
+                &format!("_struct_conn.pdbx_ptnr{partner}_PDB_ins_code"),
+            )
+            .map(str::to_owned),
+            alternate_location: optional(
+                table,
+                row,
+                &format!("_struct_conn.pdbx_ptnr{partner}_auth_alt_id"),
+            )
+            .map(str::to_owned),
+        },
+        conflict,
+    };
+    if let (Some(label), Some(author)) = (
+        selector.label.alternate_location.as_deref(),
+        selector.author.alternate_location.as_deref(),
+    ) {
+        if label != author {
+            selector.conflict = Some(MmcifConnectionResolutionReason::ConflictingSelectorValues {
+                selector: "label and author alternate locations",
+            });
+        }
+    }
+    if let Some(reason) = selector.conflict.take() {
+        return Ok(ConnectionPartnerResolution::Unresolved(reason));
+    }
+    if selector.is_empty() {
+        return Ok(ConnectionPartnerResolution::Unresolved(
+            MmcifConnectionResolutionReason::MissingSelector,
+        ));
+    }
+
+    let candidates = selected_rows
+        .iter()
+        .filter(|candidate| selector.matches(candidate))
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [candidate] => Ok(ConnectionPartnerResolution::Resolved(candidate)),
+        [] => {
+            if let Some(alternate_location) = selector.explicit_alternate_location() {
+                if all_rows.iter().any(|candidate| {
+                    candidate.model_id == selected_model && selector.matches(candidate)
+                }) {
+                    return Ok(ConnectionPartnerResolution::Unresolved(
+                        MmcifConnectionResolutionReason::AlternateLocationOmitted {
+                            alternate_location: alternate_location.to_owned(),
+                        },
+                    ));
+                }
+            }
+            if !selector.label.is_empty()
+                && !selector.author.is_empty()
+                && selected_rows
+                    .iter()
+                    .any(|candidate| selector.label.matches(candidate))
+                && selected_rows
+                    .iter()
+                    .any(|candidate| selector.author.matches(candidate))
+            {
+                return Ok(ConnectionPartnerResolution::Unresolved(
+                    MmcifConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
+                ));
+            }
+            Ok(ConnectionPartnerResolution::Unresolved(
+                MmcifConnectionResolutionReason::NoMatchingAtom,
+            ))
+        }
+        candidates => Ok(ConnectionPartnerResolution::Ambiguous {
+            candidates: candidates.len(),
+            reason: MmcifConnectionResolutionReason::MultipleMatchingAtoms,
+        }),
+    }
 }
 
 #[derive(Debug)]

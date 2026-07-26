@@ -156,13 +156,170 @@ _atom_site.Cartn_z
 HETATM 1 C C1 LIG A 1.936908127739503e19 0.0 0.0
 "#;
 
+const CONNECTION_ATOMS: &str = r#"
+data_connection_resolution
+loop_
+_entity.id
+_entity.type
+1 polymer
+2 non-polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+L 2
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_atom_id
+_atom_site.auth_comp_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.label_alt_id
+_atom_site.occupancy
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N GLY A N GLY X 1 1 10 . . 1.0 0.0 0.0 0.0 1
+ATOM 2 C CA GLY A CA GLY X 1 1 10 . . 1.0 2.0 0.0 0.0 1
+ATOM 3 N N ALA A N ALA X 1 2 11 . . 1.0 4.0 0.0 0.0 1
+ATOM 4 C CA ALA A CA ALA X 1 2 11 . . 1.0 6.0 0.0 0.0 1
+ATOM 5 S SG CYS A SG CYS X 1 3 20 A . 1.0 8.0 0.0 0.0 1
+ATOM 6 S SG CYS A SG CYS X 1 4 20 B . 1.0 10.0 0.0 0.0 1
+ATOM 7 O OG SER A OG SER X 1 5 30 . A 0.8 12.0 0.0 0.0 1
+ATOM 8 O OG SER A OG SER X 1 5 30 . B 0.2 14.0 0.0 0.0 1
+HETATM 9 C C1 LIG L C7 LIG Y 2 . 50 . . 1.0 20.0 0.0 0.0 1
+HETATM 10 O O1 LIG L O7 LIG Y 2 . 50 . . 1.0 22.0 0.0 0.0 1
+"#;
+
+const AMBIGUOUS_CONNECTION_FUZZ_SEED: &str = r#"
+data_ambiguous_connection
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 C CA GLY A 1 0.0 0.0 0.0
+ATOM 2 C CA ALA A 2 2.0 0.0 0.0
+loop_
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+ambiguous covale A CA A CA
+"#;
+
+const AUTH_ONLY_CONNECTION_FUZZ_SEED: &str = r#"
+data_auth_connection
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_atom_id
+_atom_site.auth_comp_id
+_atom_site.auth_asym_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 C C1 LIG L C7 LIG X 50 0.0 0.0 0.0
+HETATM 2 O O1 LIG L O7 LIG X 50 2.0 0.0 0.0
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_auth_asym_id
+_struct_conn.ptnr1_auth_comp_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr1_auth_atom_id
+_struct_conn.ptnr2_auth_asym_id
+_struct_conn.ptnr2_auth_comp_id
+_struct_conn.ptnr2_auth_seq_id
+_struct_conn.ptnr2_auth_atom_id
+auth covale X LIG 50 C7 X LIG 50 O7
+"#;
+
 fn parse(input: &str) -> mmcif::MmcifDocument {
     mmcif::parse_str(input, MmcifParseOptions::default()).expect("mmCIF parses")
 }
 
+fn connection_input(atom_sites: &str, tags: &str, values: &str) -> String {
+    format!("{atom_sites}\nloop_\n_struct_conn.id\n_struct_conn.conn_type_id\n{tags}\n{values}\n")
+}
+
+fn connection_atom(
+    interpretation: &mmcif::MmcifInterpretation,
+    atom_name: &str,
+    label_sequence_id: Option<i32>,
+    insertion_code: Option<&str>,
+) -> crate::topology::InstanceAtomId {
+    interpretation
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .find(|atom| {
+            atom.atom_name() == atom_name
+                && atom.label_sequence_id() == label_sequence_id
+                && atom.insertion_code() == insertion_code
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "missing provenance atom {atom_name} at label sequence {label_sequence_id:?} insertion {insertion_code:?}"
+            )
+        })
+        .atom()
+}
+
+fn assert_declared_bond(
+    interpretation: &mmcif::MmcifInterpretation,
+    left: crate::topology::InstanceAtomId,
+    right: crate::topology::InstanceAtomId,
+    order: BondOrder,
+) {
+    assert_eq!(left.molecule(), right.molecule());
+    let definition = interpretation
+        .model()
+        .topology()
+        .definition_for_instance(left.molecule())
+        .expect("connection molecule definition");
+    let bond = definition
+        .graph()
+        .bond_between(left.atom(), right.atom())
+        .expect("valid connection atoms")
+        .expect("declared connection bond");
+    assert_eq!(
+        definition.graph().bond(bond).expect("declared bond").order,
+        order
+    );
+}
+
 #[test]
 fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
-    for seed in [MIXED, MULTI_MODEL, EXTREME_COORDINATE] {
+    for seed in [
+        MIXED,
+        MULTI_MODEL,
+        EXTREME_COORDINATE,
+        AMBIGUOUS_CONNECTION_FUZZ_SEED,
+        AUTH_ONLY_CONNECTION_FUZZ_SEED,
+    ] {
         for input in deterministic_text_mutations(seed) {
             std::panic::catch_unwind(|| {
                 let Ok(document) = mmcif::parse_str(
@@ -721,6 +878,319 @@ fn selected_model_requires_complete_positions() {
 }
 
 #[test]
+fn struct_conn_label_sequence_distinguishes_repeated_atom_names() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.pdbx_value_order"#,
+        "label-sequence covale A GLY 1 CA A ALA 2 CA doub",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 1);
+    assert_declared_bond(
+        &result,
+        connection_atom(&result, "CA", Some(1), None),
+        connection_atom(&result, "CA", Some(2), None),
+        BondOrder::Double,
+    );
+}
+
+#[test]
+fn struct_conn_author_insertion_code_distinguishes_repeated_author_sequence() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_auth_asym_id
+_struct_conn.ptnr1_auth_comp_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr1_auth_atom_id
+_struct_conn.pdbx_ptnr1_PDB_ins_code
+_struct_conn.ptnr2_auth_asym_id
+_struct_conn.ptnr2_auth_comp_id
+_struct_conn.ptnr2_auth_seq_id
+_struct_conn.ptnr2_auth_atom_id
+_struct_conn.pdbx_ptnr2_PDB_ins_code"#,
+        "insertion covale X CYS 20 SG A X CYS 20 SG B",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 1);
+    assert_declared_bond(
+        &result,
+        connection_atom(&result, "SG", Some(3), Some("A")),
+        connection_atom(&result, "SG", Some(4), Some("B")),
+        BondOrder::Single,
+    );
+}
+
+#[test]
+fn struct_conn_author_fields_resolve_when_label_sequence_is_absent() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_auth_asym_id
+_struct_conn.ptnr1_auth_comp_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr1_auth_atom_id
+_struct_conn.ptnr2_auth_asym_id
+_struct_conn.ptnr2_auth_comp_id
+_struct_conn.ptnr2_auth_seq_id
+_struct_conn.ptnr2_auth_atom_id"#,
+        "author-only covale Y LIG 50 C7 Y LIG 50 O7",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 1);
+    assert_declared_bond(
+        &result,
+        connection_atom(&result, "C1", None, None),
+        connection_atom(&result, "O1", None, None),
+        BondOrder::Single,
+    );
+}
+
+#[test]
+fn struct_conn_consistent_label_and_author_selectors_resolve_same_atom() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_auth_asym_id
+_struct_conn.ptnr1_auth_comp_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr1_auth_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_auth_asym_id
+_struct_conn.ptnr2_auth_comp_id
+_struct_conn.ptnr2_auth_seq_id
+_struct_conn.ptnr2_auth_atom_id"#,
+        "consistent covale A GLY 1 N X GLY 10 N A GLY 1 CA X GLY 10 CA",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 1);
+    assert_declared_bond(
+        &result,
+        connection_atom(&result, "N", Some(1), None),
+        connection_atom(&result, "CA", Some(1), None),
+        BondOrder::Single,
+    );
+}
+
+#[test]
+fn struct_conn_conflicting_label_and_author_selectors_are_unresolved() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_auth_asym_id
+_struct_conn.ptnr1_auth_comp_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr1_auth_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id"#,
+        "conflict covale A GLY 1 N X ALA 11 CA A GLY 1 CA",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 0);
+    assert!(result.report().issues().iter().any(|issue| matches!(
+        issue,
+        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+            connection_id: Some(id),
+            connection_type,
+            partner: 1,
+            source_line: Some(_),
+            reason:
+                mmcif::MmcifConnectionResolutionReason::ConflictingLabelAndAuthorSelectors,
+        } if id == "conflict" && connection_type == "covale"
+    )));
+}
+
+#[test]
+fn struct_conn_under_specified_selector_is_reported_ambiguous() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id"#,
+        "ambiguous covale A CA A GLY 1 N",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 0);
+    assert!(result.report().issues().iter().any(|issue| matches!(
+        issue,
+        mmcif::MmcifInterpretIssue::ConnectionAmbiguous {
+            connection_id: Some(id),
+            connection_type,
+            partner: 1,
+            source_line: Some(_),
+            candidates: 2,
+            reason: mmcif::MmcifConnectionResolutionReason::MultipleMatchingAtoms,
+        } if id == "ambiguous" && connection_type == "covale"
+    )));
+}
+
+#[test]
+fn struct_conn_zero_candidate_selector_is_reported_unresolved() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id"#,
+        "missing covale Z CA A GLY 1 N",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 0);
+    assert!(result.report().issues().iter().any(|issue| matches!(
+        issue,
+        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+            connection_id: Some(id),
+            partner: 1,
+            reason: mmcif::MmcifConnectionResolutionReason::NoMatchingAtom,
+            ..
+        } if id == "missing"
+    )));
+}
+
+#[test]
+fn struct_conn_named_omitted_altloc_does_not_bind_retained_altloc() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_label_alt_id
+_struct_conn.pdbx_ptnr1_label_alt_id
+_struct_conn.ptnr1_auth_asym_id
+_struct_conn.ptnr1_auth_comp_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr1_auth_atom_id
+_struct_conn.pdbx_ptnr1_auth_alt_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id"#,
+        "omitted-alt covale A SER 5 OG B B X SER 30 OG B A GLY 1 N",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 0);
+    assert!(result.report().issues().iter().any(|issue| matches!(
+        issue,
+        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+            connection_id: Some(id),
+            partner: 1,
+            reason:
+                mmcif::MmcifConnectionResolutionReason::AlternateLocationOmitted {
+                    alternate_location
+                },
+            ..
+        } if id == "omitted-alt" && alternate_location == "B"
+    )));
+}
+
+#[test]
+fn struct_conn_resolution_is_independent_of_atom_site_row_order() {
+    let tags = r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id"#;
+    let values = "reordered covale A GLY 1 CA A ALA 2 CA";
+    let reordered_atoms = CONNECTION_ATOMS.replace(
+        "ATOM 1 N N GLY A N GLY X 1 1 10 . . 1.0 0.0 0.0 0.0 1\nATOM 2 C CA GLY A CA GLY X 1 1 10 . . 1.0 2.0 0.0 0.0 1\nATOM 3 N N ALA A N ALA X 1 2 11 . . 1.0 4.0 0.0 0.0 1\nATOM 4 C CA ALA A CA ALA X 1 2 11 . . 1.0 6.0 0.0 0.0 1",
+        "ATOM 4 C CA ALA A CA ALA X 1 2 11 . . 1.0 6.0 0.0 0.0 1\nATOM 3 N N ALA A N ALA X 1 2 11 . . 1.0 4.0 0.0 0.0 1\nATOM 2 C CA GLY A CA GLY X 1 1 10 . . 1.0 2.0 0.0 0.0 1\nATOM 1 N N GLY A N GLY X 1 1 10 . . 1.0 0.0 0.0 0.0 1",
+    );
+    let original = mmcif::interpret(
+        &parse(&connection_input(CONNECTION_ATOMS, tags, values)),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap();
+    let reordered = mmcif::interpret(
+        &parse(&connection_input(&reordered_atoms, tags, values)),
+        MmcifInterpretOptions::default(),
+    )
+    .unwrap();
+    for interpretation in [&original, &reordered] {
+        assert_eq!(interpretation.report().applied_connections(), 1);
+        assert_declared_bond(
+            interpretation,
+            connection_atom(interpretation, "CA", Some(1), None),
+            connection_atom(interpretation, "CA", Some(2), None),
+            BondOrder::Single,
+        );
+    }
+}
+
+#[test]
+fn ordinary_unambiguous_struct_conn_retains_current_behavior() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.pdbx_value_order"#,
+        "ordinary covale A CYS 3 SG A GLY 1 N sing",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_eq!(result.report().applied_connections(), 1);
+    assert_declared_bond(
+        &result,
+        connection_atom(&result, "SG", Some(3), Some("A")),
+        connection_atom(&result, "N", Some(1), None),
+        BondOrder::Single,
+    );
+}
+
+#[test]
+fn missing_struct_conn_value_order_defaults_to_single_bond() {
+    let input = connection_input(
+        CONNECTION_ATOMS,
+        r#"_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_seq_id
+_struct_conn.ptnr2_label_atom_id"#,
+        "default-order covale A GLY 1 N A GLY 1 CA",
+    );
+    let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
+    assert_declared_bond(
+        &result,
+        connection_atom(&result, "N", Some(1), None),
+        connection_atom(&result, "CA", Some(1), None),
+        BondOrder::Single,
+    );
+}
+
+#[test]
 fn declared_covalent_links_merge_entities_but_noncovalent_links_do_not() {
     let connections = r#"
 loop_
@@ -753,6 +1223,7 @@ hydrog A N 1 W O .
 fn symmetry_mate_connections_are_reported_unresolved() {
     let connection = r#"
 loop_
+_struct_conn.id
 _struct_conn.conn_type_id
 _struct_conn.ptnr1_label_asym_id
 _struct_conn.ptnr1_label_atom_id
@@ -762,15 +1233,22 @@ _struct_conn.ptnr2_label_asym_id
 _struct_conn.ptnr2_label_atom_id
 _struct_conn.ptnr2_label_seq_id
 _struct_conn.ptnr2_symmetry
-disulf A N 1 1_555 A N 1 15_545
+symmetry-link disulf A N 1 1_555 A N 1 15_545
 "#;
     let input = format!("{MIXED}\n{connection}");
     let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
     assert_eq!(result.report().applied_connections, 0);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
-        mmcif::MmcifInterpretIssue::ConnectionUnresolved { connection_type }
-            if connection_type == "disulf"
+        mmcif::MmcifInterpretIssue::ConnectionUnresolved {
+            connection_id: Some(id),
+            connection_type,
+            partner: 2,
+            source_line: Some(_),
+            reason: mmcif::MmcifConnectionResolutionReason::UnsupportedSymmetry {
+                symmetry
+            },
+        } if id == "symmetry-link" && connection_type == "disulf" && symmetry == "15_545"
     )));
 }
 
@@ -801,6 +1279,7 @@ covale A N 1 A CA 1 doub
         MmcifInterpretOptions::default(),
     )
     .unwrap_err();
+    assert!(error.line().is_some());
     assert!(error
         .message
         .contains("unsupported struct_conn bond order `arom`"));

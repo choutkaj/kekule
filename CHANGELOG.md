@@ -38,6 +38,10 @@ series, breaking public API changes increment the minor version.
   `Molecule::add_atom` is now fallible, graph/conformer/stereo/SMCRA/topology
   capacity failures are structured by identifier kind, iterators avoid
   narrowing slot indices, and writer-generated one-based serials use `u64`.
+- Resolve declared mmCIF `_struct_conn` partners from all supplied label,
+  author, insertion, and alternate-location identity fields. Ambiguous,
+  conflicting, selected-out, and missing partners are source-aware report
+  issues and never bind by source-row order or spatial proximity.
 - Move DSSP and potential evaluation to borrowed structural views. Bind
   harmonic and DREIDING preparation to exact topology identity; DREIDING now
   exposes explicit whole-topology, molecule-instance, and connected-component
