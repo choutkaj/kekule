@@ -80,7 +80,10 @@ impl PotentialEvaluation {
 ///
 /// Implementations may retain mutable caches between calls. Every returned
 /// evaluation must contain one finite gradient vector per topology atom.
-/// Prepared implementations bind to exact topology identity.
+/// Prepared implementations bind to exact topology identity. Accepting a
+/// [`ModelView`] does not imply support for every configuration field;
+/// implementations must document capabilities such as periodic-cell support
+/// and return a structured error for unsupported state.
 pub trait Potential {
     fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError>;
 }
@@ -115,6 +118,8 @@ impl HarmonicBondParameter {
 ///
 /// Each term contributes `0.5 * k * (r - r0)^2`. No parameters are inferred,
 /// and angle, torsion, and nonbonded interactions are intentionally absent.
+/// This potential is nonperiodic and rejects any evaluated configuration with
+/// a periodic cell.
 pub struct HarmonicBondPotential {
     topology: TopologyIdentity,
     terms: Vec<HarmonicBondTerm>,
@@ -184,6 +189,9 @@ impl Potential for HarmonicBondPotential {
         if self.topology != model.topology().identity() {
             return Err(PotentialError::IncompatibleTopology);
         }
+        if model.cell().is_some() {
+            return Err(PotentialError::UnsupportedPeriodicCell);
+        }
         let mut energy = 0.0;
         let mut gradient = vec![Vector3::zero(); model.atom_count()];
         for term in &self.terms {
@@ -250,27 +258,34 @@ impl fmt::Display for PotentialGeometryError {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PotentialError {
+    /// A supplied bond does not exist in the topology being parameterized.
     InvalidBondId(InstanceBondId),
+    /// More than one parameter was supplied for the same topology bond.
     DuplicateBondParameter(InstanceBondId),
+    /// A harmonic bond parameter is numerically or dimensionally invalid.
     InvalidBondParameter {
         bond: InstanceBondId,
         parameter: &'static str,
     },
+    /// The evaluated view does not share the potential's exact topology.
     IncompatibleTopology,
+    /// The potential has no complete periodic-coordinate evaluation policy.
+    UnsupportedPeriodicCell,
+    /// The evaluated coordinates are singular for a required interaction.
     InvalidGeometry {
         interaction: &'static str,
         atoms: Vec<InstanceAtomId>,
         kind: PotentialGeometryError,
     },
+    /// The implementation returned a non-finite energy.
     NonFiniteEnergy,
-    GradientLengthMismatch {
-        expected: usize,
-        actual: usize,
-    },
-    NonFiniteGradient {
-        atom: InstanceAtomId,
-    },
+    /// The implementation returned the wrong number of gradient vectors.
+    GradientLengthMismatch { expected: usize, actual: usize },
+    /// The implementation returned a non-finite gradient vector.
+    NonFiniteGradient { atom: InstanceAtomId },
+    /// A public potential quantity used incompatible units.
     Unit(UnitError),
+    /// A potential backend reported a non-geometric evaluation failure.
     Backend {
         backend: &'static str,
         message: String,
@@ -317,6 +332,9 @@ impl fmt::Display for PotentialError {
                 f,
                 "model view belongs to a different exact topology than the potential"
             ),
+            Self::UnsupportedPeriodicCell => {
+                f.write_str("potential does not support periodic-cell configurations")
+            }
             Self::InvalidGeometry {
                 interaction,
                 atoms,

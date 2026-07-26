@@ -720,7 +720,7 @@ pub fn assign(model: &Model, options: ...) {
 
 ### Goal
 
-Prepare once per topology and evaluate any compatible configuration.
+Prepare once per topology and evaluate any supported compatible configuration.
 
 ### Work
 
@@ -759,7 +759,9 @@ For DREIDING:
 - make coordinate use explicit only where the external parameterizer truly
   requires it;
 - bind the result to topology identity;
-- evaluate any model/ensemble member/frame with that topology;
+- evaluate any supported model/ensemble member/frame with that topology;
+- document the adapter as nonperiodic and reject periodic reference and
+  evaluation views until a complete periodic policy exists;
 - preserve fixed-charge behavior during evaluation.
 
 Clarify QEq scope. Do not call molecule-instance-local calculation
@@ -783,6 +785,8 @@ allocation where practical.
 
 - One prepared potential evaluates two independent models sharing one topology.
 - It evaluates ensemble members and trajectory frame views.
+- Built-in and adapter potentials document periodic capability and reject
+  unsupported periodic model, ensemble, frame, and frame-buffer views.
 - It rejects independently constructed topology with equal content.
 - Gradient indexing uses `TopologyAtomIndex`.
 - DREIDING preparation does not mutate topology or input models.
@@ -1302,6 +1306,7 @@ The final suite should cover at least the following scenarios.
 ### Prepared systems
 
 - DREIDING preparation once, evaluation many configurations;
+- explicit nonperiodic DREIDING preparation/evaluation contract;
 - explicit charge grouping scope;
 - topology mismatch;
 - no model mutation during preparation or evaluation.
@@ -1402,7 +1407,11 @@ let e_a = potential.evaluate(model_a.view())?;
 let e_b = potential.evaluate(model_b.view())?;
 ```
 
-and streaming:
+Each potential documents which configuration state it supports. In 0.2.0 the
+built-in harmonic and DREIDING potentials require nonperiodic views and return
+structured errors when a periodic cell is present.
+
+The streaming form is:
 
 ```rust
 let mut reader = open_trajectory(topology.clone(), source)?;

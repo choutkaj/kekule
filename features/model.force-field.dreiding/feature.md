@@ -4,7 +4,7 @@
 
 Provide an explicit topology-bound adapter that prepares DREIDING atom types,
 fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian
-gradients once for compatible structural views.
+gradients once for supported nonperiodic structural views.
 
 ## Behavior/API
 
@@ -12,6 +12,10 @@ gradients once for compatible structural views.
   `DreidingPrepareError` from the separate `molecular-dreiding` crate.
 - Prepares with an explicit `&Topology`, reference `ModelView`, and QEq grouping
   policy, then implements the core borrowed-view `Potential` contract.
+- The adapter is nonperiodic. Preparation rejects a reference view carrying a
+  periodic cell with `DreidingPrepareError::UnsupportedPeriodicCell`, and
+  evaluation rejects periodic views with
+  `PotentialError::UnsupportedPeriodicCell`.
 - Binds preparation to exact topology identity, accepting models, ensemble
   members, and trajectory frames sharing it while rejecting independently
   constructed equal topology.
@@ -39,6 +43,8 @@ gradients once for compatible structural views.
   pairs. Nonbonded work is all-pairs and therefore O(N^2).
 - Preparation never sanitizes, adds hydrogens, or mutates topology or the
   reference model.
+- No periodic cell is ignored and no orthorhombic-only minimum-image shortcut
+  is applied.
 
 ## Tests
 
@@ -48,6 +54,10 @@ gradients once for compatible structural views.
 - Tests prepare once and evaluate model, ensemble-member, and trajectory-frame
   views, reject independent topology identity, and exercise every QEq grouping
   policy.
+- Periodic-policy tests use atoms on opposite box faces and verify structured
+  preparation failure plus consistent model, ensemble, trajectory-frame, and
+  frame-buffer evaluation failure; the same coordinates without a cell remain
+  evaluable.
 - No external force-field golden corpus is currently accepted, so no parity
   result is recorded.
 
@@ -73,3 +83,5 @@ gradients once for compatible structural views.
 - v7: Bind preparation to exact `TopologyIdentity`, evaluate `ModelView`, make
   reference-geometry use explicit, and distinguish whole-topology,
   molecule-instance, and connected-component QEq grouping.
+- v8: Declare DREIDING nonperiodic and reject periodic reference and evaluation
+  views structurally instead of silently applying direct Cartesian geometry.

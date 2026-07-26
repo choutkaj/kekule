@@ -7,43 +7,50 @@ use molecular::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DreidingPrepareError {
+    /// The reference view does not share the requested exact topology.
     TopologyIdentityMismatch,
-    UnresolvedImplicitHydrogens {
-        atom: InstanceAtomId,
-    },
+    /// DREIDING preparation has no periodic-coordinate policy.
+    UnsupportedPeriodicCell,
+    /// An atom has no resolved implicit-hydrogen count.
+    UnresolvedImplicitHydrogens { atom: InstanceAtomId },
+    /// Hydrogens are represented as counts instead of coordinate-bearing atoms.
     CountedHydrogens {
         atom: InstanceAtomId,
         explicit: u8,
         implicit: u8,
     },
-    RadicalAtom {
-        atom: InstanceAtomId,
-    },
+    /// No supported DREIDING radical parameterization is available.
+    RadicalAtom { atom: InstanceAtomId },
+    /// A topology bond order cannot be represented by this adapter.
     UnsupportedBondOrder {
         bond: InstanceBondId,
         order: BondOrder,
     },
-    InconsistentAromaticBond {
-        bond: InstanceBondId,
-    },
+    /// Aromatic perception and asserted bond order are inconsistent.
+    InconsistentAromaticBond { bond: InstanceBondId },
+    /// An atom element cannot be converted to the upstream parameterizer.
     UnsupportedElement {
         atom: InstanceAtomId,
         symbol: String,
     },
+    /// The upstream parameterizer rejected the selected charge group.
     Parameterization {
         molecule: Option<MoleculeInstanceId>,
         message: String,
     },
+    /// Whole-topology and charge-group parameterization assigned different types.
     AtomTypeMismatch {
         molecule: Option<MoleculeInstanceId>,
         atom: InstanceAtomId,
         whole_model: String,
         component_model: String,
     },
+    /// The upstream parameterizer omitted a required pair parameter.
     MissingVdwParameters {
         first: InstanceAtomId,
         second: InstanceAtomId,
     },
+    /// Upstream output violated a checked adapter invariant.
     InvalidPreparedData {
         interaction: &'static str,
         detail: String,
@@ -56,6 +63,9 @@ impl fmt::Display for DreidingPrepareError {
             Self::TopologyIdentityMismatch => f.write_str(
                 "DREIDING reference configuration belongs to a different exact topology",
             ),
+            Self::UnsupportedPeriodicCell => {
+                f.write_str("DREIDING preparation does not support periodic-cell configurations")
+            }
             Self::UnresolvedImplicitHydrogens { atom } => write!(
                 f,
                 "atom {atom} has an unresolved implicit-hydrogen count; DREIDING preparation requires an explicit zero count or no-implicit-hydrogens assertion"

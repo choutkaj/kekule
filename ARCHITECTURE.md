@@ -873,11 +873,15 @@ A prepared system:
   `TopologyAtomIndex`/`InstanceAtomId`;
 - may contain particles not in canonical topology, such as virtual sites;
 - does not mutate topology or coordinate containers;
-- may evaluate any model view sharing the bound topology.
+- may evaluate supported model views sharing the bound topology.
 
 Potential evaluation consumes `ModelView` or an equivalent borrowed
 topology-plus-configuration view. Preparation is performed once and reused
 across models, ensemble members, and trajectory frames with the same topology.
+Accepting the common view does not imply support for every dynamic
+configuration field. Each potential documents capabilities such as
+periodic-cell handling and returns a structured error when a compatible view
+contains unsupported state.
 
 Policies that group atoms, such as charge equilibration, must state whether
 they operate over the whole topology, molecule instances, connected

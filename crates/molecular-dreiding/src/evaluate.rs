@@ -21,6 +21,9 @@ impl Potential for DreidingPotential {
         if self.topology != model.topology().identity() {
             return Err(PotentialError::IncompatibleTopology);
         }
+        if model.cell().is_some() {
+            return Err(PotentialError::UnsupportedPeriodicCell);
+        }
 
         let positions = model.positions().into_value();
         let mut energy = 0.0;

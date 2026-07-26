@@ -225,7 +225,10 @@ fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::
 
 #[test]
 fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>> {
-    use molecular::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential};
+    use molecular::geometry::{PeriodicCell, Vector3};
+    use molecular::modeling::potential::{
+        HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError,
+    };
     use molecular::modeling::{minimize, MinimizationStatus, MinimizeOptions};
     use molecular::structure::Model;
     use molecular::topology::InstanceBondId;
@@ -275,6 +278,15 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         )],
     )?;
     let result = minimize(&model, &mut potential, MinimizeOptions::default())?;
+    let mut periodic = model.clone();
+    periodic.set_cell(Some(PeriodicCell::orthorhombic(
+        molecular::units::Quantity::new(Vector3::new(10.0, 10.0, 10.0), molecular::units::ANGSTROM),
+        [true; 3],
+    )?));
+    assert_eq!(
+        potential.evaluate(periodic.view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
 
     result
         .model

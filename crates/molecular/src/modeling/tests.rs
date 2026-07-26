@@ -1,19 +1,20 @@
 use super::*;
 use crate::bio::{MacroMolecule, SmcraAtomSiteId, SmcraAtomSiteMetadata, SmcraHierarchy};
 use crate::core::{Atom, AtomId, BondId, BondOrder, Conformer, ConformerId, Element, Molecule};
-use crate::geometry::{Point3, Vector3};
+use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::modeling::potential::{
     HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError, PotentialEvaluation,
     PotentialGeometryError,
 };
 use crate::small::SmallMolecule;
 use crate::structure::{
-    InstanceToConformerError, Model, ModelBuildError, ModelView, PositionError,
+    Ensemble, InstanceToConformerError, Model, ModelBuildError, ModelView, PositionError,
 };
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole,
     TopologyBuildError,
 };
+use crate::trajectory::{FrameBuffer, TrajectoryFrame};
 use crate::units::{
     Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
     NANOMETER,
@@ -369,6 +370,83 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
             ],
             kind: PotentialGeometryError::CoincidentAtoms,
         })
+    );
+}
+
+#[test]
+fn harmonic_potential_rejects_periodic_state_across_all_structural_views() {
+    let (small, conformer, _, _, bond) = two_atom_small(9.8);
+    let mut model = Model::from_small_molecule(&small, conformer).unwrap();
+    model
+        .set_positions(Quantity::new(
+            [Point3::new(0.1, 0.0, 0.0), Point3::new(9.9, 0.0, 0.0)],
+            ANGSTROM,
+        ))
+        .unwrap();
+    let qualified = InstanceBondId::new(MoleculeInstanceId::new(0), bond);
+    let mut potential = HarmonicBondPotential::new(
+        model.topology(),
+        [HarmonicBondParameter::new(
+            qualified,
+            Quantity::new(1.0, ANGSTROM),
+            Quantity::new(100.0, MODEL_FORCE_CONSTANT_UNIT),
+        )],
+    )
+    .unwrap();
+
+    assert!(potential.evaluate(model.view()).is_ok());
+    let nonperiodic_ensemble = Ensemble::from_models(&[model.clone()]).unwrap();
+    assert!(potential
+        .evaluate(nonperiodic_ensemble.views().next().unwrap())
+        .is_ok());
+    let nonperiodic_frame = TrajectoryFrame::new(model.configuration().clone());
+    assert!(potential
+        .evaluate(
+            nonperiodic_frame
+                .view(model.topology())
+                .unwrap()
+                .model_view()
+        )
+        .is_ok());
+    let mut nonperiodic_buffer = FrameBuffer::new(model.topology().clone());
+    nonperiodic_buffer.set_positions(model.positions()).unwrap();
+    assert!(potential.evaluate(nonperiodic_buffer.model_view()).is_ok());
+
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
+        [true; 3],
+    )
+    .unwrap();
+    let mut periodic_model = model.clone();
+    periodic_model.set_cell(Some(cell));
+    assert_eq!(
+        potential.evaluate(periodic_model.view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+
+    let periodic_ensemble = Ensemble::from_models(&[periodic_model.clone()]).unwrap();
+    assert_eq!(
+        potential.evaluate(periodic_ensemble.views().next().unwrap()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+    let periodic_frame = TrajectoryFrame::new(periodic_model.configuration().clone());
+    assert_eq!(
+        potential.evaluate(periodic_frame.view(model.topology()).unwrap().model_view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+    let mut periodic_buffer = FrameBuffer::new(model.topology().clone());
+    periodic_buffer.set_positions(model.positions()).unwrap();
+    periodic_buffer.set_cell(Some(cell));
+    assert_eq!(
+        potential.evaluate(periodic_buffer.model_view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+
+    let mut independent = Model::from_small_molecule(&small, conformer).unwrap();
+    independent.set_cell(Some(cell));
+    assert_eq!(
+        potential.evaluate(independent.view()),
+        Err(PotentialError::IncompatibleTopology)
     );
 }
 

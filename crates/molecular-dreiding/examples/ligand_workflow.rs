@@ -37,7 +37,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let instance = builder.add_small_molecule(&ligand, conformer)?;
     let model = builder.build()?;
 
-    // Prepare DREIDING explicitly, then minimize a clone of the model.
+    // DREIDING 0.2.0 is explicitly nonperiodic. This SDF-derived model has no
+    // periodic cell, so it is eligible for preparation and minimization.
+    assert!(model.cell().is_none());
     let mut potential = DreidingPotential::prepare(
         model.topology(),
         model.view(),

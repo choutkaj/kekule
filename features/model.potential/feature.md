@@ -19,14 +19,21 @@ harmonic bond potential.
   outputs, then converts once to the modelling kernel's declared length,
   energy, gradient, and force-constant units.
 - Distinguishes incompatible exact topology identity, coordinate singularities,
-  malformed outputs, and backend failures.
+  unsupported periodic configurations, malformed outputs, and backend failures.
+- `ModelView` is a common transport for topology plus configuration state, not
+  a promise that every potential supports every field. Each implementation
+  documents its periodic-cell capability.
+- `HarmonicBondPotential` is nonperiodic and returns
+  `PotentialError::UnsupportedPeriodicCell` whenever an evaluated view carries
+  a periodic cell.
 
 ## Implementation Notes
 
 - `Potential::evaluate(ModelView)` takes `&mut self` so implementations may
   retain caches while remaining object-safe.
 - Prepared potentials bind to exact `TopologyIdentity` and remain compatible
-  with models, ensemble members, and trajectory frames sharing that topology.
+  with supported model, ensemble-member, and trajectory-frame configurations
+  sharing that topology.
 - Harmonic terms use `0.5 * k * (r - r0)^2` and validate positive finite parameters, unique bond terms, and the topology observed at construction.
 - Coincident bonded atoms return a structured coordinate-geometry failure because a nonzero-rest-length harmonic gradient has no defined Cartesian direction there.
 - The built-in potential performs no parameter inference and contains no angle, torsion, or nonbonded interactions.
@@ -35,6 +42,9 @@ harmonic bond potential.
 
 - Unit tests compare analytic harmonic gradients against central finite differences in arbitrary orientations.
 - Tests cover invalid bonds, duplicate or invalid parameters, malformed evaluations, topology mismatch, additive terms, and coincident atoms.
+- Periodic-policy tests place bonded atoms on opposite box faces and verify
+  explicit rejection through model, ensemble, trajectory-frame, and
+  frame-buffer views while the same nonperiodic coordinates remain evaluable.
 - Reference molecular goldens are not currently defined for this analytic
   infrastructure, so no external parity result is recorded.
 
@@ -55,3 +65,6 @@ harmonic bond potential.
 - v6: Evaluate borrowed `ModelView` values, bind preparation and gradients to
   exact topology identity/dense order, and move vector geometry to the common
   `geometry` module.
+- v7: Add a structured unsupported-periodic-cell error and make the built-in
+  harmonic potential's nonperiodic capability explicit across every structural
+  view.

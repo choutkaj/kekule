@@ -45,7 +45,8 @@ impl Default for DreidingPrepareOptions {
 ///
 /// The reference view is used explicitly for the geometry-dependent QEq
 /// preparation performed by `dreid-forge`. Evaluation can then consume any
-/// model, ensemble member, or trajectory frame with the same exact topology.
+/// nonperiodic model, ensemble member, or trajectory frame with the same exact
+/// topology. Periodic cells are unsupported during preparation and evaluation.
 #[derive(Debug, Clone)]
 pub struct DreidingPotential {
     pub(crate) topology: TopologyIdentity,
@@ -64,6 +65,9 @@ pub struct DreidingPotential {
 
 impl DreidingPotential {
     /// Prepares standard DREIDING parameters and fixed QEq charges.
+    ///
+    /// The reference view must be nonperiodic because the present adapter has
+    /// no complete minimum-image or unwrapped-coordinate preparation policy.
     pub fn prepare(
         topology: &Topology,
         reference: ModelView<'_>,
@@ -71,6 +75,9 @@ impl DreidingPotential {
     ) -> Result<Self, DreidingPrepareError> {
         if !topology.same_identity(reference.topology()) {
             return Err(DreidingPrepareError::TopologyIdentityMismatch);
+        }
+        if reference.cell().is_some() {
+            return Err(DreidingPrepareError::UnsupportedPeriodicCell);
         }
         let prepared = PreparedInput::new(topology, reference, options.qeq_grouping)?;
         let total_charge = prepared

@@ -1,11 +1,11 @@
 use molecular::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
 use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
-use molecular::geometry::Point3;
+use molecular::geometry::{PeriodicCell, Point3, Vector3};
 use molecular::modeling::potential::{Potential, PotentialError};
 use molecular::small::SmallMolecule;
 use molecular::structure::{Ensemble, Model};
 use molecular::topology::{InstanceAtomId, MoleculeInstanceId};
-use molecular::trajectory::TrajectoryFrame;
+use molecular::trajectory::{FrameBuffer, TrajectoryFrame};
 
 use crate::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions, QeqGrouping};
 
@@ -140,6 +140,72 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
         .unwrap()
         .energy()
         .is_finite());
+}
+
+#[test]
+fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
+    let (molecule, conformer) = molecule(
+        &["C", "C"],
+        &[],
+        &[Point3::new(0.1, 0.0, 0.0), Point3::new(9.9, 0.0, 0.0)],
+    );
+    let model = Model::from_small_molecule(&molecule, conformer).unwrap();
+    let cell = PeriodicCell::orthorhombic(
+        molecular::units::Quantity::new(Vector3::new(10.0, 10.0, 10.0), molecular::units::ANGSTROM),
+        [true; 3],
+    )
+    .unwrap();
+    let mut periodic_model = model.clone();
+    periodic_model.set_cell(Some(cell));
+
+    assert!(matches!(
+        DreidingPotential::prepare(
+            periodic_model.topology(),
+            periodic_model.view(),
+            DreidingPrepareOptions::default(),
+        ),
+        Err(DreidingPrepareError::UnsupportedPeriodicCell)
+    ));
+
+    let mut potential = DreidingPotential::prepare(
+        model.topology(),
+        model.view(),
+        DreidingPrepareOptions::default(),
+    )
+    .unwrap();
+    assert!(potential.evaluate(model.view()).is_ok());
+    let mut nonperiodic_buffer = FrameBuffer::new(model.topology().clone());
+    nonperiodic_buffer.set_positions(model.positions()).unwrap();
+    assert!(potential.evaluate(nonperiodic_buffer.model_view()).is_ok());
+    assert_eq!(
+        potential.evaluate(periodic_model.view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+
+    let periodic_ensemble = Ensemble::from_models(&[periodic_model.clone()]).unwrap();
+    assert_eq!(
+        potential.evaluate(periodic_ensemble.views().next().unwrap()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+    let periodic_frame = TrajectoryFrame::new(periodic_model.configuration().clone());
+    assert_eq!(
+        potential.evaluate(periodic_frame.view(model.topology()).unwrap().model_view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+    let mut periodic_buffer = FrameBuffer::new(model.topology().clone());
+    periodic_buffer.set_positions(model.positions()).unwrap();
+    periodic_buffer.set_cell(Some(cell));
+    assert_eq!(
+        potential.evaluate(periodic_buffer.model_view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
+
+    let mut independent = Model::from_small_molecule(&molecule, conformer).unwrap();
+    independent.set_cell(Some(cell));
+    assert_eq!(
+        potential.evaluate(independent.view()),
+        Err(PotentialError::IncompatibleTopology)
+    );
 }
 
 #[test]

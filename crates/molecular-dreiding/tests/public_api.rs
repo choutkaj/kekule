@@ -1,10 +1,10 @@
 use molecular::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
-use molecular::geometry::Point3;
+use molecular::geometry::{PeriodicCell, Point3, Vector3};
 use molecular::modeling::potential::{Potential, PotentialError};
 use molecular::small::SmallMolecule;
 use molecular::structure::Model;
 use molecular::topology::{InstanceAtomId, MoleculeInstanceId};
-use molecular_dreiding::{DreidingPotential, DreidingPrepareOptions};
+use molecular_dreiding::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions};
 
 #[test]
 fn downstream_preparation_and_evaluation() {
@@ -52,6 +52,25 @@ fn downstream_preparation_and_evaluation() {
     let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     let independently_built = Model::from_small_molecule(&molecule, conformer).unwrap();
+    let mut periodic = model.clone();
+    periodic.set_cell(Some(
+        PeriodicCell::orthorhombic(
+            molecular::units::Quantity::new(
+                Vector3::new(10.0, 10.0, 10.0),
+                molecular::units::ANGSTROM,
+            ),
+            [true; 3],
+        )
+        .unwrap(),
+    ));
+    assert!(matches!(
+        DreidingPotential::prepare(
+            periodic.topology(),
+            periodic.view(),
+            DreidingPrepareOptions::default(),
+        ),
+        Err(DreidingPrepareError::UnsupportedPeriodicCell)
+    ));
     let mut potential = DreidingPotential::prepare(
         model.topology(),
         model.view(),
@@ -64,6 +83,10 @@ fn downstream_preparation_and_evaluation() {
     assert_eq!(evaluation.gradient().len(), model.atom_count());
     assert!(potential.atom_type(oxygen).is_some());
     assert!(potential.partial_charge(oxygen).unwrap().is_finite());
+    assert_eq!(
+        potential.evaluate(periodic.view()),
+        Err(PotentialError::UnsupportedPeriodicCell)
+    );
     assert_eq!(
         potential.evaluate(independently_built.view()),
         Err(PotentialError::IncompatibleTopology)
