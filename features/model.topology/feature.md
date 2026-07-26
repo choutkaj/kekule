@@ -19,6 +19,9 @@ definitions and explicitly identified instances.
 - `TopologyBuilder` is independently usable without coordinates, supports
   explicit definition reuse, uses checked fixed-width identifiers, and commits
   additions only after validation.
+- Macro definitions receive static graph/hierarchy validation with coordinate
+  checking disabled. Topology construction neither scans nor validates source
+  conformers and strips them only from the stored definition clone.
 - `TopologyMapping::between_identical_layouts` produces identity maps only
   when complete layouts already match. Explicit mappings validate injectivity,
   definition/instance/atom/bond relationships, mapped bond endpoints, and both
@@ -38,6 +41,8 @@ definitions and explicitly identified instances.
   order and is immutable for the topology lifetime.
 - Builder transactionality stages only the new addition and never clones the
   accumulated builder.
+- Static macro validation reports zero conformers and coordinates checked, so
+  topology construction work is independent of unused source conformer count.
 
 ## Tests
 
@@ -48,6 +53,9 @@ definitions and explicitly identified instances.
   selections, mapping target mismatch, duplicate and cross-instance atom maps,
   mapped-bond endpoint consistency, and added/removed reporting at every
   topology level.
+- Macro regressions cover successful coordinate-free construction with many
+  unused invalid conformers and verify that stored definitions contain no
+  conformers while sources remain unchanged.
 
 ## Out Of Scope
 
@@ -68,3 +76,5 @@ definitions and explicitly identified instances.
   `same_layout` semantics and harden mappings across definitions, instances,
   atoms, bond endpoints, added/removed reporting, and edit-result target
   identity.
+- v4: Make macro topology construction strictly coordinate-independent through
+  static-only graph/hierarchy validation that performs no unused-conformer work.

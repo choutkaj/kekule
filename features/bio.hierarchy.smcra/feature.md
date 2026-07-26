@@ -13,7 +13,10 @@ sidecar over the shared core molecule graph.
 - `MacroMolecule` owns one core `Molecule` plus one `SmcraHierarchy`.
 - `MacroMolecule` exposes chain, residue, and atom-site iterators plus
   `atom_site_for_atom`.
-- `MacroMolecule::validate` checks graph/hierarchy/coordinate consistency without mutation.
+- `MacroMolecule::validate` checks graph/hierarchy consistency and all retained
+  conformer coordinates without mutation.
+- `MacroMolecule::validate_with_options` can restrict work to static
+  graph/hierarchy validation for coordinate-independent consumers.
 - `MacroMoleculeBuilder` and `MacroMolecule::try_from_parts` are the only raw
   assembly paths and reject invalid graph/hierarchy pairs.
 - `MacroMolecule::edit` provides coordinated transactional graph/hierarchy
@@ -37,7 +40,8 @@ sidecar over the shared core molecule graph.
 ## Tests
 
 - Unit tests cover hierarchy construction, checked assembly, transactional
-  mutation, lookup, validation, and failed-commit rollback.
+  mutation, lookup, full versus static-only validation reports, unused
+  conformer skipping, and failed-commit rollback.
 - The former Biopython evidence exercised the removed whole-file reader rather
   than the format-neutral hierarchy contract, so no current hierarchy parity
   evidence is recorded pending a replacement comparison.
@@ -63,3 +67,6 @@ sidecar over the shared core molecule graph.
 - v9: Remove coordinate-model nodes from the structural hierarchy and move
   occupancy, B-factor, alternate-location, source-row, and raw-coordinate state
   into topology-bound structure observations.
+- v10: Document static-only validation for coordinate-independent topology
+  consumers while retaining all-conformer validation as the standalone
+  `MacroMolecule::validate` default.

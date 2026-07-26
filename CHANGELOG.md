@@ -27,6 +27,13 @@ series, breaking public API changes increment the minor version.
 - Keep ordinary mmCIF interpretation explicitly single-model; add a separate
   consistency-proving multi-model ensemble path. Distance heuristics now report
   connectivity candidates without asserting unsupported single bonds.
+- Strengthen ensemble source-atom correspondence with sequence, insertion,
+  asymmetry, component, occurrence, atom, and selected-altloc provenance rather
+  than derived molecule insertion order.
+- Keep topology construction coordinate-independent by validating only static
+  macromolecular graph/hierarchy state; model construction validates only its
+  selected source conformer, while explicit standalone macro validation retains
+  full-conformer checking.
 - Move DSSP and potential evaluation to borrowed structural views. Bind
   harmonic and DREIDING preparation to exact topology identity; DREIDING now
   exposes explicit whole-topology, molecule-instance, and connected-component

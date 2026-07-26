@@ -501,6 +501,11 @@ A built topology rejects:
 - inconsistent local atom or bond references;
 - static metadata violating documented invariants.
 
+Topology construction validates macromolecular graph/hierarchy state without
+scanning source conformers. A convenience model builder separately validates
+only its explicitly selected conformer while staging positions. Standalone
+full macromolecule validation may inspect every retained source conformer.
+
 ### Roles, properties, and provenance
 
 A molecule instance may have several roles, including:
@@ -837,6 +842,11 @@ molecule-instance partition, atom identity mapping, and dense ordering across
 members. Coordinate-model identifiers and per-model observation values belong
 to ensemble-member metadata. Inconsistent atom presence or topology produces a
 structured error unless an explicit reconciliation policy is requested.
+Source atom correspondence uses residue sequence and insertion identity,
+label/author asymmetry identity, component and atom labels, an explicit
+occurrence discriminator when sequence identifiers are absent, and the
+selected alternate location where relevant. It does not infer correspondence
+from derived molecule insertion order.
 
 Only evidence-backed covalent links establish topology connectivity.
 Distance-based candidates, unresolved connections, model selection, altloc

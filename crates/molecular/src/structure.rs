@@ -770,6 +770,10 @@ impl fmt::Display for ModelError {
 impl std::error::Error for ModelError {}
 
 /// Convenience builder that assembles topology and one complete configuration.
+///
+/// Macro-molecule insertion validates only the explicitly selected conformer
+/// while staging positions; topology insertion separately validates static
+/// graph/hierarchy consistency and ignores every unselected conformer.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelBuilder {
     topology: TopologyBuilder,
@@ -875,9 +879,6 @@ impl ModelBuilder {
                 TopologyBuildError::EmptyMoleculeDefinition,
             ));
         }
-        molecule.validate().map_err(|error| {
-            ModelBuildError::Topology(TopologyBuildError::InvalidMacroMolecule(error))
-        })?;
         let staged = stage_conformer_positions(molecule.graph(), conformer)?;
         self.positions
             .try_reserve(staged.len())

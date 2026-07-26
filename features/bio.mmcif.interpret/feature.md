@@ -39,7 +39,14 @@ report, or use a separate path for a verified shared-topology ensemble.
   distance-based connectivity candidates.
 - Reports every interpreted atom through `MmcifAtomProvenance`, qualified by
   `MoleculeInstanceId` and `InstanceAtomId`, with source line, atom-site,
-  component, asymmetry, entity, and coordinate-model identifiers.
+  component, label/auth asymmetry, entity, residue sequence, insertion,
+  sequence-free occurrence, selected alternate-location, and coordinate-model
+  identifiers.
+- Ensemble correspondence compares stable source atom identity rather than
+  derived molecule insertion order. Reordered rows with the same source atom
+  set fail deterministically as dense-order mismatches; changed residue,
+  occurrence, insertion, asymmetry, atom, component, or selected-altloc
+  identity fails as an atom-set mismatch.
 - Never writes mmCIF-specific labels into generic atom, molecule, or conformer
   property maps.
 - Preserves source coordinate-model ID, selected alternate location, occupancy,
@@ -70,8 +77,11 @@ report, or use a separate path for a verified shared-topology ensemble.
   rejection, deposited polymer-chain ordering, supported connection order
   interpretation, and unknown-order rejection.
 - Multi-model tests cover shared-topology ensemble construction, distinct
-  per-member source IDs/occupancy/B-factors, and structured inconsistent atom
-  set, empty selection, and multi-data-block rejection.
+  per-member source IDs/occupancy/B-factors, repeated residue/atom names,
+  insertion-code variants, repeated sequence-free non-polymer occurrences,
+  reordered coordinate-model rows, selected alternate locations, stable valid
+  identity, and structured true atom-set, empty-selection, and multi-data-block
+  rejection.
 - Successful bounded fuzz parses traverse the loss-preserving document and then
   exercise explicit selected-model interpretation, empty ensemble selection,
   extreme finite coordinates, and qualified model lookup.
@@ -108,3 +118,6 @@ report, or use a separate path for a verified shared-topology ensemble.
 - v11: Make spatial connectivity diagnostics overflow-safe, reject empty
   explicit ensemble selections, and reject ambiguous multi-block atom-site
   documents consistently across single-model and ensemble interpretation.
+- v12: Extend atom provenance and ensemble identity with residue sequence,
+  insertion, auth asymmetry, sequence-free occurrence, and selected-altloc
+  identity; stop relying on derived molecule insertion order.

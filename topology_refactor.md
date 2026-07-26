@@ -642,6 +642,10 @@ Update:
 
 Do not drop source information merely to simplify the canonical hierarchy.
 Preserve it in documents, reports, or observation state.
+Topology construction uses static macro graph/hierarchy validation and does not
+scan source conformers. Model construction validates only its explicitly
+selected conformer; standalone full macro validation may continue to inspect
+all retained conformers.
 
 ### Migration caution
 
@@ -1047,7 +1051,9 @@ It must:
 
 1. identify the intended coordinate-model records;
 2. interpret static chemistry and molecule boundaries;
-3. prove consistent atom identity across members;
+3. prove consistent atom identity across members from stable residue sequence,
+   insertion, asymmetry, component, atom, sequence-free occurrence, and
+   selected-altloc provenance rather than derived molecule insertion order;
 4. prove consistent molecule-instance partition and topology;
 5. construct one shared topology;
 6. construct one ensemble member per coordinate model;

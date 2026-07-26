@@ -16,6 +16,10 @@ complete mutable `Configuration` and optional observation state.
   adds instance ownership and topology dense indices round-trip to qualified IDs.
 - Copies one complete finite source conformer into authoritative model positions
   without copying other source conformers or mutating sources.
+- Macro model insertion validates static graph/hierarchy state through topology
+  staging and validates only the explicitly selected conformer while staging
+  positions. Unselected conformers cannot make an otherwise valid selection
+  fail.
 - Converts source coordinates once to `MODEL_LENGTH_UNIT`; model position
   getters and setters expose explicit quantities and accept compatible length units.
 - `Positions` bind to exact topology identity, reject incomplete or non-finite
@@ -47,6 +51,9 @@ complete mutable `Configuration` and optional observation state.
   identity rejection, shared topology after cloning, unit conversion,
   allocation reuse, periodic cells, source immutability, conformer export, and
   transactional failures.
+- Macro construction tests cover one valid selected conformer alongside many
+  unrelated invalid conformers, rejection when an invalid conformer is selected,
+  and preservation of all source conformers.
 
 ## Out Of Scope
 
@@ -72,3 +79,5 @@ complete mutable `Configuration` and optional observation state.
 - v8: Replace model-owned topology and coordinates with the explicit
   `Model = Topology + Configuration` contract, exact topology-bound positions,
   periodic cells, observation state, and borrowed `ModelView`.
+- v9: Validate only the explicitly selected macro conformer during model
+  staging, leaving unrelated conformers to optional standalone full validation.

@@ -7,7 +7,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::bio::{
-    MacroMolecule, MacroValidateError, SmcraAtomSite, SmcraAtomSiteId, SmcraHierarchy,
+    MacroMolecule, MacroValidateError, MacroValidateOptions, SmcraAtomSite, SmcraAtomSiteId,
+    SmcraHierarchy,
 };
 use crate::core::{Atom, AtomId, Bond, BondId, Element, Molecule, PropMap};
 use crate::small::SmallMolecule;
@@ -585,6 +586,10 @@ impl Topology {
 }
 
 /// Linear, validate-then-commit builder for coordinate-free topology.
+///
+/// Macro-molecule insertion validates static graph/hierarchy consistency with
+/// coordinate validation disabled. Source conformers are not scanned or
+/// cloned into topology definitions.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TopologyBuilder {
     definitions: Vec<MoleculeDefinition>,
@@ -859,7 +864,9 @@ fn validate_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
 fn validate_macro(molecule: &MacroMolecule) -> Result<(), TopologyBuildError> {
     validate_graph(molecule.graph())?;
     molecule
-        .validate()
+        .validate_with_options(MacroValidateOptions {
+            validate_coordinates: false,
+        })
         .map_err(TopologyBuildError::InvalidMacroMolecule)?;
     Ok(())
 }

@@ -100,6 +100,10 @@ pub enum MmcifInterpretIssue {
     },
 }
 
+/// Stable source correspondence for one interpreted mmCIF atom.
+///
+/// Residue, occurrence, asymmetry, and selected alternate-location fields are
+/// retained independently of derived molecule-instance and dense ordering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifAtomProvenance {
     pub(crate) atom: InstanceAtomId,
@@ -108,7 +112,13 @@ pub struct MmcifAtomProvenance {
     pub(crate) atom_name: String,
     pub(crate) component_id: String,
     pub(crate) asym_id: String,
+    pub(crate) auth_asym_id: Option<String>,
     pub(crate) entity_id: Option<String>,
+    pub(crate) label_sequence_id: Option<i32>,
+    pub(crate) author_sequence_id: Option<String>,
+    pub(crate) insertion_code: Option<String>,
+    pub(crate) occurrence: Option<usize>,
+    pub(crate) selected_alternate_location: Option<String>,
 }
 
 impl MmcifAtomProvenance {
@@ -132,12 +142,45 @@ impl MmcifAtomProvenance {
         &self.component_id
     }
 
+    /// Returns `_atom_site.label_asym_id`, falling back to
+    /// `_atom_site.auth_asym_id` when the label identifier is absent.
     pub fn asym_id(&self) -> &str {
         &self.asym_id
     }
 
+    /// Returns the independently preserved author asymmetry identifier.
+    pub fn auth_asym_id(&self) -> Option<&str> {
+        self.auth_asym_id.as_deref()
+    }
+
     pub fn entity_id(&self) -> Option<&str> {
         self.entity_id.as_deref()
+    }
+
+    pub const fn label_sequence_id(&self) -> Option<i32> {
+        self.label_sequence_id
+    }
+
+    pub fn author_sequence_id(&self) -> Option<&str> {
+        self.author_sequence_id.as_deref()
+    }
+
+    pub fn insertion_code(&self) -> Option<&str> {
+        self.insertion_code.as_deref()
+    }
+
+    /// Returns the zero-based source occurrence discriminator used when both
+    /// label and author sequence identifiers are absent.
+    ///
+    /// The discriminator is scoped to one coordinate model, asymmetry
+    /// identifier, and component identifier.
+    pub const fn occurrence(&self) -> Option<usize> {
+        self.occurrence
+    }
+
+    /// Returns the alternate-location identity selected for this source atom.
+    pub fn selected_alternate_location(&self) -> Option<&str> {
+        self.selected_alternate_location.as_deref()
     }
 }
 
@@ -535,6 +578,7 @@ struct AtomRow {
     label_seq_id: Option<i32>,
     auth_seq_id: Option<String>,
     insertion_code: Option<String>,
+    occurrence: Option<usize>,
     comp_id: String,
     auth_comp_id: Option<String>,
     atom_name: String,
@@ -635,15 +679,21 @@ fn read_atom_rows(
         let insertion_code =
             optional(table, row, "_atom_site.pdbx_PDB_ins_code").map(str::to_owned);
         let alt_id = optional(table, row, "_atom_site.label_alt_id").map(str::to_owned);
-        let residue_key = if let Some(sequence) = label_seq_id {
-            format!(
-                "label:{sequence}:{}",
-                insertion_code.as_deref().unwrap_or("")
+        let (residue_key, occurrence) = if let Some(sequence) = label_seq_id {
+            (
+                format!(
+                    "label:{sequence}:{}",
+                    insertion_code.as_deref().unwrap_or("")
+                ),
+                None,
             )
         } else if let Some(sequence) = &auth_seq_id {
-            format!(
-                "auth:{sequence}:{}",
-                insertion_code.as_deref().unwrap_or("")
+            (
+                format!(
+                    "auth:{sequence}:{}",
+                    insertion_code.as_deref().unwrap_or("")
+                ),
+                None,
             )
         } else {
             let state = occurrences
@@ -662,7 +712,10 @@ fn read_atom_rows(
                 .entry(atom_name.clone())
                 .or_default()
                 .insert(alt_id.clone());
-            format!("occurrence:{}", state.occurrence)
+            (
+                format!("occurrence:{}", state.occurrence),
+                Some(state.occurrence),
+            )
         };
         let instance_key = if kind.is_macro() {
             format!("macro:{asym_id}")
@@ -690,6 +743,7 @@ fn read_atom_rows(
             label_seq_id,
             auth_seq_id,
             insertion_code,
+            occurrence,
             comp_id,
             auth_comp_id: optional(table, row, "_atom_site.auth_comp_id").map(str::to_owned),
             atom_name,
@@ -1077,7 +1131,13 @@ struct BuiltAtomProvenance {
     atom_name: String,
     component_id: String,
     asym_id: String,
+    auth_asym_id: Option<String>,
     entity_id: Option<String>,
+    label_sequence_id: Option<i32>,
+    author_sequence_id: Option<String>,
+    insertion_code: Option<String>,
+    occurrence: Option<usize>,
+    selected_alternate_location: Option<String>,
     observation: AtomObservation,
 }
 
@@ -1319,11 +1379,16 @@ pub fn interpret_mmcif_ensemble(
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct ProvenanceAtomIdentity {
-    molecule: MoleculeInstanceId,
     atom_name: String,
     component_id: String,
     asym_id: String,
+    auth_asym_id: Option<String>,
     entity_id: Option<String>,
+    label_sequence_id: Option<i32>,
+    author_sequence_id: Option<String>,
+    insertion_code: Option<String>,
+    occurrence: Option<usize>,
+    selected_alternate_location: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1346,11 +1411,16 @@ fn provenance_identity(report: &MmcifInterpretationReport) -> ProvenanceIdentity
             .iter()
             .flat_map(|instance| {
                 instance.atoms.iter().map(|atom| ProvenanceAtomIdentity {
-                    molecule: instance.molecule,
                     atom_name: atom.atom_name.clone(),
                     component_id: atom.component_id.clone(),
                     asym_id: atom.asym_id.clone(),
+                    auth_asym_id: atom.auth_asym_id.clone(),
                     entity_id: atom.entity_id.clone(),
+                    label_sequence_id: atom.label_sequence_id,
+                    author_sequence_id: atom.author_sequence_id.clone(),
+                    insertion_code: atom.insertion_code.clone(),
+                    occurrence: atom.occurrence,
+                    selected_alternate_location: atom.selected_alternate_location.clone(),
                 })
             })
             .collect(),
@@ -1385,7 +1455,13 @@ impl BuiltMoleculeProvenance {
                         atom_name: atom.atom_name,
                         component_id: atom.component_id,
                         asym_id: atom.asym_id,
+                        auth_asym_id: atom.auth_asym_id,
                         entity_id: atom.entity_id,
+                        label_sequence_id: atom.label_sequence_id,
+                        author_sequence_id: atom.author_sequence_id,
+                        insertion_code: atom.insertion_code,
+                        occurrence: atom.occurrence,
+                        selected_alternate_location: atom.selected_alternate_location,
                     }
                 })
                 .collect(),
@@ -1527,7 +1603,13 @@ fn build_molecule(
                 atom_name: row.atom_name.clone(),
                 component_id: row.comp_id.clone(),
                 asym_id: row.asym_id.clone(),
+                auth_asym_id: row.auth_asym_id.clone(),
                 entity_id: row.entity_id.clone(),
+                label_sequence_id: row.label_seq_id,
+                author_sequence_id: row.auth_seq_id.clone(),
+                insertion_code: row.insertion_code.clone(),
+                occurrence: row.occurrence,
+                selected_alternate_location: row.alt_id.clone(),
                 observation,
             }
         })

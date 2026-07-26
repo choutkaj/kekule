@@ -667,3 +667,117 @@ impl fmt::Display for SmcraHierarchyError {
 }
 
 impl std::error::Error for SmcraHierarchyError {}
+
+#[cfg(test)]
+mod coordinate_independence_tests {
+    use super::*;
+    use crate::geometry::Point3;
+    use crate::structure::{ModelBuildError, ModelBuilder};
+    use crate::topology::{MoleculeInstanceMetadata, TopologyBuilder};
+    use crate::units::{Quantity, ANGSTROM};
+
+    fn macro_with_unused_invalid_conformers(
+        invalid_count: usize,
+    ) -> (MacroMolecule, AtomId, ConformerId, ConformerId) {
+        let mut graph = Molecule::new();
+        let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()));
+
+        let mut valid = Conformer::new(ANGSTROM).unwrap();
+        valid
+            .set_position(atom, Quantity::new(Point3::new(1.0, 2.0, 3.0), ANGSTROM))
+            .unwrap();
+        let valid = graph.add_conformer(valid).unwrap();
+
+        let mut first_invalid = None;
+        for _ in 0..invalid_count {
+            let mut invalid = Conformer::new(ANGSTROM).unwrap();
+            invalid
+                .set_position(
+                    atom,
+                    Quantity::new(Point3::new(f64::NAN, 0.0, 0.0), ANGSTROM),
+                )
+                .unwrap();
+            let conformer = graph.add_conformer(invalid).unwrap();
+            first_invalid.get_or_insert(conformer);
+        }
+
+        let mut hierarchy = SmcraHierarchy::new();
+        let chain = hierarchy.add_chain("A", None).unwrap();
+        let residue = hierarchy
+            .add_residue(chain, "GLY", Some(1), None, None)
+            .unwrap();
+        hierarchy
+            .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
+            .unwrap();
+        // Keep public checked assembly strict; this module-private fixture
+        // exercises downstream behavior for an invalid unselected conformer.
+        (
+            MacroMolecule { graph, hierarchy },
+            atom,
+            valid,
+            first_invalid.expect("fixture requires an invalid conformer"),
+        )
+    }
+
+    #[test]
+    fn topology_and_model_construction_validate_only_selected_coordinate_state() {
+        const UNUSED_CONFORMERS: usize = 128;
+        let (molecule, atom, valid, invalid) =
+            macro_with_unused_invalid_conformers(UNUSED_CONFORMERS);
+
+        let static_report = molecule
+            .validate_with_options(MacroValidateOptions {
+                validate_coordinates: false,
+            })
+            .unwrap();
+        assert_eq!(static_report.conformers_checked, 0);
+        assert_eq!(static_report.coordinates_checked, 0);
+
+        let mut topology_builder = TopologyBuilder::new();
+        topology_builder
+            .add_macro_molecule_instance(&molecule, MoleculeInstanceMetadata::default())
+            .unwrap();
+        let topology = topology_builder.build().unwrap();
+        assert_eq!(topology.atom_count(), 1);
+        assert_eq!(
+            topology
+                .definitions()
+                .next()
+                .unwrap()
+                .1
+                .graph()
+                .conformers()
+                .count(),
+            0
+        );
+
+        let mut valid_builder = ModelBuilder::new();
+        valid_builder.add_macro_molecule(&molecule, valid).unwrap();
+        let model = valid_builder.build().unwrap();
+        assert_eq!(model.positions()[0], Point3::new(1.0, 2.0, 3.0));
+
+        let mut invalid_builder = ModelBuilder::new();
+        assert_eq!(
+            invalid_builder.add_macro_molecule(&molecule, invalid),
+            Err(ModelBuildError::NonFinitePosition { atom })
+        );
+        assert_eq!(
+            molecule.validate(),
+            Err(MacroValidateError::InvalidConformerAtom {
+                conformer: invalid,
+                atom,
+            })
+        );
+
+        assert_eq!(molecule.graph().conformers().count(), UNUSED_CONFORMERS + 1);
+        assert!(molecule
+            .graph()
+            .conformer(invalid)
+            .unwrap()
+            .position(atom)
+            .unwrap()
+            .value()
+            .x
+            .is_nan());
+    }
+}

@@ -73,6 +73,74 @@ HETATM 3 C C1 LIG A 1 5.0 0.0 0.0 0.80 20.0 2
 HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2
 "#;
 
+const REPEATED_RESIDUE_ENSEMBLE: &str = r#"
+data_repeated_residues
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.label_alt_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 C CA GLY A X 1 7 100 . . 0.0 0.0 0.0 1
+ATOM 2 C CA GLY A X 1 7 100 A . 2.0 0.0 0.0 1
+ATOM 3 C CA GLY A X 1 8 101 . . 4.0 0.0 0.0 1
+ATOM 4 C CA GLY A X 1 7 100 . . 10.0 0.0 0.0 2
+ATOM 5 C CA GLY A X 1 7 100 A . 12.0 0.0 0.0 2
+ATOM 6 C CA GLY A X 1 8 101 . . 14.0 0.0 0.0 2
+"#;
+
+const REPEATED_NONPOLYMER_ENSEMBLE: &str = r#"
+data_repeated_nonpolymer
+loop_
+_entity.id
+_entity.type
+1 non-polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+L 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+HETATM 1 C C1 LIG L X 1 0.0 0.0 0.0 1
+HETATM 2 O O1 LIG L X 1 1.2 0.0 0.0 1
+HETATM 3 C C1 LIG L X 1 5.0 0.0 0.0 1
+HETATM 4 O O1 LIG L X 1 6.2 0.0 0.0 1
+HETATM 5 C C1 LIG L X 1 10.0 0.0 0.0 2
+HETATM 6 O O1 LIG L X 1 11.2 0.0 0.0 2
+HETATM 7 C C1 LIG L X 1 15.0 0.0 0.0 2
+HETATM 8 O O1 LIG L X 1 16.2 0.0 0.0 2
+"#;
+
 const EXTREME_COORDINATE: &str = r#"
 data_extreme
 loop_
@@ -465,6 +533,148 @@ fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     assert!(matches!(
         mmcif::interpret_ensemble(
             &parse(&inconsistent),
+            mmcif::MmcifEnsembleInterpretOptions::default(),
+        ),
+        Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
+            if model_id == "2"
+    ));
+}
+
+#[test]
+fn ensemble_identity_distinguishes_repeated_residues_and_insertion_codes() {
+    let interpreted = mmcif::interpret_ensemble(
+        &parse(REPEATED_RESIDUE_ENSEMBLE),
+        mmcif::MmcifEnsembleInterpretOptions::default(),
+    )
+    .expect("stable repeated-residue identities form an ensemble");
+
+    assert_eq!(interpreted.ensemble().len(), 2);
+    assert_eq!(interpreted.ensemble().topology().atom_count(), 3);
+    let atoms = interpreted.reports()[0]
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .collect::<Vec<_>>();
+    assert_eq!(atoms.len(), 3);
+    assert_eq!(atoms[0].label_sequence_id(), Some(7));
+    assert_eq!(atoms[0].author_sequence_id(), Some("100"));
+    assert_eq!(atoms[0].insertion_code(), None);
+    assert_eq!(atoms[0].auth_asym_id(), Some("X"));
+    assert_eq!(atoms[0].occurrence(), None);
+    assert_eq!(atoms[1].label_sequence_id(), Some(7));
+    assert_eq!(atoms[1].insertion_code(), Some("A"));
+    assert_eq!(atoms[2].label_sequence_id(), Some(8));
+}
+
+#[test]
+fn ensemble_identity_preserves_repeated_nonpolymer_occurrences() {
+    let interpreted = mmcif::interpret_ensemble(
+        &parse(REPEATED_NONPOLYMER_ENSEMBLE),
+        mmcif::MmcifEnsembleInterpretOptions::default(),
+    )
+    .expect("stable occurrence discriminators form an ensemble");
+
+    assert_eq!(interpreted.ensemble().len(), 2);
+    assert_eq!(interpreted.ensemble().topology().instance_count(), 2);
+    for report in interpreted.reports() {
+        let occurrences = report
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .map(|atom| atom.occurrence())
+            .collect::<Vec<_>>();
+        assert_eq!(occurrences, [Some(0), Some(0), Some(1), Some(1)]);
+    }
+}
+
+#[test]
+fn ensemble_identity_classifies_reordered_rows_as_dense_order_mismatch() {
+    let reordered = r#"
+data_reordered_instances
+loop_
+_entity.id
+_entity.type
+1 non-polymer
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+B 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.auth_asym_id
+_atom_site.label_entity_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+HETATM 1 C C1 LIG A XA 1 0.0 0.0 0.0 1
+HETATM 2 C C1 LIG B XB 1 5.0 0.0 0.0 1
+HETATM 3 C C1 LIG B XB 1 15.0 0.0 0.0 2
+HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
+"#;
+    assert!(matches!(
+        mmcif::interpret_ensemble(
+            &parse(reordered),
+            mmcif::MmcifEnsembleInterpretOptions::default(),
+        ),
+        Err(mmcif::MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id })
+            if model_id == "2"
+    ));
+}
+
+#[test]
+fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
+    let mismatched = REPEATED_RESIDUE_ENSEMBLE.replace(
+        "ATOM 6 C CA GLY A X 1 8 101 . . 14.0 0.0 0.0 2",
+        "ATOM 6 C CA GLY A X 1 9 101 . . 14.0 0.0 0.0 2",
+    );
+    assert!(matches!(
+        mmcif::interpret_ensemble(
+            &parse(&mismatched),
+            mmcif::MmcifEnsembleInterpretOptions::default(),
+        ),
+        Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
+            if model_id == "2"
+    ));
+}
+
+#[test]
+fn ensemble_identity_includes_selected_alternate_location() {
+    let input = r#"
+data_altloc_models
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.label_alt_id
+_atom_site.occupancy
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 C CA GLY A 1 1 A 0.8 0.0 0.0 0.0 1
+ATOM 2 C CA GLY A 1 1 B 0.2 1.0 0.0 0.0 1
+ATOM 3 C CA GLY A 1 1 A 0.2 10.0 0.0 0.0 2
+ATOM 4 C CA GLY A 1 1 B 0.8 11.0 0.0 0.0 2
+"#;
+    assert!(matches!(
+        mmcif::interpret_ensemble(
+            &parse(input),
             mmcif::MmcifEnsembleInterpretOptions::default(),
         ),
         Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
