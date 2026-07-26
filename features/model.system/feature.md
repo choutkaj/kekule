@@ -28,6 +28,10 @@ complete mutable `Configuration` and optional observation state.
 - `ModelView` borrows topology plus configuration without copying coordinates.
 - `StructureObservation` stores topology-bound coordinate-model-specific atom
   values outside topology.
+- `Positions`, `Configuration`, `StructureObservation`, and `Model` remap
+  explicitly through checked topology lineage. Exact identities are required
+  at both ends, complete target atom state is mandatory, cells and observation
+  metadata are preserved, and failures leave sources unchanged.
 - `Model::instance_to_conformer` maps current instance positions back through
   preserved local atom IDs, converts them to the target conformer unit, and
   commits only after the target live-atom set and all conversions validate.
@@ -54,6 +58,9 @@ complete mutable `Configuration` and optional observation state.
 - Macro construction tests cover one valid selected conformer alongside many
   unrelated invalid conformers, rejection when an invalid conformer is selected,
   and preservation of all source conformers.
+- Public transformation tests cover dense-index compaction, equal-layout
+  identity rejection, complete coordinate transfer, cells, every observation
+  field and property, missing target state, and source immutability.
 
 ## Out Of Scope
 
@@ -81,3 +88,5 @@ complete mutable `Configuration` and optional observation state.
   periodic cells, observation state, and borrowed `ModelView`.
 - v9: Validate only the explicitly selected macro conformer during model
   staging, leaving unrelated conformers to optional standalone full validation.
+- v10: Add explicit transactional remapping of complete positions,
+  configurations, observations, and models through exact topology lineage.

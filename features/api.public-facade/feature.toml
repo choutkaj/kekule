@@ -2,7 +2,7 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 22
+version = 23
 status = "supported"
 description = "Expose the 0.2 release facade with focused topology, structure, trajectory, modeling, chemistry, and format modules."
 depends_on = [
@@ -33,6 +33,7 @@ depends_on = [
   "model.system",
   "model.ensemble",
   "model.trajectory",
+  "model.topology-transform",
   "model.potential",
   "algo.geometry-minimization",
 ]

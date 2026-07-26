@@ -46,6 +46,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   and restricts `TopologyMapping::between_identical_layouts` to identity maps
   over that exact layout. Checked explicit mappings and topology-edit results
   expose structured consistency failures.
+- Immutable whole-instance edits live under the focused
+  `topology::transform` namespace. Structure and trajectory containers expose
+  explicit remapping methods and typed errors without expanding the crate root
+  or prelude.
 - `Model::instance_to_conformer` provides an explicit transactional path from
   instance-qualified model positions back to a compatible local conformer.
 - Explicit small-molecule hydrogen topology transforms live under `hydrogens`
@@ -80,6 +84,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   examples as downstream user code.
 - Public topology tests compile the exact-identity, same-layout, checked
   identity-mapping, and checked edit-result surface.
+- Downstream transformation tests compile instance retain/remove, stable
+  mapping traversal, model and selection remapping, ensemble remapping, owned
+  trajectory remapping, and reusable target-buffer remapping.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
 
 ## Out Of Scope
@@ -135,3 +142,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v22: Make core atom insertion fallible, expose structured identifier-capacity
   error kinds across graph, conformer, hierarchy, and topology APIs, and remove
   unchecked ID reconstruction and one-based writer arithmetic.
+- v23: Add the focused immutable topology-transform and explicit
+  topology-bound state-remapping public surface without expanding the prelude.
