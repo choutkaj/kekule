@@ -1,6 +1,7 @@
 use molecular::bio::{MacroMolecule, SmcraAtomSiteMetadata};
 use molecular::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule, PropValue};
 use molecular::geometry::{PeriodicCell, Point3, Vector3};
+use molecular::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential, Potential};
 use molecular::small::SmallMolecule;
 use molecular::structure::{
     AtomObservation, Configuration, Ensemble, EnsembleMember, Model, Positions,
@@ -11,13 +12,16 @@ use molecular::topology::transform::{
     TopologyTransformError,
 };
 use molecular::topology::{
-    AtomSelection, InstanceAtomId, MoleculeDefinitionId, MoleculeInstanceId,
+    AtomSelection, InstanceAtomId, InstanceBondId, MoleculeDefinitionId, MoleculeInstanceId,
     MoleculeInstanceMetadata, MoleculeRole, Topology, TopologyBuilder, TopologyMapping,
 };
 use molecular::trajectory::{
     Forces, FrameBuffer, Trajectory, TrajectoryFrame, TrajectoryRemapError, Velocities,
 };
-use molecular::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
+use molecular::units::{
+    Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT,
+    PICOSECOND,
+};
 
 struct Fixture {
     topology: Topology,
@@ -325,6 +329,20 @@ fn subset_normalization_identity_and_failures_are_explicit() {
     assert_eq!(
         removed.mapping().removed_instances(),
         &[fixture.water_first, fixture.ion]
+    );
+
+    let complex = retain_instances(&fixture.topology, [fixture.macromolecule, fixture.ligand])
+        .expect("protein-ligand complex");
+    assert_eq!(complex.topology().definition_count(), 2);
+    assert_eq!(complex.topology().instance_count(), 2);
+    assert!(complex
+        .topology()
+        .instances()
+        .all(|(_, instance)| !instance.has_role(MoleculeRole::Solvent)
+            && !instance.has_role(MoleculeRole::Ion)));
+    assert_eq!(
+        complex.mapping().removed_definitions(),
+        &[fixture.water_definition, fixture.ion_definition]
     );
 }
 
@@ -671,14 +689,25 @@ fn frame(fixture: &Fixture, offset: f64, step: u64) -> TrajectoryFrame {
 fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
-    let frames = [frame(&fixture, 4.0, 40), frame(&fixture, 8.0, 80)];
+    let positions_only = TrajectoryFrame::new(Configuration::new(
+        Positions::new(
+            &fixture.topology,
+            Quantity::new(point_values(&fixture.topology, 6.0), ANGSTROM),
+        )
+        .expect("positions-only frame"),
+    ));
+    let frames = [
+        frame(&fixture, 4.0, 40),
+        positions_only,
+        frame(&fixture, 8.0, 80),
+    ];
     let trajectory = Trajectory::from_frames(fixture.topology.clone(), frames.clone())
         .expect("valid trajectory");
     let remapped = trajectory
         .remap_to(edit.topology(), edit.mapping())
         .expect("trajectory remap");
     assert!(remapped.topology().same_identity(edit.topology()));
-    assert_eq!(remapped.len(), 2);
+    assert_eq!(remapped.len(), 3);
     for (source_frame, target_frame) in trajectory.frames().zip(remapped.frames()) {
         assert_eq!(
             target_frame.configuration().cell(),
@@ -690,12 +719,10 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
         assert_eq!(
             target_frame
                 .observation()
-                .expect("target observation")
-                .source_model_id(),
+                .map(StructureObservation::source_model_id),
             source_frame
                 .observation()
-                .expect("source observation")
-                .source_model_id()
+                .map(StructureObservation::source_model_id)
         );
         for (source_index, target_index) in edit.mapping().atom_index_pairs() {
             assert_eq!(
@@ -703,15 +730,33 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
                 source_frame.configuration().positions().values().value()[source_index.index()]
             );
             assert_eq!(
-                target_frame.velocities().expect("velocities").value()[target_index.index()],
-                source_frame.velocities().expect("velocities").value()[source_index.index()]
+                target_frame
+                    .velocities()
+                    .map(|values| values.value()[target_index.index()]),
+                source_frame
+                    .velocities()
+                    .map(|values| values.value()[source_index.index()])
             );
             assert_eq!(
-                target_frame.forces().expect("forces").value()[target_index.index()],
-                source_frame.forces().expect("forces").value()[source_index.index()]
+                target_frame
+                    .forces()
+                    .map(|values| values.value()[target_index.index()]),
+                source_frame
+                    .forces()
+                    .map(|values| values.value()[source_index.index()])
             );
         }
     }
+    assert!(remapped
+        .frame(1)
+        .expect("positions-only frame")
+        .velocities()
+        .is_none());
+    assert!(remapped
+        .frame(1)
+        .expect("positions-only frame")
+        .forces()
+        .is_none());
 
     let mut buffer = FrameBuffer::new(edit.topology().clone());
     buffer
@@ -730,6 +775,27 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
         .model_view()
         .topology()
         .same_identity(edit.topology()));
+    let source_bond = InstanceBondId::new(fixture.ligand, BondId::new(1));
+    let target_bond = edit
+        .mapping()
+        .map_bond(source_bond)
+        .expect("retained ligand bond");
+    let mut potential = HarmonicBondPotential::new(
+        edit.topology(),
+        [HarmonicBondParameter::new(
+            target_bond,
+            Quantity::new(1.2, ANGSTROM),
+            Quantity::new(100.0, MODEL_FORCE_CONSTANT_UNIT),
+        )],
+    )
+    .expect("prepare target potential");
+    buffer.set_cell(None);
+    assert!(potential
+        .evaluate(buffer.frame_view().model_view())
+        .expect("evaluate remapped target view")
+        .energy()
+        .into_value()
+        .is_finite());
 
     let independent = self::fixture();
     let independent_edit = retained_fixture(&independent);
