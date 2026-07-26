@@ -9,7 +9,7 @@ use crate::geometry::{PeriodicCell, PeriodicCellError, Point3};
 use crate::small::SmallMolecule;
 use crate::topology::{
     InstanceAtomId, MoleculeDefinitionId, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
-    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyIdentity,
+    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyIdentity, TopologyMapping,
 };
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
 
@@ -73,6 +73,23 @@ impl Positions {
 
     pub fn values(&self) -> Quantity<&[Point3]> {
         Quantity::new(self.values.as_slice(), MODEL_LENGTH_UNIT)
+    }
+
+    /// Copies complete positions through a checked topology lineage mapping.
+    pub fn remap_to(
+        &self,
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TopologyRemapError> {
+        if !self.is_compatible(source) {
+            return Err(TopologyRemapError::SourceTopologyMismatch);
+        }
+        let values = remap_dense_values(&self.values, source, target, mapping)?;
+        Ok(Self {
+            topology: target.identity(),
+            values,
+        })
     }
 
     pub fn position_at(&self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
@@ -143,6 +160,21 @@ impl Positions {
 
     pub(crate) fn values_raw(&self) -> &[Point3] {
         &self.values
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capacity(&self) -> usize {
+        self.values.capacity()
+    }
+
+    pub(crate) fn copy_remapped_from_validated(
+        &mut self,
+        source: &Self,
+        mapping: &TopologyMapping,
+    ) {
+        for (source_index, target_index) in mapping.atom_index_pairs() {
+            self.values[target_index.index()] = source.values[source_index.index()];
+        }
     }
 
     fn ensure_compatible(&self, topology: &Topology) -> Result<(), PositionError> {
@@ -259,6 +291,19 @@ impl Configuration {
             positions: &self.positions,
             cell: self.cell.as_ref(),
         }
+    }
+
+    /// Remaps complete positions while preserving the periodic cell.
+    pub fn remap_to(
+        &self,
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TopologyRemapError> {
+        Ok(Self {
+            positions: self.positions.remap_to(source, target, mapping)?,
+            cell: self.cell,
+        })
     }
 }
 
@@ -474,6 +519,25 @@ impl StructureObservation {
         &mut self.props
     }
 
+    /// Remaps per-atom observation state while preserving model provenance and
+    /// properties.
+    pub fn remap_to(
+        &self,
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TopologyRemapError> {
+        if !self.is_compatible(source) {
+            return Err(TopologyRemapError::SourceTopologyMismatch);
+        }
+        Ok(Self {
+            topology: target.identity(),
+            source_model_id: self.source_model_id.clone(),
+            atoms: remap_dense_values(&self.atoms, source, target, mapping)?,
+            props: self.props.clone(),
+        })
+    }
+
     fn ensure_compatible(&self, topology: &Topology) -> Result<(), ObservationError> {
         if !self.is_compatible(topology) {
             return Err(ObservationError::TopologyIdentityMismatch);
@@ -657,6 +721,72 @@ impl Model {
             topology: &self.topology,
             configuration: self.configuration.view(),
         }
+    }
+
+    /// Remaps this model to an explicitly related target topology.
+    ///
+    /// The source model is unchanged. Positions, cell, observation values, and
+    /// observation metadata are staged before the target model is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molecular::core::{Atom, Element, Molecule};
+    /// use molecular::geometry::Point3;
+    /// use molecular::small::SmallMolecule;
+    /// use molecular::structure::{Configuration, Model, Positions};
+    /// use molecular::topology::{
+    ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
+    /// };
+    /// use molecular::units::{Quantity, ANGSTROM};
+    ///
+    /// let mut ligand_graph = Molecule::new();
+    /// ligand_graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+    /// let ligand = SmallMolecule::from_graph(ligand_graph);
+    /// let mut water_graph = Molecule::new();
+    /// water_graph.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+    /// let water = SmallMolecule::from_graph(water_graph);
+    /// let mut builder = TopologyBuilder::new();
+    /// let ligand_definition = builder.add_small_molecule_definition(&ligand)?;
+    /// let water_definition = builder.add_small_molecule_definition(&water)?;
+    /// builder.add_instance(ligand_definition, MoleculeInstanceMetadata::default())?;
+    /// let mut solvent = MoleculeInstanceMetadata::default();
+    /// solvent.insert_role(MoleculeRole::Solvent);
+    /// let water_instance = builder.add_instance(water_definition, solvent)?;
+    /// let topology = builder.build()?;
+    /// let positions = Positions::new(
+    ///     &topology,
+    ///     Quantity::new(
+    ///         vec![Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 0.0, 0.0)],
+    ///         ANGSTROM,
+    ///     ),
+    /// )?;
+    /// let model = Model::new(topology.clone(), Configuration::new(positions))?;
+    ///
+    /// let edit = transform::remove_instances(&topology, [water_instance])?;
+    /// let stripped = model.remap_to(edit.topology(), edit.mapping())?;
+    /// assert_eq!(stripped.atom_count(), 1);
+    /// assert_eq!(stripped.positions().value()[0].x, 0.0);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn remap_to(
+        &self,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TopologyRemapError> {
+        let configuration = self
+            .configuration
+            .remap_to(&self.topology, target, mapping)?;
+        let observation = self
+            .observation
+            .as_ref()
+            .map(|observation| observation.remap_to(&self.topology, target, mapping))
+            .transpose()?;
+        Ok(Self {
+            topology: target.clone(),
+            configuration,
+            observation,
+        })
     }
 
     /// Copies one instance's current positions to a compatible local conformer.
@@ -1252,7 +1382,170 @@ impl Ensemble {
         }
         Ok(())
     }
+
+    /// Remaps every member to one exact target topology without renormalizing
+    /// weights or changing member order.
+    pub fn remap_to(
+        &self,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TopologyRemapError> {
+        if !mapping.is_source(&self.topology) {
+            return Err(TopologyRemapError::MappingSourceMismatch);
+        }
+        if !mapping.is_target(target) {
+            return Err(TopologyRemapError::MappingTargetMismatch);
+        }
+        let mut members = Vec::with_capacity(self.members.len());
+        for (member_index, member) in self.members.iter().enumerate() {
+            let remap_member = || -> Result<EnsembleMember, TopologyRemapError> {
+                let configuration =
+                    member
+                        .configuration
+                        .remap_to(&self.topology, target, mapping)?;
+                let observation = member
+                    .observation
+                    .as_ref()
+                    .map(|observation| observation.remap_to(&self.topology, target, mapping))
+                    .transpose()?;
+                Ok(EnsembleMember {
+                    configuration,
+                    weight: member.weight,
+                    observation,
+                    props: member.props.clone(),
+                })
+            };
+            members.push(remap_member().map_err(|error| TopologyRemapError::Member {
+                member: member_index,
+                error: Box::new(error),
+            })?);
+        }
+        Ok(Self {
+            topology: target.clone(),
+            members,
+        })
+    }
 }
+
+pub(crate) fn validate_state_mapping(
+    source: &Topology,
+    target: &Topology,
+    mapping: &TopologyMapping,
+) -> Result<(), TopologyRemapError> {
+    if !mapping.is_source(source) {
+        return Err(TopologyRemapError::MappingSourceMismatch);
+    }
+    if !mapping.is_target(target) {
+        return Err(TopologyRemapError::MappingTargetMismatch);
+    }
+    if let Some(target_atom) = mapping.added_atoms().first().copied() {
+        return Err(TopologyRemapError::AddedAtomsRequireState { target_atom });
+    }
+    if mapping.atom_index_pairs().len() != target.atom_count() {
+        let mapped = mapping
+            .atom_pairs()
+            .map(|(_, target)| target)
+            .collect::<std::collections::BTreeSet<_>>();
+        let target_atom = target
+            .atom_ids()
+            .iter()
+            .copied()
+            .find(|atom| !mapped.contains(atom))
+            .expect("incomplete target mapping has an unmapped target atom");
+        return Err(TopologyRemapError::AddedAtomsRequireState { target_atom });
+    }
+    Ok(())
+}
+
+pub(crate) fn remap_dense_values<T: Clone>(
+    source_values: &[T],
+    source: &Topology,
+    target: &Topology,
+    mapping: &TopologyMapping,
+) -> Result<Vec<T>, TopologyRemapError> {
+    if source_values.len() != source.atom_count() {
+        return Err(TopologyRemapError::SourceAtomCountMismatch {
+            expected: source.atom_count(),
+            actual: source_values.len(),
+        });
+    }
+    validate_state_mapping(source, target, mapping)?;
+
+    let mut values = std::iter::repeat_with(|| None)
+        .take(target.atom_count())
+        .collect::<Vec<Option<T>>>();
+    for (source_index, target_index) in mapping.atom_index_pairs() {
+        let slot = &mut values[target_index.index()];
+        if slot.is_some() {
+            return Err(TopologyRemapError::DuplicateTargetAssignment { target_index });
+        }
+        *slot = Some(source_values[source_index.index()].clone());
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value.ok_or_else(|| TopologyRemapError::AddedAtomsRequireState {
+                target_atom: target.atom_ids()[index],
+            })
+        })
+        .collect()
+}
+
+/// Failure to remap complete topology-bound structure state.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum TopologyRemapError {
+    /// The source state is not bound to the supplied source topology.
+    SourceTopologyMismatch,
+    /// The mapping is not sourced from the supplied source topology.
+    MappingSourceMismatch,
+    /// The mapping does not target the supplied target topology.
+    MappingTargetMismatch,
+    /// A complete source dense array has an invalid length.
+    SourceAtomCountMismatch { expected: usize, actual: usize },
+    /// A target atom has no source state under this mapping.
+    AddedAtomsRequireState { target_atom: InstanceAtomId },
+    /// More than one source value was assigned to one target dense index.
+    DuplicateTargetAssignment { target_index: TopologyAtomIndex },
+    /// One ensemble member could not be remapped.
+    Member {
+        member: usize,
+        error: Box<TopologyRemapError>,
+    },
+}
+
+impl fmt::Display for TopologyRemapError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SourceTopologyMismatch => {
+                formatter.write_str("source state does not belong to the supplied topology")
+            }
+            Self::MappingSourceMismatch => {
+                formatter.write_str("topology mapping does not match the source topology")
+            }
+            Self::MappingTargetMismatch => {
+                formatter.write_str("topology mapping does not match the target topology")
+            }
+            Self::SourceAtomCountMismatch { expected, actual } => write!(
+                formatter,
+                "source state requires {expected} atoms, but received {actual}"
+            ),
+            Self::AddedAtomsRequireState { target_atom } => write!(
+                formatter,
+                "target atom {target_atom} has no mapped source state"
+            ),
+            Self::DuplicateTargetAssignment { target_index } => {
+                write!(formatter, "target {target_index} received duplicate state")
+            }
+            Self::Member { member, error } => {
+                write!(formatter, "cannot remap ensemble member {member}: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TopologyRemapError {}
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
