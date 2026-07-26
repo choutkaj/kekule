@@ -18,8 +18,9 @@ that share one exact topology.
 ## Implementation Notes
 
 - Ensemble order has no implicit temporal meaning.
-- Independently constructed structurally equivalent topologies are not merged
-  without an explicit validated mapping.
+- Independently constructed topologies, including complete layouts for which
+  `Topology::same_layout` is true, are not merged without an explicit validated
+  mapping.
 
 ## Tests
 

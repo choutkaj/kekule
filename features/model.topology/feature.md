@@ -10,13 +10,23 @@ definitions and explicitly identified instances.
 - The public `topology` module owns molecule definitions, molecule
   instances, instance-qualified atom and bond identities, and authoritative
   dense atom and bond orderings.
-- Exact topology identity is distinct from structural equivalence. Clones keep
-  exact identity; independently constructed equal systems do not.
+- Exact topology identity controls compatibility. Clones keep exact identity;
+  independently constructed systems do not.
+- `Topology::same_layout` compares complete chemical/static content,
+  definition and instance partitioning, semantic IDs, authoritative dense
+  order, and index maps. It does not perform order-independent structural
+  equivalence or graph isomorphism.
 - `TopologyBuilder` is independently usable without coordinates, supports
   explicit definition reuse, uses checked fixed-width identifiers, and commits
   additions only after validation.
-- Topology-changing operations return a new topology plus `TopologyMapping`
-  lineage rather than mutating existing coordinate containers.
+- `TopologyMapping::between_identical_layouts` produces identity maps only
+  when complete layouts already match. Explicit mappings validate injectivity,
+  definition/instance/atom/bond relationships, mapped bond endpoints, and both
+  source and target topology identities.
+- Topology-changing operations return a new topology plus checked
+  `TopologyMapping` lineage rather than mutating existing coordinate
+  containers. Added and removed definitions, instances, atoms, and bonds are
+  derived from the validated maps.
 - Compiled atom selections bind to exact topology identity and reusable dense
   indices while chemical query syntax remains a separate concern.
 
@@ -31,18 +41,30 @@ definitions and explicitly identified instances.
 
 ## Tests
 
-- Tests cover identity, structural equivalence, explicit definition
-  reuse, qualified identifiers, dense inverse mappings, tombstones, checked
-  capacity failures, transactional construction, selections, and mappings.
+- Tests cover exact identity versus equal layout, differing definition,
+  instance, and dense insertion order, repeated identical definitions and
+  instances, explicit definition reuse, qualified identifiers, dense inverse
+  mappings, tombstones, checked capacity failures, transactional construction,
+  selections, mapping target mismatch, duplicate and cross-instance atom maps,
+  mapped-bond endpoint consistency, and added/removed reporting at every
+  topology level.
 
 ## Out Of Scope
 
 - Automatic definition interning, dynamic coordinates, force-field state,
   reactive trajectories, implicit coordinate transfer, and a structural
   selection language.
+- Order-independent structural equivalence, graph-isomorphism mapping,
+  ambiguity resolution for indistinguishable definitions or instances, and
+  automatic reconciliation of differing dense layouts. These remain planned
+  future capabilities.
 
 ## Revision Notes
 
 - v1: Track the topology-centered public contract for the 0.2.0 transition.
 - v2: Implement independent immutable topology, explicit reusable definitions,
   exact identity, dense mappings, selections, and lineage mappings.
+- v3: Replace the misleading structural-equivalence name with exact
+  `same_layout` semantics and harden mappings across definitions, instances,
+  atoms, bond endpoints, added/removed reporting, and edit-result target
+  identity.

@@ -193,7 +193,7 @@ fn topology_identity_is_shared_only_by_clones() {
 
     assert!(model.topology().same_identity(cloned.topology()));
     assert!(!model.topology().same_identity(rebuilt.topology()));
-    assert!(model.topology().structurally_equivalent(rebuilt.topology()));
+    assert!(model.topology().same_layout(rebuilt.topology()));
     assert_ne!(model, cloned);
     assert_ne!(model, rebuilt);
 }

@@ -34,8 +34,10 @@ System structure is represented separately by `Topology`: an immutable,
 coordinate-free collection of reusable molecule definitions and explicit
 molecule instances. Qualified atom/bond IDs retain chemical meaning, while
 topology-owned dense indices define the array order used by coordinates and
-gradients. Exact topology identity is deliberately stricter than structural
-equivalence.
+gradients. Exact topology identity controls compatibility.
+`Topology::same_layout` compares complete static layout, including semantic
+identifiers and dense order; general order-independent structural equivalence
+and isomorphism mapping are planned future capabilities.
 
 `Model`, `Ensemble`, and `Trajectory` reuse that structure:
 

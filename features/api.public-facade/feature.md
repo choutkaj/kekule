@@ -39,6 +39,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Immutable system structure, coordinate containers, and frames live under
   `topology`, `structure`, and `trajectory`; potentials and minimization remain
   under `modeling`. These focused types are not added to the prelude.
+- The topology facade names complete static equality `Topology::same_layout`
+  and restricts `TopologyMapping::between_identical_layouts` to identity maps
+  over that exact layout. Checked explicit mappings and topology-edit results
+  expose structured consistency failures.
 - `Model::instance_to_conformer` provides an explicit transactional path from
   instance-qualified model positions back to a compatible local conformer.
 - Explicit small-molecule hydrogen topology transforms live under `hydrogens`
@@ -71,6 +75,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - External integration tests compile public happy-path, namespaced, low-level
   graph, macro-molecule, topology/configuration/model, mmCIF, and borrowed-view
   examples as downstream user code.
+- Public topology tests compile the exact-identity, same-layout, checked
+  identity-mapping, and checked edit-result surface.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
 
 ## Out Of Scope
@@ -120,3 +126,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v20: Add the 0.2 `geometry`, `topology`, `structure`, and `trajectory`
   modules; remove obsolete model-owned topology concepts; expose separate
   mmCIF ensemble interpretation; and migrate DSSP/potentials to borrowed views.
+- v21: Replace the misleading topology structural-equivalence names with
+  complete static-layout semantics and expose checked mapping/edit-result
+  construction.

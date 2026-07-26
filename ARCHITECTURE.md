@@ -392,9 +392,9 @@ addressed. `TopologyAtomIndex` answers where that atom is stored in complete
 position, velocity, force, gradient, and per-atom result arrays.
 
 The dense ordering is authoritative and immutable for the lifetime of one
-topology. It need not be identical between independently constructed,
-structurally equivalent topologies. Every topology-bound dense array uses the
-ordering published by that exact topology.
+topology. It need not be identical between independently constructed
+topologies representing the same chemistry. Every topology-bound dense array
+uses the ordering published by that exact topology.
 
 Local `AtomId` and `BondId` values, including tombstone positions, survive
 definition insertion. Qualification adds instance ownership without remapping
@@ -404,25 +404,33 @@ All conversions from collection lengths to fixed-width public identifiers are
 checked. Capacity overflow produces structured errors rather than truncation or
 wrapping.
 
-### Identity and structural equivalence
+### Identity and layout equality
 
 Exact topology identity is the compatibility criterion for positions, prepared
 systems, compiled selections, and frame buffers.
 
 Clones of one `Topology` retain exact identity. Independently constructed
-topologies have different identity even when their contents are structurally
-equivalent.
+topologies have different identity even when their complete static layouts are
+equal.
 
 The API distinguishes:
 
 ```rust
 topology_a.same_identity(&topology_b)
-topology_a.structurally_equivalent(&topology_b)
+topology_a.same_layout(&topology_b)
 ```
 
-or equivalent explicit operations. Pointer identity must not be confused with
-structural equality, and structural equality must not silently imply compatible
-dense ordering.
+`same_layout` compares chemical and hierarchy content, definition and instance
+partitioning, instance metadata, semantic identifiers, authoritative dense
+order, and the corresponding index maps. It excludes only exact identity.
+Therefore it is not order-independent structural equivalence and does not
+silently imply compatibility for topology-bound state.
+
+General structural equivalence and validated isomorphism mapping across
+different definition, instance, atom, or bond orderings remain planned future
+capabilities. Such an operation must account for all relevant chemical,
+stereochemical, perception, role, and hierarchy state and must report ambiguous
+mappings rather than selecting one silently.
 
 Transferring positions, parameters, or selections between independently
 constructed topologies requires an explicit validated mapping.

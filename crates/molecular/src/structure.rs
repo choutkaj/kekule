@@ -1358,7 +1358,7 @@ mod tests {
     fn model_requires_exact_topology_and_views_do_not_copy_coordinates() {
         let topology = one_atom_topology();
         let independent = one_atom_topology();
-        assert!(topology.structurally_equivalent(&independent));
+        assert!(topology.same_layout(&independent));
         assert!(!topology.same_identity(&independent));
 
         let wrong_configuration = configuration(&independent, 1.0);

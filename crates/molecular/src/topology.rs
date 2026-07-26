@@ -321,9 +321,10 @@ struct TopologyData {
 
 /// An immutable, coordinate-free molecular system.
 ///
-/// Cloning this handle is constant-time and retains exact identity. Structural
-/// equivalence is an explicit operation and does not imply dense-array
-/// compatibility.
+/// Cloning this handle is constant-time and retains exact identity.
+/// [`Topology::same_layout`] compares the complete static layout, including
+/// semantic identifiers and dense order, but does not make independently
+/// constructed topologies compatible with topology-bound state.
 #[derive(Clone)]
 pub struct Topology {
     data: Arc<TopologyData>,
@@ -355,7 +356,17 @@ impl Topology {
         self.identity == other.identity
     }
 
-    pub fn structurally_equivalent(&self, other: &Self) -> bool {
+    /// Returns whether two topologies have the same complete static layout.
+    ///
+    /// Layout equality includes chemical and hierarchy content, definition and
+    /// instance partitioning, instance metadata, semantic identifiers,
+    /// authoritative dense atom and bond order, and the corresponding index
+    /// maps. Exact topology identity is deliberately excluded.
+    ///
+    /// This is stricter than order-independent structural equivalence. It does
+    /// not perform graph isomorphism, reorder definitions or instances, or
+    /// resolve repeated indistinguishable content.
+    pub fn same_layout(&self, other: &Self) -> bool {
         self.data.as_ref() == other.data.as_ref()
     }
 
@@ -1175,6 +1186,10 @@ pub struct TopologyMapping {
     bonds: BTreeMap<InstanceBondId, InstanceBondId>,
     atom_indices: BTreeMap<TopologyAtomIndex, TopologyAtomIndex>,
     bond_indices: BTreeMap<TopologyBondIndex, TopologyBondIndex>,
+    removed_definitions: Vec<MoleculeDefinitionId>,
+    added_definitions: Vec<MoleculeDefinitionId>,
+    removed_instances: Vec<MoleculeInstanceId>,
+    added_instances: Vec<MoleculeInstanceId>,
     removed_atoms: Vec<InstanceAtomId>,
     added_atoms: Vec<InstanceAtomId>,
     removed_bonds: Vec<InstanceBondId>,
@@ -1182,14 +1197,19 @@ pub struct TopologyMapping {
 }
 
 impl TopologyMapping {
-    /// Maps two independently constructed structurally equivalent topologies by
-    /// their authoritative semantic and dense orderings.
-    pub fn between_equivalent(
+    /// Constructs identity mappings between two topologies with identical
+    /// static layouts.
+    ///
+    /// Independently constructed topologies may satisfy this precondition, but
+    /// all semantic identifiers and authoritative dense orderings must already
+    /// be identical. This method does not solve a graph isomorphism or infer a
+    /// mapping between reordered layouts.
+    pub fn between_identical_layouts(
         old: &Topology,
         new: &Topology,
     ) -> Result<Self, TopologyMappingError> {
-        if !old.structurally_equivalent(new) {
-            return Err(TopologyMappingError::NotStructurallyEquivalent);
+        if !old.same_layout(new) {
+            return Err(TopologyMappingError::NotSameLayout);
         }
         Self::from_pairs(
             old,
@@ -1201,6 +1221,13 @@ impl TopologyMapping {
         )
     }
 
+    /// Constructs a checked explicit lineage mapping.
+    ///
+    /// Each map must be injective and reference live source and target values.
+    /// Definition mappings must agree with mapped instances, instance mappings
+    /// must agree with mapped atoms and bonds, and mapped bond endpoints must
+    /// agree with the atom mapping. Added and removed values are derived as the
+    /// unmapped complements in authoritative topology order.
     pub fn from_pairs(
         old: &Topology,
         new: &Topology,
@@ -1234,30 +1261,52 @@ impl TopologyMapping {
             MappingKind::Bond,
         )?;
 
-        let atom_indices = atoms
-            .iter()
-            .map(|(source, target)| {
-                (
-                    old.atom_index(*source)
-                        .expect("validated mapping source atom"),
-                    new.atom_index(*target)
-                        .expect("validated mapping target atom"),
-                )
-            })
-            .collect();
-        let bond_indices = bonds
-            .iter()
-            .map(|(source, target)| {
-                (
-                    old.bond_index(*source)
-                        .expect("validated mapping source bond"),
-                    new.bond_index(*target)
-                        .expect("validated mapping target bond"),
-                )
-            })
-            .collect();
+        validate_mapping_relationships(old, new, &definitions, &instances, &atoms, &bonds)?;
+
+        let mut atom_indices = BTreeMap::new();
+        for (source, target) in &atoms {
+            let source_index = old
+                .atom_index(*source)
+                .ok_or(TopologyMappingError::InvalidSource(MappingKind::Atom))?;
+            let target_index = new
+                .atom_index(*target)
+                .ok_or(TopologyMappingError::InvalidTarget(MappingKind::Atom))?;
+            atom_indices.insert(source_index, target_index);
+        }
+        let mut bond_indices = BTreeMap::new();
+        for (source, target) in &bonds {
+            let source_index = old
+                .bond_index(*source)
+                .ok_or(TopologyMappingError::InvalidSource(MappingKind::Bond))?;
+            let target_index = new
+                .bond_index(*target)
+                .ok_or(TopologyMappingError::InvalidTarget(MappingKind::Bond))?;
+            bond_indices.insert(source_index, target_index);
+        }
+        let mapped_new_definitions = definitions.values().copied().collect::<BTreeSet<_>>();
+        let mapped_new_instances = instances.values().copied().collect::<BTreeSet<_>>();
         let mapped_new_atoms = atoms.values().copied().collect::<BTreeSet<_>>();
         let mapped_new_bonds = bonds.values().copied().collect::<BTreeSet<_>>();
+        let removed_definitions = old
+            .definitions()
+            .map(|(definition, _)| definition)
+            .filter(|definition| !definitions.contains_key(definition))
+            .collect();
+        let added_definitions = new
+            .definitions()
+            .map(|(definition, _)| definition)
+            .filter(|definition| !mapped_new_definitions.contains(definition))
+            .collect();
+        let removed_instances = old
+            .instances()
+            .map(|(instance, _)| instance)
+            .filter(|instance| !instances.contains_key(instance))
+            .collect();
+        let added_instances = new
+            .instances()
+            .map(|(instance, _)| instance)
+            .filter(|instance| !mapped_new_instances.contains(instance))
+            .collect();
 
         Ok(Self {
             old: old.identity(),
@@ -1266,6 +1315,10 @@ impl TopologyMapping {
             instances,
             atom_indices,
             bond_indices,
+            removed_definitions,
+            added_definitions,
+            removed_instances,
+            added_instances,
             removed_atoms: old
                 .atom_ids()
                 .iter()
@@ -1327,6 +1380,22 @@ impl TopologyMapping {
         self.bond_indices.get(&index).copied()
     }
 
+    pub fn removed_definitions(&self) -> &[MoleculeDefinitionId] {
+        &self.removed_definitions
+    }
+
+    pub fn added_definitions(&self) -> &[MoleculeDefinitionId] {
+        &self.added_definitions
+    }
+
+    pub fn removed_instances(&self) -> &[MoleculeInstanceId] {
+        &self.removed_instances
+    }
+
+    pub fn added_instances(&self) -> &[MoleculeInstanceId] {
+        &self.added_instances
+    }
+
     pub fn removed_atoms(&self) -> &[InstanceAtomId] {
         &self.removed_atoms
     }
@@ -1342,6 +1411,102 @@ impl TopologyMapping {
     pub fn added_bonds(&self) -> &[InstanceBondId] {
         &self.added_bonds
     }
+}
+
+fn validate_mapping_relationships(
+    old: &Topology,
+    new: &Topology,
+    definitions: &BTreeMap<MoleculeDefinitionId, MoleculeDefinitionId>,
+    instances: &BTreeMap<MoleculeInstanceId, MoleculeInstanceId>,
+    atoms: &BTreeMap<InstanceAtomId, InstanceAtomId>,
+    bonds: &BTreeMap<InstanceBondId, InstanceBondId>,
+) -> Result<(), TopologyMappingError> {
+    for (source, target) in instances {
+        let source_definition = old
+            .instance(*source)
+            .map_err(|_| TopologyMappingError::InvalidSource(MappingKind::Instance))?
+            .definition();
+        let target_definition = new
+            .instance(*target)
+            .map_err(|_| TopologyMappingError::InvalidTarget(MappingKind::Instance))?
+            .definition();
+        let Some(expected_target_definition) = definitions.get(&source_definition).copied() else {
+            return Err(TopologyMappingError::MissingDefinitionMappingForInstance {
+                source: *source,
+                definition: source_definition,
+            });
+        };
+        if target_definition != expected_target_definition {
+            return Err(TopologyMappingError::InconsistentInstanceDefinition {
+                source: *source,
+                target: *target,
+                expected_target_definition,
+                actual_target_definition: target_definition,
+            });
+        }
+    }
+
+    for (source, target) in atoms {
+        let Some(expected_target_instance) = instances.get(&source.molecule()).copied() else {
+            return Err(TopologyMappingError::MissingInstanceMappingForAtom { source: *source });
+        };
+        if target.molecule() != expected_target_instance {
+            return Err(TopologyMappingError::InconsistentAtomInstance {
+                source: *source,
+                target: *target,
+                expected_target_instance,
+            });
+        }
+    }
+
+    for (source, target) in bonds {
+        let Some(expected_target_instance) = instances.get(&source.molecule()).copied() else {
+            return Err(TopologyMappingError::MissingInstanceMappingForBond { source: *source });
+        };
+        if target.molecule() != expected_target_instance {
+            return Err(TopologyMappingError::InconsistentBondInstance {
+                source: *source,
+                target: *target,
+                expected_target_instance,
+            });
+        }
+
+        let source_bond = old
+            .bond(*source)
+            .map_err(|_| TopologyMappingError::InvalidSource(MappingKind::Bond))?;
+        let target_bond = new
+            .bond(*target)
+            .map_err(|_| TopologyMappingError::InvalidTarget(MappingKind::Bond))?;
+        let (source_a, source_b) = source_bond.endpoints();
+        let source_a = InstanceAtomId::new(source.molecule(), source_a);
+        let source_b = InstanceAtomId::new(source.molecule(), source_b);
+        let Some(mapped_a) = atoms.get(&source_a).copied() else {
+            return Err(TopologyMappingError::MissingAtomMappingForBondEndpoint {
+                source_bond: *source,
+                source_atom: source_a,
+            });
+        };
+        let Some(mapped_b) = atoms.get(&source_b).copied() else {
+            return Err(TopologyMappingError::MissingAtomMappingForBondEndpoint {
+                source_bond: *source,
+                source_atom: source_b,
+            });
+        };
+        let (target_a, target_b) = target_bond.endpoints();
+        let target_a = InstanceAtomId::new(target.molecule(), target_a);
+        let target_b = InstanceAtomId::new(target.molecule(), target_b);
+        if !unordered_pair_eq((mapped_a, mapped_b), (target_a, target_b)) {
+            return Err(TopologyMappingError::InconsistentBondEndpoints {
+                source: *source,
+                target: *target,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn unordered_pair_eq<T: PartialEq>((left_a, left_b): (T, T), (right_a, right_b): (T, T)) -> bool {
+    (left_a == right_a && left_b == right_b) || (left_a == right_b && left_b == right_a)
 }
 
 fn collect_mapping<K>(
@@ -1393,24 +1558,126 @@ impl fmt::Display for MappingKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
+/// Failure to construct a self-consistent explicit topology mapping or edit
+/// result.
 pub enum TopologyMappingError {
-    NotStructurallyEquivalent,
+    /// Identity mapping was requested for layouts that differ.
+    NotSameLayout,
+    /// A mapped source identifier does not exist in the source topology.
     InvalidSource(MappingKind),
+    /// A mapped target identifier does not exist in the target topology.
     InvalidTarget(MappingKind),
+    /// A source identifier occurs more than once.
     DuplicateSource(MappingKind),
+    /// More than one source identifier maps to the same target identifier.
     DuplicateTarget(MappingKind),
+    /// A mapped instance's source definition has no definition mapping.
+    MissingDefinitionMappingForInstance {
+        source: MoleculeInstanceId,
+        definition: MoleculeDefinitionId,
+    },
+    /// A mapped instance's target definition disagrees with the definition
+    /// mapping.
+    InconsistentInstanceDefinition {
+        source: MoleculeInstanceId,
+        target: MoleculeInstanceId,
+        expected_target_definition: MoleculeDefinitionId,
+        actual_target_definition: MoleculeDefinitionId,
+    },
+    /// A mapped atom's source molecule instance has no instance mapping.
+    MissingInstanceMappingForAtom { source: InstanceAtomId },
+    /// A mapped atom belongs to the wrong target molecule instance.
+    InconsistentAtomInstance {
+        source: InstanceAtomId,
+        target: InstanceAtomId,
+        expected_target_instance: MoleculeInstanceId,
+    },
+    /// A mapped bond's source molecule instance has no instance mapping.
+    MissingInstanceMappingForBond { source: InstanceBondId },
+    /// A mapped bond belongs to the wrong target molecule instance.
+    InconsistentBondInstance {
+        source: InstanceBondId,
+        target: InstanceBondId,
+        expected_target_instance: MoleculeInstanceId,
+    },
+    /// A mapped bond has a source endpoint missing from the atom mapping.
+    MissingAtomMappingForBondEndpoint {
+        source_bond: InstanceBondId,
+        source_atom: InstanceAtomId,
+    },
+    /// A mapped target bond does not connect the mapped source endpoints.
+    InconsistentBondEndpoints {
+        source: InstanceBondId,
+        target: InstanceBondId,
+    },
+    /// A topology edit result was paired with a topology other than the
+    /// mapping target.
+    TargetTopologyMismatch,
 }
 
 impl fmt::Display for TopologyMappingError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotStructurallyEquivalent => {
-                formatter.write_str("topologies are not structurally equivalent")
-            }
+            Self::NotSameLayout => formatter.write_str("topologies do not have the same layout"),
             Self::InvalidSource(kind) => write!(formatter, "invalid source {kind} mapping"),
             Self::InvalidTarget(kind) => write!(formatter, "invalid target {kind} mapping"),
             Self::DuplicateSource(kind) => write!(formatter, "duplicate source {kind} mapping"),
             Self::DuplicateTarget(kind) => write!(formatter, "duplicate target {kind} mapping"),
+            Self::MissingDefinitionMappingForInstance { source, definition } => write!(
+                formatter,
+                "mapped source instance {source} has no mapping for its definition {definition}"
+            ),
+            Self::InconsistentInstanceDefinition {
+                source,
+                target,
+                expected_target_definition,
+                actual_target_definition,
+            } => write!(
+                formatter,
+                "mapped instance {source} -> {target} requires target definition \
+                 {expected_target_definition}, but the target instance uses \
+                 {actual_target_definition}"
+            ),
+            Self::MissingInstanceMappingForAtom { source } => write!(
+                formatter,
+                "mapped source atom {source} has no mapping for its molecule instance"
+            ),
+            Self::InconsistentAtomInstance {
+                source,
+                target,
+                expected_target_instance,
+            } => write!(
+                formatter,
+                "mapped atom {source} -> {target} must target molecule instance \
+                 {expected_target_instance}"
+            ),
+            Self::MissingInstanceMappingForBond { source } => write!(
+                formatter,
+                "mapped source bond {source} has no mapping for its molecule instance"
+            ),
+            Self::InconsistentBondInstance {
+                source,
+                target,
+                expected_target_instance,
+            } => write!(
+                formatter,
+                "mapped bond {source} -> {target} must target molecule instance \
+                 {expected_target_instance}"
+            ),
+            Self::MissingAtomMappingForBondEndpoint {
+                source_bond,
+                source_atom,
+            } => write!(
+                formatter,
+                "mapped source bond {source_bond} has an unmapped endpoint {source_atom}"
+            ),
+            Self::InconsistentBondEndpoints { source, target } => write!(
+                formatter,
+                "mapped bond {source} -> {target} does not agree with the atom mapping"
+            ),
+            Self::TargetTopologyMismatch => {
+                formatter.write_str("topology edit result does not match the mapping target")
+            }
         }
     }
 }
@@ -1425,8 +1692,12 @@ pub struct TopologyEditResult {
 }
 
 impl TopologyEditResult {
-    pub fn new(topology: Topology, mapping: TopologyMapping) -> Self {
-        Self { topology, mapping }
+    /// Constructs a topology edit result after checking target identity.
+    pub fn new(topology: Topology, mapping: TopologyMapping) -> Result<Self, TopologyMappingError> {
+        if &topology.identity() != mapping.new_identity() {
+            return Err(TopologyMappingError::TargetTopologyMismatch);
+        }
+        Ok(Self { topology, mapping })
     }
 
     pub fn topology(&self) -> &Topology {
@@ -1477,6 +1748,58 @@ mod tests {
         (builder.build().unwrap(), carbon, oxygen, bond)
     }
 
+    fn topology_from_smiles(
+        smiles: &str,
+    ) -> (
+        Topology,
+        MoleculeDefinitionId,
+        MoleculeInstanceId,
+        Vec<AtomId>,
+        Vec<BondId>,
+    ) {
+        let molecule = SmallMolecule::from_smiles_sanitized(smiles).unwrap();
+        let atoms = molecule.graph().atom_ids().collect();
+        let bonds = molecule.graph().bond_ids().collect();
+        let mut builder = TopologyBuilder::new();
+        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let instance = builder
+            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        (builder.build().unwrap(), definition, instance, atoms, bonds)
+    }
+
+    fn topology_with_two_distinct_definitions(reverse: bool) -> Topology {
+        let carbon = SmallMolecule::from_smiles_sanitized("C").unwrap();
+        let carbon_oxygen = SmallMolecule::from_smiles_sanitized("CO").unwrap();
+        let molecules = if reverse {
+            [&carbon_oxygen, &carbon]
+        } else {
+            [&carbon, &carbon_oxygen]
+        };
+        let mut builder = TopologyBuilder::new();
+        for molecule in molecules {
+            let definition = builder.add_small_molecule_definition(molecule).unwrap();
+            builder
+                .add_instance(definition, MoleculeInstanceMetadata::default())
+                .unwrap();
+        }
+        builder.build().unwrap()
+    }
+
+    fn topology_with_repeated_identical_definitions() -> Topology {
+        let water = SmallMolecule::from_smiles_sanitized("O").unwrap();
+        let mut builder = TopologyBuilder::new();
+        for _ in 0..2 {
+            let definition = builder.add_small_molecule_definition(&water).unwrap();
+            for _ in 0..2 {
+                builder
+                    .add_instance(definition, MoleculeInstanceMetadata::default())
+                    .unwrap();
+            }
+        }
+        builder.build().unwrap()
+    }
+
     #[test]
     fn topology_reuses_definitions_and_preserves_qualified_dense_order() {
         let (topology, carbon, oxygen, bond) = topology_with_reused_definition();
@@ -1520,16 +1843,49 @@ mod tests {
     }
 
     #[test]
-    fn topology_identity_is_exact_while_equivalence_is_structural() {
+    fn topology_identity_is_exact_while_layout_can_match() {
         let (topology, ..) = topology_with_reused_definition();
         let clone = topology.clone();
         let (independent, ..) = topology_with_reused_definition();
 
         assert!(topology.same_identity(&clone));
-        assert!(topology.structurally_equivalent(&clone));
+        assert!(topology.same_layout(&clone));
         assert!(!topology.same_identity(&independent));
-        assert!(topology.structurally_equivalent(&independent));
+        assert!(topology.same_layout(&independent));
         assert_eq!(clone.atom_ids(), topology.atom_ids());
+    }
+
+    #[test]
+    fn layout_equality_does_not_reorder_definitions_instances_or_dense_state() {
+        let forward = topology_with_two_distinct_definitions(false);
+        let reverse = topology_with_two_distinct_definitions(true);
+
+        assert!(!forward.same_identity(&reverse));
+        assert!(!forward.same_layout(&reverse));
+        assert_eq!(
+            TopologyMapping::between_identical_layouts(&forward, &reverse),
+            Err(TopologyMappingError::NotSameLayout)
+        );
+    }
+
+    #[test]
+    fn identical_layout_mapping_preserves_repeated_definitions_and_instances() {
+        let source = topology_with_repeated_identical_definitions();
+        let target = topology_with_repeated_identical_definitions();
+
+        assert!(source.same_layout(&target));
+        assert!(!source.same_identity(&target));
+        let mapping = TopologyMapping::between_identical_layouts(&source, &target).unwrap();
+        for (definition, _) in source.definitions() {
+            assert_eq!(mapping.map_definition(definition), Some(definition));
+        }
+        for (instance, _) in source.instances() {
+            assert_eq!(mapping.map_instance(instance), Some(instance));
+        }
+        assert!(mapping.removed_definitions().is_empty());
+        assert!(mapping.added_definitions().is_empty());
+        assert!(mapping.removed_instances().is_empty());
+        assert!(mapping.added_instances().is_empty());
     }
 
     #[test]
@@ -1685,6 +2041,13 @@ mod tests {
         let old_instance = old_builder
             .add_instance(old_definition, MoleculeInstanceMetadata::default())
             .unwrap();
+        let old_extra_molecule = SmallMolecule::from_smiles_sanitized("O").unwrap();
+        let old_extra_definition = old_builder
+            .add_small_molecule_definition(&old_extra_molecule)
+            .unwrap();
+        let old_extra_instance = old_builder
+            .add_instance(old_extra_definition, MoleculeInstanceMetadata::default())
+            .unwrap();
         let old = old_builder.build().unwrap();
 
         let mut new_graph = Molecule::new();
@@ -1696,6 +2059,13 @@ mod tests {
             .unwrap();
         let new_instance = new_builder
             .add_instance(new_definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        let new_extra_molecule = SmallMolecule::from_smiles_sanitized("N").unwrap();
+        let new_extra_definition = new_builder
+            .add_small_molecule_definition(&new_extra_molecule)
+            .unwrap();
+        let new_extra_instance = new_builder
+            .add_instance(new_extra_definition, MoleculeInstanceMetadata::default())
             .unwrap();
         let new = new_builder.build().unwrap();
 
@@ -1719,21 +2089,185 @@ mod tests {
         );
         assert_eq!(
             mapping.removed_atoms(),
-            &[InstanceAtomId::new(old_instance, oxygen)]
+            &[
+                InstanceAtomId::new(old_instance, oxygen),
+                *old.atom_ids()
+                    .iter()
+                    .find(|atom| atom.molecule() == old_extra_instance)
+                    .unwrap(),
+            ]
         );
         assert_eq!(
             mapping.removed_bonds(),
             &[InstanceBondId::new(old_instance, bond)]
         );
-        assert!(mapping.added_atoms().is_empty());
+        assert_eq!(mapping.removed_definitions(), &[old_extra_definition]);
+        assert_eq!(mapping.added_definitions(), &[new_extra_definition]);
+        assert_eq!(mapping.removed_instances(), &[old_extra_instance]);
+        assert_eq!(mapping.added_instances(), &[new_extra_instance]);
+        assert_eq!(
+            mapping.added_atoms(),
+            &[*new
+                .atom_ids()
+                .iter()
+                .find(|atom| atom.molecule() == new_extra_instance)
+                .unwrap()]
+        );
         assert!(mapping.added_bonds().is_empty());
 
         let equivalent = topology_with_reused_definition().0;
         let independently_equivalent = topology_with_reused_definition().0;
         let round_trip =
-            TopologyMapping::between_equivalent(&equivalent, &independently_equivalent).unwrap();
+            TopologyMapping::between_identical_layouts(&equivalent, &independently_equivalent)
+                .unwrap();
         for atom in equivalent.atom_ids() {
             assert_eq!(round_trip.map_atom(*atom), Some(*atom));
         }
+    }
+
+    #[test]
+    fn topology_mapping_rejects_duplicate_and_cross_instance_atom_targets() {
+        let (source, carbon, _, bond) = topology_with_reused_definition();
+        let (target, ..) = topology_with_reused_definition();
+        let definition = MoleculeDefinitionId::new(0);
+        let first = MoleculeInstanceId::new(0);
+        let second = MoleculeInstanceId::new(1);
+        let first_carbon = InstanceAtomId::new(first, carbon);
+        let second_carbon = InstanceAtomId::new(second, carbon);
+
+        assert_eq!(
+            TopologyMapping::from_pairs(
+                &source,
+                &target,
+                [(definition, definition)],
+                [(first, first), (second, second)],
+                [(first_carbon, first_carbon), (second_carbon, first_carbon),],
+                [],
+            ),
+            Err(TopologyMappingError::DuplicateTarget(MappingKind::Atom))
+        );
+        assert_eq!(
+            TopologyMapping::from_pairs(
+                &source,
+                &target,
+                [(definition, definition)],
+                [(first, first), (second, second)],
+                [(first_carbon, second_carbon)],
+                [],
+            ),
+            Err(TopologyMappingError::InconsistentAtomInstance {
+                source: first_carbon,
+                target: second_carbon,
+                expected_target_instance: first,
+            })
+        );
+        let first_bond = InstanceBondId::new(first, bond);
+        let second_bond = InstanceBondId::new(second, bond);
+        assert_eq!(
+            TopologyMapping::from_pairs(
+                &source,
+                &target,
+                [(definition, definition)],
+                [(first, first), (second, second)],
+                [],
+                [(first_bond, second_bond)],
+            ),
+            Err(TopologyMappingError::InconsistentBondInstance {
+                source: first_bond,
+                target: second_bond,
+                expected_target_instance: first,
+            })
+        );
+    }
+
+    #[test]
+    fn topology_mapping_rejects_inconsistent_definition_and_bond_relationships() {
+        let source_layout = topology_with_two_distinct_definitions(false);
+        let target_layout = topology_with_two_distinct_definitions(false);
+        assert_eq!(
+            TopologyMapping::from_pairs(
+                &source_layout,
+                &target_layout,
+                [(MoleculeDefinitionId::new(0), MoleculeDefinitionId::new(1),)],
+                [(MoleculeInstanceId::new(0), MoleculeInstanceId::new(0))],
+                [],
+                [],
+            ),
+            Err(TopologyMappingError::InconsistentInstanceDefinition {
+                source: MoleculeInstanceId::new(0),
+                target: MoleculeInstanceId::new(0),
+                expected_target_definition: MoleculeDefinitionId::new(1),
+                actual_target_definition: MoleculeDefinitionId::new(0),
+            })
+        );
+
+        let (source, source_definition, source_instance, source_atoms, source_bonds) =
+            topology_from_smiles("CCC");
+        let (target, target_definition, target_instance, target_atoms, target_bonds) =
+            topology_from_smiles("CCC");
+        let source_bond = source_bonds[0];
+        let (source_a, source_b) = source
+            .definition(source_definition)
+            .unwrap()
+            .graph()
+            .bond(source_bond)
+            .unwrap()
+            .endpoints();
+        let source_other = source_atoms
+            .iter()
+            .copied()
+            .find(|atom| *atom != source_a && *atom != source_b)
+            .unwrap();
+        let target_other = target_atoms
+            .iter()
+            .copied()
+            .find(|atom| *atom != source_a && *atom != source_b)
+            .unwrap();
+        let atom_pairs = [
+            (
+                InstanceAtomId::new(source_instance, source_a),
+                InstanceAtomId::new(target_instance, source_a),
+            ),
+            (
+                InstanceAtomId::new(source_instance, source_b),
+                InstanceAtomId::new(target_instance, target_other),
+            ),
+            (
+                InstanceAtomId::new(source_instance, source_other),
+                InstanceAtomId::new(target_instance, source_b),
+            ),
+        ];
+        let source_bond = InstanceBondId::new(source_instance, source_bond);
+        let target_bond = InstanceBondId::new(target_instance, target_bonds[0]);
+        assert_eq!(
+            TopologyMapping::from_pairs(
+                &source,
+                &target,
+                [(source_definition, target_definition)],
+                [(source_instance, target_instance)],
+                atom_pairs,
+                [(source_bond, target_bond)],
+            ),
+            Err(TopologyMappingError::InconsistentBondEndpoints {
+                source: source_bond,
+                target: target_bond,
+            })
+        );
+    }
+
+    #[test]
+    fn topology_edit_result_checks_mapping_target_identity() {
+        let source = topology_with_repeated_identical_definitions();
+        let target = topology_with_repeated_identical_definitions();
+        let wrong_target = topology_with_repeated_identical_definitions();
+        let mapping = TopologyMapping::between_identical_layouts(&source, &target).unwrap();
+
+        assert_eq!(
+            TopologyEditResult::new(wrong_target, mapping).unwrap_err(),
+            TopologyMappingError::TargetTopologyMismatch
+        );
+        let mapping = TopologyMapping::between_identical_layouts(&source, &target).unwrap();
+        let result = TopologyEditResult::new(target.clone(), mapping).unwrap();
+        assert!(result.topology().same_identity(&target));
     }
 }

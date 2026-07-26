@@ -37,8 +37,9 @@ At completion, the repository must provide:
 3. Instance-qualified semantic atom and bond identifiers.
 4. Immutable authoritative dense atom and bond orderings owned by topology.
 5. Cheap topology cloning with exact identity retained across clones.
-6. Explicit distinction between exact topology identity and structural
-   equivalence.
+6. Explicit distinction between exact topology identity and equality of the
+   complete static layout; general structural equivalence remains reserved for
+   a future ambiguity-aware isomorphism API.
 7. A linear-time transactional `TopologyBuilder`.
 8. `Positions` and `Configuration` types validated against topology.
 9. `Model` implemented as topology plus one configuration.
@@ -92,8 +93,8 @@ Every stage must preserve these invariants:
 - Force-field and backend particle state is not canonical topology state.
 - Exact topology identity is required for topology-bound dense arrays,
   selections, frame buffers, and prepared systems.
-- Independently constructed structurally equal topologies are not silently
-  interchangeable.
+- Independently constructed topologies, including equal-layout topologies, are
+  not silently interchangeable.
 - Dense atom and bond orderings never change during a topology's lifetime.
 - Topology-changing operations create a new topology and explicit mappings.
 - Failed transactional operations leave their input unchanged.
@@ -348,14 +349,17 @@ Provide explicit identity behavior:
 ```rust
 Topology::same_identity
 Topology::identity
+Topology::same_layout
 ```
 
 Introduce a private or opaque `TopologyIdentity` suitable for prepared objects,
 positions, selections, and buffers.
 
-Do not rely on `PartialEq` to express both identity and structural equality.
-Provide an explicit structural-equivalence API if implemented in this stage;
-otherwise reserve it clearly for a later stage.
+`same_layout` means equality of complete chemical/static content, definition
+and instance partitioning, semantic identifiers, authoritative dense order, and
+index maps. Do not label this `PartialEq`-based operation structural
+equivalence. Order-independent structural equivalence, ambiguity reporting, and
+validated isomorphism mappings are reserved explicitly for a later stage.
 
 ### Initial storage strategy
 
@@ -1115,7 +1119,11 @@ Implement `TopologyMapping` foundations:
 - atom mapping;
 - bond mapping;
 - dense-index mapping;
-- retained/removed/added reporting.
+- retained/removed/added reporting for definitions, instances, atoms, and bonds;
+- injective maps whose definition, instance, atom, and bond relationships agree;
+- mapped bond endpoints validated against mapped atoms;
+- checked topology-edit results whose topology has the exact mapping target
+  identity.
 
 It is acceptable for the initial refactor to provide mappings for builder
 conversions and selected transforms rather than every possible topology edit.
@@ -1127,7 +1135,9 @@ conversions and selected transforms rather than every possible topology edit.
 - Hierarchy and role selections.
 - Query-derived selections.
 - Mapping round trips for retained atoms.
-- Added/removed atom reporting.
+- Added/removed definition, instance, atom, and bond reporting.
+- Mapping target mismatch, duplicate targets, cross-instance atoms, and
+  inconsistent mapped-bond endpoints are rejected.
 - No implicit position transfer without mapping.
 
 ### Exit criteria
@@ -1387,7 +1397,8 @@ At each stage:
 - avoid claiming unimplemented trajectory codecs;
 - distinguish ensemble order from trajectory time;
 - distinguish molecule instance from connected component;
-- distinguish topology identity from structural equivalence;
+- distinguish exact topology identity from complete static-layout equality and
+  state that general structural equivalence is not implemented;
 - distinguish topology from prepared mechanical system;
 - describe units and dense ordering explicitly.
 
@@ -1451,7 +1462,9 @@ The refactor is complete only when all statements below are true:
 - [x] Molecule definitions and instances are distinct.
 - [x] Explicit definition reuse works.
 - [x] Dense atom and bond indices belong to topology.
-- [x] Exact identity and structural equivalence are distinct.
+- [x] Exact identity and complete static-layout equality are distinct.
+- [x] Order-independent structural equivalence and ambiguity-aware isomorphism
+  mapping are documented as future capabilities rather than claimed.
 - [x] Topology construction is linear and transactional.
 - [x] `Model` is topology plus one configuration.
 - [x] `Ensemble` shares one topology across members.

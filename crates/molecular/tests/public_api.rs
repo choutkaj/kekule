@@ -377,6 +377,30 @@ fn topology_ensemble_and_streaming_trajectory_public_api() -> Result<(), Box<dyn
 }
 
 #[test]
+fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use molecular::topology::{
+        MoleculeInstanceMetadata, TopologyBuilder, TopologyEditResult, TopologyMapping,
+    };
+
+    let water = SmallMolecule::from_smiles_sanitized("O")?;
+    let build = || -> Result<_, Box<dyn std::error::Error>> {
+        let mut builder = TopologyBuilder::new();
+        let definition = builder.add_small_molecule_definition(&water)?;
+        builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+        Ok(builder.build()?)
+    };
+    let source = build()?;
+    let target = build()?;
+
+    assert!(!source.same_identity(&target));
+    assert!(source.same_layout(&target));
+    let mapping = TopologyMapping::between_identical_layouts(&source, &target)?;
+    let result = TopologyEditResult::new(target.clone(), mapping)?;
+    assert!(result.topology().same_identity(&target));
+    Ok(())
+}
+
+#[test]
 fn production_smiles_stereo_uses_installed_perception_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use molecular::perception::{self, stereo, SanitizeOptions};

@@ -11,7 +11,10 @@ series, breaking public API changes increment the minor version.
 
 - Complete the topology-centered hard break: add immutable coordinate-free
   `Topology` with reusable molecule definitions, explicit instances,
-  authoritative dense order, exact identity, selections, and lineage mappings.
+  authoritative dense order, exact identity, explicit `same_layout` comparison,
+  selections, and checked lineage mappings. Identity maps use
+  `between_identical_layouts`; general order-independent structural equivalence
+  and isomorphism mapping remain planned.
 - Define `Model = Topology + Configuration`, add topology-bound `Positions`,
   validated periodic cells, borrowed `ModelView`, and coordinate-model-specific
   `StructureObservation`.

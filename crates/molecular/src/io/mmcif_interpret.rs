@@ -1267,7 +1267,7 @@ pub fn interpret_mmcif_ensemble(
             };
             return Err(error);
         }
-        if !shared_topology.structurally_equivalent(model.topology()) {
+        if !shared_topology.same_layout(model.topology()) {
             return Err(MmcifEnsembleInterpretError::InconsistentTopology { model_id });
         }
         if shared_topology.atom_ids() != model.topology().atom_ids()
@@ -1275,11 +1275,11 @@ pub fn interpret_mmcif_ensemble(
         {
             return Err(MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id });
         }
-        TopologyMapping::between_equivalent(model.topology(), &shared_topology).map_err(|_| {
-            MmcifEnsembleInterpretError::InconsistentTopology {
+        TopologyMapping::between_identical_layouts(model.topology(), &shared_topology).map_err(
+            |_| MmcifEnsembleInterpretError::InconsistentTopology {
                 model_id: model_id.clone(),
-            }
-        })?;
+            },
+        )?;
         let positions = Positions::new(&shared_topology, model.positions())
             .map_err(MmcifEnsembleInterpretError::Position)?;
         let configuration = match model.cell().copied() {
