@@ -1,0 +1,8 @@
+id = "model.ensemble"
+title = "Shared-topology structural ensembles"
+area = "modeling"
+domains = ["small-molecule", "macromolecule"]
+version = 2
+status = "supported"
+description = "Store finite non-temporal configurations and observation state that share one exact topology."
+depends_on = ["model.topology", "model.system"]

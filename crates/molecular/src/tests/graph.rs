@@ -14,9 +14,14 @@ fn empty_molecule_has_no_atoms_or_bonds() {
 #[test]
 fn formal_charge_sums_only_live_atom_payloads() {
     let mut mol = Molecule::new();
-    let positive = mol.add_atom(charged_atom("N", 3));
-    mol.add_atom(charged_atom("O", -1));
-    let deleted = mol.add_atom(charged_atom("Cl", -2));
+    let positive = mol
+        .add_atom(charged_atom("N", 3))
+        .expect("atom identifier capacity");
+    mol.add_atom(charged_atom("O", -1))
+        .expect("atom identifier capacity");
+    let deleted = mol
+        .add_atom(charged_atom("Cl", -2))
+        .expect("atom identifier capacity");
 
     assert_eq!(mol.formal_charge(), 0);
     mol.delete_atom(deleted)
@@ -32,8 +37,8 @@ fn formal_charge_sums_only_live_atom_payloads() {
 #[test]
 fn atom_insertion_assigns_stable_typed_ids() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
 
     assert_eq!(a.raw(), 0);
     assert_eq!(b.raw(), 1);
@@ -52,8 +57,8 @@ fn atom_insertion_assigns_stable_typed_ids() {
 #[test]
 fn bond_insertion_assigns_stable_typed_ids() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
@@ -70,7 +75,7 @@ fn bond_insertion_assigns_stable_typed_ids() {
 #[test]
 fn invalid_atom_ids_are_rejected() {
     let mut mol = Molecule::new();
-    let atom = mol.add_atom(carbon());
+    let atom = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     assert_eq!(
         mol.atom(AtomId::new(99))
@@ -92,8 +97,8 @@ fn invalid_atom_ids_are_rejected() {
 #[test]
 fn invalid_bond_ids_are_rejected() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
@@ -118,7 +123,7 @@ fn invalid_bond_ids_are_rejected() {
 #[test]
 fn self_bonds_are_rejected() {
     let mut mol = Molecule::new();
-    let atom = mol.add_atom(carbon());
+    let atom = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     let err = mol
         .add_bond(atom, atom, BondOrder::Single)
@@ -129,8 +134,8 @@ fn self_bonds_are_rejected() {
 #[test]
 fn duplicate_bond_is_rejected() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(a, b, BondOrder::Single)
         .expect("first bond should be valid");
 
@@ -148,10 +153,10 @@ fn duplicate_bond_is_rejected() {
 #[test]
 fn neighbor_iteration_reports_live_adjacent_atoms() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(oxygen());
-    let isolated = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let isolated = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(center, left, BondOrder::Single)
         .expect("left bond should be valid");
     mol.add_bond(center, right, BondOrder::Double)
@@ -176,9 +181,9 @@ fn neighbor_iteration_reports_live_adjacent_atoms() {
 #[test]
 fn incident_bond_iteration_reports_live_bonds() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(oxygen());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let left_bond = mol
         .add_bond(center, left, BondOrder::Single)
         .expect("left bond should be valid");
@@ -212,9 +217,9 @@ fn incident_bond_iteration_reports_live_bonds() {
 #[test]
 fn bond_between_finds_live_undirected_bonds() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(oxygen());
-    let c = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
@@ -227,9 +232,9 @@ fn bond_between_finds_live_undirected_bonds() {
 #[test]
 fn bond_deletion_preserves_remaining_ids_and_counts() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let first = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("first bond should be valid");
@@ -258,9 +263,9 @@ fn bond_deletion_preserves_remaining_ids_and_counts() {
 #[test]
 fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
-    let c = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let first = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("first bond should be valid");
@@ -296,15 +301,15 @@ fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
 #[test]
 fn adding_after_deletion_allocates_new_ids() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let first_bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
     mol.delete_bond(first_bond).expect("bond should delete");
     mol.delete_atom(a).expect("atom should delete");
 
-    let c = mol.add_atom(oxygen());
+    let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let second_bond = mol
         .add_bond(b, c, BondOrder::Double)
         .expect("new bond should be valid");
@@ -319,11 +324,11 @@ fn adding_after_deletion_allocates_new_ids() {
 fn every_topology_mutation_invalidates_fresh_perception() {
     let mut mol = Molecule::new();
     mark_all_fresh(&mut mol);
-    let a = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     assert_all_stale(&mol);
 
     mark_all_fresh(&mut mol);
-    let b = mol.add_atom(oxygen());
+    let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     assert_all_stale(&mol);
 
     mark_all_fresh(&mut mol);
@@ -345,7 +350,7 @@ fn every_topology_mutation_invalidates_fresh_perception() {
 fn absent_perception_remains_absent_after_topology_mutation() {
     let mut mol = Molecule::new();
 
-    mol.add_atom(carbon());
+    mol.add_atom(carbon()).expect("atom identifier capacity");
 
     assert!(!mol.perception().has_valence());
     assert!(!mol.perception().has_rings());
@@ -356,8 +361,8 @@ fn absent_perception_remains_absent_after_topology_mutation() {
 #[test]
 fn property_maps_can_be_mutated_without_topology_changes() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(oxygen());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
@@ -435,8 +440,8 @@ fn property_and_coordinate_edits_preserve_computed_state() {
 #[test]
 fn conformer_attachment_rejects_coordinates_for_non_live_atoms_transactionally() {
     let mut mol = Molecule::new();
-    let deleted = mol.add_atom(carbon());
-    let live = mol.add_atom(oxygen());
+    let deleted = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let live = mol.add_atom(oxygen()).expect("atom identifier capacity");
     mol.delete_atom(deleted).expect("delete atom");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer

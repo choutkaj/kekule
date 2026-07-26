@@ -248,11 +248,9 @@ fn try_kekulize_imported_component_with_limit(
     for atom_id in component {
         mol.set_atom_aromatic(*atom_id, false);
     }
-    for (bond_id, bond) in mol
-        .bonds
-        .iter_mut()
-        .enumerate()
-        .filter_map(|(index, bond)| bond.as_mut().map(|bond| (BondId::new(index as u32), bond)))
+    for (bond_id, bond) in (0..=u32::MAX)
+        .zip(mol.bonds.iter_mut())
+        .filter_map(|(raw, bond)| bond.as_mut().map(|bond| (BondId::new(raw), bond)))
     {
         if bond.order == BondOrder::Aromatic
             && component_atoms.contains(&bond.a())
@@ -1005,13 +1003,24 @@ mod tests {
     #[test]
     fn candidate_options_can_disallow_exocyclic_multiple_bonds() {
         let mut mol = Molecule::new();
-        let carbonyl_carbon =
-            mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_b = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_d = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let carbon_e = mol.add_atom(Atom::new(Element::from_symbol("C").expect("test element")));
-        let oxygen = mol.add_atom(Atom::new(Element::from_symbol("O").expect("test element")));
+        let carbonyl_carbon = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("test element")))
+            .expect("atom identifier capacity");
+        let carbon_b = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("test element")))
+            .expect("atom identifier capacity");
+        let carbon_c = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("test element")))
+            .expect("atom identifier capacity");
+        let carbon_d = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("test element")))
+            .expect("atom identifier capacity");
+        let carbon_e = mol
+            .add_atom(Atom::new(Element::from_symbol("C").expect("test element")))
+            .expect("atom identifier capacity");
+        let oxygen = mol
+            .add_atom(Atom::new(Element::from_symbol("O").expect("test element")))
+            .expect("atom identifier capacity");
         mol.add_bond(carbonyl_carbon, carbon_b, BondOrder::Single)
             .expect("ring bond");
         mol.add_bond(carbon_b, carbon_c, BondOrder::Single)

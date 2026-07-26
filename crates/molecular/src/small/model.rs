@@ -36,6 +36,12 @@ impl SmallMolecule {
         self
     }
 
+    pub(crate) fn clone_without_conformers(&self) -> Self {
+        Self {
+            graph: self.graph.clone_without_conformers(),
+        }
+    }
+
     pub fn atom_count(&self) -> usize {
         self.graph.atom_count()
     }

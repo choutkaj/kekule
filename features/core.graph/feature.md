@@ -10,7 +10,7 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - Provides one shared `Molecule` graph used by both `SmallMolecule` and `MacroMolecule`.
 - Permits disconnected topology; connectedness is queried from the graph and is
   not an asserted-entity invariant.
-- Supports adding and deleting atoms and bonds.
+- Supports fallible atom and bond insertion plus stable-ID deletion.
 - Supports first-class stereo elements, stereo groups, and source bond marks attached to stable graph IDs.
 - Replaces stereo elements through a validating transactional operation; direct
   mutable access cannot bypass graph-reference or stereo-group invariants.
@@ -30,6 +30,11 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 ## Implementation Notes
 
 - Uses slot storage with tombstones so IDs remain stable.
+- Checks atom, bond, conformer, stereo-element, and stereo-group collection
+  slots before insertion and returns `MoleculeError::IdentifierCapacityExceeded`
+  without changing graph state.
+- Live-ID iterators advance in the native `u32` identifier domain and never
+  reconstruct an ID through narrowing from `usize`.
 - Maintains adjacency for neighbor and incident-bond iteration.
 - Deleting an atom removes its incident bonds.
 - Deleting atoms or bonds prunes stereo elements and source bond marks that reference removed topology and drops pruned elements from stereo groups.
@@ -45,7 +50,10 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 ## Tests
 
 - Current coverage is unit-test based.
-- Tests cover empty molecules, insertion, deletion, invalid IDs, self-bonds, duplicates, iteration, stable IDs, counts, chemistry invalidation, state-neutral property/coordinate edits, stereo CRUD, and stereo pruning.
+- Tests cover empty molecules, insertion, deletion, invalid IDs, self-bonds,
+  duplicates, iteration, stable IDs, counts, checked synthetic capacity
+  boundaries, transactional capacity rejection, chemistry invalidation,
+  state-neutral property/coordinate edits, stereo CRUD, and stereo pruning.
 - Reference-tool golden data is not required for this data-structure feature.
 
 ## Out Of Scope
@@ -71,3 +79,6 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   no physical dependency on algorithm implementations.
 - v9: Add `Molecule::formal_charge` as an overflow-safe aggregate over live
   asserted atom payloads.
+- v10: Make atom insertion fallible and enforce one checked fixed-width ID
+  strategy across atoms, bonds, conformers, stereo elements, stereo groups,
+  and live-ID iterators.

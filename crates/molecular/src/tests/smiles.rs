@@ -266,9 +266,18 @@ fn smiles_writer_round_trips_graph_shape() {
 #[test]
 fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
     let mut first = SmallMolecule::new();
-    let first_terminal_a = first.graph_mut().add_atom(carbon());
-    let first_center = first.graph_mut().add_atom(carbon());
-    let first_terminal_b = first.graph_mut().add_atom(carbon());
+    let first_terminal_a = first
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let first_center = first
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let first_terminal_b = first
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     first
         .graph_mut()
         .add_bond(first_terminal_a, first_center, BondOrder::Single)
@@ -281,9 +290,18 @@ fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
         .expect("propane sanitizes");
 
     let mut second = SmallMolecule::new();
-    let second_center = second.graph_mut().add_atom(carbon());
-    let second_terminal_a = second.graph_mut().add_atom(carbon());
-    let second_terminal_b = second.graph_mut().add_atom(carbon());
+    let second_center = second
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let second_terminal_a = second
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let second_terminal_b = second
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     second
         .graph_mut()
         .add_bond(second_center, second_terminal_a, BondOrder::Single)
@@ -3147,8 +3165,14 @@ fn test_bond_order_code(order: BondOrder) -> u8 {
 #[test]
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let mut molecule = SmallMolecule::default();
-    let a = molecule.graph_mut().add_atom(carbon());
-    let b = molecule.graph_mut().add_atom(carbon());
+    let a = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let b = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let bond = molecule
         .graph_mut()
         .add_bond(a, b, BondOrder::Dative)
@@ -3494,12 +3518,24 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
         let mut molecule = SmallMolecule::default();
         let mut left_atom = carbon();
         left_atom.implicit_hydrogens = Some(1);
-        let left = molecule.graph_mut().add_atom(left_atom);
+        let left = molecule
+            .graph_mut()
+            .add_atom(left_atom)
+            .expect("atom identifier capacity");
         let mut right_atom = carbon();
         right_atom.implicit_hydrogens = Some(1);
-        let right = molecule.graph_mut().add_atom(right_atom);
-        let fluorine = molecule.graph_mut().add_atom(element_atom("F"));
-        let chlorine = molecule.graph_mut().add_atom(element_atom("Cl"));
+        let right = molecule
+            .graph_mut()
+            .add_atom(right_atom)
+            .expect("atom identifier capacity");
+        let fluorine = molecule
+            .graph_mut()
+            .add_atom(element_atom("F"))
+            .expect("atom identifier capacity");
+        let chlorine = molecule
+            .graph_mut()
+            .add_atom(element_atom("Cl"))
+            .expect("atom identifier capacity");
         molecule
             .graph_mut()
             .add_bond(left, fluorine, BondOrder::Single)
@@ -3553,7 +3589,12 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
 fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
     let mut molecule = SmallMolecule::default();
     let atoms = (0..16)
-        .map(|_| molecule.graph_mut().add_atom(carbon()))
+        .map(|_| {
+            molecule
+                .graph_mut()
+                .add_atom(carbon())
+                .expect("atom identifier capacity")
+        })
         .collect::<Vec<_>>();
     for left in 0..atoms.len() {
         for right in (left + 1)..atoms.len() {

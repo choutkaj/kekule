@@ -13,8 +13,8 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
             BondOrder::Single,
         ],
     );
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(AtomId::new(0), a, BondOrder::Single)
         .expect("bond");
     mol.add_bond(a, b, BondOrder::Single).expect("bond");
@@ -30,9 +30,15 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
 #[test]
 fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
     let mut molecule = SmallMolecule::default();
-    let mut previous = molecule.graph_mut().add_atom(carbon());
+    let mut previous = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     for _ in 1..20_000 {
-        let atom = molecule.graph_mut().add_atom(carbon());
+        let atom = molecule
+            .graph_mut()
+            .add_atom(carbon())
+            .expect("atom identifier capacity");
         molecule
             .graph_mut()
             .add_bond(previous, atom, BondOrder::Single)
@@ -54,8 +60,12 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
 #[test]
 fn ladder_ring_work_is_instrumented() {
     let mut mol = Molecule::new();
-    let top = (0..12).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
-    let bottom = (0..12).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    let top = (0..12)
+        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
+    let bottom = (0..12)
+        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
     for index in 0..11 {
         mol.add_bond(top[index], top[index + 1], BondOrder::Single)
             .expect("top rail");
@@ -81,8 +91,12 @@ fn ladder_ring_work_is_instrumented() {
 #[test]
 fn symmetric_cage_returns_named_candidate_limit_error() {
     let mut mol = Molecule::new();
-    let left = (0..4).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
-    let right = (0..4).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    let left = (0..4)
+        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
+    let right = (0..4)
+        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
     for a in &left {
         for b in &right {
             mol.add_bond(*a, *b, BondOrder::Single)
@@ -112,17 +126,17 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
 #[test]
 fn theta_graph_and_disconnected_mixture_are_deterministic() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     for _ in 0..3 {
-        let middle = mol.add_atom(carbon());
+        let middle = mol.add_atom(carbon()).expect("atom identifier capacity");
         mol.add_bond(left, middle, BondOrder::Single)
             .expect("theta edge");
         mol.add_bond(middle, right, BondOrder::Single)
             .expect("theta edge");
     }
-    let tail_a = mol.add_atom(carbon());
-    let tail_b = mol.add_atom(carbon());
+    let tail_a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let tail_b = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("disconnected tail");
 
@@ -138,7 +152,9 @@ fn theta_graph_and_disconnected_mixture_are_deterministic() {
 #[test]
 fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
     let mut mol = Molecule::new();
-    let atoms = (0..9).map(|_| mol.add_atom(carbon())).collect::<Vec<_>>();
+    let atoms = (0..9)
+        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
     for (left, right) in [
         (0, 2),
         (2, 1),
@@ -208,7 +224,12 @@ fn cycle_size_limit_returns_structured_error() {
 fn ring_resource_errors_propagate_transactionally() {
     let mut molecule = SmallMolecule::default();
     let atoms = (0..3)
-        .map(|_| molecule.graph_mut().add_atom(carbon()))
+        .map(|_| {
+            molecule
+                .graph_mut()
+                .add_atom(carbon())
+                .expect("atom identifier capacity")
+        })
         .collect::<Vec<_>>();
     for (left, right) in [(0, 1), (1, 2), (2, 0)] {
         molecule

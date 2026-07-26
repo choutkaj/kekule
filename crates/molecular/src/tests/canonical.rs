@@ -26,9 +26,18 @@ fn canonical_ranking_groups_symmetric_atoms() {
 #[test]
 fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
     let mut first = SmallMolecule::new();
-    let first_terminal_a = first.graph_mut().add_atom(carbon());
-    let first_center = first.graph_mut().add_atom(carbon());
-    let first_terminal_b = first.graph_mut().add_atom(carbon());
+    let first_terminal_a = first
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let first_center = first
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let first_terminal_b = first
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     first
         .graph_mut()
         .add_bond(first_terminal_a, first_center, BondOrder::Single)
@@ -41,9 +50,18 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
         .expect("propane sanitizes");
 
     let mut second = SmallMolecule::new();
-    let second_center = second.graph_mut().add_atom(carbon());
-    let second_terminal_a = second.graph_mut().add_atom(carbon());
-    let second_terminal_b = second.graph_mut().add_atom(carbon());
+    let second_center = second
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let second_terminal_a = second
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let second_terminal_b = second
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     second
         .graph_mut()
         .add_bond(second_center, second_terminal_a, BondOrder::Single)

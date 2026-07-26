@@ -298,7 +298,7 @@ fn dssp_record_json(fixture_path: &Path) -> Result<Value, Box<dyn Error>> {
             ..MmcifInterpretOptions::default()
         },
     )?;
-    let result = match dssp::assign(interpretation.model(), dssp::DsspOptions::default()) {
+    let result = match dssp::assign(interpretation.model().view(), dssp::DsspOptions::default()) {
         Ok(result) => result,
         Err(dssp::DsspError::NoAnalyzableProteinResidues) => {
             return Ok(json!({
@@ -912,7 +912,7 @@ pub(crate) fn stereo_cip_record_json(
 
 pub(crate) fn cip_atom_descriptors_json(
     mol: &Molecule,
-    atom_index: &BTreeMap<AtomId, u32>,
+    atom_index: &BTreeMap<AtomId, u64>,
 ) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
@@ -942,7 +942,7 @@ pub(crate) fn cip_atom_descriptors_json(
 
 pub(crate) fn cip_bond_descriptors_json(
     mol: &Molecule,
-    atom_index: &BTreeMap<AtomId, u32>,
+    atom_index: &BTreeMap<AtomId, u64>,
 ) -> Vec<Value> {
     let mut descriptors = mol
         .stereo_elements()
@@ -1013,18 +1013,18 @@ pub(crate) fn cip_bond_descriptors_json(
     descriptors
 }
 
-fn rdkit_default_atom_index(mol: &Molecule, remove_plain_hydrogens: bool) -> BTreeMap<AtomId, u32> {
+fn rdkit_default_atom_index(mol: &Molecule, remove_plain_hydrogens: bool) -> BTreeMap<AtomId, u64> {
     let mut index = BTreeMap::new();
-    for (atom_id, atom) in mol.atoms() {
-        if remove_plain_hydrogens && rdkit_default_removes_hydrogen(atom) {
-            continue;
-        }
-        index.insert(atom_id, index.len() as u32);
+    let retained = mol
+        .atoms()
+        .filter(|(_, atom)| !remove_plain_hydrogens || !rdkit_default_removes_hydrogen(atom));
+    for (dense_index, (atom_id, _)) in (0u64..).zip(retained) {
+        index.insert(atom_id, dense_index);
     }
     index
 }
 
-fn rdkit_default_bond_count(mol: &Molecule, atom_index: &BTreeMap<AtomId, u32>) -> usize {
+fn rdkit_default_bond_count(mol: &Molecule, atom_index: &BTreeMap<AtomId, u64>) -> usize {
     mol.bonds()
         .filter(|(_, bond)| {
             atom_index.contains_key(&bond.a()) && atom_index.contains_key(&bond.b())
@@ -1971,8 +1971,8 @@ pub(crate) fn stereo_perception_report_json(report: &StereoPerceptionReport) -> 
         "assembled_elements": report
             .assembled_elements
             .iter()
-            .enumerate()
-            .map(|(index, element)| stereo_element_json(index as u32, element, None))
+            .zip(0u64..)
+            .map(|(element, index)| stereo_element_json(index, element, None))
             .collect::<Vec<_>>(),
         "created_element_indices": report
             .created_elements
@@ -2171,13 +2171,17 @@ pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Val
 pub(crate) fn stereo_elements_json(mol: &Molecule) -> Vec<Value> {
     mol.stereo_elements()
         .map(|(id, element)| {
-            stereo_element_json(id.raw(), element, mol.cip_descriptor(id).ok().flatten())
+            stereo_element_json(
+                u64::from(id.raw()),
+                element,
+                mol.cip_descriptor(id).ok().flatten(),
+            )
         })
         .collect()
 }
 
 pub(crate) fn stereo_element_json(
-    index: u32,
+    index: u64,
     element: &StereoElement,
     descriptor: Option<StereoDescriptor>,
 ) -> Value {

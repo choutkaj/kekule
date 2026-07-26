@@ -6,13 +6,17 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 
 ## Behavior/API
 
-- Exposes `Point3`, `Conformer`, `ConformerId`, and conformer accessors on `Molecule`.
+- Exposes `Conformer`, `ConformerId`, and conformer accessors on `Molecule`;
+  the shared `Point3` type lives at `geometry::Point3`.
 - Conformers store optional coordinates keyed by `AtomId` plus one explicit
   compatible length unit for the complete coordinate array.
 - Position setters accept `Quantity<Point3>`, convert to the conformer's unit,
   and position accessors return quantities retaining that unit.
 - `Molecule::add_conformer` is fallible and transactionally rejects coordinates
   assigned to invalid, deleted, or otherwise non-live atom IDs.
+- `Conformer::new`, `with_atom_capacity`, and `set_position` return
+  `ConformerError`; position arrays outside the `AtomId` addressable range fail
+  with `PositionCapacityExceeded` before allocation or mutation.
 - Adding or deleting topology invalidates coordinate-bearing conformers only when the topology operation removes atoms.
 
 ## Implementation Notes
@@ -22,11 +26,13 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
   hidden coordinate convention.
 - Stable conformer IDs use slot storage, matching atom and bond ID behavior.
 - Parsers may attach a conformer without running sanitization or perception.
-- The mmCIF parser stores coordinates from all models in one conformer because each atom-site row is a distinct graph atom; model identity remains in `SmcraHierarchy`.
+- Molecule-local conformers remain convenience coordinate storage. System-wide
+  models, ensembles, and trajectories use the topology-bound structure layer.
 
 ## Tests
 
-- Unit tests cover insertion, lookup, and SDF/Molfile coordinate preservation.
+- Unit tests cover insertion, lookup, synthetic position-capacity boundaries,
+  and SDF/Molfile coordinate preservation.
 
 ## Benchmarks
 
@@ -50,3 +56,7 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
   access through `Quantity<Point3>`.
 - v6: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v7: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v8: Move `Point3` to the shared `geometry` module and distinguish local
+  molecule conformers from topology-bound configurations and trajectories.
+- v9: Add structured conformer position-capacity errors and remove unchecked
+  slot reconstruction from conformer coordinate iteration.

@@ -2,16 +2,21 @@
 
 ## Summary
 
-Represent model, chain, residue, and atom-site hierarchy as a sidecar over the shared core molecule graph.
+Represent coordinate-independent chain, residue, and atom-site hierarchy as a
+sidecar over the shared core molecule graph.
 
 ## Behavior/API
 
-- Exposes `SmcraModel`, `SmcraChain`, `SmcraResidue`, and `SmcraAtomSite`
-  nodes plus correspondingly prefixed typed IDs.
+- Exposes `SmcraChain`, `SmcraResidue`, and `SmcraAtomSite` nodes plus
+  correspondingly prefixed typed IDs.
 - Stores biomolecular labels and atom-site metadata in `SmcraHierarchy`, not core `Atom`.
 - `MacroMolecule` owns one core `Molecule` plus one `SmcraHierarchy`.
-- `MacroMolecule` exposes model, chain, residue, and atom-site iterators plus `atom_site_for_atom`.
-- `MacroMolecule::validate` checks graph/hierarchy/coordinate consistency without mutation.
+- `MacroMolecule` exposes chain, residue, and atom-site iterators plus
+  `atom_site_for_atom`.
+- `MacroMolecule::validate` checks graph/hierarchy consistency and all retained
+  conformer coordinates without mutation.
+- `MacroMolecule::validate_with_options` can restrict work to static
+  graph/hierarchy validation for coordinate-independent consumers.
 - `MacroMoleculeBuilder` and `MacroMolecule::try_from_parts` are the only raw
   assembly paths and reject invalid graph/hierarchy pairs.
 - `MacroMolecule::edit` provides coordinated transactional graph/hierarchy
@@ -19,20 +24,28 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - Every live graph atom must have exactly one atom site, and every atom site
   must reference a live graph atom.
 - Atom-site insertion validates that referenced core atoms exist.
-- Atom-site metadata preserves `_atom_site.group_PDB`, `_atom_site.id`, label/auth atom IDs, alternate location, occupancy, and B-factor.
+- Chain, residue, and atom-site insertion checks fixed-width capacity before
+  mutating parent/lookup state and reports
+  `SmcraHierarchyError::IdentifierCapacityExceeded` with the affected ID kind.
+- Atom-site metadata preserves static type, label/auth chain, and label/auth
+  atom identity. Coordinate-model-specific fields live in
+  `StructureObservation`.
 
 ## Implementation Notes
 
 - Preserves insertion order for hierarchy iteration.
 - Tracks label and author identifiers separately.
-- Supports alternate locations, occupancy, B-factor, insertion code, and model identifiers.
+- Supports insertion codes and distinct label/author identifiers without
+  structural coordinate-model parent nodes.
 - Stores label and author component IDs separately on residues.
 - mmCIF interpretation populates hierarchy only after molecular boundaries and alternate locations have been resolved.
 
 ## Tests
 
 - Unit tests cover hierarchy construction, checked assembly, transactional
-  mutation, lookup, validation, and failed-commit rollback.
+  mutation, lookup, full versus static-only validation reports, unused
+  conformer skipping, synthetic ID-capacity boundaries, capacity rollback, and
+  failed-commit rollback.
 - The former Biopython evidence exercised the removed whole-file reader rather
   than the format-neutral hierarchy contract, so no current hierarchy parity
   evidence is recorded pending a replacement comparison.
@@ -50,8 +63,16 @@ Represent model, chain, residue, and atom-site hierarchy as a sidecar over the s
 - v4: Add direct macro hierarchy accessors plus conservative macro validation and sanitization APIs.
 - v5: Make macro sanitization defaults honest by enabling only implemented validation behavior and rejecting requested unimplemented stages.
 - v6: Remove validation coupling to the deleted direct mmCIF reader and keep `SmcraHierarchy` format-neutral.
-- v7: Hard-break the complete hierarchy vocabulary to `Smcra*` names so its
-  structural model cannot be confused with `modeling::Model`.
+- v7: Hard-break the complete hierarchy vocabulary to `Smcra*` names so
+  structural hierarchy nodes cannot be confused with concrete configurations.
 - v8: Enforce a valid-state `MacroMolecule` boundary with checked builders,
   complete graph-to-atom-site coverage, and transactional coordinated editing;
   remove the placeholder macromolecule sanitization surface.
+- v9: Remove coordinate-model nodes from the structural hierarchy and move
+  occupancy, B-factor, alternate-location, source-row, and raw-coordinate state
+  into topology-bound structure observations.
+- v10: Document static-only validation for coordinate-independent topology
+  consumers while retaining all-conformer validation as the standalone
+  `MacroMolecule::validate` default.
+- v11: Add structured chain, residue, and atom-site capacity errors and verify
+  hierarchy insertion remains transactional at the fixed-width boundary.

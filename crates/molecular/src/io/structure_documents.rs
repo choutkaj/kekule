@@ -452,19 +452,13 @@ pub fn interpret_molfile_document(
     };
     let atom_mappings = atom_lines
         .into_iter()
-        .enumerate()
-        .map(|(index, source_line)| MolfileAtomMapping {
-            atom: crate::core::AtomId::new(index as u32),
-            source_line,
-        })
+        .zip(molecule.graph().atom_ids())
+        .map(|(source_line, atom)| MolfileAtomMapping { atom, source_line })
         .collect();
     let bond_mappings = bond_lines
         .into_iter()
-        .enumerate()
-        .map(|(index, source_line)| MolfileBondMapping {
-            bond: crate::core::BondId::new(index as u32),
-            source_line,
-        })
+        .zip(molecule.graph().bond_ids())
+        .map(|(source_line, bond)| MolfileBondMapping { bond, source_line })
         .collect();
     let ignored_record_lines = document
         .property_records

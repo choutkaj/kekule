@@ -2,45 +2,62 @@
 
 ## Summary
 
-Provide an explicit molecule-instance modelling adapter that prepares DREIDING atom types,
-fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradients.
+Provide an explicit topology-bound adapter that prepares DREIDING atom types,
+fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian
+gradients once for supported nonperiodic structural views.
 
 ## Behavior/API
 
-- Exposes `DreidingPotential` and `DreidingPrepareError` from the separate
-  `molecular-dreiding` crate.
-- Prepares a potential with `DreidingPotential::prepare(&Model)` and implements
-  the core `Potential` evaluation contract.
-- Binds preparation to the source model definition, accepting coordinate-modified clones
-  and rejecting independently built models.
+- Exposes `DreidingPotential`, `DreidingPrepareOptions`, `QeqGrouping`, and
+  `DreidingPrepareError` from the separate `molecular-dreiding` crate.
+- Prepares with an explicit `&Topology`, reference `ModelView`, and QEq grouping
+  policy, then implements the core borrowed-view `Potential` contract.
+- The adapter is nonperiodic. Preparation rejects a reference view carrying a
+  periodic cell with `DreidingPrepareError::UnsupportedPeriodicCell`, and
+  evaluation rejects periodic views with
+  `PotentialError::UnsupportedPeriodicCell`.
+- Binds preparation to exact topology identity, accepting models, ensemble
+  members, and trajectory frames sharing it while rejecting independently
+  constructed equal topology.
 - Exposes read-only per-atom type diagnostics and quantity-valued partial charges.
 - Rejects unresolved implicit-hydrogen state; every atom must carry an explicit zero
   implicit-hydrogen count or a no-implicit-hydrogens assertion.
-- Consumes the model's declared coordinate quantity and returns explicit
+- Consumes the view's declared coordinate quantity and returns explicit
   kJ/mol energy and kJ/mol/angstrom gradient quantities.
 
 ## Implementation Notes
 
 - Uses pinned `dreid-forge` and matching `dreid-kernel` releases; upstream types do not
   cross the adapter's public API.
-- Uses the shared model-definition key rather than rebuilding an adapter-specific topology
-  signature during each evaluation.
+- Uses shared exact topology identity rather than rebuilding an
+  adapter-specific signature during each evaluation.
 - Maps aromatic-flagged localized single and double bonds to DREIDING aromatic bonds
   without changing the bond orders stored by Molecular.
-- Runs QEq separately for each molecule instance using its formal-charge sum and keeps the
-  resulting charges fixed during evaluation and minimization.
+- Makes QEq grouping explicit as whole topology, molecule instances, or actual
+  connected components; molecule-instance grouping is the default. Charges
+  remain fixed during evaluation and minimization.
 - Evaluates harmonic bonds, cosine angles, torsions, inversions, Lennard-Jones,
   electrostatic, and directional hydrogen-bond terms. Eligible Small and Macro
   instances use the same chemistry requirements.
 - Excludes 1-2 and 1-3 nonbonded pairs and includes full-strength 1-4 and inter-instance
   pairs. Nonbonded work is all-pairs and therefore O(N^2).
-- Preparation never sanitizes, adds hydrogens, or mutates the source model.
+- Preparation never sanitizes, adds hydrogens, or mutates topology or the
+  reference model.
+- No periodic cell is ignored and no orthorhombic-only minimum-image shortcut
+  is applied.
 
 ## Tests
 
 - Unit tests compare Cartesian gradients with central finite differences and cover
   molecule-instance charge isolation, exclusions, topology binding, singular geometry, and
   minimization integration.
+- Tests prepare once and evaluate model, ensemble-member, and trajectory-frame
+  views, reject independent topology identity, and exercise every QEq grouping
+  policy.
+- Periodic-policy tests use atoms on opposite box faces and verify structured
+  preparation failure plus consistent model, ensemble, trajectory-frame, and
+  frame-buffer evaluation failure; the same coordinates without a cell remain
+  evaluable.
 - No external force-field golden corpus is currently accepted, so no parity
   result is recorded.
 
@@ -63,3 +80,8 @@ fixed QEq charges, bonded terms, nonbonded terms, and complete Cartesian gradien
   `Model` API.
 - v6: Integrate explicit coordinate, energy, gradient, and charge quantities at
   the adapter boundary while retaining raw numeric inner kernels.
+- v7: Bind preparation to exact `TopologyIdentity`, evaluate `ModelView`, make
+  reference-geometry use explicit, and distinguish whole-topology,
+  molecule-instance, and connected-component QEq grouping.
+- v8: Declare DREIDING nonperiodic and reject periodic reference and evaluation
+  views structurally instead of silently applying direct Cartesian geometry.

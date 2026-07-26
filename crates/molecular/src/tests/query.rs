@@ -325,8 +325,8 @@ fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
 #[test]
 fn matcher_requires_only_the_perception_used_by_the_ir() {
     let mut raw = Molecule::new();
-    let first = raw.add_atom(carbon());
-    let second = raw.add_atom(carbon());
+    let first = raw.add_atom(carbon()).expect("atom identifier capacity");
+    let second = raw.add_atom(carbon()).expect("atom identifier capacity");
     raw.add_bond(first, second, BondOrder::Single).unwrap();
     let elemental = manual_element_query("C");
     assert_eq!(

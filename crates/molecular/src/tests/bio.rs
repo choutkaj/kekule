@@ -1,11 +1,10 @@
 use super::*;
 
 #[test]
-fn smcra_hierarchy_adds_models_chains_residues_and_atom_sites() {
+fn smcra_hierarchy_adds_chains_residues_and_atom_sites() {
     let mut hierarchy = SmcraHierarchy::new();
-    let model = hierarchy.add_model("1");
     let chain = hierarchy
-        .add_chain(model, "A", Some("authA".to_owned()))
+        .add_chain("A", Some("authA".to_owned()))
         .expect("chain should be valid");
     let residue = hierarchy
         .add_residue(
@@ -17,34 +16,19 @@ fn smcra_hierarchy_adds_models_chains_residues_and_atom_sites() {
         )
         .expect("residue should be valid");
     let metadata = SmcraAtomSiteMetadata {
-        group_pdb: Some("ATOM".to_owned()),
-        atom_site_id: Some("1".to_owned()),
         type_symbol: Some("C".to_owned()),
         label_asym_id: Some("A".to_owned()),
         auth_asym_id: Some("authA".to_owned()),
         label_atom_id: Some("CA".to_owned()),
         auth_atom_id: Some("CAY".to_owned()),
-        label_alt_id: Some("B".to_owned()),
-        occupancy: Some(0.5),
-        occupancy_raw: Some("0.50".to_owned()),
-        b_factor: Some(12.25),
-        b_factor_raw: Some("12.25".to_owned()),
-        cartn_x_raw: None,
-        cartn_y_raw: None,
-        cartn_z_raw: None,
     };
     let site = hierarchy
         .add_atom_site(residue, AtomId::new(7), metadata.clone())
         .expect("atom site should be valid");
 
-    assert_eq!(model.raw(), 0);
     assert_eq!(chain.raw(), 0);
     assert_eq!(residue.raw(), 0);
     assert_eq!(site.raw(), 0);
-    assert_eq!(
-        hierarchy.model(model).expect("model exists").chains,
-        vec![chain]
-    );
     assert_eq!(
         hierarchy.chain(chain).expect("chain exists").residues,
         vec![residue]
@@ -68,15 +52,9 @@ fn smcra_hierarchy_adds_models_chains_residues_and_atom_sites() {
 #[test]
 fn smcra_hierarchy_iteration_is_insertion_order() {
     let mut hierarchy = SmcraHierarchy::new();
-    let first_model = hierarchy.add_model("1");
-    let second_model = hierarchy.add_model("2");
-    let first_chain = hierarchy.add_chain(first_model, "A", None).expect("chain");
-    let second_chain = hierarchy.add_chain(second_model, "B", None).expect("chain");
+    let first_chain = hierarchy.add_chain("A", None).expect("chain");
+    let second_chain = hierarchy.add_chain("B", None).expect("chain");
 
-    assert_eq!(
-        hierarchy.models().map(|(id, _)| id).collect::<Vec<_>>(),
-        vec![first_model, second_model]
-    );
     assert_eq!(
         hierarchy.chains().map(|(id, _)| id).collect::<Vec<_>>(),
         vec![first_chain, second_chain]
@@ -86,15 +64,7 @@ fn smcra_hierarchy_iteration_is_insertion_order() {
 #[test]
 fn smcra_hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
     let mut hierarchy = SmcraHierarchy::new();
-    assert_eq!(
-        hierarchy
-            .add_chain(SmcraModelId::new(99), "A", None)
-            .expect_err("missing model should fail"),
-        SmcraHierarchyError::InvalidModelId(SmcraModelId::new(99))
-    );
-
-    let model = hierarchy.add_model("1");
-    let chain = hierarchy.add_chain(model, "A", None).expect("chain");
+    let chain = hierarchy.add_chain("A", None).expect("chain");
     assert_eq!(
         hierarchy
             .add_residue(SmcraChainId::new(99), "GLY", None, None, None)
@@ -119,11 +89,13 @@ fn smcra_hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
 #[test]
 fn macro_molecule_validates_atom_site_atom_ids() {
     let mut builder = MacroMolecule::builder();
-    let atom = builder.graph_mut().add_atom(carbon());
-    let model = builder.hierarchy_mut().add_model("1");
+    let atom = builder
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let chain = builder
         .hierarchy_mut()
-        .add_chain(model, "A", Some("authA".to_owned()))
+        .add_chain("A", Some("authA".to_owned()))
         .expect("chain");
     let residue = builder
         .hierarchy_mut()
@@ -135,21 +107,11 @@ fn macro_molecule_validates_atom_site_atom_ids() {
             residue,
             atom,
             SmcraAtomSiteMetadata {
-                group_pdb: Some("ATOM".to_owned()),
-                atom_site_id: Some("1".to_owned()),
                 type_symbol: Some("C".to_owned()),
                 label_asym_id: Some("A".to_owned()),
                 auth_asym_id: Some("authA".to_owned()),
                 label_atom_id: Some("CA".to_owned()),
                 auth_atom_id: Some("CA".to_owned()),
-                label_alt_id: None,
-                occupancy: Some(1.0),
-                occupancy_raw: Some("1.0".to_owned()),
-                b_factor: Some(10.0),
-                b_factor_raw: Some("10.0".to_owned()),
-                cartn_x_raw: None,
-                cartn_y_raw: None,
-                cartn_z_raw: None,
             },
         )
         .expect("valid atom should attach");
@@ -164,7 +126,10 @@ fn macro_molecule_validates_atom_site_atom_ids() {
 
 fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
     let mut builder = MacroMolecule::builder();
-    let atom = builder.graph_mut().add_atom(carbon());
+    let atom = builder
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -177,25 +142,13 @@ fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
         .add_conformer(conformer)
         .expect("valid conformer");
 
-    let model = builder.hierarchy_mut().add_model("1");
-    let chain = builder
-        .hierarchy_mut()
-        .add_chain(model, "A", None)
-        .expect("chain");
+    let chain = builder.hierarchy_mut().add_chain("A", None).expect("chain");
     let residue = builder
         .hierarchy_mut()
         .add_residue(chain, "GLY", Some(1), Some("1".to_owned()), None)
         .expect("residue");
     builder
-        .add_atom_site(
-            residue,
-            atom,
-            SmcraAtomSiteMetadata {
-                occupancy: Some(1.0),
-                b_factor: Some(12.0),
-                ..SmcraAtomSiteMetadata::default()
-            },
-        )
+        .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .expect("atom site");
 
     (builder.build().expect("checked macro molecule"), atom)
@@ -205,14 +158,12 @@ fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
 fn macro_molecule_validates_separately_from_small_molecule_chemistry() {
     let (macro_mol, atom) = macro_molecule_with_valid_atom_site();
 
-    assert_eq!(macro_mol.models().count(), 1);
     assert_eq!(macro_mol.chains().count(), 1);
     assert_eq!(macro_mol.residues().count(), 1);
     assert_eq!(macro_mol.atom_sites().count(), 1);
     assert_eq!(macro_mol.atom_site_for_atom(atom).expect("site").atom, atom);
 
     let report = macro_mol.validate().expect("macro molecule validates");
-    assert_eq!(report.models_checked, 1);
     assert_eq!(report.chains_checked, 1);
     assert_eq!(report.residues_checked, 1);
     assert_eq!(report.atom_sites_checked, 1);
@@ -225,8 +176,7 @@ fn macro_molecule_validates_separately_from_small_molecule_chemistry() {
 fn macro_molecule_validation_rejects_cross_layer_inconsistency() {
     let graph = Molecule::new();
     let mut hierarchy = SmcraHierarchy::new();
-    let model = hierarchy.add_model("1");
-    let chain = hierarchy.add_chain(model, "A", None).expect("chain");
+    let chain = hierarchy.add_chain("A", None).expect("chain");
     let residue = hierarchy
         .add_residue(chain, "GLY", None, None, None)
         .expect("residue");
@@ -316,20 +266,25 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
 #[test]
 fn wrappers_share_the_core_molecule_graph() {
     let mut small = SmallMolecule::default();
-    let a = small.graph_mut().add_atom(carbon());
-    let b = small.graph_mut().add_atom(oxygen());
+    let a = small
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let b = small
+        .graph_mut()
+        .add_atom(oxygen())
+        .expect("atom identifier capacity");
     small
         .graph_mut()
         .add_bond(a, b, BondOrder::Single)
         .expect("small molecule graph should accept bonds");
 
     let mut builder = MacroMolecule::builder();
-    let c = builder.graph_mut().add_atom(carbon());
-    let model = builder.hierarchy_mut().add_model("1");
-    let chain = builder
-        .hierarchy_mut()
-        .add_chain(model, "A", None)
-        .expect("chain");
+    let c = builder
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let chain = builder.hierarchy_mut().add_chain("A", None).expect("chain");
     let residue = builder
         .hierarchy_mut()
         .add_residue(chain, "GLY", Some(1), None, None)

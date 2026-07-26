@@ -142,6 +142,10 @@ It owns:
 
 Deletion leaves tombstones and stable local identifiers are never reused.
 `Molecule` may be disconnected, unsanitized, incomplete, or chemically invalid.
+Atom, bond, conformer, stereo-element, and stereo-group insertion checks the
+fixed-width identifier slot before mutation and returns a focused structured
+capacity error when exhausted. Iteration never reconstructs these identifiers
+through unchecked narrowing from platform-sized collection indices.
 
 Graph connectedness is not the definition of a molecular entity. A salt such as
 `[Na+].[Cl-]`, a coordination compound such as ferrocene, and an ordinary
@@ -203,6 +207,8 @@ atom site, every atom site references a live graph atom, hierarchy parentage is
 consistent, and static identifiers satisfy their documented invariants.
 Construction uses checked builders or checked assembly from parts.
 Coordinated graph-and-hierarchy mutation is transactional.
+Chain, residue, and atom-site capacity failures are structured and occur before
+parent lists or lookup maps are changed.
 
 Macromolecule validation is separate from small-molecule sanitization.
 Chemically general algorithms operate on `Molecule` where practical.
@@ -392,9 +398,9 @@ addressed. `TopologyAtomIndex` answers where that atom is stored in complete
 position, velocity, force, gradient, and per-atom result arrays.
 
 The dense ordering is authoritative and immutable for the lifetime of one
-topology. It need not be identical between independently constructed,
-structurally equivalent topologies. Every topology-bound dense array uses the
-ordering published by that exact topology.
+topology. It need not be identical between independently constructed
+topologies representing the same chemistry. Every topology-bound dense array
+uses the ordering published by that exact topology.
 
 Local `AtomId` and `BondId` values, including tombstone positions, survive
 definition insertion. Qualification adds instance ownership without remapping
@@ -404,25 +410,33 @@ All conversions from collection lengths to fixed-width public identifiers are
 checked. Capacity overflow produces structured errors rather than truncation or
 wrapping.
 
-### Identity and structural equivalence
+### Identity and layout equality
 
 Exact topology identity is the compatibility criterion for positions, prepared
 systems, compiled selections, and frame buffers.
 
 Clones of one `Topology` retain exact identity. Independently constructed
-topologies have different identity even when their contents are structurally
-equivalent.
+topologies have different identity even when their complete static layouts are
+equal.
 
 The API distinguishes:
 
 ```rust
 topology_a.same_identity(&topology_b)
-topology_a.structurally_equivalent(&topology_b)
+topology_a.same_layout(&topology_b)
 ```
 
-or equivalent explicit operations. Pointer identity must not be confused with
-structural equality, and structural equality must not silently imply compatible
-dense ordering.
+`same_layout` compares chemical and hierarchy content, definition and instance
+partitioning, instance metadata, semantic identifiers, authoritative dense
+order, and the corresponding index maps. It excludes only exact identity.
+Therefore it is not order-independent structural equivalence and does not
+silently imply compatibility for topology-bound state.
+
+General structural equivalence and validated isomorphism mapping across
+different definition, instance, atom, or bond orderings remain planned future
+capabilities. Such an operation must account for all relevant chemical,
+stereochemical, perception, role, and hierarchy state and must report ambiguous
+mappings rather than selecting one silently.
 
 Transferring positions, parameters, or selections between independently
 constructed topologies requires an explicit validated mapping.
@@ -492,6 +506,11 @@ A built topology rejects:
 - identifier capacity overflow;
 - inconsistent local atom or bond references;
 - static metadata violating documented invariants.
+
+Topology construction validates macromolecular graph/hierarchy state without
+scanning source conformers. A convenience model builder separately validates
+only its explicitly selected conformer while staging positions. Standalone
+full macromolecule validation may inspect every retained source conformer.
 
 ### Roles, properties, and provenance
 
@@ -829,6 +848,11 @@ molecule-instance partition, atom identity mapping, and dense ordering across
 members. Coordinate-model identifiers and per-model observation values belong
 to ensemble-member metadata. Inconsistent atom presence or topology produces a
 structured error unless an explicit reconciliation policy is requested.
+Source atom correspondence uses residue sequence and insertion identity,
+label/author asymmetry identity, component and atom labels, an explicit
+occurrence discriminator when sequence identifiers are absent, and the
+selected alternate location where relevant. It does not infer correspondence
+from derived molecule insertion order.
 
 Only evidence-backed covalent links establish topology connectivity.
 Distance-based candidates, unresolved connections, model selection, altloc
@@ -836,6 +860,8 @@ selection, ignored records, and source classification remain visible in
 reports and provenance. Interpretation must not assert fabricated bond orders.
 
 Text writers operate on canonical objects and reject unsupported semantics.
+Writer-generated one-based numeric serials use widened integer arithmetic;
+formatting never increments a `u32` identifier in place.
 Trajectory codecs use streaming reader and writer interfaces rather than
 forcing a loss-preserving whole-file document abstraction for binary data.
 
@@ -873,11 +899,15 @@ A prepared system:
   `TopologyAtomIndex`/`InstanceAtomId`;
 - may contain particles not in canonical topology, such as virtual sites;
 - does not mutate topology or coordinate containers;
-- may evaluate any model view sharing the bound topology.
+- may evaluate supported model views sharing the bound topology.
 
 Potential evaluation consumes `ModelView` or an equivalent borrowed
 topology-plus-configuration view. Preparation is performed once and reused
 across models, ensemble members, and trajectory frames with the same topology.
+Accepting the common view does not imply support for every dynamic
+configuration field. Each potential documents capabilities such as
+periodic-cell handling and returns a structured error when a compatible view
+contains unsupported state.
 
 Policies that group atoms, such as charge equilibration, must state whether
 they operate over the whole topology, molecule instances, connected

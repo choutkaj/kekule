@@ -13,6 +13,8 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - Inherits exact radical and supported source bond-stereo mark handling from the Molfile V2000 writer.
 - Inherits V2000 atom-block valence/no-implicit output and structured rejection
   of quartet/quintet radical multiplicity.
+- Inherits widened `u64` one-based atom and property-record serial generation
+  from the V2000 writer.
 - Rejects titles with line breaks, malformed field names, field values with
   blank lines or carriage returns, and field values containing a `$$$$`
   delimiter line instead of emitting SDF text that cannot round-trip safely.
@@ -56,3 +58,5 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
   grammar and preserve value lines beginning with `>` on round trip.
 - v10: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v11: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v12: Inherit overflow-safe one-based serial formatting from Molfile V2000
+  output and avoid unchecked record-number incrementing during interpretation.

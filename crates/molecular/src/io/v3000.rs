@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::core::*;
+use crate::geometry::Point3;
 use crate::io::{
     preserve_molfile_tetrahedral_hydrogens, MolWriteError, MolfileParseOptions, SdfParseError,
 };
@@ -35,8 +36,8 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let bonds = mol.bond_ids().collect::<Vec<_>>();
     let mut atom_index = BTreeMap::new();
-    for (index, atom_id) in atoms.iter().enumerate() {
-        atom_index.insert(*atom_id, index + 1);
+    for (serial, atom_id) in (1u64..).zip(atoms.iter()) {
+        atom_index.insert(*atom_id, serial);
     }
 
     let title = "";
@@ -91,7 +92,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
     }
     out.push_str("M  V30 END ATOM\n");
     out.push_str("M  V30 BEGIN BOND\n");
-    for (index, bond_id) in bonds.iter().enumerate() {
+    for (serial, bond_id) in (1u64..).zip(bonds.iter()) {
         let bond = mol
             .bond(*bond_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
@@ -102,7 +103,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .get(&bond.b())
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
         let order_code = v3000_bond_code(bond.order)?;
-        out.push_str(&format!("M  V30 {} {order_code} {a} {b}", index + 1));
+        out.push_str(&format!("M  V30 {serial} {order_code} {a} {b}"));
         if let Some(cfg) = v3000_bond_cfg(bond.order, mol.stereo_bond_mark(*bond_id))? {
             out.push_str(&format!(" CFG={cfg}"));
         }
@@ -329,7 +330,9 @@ pub(super) fn interpret_v3000_syntax(
     let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
         .expect("angstrom is a length unit");
     for record in &syntax.atoms {
-        let atom_id = mol.add_atom(record.atom.clone());
+        let atom_id = mol.add_atom(record.atom.clone()).map_err(|error| {
+            SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
+        })?;
         conformer
             .set_position(atom_id, Quantity::new(record.point, ANGSTROM))
             .expect("matching coordinate units");

@@ -37,8 +37,9 @@ At completion, the repository must provide:
 3. Instance-qualified semantic atom and bond identifiers.
 4. Immutable authoritative dense atom and bond orderings owned by topology.
 5. Cheap topology cloning with exact identity retained across clones.
-6. Explicit distinction between exact topology identity and structural
-   equivalence.
+6. Explicit distinction between exact topology identity and equality of the
+   complete static layout; general structural equivalence remains reserved for
+   a future ambiguity-aware isomorphism API.
 7. A linear-time transactional `TopologyBuilder`.
 8. `Positions` and `Configuration` types validated against topology.
 9. `Model` implemented as topology plus one configuration.
@@ -92,8 +93,8 @@ Every stage must preserve these invariants:
 - Force-field and backend particle state is not canonical topology state.
 - Exact topology identity is required for topology-bound dense arrays,
   selections, frame buffers, and prepared systems.
-- Independently constructed structurally equal topologies are not silently
-  interchangeable.
+- Independently constructed topologies, including equal-layout topologies, are
+  not silently interchangeable.
 - Dense atom and bond orderings never change during a topology's lifetime.
 - Topology-changing operations create a new topology and explicit mappings.
 - Failed transactional operations leave their input unchanged.
@@ -348,14 +349,17 @@ Provide explicit identity behavior:
 ```rust
 Topology::same_identity
 Topology::identity
+Topology::same_layout
 ```
 
 Introduce a private or opaque `TopologyIdentity` suitable for prepared objects,
 positions, selections, and buffers.
 
-Do not rely on `PartialEq` to express both identity and structural equality.
-Provide an explicit structural-equivalence API if implemented in this stage;
-otherwise reserve it clearly for a later stage.
+`same_layout` means equality of complete chemical/static content, definition
+and instance partitioning, semantic identifiers, authoritative dense order, and
+index maps. Do not label this `PartialEq`-based operation structural
+equivalence. Order-independent structural equivalence, ambiguity reporting, and
+validated isomorphism mappings are reserved explicitly for a later stage.
 
 ### Initial storage strategy
 
@@ -638,6 +642,10 @@ Update:
 
 Do not drop source information merely to simplify the canonical hierarchy.
 Preserve it in documents, reports, or observation state.
+Topology construction uses static macro graph/hierarchy validation and does not
+scan source conformers. Model construction validates only its explicitly
+selected conformer; standalone full macro validation may continue to inspect
+all retained conformers.
 
 ### Migration caution
 
@@ -720,7 +728,7 @@ pub fn assign(model: &Model, options: ...) {
 
 ### Goal
 
-Prepare once per topology and evaluate any compatible configuration.
+Prepare once per topology and evaluate any supported compatible configuration.
 
 ### Work
 
@@ -759,7 +767,9 @@ For DREIDING:
 - make coordinate use explicit only where the external parameterizer truly
   requires it;
 - bind the result to topology identity;
-- evaluate any model/ensemble member/frame with that topology;
+- evaluate any supported model/ensemble member/frame with that topology;
+- document the adapter as nonperiodic and reject periodic reference and
+  evaluation views until a complete periodic policy exists;
 - preserve fixed-charge behavior during evaluation.
 
 Clarify QEq scope. Do not call molecule-instance-local calculation
@@ -783,6 +793,8 @@ allocation where practical.
 
 - One prepared potential evaluates two independent models sharing one topology.
 - It evaluates ensemble members and trajectory frame views.
+- Built-in and adapter potentials document periodic capability and reject
+  unsupported periodic model, ensemble, frame, and frame-buffer views.
 - It rejects independently constructed topology with equal content.
 - Gradient indexing uses `TopologyAtomIndex`.
 - DREIDING preparation does not mutate topology or input models.
@@ -1039,7 +1051,9 @@ It must:
 
 1. identify the intended coordinate-model records;
 2. interpret static chemistry and molecule boundaries;
-3. prove consistent atom identity across members;
+3. prove consistent atom identity across members from stable residue sequence,
+   insertion, asymmetry, component, atom, sequence-free occurrence, and
+   selected-altloc provenance rather than derived molecule insertion order;
 4. prove consistent molecule-instance partition and topology;
 5. construct one shared topology;
 6. construct one ensemble member per coordinate model;
@@ -1111,7 +1125,11 @@ Implement `TopologyMapping` foundations:
 - atom mapping;
 - bond mapping;
 - dense-index mapping;
-- retained/removed/added reporting.
+- retained/removed/added reporting for definitions, instances, atoms, and bonds;
+- injective maps whose definition, instance, atom, and bond relationships agree;
+- mapped bond endpoints validated against mapped atoms;
+- checked topology-edit results whose topology has the exact mapping target
+  identity.
 
 It is acceptable for the initial refactor to provide mappings for builder
 conversions and selected transforms rather than every possible topology edit.
@@ -1123,7 +1141,9 @@ conversions and selected transforms rather than every possible topology edit.
 - Hierarchy and role selections.
 - Query-derived selections.
 - Mapping round trips for retained atoms.
-- Added/removed atom reporting.
+- Added/removed definition, instance, atom, and bond reporting.
+- Mapping target mismatch, duplicate targets, cross-instance atoms, and
+  inconsistent mapped-bond endpoints are rejected.
 - No implicit position transfer without mapping.
 
 ### Exit criteria
@@ -1302,6 +1322,7 @@ The final suite should cover at least the following scenarios.
 ### Prepared systems
 
 - DREIDING preparation once, evaluation many configurations;
+- explicit nonperiodic DREIDING preparation/evaluation contract;
 - explicit charge grouping scope;
 - topology mismatch;
 - no model mutation during preparation or evaluation.
@@ -1382,7 +1403,8 @@ At each stage:
 - avoid claiming unimplemented trajectory codecs;
 - distinguish ensemble order from trajectory time;
 - distinguish molecule instance from connected component;
-- distinguish topology identity from structural equivalence;
+- distinguish exact topology identity from complete static-layout equality and
+  state that general structural equivalence is not implemented;
 - distinguish topology from prepared mechanical system;
 - describe units and dense ordering explicitly.
 
@@ -1402,7 +1424,11 @@ let e_a = potential.evaluate(model_a.view())?;
 let e_b = potential.evaluate(model_b.view())?;
 ```
 
-and streaming:
+Each potential documents which configuration state it supports. In 0.2.0 the
+built-in harmonic and DREIDING potentials require nonperiodic views and return
+structured errors when a periodic cell is present.
+
+The streaming form is:
 
 ```rust
 let mut reader = open_trajectory(topology.clone(), source)?;
@@ -1437,30 +1463,35 @@ rather than only compilation.
 
 The refactor is complete only when all statements below are true:
 
-- [ ] `Topology` is public and independent of coordinates.
-- [ ] `Topology` is cheap-clone and immutable.
-- [ ] Molecule definitions and instances are distinct.
-- [ ] Explicit definition reuse works.
-- [ ] Dense atom and bond indices belong to topology.
-- [ ] Exact identity and structural equivalence are distinct.
-- [ ] Topology construction is linear and transactional.
-- [ ] `Model` is topology plus one configuration.
-- [ ] `Ensemble` shares one topology across members.
-- [ ] `Trajectory` shares one topology across ordered frames.
-- [ ] Streaming frame reads reuse a buffer.
-- [ ] Periodic cells and dynamic arrays are not topology state.
-- [ ] Static SMCRA hierarchy is coordinate-independent.
-- [ ] Observation-specific mmCIF data is outside topology.
-- [ ] DSSP and potentials operate on borrowed structural views.
-- [ ] Prepared potentials bind to topology identity.
-- [ ] DREIDING evaluates multiple configurations without re-preparation.
-- [ ] Molecule instances are not conflated with connected components.
-- [ ] Topology edits use explicit mappings.
-- [ ] mmCIF single-model interpretation remains explicit.
-- [ ] Multi-model mmCIF has a separate ensemble path.
-- [ ] No obsolete public model-topology types remain.
-- [ ] Workspace version has the required minor bump.
-- [ ] Feature contracts and generated dashboard agree.
-- [ ] Full workspace checks pass.
-- [ ] MolStudio validation is reported.
-- [ ] Every command not run is listed with a reason.
+- [x] `Topology` is public and independent of coordinates.
+- [x] `Topology` is cheap-clone and immutable.
+- [x] Molecule definitions and instances are distinct.
+- [x] Explicit definition reuse works.
+- [x] Dense atom and bond indices belong to topology.
+- [x] Every collection-backed fixed-width public identifier is created through
+  checked conversion with a structured, transactional capacity failure.
+- [x] Exact identity and complete static-layout equality are distinct.
+- [x] Order-independent structural equivalence and ambiguity-aware isomorphism
+  mapping are documented as future capabilities rather than claimed.
+- [x] Topology construction is linear and transactional.
+- [x] `Model` is topology plus one configuration.
+- [x] `Ensemble` shares one topology across members.
+- [x] `Trajectory` shares one topology across ordered frames.
+- [x] Streaming frame reads reuse a buffer.
+- [x] Periodic cells and dynamic arrays are not topology state.
+- [x] Static SMCRA hierarchy is coordinate-independent.
+- [x] Observation-specific mmCIF data is outside topology.
+- [x] DSSP and potentials operate on borrowed structural views.
+- [x] Prepared potentials bind to topology identity.
+- [x] DREIDING evaluates multiple configurations without re-preparation.
+- [x] Molecule instances are not conflated with connected components.
+- [x] Topology edits use explicit mappings.
+- [x] mmCIF single-model interpretation remains explicit.
+- [x] Multi-model mmCIF has a separate ensemble path.
+- [x] Writer-generated one-based numeric serials widen before arithmetic.
+- [x] No obsolete public model-topology types remain.
+- [x] Workspace version has the required minor bump.
+- [x] Feature contracts and generated dashboard agree.
+- [x] Full workspace checks pass.
+- [x] MolStudio validation is reported.
+- [x] Every command not run is listed with a reason.

@@ -5,6 +5,28 @@
 //! Parsing produces format documents, interpretation produces canonical domain
 //! objects plus reports, and perception or modelling preparation remains
 //! explicit.
+//!
+//! System structure is coordinate-free and immutable in [`topology`].
+//! Dynamic structure follows three explicit relationships:
+//!
+//! - [`structure::Model`] = one [`topology::Topology`] plus one
+//!   [`structure::Configuration`];
+//! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
+//! - [`trajectory::Trajectory`] = one topology plus ordered frames.
+//!
+//! Coordinate-dependent kernels consume borrowed [`structure::ModelView`]
+//! values, allowing the same analysis or prepared potential to operate over a
+//! model, ensemble member, trajectory frame, or reusable frame buffer without
+//! copying coordinates. Exact topology identity is required by positions,
+//! selections, buffers, and prepared systems. [`topology::Topology::same_layout`]
+//! compares complete static layout, including semantic IDs and dense order;
+//! general order-independent structural equivalence and isomorphism mapping
+//! remain future capabilities.
+//!
+//! Collection-backed public identifiers are fixed-width and every insertion
+//! that creates one is fallible. Exhausting an atom, bond, conformer, stereo,
+//! hierarchy, definition, instance, or dense topology index space returns the
+//! corresponding structured capacity error before canonical state is changed.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
@@ -14,10 +36,14 @@ mod chemistry;
 pub mod core;
 pub mod descriptors;
 pub mod dssp;
+pub mod geometry;
 mod io;
 pub mod modeling;
 pub mod query;
 pub mod small;
+pub mod structure;
+pub mod topology;
+pub mod trajectory;
 pub mod units;
 
 /// Syntax-independent substructure matching algorithms.
@@ -149,11 +175,12 @@ pub mod sdf {
 
 pub mod mmcif {
     pub use crate::io::{
-        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifDataBlock, MmcifDocument, MmcifEntityKind,
-        MmcifEntry, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
-        MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifItem,
-        MmcifLoopTable, MmcifModelSelection, MmcifParseError, MmcifParseOptions, MmcifValue,
-        MmcifWriteError, MmcifWriteOptions,
+        MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason, MmcifDataBlock,
+        MmcifDocument, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
+        MmcifEnsembleInterpretation, MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance,
+        MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
+        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
+        MmcifParseOptions, MmcifValue, MmcifWriteError, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -172,9 +199,17 @@ pub mod mmcif {
         crate::io::interpret_mmcif(document, options)
     }
 
+    /// Interprets multiple coordinate models as one verified shared-topology ensemble.
+    pub fn interpret_ensemble(
+        document: &MmcifDocument,
+        options: MmcifEnsembleInterpretOptions,
+    ) -> Result<MmcifEnsembleInterpretation, MmcifEnsembleInterpretError> {
+        crate::io::interpret_mmcif_ensemble(document, options)
+    }
+
     /// Writes one canonical molecular model as a structural mmCIF data block.
     pub fn write(
-        model: &crate::modeling::Model,
+        model: &crate::structure::Model,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
         crate::io::write_mmcif_model(model, options)

@@ -26,11 +26,11 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
 
     assert_eq!(document.blocks().len(), 1);
-    assert_eq!(interpreted.model().topology().molecule_count(), 1);
+    assert_eq!(interpreted.model().topology().instance_count(), 1);
     assert!(interpreted
         .model()
         .topology()
-        .molecules()
+        .definitions()
         .next()
         .unwrap()
         .1
@@ -43,12 +43,17 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert_eq!(provenance.coordinate_model_id(), "1");
     assert_eq!(provenance.atoms().len(), 2);
     assert_eq!(provenance.atoms()[0].atom_name(), "C1");
+    assert_eq!(provenance.atoms()[0].label_sequence_id(), None);
+    assert_eq!(provenance.atoms()[0].author_sequence_id(), Some("1"));
+    assert_eq!(provenance.atoms()[0].insertion_code(), None);
+    assert_eq!(provenance.atoms()[0].occurrence(), None);
+    assert_eq!(provenance.atoms()[0].selected_alternate_location(), None);
     assert_eq!(
         provenance.atoms()[0].atom().molecule(),
         provenance.molecule()
     );
     let model = interpreted.into_model();
-    assert_eq!(model.topology().molecule_count(), 1);
+    assert_eq!(model.topology().instance_count(), 1);
     assert_eq!(model.positions().len(), 2);
     let written = mmcif::write(&model, MmcifWriteOptions::default())?;
     assert!(written.starts_with("data_model\n"));

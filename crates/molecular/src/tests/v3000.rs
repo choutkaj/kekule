@@ -314,15 +314,24 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     nitrogen.formal_charge = 1;
     nitrogen.radical = Some(AtomRadical::Doublet);
     nitrogen.atom_map = Some(42);
-    let n = molecule.graph_mut().add_atom(nitrogen);
+    let n = molecule
+        .graph_mut()
+        .add_atom(nitrogen)
+        .expect("atom identifier capacity");
 
     let mut carbon = carbon();
     carbon.isotope = Some(13);
-    let c = molecule.graph_mut().add_atom(carbon);
+    let c = molecule
+        .graph_mut()
+        .add_atom(carbon)
+        .expect("atom identifier capacity");
 
     let mut oxygen = oxygen();
     oxygen.formal_charge = -1;
-    let o = molecule.graph_mut().add_atom(oxygen);
+    let o = molecule
+        .graph_mut()
+        .add_atom(oxygen)
+        .expect("atom identifier capacity");
 
     let wedge = molecule
         .graph_mut()
@@ -420,7 +429,10 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
 #[test]
 fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
     let mut molecule = SmallMolecule::default();
-    let a = molecule.graph_mut().add_atom(carbon());
+    let a = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     molecule
         .graph_mut()
         .add_stereo_element(StereoElement::specified(
@@ -438,8 +450,14 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .contains("stereo elements"));
 
     let mut molecule = SmallMolecule::default();
-    let a = molecule.graph_mut().add_atom(carbon());
-    let b = molecule.graph_mut().add_atom(carbon());
+    let a = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let b = molecule
+        .graph_mut()
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
     let bond = molecule
         .graph_mut()
         .add_bond(a, b, BondOrder::Double)

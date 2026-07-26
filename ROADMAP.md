@@ -5,18 +5,19 @@ statuses and dependency graph are rendered procedurally into
 `features/DASHBOARD.html`; this document records release direction rather than
 duplicating that inventory.
 
-## 0.1 release line
+## 0.2 release line
 
-The first release establishes the graph kernel, typed small- and
-macromolecules, fixed-coordinate `Model` workflows, staged structure I/O,
-sanitization and perception, stereochemistry, bounded query matching,
-macromolecular hierarchy and secondary-structure analysis, and the DREIDING
-adapter. Supported features and optional benchmark availability/observations
-are listed separately in the generated dashboard.
+The 0.2 line establishes immutable coordinate-free `Topology`, explicit
+definition reuse and exact identity, topology-bound configurations and borrowed
+views, finite ensembles, streaming-first fixed-topology trajectories,
+coordinate-independent SMCRA hierarchy, separate single-/multi-model mmCIF
+interpretation, and topology-bound prepared potentials. Supported features and
+optional benchmark availability/observations are listed separately in the
+generated dashboard.
 
 ## Next tracked capabilities
 
-Two feature contracts are currently reserved with `planned` status:
+Feature contracts currently reserved with `planned` status include:
 
 - `descriptor.molecular`: explicit-policy molecular formula, mass, and related
   descriptors.

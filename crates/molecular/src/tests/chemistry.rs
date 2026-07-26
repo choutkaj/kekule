@@ -121,10 +121,14 @@ fn sanitization_preserves_unknown_double_bond_stereo() {
 #[test]
 fn sanitization_does_not_assign_coordinate_only_stereo() {
     let mut mol = Molecule::new();
-    let left = mol.add_atom(carbon());
-    let right = mol.add_atom(carbon());
-    let left_carrier = mol.add_atom(element_atom("F"));
-    let right_carrier = mol.add_atom(element_atom("Cl"));
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_carrier = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let right_carrier = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
     mol.add_bond(left, right, BondOrder::Double).expect("bond");
     mol.add_bond(left, left_carrier, BondOrder::Single)
         .expect("left carrier");
@@ -173,8 +177,8 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
 #[test]
 fn failed_stereo_sanitization_is_transactional() {
     let mut mol = Molecule::new();
-    let a = mol.add_atom(carbon());
-    let b = mol.add_atom(carbon());
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
     mol.set_stereo_bond_mark(StereoBondMark {
         bond,
@@ -195,10 +199,12 @@ fn failed_stereo_sanitization_is_transactional() {
 #[test]
 fn sanitization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
     let mut mol = Molecule::new();
-    let center = mol.add_atom(carbon());
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let mut marked_bonds = Vec::new();
     for symbol in ["F", "Cl", "Br", "I"] {
-        let carrier = mol.add_atom(element_atom(symbol));
+        let carrier = mol
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
         marked_bonds.push(
             mol.add_bond(center, carrier, BondOrder::Single)
                 .expect("carrier bond"),
@@ -235,9 +241,11 @@ fn sanitization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
 #[test]
 fn failed_valence_sanitization_is_transactional() {
     let mut mol = Molecule::new();
-    let carbon = mol.add_atom(carbon());
+    let carbon = mol.add_atom(carbon()).expect("atom identifier capacity");
     for _ in 0..5 {
-        let hydrogen = mol.add_atom(Atom::new(Element::from_symbol("H").expect("hydrogen")));
+        let hydrogen = mol
+            .add_atom(Atom::new(Element::from_symbol("H").expect("hydrogen")))
+            .expect("atom identifier capacity");
         mol.add_bond(carbon, hydrogen, BondOrder::Single)
             .expect("bond");
     }
@@ -296,9 +304,11 @@ fn successful_sanitization_is_idempotent() {
 #[test]
 fn sanitize_cleanup_invalidates_preexisting_perception() {
     let mut mol = Molecule::new();
-    let chlorine = mol.add_atom(Atom::new(Element::from_symbol("Cl").expect("chlorine")));
-    let oxo = mol.add_atom(oxygen());
-    let hydroxyl = mol.add_atom(oxygen());
+    let chlorine = mol
+        .add_atom(Atom::new(Element::from_symbol("Cl").expect("chlorine")))
+        .expect("atom identifier capacity");
+    let oxo = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let hydroxyl = mol.add_atom(oxygen()).expect("atom identifier capacity");
     mol.add_bond(chlorine, oxo, BondOrder::Double)
         .expect("bond");
     mol.add_bond(chlorine, hydroxyl, BondOrder::Single)
@@ -347,9 +357,13 @@ fn sanitize_cleanup_invalidates_preexisting_perception() {
 #[test]
 fn valence_reports_excess_common_valence() {
     let mut mol = Molecule::new();
-    let c = mol.add_atom(Atom::new(Element::from_symbol("C").expect("C")));
+    let c = mol
+        .add_atom(Atom::new(Element::from_symbol("C").expect("C")))
+        .expect("atom identifier capacity");
     for _ in 0..5 {
-        let h = mol.add_atom(Atom::new(Element::from_symbol("H").expect("H")));
+        let h = mol
+            .add_atom(Atom::new(Element::from_symbol("H").expect("H")))
+            .expect("atom identifier capacity");
         mol.add_bond(c, h, BondOrder::Single).expect("bond");
     }
 
@@ -370,9 +384,13 @@ fn valence_reports_excess_common_valence() {
 #[test]
 fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
     let mut mol = Molecule::new();
-    let carbon = mol.add_atom(element_atom("C"));
+    let carbon = mol
+        .add_atom(element_atom("C"))
+        .expect("atom identifier capacity");
     for _ in 0..300 {
-        let hydrogen = mol.add_atom(element_atom("H"));
+        let hydrogen = mol
+            .add_atom(element_atom("H"))
+            .expect("atom identifier capacity");
         mol.add_bond(carbon, hydrogen, BondOrder::Single)
             .expect("bond");
     }
@@ -410,7 +428,9 @@ fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
         ("Ra", 2),
     ] {
         let mut mol = Molecule::new();
-        let atom_id = mol.add_atom(element_atom(symbol));
+        let atom_id = mol
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
 
         let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
 
@@ -432,9 +452,13 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
         ("Se", -1, 5, 6),
     ] {
         let mut accepted_mol = Molecule::new();
-        let accepted_center = accepted_mol.add_atom(charged_atom(symbol, charge));
+        let accepted_center = accepted_mol
+            .add_atom(charged_atom(symbol, charge))
+            .expect("atom identifier capacity");
         for _ in 0..accepted {
-            let hydrogen = accepted_mol.add_atom(element_atom("H"));
+            let hydrogen = accepted_mol
+                .add_atom(element_atom("H"))
+                .expect("atom identifier capacity");
             accepted_mol
                 .add_bond(accepted_center, hydrogen, BondOrder::Single)
                 .expect("bond");
@@ -447,9 +471,13 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
         );
 
         let mut rejected_mol = Molecule::new();
-        let rejected_center = rejected_mol.add_atom(charged_atom(symbol, charge));
+        let rejected_center = rejected_mol
+            .add_atom(charged_atom(symbol, charge))
+            .expect("atom identifier capacity");
         for _ in 0..rejected {
-            let hydrogen = rejected_mol.add_atom(element_atom("H"));
+            let hydrogen = rejected_mol
+                .add_atom(element_atom("H"))
+                .expect("atom identifier capacity");
             rejected_mol
                 .add_bond(rejected_center, hydrogen, BondOrder::Single)
                 .expect("bond");
@@ -469,10 +497,13 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
 #[test]
 fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() {
     let mut hexafluorophosphate = Molecule::new();
-    let phosphorus = hexafluorophosphate.add_atom(charged_atom("P", -1));
+    let phosphorus = hexafluorophosphate
+        .add_atom(charged_atom("P", -1))
+        .expect("atom identifier capacity");
     for _ in 0..6 {
-        let fluorine =
-            hexafluorophosphate.add_atom(Atom::new(Element::from_symbol("F").expect("fluorine")));
+        let fluorine = hexafluorophosphate
+            .add_atom(Atom::new(Element::from_symbol("F").expect("fluorine")))
+            .expect("atom identifier capacity");
         hexafluorophosphate
             .add_bond(phosphorus, fluorine, BondOrder::Single)
             .expect("P-F bond");
@@ -482,9 +513,15 @@ fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() 
     );
 
     let mut bridged_hydride = Molecule::new();
-    let hydrogen = bridged_hydride.add_atom(charged_atom("H", -1));
-    let boron_a = bridged_hydride.add_atom(Atom::new(Element::from_symbol("B").expect("boron")));
-    let boron_b = bridged_hydride.add_atom(Atom::new(Element::from_symbol("B").expect("boron")));
+    let hydrogen = bridged_hydride
+        .add_atom(charged_atom("H", -1))
+        .expect("atom identifier capacity");
+    let boron_a = bridged_hydride
+        .add_atom(Atom::new(Element::from_symbol("B").expect("boron")))
+        .expect("atom identifier capacity");
+    let boron_b = bridged_hydride
+        .add_atom(Atom::new(Element::from_symbol("B").expect("boron")))
+        .expect("atom identifier capacity");
     bridged_hydride
         .add_bond(hydrogen, boron_a, BondOrder::Single)
         .expect("first hydride bond");
@@ -511,7 +548,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
         ("Se", -2, 0),
     ] {
         let mut mol = Molecule::new();
-        let atom_id = mol.add_atom(charged_atom(symbol, charge));
+        let atom_id = mol
+            .add_atom(charged_atom(symbol, charge))
+            .expect("atom identifier capacity");
 
         let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
 
@@ -525,7 +564,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
 
     for symbol in ["Ac", "Cf"] {
         let mut mol = Molecule::new();
-        let atom_id = mol.add_atom(element_atom(symbol));
+        let atom_id = mol
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
 
         let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
 
@@ -541,10 +582,16 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     }
 
     let mut mercury_cyanide = Molecule::new();
-    let mercury = mercury_cyanide.add_atom(charged_atom("Hg", -2));
+    let mercury = mercury_cyanide
+        .add_atom(charged_atom("Hg", -2))
+        .expect("atom identifier capacity");
     for _ in 0..4 {
-        let carbon = mercury_cyanide.add_atom(element_atom("C"));
-        let nitrogen = mercury_cyanide.add_atom(element_atom("N"));
+        let carbon = mercury_cyanide
+            .add_atom(element_atom("C"))
+            .expect("atom identifier capacity");
+        let nitrogen = mercury_cyanide
+            .add_atom(element_atom("N"))
+            .expect("atom identifier capacity");
         mercury_cyanide
             .add_bond(mercury, carbon, BondOrder::Single)
             .expect("mercury-carbon bond");
@@ -563,9 +610,13 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     );
 
     let mut covalent_aluminum = Molecule::new();
-    let aluminum = covalent_aluminum.add_atom(element_atom("Al"));
+    let aluminum = covalent_aluminum
+        .add_atom(element_atom("Al"))
+        .expect("atom identifier capacity");
     for _ in 0..3 {
-        let chlorine = covalent_aluminum.add_atom(element_atom("Cl"));
+        let chlorine = covalent_aluminum
+            .add_atom(element_atom("Cl"))
+            .expect("atom identifier capacity");
         covalent_aluminum
             .add_bond(aluminum, chlorine, BondOrder::Single)
             .expect("bond");
@@ -586,9 +637,13 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     );
 
     let mut neutral_magnesium = Molecule::new();
-    let magnesium = neutral_magnesium.add_atom(element_atom("Mg"));
+    let magnesium = neutral_magnesium
+        .add_atom(element_atom("Mg"))
+        .expect("atom identifier capacity");
     for _ in 0..2 {
-        let chlorine = neutral_magnesium.add_atom(element_atom("Cl"));
+        let chlorine = neutral_magnesium
+            .add_atom(element_atom("Cl"))
+            .expect("atom identifier capacity");
         neutral_magnesium
             .add_bond(magnesium, chlorine, BondOrder::Single)
             .expect("bond");

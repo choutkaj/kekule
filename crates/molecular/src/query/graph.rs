@@ -130,11 +130,11 @@ impl QueryGraph {
     }
 
     pub fn atom_ids(&self) -> impl Iterator<Item = QueryAtomId> + '_ {
-        (0..self.atoms.len()).map(|index| QueryAtomId::new(index as u32))
+        (0..=u32::MAX).take(self.atoms.len()).map(QueryAtomId::new)
     }
 
     pub fn bond_ids(&self) -> impl Iterator<Item = QueryBondId> + '_ {
-        (0..self.bonds.len()).map(|index| QueryBondId::new(index as u32))
+        (0..=u32::MAX).take(self.bonds.len()).map(QueryBondId::new)
     }
 
     pub fn incident_bonds(
@@ -195,9 +195,11 @@ impl QueryGraphBuilder {
     }
 
     pub fn add_atom(&mut self, expression: AtomExpression) -> Result<QueryAtomId, QueryGraphError> {
-        let raw = u32::try_from(self.atoms.len()).map_err(|_| QueryGraphError::ResourceLimit {
-            resource: "atoms",
-            limit: u32::MAX as usize,
+        let raw = crate::core::checked_raw_id(self.atoms.len()).map_err(|_| {
+            QueryGraphError::ResourceLimit {
+                resource: "atoms",
+                limit: u32::MAX as usize,
+            }
         })?;
         let id = QueryAtomId::new(raw);
         self.atoms.push(QueryAtom { expression });
@@ -222,9 +224,11 @@ impl QueryGraphBuilder {
         {
             return Err(QueryGraphError::DuplicateBond { a, b });
         }
-        let raw = u32::try_from(self.bonds.len()).map_err(|_| QueryGraphError::ResourceLimit {
-            resource: "bonds",
-            limit: u32::MAX as usize,
+        let raw = crate::core::checked_raw_id(self.bonds.len()).map_err(|_| {
+            QueryGraphError::ResourceLimit {
+                resource: "bonds",
+                limit: u32::MAX as usize,
+            }
         })?;
         let id = QueryBondId::new(raw);
         self.bonds.push(QueryBond { a, b, expression });
