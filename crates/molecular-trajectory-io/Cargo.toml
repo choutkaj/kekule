@@ -1,0 +1,18 @@
+[package]
+name = "molecular-trajectory-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Pure-Rust file codecs for Molecular fixed-topology trajectories."
+publish = true
+
+[dependencies]
+molecular = { version = "0.2.0", path = "../molecular" }
+
+[dev-dependencies]
+sha2 = "0.11"

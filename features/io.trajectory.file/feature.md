@@ -27,11 +27,17 @@ foundational `molecular` crate.
 - XYZ, DCD, TRR, and XTC are tracked independently. Amber NetCDF, multi-model
   PDB, GRO/G96, Amber ASCII, LAMMPS dump, and compressed wrappers remain
   structured unsupported formats until their own contracts land.
+- The current format-agnostic factory dispatches the complete XYZ vertical
+  slice. Recognized DCD, TRR, and XTC signatures remain typed unsupported
+  results until their independently tracked implementations land.
 
 ## Implementation Notes
 
 - Molecular-owned source forbids unsafe code and has no native Chemfiles,
   C/C++, or CMake runtime.
+- The companion crate is a publishable workspace member depending one-way on
+  `molecular`; format detection and XYZ have no production dependency beyond
+  the semantic core.
 - Codecs decode complete frames into reusable private scratch and publish
   transactionally into caller-owned `FrameBuffer` storage.
 - Clean EOF is recognized only between frames. Partial headers, records, or
@@ -44,6 +50,8 @@ foundational `molecular` crate.
 - Detection, limits, topology/order binding, metadata, transactionality,
   allocation reuse, indexing, atomic finish, and malformed/truncated input
   receive focused regressions.
+- Public bounded detection is covered by the `trajectory_detection` fuzz
+  target, which also asserts that the inspected stream position is restored.
 - Each supported format supplies provenance-pinned interoperability fixtures,
   sequential-versus-indexed equality, and strict writer round trips.
 - Bounded fuzz targets cover detection and every format parser or adapter.
@@ -66,3 +74,7 @@ foundational `molecular` crate.
 
 - v1: Register the planned file-backed trajectory I/O boundary and milestone
   acceptance contract.
+- v2: Add the experimental companion crate, bounded signature/extension
+  detection, metadata/reports/limits, one-handle sequential and indexed
+  wrappers, strict atomic path writing, the XYZ dispatch vertical slice, and
+  bounded detection and XYZ fuzz targets.
