@@ -21,8 +21,11 @@ series, breaking public API changes increment the minor version.
   explicit step/time policy, and a provenance-pinned MDAnalysis fixture. Add
   experimental pure-Rust TRR/XDR f32/f64 read/write with triclinic cells,
   optional velocities and forces, time, step, explicit lambda preservation,
-  mixed-precision indexing, and reciprocal MDAnalysis interoperability. XTC
-  remains independently tracked and unsupported until complete.
+  mixed-precision indexing, and reciprocal MDAnalysis interoperability. Add an
+  experimental private adapter over audited pure-Rust `molly` 0.6.1 for XTC
+  1995/2023, with bounded preflight, small/compressed coordinates, explicit
+  lossy precision and box policies, panic-contained corruption handling,
+  full-decode indexing, and reciprocal MDAnalysis interoperability.
 - Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit

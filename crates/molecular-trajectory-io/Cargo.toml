@@ -13,6 +13,7 @@ publish = true
 
 [dependencies]
 molecular = { version = "0.2.0", path = "../molecular" }
+molly = "=0.6.1"
 
 [dev-dependencies]
 sha2 = "0.11"

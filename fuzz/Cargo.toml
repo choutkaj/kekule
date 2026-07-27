@@ -77,3 +77,10 @@ path = "fuzz_targets/trajectory_trr.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "trajectory_xtc"
+path = "fuzz_targets/trajectory_xtc.rs"
+test = false
+doc = false
+bench = false
