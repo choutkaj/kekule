@@ -843,7 +843,143 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
 }
 
 #[test]
-fn solvent_rich_subset_scaling_regression_reuses_one_definition() {
+fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
+    let fixture = fixture();
+    let edit = retained_fixture(&fixture);
+    let full = frame(&fixture, 4.0, 40);
+    let positions_only = TrajectoryFrame::new(Configuration::new(
+        Positions::new(
+            &fixture.topology,
+            Quantity::new(point_values(&fixture.topology, 6.0), ANGSTROM),
+        )
+        .expect("positions-only frame"),
+    ));
+    let mut buffer = FrameBuffer::new(edit.topology().clone());
+    buffer
+        .copy_remapped_from(
+            full.view(&fixture.topology).expect("full borrowed frame"),
+            edit.mapping(),
+        )
+        .expect("full buffer remap");
+    assert!(buffer.frame_view().configuration().cell().is_some());
+    assert!(buffer.frame_view().velocities().is_some());
+    assert!(buffer.frame_view().forces().is_some());
+    assert!(buffer.frame_view().time().is_some());
+    assert!(buffer.frame_view().step().is_some());
+    assert!(buffer.frame_view().observation().is_some());
+    assert!(!buffer.frame_view().props().is_empty());
+
+    buffer
+        .copy_remapped_from(
+            positions_only
+                .view(&fixture.topology)
+                .expect("positions-only borrowed frame"),
+            edit.mapping(),
+        )
+        .expect("positions-only buffer remap");
+    let cleared = buffer.frame_view();
+    assert_eq!(cleared.configuration().cell(), None);
+    assert_eq!(cleared.velocities(), None);
+    assert_eq!(cleared.forces(), None);
+    assert_eq!(cleared.time(), None);
+    assert_eq!(cleared.step(), None);
+    assert_eq!(cleared.observation(), None);
+    assert!(cleared.props().is_empty());
+    for (source_index, target_index) in edit.mapping().atom_index_pairs() {
+        assert_eq!(
+            cleared.configuration().positions().values().value()[target_index.index()],
+            positions_only.configuration().positions().values().value()[source_index.index()]
+        );
+    }
+
+    let (source, target, mapping, added_atom) = mapping_with_added_atom();
+    let source_frame = TrajectoryFrame::new(Configuration::new(
+        Positions::new(
+            &source,
+            Quantity::new(vec![Point3::new(1.0, 2.0, 3.0)], ANGSTROM),
+        )
+        .expect("source positions"),
+    ));
+    let mut destination = FrameBuffer::new(target.clone());
+    destination
+        .set_positions(Quantity::new(
+            vec![Point3::new(11.0, 12.0, 13.0), Point3::new(21.0, 22.0, 23.0)],
+            ANGSTROM,
+        ))
+        .expect("destination positions");
+    let destination_cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(31.0, 32.0, 33.0), ANGSTROM),
+        [true, false, true],
+    )
+    .expect("destination cell");
+    destination.set_cell(Some(destination_cell));
+    destination
+        .set_velocities(Some(Quantity::new(
+            vec![
+                Vector3::new(41.0, 42.0, 43.0),
+                Vector3::new(51.0, 52.0, 53.0),
+            ],
+            MODEL_VELOCITY_UNIT,
+        )))
+        .expect("destination velocities");
+    destination
+        .set_forces(Some(Quantity::new(
+            vec![
+                Vector3::new(61.0, 62.0, 63.0),
+                Vector3::new(71.0, 72.0, 73.0),
+            ],
+            MODEL_FORCE_UNIT,
+        )))
+        .expect("destination forces");
+    destination
+        .set_time(Some(Quantity::new(81.0, PICOSECOND)))
+        .expect("destination time");
+    destination.set_step(Some(91));
+    let mut destination_observation = StructureObservation::empty(&target);
+    destination_observation.set_source_model_id(Some("destination-model".to_owned()));
+    destination_observation.props_mut().insert(
+        "observation".to_owned(),
+        PropValue::String("destination".to_owned()),
+    );
+    destination
+        .set_observation(Some(destination_observation))
+        .expect("destination observation");
+    destination.props_mut().insert(
+        "frame".to_owned(),
+        PropValue::String("destination".to_owned()),
+    );
+    let before = destination.clone();
+
+    assert_eq!(
+        destination.copy_remapped_from(
+            source_frame.view(&source).expect("borrowed source frame"),
+            &mapping,
+        ),
+        Err(TrajectoryRemapError::Topology(
+            TopologyRemapError::AddedAtomsRequireState {
+                target_atom: added_atom,
+            }
+        ))
+    );
+
+    let before = before.frame_view();
+    let after = destination.frame_view();
+    assert!(after.topology().same_identity(before.topology()));
+    assert_eq!(
+        after.configuration().positions(),
+        before.configuration().positions()
+    );
+    assert_eq!(after.configuration().cell(), before.configuration().cell());
+    assert_eq!(after.velocities(), before.velocities());
+    assert_eq!(after.forces(), before.forces());
+    assert_eq!(after.time(), before.time());
+    assert_eq!(after.step(), before.step());
+    assert_eq!(after.observation(), before.observation());
+    assert_eq!(after.props(), before.props());
+}
+
+#[test]
+fn solvent_rich_subset_regression_avoids_quadratic_builder_cloning() {
     const WATER_COUNT: usize = 20_000;
     let water = one_atom_small("O");
     let ligand = one_atom_small("C");
@@ -874,7 +1010,7 @@ fn solvent_rich_subset_scaling_regression_reuses_one_definition() {
     }
     let topology = builder.build().expect("synthetic solvent topology");
     let requested = std::iter::once(ligand_instance).chain(retained_waters.iter().copied());
-    let edit = retain_instances(&topology, requested).expect("large linear subset");
+    let edit = retain_instances(&topology, requested).expect("large solvent-rich subset");
     assert_eq!(edit.topology().definition_count(), 2);
     assert_eq!(edit.topology().instance_count(), WATER_COUNT / 2 + 1);
     assert_eq!(edit.mapping().instance_pairs().len(), WATER_COUNT / 2 + 1);

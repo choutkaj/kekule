@@ -31,8 +31,12 @@ compatible topology-bound structure state through checked lineage.
 
 - Subset membership is normalized before construction. Source definition and
   instance order determine target order, and retained reusable definitions are
-  cloned once. Membership, filtered construction, and state transfer use
-  single-pass dense storage; no graph correspondence is inferred.
+  cloned once. The implementation has no quadratic builder behavior, while
+  topology index construction and checked lineage currently use ordered maps
+  and sets, giving practical O(n log n) scaling. No graph correspondence is
+  inferred.
+- Dense or hash-backed topology indices and lineage maps remain a future
+  optimization if strict or expected linear construction becomes necessary.
 - Local atom and bond identifiers are preserved; new topology-level semantic
   and dense identifiers are recorded by the returned mapping.
 - Remapping is complete and transactional. Missing target atom state is an
@@ -43,13 +47,16 @@ compatible topology-bound structure state through checked lineage.
 - Focused unit and downstream public-API tests cover deterministic subsetting,
   complete lineage, identity checks, state preservation, transactional
   failures, strict/drop selection policy, member/frame error context, and
-  reusable buffer allocation stability.
+  reusable buffer allocation stability. Buffer regressions preserve every
+  pre-existing destination field after a later unmapped-target-atom failure and
+  clear stale optional state when a positions-only frame follows a full frame.
 
 ## Benchmarks
 
 - A synthetic regression subsets 20,000 solvent instances sharing one
   definition, verifies definition reuse and complete mapping cardinality, and
-  provides practical scaling evidence without external benchmark data.
+  guards against quadratic builder cloning. It is a practical large-input
+  regression, not proof of linear asymptotics.
 
 ## Out Of Scope
 
@@ -61,3 +68,5 @@ compatible topology-bound structure state through checked lineage.
 ## Revision Notes
 
 - v1: Track the complete-instance subset and explicit state-remapping milestone.
+- v2: Correct the ordered-map complexity contract and strengthen reusable-buffer
+  transactionality and stale-state regressions.
