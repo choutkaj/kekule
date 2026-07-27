@@ -3,10 +3,9 @@
 ## Status and purpose
 
 This document is the normative architecture contract for `molecular`. The
-topology-centered 0.2 design is implemented. [`topology_refactor.md`](topology_refactor.md)
-and [`topology_transformations.md`](topology_transformations.md) are retained as
-historical implementation plans; current work must follow the object boundaries
-and invariants defined here.
+topology-centered 0.2 design and the initial complete-instance topology-
+transformation milestone are implemented. Current work must follow the object
+boundaries and invariants defined here.
 
 `molecular` is a pure-Rust foundation for cheminformatics, structural
 bioinformatics, molecular structure handling, and molecular modelling. It
