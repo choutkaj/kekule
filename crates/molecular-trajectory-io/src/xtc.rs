@@ -597,6 +597,9 @@ impl<R: Read + Seek> XtcReader<R> {
     }
 
     fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
+        let Some(info) = self.next_info()? else {
+            return Ok(false);
+        };
         if self.frame_cursor >= self.limits.max_frames {
             return Err(resource_error(
                 &self.source_label,
@@ -604,9 +607,6 @@ impl<R: Read + Seek> XtcReader<R> {
                 "XTC frame count exceeds the configured limit",
             ));
         }
-        let Some(info) = self.next_info()? else {
-            return Ok(false);
-        };
         self.adapter
             .decode(&info, &self.source_label, self.frame_cursor)?;
         for (point, values) in self
@@ -639,13 +639,6 @@ impl<R: Read + Seek> XtcReader<R> {
     pub fn into_indexed(mut self) -> Result<IndexedXtcReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
-            if offsets.len() >= self.limits.max_index_entries {
-                return Err(resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "XTC index entry limit exceeded",
-                ));
-            }
             let offset = self.pending_info.as_ref().map_or_else(
                 || {
                     self.adapter.inner.file.stream_position().map_err(|error| {
@@ -661,6 +654,13 @@ impl<R: Read + Seek> XtcReader<R> {
             )?;
             if !self.parse_next(None)? {
                 break;
+            }
+            if offsets.len() >= self.limits.max_index_entries {
+                return Err(resource_error(
+                    &self.source_label,
+                    Some(offsets.len() as u64),
+                    "XTC index entry limit exceeded",
+                ));
             }
             offsets.try_reserve(1).map_err(|_| {
                 resource_error(

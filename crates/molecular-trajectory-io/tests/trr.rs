@@ -209,6 +209,54 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
 }
 
 #[test]
+fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        TrrWriteOptions::default(),
+        "exact-limit.trr",
+    )
+    .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 0.0, 4).frame_view())
+        .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 1.0, 5).frame_view())
+        .unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    let limits = TrajectoryIoLimits {
+        max_frames: 2,
+        max_index_entries: 2,
+        ..TrajectoryIoLimits::default()
+    };
+    let mut reader = TrrReader::new(
+        Cursor::new(bytes.clone()),
+        binding(&topology),
+        TrrReadOptions::default(),
+        limits.clone(),
+        "exact-limit.trr",
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(!reader.read_next(&mut buffer).unwrap());
+
+    let indexed = TrrReader::new(
+        Cursor::new(bytes),
+        binding(&topology),
+        TrrReadOptions::default(),
+        limits,
+        "exact-index-limit.trr",
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
 fn trr_lambda_policy_and_writer_contract_are_explicit() {
     let topology = topology();
     let mut frame = populated_frame(&topology, 0.0, 0);

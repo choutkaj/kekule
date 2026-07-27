@@ -185,6 +185,41 @@ fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
 }
 
 #[test]
+fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
+    let topology = topology();
+    let bytes = fixed_atom_fixture(DcdEndian::Little);
+    let limits = TrajectoryIoLimits {
+        max_frames: 2,
+        max_index_entries: 2,
+        ..TrajectoryIoLimits::default()
+    };
+    let mut reader = DcdReader::new(
+        Cursor::new(bytes.clone()),
+        binding(&topology),
+        DcdReadOptions::default(),
+        limits.clone(),
+        "exact-limit.dcd",
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(!reader.read_next(&mut buffer).unwrap());
+
+    let indexed = DcdReader::new(
+        Cursor::new(bytes),
+        binding(&topology),
+        DcdReadOptions::default(),
+        limits,
+        "exact-index-limit.dcd",
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
 fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let topology = topology();
     let valid = fixed_atom_fixture(DcdEndian::Big);
