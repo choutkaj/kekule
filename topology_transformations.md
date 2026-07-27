@@ -1,8 +1,12 @@
 # Topology transformations and state-remapping plan
 
+> **Status:** Implemented by the `model.topology-transform` milestone. This
+> document is retained as the historical implementation specification; current
+> behavior is governed by `ARCHITECTURE.md` and the affected feature contracts.
+
 ## Purpose
 
-This document defines the next implementation milestone after the topology-centered
+This document defined the implementation milestone after the topology-centered
 0.2.0 refactor.
 
 The goal is to make immutable `Topology` useful for real system editing without
@@ -91,8 +95,9 @@ At completion, the repository must provide:
    atoms.
 9. Transactional behavior: failed transformations or remaps leave source objects
    and caller-owned destinations unchanged.
-10. Linear-time behavior in the amount of source or target data being processed,
-    without graph isomorphism or repeated cloning of reused definitions.
+10. No quadratic builder behavior or repeated cloning of reused definitions;
+    practical O(n log n) scaling under the ordered maps used by topology indices
+    and lineage mappings.
 11. Public API tests, focused regression tests, feature-contract updates, and
     documentation consistent with the final implementation.
 
@@ -453,10 +458,16 @@ correspondence from graph matching.
 
 ### Performance expectations
 
-- time is linear in visited definitions, instances, atoms, and bonds;
+- no quadratic builder behavior occurs as visited definitions, instances, atoms,
+  and bonds grow;
 - retained repeated definitions are cloned once, not once per instance;
 - no clone of the accumulated builder occurs per addition;
-- a large synthetic solvent-rich topology demonstrates practical scaling.
+- current `BTreeMap`/`BTreeSet` topology indices and lineage maps yield practical
+  O(n log n) scaling;
+- a large synthetic solvent-rich topology guards practical behavior and
+  definition reuse, but does not prove an asymptotic bound;
+- dense or hash-backed indices and mappings remain a future optimization if
+  strict or expected linear construction becomes necessary.
 
 ### Exit criteria
 

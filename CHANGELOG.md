@@ -7,6 +7,11 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Add immutable whole-instance topology subset transformations with complete
+  checked lineage plus explicit transactional remapping for topology-bound
+  positions, models, selections, ensembles, trajectory frames, trajectories,
+  and reusable frame buffers.
+
 ## 0.2.0 - 2026-07-25
 
 - Complete the topology-centered hard break: add immutable coordinate-free
