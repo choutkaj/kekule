@@ -533,14 +533,6 @@ impl<R: Read + Seek> DcdReader<R> {
     }
 
     fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
-        if self.frame_cursor >= self.limits.max_frames {
-            return Err(resource_error(
-                TrajectoryIoOperation::ReadFrame,
-                &self.source_label,
-                Some(self.frame_cursor),
-                "DCD frame count exceeds the configured limit",
-            ));
-        }
         let frame_start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
@@ -549,6 +541,38 @@ impl<R: Read + Seek> DcdReader<R> {
                 error,
             )
         })?;
+        let mut first = [0_u8; 1];
+        match self.reader.read(&mut first) {
+            Ok(0) => return Ok(false),
+            Ok(_) => {
+                self.reader
+                    .seek(SeekFrom::Start(frame_start))
+                    .map_err(|error| {
+                        io_context(
+                            TrajectoryIoOperation::ReadFrame,
+                            Some(TrajectoryFormat::Dcd),
+                            &self.source_label,
+                            error,
+                        )
+                    })?;
+            }
+            Err(error) => {
+                return Err(io_context(
+                    TrajectoryIoOperation::ReadFrame,
+                    Some(TrajectoryFormat::Dcd),
+                    &self.source_label,
+                    error,
+                ))
+            }
+        }
+        if self.frame_cursor >= self.limits.max_frames {
+            return Err(resource_error(
+                TrajectoryIoOperation::ReadFrame,
+                &self.source_label,
+                Some(self.frame_cursor),
+                "DCD frame count exceeds the configured limit",
+            ));
+        }
         let mut cell = None;
         if self.header.has_cell {
             if !read_record(
@@ -577,35 +601,6 @@ impl<R: Read + Seek> DcdReader<R> {
                 &self.source_label,
                 self.frame_cursor,
             )?);
-        } else {
-            let probe = self.reader.stream_position().map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::ReadFrame,
-                    Some(TrajectoryFormat::Dcd),
-                    &self.source_label,
-                    error,
-                )
-            })?;
-            let mut first = [0_u8; 1];
-            match self.reader.read(&mut first) {
-                Ok(0) => return Ok(false),
-                Ok(_) => self.reader.seek(SeekFrom::Start(probe)).map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::ReadFrame,
-                        Some(TrajectoryFormat::Dcd),
-                        &self.source_label,
-                        error,
-                    )
-                })?,
-                Err(error) => {
-                    return Err(io_context(
-                        TrajectoryIoOperation::ReadFrame,
-                        Some(TrajectoryFormat::Dcd),
-                        &self.source_label,
-                        error,
-                    ))
-                }
-            };
         }
 
         let coordinate_indices = if self.frame_cursor == 0 || self.header.fixed_count == 0 {
@@ -752,14 +747,6 @@ impl<R: Read + Seek> DcdReader<R> {
     pub fn into_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
-            if offsets.len() >= self.limits.max_index_entries {
-                return Err(resource_error(
-                    TrajectoryIoOperation::Index,
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "DCD index entry limit exceeded",
-                ));
-            }
             let offset = self.reader.stream_position().map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
@@ -770,6 +757,14 @@ impl<R: Read + Seek> DcdReader<R> {
             })?;
             if !self.parse_next(None)? {
                 break;
+            }
+            if offsets.len() >= self.limits.max_index_entries {
+                return Err(resource_error(
+                    TrajectoryIoOperation::Index,
+                    &self.source_label,
+                    Some(offsets.len() as u64),
+                    "DCD index entry limit exceeded",
+                ));
             }
             offsets.try_reserve(1).map_err(|_| {
                 resource_error(

@@ -193,6 +193,40 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
 }
 
 #[test]
+fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
+    let (topology, bytes) = encoded(12, XtcMagic::Xtc1995);
+    let limits = TrajectoryIoLimits {
+        max_frames: 2,
+        max_index_entries: 2,
+        ..TrajectoryIoLimits::default()
+    };
+    let mut reader = XtcReader::new(
+        Cursor::new(bytes.clone()),
+        binding(&topology),
+        XtcReadOptions::default(),
+        limits.clone(),
+        "exact-limit.xtc",
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(!reader.read_next(&mut buffer).unwrap());
+
+    let indexed = XtcReader::new(
+        Cursor::new(bytes),
+        binding(&topology),
+        XtcReadOptions::default(),
+        limits,
+        "exact-index-limit.xtc",
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
 fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     let (topology, valid) = encoded(12, XtcMagic::Xtc1995);
 

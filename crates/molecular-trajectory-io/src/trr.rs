@@ -269,6 +269,9 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
+        let Some(header) = self.next_header()? else {
+            return Ok(false);
+        };
         if self.frame_cursor >= self.limits.max_frames {
             return Err(resource_error(
                 &self.source_label,
@@ -276,9 +279,6 @@ impl<R: Read + Seek> TrrReader<R> {
                 "TRR frame count exceeds the configured limit",
             ));
         }
-        let Some(header) = self.next_header()? else {
-            return Ok(false);
-        };
         self.precision_mixed |= header.precision != self.first_header.precision;
         validate_lambda(
             header.lambda,
@@ -429,13 +429,6 @@ impl<R: Read + Seek> TrrReader<R> {
     pub fn into_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
-            if offsets.len() >= self.limits.max_index_entries {
-                return Err(resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "TRR index entry limit exceeded",
-                ));
-            }
             let offset = if self.pending_header.is_some() {
                 self.current_header_offset
             } else {
@@ -450,6 +443,13 @@ impl<R: Read + Seek> TrrReader<R> {
             };
             if !self.parse_next(None)? {
                 break;
+            }
+            if offsets.len() >= self.limits.max_index_entries {
+                return Err(resource_error(
+                    &self.source_label,
+                    Some(offsets.len() as u64),
+                    "TRR index entry limit exceeded",
+                ));
             }
             offsets.try_reserve(1).map_err(|_| {
                 resource_error(
