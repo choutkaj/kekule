@@ -18,8 +18,11 @@ series, breaking public API changes increment the minor version.
   element-order validation, and a provenance-pinned ASE fixture. Add
   experimental common-profile DCD read/write with both byte orders, cells,
   fixed-atom reconstruction, checked records and counts, indexed access,
-  explicit step/time policy, and a provenance-pinned MDAnalysis fixture. TRR
-  and XTC remain independently tracked and unsupported until complete.
+  explicit step/time policy, and a provenance-pinned MDAnalysis fixture. Add
+  experimental pure-Rust TRR/XDR f32/f64 read/write with triclinic cells,
+  optional velocities and forces, time, step, explicit lambda preservation,
+  mixed-precision indexing, and reciprocal MDAnalysis interoperability. XTC
+  remains independently tracked and unsupported until complete.
 - Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit

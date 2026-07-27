@@ -8,6 +8,7 @@
 
 pub mod dcd;
 mod detect;
+pub mod trr;
 pub mod xyz;
 
 use std::fs::{File, OpenOptions};
@@ -252,6 +253,53 @@ impl FileTrajectoryMetadata {
             variant: Some(header.variant()),
         }
     }
+
+    fn trr(
+        header: &trr::TrrFrameHeader,
+        indexed_frame_count: Option<u64>,
+        precision_mixed: bool,
+    ) -> Self {
+        let precision = if precision_mixed {
+            ScalarPrecision::Mixed
+        } else {
+            match header.precision() {
+                trr::TrrScalarPrecision::Float32 => ScalarPrecision::Float32,
+                trr::TrrScalarPrecision::Float64 => ScalarPrecision::Float64,
+            }
+        };
+        Self {
+            format: TrajectoryFormat::Trr,
+            atom_count: header.atom_count(),
+            declared_frame_count: None,
+            indexed_frame_count,
+            fields: TrajectoryFieldAvailability {
+                positions: FieldAvailability::Required,
+                cell: FieldAvailability::Optional,
+                velocities: FieldAvailability::Optional,
+                forces: FieldAvailability::Optional,
+                time: FieldAvailability::Required,
+                step: FieldAvailability::Required,
+                properties: FieldAvailability::Optional,
+            },
+            coordinate_encoding: CoordinateEncoding::Lossless { precision },
+            random_access: if indexed_frame_count.is_some() {
+                RandomAccessCapability::Indexed
+            } else {
+                RandomAccessCapability::SequentialOnly
+            },
+            variant: Some(format!(
+                "GROMACS TRR/XDR first-frame {:?}{}{}{}",
+                header.precision(),
+                if header.has_cell() { " cell" } else { "" },
+                if header.has_velocities() {
+                    " velocities"
+                } else {
+                    ""
+                },
+                if header.has_forces() { " forces" } else { "" },
+            )),
+        }
+    }
 }
 
 /// Evidence used to select a trajectory format.
@@ -336,6 +384,7 @@ pub struct TrajectoryOpenOptions {
     limits: TrajectoryIoLimits,
     xyz: xyz::XyzReadOptions,
     dcd: dcd::DcdReadOptions,
+    trr: trr::TrrReadOptions,
 }
 
 impl Default for TrajectoryOpenOptions {
@@ -345,6 +394,7 @@ impl Default for TrajectoryOpenOptions {
             limits: TrajectoryIoLimits::default(),
             xyz: xyz::XyzReadOptions::default(),
             dcd: dcd::DcdReadOptions::default(),
+            trr: trr::TrrReadOptions::default(),
         }
     }
 }
@@ -369,6 +419,11 @@ impl TrajectoryOpenOptions {
         self.dcd = options;
         self
     }
+
+    pub fn with_trr_options(mut self, options: trr::TrrReadOptions) -> Self {
+        self.trr = options;
+        self
+    }
 }
 
 /// Existing-destination policy for a path writer.
@@ -386,6 +441,7 @@ pub struct TrajectoryWriteOptions {
     overwrite: OverwritePolicy,
     xyz: xyz::XyzWriteOptions,
     dcd: dcd::DcdWriteOptions,
+    trr: trr::TrrWriteOptions,
 }
 
 impl TrajectoryWriteOptions {
@@ -395,6 +451,7 @@ impl TrajectoryWriteOptions {
             overwrite: OverwritePolicy::Forbid,
             xyz: xyz::XyzWriteOptions::default(),
             dcd: dcd::DcdWriteOptions::default(),
+            trr: trr::TrrWriteOptions::default(),
         }
     }
 
@@ -412,11 +469,17 @@ impl TrajectoryWriteOptions {
         self.dcd = options;
         self
     }
+
+    pub fn with_trr_options(mut self, options: trr::TrrWriteOptions) -> Self {
+        self.trr = options;
+        self
+    }
 }
 
 enum SequentialReaderInner {
     Xyz(xyz::XyzReader<BufReader<File>>),
     Dcd(dcd::DcdReader<BufReader<File>>),
+    Trr(trr::TrrReader<BufReader<File>>),
 }
 
 /// Format-agnostic path-backed sequential reader retaining one file handle.
@@ -436,6 +499,7 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
         match &self.inner {
             SequentialReaderInner::Xyz(reader) => reader.topology(),
             SequentialReaderInner::Dcd(reader) => reader.topology(),
+            SequentialReaderInner::Trr(reader) => reader.topology(),
         }
     }
 
@@ -443,6 +507,7 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
         match &mut self.inner {
             SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
             SequentialReaderInner::Dcd(reader) => reader.read_next(destination),
+            SequentialReaderInner::Trr(reader) => reader.read_next(destination),
         }
     }
 }
@@ -450,6 +515,7 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
 enum IndexedReaderInner {
     Xyz(xyz::IndexedXyzReader<BufReader<File>>),
     Dcd(dcd::IndexedDcdReader<BufReader<File>>),
+    Trr(trr::IndexedTrrReader<BufReader<File>>),
 }
 
 /// Format-agnostic path-backed indexed reader retaining one file handle.
@@ -469,6 +535,7 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
         match &self.inner {
             IndexedReaderInner::Xyz(reader) => reader.topology(),
             IndexedReaderInner::Dcd(reader) => reader.topology(),
+            IndexedReaderInner::Trr(reader) => reader.topology(),
         }
     }
 
@@ -476,6 +543,7 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
         match &mut self.inner {
             IndexedReaderInner::Xyz(reader) => reader.read_next(destination),
             IndexedReaderInner::Dcd(reader) => reader.read_next(destination),
+            IndexedReaderInner::Trr(reader) => reader.read_next(destination),
         }
     }
 }
@@ -485,6 +553,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
         match &self.inner {
             IndexedReaderInner::Xyz(reader) => reader.frame_count(),
             IndexedReaderInner::Dcd(reader) => reader.frame_count(),
+            IndexedReaderInner::Trr(reader) => reader.frame_count(),
         }
     }
 
@@ -496,6 +565,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
         match &mut self.inner {
             IndexedReaderInner::Xyz(reader) => reader.read_frame(index, destination),
             IndexedReaderInner::Dcd(reader) => reader.read_frame(index, destination),
+            IndexedReaderInner::Trr(reader) => reader.read_frame(index, destination),
         }
     }
 }
@@ -539,6 +609,18 @@ pub fn open_trajectory(
                 metadata,
                 vec![
                     "DCD steps are preserved from ISTART/NSAVC; time follows the explicit policy"
+                        .into(),
+                ],
+            )
+        }
+        TrajectoryFormat::Trr => {
+            let reader = trr::TrrReader::new(reader, binding, options.trr, options.limits, label)?;
+            let metadata = FileTrajectoryMetadata::trr(reader.first_header(), None, false);
+            (
+                SequentialReaderInner::Trr(reader),
+                metadata,
+                vec![
+                    "TRR uses XDR big-endian scalars and explicit lambda preservation policy"
                         .into(),
                 ],
             )
@@ -602,6 +684,21 @@ pub fn open_indexed_trajectory(
                 vec!["DCD index verified record markers and the declared frame count".into()],
             )
         }
+        TrajectoryFormat::Trr => {
+            let reader = trr::TrrReader::new(reader, binding, options.trr, options.limits, label)?;
+            let reader = reader.into_indexed()?;
+            let count = reader.frame_count().unwrap_or(0);
+            let metadata = FileTrajectoryMetadata::trr(
+                reader.first_header(),
+                Some(count),
+                reader.precision_mixed(),
+            );
+            (
+                IndexedReaderInner::Trr(reader),
+                metadata,
+                vec!["TRR index verified every XDR frame and payload block".into()],
+            )
+        }
         format => {
             return Err(unimplemented_format(
                 format,
@@ -622,6 +719,7 @@ pub fn open_indexed_trajectory(
 enum FileWriterInner {
     Xyz(xyz::XyzWriter<BufWriter<File>>),
     Dcd(dcd::DcdWriter<BufWriter<File>>),
+    Trr(trr::TrrWriter<BufWriter<File>>),
 }
 
 impl FileWriterInner {
@@ -629,6 +727,7 @@ impl FileWriterInner {
         match self {
             Self::Xyz(writer) => writer.topology(),
             Self::Dcd(writer) => writer.topology(),
+            Self::Trr(writer) => writer.topology(),
         }
     }
 
@@ -636,6 +735,7 @@ impl FileWriterInner {
         match self {
             Self::Xyz(writer) => writer.write_frame(frame),
             Self::Dcd(writer) => writer.write_frame(frame),
+            Self::Trr(writer) => writer.write_frame(frame),
         }
     }
 
@@ -673,6 +773,24 @@ impl FileWriterInner {
                     io_context(
                         TrajectoryIoOperation::Finish,
                         Some(TrajectoryFormat::Dcd),
+                        label,
+                        error,
+                    )
+                })
+            }
+            Self::Trr(writer) => {
+                writer.flush().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Trr),
+                        label,
+                        error,
+                    )
+                })?;
+                writer.writer().get_ref().sync_all().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Trr),
                         label,
                         error,
                     )
@@ -820,6 +938,12 @@ pub fn create_trajectory_writer(
             BufWriter::new(file),
             topology,
             options.dcd,
+            label,
+        )?),
+        TrajectoryFormat::Trr => FileWriterInner::Trr(trr::TrrWriter::new(
+            BufWriter::new(file),
+            topology,
+            options.trr,
             label,
         )?),
         format => {
