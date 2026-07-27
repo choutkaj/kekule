@@ -31,6 +31,7 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 mod algorithms;
+pub mod alignment;
 pub mod bio;
 mod chemistry;
 pub mod core;

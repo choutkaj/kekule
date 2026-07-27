@@ -9,7 +9,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
-  `trajectory`, and `modeling`.
+  `trajectory`, `alignment`, and `modeling`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -60,6 +60,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   on the query IR. Neither namespace is added to the prelude.
 - Read-only molecular formula and mass calculation lives under `descriptors`,
   requires an explicit hydrogen-count policy, and is not added to the prelude.
+- Same-topology selection-based proper rigid fitting lives under `alignment`,
+  returns the existing geometry transform plus unit-bearing RMSD, and is not
+  added to the prelude.
 
 ## Implementation Notes
 
@@ -87,6 +90,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Downstream transformation tests compile instance retain/remove, stable
   mapping traversal, model and selection remapping, ensemble remapping, owned
   trajectory remapping, and reusable target-buffer remapping.
+- A downstream alignment test compiles the focused options, result, structured
+  error, topology-selection, transform-direction, and RMSD-unit surface.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
 
 ## Out Of Scope
@@ -144,3 +149,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   unchecked ID reconstruction and one-based writer arithmetic.
 - v23: Add the focused immutable topology-transform and explicit
   topology-bound state-remapping public surface without expanding the prelude.
+- v24: Add the focused same-topology weighted rigid-alignment analysis surface
+  without expanding the crate root aliases or prelude.
