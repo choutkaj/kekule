@@ -11,21 +11,22 @@ series, breaking public API changes increment the minor version.
   transactional allocation-reusing `FrameBuffer` publication, explicit
   exact-topology atom-order assertions, non-exhaustive trajectory format
   identity, typed file/codec error context, and downstream trait-implementation
-  tests. Add the experimental one-way `molecular-trajectory-io` companion with
+  tests. Add the supported one-way `molecular-trajectory-io` companion with
   bounded signature-plus-extension detection, metadata/reports/limits,
   one-handle sequential and verified indexed access, strict atomic path
-  writers, and strict multi-frame XYZ read/write with explicit units,
+  writers that cannot publish after a failed frame, and strict multi-frame XYZ
+  read/write with explicit units,
   element-order validation, and a provenance-pinned ASE fixture. Add
-  experimental common-profile DCD read/write with both byte orders, cells,
+  supported common-profile DCD read/write with both byte orders, cells,
   fixed-atom reconstruction, checked records and counts, indexed access,
   explicit step/time policy, and a provenance-pinned MDAnalysis fixture. Add
-  experimental pure-Rust TRR/XDR f32/f64 read/write with triclinic cells,
+  supported pure-Rust TRR/XDR f32/f64 read/write with triclinic cells,
   optional velocities and forces, time, step, explicit lambda preservation,
   mixed-precision indexing, and reciprocal MDAnalysis interoperability. Add an
-  experimental private adapter over audited pure-Rust `molly` 0.6.1 for XTC
-  1995/2023, with bounded preflight, small/compressed coordinates, explicit
-  lossy precision and box policies, panic-contained corruption handling,
-  full-decode indexing, and reciprocal MDAnalysis interoperability.
+  supported checked XTC decoder for the 1995/2023 magic profiles, small and
+  compressed coordinates, explicit lossy precision and box policies, bounded
+  full-decode indexing, and a private panic-contained writer adapter over
+  audited pure-Rust `molly` 0.6.1 with reciprocal MDAnalysis interoperability.
 - Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit
