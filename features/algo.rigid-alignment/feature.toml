@@ -1,0 +1,8 @@
+id = "algo.rigid-alignment"
+title = "Rigid molecular alignment"
+area = "algorithms"
+domains = ["small-molecule", "macromolecule"]
+version = 1
+status = "supported"
+description = "Fit one same-topology structural snapshot onto another with selection-based weighted proper rigid alignment."
+depends_on = ["model.topology", "model.system", "core.units"]
