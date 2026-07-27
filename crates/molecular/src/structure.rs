@@ -140,6 +140,19 @@ impl Positions {
     where
         T: AsRef<[Point3]>,
     {
+        let factor = self.validate_replacement(topology, &positions)?;
+        self.copy_from_validated(positions.value().as_ref(), factor);
+        Ok(())
+    }
+
+    pub(crate) fn validate_replacement<T>(
+        &self,
+        topology: &Topology,
+        positions: &Quantity<T>,
+    ) -> Result<f64, PositionError>
+    where
+        T: AsRef<[Point3]>,
+    {
         self.ensure_compatible(topology)?;
         let factor = positions.unit().conversion_factor_to(MODEL_LENGTH_UNIT)?;
         let source = positions.value().as_ref();
@@ -152,10 +165,13 @@ impl Positions {
                 });
             }
         }
+        Ok(factor)
+    }
+
+    pub(crate) fn copy_from_validated(&mut self, source: &[Point3], factor: f64) {
         for (destination, source) in self.values.iter_mut().zip(source.iter().copied()) {
             *destination = Point3::new(source.x * factor, source.y * factor, source.z * factor);
         }
-        Ok(())
     }
 
     pub(crate) fn values_raw(&self) -> &[Point3] {

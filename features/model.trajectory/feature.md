@@ -15,6 +15,10 @@ trajectories through reusable caller-owned buffers.
 - `TrajectoryReader` fills a caller-owned `FrameBuffer`;
   `SeekableTrajectoryReader` adds explicit random access; `TrajectoryWriter`
   validates topology and supported state.
+- `FrameBuffer::replace_from_data` transactionally publishes complete borrowed
+  decoder state after validating every field, converts units once, reuses all
+  dense-array allocations, clears absent optional state, and leaves the
+  destination unchanged on failure.
 - `FrameBuffer::reset_dynamic_state` clears cell, velocities, forces, time,
   step, observation, and properties without replacing its positions allocation;
   coordinate-only readers use this reset after filling positions.
@@ -26,13 +30,21 @@ trajectories through reusable caller-owned buffers.
 - `FrameBuffer::copy_remapped_from` transactionally copies borrowed source
   frame state into an exact target-bound buffer without constructing a model
   and reuses position, velocity, and force allocations.
+- `AtomOrderAssertion` distinguishes an explicit semantic-order proof from the
+  caller's explicit assertion that a topology-free file uses authoritative
+  topology order, and remains bound to exact topology identity.
+- Non-exhaustive `TrajectoryFormat`, `TrajectoryIoOperation`, and
+  `TrajectoryCodecErrorKind` values plus cloneable I/O/codec contexts let
+  companion codecs report typed format, operation, source, frame, byte offset,
+  count, and underlying I/O information without a dependency cycle.
 
 ## Implementation Notes
 
 - Ordinary trajectories retain one fixed exact topology. Reactive trajectories
   remain a future segmented-topology concept.
 - A minimal in-memory/reference reader and writer validate the streaming
-  contracts; production binary codecs are not part of this feature.
+  contracts. Production codecs live in the one-way
+  `molecular-trajectory-io` companion crate and are tracked separately.
 
 ## Tests
 
@@ -46,10 +58,16 @@ trajectories through reusable caller-owned buffers.
   positions, cell, vectors, time, step, observation, and properties after a
   later validation failure, stale optional-state clearing after positions-only
   remaps, and stable dense-array pointers and capacities over repeated remaps.
+- Downstream tests prove an external companion crate can implement sequential,
+  seekable, and writer traits and publish complete data without private access.
+- Publication regressions cover late validation failure, complete destination
+  transactionality, stale property/optional-field clearing, exact order-token
+  identity, typed error context, and stable position/vector pointers and
+  capacities after warm-up.
 
 ## Out Of Scope
 
-- XTC, DCD, TRR, NetCDF, reactive trajectories, dynamics integration, and
+- File codec implementations, reactive trajectories, dynamics integration, and
   neighbor lists.
 
 ## Revision Notes
@@ -65,3 +83,6 @@ trajectories through reusable caller-owned buffers.
   transactional allocation-reusing borrowed-frame copies into target buffers.
 - v5: Strengthen reusable-buffer tests for complete destination transactionality
   and stale optional-state clearing after positions-only remaps.
+- v6: Add complete transactional borrowed-data publication, explicit exact
+  atom-order binding helpers, shared format identity, typed file/codec error
+  context, and downstream codec-trait implementation coverage.

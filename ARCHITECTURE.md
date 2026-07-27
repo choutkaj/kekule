@@ -742,6 +742,19 @@ compressed format supports inexpensive random access.
 across reads. A frame view allows analyses and potentials to consume decoded
 state without constructing or cloning an owned `Model`.
 
+File decoders publish only complete frames through one transactional borrowed-
+data operation. That operation validates exact topology identity, complete
+array lengths, units, finite values, cell, time, observations, and properties
+before destination-visible mutation; it reuses position, velocity, and force
+allocations and clears every absent optional field. Clean EOF and any failed
+decode leave the caller's buffer unchanged.
+
+Topology-free file readers require an `AtomOrderAssertion` bound to the same
+exact topology. The assertion is either constructed from a complete semantic
+atom sequence proven equal to authoritative dense order or is an explicit
+caller statement that the file uses that order. Neither form is inferred from
+atom count, and readers still validate all stronger format metadata.
+
 ### Topology-bearing and topology-free formats
 
 Some trajectory formats contain only coordinates and atom count. Their readers
@@ -1016,6 +1029,18 @@ remain in focused namespaces. Broad root re-exports are not added casually.
 Dependency-heavy binary trajectory codecs and force-field adapters should live
 in separate crates when required, keeping the foundational `molecular` crate
 lightweight.
+
+Production fixed-topology file codecs live in the one-way
+`molecular-trajectory-io` workspace companion:
+
+```text
+molecular <- molecular-trajectory-io <- applications
+```
+
+The companion implements Molecular's streaming traits and uses its topology,
+frame-buffer, geometry, unit, format-identity, and typed error contracts. It
+does not define duplicate domain objects. Molecular-owned codec source forbids
+unsafe code and does not require Chemfiles, a C/C++ compiler, or CMake.
 
 ## Public API and release policy
 
