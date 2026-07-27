@@ -9,6 +9,7 @@
 pub mod dcd;
 mod detect;
 pub mod trr;
+pub mod xtc;
 pub mod xyz;
 
 use std::fs::{File, OpenOptions};
@@ -300,6 +301,49 @@ impl FileTrajectoryMetadata {
             )),
         }
     }
+
+    fn xtc(info: &xtc::XtcFrameInfo, indexed_frame_count: Option<u64>) -> Self {
+        let coordinate_encoding = match info.precision() {
+            Some(precision) => CoordinateEncoding::Lossy {
+                precision: ScalarPrecision::Float32,
+                resolution: 1.0 / f64::from(precision),
+                unit: molecular::units::NANOMETER,
+            },
+            None => CoordinateEncoding::Lossless {
+                precision: ScalarPrecision::Float32,
+            },
+        };
+        Self {
+            format: TrajectoryFormat::Xtc,
+            atom_count: info.atom_count(),
+            declared_frame_count: None,
+            indexed_frame_count,
+            fields: TrajectoryFieldAvailability {
+                positions: FieldAvailability::Required,
+                cell: if info.has_cell() {
+                    FieldAvailability::Optional
+                } else {
+                    FieldAvailability::Absent
+                },
+                velocities: FieldAvailability::Absent,
+                forces: FieldAvailability::Absent,
+                time: FieldAvailability::Required,
+                step: FieldAvailability::Required,
+                properties: FieldAvailability::Absent,
+            },
+            coordinate_encoding,
+            random_access: if indexed_frame_count.is_some() {
+                RandomAccessCapability::Indexed
+            } else {
+                RandomAccessCapability::SequentialOnly
+            },
+            variant: Some(format!(
+                "{:?} via audited molly 0.6.1; first payload {} bytes",
+                info.magic(),
+                info.compressed_bytes()
+            )),
+        }
+    }
 }
 
 /// Evidence used to select a trajectory format.
@@ -385,6 +429,7 @@ pub struct TrajectoryOpenOptions {
     xyz: xyz::XyzReadOptions,
     dcd: dcd::DcdReadOptions,
     trr: trr::TrrReadOptions,
+    xtc: xtc::XtcReadOptions,
 }
 
 impl Default for TrajectoryOpenOptions {
@@ -395,6 +440,7 @@ impl Default for TrajectoryOpenOptions {
             xyz: xyz::XyzReadOptions::default(),
             dcd: dcd::DcdReadOptions::default(),
             trr: trr::TrrReadOptions::default(),
+            xtc: xtc::XtcReadOptions::default(),
         }
     }
 }
@@ -424,6 +470,11 @@ impl TrajectoryOpenOptions {
         self.trr = options;
         self
     }
+
+    pub fn with_xtc_options(mut self, options: xtc::XtcReadOptions) -> Self {
+        self.xtc = options;
+        self
+    }
 }
 
 /// Existing-destination policy for a path writer.
@@ -442,6 +493,7 @@ pub struct TrajectoryWriteOptions {
     xyz: xyz::XyzWriteOptions,
     dcd: dcd::DcdWriteOptions,
     trr: trr::TrrWriteOptions,
+    xtc: xtc::XtcWriteOptions,
 }
 
 impl TrajectoryWriteOptions {
@@ -452,6 +504,7 @@ impl TrajectoryWriteOptions {
             xyz: xyz::XyzWriteOptions::default(),
             dcd: dcd::DcdWriteOptions::default(),
             trr: trr::TrrWriteOptions::default(),
+            xtc: xtc::XtcWriteOptions::default(),
         }
     }
 
@@ -474,12 +527,18 @@ impl TrajectoryWriteOptions {
         self.trr = options;
         self
     }
+
+    pub fn with_xtc_options(mut self, options: xtc::XtcWriteOptions) -> Self {
+        self.xtc = options;
+        self
+    }
 }
 
 enum SequentialReaderInner {
     Xyz(xyz::XyzReader<BufReader<File>>),
     Dcd(dcd::DcdReader<BufReader<File>>),
     Trr(trr::TrrReader<BufReader<File>>),
+    Xtc(xtc::XtcReader<BufReader<File>>),
 }
 
 /// Format-agnostic path-backed sequential reader retaining one file handle.
@@ -500,6 +559,7 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
             SequentialReaderInner::Xyz(reader) => reader.topology(),
             SequentialReaderInner::Dcd(reader) => reader.topology(),
             SequentialReaderInner::Trr(reader) => reader.topology(),
+            SequentialReaderInner::Xtc(reader) => reader.topology(),
         }
     }
 
@@ -508,6 +568,7 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
             SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
             SequentialReaderInner::Dcd(reader) => reader.read_next(destination),
             SequentialReaderInner::Trr(reader) => reader.read_next(destination),
+            SequentialReaderInner::Xtc(reader) => reader.read_next(destination),
         }
     }
 }
@@ -516,6 +577,7 @@ enum IndexedReaderInner {
     Xyz(xyz::IndexedXyzReader<BufReader<File>>),
     Dcd(dcd::IndexedDcdReader<BufReader<File>>),
     Trr(trr::IndexedTrrReader<BufReader<File>>),
+    Xtc(xtc::IndexedXtcReader<BufReader<File>>),
 }
 
 /// Format-agnostic path-backed indexed reader retaining one file handle.
@@ -536,6 +598,7 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
             IndexedReaderInner::Xyz(reader) => reader.topology(),
             IndexedReaderInner::Dcd(reader) => reader.topology(),
             IndexedReaderInner::Trr(reader) => reader.topology(),
+            IndexedReaderInner::Xtc(reader) => reader.topology(),
         }
     }
 
@@ -544,6 +607,7 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
             IndexedReaderInner::Xyz(reader) => reader.read_next(destination),
             IndexedReaderInner::Dcd(reader) => reader.read_next(destination),
             IndexedReaderInner::Trr(reader) => reader.read_next(destination),
+            IndexedReaderInner::Xtc(reader) => reader.read_next(destination),
         }
     }
 }
@@ -554,6 +618,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
             IndexedReaderInner::Xyz(reader) => reader.frame_count(),
             IndexedReaderInner::Dcd(reader) => reader.frame_count(),
             IndexedReaderInner::Trr(reader) => reader.frame_count(),
+            IndexedReaderInner::Xtc(reader) => reader.frame_count(),
         }
     }
 
@@ -566,6 +631,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
             IndexedReaderInner::Xyz(reader) => reader.read_frame(index, destination),
             IndexedReaderInner::Dcd(reader) => reader.read_frame(index, destination),
             IndexedReaderInner::Trr(reader) => reader.read_frame(index, destination),
+            IndexedReaderInner::Xtc(reader) => reader.read_frame(index, destination),
         }
     }
 }
@@ -621,6 +687,18 @@ pub fn open_trajectory(
                 metadata,
                 vec![
                     "TRR uses XDR big-endian scalars and explicit lambda preservation policy"
+                        .into(),
+                ],
+            )
+        }
+        TrajectoryFormat::Xtc => {
+            let reader = xtc::XtcReader::new(reader, binding, options.xtc, options.limits, label)?;
+            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), None);
+            (
+                SequentialReaderInner::Xtc(reader),
+                metadata,
+                vec![
+                    "XTC decoding uses bounded preflight and the audited unbuffered molly adapter"
                         .into(),
                 ],
             )
@@ -699,6 +777,17 @@ pub fn open_indexed_trajectory(
                 vec!["TRR index verified every XDR frame and payload block".into()],
             )
         }
+        TrajectoryFormat::Xtc => {
+            let reader = xtc::XtcReader::new(reader, binding, options.xtc, options.limits, label)?;
+            let reader = reader.into_indexed()?;
+            let count = reader.frame_count().unwrap_or(0);
+            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), Some(count));
+            (
+                IndexedReaderInner::Xtc(reader),
+                metadata,
+                vec!["XTC index fully decoded and verified every compressed frame".into()],
+            )
+        }
         format => {
             return Err(unimplemented_format(
                 format,
@@ -720,6 +809,7 @@ enum FileWriterInner {
     Xyz(xyz::XyzWriter<BufWriter<File>>),
     Dcd(dcd::DcdWriter<BufWriter<File>>),
     Trr(trr::TrrWriter<BufWriter<File>>),
+    Xtc(xtc::XtcWriter<BufWriter<File>>),
 }
 
 impl FileWriterInner {
@@ -728,6 +818,7 @@ impl FileWriterInner {
             Self::Xyz(writer) => writer.topology(),
             Self::Dcd(writer) => writer.topology(),
             Self::Trr(writer) => writer.topology(),
+            Self::Xtc(writer) => writer.topology(),
         }
     }
 
@@ -736,6 +827,7 @@ impl FileWriterInner {
             Self::Xyz(writer) => writer.write_frame(frame),
             Self::Dcd(writer) => writer.write_frame(frame),
             Self::Trr(writer) => writer.write_frame(frame),
+            Self::Xtc(writer) => writer.write_frame(frame),
         }
     }
 
@@ -791,6 +883,24 @@ impl FileWriterInner {
                     io_context(
                         TrajectoryIoOperation::Finish,
                         Some(TrajectoryFormat::Trr),
+                        label,
+                        error,
+                    )
+                })
+            }
+            Self::Xtc(writer) => {
+                writer.flush().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Xtc),
+                        label,
+                        error,
+                    )
+                })?;
+                writer.writer().get_ref().sync_all().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Xtc),
                         label,
                         error,
                     )
@@ -944,6 +1054,12 @@ pub fn create_trajectory_writer(
             BufWriter::new(file),
             topology,
             options.trr,
+            label,
+        )?),
+        TrajectoryFormat::Xtc => FileWriterInner::Xtc(xtc::XtcWriter::new(
+            BufWriter::new(file),
+            topology,
+            options.xtc,
             label,
         )?),
         format => {

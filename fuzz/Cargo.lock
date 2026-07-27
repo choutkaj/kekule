@@ -88,7 +88,14 @@ name = "molecular-trajectory-io"
 version = "0.2.0"
 dependencies = [
  "molecular",
+ "molly",
 ]
+
+[[package]]
+name = "molly"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80fc11cdd24f997d0db799faf11a20c1902a49e6b45157977137188ef13f3848"
 
 [[package]]
 name = "r-efi"

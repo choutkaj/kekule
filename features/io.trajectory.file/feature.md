@@ -27,17 +27,17 @@ foundational `molecular` crate.
 - XYZ, DCD, TRR, and XTC are tracked independently. Amber NetCDF, multi-model
   PDB, GRO/G96, Amber ASCII, LAMMPS dump, and compressed wrappers remain
   structured unsupported formats until their own contracts land.
-- The current format-agnostic factory dispatches the implemented XYZ, DCD, and
-  TRR vertical slices. Recognized XTC signatures remain typed unsupported until
-  its independently tracked adapter lands.
+- The format-agnostic factory dispatches the implemented XYZ, DCD, TRR, and XTC
+  vertical slices. Amber NetCDF, PDB, GRO/G96, Amber ASCII, LAMMPS dump, and
+  compressed wrappers remain visibly deferred.
 
 ## Implementation Notes
 
 - Molecular-owned source forbids unsafe code and has no native Chemfiles,
   C/C++, or CMake runtime.
 - The companion crate is a publishable workspace member depending one-way on
-  `molecular`; format detection and XYZ have no production dependency beyond
-  the semantic core.
+  `molecular`; XYZ, DCD, and TRR have no production dependency beyond the
+  semantic core, while XTC adds only the audited pure-Rust `molly` adapter.
 - Codecs decode complete frames into reusable private scratch and publish
   transactionally into caller-owned `FrameBuffer` storage.
 - Clean EOF is recognized only between frames. Partial headers, records, or
