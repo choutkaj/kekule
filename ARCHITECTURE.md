@@ -794,6 +794,22 @@ geometric measurements should accept this view or a narrower equivalent.
 Existing convenience functions accepting `&Model` may delegate to the view
 kernel.
 
+Rigid alignment lives in the focused `alignment` analysis module. Its first
+milestone fits two `ModelView` values sharing one exact topology through one
+topology-bound `AtomSelection`. The returned proper `RigidTransform` maps
+moving coordinates into reference coordinates, while post-fit weighted RMSD is
+reported in the model length unit. Uniform or explicit positive finite
+selection-order weights are supported. Periodic configurations are rejected by
+default; an explicit stored-coordinate policy ignores cells without imaging or
+unwrapping. The analysis is read-only and never materializes replacement
+canonical coordinates.
+
+Determined alignment requires at least three selected atoms and rank-two
+geometry on both sides. Planar non-collinear selections are valid. Coincident,
+collinear, and scale-relatively near-collinear inputs are rejected through
+structured errors. Exact topology identity is mandatory; equal layout or atom
+count never establishes correspondence.
+
 ## Topology-bound selections
 
 Compiled atom and bond selections bind to exact topology identity and store
@@ -982,6 +998,9 @@ canon
 
 dssp
     read-only DSSP assignment over structural views
+
+alignment
+    same-topology selection-based weighted proper rigid fitting
 
 modeling
     prepared-system interfaces, Potential, minimization, numerical workflows
