@@ -17,3 +17,7 @@ molly = "=0.6.1"
 
 [dev-dependencies]
 sha2 = "0.11"
+
+[[bench]]
+name = "codec_throughput"
+harness = false

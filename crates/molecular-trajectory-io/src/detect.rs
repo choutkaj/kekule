@@ -24,7 +24,16 @@ pub(crate) fn select_format<R: Read + Seek>(
     let start = reader
         .stream_position()
         .map_err(|error| io_context(TrajectoryIoOperation::Detect, None, source_label, error))?;
-    let max = limits.max_detection_bytes.max(1);
+    let max = limits.max_detection_bytes;
+    if max == 0 {
+        return Err(codec_context(
+            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+            TrajectoryIoOperation::Detect,
+            None,
+            source_label,
+            "detection requires at least one configured prefix byte",
+        ));
+    }
     if max > limits.max_scratch_bytes {
         return Err(codec_context(
             TrajectoryCodecErrorKind::ResourceLimitExceeded,
@@ -44,13 +53,14 @@ pub(crate) fn select_format<R: Read + Seek>(
             "could not reserve bounded detection scratch",
         )
     })?;
-    prefix.resize(max, 0);
-    let read = reader
-        .read(&mut prefix)
-        .map_err(|error| io_context(TrajectoryIoOperation::Detect, None, source_label, error))?;
-    prefix.truncate(read);
-    reader
+    let read_result = Read::by_ref(reader)
+        .take(max as u64)
+        .read_to_end(&mut prefix);
+    let restore_result = reader
         .seek(SeekFrom::Start(start))
+        .map_err(|error| io_context(TrajectoryIoOperation::Detect, None, source_label, error));
+    restore_result?;
+    read_result
         .map_err(|error| io_context(TrajectoryIoOperation::Detect, None, source_label, error))?;
 
     if is_compressed_wrapper(&prefix) {

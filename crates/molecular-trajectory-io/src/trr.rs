@@ -13,11 +13,14 @@ use molecular::trajectory::{
 };
 use molecular::units::{Quantity, KILOJOULE_PER_MOLE, MODEL_LENGTH_UNIT, NANOMETER, PICOSECOND};
 
-use crate::{codec_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding};
+use crate::{
+    codec_context, frame_offset_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding,
+};
 
 const TRR_MAGIC: i32 = 1993;
 const TRR_VERSION: &[u8] = b"GMX_trn_file";
-const TRR_LAMBDA_PROPERTY: &str = "gromacs.trr.lambda";
+/// Stable frame-property key used to preserve the GROMACS TRR lambda scalar.
+pub const TRR_LAMBDA_PROPERTY: &str = "gromacs.trr.lambda";
 
 /// Native scalar width used by one TRR writer or frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +217,10 @@ impl<R: Read + Seek> TrrReader<R> {
         positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         velocities.resize(atom_count, Vector3::zero());
         forces.resize(atom_count, Vector3::zero());
+        let mut props = BTreeMap::new();
+        if options.lambda_policy == TrrLambdaPolicy::FrameProperty {
+            props.insert(TRR_LAMBDA_PROPERTY.to_owned(), PropValue::Float(0.0));
+        }
         Ok(Self {
             reader,
             binding,
@@ -228,7 +235,7 @@ impl<R: Read + Seek> TrrReader<R> {
             velocities,
             forces,
             raw: Vec::new(),
-            props: BTreeMap::new(),
+            props,
             frame_cursor: 0,
             precision_mixed: false,
         })
@@ -266,6 +273,7 @@ impl<R: Read + Seek> TrrReader<R> {
             Some(atom_count),
             true,
         )
+        .map_err(|error| frame_offset_context(error, self.frame_cursor, self.current_header_offset))
     }
 
     fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
@@ -391,12 +399,15 @@ impl<R: Read + Seek> TrrReader<R> {
             )?;
         }
         if let Some(destination) = publish {
-            self.props.clear();
             if self.options.lambda_policy == TrrLambdaPolicy::FrameProperty {
-                self.props.insert(
-                    TRR_LAMBDA_PROPERTY.to_owned(),
-                    PropValue::Float(header.lambda),
-                );
+                let Some(PropValue::Float(lambda)) = self.props.get_mut(TRR_LAMBDA_PROPERTY) else {
+                    return Err(frame_error(
+                        &self.source_label,
+                        self.frame_cursor,
+                        "TRR lambda scratch lost its stable property entry",
+                    ));
+                };
+                *lambda = header.lambda;
             }
             let mut data = FrameBufferData::new(
                 self.topology(),
@@ -422,7 +433,13 @@ impl<R: Read + Seek> TrrReader<R> {
             }
             destination.replace_from_data(data)?;
         }
-        self.frame_cursor += 1;
+        self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
+            resource_error(
+                &self.source_label,
+                Some(self.frame_cursor),
+                "TRR frame cursor overflows",
+            )
+        })?;
         Ok(true)
     }
 
@@ -441,7 +458,10 @@ impl<R: Read + Seek> TrrReader<R> {
                     )
                 })?
             };
-            if !self.parse_next(None)? {
+            if !self
+                .parse_next(None)
+                .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
+            {
                 break;
             }
             if offsets.len() >= self.limits.max_index_entries {
@@ -509,7 +529,20 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+        let offset = if self.pending_header.is_some() {
+            self.current_header_offset
+        } else {
+            self.reader.stream_position().map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::ReadFrame,
+                    Some(TrajectoryFormat::Trr),
+                    &self.source_label,
+                    error,
+                )
+            })?
+        };
         self.parse_next(Some(destination))
+            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
     }
 }
 
@@ -582,13 +615,17 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
             })?;
         self.inner.current_header_offset = offset;
         self.inner.frame_cursor = index;
-        let result = self.inner.parse_next(Some(destination)).and_then(|read| {
-            if read {
-                Ok(())
-            } else {
-                Err(TrajectoryError::FrameIndexOutOfRange(index))
-            }
-        });
+        let result = self
+            .inner
+            .parse_next(Some(destination))
+            .map_err(|error| frame_offset_context(error, index, offset))
+            .and_then(|read| {
+                if read {
+                    Ok(())
+                } else {
+                    Err(TrajectoryError::FrameIndexOutOfRange(index))
+                }
+            });
         let restore = self
             .inner
             .reader
@@ -680,7 +717,17 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             return Err(TrajectoryError::TopologyIdentityMismatch);
         }
         if frame.observation().is_some() {
-            return Err(TrajectoryError::UnsupportedField("observation"));
+            return Err(writer_field_error(
+                &self.source_label,
+                self.frame_count,
+                "observation",
+            ));
+        }
+        if self.frame_count == u64::MAX {
+            return Err(writer_limit(
+                &self.source_label,
+                "TRR frame count overflows",
+            ));
         }
         let step = frame.step().ok_or_else(|| {
             codec_context(
@@ -722,6 +769,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             frame.props(),
             self.options.lambda_policy,
             &self.source_label,
+            self.frame_count,
         )?;
         let scalar_bytes = self.options.precision.bytes();
         validate_representable(time, self.options.precision, &self.source_label, "time")?;
@@ -748,6 +796,85 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         } else {
             0
         };
+        let cell = frame.configuration().cell().copied();
+        let cell_data = if let Some(cell) = cell {
+            if cell.periodic_axes() != [true; 3] {
+                return Err(codec_context(
+                    TrajectoryCodecErrorKind::UnsupportedVariant,
+                    TrajectoryIoOperation::WriteFrame,
+                    Some(TrajectoryFormat::Trr),
+                    &self.source_label,
+                    "TRR cell requires all three periodic axes",
+                ));
+            }
+            let factor = MODEL_LENGTH_UNIT
+                .conversion_factor_to(NANOMETER)
+                .map_err(|error| writer_unit(&self.source_label, "cell", error))?;
+            Some((cell.vectors().into_value(), factor))
+        } else {
+            None
+        };
+        let positions = frame.configuration().positions().values();
+        let position_factor = MODEL_LENGTH_UNIT
+            .conversion_factor_to(NANOMETER)
+            .map_err(|error| writer_unit(&self.source_label, "positions", error))?;
+        let velocity_factor = frame
+            .velocities()
+            .map(|velocities| {
+                velocities
+                    .unit()
+                    .conversion_factor_to(NANOMETER / PICOSECOND)
+                    .map_err(|error| writer_unit(&self.source_label, "velocities", error))
+            })
+            .transpose()?;
+        let force_factor = frame
+            .forces()
+            .map(|forces| {
+                forces
+                    .unit()
+                    .conversion_factor_to(KILOJOULE_PER_MOLE / NANOMETER)
+                    .map_err(|error| writer_unit(&self.source_label, "forces", error))
+            })
+            .transpose()?;
+
+        if let Some((vectors, factor)) = &cell_data {
+            encode_vectors_to_raw(
+                &mut self.raw,
+                vectors,
+                *factor,
+                self.options.precision,
+                &self.source_label,
+                "cell",
+            )?;
+        }
+        encode_points_to_raw(
+            &mut self.raw,
+            positions.value(),
+            position_factor,
+            self.options.precision,
+            &self.source_label,
+        )?;
+        if let (Some(velocities), Some(factor)) = (frame.velocities(), velocity_factor) {
+            encode_vectors_to_raw(
+                &mut self.raw,
+                velocities.value(),
+                factor,
+                self.options.precision,
+                &self.source_label,
+                "velocity",
+            )?;
+        }
+        if let (Some(forces), Some(factor)) = (frame.forces(), force_factor) {
+            encode_vectors_to_raw(
+                &mut self.raw,
+                forces.value(),
+                factor,
+                self.options.precision,
+                &self.source_label,
+                "force",
+            )?;
+        }
+
         write_i32(&mut self.writer, TRR_MAGIC, &self.source_label)?;
         write_i32(
             &mut self.writer,
@@ -782,20 +909,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             self.options.precision,
             &self.source_label,
         )?;
-        if let Some(cell) = frame.configuration().cell().copied() {
-            if cell.periodic_axes() != [true; 3] {
-                return Err(codec_context(
-                    TrajectoryCodecErrorKind::UnsupportedVariant,
-                    TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Trr),
-                    &self.source_label,
-                    "TRR cell requires all three periodic axes",
-                ));
-            }
-            let factor = MODEL_LENGTH_UNIT
-                .conversion_factor_to(NANOMETER)
-                .map_err(|error| writer_unit(&self.source_label, "cell", error))?;
-            let vectors = cell.vectors().into_value();
+        if let Some((vectors, factor)) = cell_data {
             encode_vectors_to_raw(
                 &mut self.raw,
                 &vectors,
@@ -806,23 +920,15 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             )?;
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
-        let positions = frame.configuration().positions().values();
-        let factor = MODEL_LENGTH_UNIT
-            .conversion_factor_to(NANOMETER)
-            .map_err(|error| writer_unit(&self.source_label, "positions", error))?;
         encode_points_to_raw(
             &mut self.raw,
             positions.value(),
-            factor,
+            position_factor,
             self.options.precision,
             &self.source_label,
         )?;
         write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
-        if let Some(velocities) = frame.velocities() {
-            let factor = velocities
-                .unit()
-                .conversion_factor_to(NANOMETER / PICOSECOND)
-                .map_err(|error| writer_unit(&self.source_label, "velocities", error))?;
+        if let (Some(velocities), Some(factor)) = (frame.velocities(), velocity_factor) {
             encode_vectors_to_raw(
                 &mut self.raw,
                 velocities.value(),
@@ -833,11 +939,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             )?;
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
-        if let Some(forces) = frame.forces() {
-            let factor = forces
-                .unit()
-                .conversion_factor_to(KILOJOULE_PER_MOLE / NANOMETER)
-                .map_err(|error| writer_unit(&self.source_label, "forces", error))?;
+        if let (Some(forces), Some(factor)) = (frame.forces(), force_factor) {
             encode_vectors_to_raw(
                 &mut self.raw,
                 forces.value(),
@@ -900,8 +1002,8 @@ fn read_header<R: Read>(
             "TRR declared version storage is not the GMX_trn_file profile",
         ));
     }
-    let (version, version_bytes) = read_xdr_string(reader, limits, source_label)?;
-    if version != TRR_VERSION {
+    let (version_matches, version_bytes) = read_xdr_string(reader, limits, source_label)?;
+    if !version_matches {
         return Err(codec_context(
             TrajectoryCodecErrorKind::UnsupportedVariant,
             TrajectoryIoOperation::ReadHeader,
@@ -1065,7 +1167,7 @@ fn read_xdr_string<R: Read>(
     reader: &mut R,
     limits: &TrajectoryIoLimits,
     source_label: &str,
-) -> Result<(Vec<u8>, u64), TrajectoryError> {
+) -> Result<(bool, u64), TrajectoryError> {
     let length = usize::try_from(read_i32(reader, source_label, None, "TRR version length")?)
         .map_err(|_| header_error(source_label, "TRR version length is negative"))?;
     if length > 256 || length > limits.max_text_line_bytes || length > limits.max_scratch_bytes {
@@ -1079,14 +1181,10 @@ fn read_xdr_string<R: Read>(
         .checked_add(3)
         .map(|value| value & !3)
         .ok_or_else(|| resource_error(source_label, None, "TRR string padding overflows"))?;
-    let mut bytes = Vec::new();
-    bytes
-        .try_reserve_exact(padded)
-        .map_err(|_| resource_error(source_label, None, "could not reserve TRR version scratch"))?;
-    bytes.resize(padded, 0);
+    let mut bytes = [0_u8; 256];
     read_exact(
         reader,
-        &mut bytes,
+        &mut bytes[..padded],
         source_label,
         None,
         "truncated TRR version string",
@@ -1097,8 +1195,7 @@ fn read_xdr_string<R: Read>(
             "TRR XDR string padding is not zero",
         ));
     }
-    bytes.truncate(length);
-    Ok((bytes, 4 + padded as u64))
+    Ok((&bytes[..length] == TRR_VERSION, 4 + padded as u64))
 }
 
 fn read_raw<R: Read>(
@@ -1118,7 +1215,7 @@ fn read_raw<R: Read>(
         ));
     }
     if raw.capacity() < length {
-        raw.try_reserve_exact(length - raw.capacity())
+        raw.try_reserve_exact(length.saturating_sub(raw.len()))
             .map_err(|_| {
                 resource_error(
                     source_label,
@@ -1232,7 +1329,7 @@ fn encode_points_to_raw(
         .len()
         .checked_mul(3 * precision.bytes())
         .ok_or_else(|| writer_limit(source_label, "TRR position bytes overflow"))?;
-    raw.try_reserve(bytes.saturating_sub(raw.capacity()))
+    raw.try_reserve(bytes.saturating_sub(raw.len()))
         .map_err(|_| writer_limit(source_label, "could not reserve TRR writer scratch"))?;
     for point in points {
         for value in [point.x * factor, point.y * factor, point.z * factor] {
@@ -1255,7 +1352,7 @@ fn encode_vectors_to_raw(
         .len()
         .checked_mul(3 * precision.bytes())
         .ok_or_else(|| writer_limit(source_label, "TRR vector bytes overflow"))?;
-    raw.try_reserve(bytes.saturating_sub(raw.capacity()))
+    raw.try_reserve(bytes.saturating_sub(raw.len()))
         .map_err(|_| writer_limit(source_label, "could not reserve TRR writer scratch"))?;
     for vector in vectors {
         for value in [vector.x * factor, vector.y * factor, vector.z * factor] {
@@ -1304,6 +1401,7 @@ fn writer_lambda(
     props: &PropMap,
     policy: TrrLambdaPolicy,
     source_label: &str,
+    frame: u64,
 ) -> Result<f64, TrajectoryError> {
     match policy {
         TrrLambdaPolicy::FrameProperty => {
@@ -1329,7 +1427,7 @@ fn writer_lambda(
         }
         TrrLambdaPolicy::RequireZero => {
             if !props.is_empty() {
-                return Err(TrajectoryError::UnsupportedField("properties"));
+                return Err(writer_field_error(source_label, frame, "properties"));
             }
             Ok(0.0)
         }
@@ -1559,4 +1657,16 @@ fn writer_unit(source_label: &str, field: &str, error: impl std::fmt::Display) -
         source_label,
         format!("TRR {field} unit is incompatible: {error}"),
     )
+}
+
+fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryError {
+    TrajectoryCodecErrorContext::new(
+        TrajectoryCodecErrorKind::UnsupportedField,
+        TrajectoryIoOperation::WriteFrame,
+        Some(TrajectoryFormat::Trr),
+    )
+    .with_source_label(source_label)
+    .with_frame(frame)
+    .with_detail(format!("TRR cannot preserve {field}"))
+    .into()
 }

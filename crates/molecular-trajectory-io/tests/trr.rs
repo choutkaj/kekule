@@ -11,6 +11,7 @@ use molecular::trajectory::{
 use molecular::units::{Quantity, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
 use molecular_trajectory_io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision, TrrWriteOptions, TrrWriter,
+    TRR_LAMBDA_PROPERTY,
 };
 use molecular_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 use sha2::{Digest, Sha256};
@@ -120,7 +121,7 @@ fn populated_frame(topology: &Topology, shift: f64, step: u64) -> FrameBuffer {
     frame.set_step(Some(step));
     frame
         .props_mut()
-        .insert("gromacs.trr.lambda".into(), PropValue::Float(0.125));
+        .insert(TRR_LAMBDA_PROPERTY.into(), PropValue::Float(0.125));
     frame
 }
 
@@ -144,8 +145,13 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         second.set_forces::<&[Vector3]>(None).unwrap();
         second
             .props_mut()
-            .insert("gromacs.trr.lambda".into(), PropValue::Float(0.25));
+            .insert(TRR_LAMBDA_PROPERTY.into(), PropValue::Float(0.25));
         writer.write_frame(second.frame_view()).unwrap();
+        let mut third = populated_frame(&topology, 2.0, 6);
+        third
+            .props_mut()
+            .insert(TRR_LAMBDA_PROPERTY.into(), PropValue::Float(0.375));
+        writer.write_frame(third.frame_view()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
 
         let mut reader = TrrReader::new(
@@ -170,8 +176,15 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         assert!(destination.configuration().cell().is_some());
         assert!(destination.frame_view().velocities().is_some());
         assert!(destination.frame_view().forces().is_some());
+        let velocity_pointer = destination
+            .frame_view()
+            .velocities()
+            .unwrap()
+            .value()
+            .as_ptr();
+        let force_pointer = destination.frame_view().forces().unwrap().value().as_ptr();
         assert_eq!(
-            destination.props().get("gromacs.trr.lambda"),
+            destination.props().get(TRR_LAMBDA_PROPERTY),
             Some(&PropValue::Float(0.125))
         );
         assert!(reader.read_next(&mut destination).unwrap());
@@ -188,6 +201,21 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
                 .as_ptr(),
             pointer
         );
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_xs_close(&destination, &[20.0, 50.0, 80.0]);
+        assert_eq!(
+            destination
+                .frame_view()
+                .velocities()
+                .unwrap()
+                .value()
+                .as_ptr(),
+            velocity_pointer
+        );
+        assert_eq!(
+            destination.frame_view().forces().unwrap().value().as_ptr(),
+            force_pointer
+        );
         assert!(!reader.read_next(&mut destination).unwrap());
 
         let mut indexed = TrrReader::new(
@@ -200,7 +228,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         .unwrap()
         .into_indexed()
         .unwrap();
-        assert_eq!(indexed.frame_count(), Some(2));
+        assert_eq!(indexed.frame_count(), Some(3));
         indexed.read_frame(1, &mut destination).unwrap();
         assert_xs_close(&destination, &[10.0, 40.0, 70.0]);
         assert!(indexed.read_next(&mut destination).unwrap());
@@ -268,8 +296,8 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(frame.frame_view()).unwrap_err(),
-        TrajectoryError::UnsupportedField("properties")
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
     frame.props_mut().clear();
     writer.write_frame(frame.frame_view()).unwrap();
@@ -337,6 +365,11 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::TruncatedRecord)
     );
+    let TrajectoryError::Codec(context) = &error else {
+        panic!("expected typed TRR codec context");
+    };
+    assert_eq!(context.frame(), Some(1));
+    assert!(context.byte_offset().is_some());
     assert_eq!(xs(&destination), before);
 
     let limits = TrajectoryIoLimits {
@@ -356,6 +389,34 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
     );
+}
+
+#[test]
+fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        TrrWriteOptions::default(),
+        "late-invalid.trr",
+    )
+    .unwrap();
+    let mut frame = populated_frame(&topology, 0.0, 0);
+    frame
+        .set_positions(Quantity::new(
+            [
+                Point3::new(1.0e39, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 1.0),
+                Point3::new(2.0, 2.0, 2.0),
+            ],
+            NANOMETER,
+        ))
+        .unwrap();
+    assert_eq!(
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+    assert!(writer.writer().get_ref().is_empty());
 }
 
 #[test]
@@ -422,14 +483,14 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     assert!(buffer.frame_view().forces().is_some());
     assert_eq!(buffer.frame_view().step(), Some(0));
     assert_eq!(
-        buffer.props().get("gromacs.trr.lambda"),
+        buffer.props().get(TRR_LAMBDA_PROPERTY),
         Some(&PropValue::Float(0.125))
     );
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_xs_close(&buffer, &[1.0, 4.0, 7.0]);
     assert_eq!(buffer.frame_view().step(), Some(1));
     assert_eq!(
-        buffer.props().get("gromacs.trr.lambda"),
+        buffer.props().get(TRR_LAMBDA_PROPERTY),
         Some(&PropValue::Float(0.25))
     );
     assert!(!reader.read_next(&mut buffer).unwrap());

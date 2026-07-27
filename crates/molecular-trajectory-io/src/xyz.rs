@@ -14,6 +14,8 @@ use molecular::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT};
 
 use crate::{codec_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding};
 
+const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
+
 /// XYZ length-unit interpretation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct XyzReadOptions {
@@ -160,7 +162,18 @@ impl<R: BufRead> XyzReader<R> {
                 "XYZ frame count exceeds the configured limit",
             ));
         }
-        let mut frame_bytes = count_line.len().saturating_add(1) as u64;
+        let mut frame_bytes = u64::try_from(count_line.len())
+            .ok()
+            .and_then(|bytes| bytes.checked_add(1))
+            .ok_or_else(|| {
+                frame_codec_error(
+                    TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                    operation,
+                    &self.source_label,
+                    self.frame_cursor,
+                    "XYZ frame byte count overflows",
+                )
+            })?;
         validate_frame_bytes(
             frame_bytes,
             &self.limits,
@@ -215,7 +228,13 @@ impl<R: BufRead> XyzReader<R> {
                 "XYZ frame is missing its comment line",
             ));
         }
-        frame_bytes = frame_bytes.saturating_add(self.line.len().saturating_add(1) as u64);
+        frame_bytes = checked_frame_add(
+            frame_bytes,
+            self.line.len(),
+            &self.source_label,
+            self.frame_cursor,
+            operation,
+        )?;
         validate_frame_bytes(
             frame_bytes,
             &self.limits,
@@ -256,7 +275,13 @@ impl<R: BufRead> XyzReader<R> {
                     format!("XYZ frame ends before atom line {atom_index}"),
                 ));
             };
-            frame_bytes = frame_bytes.saturating_add(line.len().saturating_add(1) as u64);
+            frame_bytes = checked_frame_add(
+                frame_bytes,
+                line.len(),
+                &self.source_label,
+                self.frame_cursor,
+                operation,
+            )?;
             validate_frame_bytes(
                 frame_bytes,
                 &self.limits,
@@ -440,7 +465,15 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 ));
             }
             offsets.push(offset);
-            self.frame_cursor += 1;
+            self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
+                frame_codec_error(
+                    TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                    TrajectoryIoOperation::Index,
+                    &self.source_label,
+                    self.frame_cursor,
+                    "XYZ frame cursor overflows",
+                )
+            })?;
         }
         if offsets.is_empty() {
             return Err(codec_context(
@@ -592,6 +625,15 @@ impl<W: Write> XyzWriter<W> {
                 "XYZ writer comment cannot contain a line break",
             ));
         }
+        if options.comment.len() > MAX_WRITER_COMMENT_BYTES {
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &source_label,
+                format!("XYZ writer comment exceeds the {MAX_WRITER_COMMENT_BYTES}-byte limit"),
+            ));
+        }
         Ok(Self {
             writer,
             topology,
@@ -646,7 +688,11 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             (!frame.props().is_empty(), "frame properties"),
         ];
         if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
-            return Err(TrajectoryError::UnsupportedField(field));
+            return Err(writer_field_error(
+                &self.source_label,
+                self.frame_count,
+                field,
+            ));
         }
         let factor = MODEL_LENGTH_UNIT
             .conversion_factor_to(self.options.length_unit)
@@ -795,6 +841,28 @@ fn validate_frame_bytes(
     Ok(())
 }
 
+fn checked_frame_add(
+    frame_bytes: u64,
+    line_bytes: usize,
+    source_label: &str,
+    frame: u64,
+    operation: TrajectoryIoOperation,
+) -> Result<u64, TrajectoryError> {
+    u64::try_from(line_bytes)
+        .ok()
+        .and_then(|bytes| bytes.checked_add(1))
+        .and_then(|bytes| frame_bytes.checked_add(bytes))
+        .ok_or_else(|| {
+            frame_codec_error(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                operation,
+                source_label,
+                frame,
+                "XYZ frame byte count overflows",
+            )
+        })
+}
+
 fn read_line<'a, R: BufRead>(
     reader: &mut R,
     line: &'a mut String,
@@ -849,4 +917,16 @@ fn frame_codec_error(
         .with_frame(frame)
         .with_detail(detail)
         .into()
+}
+
+fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryError {
+    TrajectoryCodecErrorContext::new(
+        TrajectoryCodecErrorKind::UnsupportedField,
+        TrajectoryIoOperation::WriteFrame,
+        Some(TrajectoryFormat::Xyz),
+    )
+    .with_source_label(source_label)
+    .with_frame(frame)
+    .with_detail(format!("XYZ cannot preserve {field}"))
+    .into()
 }
