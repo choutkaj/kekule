@@ -7,6 +7,12 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Add the core contracts required by external trajectory codecs: complete
+  transactional allocation-reusing `FrameBuffer` publication, explicit
+  exact-topology atom-order assertions, non-exhaustive trajectory format
+  identity, typed file/codec error context, and downstream trait-implementation
+  tests. Register the planned one-way `molecular-trajectory-io` companion and
+  independent XYZ, DCD, TRR, and XTC feature contracts.
 - Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit

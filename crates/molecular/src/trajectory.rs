@@ -1,10 +1,10 @@
 //! Fixed-topology trajectory frames, reusable buffers, in-memory storage, and
 //! streaming reader/writer contracts.
 
-use std::fmt;
+use std::{fmt, io};
 
 use crate::core::PropMap;
-use crate::geometry::{Point3, Vector3};
+use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::structure::{
     remap_dense_values, validate_state_mapping, Configuration, ConfigurationView, ModelError,
     ModelView, ObservationError, PositionError, Positions, StructureObservation,
@@ -76,6 +76,19 @@ impl TopologyVectors {
     where
         T: AsRef<[Vector3]>,
     {
+        let factor = self.validate_replacement(topology, &values)?;
+        self.copy_from_validated(values.value().as_ref(), factor);
+        Ok(())
+    }
+
+    fn validate_replacement<T>(
+        &self,
+        topology: &Topology,
+        values: &Quantity<T>,
+    ) -> Result<f64, FrameError>
+    where
+        T: AsRef<[Vector3]>,
+    {
         if !self.is_compatible(topology) {
             return Err(FrameError::TopologyIdentityMismatch);
         }
@@ -95,10 +108,13 @@ impl TopologyVectors {
                 });
             }
         }
+        Ok(factor)
+    }
+
+    fn copy_from_validated(&mut self, source: &[Vector3], factor: f64) {
         for (destination, source) in self.values.iter_mut().zip(source.iter().copied()) {
             *destination = Vector3::new(source.x * factor, source.y * factor, source.z * factor);
         }
-        Ok(())
     }
 
     fn remap_to(
@@ -408,6 +424,92 @@ impl<'a> TrajectoryFrameView<'a> {
     }
 }
 
+/// Complete borrowed frame state ready for transactional publication.
+///
+/// A decoder builds this value only after it has read one complete frame into
+/// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field
+/// before changing the destination, converts units once, reuses dense-array
+/// allocations, and clears optional fields omitted from this value.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameBufferData<'a> {
+    topology: &'a Topology,
+    positions: Quantity<&'a [Point3]>,
+    cell: Option<PeriodicCell>,
+    velocities: Option<Quantity<&'a [Vector3]>>,
+    forces: Option<Quantity<&'a [Vector3]>>,
+    time: Option<Quantity<f64>>,
+    step: Option<u64>,
+    observation: Option<&'a StructureObservation>,
+    props: Option<&'a PropMap>,
+}
+
+impl<'a> FrameBufferData<'a> {
+    /// Starts complete frame data with required topology-bound positions.
+    pub const fn new(topology: &'a Topology, positions: Quantity<&'a [Point3]>) -> Self {
+        Self {
+            topology,
+            positions,
+            cell: None,
+            velocities: None,
+            forces: None,
+            time: None,
+            step: None,
+            observation: None,
+            props: None,
+        }
+    }
+
+    /// Borrows every field from an already validated frame view.
+    pub fn from_frame_view(frame: TrajectoryFrameView<'a>) -> Self {
+        Self {
+            topology: frame.topology,
+            positions: frame.configuration.positions().values(),
+            cell: frame.configuration.cell().copied(),
+            velocities: frame.velocities,
+            forces: frame.forces,
+            time: frame.time,
+            step: frame.step,
+            observation: frame.observation,
+            props: Some(frame.props),
+        }
+    }
+
+    pub const fn with_cell(mut self, cell: PeriodicCell) -> Self {
+        self.cell = Some(cell);
+        self
+    }
+
+    pub const fn with_velocities(mut self, velocities: Quantity<&'a [Vector3]>) -> Self {
+        self.velocities = Some(velocities);
+        self
+    }
+
+    pub const fn with_forces(mut self, forces: Quantity<&'a [Vector3]>) -> Self {
+        self.forces = Some(forces);
+        self
+    }
+
+    pub const fn with_time(mut self, time: Quantity<f64>) -> Self {
+        self.time = Some(time);
+        self
+    }
+
+    pub const fn with_step(mut self, step: u64) -> Self {
+        self.step = Some(step);
+        self
+    }
+
+    pub const fn with_observation(mut self, observation: &'a StructureObservation) -> Self {
+        self.observation = Some(observation);
+        self
+    }
+
+    pub const fn with_props(mut self, props: &'a PropMap) -> Self {
+        self.props = Some(props);
+        self
+    }
+}
+
 /// Reusable caller-owned frame storage bound to one exact topology.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
@@ -559,19 +661,87 @@ impl FrameBuffer {
         }
     }
 
-    pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), FrameError> {
-        if !self.topology.same_identity(frame.topology) {
+    /// Replaces the complete visible frame transactionally.
+    ///
+    /// All topology, count, unit, finite-value, observation, and optional-array
+    /// validation completes before any destination field changes. Existing
+    /// position, velocity, and force allocations are reused. Optional fields
+    /// absent from `data`, including properties, are cleared.
+    pub fn replace_from_data(&mut self, data: FrameBufferData<'_>) -> Result<(), FrameError> {
+        if !self.topology.same_identity(data.topology) {
             return Err(FrameError::TopologyIdentityMismatch);
         }
-        self.set_positions(frame.configuration.positions().values())?;
-        self.set_cell(frame.configuration.cell().copied());
-        self.set_velocities(frame.velocities)?;
-        self.set_forces(frame.forces)?;
-        self.set_time(frame.time)?;
-        self.step = frame.step;
-        self.observation = frame.observation.cloned();
-        self.props = frame.props.clone();
+
+        let position_factor = self
+            .configuration
+            .positions()
+            .validate_replacement(&self.topology, &data.positions)?;
+        let velocities = data
+            .velocities
+            .map(|values| {
+                self.velocities
+                    .0
+                    .validate_replacement(&self.topology, &values)
+                    .map(|factor| (values, factor))
+            })
+            .transpose()?;
+        let forces = data
+            .forces
+            .map(|values| {
+                self.forces
+                    .0
+                    .validate_replacement(&self.topology, &values)
+                    .map(|factor| (values, factor))
+            })
+            .transpose()?;
+        let time = data
+            .time
+            .map(|time| {
+                let time = time.into_unit(MODEL_TIME_UNIT)?;
+                if !time.value().is_finite() {
+                    return Err(FrameError::NonFiniteTime);
+                }
+                Ok(time)
+            })
+            .transpose()?;
+        if data
+            .observation
+            .is_some_and(|observation| !observation.is_compatible(&self.topology))
+        {
+            return Err(FrameError::TopologyIdentityMismatch);
+        }
+        let observation = data.observation.cloned();
+        let props = data.props.cloned().unwrap_or_default();
+
+        self.configuration
+            .positions_mut()
+            .copy_from_validated(data.positions.value(), position_factor);
+        self.configuration.set_cell(data.cell);
+        match velocities {
+            Some((values, factor)) => {
+                self.velocities
+                    .0
+                    .copy_from_validated(values.value(), factor);
+                self.has_velocities = true;
+            }
+            None => self.has_velocities = false,
+        }
+        match forces {
+            Some((values, factor)) => {
+                self.forces.0.copy_from_validated(values.value(), factor);
+                self.has_forces = true;
+            }
+            None => self.has_forces = false,
+        }
+        self.time = time;
+        self.step = data.step;
+        self.observation = observation;
+        self.props = props;
         Ok(())
+    }
+
+    pub fn copy_from(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), FrameError> {
+        self.replace_from_data(FrameBufferData::from_frame_view(frame))
     }
 
     /// Copies a borrowed source frame through explicit topology lineage.
@@ -903,7 +1073,9 @@ pub struct AtomOrderAssertion {
 }
 
 impl AtomOrderAssertion {
-    pub fn new(
+    /// Proves that an explicit semantic atom sequence is the topology's exact
+    /// authoritative dense order.
+    pub fn from_semantic_order(
         topology: &Topology,
         atom_order: &[InstanceAtomId],
     ) -> Result<Self, TrajectoryError> {
@@ -913,6 +1085,33 @@ impl AtomOrderAssertion {
         Ok(Self {
             topology: topology.identity(),
         })
+    }
+
+    /// Records the caller's explicit assertion that a topology-free file uses
+    /// this topology's authoritative dense atom order.
+    ///
+    /// This is evidence supplied by the caller, not an inference from atom
+    /// count. Format readers must still validate all stronger file metadata.
+    pub fn assert_file_uses_topology_order(topology: &Topology) -> Self {
+        Self {
+            topology: topology.identity(),
+        }
+    }
+
+    pub fn is_compatible(&self, topology: &Topology) -> bool {
+        self.topology == topology.identity()
+    }
+
+    pub fn topology_identity(&self) -> &TopologyIdentity {
+        &self.topology
+    }
+
+    /// Backward-compatible spelling for [`Self::from_semantic_order`].
+    pub fn new(
+        topology: &Topology,
+        atom_order: &[InstanceAtomId],
+    ) -> Result<Self, TrajectoryError> {
+        Self::from_semantic_order(topology, atom_order)
     }
 }
 
@@ -1078,6 +1277,281 @@ impl From<UnitError> for FrameError {
     }
 }
 
+/// Stable identity for a trajectory file format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TrajectoryFormat {
+    Xyz,
+    Dcd,
+    Xtc,
+    Trr,
+}
+
+impl TrajectoryFormat {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Xyz => "XYZ",
+            Self::Dcd => "DCD",
+            Self::Xtc => "XTC",
+            Self::Trr => "TRR",
+        }
+    }
+}
+
+impl fmt::Display for TrajectoryFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+/// File or stream operation active when trajectory I/O failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TrajectoryIoOperation {
+    Detect,
+    Open,
+    Index,
+    ReadHeader,
+    ReadFrame,
+    WriteHeader,
+    WriteFrame,
+    Finish,
+}
+
+impl fmt::Display for TrajectoryIoOperation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Detect => "detect",
+            Self::Open => "open",
+            Self::Index => "index",
+            Self::ReadHeader => "read header",
+            Self::ReadFrame => "read frame",
+            Self::WriteHeader => "write header",
+            Self::WriteFrame => "write frame",
+            Self::Finish => "finish",
+        };
+        formatter.write_str(name)
+    }
+}
+
+/// Typed classification for malformed, unsupported, or unsafe codec input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TrajectoryCodecErrorKind {
+    UnknownFormat,
+    FormatMismatch,
+    InvalidHeader,
+    UnsupportedVariant,
+    TruncatedRecord,
+    InvalidRecordLength,
+    RecordMarkerMismatch,
+    InvalidFrame,
+    InconsistentAtomCount,
+    InconsistentMetadata,
+    InvalidPrecision,
+    ResourceLimitExceeded,
+    UnsupportedField,
+    NegativeOrUnrepresentableStep,
+    CorruptCompressedData,
+}
+
+impl fmt::Display for TrajectoryCodecErrorKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let description = match self {
+            Self::UnknownFormat => "unknown trajectory format",
+            Self::FormatMismatch => "trajectory format mismatch",
+            Self::InvalidHeader => "invalid trajectory header",
+            Self::UnsupportedVariant => "unsupported trajectory variant",
+            Self::TruncatedRecord => "truncated trajectory record",
+            Self::InvalidRecordLength => "invalid trajectory record length",
+            Self::RecordMarkerMismatch => "trajectory record markers do not match",
+            Self::InvalidFrame => "invalid trajectory frame",
+            Self::InconsistentAtomCount => "inconsistent trajectory atom count",
+            Self::InconsistentMetadata => "inconsistent trajectory metadata",
+            Self::InvalidPrecision => "invalid trajectory precision",
+            Self::ResourceLimitExceeded => "trajectory resource limit exceeded",
+            Self::UnsupportedField => "unsupported trajectory field",
+            Self::NegativeOrUnrepresentableStep => "negative or unrepresentable trajectory step",
+            Self::CorruptCompressedData => "corrupt compressed trajectory data",
+        };
+        formatter.write_str(description)
+    }
+}
+
+/// Cloneable typed context for an underlying file or stream error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrajectoryIoErrorContext {
+    operation: TrajectoryIoOperation,
+    format: Option<TrajectoryFormat>,
+    source_label: Option<String>,
+    frame: Option<u64>,
+    byte_offset: Option<u64>,
+    error_kind: io::ErrorKind,
+    message: String,
+}
+
+impl TrajectoryIoErrorContext {
+    pub fn new(
+        operation: TrajectoryIoOperation,
+        error_kind: io::ErrorKind,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation,
+            format: None,
+            source_label: None,
+            frame: None,
+            byte_offset: None,
+            error_kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn with_format(mut self, format: TrajectoryFormat) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = Some(source_label.into());
+        self
+    }
+
+    pub const fn with_frame(mut self, frame: u64) -> Self {
+        self.frame = Some(frame);
+        self
+    }
+
+    pub const fn with_byte_offset(mut self, byte_offset: u64) -> Self {
+        self.byte_offset = Some(byte_offset);
+        self
+    }
+
+    pub const fn operation(&self) -> TrajectoryIoOperation {
+        self.operation
+    }
+
+    pub const fn format(&self) -> Option<TrajectoryFormat> {
+        self.format
+    }
+
+    pub fn source_label(&self) -> Option<&str> {
+        self.source_label.as_deref()
+    }
+
+    pub const fn frame(&self) -> Option<u64> {
+        self.frame
+    }
+
+    pub const fn byte_offset(&self) -> Option<u64> {
+        self.byte_offset
+    }
+
+    pub const fn error_kind(&self) -> io::ErrorKind {
+        self.error_kind
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// Typed context for a codec validation or capability error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrajectoryCodecErrorContext {
+    kind: TrajectoryCodecErrorKind,
+    operation: TrajectoryIoOperation,
+    format: Option<TrajectoryFormat>,
+    source_label: Option<String>,
+    frame: Option<u64>,
+    byte_offset: Option<u64>,
+    expected: Option<u64>,
+    actual: Option<u64>,
+    detail: Option<String>,
+}
+
+impl TrajectoryCodecErrorContext {
+    pub const fn new(
+        kind: TrajectoryCodecErrorKind,
+        operation: TrajectoryIoOperation,
+        format: Option<TrajectoryFormat>,
+    ) -> Self {
+        Self {
+            kind,
+            operation,
+            format,
+            source_label: None,
+            frame: None,
+            byte_offset: None,
+            expected: None,
+            actual: None,
+            detail: None,
+        }
+    }
+
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = Some(source_label.into());
+        self
+    }
+
+    pub const fn with_frame(mut self, frame: u64) -> Self {
+        self.frame = Some(frame);
+        self
+    }
+
+    pub const fn with_byte_offset(mut self, byte_offset: u64) -> Self {
+        self.byte_offset = Some(byte_offset);
+        self
+    }
+
+    pub const fn with_counts(mut self, expected: u64, actual: u64) -> Self {
+        self.expected = Some(expected);
+        self.actual = Some(actual);
+        self
+    }
+
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    pub const fn kind(&self) -> TrajectoryCodecErrorKind {
+        self.kind
+    }
+
+    pub const fn operation(&self) -> TrajectoryIoOperation {
+        self.operation
+    }
+
+    pub const fn format(&self) -> Option<TrajectoryFormat> {
+        self.format
+    }
+
+    pub fn source_label(&self) -> Option<&str> {
+        self.source_label.as_deref()
+    }
+
+    pub const fn frame(&self) -> Option<u64> {
+        self.frame
+    }
+
+    pub const fn byte_offset(&self) -> Option<u64> {
+        self.byte_offset
+    }
+
+    pub const fn expected(&self) -> Option<u64> {
+        self.expected
+    }
+
+    pub const fn actual(&self) -> Option<u64> {
+        self.actual
+    }
+
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TrajectoryError {
@@ -1091,6 +1565,8 @@ pub enum TrajectoryError {
     UnsupportedField(&'static str),
     Frame(Box<FrameError>),
     Position(PositionError),
+    Io(TrajectoryIoErrorContext),
+    Codec(TrajectoryCodecErrorContext),
 }
 
 impl fmt::Display for TrajectoryError {
@@ -1122,6 +1598,49 @@ impl fmt::Display for TrajectoryError {
             }
             Self::Frame(error) => write!(formatter, "invalid trajectory frame: {error}"),
             Self::Position(error) => write!(formatter, "invalid trajectory positions: {error}"),
+            Self::Io(context) => {
+                write!(formatter, "trajectory {} I/O failed", context.operation)?;
+                if let Some(format) = context.format {
+                    write!(formatter, " for {format}")?;
+                }
+                if let Some(source) = &context.source_label {
+                    write!(formatter, " at {source}")?;
+                }
+                if let Some(frame) = context.frame {
+                    write!(formatter, " in frame {frame}")?;
+                }
+                if let Some(offset) = context.byte_offset {
+                    write!(formatter, " at byte {offset}")?;
+                }
+                write!(
+                    formatter,
+                    ": {} ({:?})",
+                    context.message, context.error_kind
+                )
+            }
+            Self::Codec(context) => {
+                write!(formatter, "{}", context.kind)?;
+                if let Some(format) = context.format {
+                    write!(formatter, " for {format}")?;
+                }
+                write!(formatter, " while attempting to {}", context.operation)?;
+                if let Some(source) = &context.source_label {
+                    write!(formatter, " at {source}")?;
+                }
+                if let Some(frame) = context.frame {
+                    write!(formatter, " in frame {frame}")?;
+                }
+                if let Some(offset) = context.byte_offset {
+                    write!(formatter, " at byte {offset}")?;
+                }
+                if let (Some(expected), Some(actual)) = (context.expected, context.actual) {
+                    write!(formatter, " (expected {expected}, actual {actual})")?;
+                }
+                if let Some(detail) = &context.detail {
+                    write!(formatter, ": {detail}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1146,6 +1665,18 @@ impl From<PositionError> for TrajectoryError {
 impl From<ModelError> for TrajectoryError {
     fn from(_: ModelError) -> Self {
         Self::TopologyIdentityMismatch
+    }
+}
+
+impl From<TrajectoryIoErrorContext> for TrajectoryError {
+    fn from(context: TrajectoryIoErrorContext) -> Self {
+        Self::Io(context)
+    }
+}
+
+impl From<TrajectoryCodecErrorContext> for TrajectoryError {
+    fn from(context: TrajectoryCodecErrorContext) -> Self {
+        Self::Codec(context)
     }
 }
 
@@ -1197,6 +1728,19 @@ mod tests {
             .unwrap();
         frame.set_step(Some(time as u64));
         frame
+    }
+
+    fn assert_same_buffer_state(actual: &FrameBuffer, expected: &FrameBuffer) {
+        assert!(actual.topology.same_identity(&expected.topology));
+        assert_eq!(actual.configuration, expected.configuration);
+        assert_eq!(actual.velocities, expected.velocities);
+        assert_eq!(actual.has_velocities, expected.has_velocities);
+        assert_eq!(actual.forces, expected.forces);
+        assert_eq!(actual.has_forces, expected.has_forces);
+        assert_eq!(actual.time, expected.time);
+        assert_eq!(actual.step, expected.step);
+        assert_eq!(actual.observation, expected.observation);
+        assert_eq!(actual.props, expected.props);
     }
 
     #[test]
@@ -1283,6 +1827,166 @@ mod tests {
         reader.read_frame(0, &mut buffer).unwrap();
         assert_eq!(buffer.model_view().positions().value()[0].x, 0.0);
         assert_eq!(reader.frame_count(), Some(2));
+    }
+
+    #[test]
+    fn complete_buffer_publication_is_transactional_and_reuses_allocations() {
+        let topology = one_atom_topology();
+        let cell = PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(10.0, 11.0, 12.0), ANGSTROM),
+            [true; 3],
+        )
+        .unwrap();
+        let positions = [Point3::new(1.0, 2.0, 3.0)];
+        let velocities = [Vector3::new(4.0, 5.0, 6.0)];
+        let forces = [Vector3::new(7.0, 8.0, 9.0)];
+        let mut props = PropMap::new();
+        props.insert("codec:value".into(), PropValue::Int(7));
+
+        let mut buffer = FrameBuffer::new(topology.clone());
+        buffer
+            .replace_from_data(
+                FrameBufferData::new(&topology, Quantity::new(&positions, ANGSTROM))
+                    .with_cell(cell)
+                    .with_velocities(Quantity::new(&velocities, MODEL_VELOCITY_UNIT))
+                    .with_forces(Quantity::new(&forces, MODEL_FORCE_UNIT))
+                    .with_time(Quantity::new(2.0, PICOSECOND))
+                    .with_step(8)
+                    .with_props(&props),
+            )
+            .unwrap();
+
+        let position_pointer = buffer.configuration.positions().values_raw().as_ptr();
+        let position_capacity = buffer.configuration.positions().capacity();
+        let velocity_pointer = buffer.velocities.0.values.as_ptr();
+        let velocity_capacity = buffer.velocities.0.values.capacity();
+        let force_pointer = buffer.forces.0.values.as_ptr();
+        let force_capacity = buffer.forces.0.values.capacity();
+
+        let before_failure = buffer.clone();
+        let replacement_positions = [Point3::new(20.0, 21.0, 22.0)];
+        let invalid_forces = [Vector3::new(f64::NAN, 0.0, 0.0)];
+        assert!(matches!(
+            buffer.replace_from_data(
+                FrameBufferData::new(&topology, Quantity::new(&replacement_positions, ANGSTROM))
+                    .with_velocities(Quantity::new(&velocities, MODEL_VELOCITY_UNIT))
+                    .with_forces(Quantity::new(&invalid_forces, MODEL_FORCE_UNIT))
+                    .with_time(Quantity::new(3.0, PICOSECOND))
+            ),
+            Err(FrameError::NonFiniteVector { .. })
+        ));
+        assert_same_buffer_state(&buffer, &before_failure);
+
+        buffer
+            .replace_from_data(FrameBufferData::new(
+                &topology,
+                Quantity::new(&replacement_positions, ANGSTROM),
+            ))
+            .unwrap();
+        assert_eq!(
+            buffer.configuration.positions().values_raw().as_ptr(),
+            position_pointer
+        );
+        assert_eq!(
+            buffer.configuration.positions().capacity(),
+            position_capacity
+        );
+        assert_eq!(buffer.velocities.0.values.as_ptr(), velocity_pointer);
+        assert_eq!(buffer.velocities.0.values.capacity(), velocity_capacity);
+        assert_eq!(buffer.forces.0.values.as_ptr(), force_pointer);
+        assert_eq!(buffer.forces.0.values.capacity(), force_capacity);
+        assert_eq!(
+            buffer.configuration.positions().values_raw(),
+            &replacement_positions
+        );
+        assert!(buffer.configuration.cell().is_none());
+        assert!(buffer.frame_view().velocities().is_none());
+        assert!(buffer.frame_view().forces().is_none());
+        assert!(buffer.frame_view().time().is_none());
+        assert!(buffer.frame_view().step().is_none());
+        assert!(buffer.props().is_empty());
+    }
+
+    #[test]
+    fn copy_from_uses_complete_transactional_publication() {
+        let topology = one_atom_topology();
+        let mut buffer = FrameBuffer::new(topology.clone());
+        buffer
+            .set_positions(configuration(&topology, 5.0).positions().values())
+            .unwrap();
+        buffer
+            .props_mut()
+            .insert("old".into(), PropValue::Bool(true));
+        let before = buffer.clone();
+
+        let source = configuration(&topology, 10.0);
+        let props = PropMap::new();
+        let invalid = TrajectoryFrameView {
+            topology: &topology,
+            configuration: source.view(),
+            velocities: None,
+            forces: None,
+            time: Some(Quantity::new(f64::INFINITY, PICOSECOND)),
+            step: Some(9),
+            observation: None,
+            props: &props,
+        };
+        assert_eq!(buffer.copy_from(invalid), Err(FrameError::NonFiniteTime));
+        assert_same_buffer_state(&buffer, &before);
+    }
+
+    #[test]
+    fn atom_order_helpers_bind_exact_topology_identity() {
+        let topology = one_atom_topology();
+        let independent = one_atom_topology();
+        let semantic =
+            AtomOrderAssertion::from_semantic_order(&topology, topology.atom_ids()).unwrap();
+        assert!(semantic.is_compatible(&topology));
+        assert!(!semantic.is_compatible(&independent));
+        assert_eq!(semantic.topology_identity(), &topology.identity());
+
+        let asserted = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
+        assert!(asserted.is_compatible(&topology));
+        assert!(!asserted.is_compatible(&independent));
+    }
+
+    #[test]
+    fn file_and_codec_error_context_is_typed_and_preserved() {
+        let io_context = TrajectoryIoErrorContext::new(
+            TrajectoryIoOperation::ReadFrame,
+            io::ErrorKind::Other,
+            "disk",
+        )
+        .with_format(TrajectoryFormat::Dcd)
+        .with_source_label("sample.dcd")
+        .with_frame(4)
+        .with_byte_offset(128);
+        assert_eq!(io_context.operation(), TrajectoryIoOperation::ReadFrame);
+        assert_eq!(io_context.format(), Some(TrajectoryFormat::Dcd));
+        assert_eq!(io_context.source_label(), Some("sample.dcd"));
+        assert_eq!(io_context.frame(), Some(4));
+        assert_eq!(io_context.byte_offset(), Some(128));
+        assert_eq!(io_context.error_kind(), io::ErrorKind::Other);
+
+        let codec_context = TrajectoryCodecErrorContext::new(
+            TrajectoryCodecErrorKind::InconsistentAtomCount,
+            TrajectoryIoOperation::Index,
+            Some(TrajectoryFormat::Xtc),
+        )
+        .with_source_label("sample.xtc")
+        .with_frame(2)
+        .with_byte_offset(64)
+        .with_counts(10, 9)
+        .with_detail("repeated atom count differs");
+        assert_eq!(
+            codec_context.kind(),
+            TrajectoryCodecErrorKind::InconsistentAtomCount
+        );
+        assert_eq!(codec_context.expected(), Some(10));
+        assert_eq!(codec_context.actual(), Some(9));
+        assert!(TrajectoryError::from(codec_context)
+            .to_string()
+            .contains("expected 10, actual 9"));
     }
 
     #[test]
