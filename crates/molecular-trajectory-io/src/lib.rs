@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
+pub mod dcd;
 mod detect;
 pub mod xyz;
 
@@ -220,6 +221,37 @@ impl FileTrajectoryMetadata {
             variant: Some("strict multi-frame XYZ".into()),
         }
     }
+
+    fn dcd(header: &dcd::DcdHeader, indexed_frame_count: Option<u64>) -> Self {
+        Self {
+            format: TrajectoryFormat::Dcd,
+            atom_count: header.atom_count(),
+            declared_frame_count: Some(header.declared_frames()),
+            indexed_frame_count,
+            fields: TrajectoryFieldAvailability {
+                positions: FieldAvailability::Required,
+                cell: if header.has_cell() {
+                    FieldAvailability::Required
+                } else {
+                    FieldAvailability::Absent
+                },
+                velocities: FieldAvailability::Absent,
+                forces: FieldAvailability::Absent,
+                time: FieldAvailability::Optional,
+                step: FieldAvailability::Required,
+                properties: FieldAvailability::Absent,
+            },
+            coordinate_encoding: CoordinateEncoding::Lossless {
+                precision: ScalarPrecision::Float32,
+            },
+            random_access: if indexed_frame_count.is_some() {
+                RandomAccessCapability::Indexed
+            } else {
+                RandomAccessCapability::SequentialOnly
+            },
+            variant: Some(header.variant()),
+        }
+    }
 }
 
 /// Evidence used to select a trajectory format.
@@ -303,6 +335,7 @@ pub struct TrajectoryOpenOptions {
     format_hint: TrajectoryFormatHint,
     limits: TrajectoryIoLimits,
     xyz: xyz::XyzReadOptions,
+    dcd: dcd::DcdReadOptions,
 }
 
 impl Default for TrajectoryOpenOptions {
@@ -311,6 +344,7 @@ impl Default for TrajectoryOpenOptions {
             format_hint: TrajectoryFormatHint::Auto,
             limits: TrajectoryIoLimits::default(),
             xyz: xyz::XyzReadOptions::default(),
+            dcd: dcd::DcdReadOptions::default(),
         }
     }
 }
@@ -330,6 +364,11 @@ impl TrajectoryOpenOptions {
         self.xyz = options;
         self
     }
+
+    pub fn with_dcd_options(mut self, options: dcd::DcdReadOptions) -> Self {
+        self.dcd = options;
+        self
+    }
 }
 
 /// Existing-destination policy for a path writer.
@@ -346,6 +385,7 @@ pub struct TrajectoryWriteOptions {
     format: TrajectoryFormat,
     overwrite: OverwritePolicy,
     xyz: xyz::XyzWriteOptions,
+    dcd: dcd::DcdWriteOptions,
 }
 
 impl TrajectoryWriteOptions {
@@ -354,6 +394,7 @@ impl TrajectoryWriteOptions {
             format,
             overwrite: OverwritePolicy::Forbid,
             xyz: xyz::XyzWriteOptions::default(),
+            dcd: dcd::DcdWriteOptions::default(),
         }
     }
 
@@ -366,10 +407,16 @@ impl TrajectoryWriteOptions {
         self.xyz = options;
         self
     }
+
+    pub fn with_dcd_options(mut self, options: dcd::DcdWriteOptions) -> Self {
+        self.dcd = options;
+        self
+    }
 }
 
 enum SequentialReaderInner {
     Xyz(xyz::XyzReader<BufReader<File>>),
+    Dcd(dcd::DcdReader<BufReader<File>>),
 }
 
 /// Format-agnostic path-backed sequential reader retaining one file handle.
@@ -388,18 +435,21 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
     fn topology(&self) -> &Topology {
         match &self.inner {
             SequentialReaderInner::Xyz(reader) => reader.topology(),
+            SequentialReaderInner::Dcd(reader) => reader.topology(),
         }
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
         match &mut self.inner {
             SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
+            SequentialReaderInner::Dcd(reader) => reader.read_next(destination),
         }
     }
 }
 
 enum IndexedReaderInner {
     Xyz(xyz::IndexedXyzReader<BufReader<File>>),
+    Dcd(dcd::IndexedDcdReader<BufReader<File>>),
 }
 
 /// Format-agnostic path-backed indexed reader retaining one file handle.
@@ -418,12 +468,14 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
     fn topology(&self) -> &Topology {
         match &self.inner {
             IndexedReaderInner::Xyz(reader) => reader.topology(),
+            IndexedReaderInner::Dcd(reader) => reader.topology(),
         }
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
         match &mut self.inner {
             IndexedReaderInner::Xyz(reader) => reader.read_next(destination),
+            IndexedReaderInner::Dcd(reader) => reader.read_next(destination),
         }
     }
 }
@@ -432,6 +484,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
     fn frame_count(&self) -> Option<u64> {
         match &self.inner {
             IndexedReaderInner::Xyz(reader) => reader.frame_count(),
+            IndexedReaderInner::Dcd(reader) => reader.frame_count(),
         }
     }
 
@@ -442,6 +495,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
     ) -> Result<(), TrajectoryError> {
         match &mut self.inner {
             IndexedReaderInner::Xyz(reader) => reader.read_frame(index, destination),
+            IndexedReaderInner::Dcd(reader) => reader.read_frame(index, destination),
         }
     }
 }
@@ -475,6 +529,18 @@ pub fn open_trajectory(
                 SequentialReaderInner::Xyz(reader),
                 FileTrajectoryMetadata::xyz(atom_count, None),
                 vec!["XYZ coordinates use the configured explicit/default length unit".into()],
+            )
+        }
+        TrajectoryFormat::Dcd => {
+            let reader = dcd::DcdReader::new(reader, binding, options.dcd, options.limits, label)?;
+            let metadata = FileTrajectoryMetadata::dcd(reader.header(), None);
+            (
+                SequentialReaderInner::Dcd(reader),
+                metadata,
+                vec![
+                    "DCD steps are preserved from ISTART/NSAVC; time follows the explicit policy"
+                        .into(),
+                ],
             )
         }
         format => {
@@ -525,6 +591,17 @@ pub fn open_indexed_trajectory(
                 vec!["XYZ index verified every complete frame".into()],
             )
         }
+        TrajectoryFormat::Dcd => {
+            let reader = dcd::DcdReader::new(reader, binding, options.dcd, options.limits, label)?;
+            let reader = reader.into_indexed()?;
+            let count = reader.frame_count().unwrap_or(0);
+            let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
+            (
+                IndexedReaderInner::Dcd(reader),
+                metadata,
+                vec!["DCD index verified record markers and the declared frame count".into()],
+            )
+        }
         format => {
             return Err(unimplemented_format(
                 format,
@@ -544,18 +621,21 @@ pub fn open_indexed_trajectory(
 
 enum FileWriterInner {
     Xyz(xyz::XyzWriter<BufWriter<File>>),
+    Dcd(dcd::DcdWriter<BufWriter<File>>),
 }
 
 impl FileWriterInner {
     fn topology(&self) -> &Topology {
         match self {
             Self::Xyz(writer) => writer.topology(),
+            Self::Dcd(writer) => writer.topology(),
         }
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
         match self {
             Self::Xyz(writer) => writer.write_frame(frame),
+            Self::Dcd(writer) => writer.write_frame(frame),
         }
     }
 
@@ -574,6 +654,25 @@ impl FileWriterInner {
                     io_context(
                         TrajectoryIoOperation::Finish,
                         Some(TrajectoryFormat::Xyz),
+                        label,
+                        error,
+                    )
+                })
+            }
+            Self::Dcd(writer) => {
+                writer.finalize()?;
+                writer.flush().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Dcd),
+                        label,
+                        error,
+                    )
+                })?;
+                writer.writer().get_ref().sync_all().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Dcd),
                         label,
                         error,
                     )
@@ -715,6 +814,12 @@ pub fn create_trajectory_writer(
             BufWriter::new(file),
             topology,
             options.xyz,
+            label,
+        )?),
+        TrajectoryFormat::Dcd => FileWriterInner::Dcd(dcd::DcdWriter::new(
+            BufWriter::new(file),
+            topology,
+            options.dcd,
             label,
         )?),
         format => {
