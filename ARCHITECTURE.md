@@ -3,10 +3,10 @@
 ## Status and purpose
 
 This document is the normative architecture contract for `molecular`. The
-implementation is being migrated to this design through the staged plan in
-[`topology_refactor.md`](topology_refactor.md). During that migration, temporary
-compatibility code may exist, but new work must follow the object boundaries and
-invariants defined here.
+topology-centered 0.2 design is implemented. [`topology_refactor.md`](topology_refactor.md)
+and [`topology_transformations.md`](topology_transformations.md) are retained as
+historical implementation plans; current work must follow the object boundaries
+and invariants defined here.
 
 `molecular` is a pure-Rust foundation for cheminformatics, structural
 bioinformatics, molecular structure handling, and molecular modelling. It
@@ -474,6 +474,16 @@ A topology edit never mutates existing models, ensembles, trajectories, or
 prepared systems. Remapping coordinate state is a separate explicit operation.
 Added atoms may remain without coordinates until a geometry-building operation
 supplies them; topology transforms do not invent geometry silently.
+
+Complete molecule instances can be retained or removed through the focused
+`topology::transform` namespace. These immutable deletion-only edits preserve
+filtered source definition and instance order, explicit definition reuse, and
+local atom and bond identifiers while returning complete checked lineage.
+Positions, configurations, observations, models, compiled atom selections,
+finite ensembles, owned frames, in-memory trajectories, and borrowed frame
+state in reusable target buffers provide explicit remapping operations. Every
+operation checks exact source and target identity; complete dense arrays reject
+unmapped target atoms, and selection loss requires an explicit policy.
 
 ### Construction
 

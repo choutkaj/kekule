@@ -15,12 +15,18 @@ interpretation, and topology-bound prepared potentials. Supported features and
 optional benchmark availability/observations are listed separately in the
 generated dashboard.
 
+The complete-instance topology-transformation milestone is implemented:
+callers can retain or remove whole molecule instances with complete checked
+lineage and explicitly remap models, selections, ensembles, frames,
+trajectories, and reusable buffers without weakening exact topology identity.
+The next topology-editing direction is explicit topology composition, followed
+by instance-definition replacement and definition-edit scope, each as a
+separate feature contract.
+
 ## Next tracked capabilities
 
 Feature contracts currently reserved with `planned` status include:
 
-- `descriptor.molecular`: explicit-policy molecular formula, mass, and related
-  descriptors.
 - `fp.morgan`: a defined-shape Morgan-style circular fingerprint with explicit
   perception dependencies.
 
