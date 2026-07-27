@@ -1078,6 +1078,128 @@ mod tests {
     }
 
     #[test]
+    fn explicit_weights_follow_selection_indices_order_not_semantic_id_insertion_order() {
+        let moving = fixture_points();
+        let expected = non_axis_transform();
+        let mut reference = transform_points(&moving, expected);
+        reference[0].x += 1.7;
+        reference[4].x -= 1.9;
+        let (topology, moving_model, reference_model) = models(&moving, &reference);
+        let atom_ids = topology.atom_ids();
+        let selection = AtomSelection::from_atoms(
+            &topology,
+            [atom_ids[4], atom_ids[1], atom_ids[3], atom_ids[0]],
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection
+                .indices()
+                .iter()
+                .map(|index| index.index())
+                .collect::<Vec<_>>(),
+            [0, 1, 3, 4]
+        );
+
+        // These weights make dense index 0 dominant in selection.indices()
+        // order. Reversing the endpoint weights instead makes the first
+        // inserted semantic ID (dense index 4) dominant.
+        let selection_order_weights = [100.0, 1.0, 1.0, 0.1];
+        let insertion_order_interpretation = [0.1, 1.0, 1.0, 100.0];
+        let selection_order_fit = kabsch_with_options(
+            moving_model.view(),
+            reference_model.view(),
+            &selection,
+            KabschOptions {
+                weighting: AlignmentWeighting::Explicit(&selection_order_weights),
+                ..KabschOptions::default()
+            },
+        )
+        .unwrap();
+        let insertion_order_fit = kabsch_with_options(
+            moving_model.view(),
+            reference_model.view(),
+            &selection,
+            KabschOptions {
+                weighting: AlignmentWeighting::Explicit(&insertion_order_interpretation),
+                ..KabschOptions::default()
+            },
+        )
+        .unwrap();
+
+        let selected_dense_zero_error =
+            (selection_order_fit.transform().transform_point(moving[0]) - reference[0]).norm();
+        let insertion_dense_zero_error =
+            (insertion_order_fit.transform().transform_point(moving[0]) - reference[0]).norm();
+        let selected_dense_four_error =
+            (selection_order_fit.transform().transform_point(moving[4]) - reference[4]).norm();
+        let insertion_dense_four_error =
+            (insertion_order_fit.transform().transform_point(moving[4]) - reference[4]).norm();
+        assert!(selected_dense_zero_error < insertion_dense_zero_error * 0.1);
+        assert!(insertion_dense_four_error < selected_dense_four_error * 0.1);
+    }
+
+    #[test]
+    fn weighted_noisy_fit_matches_high_precision_svd_golden() {
+        let moving = [
+            Point3::new(-1.4, 0.2, 2.1),
+            Point3::new(0.3, -1.7, 0.5),
+            Point3::new(2.2, 0.9, -0.8),
+            Point3::new(-0.6, 2.4, 1.3),
+            Point3::new(1.5, 1.1, 2.7),
+            Point3::new(-2.0, -0.9, -1.2),
+        ];
+        let reference = [
+            Point3::new(1.873307692308, -4.135076923077, -0.201230769231),
+            Point3::new(3.672153846154, -2.542538461538, 1.554384615385),
+            Point3::new(1.272692307692, -0.149923076923, 2.197230769231),
+            Point3::new(-0.144923076923, -2.663769230769, -0.328307692308),
+            Point3::new(0.199692307692, -3.570923076923, 2.290230769231),
+            Point3::new(4.000538461538, -1.492384615385, -1.161153846154),
+        ];
+        let weights = [0.7, 3.25, 1.1, 5.5, 0.4, 2.75];
+        let (topology, moving_model, reference_model) = models(&moving, &reference);
+
+        // Independent reference: mpmath 1.3.0 at 100 decimal digits, using
+        // weighted centroids/cross-covariance and its general SVD, followed by
+        // V * diag(1, 1, det(V * U^T)) * U^T. The 3e-12 transform and 5e-14
+        // RMSD tolerances cover only f64 rounding relative to that reference.
+        let expected = RigidTransform::new(
+            Matrix3::from_columns(
+                Vector3::new(
+                    -0.23369675064066617,
+                    0.30951178758237726,
+                    0.9217311332962317,
+                ),
+                Vector3::new(
+                    -0.9253543656919893,
+                    0.22023658458981056,
+                    -0.30856951356702656,
+                ),
+                Vector3::new(-0.2985048184448125, -0.925039620857278, 0.2349395096816475),
+            ),
+            Vector3::new(2.333984523603927, -1.795397432011596, 0.6560333319022371),
+        )
+        .unwrap();
+        let expected_rmsd = 0.029397741136029633_f64;
+
+        let result = kabsch_with_options(
+            moving_model.view(),
+            reference_model.view(),
+            &all(&topology),
+            KabschOptions {
+                weighting: AlignmentWeighting::Explicit(&weights),
+                ..KabschOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert_transform_close(result.transform(), expected, 3.0e-12);
+        assert_close(result.rmsd().into_value(), expected_rmsd, 5.0e-14);
+        assert_close(result.transform().rotation().determinant(), 1.0, 1.0e-12);
+    }
+
+    #[test]
     fn mirrored_coordinates_keep_a_proper_nonzero_residual() {
         let moving = fixture_points();
         let reference = moving.map(|point| Point3::new(-point.x, point.y, point.z));
@@ -1110,6 +1232,30 @@ mod tests {
 
         assert_transform_close(result.transform(), expected, 3.0e-12);
         assert!(result.rmsd().into_value() < 2.0e-12);
+    }
+
+    #[test]
+    fn rank_two_point_sets_with_rank_one_cross_covariance_are_rejected() {
+        let moving = [
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(-1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, -1.0, 0.0),
+        ];
+        let reference = [
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(-1.0, 1.0, 0.0),
+            Point3::new(0.0, -1.0, 0.0),
+            Point3::new(0.0, -1.0, 0.0),
+        ];
+        let (topology, moving, reference) = models(&moving, &reference);
+
+        assert_eq!(
+            kabsch(moving.view(), reference.view(), &all(&topology)),
+            Err(AlignmentError::DegenerateGeometry {
+                geometry: AlignmentGeometry::CrossCovariance,
+            })
+        );
     }
 
     #[test]
