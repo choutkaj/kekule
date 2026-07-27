@@ -1,0 +1,8 @@
+id = "io.trajectory.dcd"
+title = "DCD trajectory codec"
+area = "io"
+domains = ["infrastructure"]
+version = 1
+status = "planned"
+description = "Read and write the documented common CHARMM, NAMD, and OpenMM DCD profile with checked records, cells, fixed atoms, and time policy."
+depends_on = ["io.trajectory.file"]

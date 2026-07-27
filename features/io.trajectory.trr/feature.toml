@@ -1,0 +1,8 @@
+id = "io.trajectory.trr"
+title = "TRR trajectory codec"
+area = "io"
+domains = ["infrastructure"]
+version = 1
+status = "planned"
+description = "Read and write bounded pure-Rust GROMACS TRR/XDR frames with full dynamic state and explicit scalar precision."
+depends_on = ["io.trajectory.file"]
