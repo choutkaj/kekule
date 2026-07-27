@@ -15,8 +15,11 @@ series, breaking public API changes increment the minor version.
   bounded signature-plus-extension detection, metadata/reports/limits,
   one-handle sequential and verified indexed access, strict atomic path
   writers, and strict multi-frame XYZ read/write with explicit units,
-  element-order validation, and a provenance-pinned ASE fixture. DCD, TRR, and
-  XTC remain independently tracked and unsupported until complete.
+  element-order validation, and a provenance-pinned ASE fixture. Add
+  experimental common-profile DCD read/write with both byte orders, cells,
+  fixed-atom reconstruction, checked records and counts, indexed access,
+  explicit step/time policy, and a provenance-pinned MDAnalysis fixture. TRR
+  and XTC remain independently tracked and unsupported until complete.
 - Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit

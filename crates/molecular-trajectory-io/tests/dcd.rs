@@ -1,0 +1,345 @@
+use std::io::Cursor;
+
+use molecular::core::{Atom, Element, Molecule};
+use molecular::geometry::{PeriodicCell, Point3, Vector3};
+use molecular::small::SmallMolecule;
+use molecular::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use molecular::trajectory::{
+    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
+    TrajectoryError, TrajectoryReader, TrajectoryWriter,
+};
+use molecular::units::{Quantity, ANGSTROM, PICOSECOND};
+use molecular_trajectory_io::dcd::{
+    DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
+};
+use molecular_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use sha2::{Digest, Sha256};
+
+fn topology() -> Topology {
+    let mut graph = Molecule::new();
+    for symbol in ["C", "H", "O"] {
+        graph
+            .add_atom(Atom::new(Element::from_symbol(symbol).unwrap()))
+            .unwrap();
+    }
+    let molecule = SmallMolecule::from_graph(graph);
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+    builder
+        .add_instance(definition, MoleculeInstanceMetadata::default())
+        .unwrap();
+    builder.build().unwrap()
+}
+
+fn binding(topology: &Topology) -> TrajectoryTopologyBinding {
+    TrajectoryTopologyBinding::new(
+        topology.clone(),
+        AtomOrderAssertion::assert_file_uses_topology_order(topology),
+    )
+    .unwrap()
+}
+
+fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
+    match error {
+        TrajectoryError::Codec(context) => Some(context.kind()),
+        _ => None,
+    }
+}
+
+fn xs(buffer: &FrameBuffer) -> Vec<f64> {
+    buffer
+        .configuration()
+        .positions()
+        .values()
+        .value()
+        .iter()
+        .map(|point| point.x)
+        .collect()
+}
+
+fn set_frame(
+    buffer: &mut FrameBuffer,
+    coordinates: [[f64; 3]; 3],
+    step: u64,
+    time: Option<f64>,
+    cell: Option<PeriodicCell>,
+) {
+    buffer
+        .set_positions(Quantity::new(
+            coordinates.map(|[x, y, z]| Point3::new(x, y, z)),
+            ANGSTROM,
+        ))
+        .unwrap();
+    buffer.set_step(Some(step));
+    buffer
+        .set_time(time.map(|value| Quantity::new(value, PICOSECOND)))
+        .unwrap();
+    buffer.set_cell(cell);
+}
+
+#[test]
+fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
+    for endian in [DcdEndian::Little, DcdEndian::Big] {
+        let topology = topology();
+        let options = DcdWriteOptions::default()
+            .with_endian(endian)
+            .with_cells(true)
+            .with_step_sequence(10, 2)
+            .with_header_delta(0.5, DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
+        let mut writer = DcdWriter::new(
+            Cursor::new(Vec::new()),
+            topology.clone(),
+            options,
+            "memory.dcd",
+        )
+        .unwrap();
+        let cell = PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(10.0, 0.0, 0.0),
+                    Vector3::new(2.0, 11.0, 0.0),
+                    Vector3::new(1.0, 3.0, 12.0),
+                ],
+                ANGSTROM,
+            ),
+            [true; 3],
+        )
+        .unwrap();
+        let mut source = FrameBuffer::new(topology.clone());
+        set_frame(
+            &mut source,
+            [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
+            10,
+            Some(5.0),
+            Some(cell),
+        );
+        writer.write_frame(source.frame_view()).unwrap();
+        set_frame(
+            &mut source,
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+            12,
+            Some(6.0),
+            Some(cell),
+        );
+        writer.write_frame(source.frame_view()).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+
+        let options = DcdReadOptions::default()
+            .with_time_policy(DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
+        let mut reader = DcdReader::new(
+            Cursor::new(bytes.clone()),
+            binding(&topology),
+            options,
+            TrajectoryIoLimits::default(),
+            "memory.dcd",
+        )
+        .unwrap();
+        let mut destination = FrameBuffer::new(topology.clone());
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(xs(&destination), vec![0.0, 3.0, 6.0]);
+        assert_eq!(destination.frame_view().step(), Some(10));
+        assert_eq!(destination.frame_view().time().unwrap().value(), &5.0);
+        assert!(destination.configuration().cell().is_some());
+        assert!(reader.read_next(&mut destination).unwrap());
+        assert_eq!(xs(&destination), vec![1.0, 4.0, 7.0]);
+        assert_eq!(destination.frame_view().step(), Some(12));
+        assert!(!reader.read_next(&mut destination).unwrap());
+
+        let mut indexed = DcdReader::new(
+            Cursor::new(bytes),
+            binding(&topology),
+            options,
+            TrajectoryIoLimits::default(),
+            "memory.dcd",
+        )
+        .unwrap()
+        .into_indexed()
+        .unwrap();
+        assert_eq!(indexed.frame_count(), Some(2));
+        indexed.read_frame(1, &mut destination).unwrap();
+        assert_eq!(xs(&destination), vec![1.0, 4.0, 7.0]);
+        assert!(indexed.read_next(&mut destination).unwrap());
+        assert_eq!(xs(&destination), vec![0.0, 3.0, 6.0]);
+    }
+}
+
+#[test]
+fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
+    let topology = topology();
+    let bytes = fixed_atom_fixture(DcdEndian::Little);
+    let reader = DcdReader::new(
+        Cursor::new(bytes),
+        binding(&topology),
+        DcdReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "fixed.dcd",
+    )
+    .unwrap();
+    let mut reader = reader.into_indexed().unwrap();
+    let mut buffer = FrameBuffer::new(topology);
+    reader.read_frame(1, &mut buffer).unwrap();
+    assert_eq!(xs(&buffer), vec![0.0, 10.0, 2.0]);
+    assert_eq!(buffer.frame_view().step(), Some(1));
+    reader.read_frame(0, &mut buffer).unwrap();
+    assert_eq!(xs(&buffer), vec![0.0, 1.0, 2.0]);
+}
+
+#[test]
+fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
+    let topology = topology();
+    let valid = fixed_atom_fixture(DcdEndian::Big);
+
+    let mut wrong_count = valid.clone();
+    wrong_count[8..12].copy_from_slice(&3_i32.to_be_bytes());
+    let error = DcdReader::new(
+        Cursor::new(wrong_count),
+        binding(&topology),
+        DcdReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "count.dcd",
+    )
+    .unwrap()
+    .into_indexed()
+    .err()
+    .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+    );
+
+    let mut bad_marker = valid.clone();
+    *bad_marker.last_mut().unwrap() ^= 1;
+    let mut reader = DcdReader::new(
+        Cursor::new(bad_marker),
+        binding(&topology),
+        DcdReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "marker.dcd",
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    let before = xs(&buffer);
+    let error = reader.read_next(&mut buffer).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::RecordMarkerMismatch)
+    );
+    assert_eq!(xs(&buffer), before);
+
+    let mut truncated = valid.clone();
+    truncated.pop();
+    let error = DcdReader::new(
+        Cursor::new(truncated),
+        binding(&topology),
+        DcdReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "truncated.dcd",
+    )
+    .unwrap()
+    .into_indexed()
+    .err()
+    .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::TruncatedRecord)
+    );
+
+    let limits = TrajectoryIoLimits {
+        max_frame_bytes: 8,
+        ..TrajectoryIoLimits::default()
+    };
+    let mut reader = DcdReader::new(
+        Cursor::new(valid),
+        binding(&topology),
+        DcdReadOptions::default(),
+        limits,
+        "limited.dcd",
+    )
+    .unwrap();
+    let error = reader.read_next(&mut buffer).unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+}
+
+#[test]
+fn independently_generated_mdanalysis_fixture_is_interoperable() {
+    let topology = topology();
+    let fixture = include_bytes!("fixtures/mdanalysis-2.9.0-three-atoms.dcd");
+    let digest = Sha256::digest(fixture);
+    let actual_digest = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(
+        actual_digest,
+        "baabffaca935dff654d1466fe43ba469fb0b1b84d077b6afc3c10f5208cc7d0e"
+    );
+    let mut reader = DcdReader::new(
+        Cursor::new(fixture),
+        binding(&topology),
+        DcdReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "mdanalysis-2.9.0-three-atoms.dcd",
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(topology);
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert_eq!(xs(&buffer), vec![0.0, 3.0, 6.0]);
+    assert!(buffer.configuration().cell().is_some());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert_eq!(xs(&buffer), vec![1.0, 4.0, 7.0]);
+    assert!(!reader.read_next(&mut buffer).unwrap());
+}
+
+fn fixed_atom_fixture(endian: DcdEndian) -> Vec<u8> {
+    let i32_bytes = |value: i32| match endian {
+        DcdEndian::Little => value.to_le_bytes(),
+        DcdEndian::Big => value.to_be_bytes(),
+        _ => unreachable!("test covers current DCD endian variants"),
+    };
+    let f32_bytes = |value: f32| match endian {
+        DcdEndian::Little => value.to_le_bytes(),
+        DcdEndian::Big => value.to_be_bytes(),
+        _ => unreachable!("test covers current DCD endian variants"),
+    };
+    let mut bytes = Vec::new();
+    let mut record = |payload: &[u8]| {
+        bytes.extend(i32_bytes(payload.len() as i32));
+        bytes.extend(payload);
+        bytes.extend(i32_bytes(payload.len() as i32));
+    };
+
+    let mut header = [0_u8; 84];
+    header[..4].copy_from_slice(b"CORD");
+    let mut controls = [0_i32; 20];
+    controls[0] = 2;
+    controls[2] = 1;
+    controls[8] = 2;
+    controls[19] = 24;
+    for (chunk, value) in header[4..].chunks_exact_mut(4).zip(controls) {
+        chunk.copy_from_slice(&i32_bytes(value));
+    }
+    header[40..44].copy_from_slice(&f32_bytes(1.0));
+    record(&header);
+    let mut title = [0_u8; 84];
+    title[..4].copy_from_slice(&i32_bytes(1));
+    title[4..9].copy_from_slice(b"fixed");
+    record(&title);
+    record(&i32_bytes(3));
+    record(&i32_bytes(2));
+    for values in [
+        vec![0.0_f32, 1.0, 2.0],
+        vec![0.0, 1.0, 2.0],
+        vec![0.0, 1.0, 2.0],
+        vec![10.0],
+        vec![11.0],
+        vec![12.0],
+    ] {
+        let payload = values.into_iter().flat_map(f32_bytes).collect::<Vec<_>>();
+        record(&payload);
+    }
+    bytes
+}
