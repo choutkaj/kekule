@@ -260,6 +260,11 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::RecordMarkerMismatch)
     );
+    let TrajectoryError::Codec(context) = &error else {
+        panic!("expected typed DCD codec context");
+    };
+    assert_eq!(context.frame(), Some(1));
+    assert!(context.byte_offset().is_some());
     assert_eq!(xs(&buffer), before);
 
     let mut truncated = valid.clone();
@@ -297,6 +302,40 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
         codec_kind(&error),
         Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
     );
+}
+
+#[test]
+fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
+    let topology = topology();
+    let options = DcdWriteOptions::default()
+        .with_cells(true)
+        .with_step_sequence(0, 1);
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        options,
+        "late-invalid.dcd",
+    )
+    .unwrap();
+    let header_bytes = writer.writer().get_ref().len();
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(2.0, 2.0, 2.0), ANGSTROM),
+        [true; 3],
+    )
+    .unwrap();
+    let mut frame = FrameBuffer::new(topology);
+    set_frame(
+        &mut frame,
+        [[f64::MAX, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+        0,
+        None,
+        Some(cell),
+    );
+    assert_eq!(
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+    assert_eq!(writer.writer().get_ref().len(), header_bytes);
 }
 
 #[test]

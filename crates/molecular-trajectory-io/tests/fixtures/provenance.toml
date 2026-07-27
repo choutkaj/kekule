@@ -39,6 +39,15 @@ fields = ["positions", "element symbols"]
 native_units = "angstrom"
 coverage = ["multi-frame element order", "negative and positive decimal coordinates"]
 
+[[writer_observation]]
+format = "xyz"
+writer = "molecular-trajectory-io xyz_interop_writer example"
+independent_reader = "Atomic Simulation Environment (ASE)"
+reader_version = "3.26.0"
+reader_source_revision = "6c965f46a9449cbea275a6cc11fefb82da7df4bf"
+command = "cargo run -p molecular-trajectory-io --example xyz_interop_writer -- OUTPUT.xyz; uv run --python 3.12 --with ase==3.26.0 python -c <two-frame element-order/coordinate assertions>"
+verified = ["frame count", "element order", "positions"]
+
 [[fixture]]
 path = "mdanalysis-2.9.0-three-atoms.dcd"
 format = "dcd"

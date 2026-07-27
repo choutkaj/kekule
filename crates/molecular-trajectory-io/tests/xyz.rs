@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,9 +14,9 @@ use molecular::trajectory::{
 use molecular::units::{Quantity, ANGSTROM, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
 use molecular_trajectory_io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
 use molecular_trajectory_io::{
-    create_trajectory_writer, open_indexed_trajectory, open_trajectory, FieldAvailability,
-    FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint, TrajectoryIoLimits,
-    TrajectoryOpenOptions, TrajectoryTopologyBinding, TrajectoryWriteOptions,
+    create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
+    FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
+    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryTopologyBinding, TrajectoryWriteOptions,
 };
 use sha2::{Digest, Sha256};
 
@@ -92,6 +92,25 @@ fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
     match error {
         TrajectoryError::Codec(context) => Some(context.kind()),
         _ => None,
+    }
+}
+
+struct FailingDetectionReader {
+    cursor: Cursor<Vec<u8>>,
+}
+
+impl Read for FailingDetectionReader {
+    fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionReset,
+            "injected detection read failure",
+        ))
+    }
+}
+
+impl Seek for FailingDetectionReader {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        self.cursor.seek(position)
     }
 }
 
@@ -304,10 +323,10 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
         "strict.xyz",
     )
     .unwrap();
-    assert!(matches!(
-        strict.write_frame(buffer.frame_view()),
-        Err(TrajectoryError::UnsupportedField("step"))
-    ));
+    assert_eq!(
+        codec_kind(&strict.write_frame(buffer.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
+    );
 }
 
 #[test]
@@ -407,6 +426,109 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     for file in [&path, &mismatch, &output, &unfinished] {
         let _ = std::fs::remove_file(file);
     }
+}
+
+#[test]
+fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
+    let mut reader = FailingDetectionReader {
+        cursor: Cursor::new(b"prefix".to_vec()),
+    };
+    reader.seek(SeekFrom::Start(3)).unwrap();
+    let error = detect_trajectory_format(
+        &mut reader,
+        "failing.xyz",
+        TrajectoryFormatHint::Auto,
+        &TrajectoryIoLimits::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        TrajectoryError::Io(context) if context.error_kind() == io::ErrorKind::ConnectionReset
+    ));
+    assert_eq!(reader.stream_position().unwrap(), 3);
+
+    let mut cursor = Cursor::new(TWO_FRAMES.as_bytes());
+    cursor.seek(SeekFrom::Start(2)).unwrap();
+    let error = detect_trajectory_format(
+        &mut cursor,
+        "limited.xyz",
+        TrajectoryFormatHint::Auto,
+        &TrajectoryIoLimits {
+            max_detection_bytes: 0,
+            ..TrajectoryIoLimits::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert_eq!(cursor.stream_position().unwrap(), 2);
+}
+
+#[test]
+fn path_writer_failure_poisoning_prevents_partial_publication() {
+    let topology = topology();
+    let output = temporary_path(Some("xyz"));
+    let mut frame = FrameBuffer::new(topology.clone());
+    frame
+        .set_positions(Quantity::new(
+            [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)],
+            ANGSTROM,
+        ))
+        .unwrap();
+    let mut writer = create_trajectory_writer(
+        &output,
+        topology,
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
+    )
+    .unwrap();
+    writer.write_frame(frame.frame_view()).unwrap();
+    frame.set_step(Some(1));
+    assert_eq!(
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
+    );
+    assert_eq!(
+        codec_kind(&writer.finish().unwrap_err()),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+    assert!(!output.exists());
+}
+
+#[test]
+fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
+    let topology = topology();
+    let limits = TrajectoryIoLimits {
+        max_frames: 2,
+        max_index_entries: 2,
+        max_index_bytes: 2 * std::mem::size_of::<u64>(),
+        ..TrajectoryIoLimits::default()
+    };
+    let mut reader = XyzReader::new(
+        Cursor::new(TWO_FRAMES.as_bytes()),
+        binding(&topology),
+        XyzReadOptions::default(),
+        limits.clone(),
+        "exact-limit.xyz",
+    )
+    .unwrap();
+    let mut buffer = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(reader.read_next(&mut buffer).unwrap());
+    assert!(!reader.read_next(&mut buffer).unwrap());
+
+    let indexed = XyzReader::new(
+        Cursor::new(TWO_FRAMES.as_bytes()),
+        binding(&topology),
+        XyzReadOptions::default(),
+        limits,
+        "exact-index-limit.xyz",
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    assert_eq!(indexed.frame_count(), Some(2));
 }
 
 #[test]

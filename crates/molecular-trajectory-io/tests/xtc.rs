@@ -124,6 +124,30 @@ fn encoded(atom_count: usize, magic: XtcMagic) -> (Topology, Vec<u8>) {
     (topology, writer.finish().unwrap().into_inner())
 }
 
+fn encoded_frame(
+    topology: &Topology,
+    magic: XtcMagic,
+    precision: f32,
+    shift: f64,
+    step: u64,
+) -> Vec<u8> {
+    let options = XtcWriteOptions::default()
+        .with_magic(magic)
+        .with_precision(precision)
+        .unwrap();
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        options,
+        "one-frame.xtc",
+    )
+    .unwrap();
+    writer
+        .write_frame(source_frame(topology, shift, step).frame_view())
+        .unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
 #[test]
 fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
     for (atom_count, magic) in [
@@ -227,6 +251,37 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
 }
 
 #[test]
+fn xtc_fuzz_regression_rejects_compressed_bitstream_underflow_without_panic() {
+    let topology = topology(12);
+    let fuzz_artifact = [
+        0x00, 0x00, 0x07, 0xcb, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x0b,
+        0x24, 0x21, 0x40, 0x01, 0xd2, 0x08, 0x00, 0x00, 0x00, 0x00, 0x3e, 0x44, 0x58, 0x2f, 0x3e,
+        0xb0, 0x31, 0x2b, 0x40, 0x0a, 0x86, 0x3b, 0x00, 0x00, 0x00, 0x0c, 0x44, 0x7a, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x6e, 0x00, 0x00, 0x00, 0xdc, 0x00, 0x00, 0x01, 0x4a, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00,
+        0x00, 0x24, 0x70, 0x43, 0x17, 0x20, 0x13, 0x1a, 0xa1, 0x94, 0x86, 0x50, 0x26, 0x34, 0xc1,
+        0x45, 0xc4, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x24, 0x70, 0x43, 0x17, 0x20, 0x13,
+        0x1a, 0xa1, 0x94, 0x86, 0x50, 0x26, 0x34, 0xc1, 0x45, 0xc4, 0xa9, 0x5e, 0x88, 0x43, 0x62,
+        0x74, 0xba, 0x48, 0xad, 0xe0, 0xbd, 0x96, 0xb2, 0x29, 0x66, 0xbe, 0x1a, 0x55, 0x7a, 0xaa,
+        0x40,
+    ];
+    let error = XtcReader::new(
+        Cursor::new(fuzz_artifact),
+        binding(&topology),
+        XtcReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "fuzz-underflow.xtc",
+    )
+    .err()
+    .expect("fuzz artifact must be rejected during preflight");
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::CorruptCompressedData)
+    );
+}
+
+#[test]
 fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     let (topology, valid) = encoded(12, XtcMagic::Xtc1995);
 
@@ -316,6 +371,63 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
 }
 
 #[test]
+fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
+    let topology = topology(12);
+    let mut trailing = encoded_frame(&topology, XtcMagic::Xtc1995, 1000.0, 0.0, 0);
+    let payload_bytes =
+        usize::try_from(u32::from_be_bytes(trailing[88..92].try_into().unwrap())).unwrap();
+    let payload_start = 92;
+    trailing.splice(
+        payload_start + payload_bytes..payload_start + payload_bytes,
+        [0_u8; 4],
+    );
+    trailing[88..92].copy_from_slice(&u32::try_from(payload_bytes + 4).unwrap().to_be_bytes());
+    let error = XtcReader::new(
+        Cursor::new(trailing),
+        binding(&topology),
+        XtcReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "trailing.xtc",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::CorruptCompressedData)
+    );
+    let TrajectoryError::Codec(context) = &error else {
+        panic!("expected typed XTC codec context");
+    };
+    assert_eq!(context.frame(), Some(0));
+    assert_eq!(context.byte_offset(), Some(0));
+
+    for second in [
+        encoded_frame(&topology, XtcMagic::Xtc1995, 100.0, 0.01, 1),
+        encoded_frame(&topology, XtcMagic::Xtc2023, 1000.0, 0.01, 1),
+    ] {
+        let mut mixed = encoded_frame(&topology, XtcMagic::Xtc1995, 1000.0, 0.0, 0);
+        mixed.extend(second);
+        let mut reader = XtcReader::new(
+            Cursor::new(mixed),
+            binding(&topology),
+            XtcReadOptions::default(),
+            TrajectoryIoLimits::default(),
+            "mixed-profile.xtc",
+        )
+        .unwrap();
+        let mut destination = FrameBuffer::new(topology.clone());
+        assert!(reader.read_next(&mut destination).unwrap());
+        let before = x_values(&destination);
+        let error = reader.read_next(&mut destination).unwrap_err();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+        );
+        assert_eq!(x_values(&destination), before);
+    }
+}
+
+#[test]
 fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     let topology = topology(12);
     assert!(XtcWriteOptions::default().with_precision(0.0).is_err());
@@ -342,8 +454,8 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         .props_mut()
         .insert("unsupported".into(), molecular::core::PropValue::Bool(true));
     assert_eq!(
-        writer.write_frame(frame.frame_view()).unwrap_err(),
-        TrajectoryError::UnsupportedField("properties")
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
 }
 

@@ -3,6 +3,41 @@
 //! This crate depends one-way on [`molecular`] and implements its reusable
 //! frame-buffer streaming contracts. It does not define another topology,
 //! frame, coordinate, or unit model.
+//!
+//! # Supported profiles
+//!
+//! | Format | Reader | Writer |
+//! |---|---|---|
+//! | XYZ | strict constant-count multi-frame element/x/y/z text; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected |
+//! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, and fixed-atom reconstruction | canonical all-atom `CORD` in either byte order with optional unit cells |
+//! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks |
+//! | XTC | GROMACS magic 1995/2023, small uncompressed and ordinary compressed coordinates | magic 1995/2023 through the private audited encoder adapter at explicit lossy precision |
+//!
+//! Every open requires a [`TrajectoryTopologyBinding`], which couples one exact
+//! Molecular topology identity with caller-supplied atom-order evidence. Equal
+//! atom count is never correspondence evidence. Native units are converted once
+//! at the codec boundary: DCD and default XYZ use angstrom, while TRR/XTC use
+//! GROMACS nanometre/picosecond conventions. XTC coordinate resolution is
+//! nominally `1 / precision` nanometres.
+//!
+//! Sequential readers retain one file handle and avoid a whole-file scan.
+//! Indexed readers retain one handle, fully verify every frame during an
+//! O(file-size) index build, store bounded checked offsets, and then decode one
+//! complete frame per random read. Decoding validates into reusable private
+//! scratch and publishes transactionally into the caller's [`FrameBuffer`].
+//! Clean EOF is accepted only between frames.
+//!
+//! Path writers stage a temporary sibling. Only consuming
+//! [`FileTrajectoryWriter::finish`] flushes, synchronizes, finalizes format
+//! metadata, and publishes it. Any failed frame write poisons publication.
+//!
+//! # Limits and unsupported formats
+//!
+//! [`TrajectoryIoLimits`] bounds attacker-controlled atoms, frames, records,
+//! scratch, index storage, text, comments, and detection before allocation or
+//! seeking. Amber NetCDF, PDB, GRO/G96, Amber ASCII, LAMMPS dump, reactive
+//! trajectories, and compressed wrappers are outside this initial profile and
+//! return structured unsupported-format or unsupported-variant errors.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
@@ -302,7 +337,11 @@ impl FileTrajectoryMetadata {
         }
     }
 
-    fn xtc(info: &xtc::XtcFrameInfo, indexed_frame_count: Option<u64>) -> Self {
+    fn xtc(
+        info: &xtc::XtcFrameInfo,
+        cell_policy: xtc::XtcCellPolicy,
+        indexed_frame_count: Option<u64>,
+    ) -> Self {
         let coordinate_encoding = match info.precision() {
             Some(precision) => CoordinateEncoding::Lossy {
                 precision: ScalarPrecision::Float32,
@@ -320,10 +359,9 @@ impl FileTrajectoryMetadata {
             indexed_frame_count,
             fields: TrajectoryFieldAvailability {
                 positions: FieldAvailability::Required,
-                cell: if info.has_cell() {
-                    FieldAvailability::Optional
-                } else {
-                    FieldAvailability::Absent
+                cell: match cell_policy {
+                    xtc::XtcCellPolicy::RequirePeriodic => FieldAvailability::Required,
+                    xtc::XtcCellPolicy::ZeroMatrixAsAbsent => FieldAvailability::Optional,
                 },
                 velocities: FieldAvailability::Absent,
                 forces: FieldAvailability::Absent,
@@ -338,7 +376,7 @@ impl FileTrajectoryMetadata {
                 RandomAccessCapability::SequentialOnly
             },
             variant: Some(format!(
-                "{:?} via audited molly 0.6.1; first payload {} bytes",
+                "{:?} checked reader / audited molly 0.6.1 writer; first payload {} bytes",
                 info.magic(),
                 info.compressed_bytes()
             )),
@@ -692,13 +730,15 @@ pub fn open_trajectory(
             )
         }
         TrajectoryFormat::Xtc => {
-            let reader = xtc::XtcReader::new(reader, binding, options.xtc, options.limits, label)?;
-            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), None);
+            let xtc_options = options.xtc;
+            let reader = xtc::XtcReader::new(reader, binding, xtc_options, options.limits, label)?;
+            let metadata =
+                FileTrajectoryMetadata::xtc(reader.first_info(), xtc_options.cell_policy(), None);
             (
                 SequentialReaderInner::Xtc(reader),
                 metadata,
                 vec![
-                    "XTC decoding uses bounded preflight and the audited unbuffered molly adapter"
+                    "XTC decoding uses a bounded checked reader; molly is confined to writing"
                         .into(),
                 ],
             )
@@ -778,10 +818,15 @@ pub fn open_indexed_trajectory(
             )
         }
         TrajectoryFormat::Xtc => {
-            let reader = xtc::XtcReader::new(reader, binding, options.xtc, options.limits, label)?;
+            let xtc_options = options.xtc;
+            let reader = xtc::XtcReader::new(reader, binding, xtc_options, options.limits, label)?;
             let reader = reader.into_indexed()?;
             let count = reader.frame_count().unwrap_or(0);
-            let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), Some(count));
+            let metadata = FileTrajectoryMetadata::xtc(
+                reader.first_info(),
+                xtc_options.cell_policy(),
+                Some(count),
+            );
             (
                 IndexedReaderInner::Xtc(reader),
                 metadata,
@@ -917,6 +962,7 @@ pub struct FileTrajectoryWriter {
     destination: PathBuf,
     temporary: PathBuf,
     overwrite: OverwritePolicy,
+    failed: bool,
     published: bool,
 }
 
@@ -924,6 +970,15 @@ impl FileTrajectoryWriter {
     /// Flushes, synchronizes, and atomically publishes the completed trajectory.
     pub fn finish(mut self) -> Result<(), TrajectoryError> {
         let label = self.destination.display().to_string();
+        if self.failed {
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::Finish,
+                Some(self.format()),
+                &label,
+                "cannot publish a trajectory after an earlier frame-write failure",
+            ));
+        }
         if let Some(inner) = &mut self.inner {
             inner.flush_and_sync(&label)?;
         }
@@ -938,14 +993,8 @@ impl FileTrajectoryWriter {
                         error,
                     )
                 })?;
-                std::fs::remove_file(&self.temporary).map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Finish,
-                        Some(self.format()),
-                        &label,
-                        error,
-                    )
-                })?;
+                self.published = true;
+                let _ = std::fs::remove_file(&self.temporary);
             }
             OverwritePolicy::Replace => {
                 std::fs::rename(&self.temporary, &self.destination).map_err(|error| {
@@ -956,9 +1005,9 @@ impl FileTrajectoryWriter {
                         error,
                     )
                 })?;
+                self.published = true;
             }
         }
-        self.published = true;
         Ok(())
     }
 
@@ -976,16 +1025,29 @@ impl TrajectoryWriter for FileTrajectoryWriter {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        match &mut self.inner {
+        if self.failed {
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(self.format),
+                &self.destination.display().to_string(),
+                "trajectory writer is poisoned by an earlier frame-write failure",
+            ));
+        }
+        let result = match &mut self.inner {
             Some(inner) => inner.write_frame(frame),
             None => Err(codec_context(
                 TrajectoryCodecErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
+                Some(self.format),
                 &self.destination.display().to_string(),
                 "trajectory writer has already finished",
             )),
+        };
+        if result.is_err() {
+            self.failed = true;
         }
+        result
     }
 }
 
@@ -1037,31 +1099,23 @@ pub fn create_trajectory_writer(
                 error,
             )
         })?;
-    let inner = match options.format {
-        TrajectoryFormat::Xyz => FileWriterInner::Xyz(xyz::XyzWriter::new(
-            BufWriter::new(file),
-            topology,
-            options.xyz,
-            label,
-        )?),
-        TrajectoryFormat::Dcd => FileWriterInner::Dcd(dcd::DcdWriter::new(
-            BufWriter::new(file),
-            topology,
-            options.dcd,
-            label,
-        )?),
-        TrajectoryFormat::Trr => FileWriterInner::Trr(trr::TrrWriter::new(
-            BufWriter::new(file),
-            topology,
-            options.trr,
-            label,
-        )?),
-        TrajectoryFormat::Xtc => FileWriterInner::Xtc(xtc::XtcWriter::new(
-            BufWriter::new(file),
-            topology,
-            options.xtc,
-            label,
-        )?),
+    let inner_result = match options.format {
+        TrajectoryFormat::Xyz => {
+            xyz::XyzWriter::new(BufWriter::new(file), topology, options.xyz, label)
+                .map(FileWriterInner::Xyz)
+        }
+        TrajectoryFormat::Dcd => {
+            dcd::DcdWriter::new(BufWriter::new(file), topology, options.dcd, label)
+                .map(FileWriterInner::Dcd)
+        }
+        TrajectoryFormat::Trr => {
+            trr::TrrWriter::new(BufWriter::new(file), topology, options.trr, label)
+                .map(FileWriterInner::Trr)
+        }
+        TrajectoryFormat::Xtc => {
+            xtc::XtcWriter::new(BufWriter::new(file), topology, options.xtc, label)
+                .map(FileWriterInner::Xtc)
+        }
         format => {
             let _ = std::fs::remove_file(&temporary);
             return Err(unimplemented_format(
@@ -1071,14 +1125,40 @@ pub fn create_trajectory_writer(
             ));
         }
     };
+    let inner = match inner_result {
+        Ok(inner) => inner,
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+    };
     Ok(FileTrajectoryWriter {
         inner: Some(inner),
         format: options.format,
         destination,
         temporary,
         overwrite: options.overwrite,
+        failed: false,
         published: false,
     })
+}
+
+pub(crate) fn frame_offset_context(
+    error: TrajectoryError,
+    frame: u64,
+    byte_offset: u64,
+) -> TrajectoryError {
+    match error {
+        TrajectoryError::Io(context) => {
+            let context = (*context).with_frame(frame).with_byte_offset(byte_offset);
+            TrajectoryError::Io(Box::new(context))
+        }
+        TrajectoryError::Codec(context) => {
+            let context = (*context).with_frame(frame).with_byte_offset(byte_offset);
+            TrajectoryError::Codec(Box::new(context))
+        }
+        error => error,
+    }
 }
 
 fn create_temporary_sibling(

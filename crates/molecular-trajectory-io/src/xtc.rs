@@ -1,4 +1,4 @@
-//! Defensive private adapter over `molly` for GROMACS XTC trajectories.
+//! Bounded GROMACS XTC trajectories with a checked reader and `molly` writer.
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -12,10 +12,20 @@ use molecular::trajectory::{
 };
 use molecular::units::{Quantity, NANOMETER, PICOSECOND};
 
-use crate::{codec_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding};
+use crate::{
+    codec_context, frame_offset_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding,
+};
 
 const XTC_HEADER_BYTES: usize = 56;
 const XTC_COMPRESSED_PRELUDE_BYTES: usize = 32;
+const XTC_MAGIC_INTS: [i32; 73] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 10, 12, 16, 20, 25, 32, 40, 50, 64, 80, 101, 128, 161, 203, 256,
+    322, 406, 512, 645, 812, 1024, 1290, 1625, 2048, 2580, 3250, 4096, 5060, 6501, 8192, 10321,
+    13003, 16384, 20642, 26007, 32768, 41285, 52015, 65536, 82570, 104031, 131072, 165140, 208063,
+    262144, 330280, 416127, 524287, 660561, 832255, 1048576, 1321122, 1664510, 2097152, 2642245,
+    3329021, 4194304, 5284491, 6658042, 8388607, 10568983, 13316085, 16777216,
+];
+const XTC_FIRST_SMALL_INDEX: usize = 9;
 
 /// Supported XTC magic and compressed-byte-count profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +79,10 @@ impl XtcReadOptions {
     pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
         self.cell_policy = cell_policy;
         self
+    }
+
+    pub const fn cell_policy(self) -> XtcCellPolicy {
+        self.cell_policy
     }
 }
 
@@ -138,27 +152,25 @@ impl XtcFrameInfo {
         self.precision
     }
 
-    pub(crate) const fn has_cell(&self) -> bool {
-        self.cell.is_some()
-    }
-
     pub(crate) const fn compressed_bytes(&self) -> usize {
         self.compressed_bytes
     }
 }
 
-struct MollyReaderAdapter<R> {
-    inner: molly::XTCReader<R>,
-    frame: molly::Frame,
+struct CheckedXtcReaderAdapter<R> {
+    reader: R,
     scratch: Vec<u8>,
+    decoded_positions: Vec<f32>,
+    decoded_start: Option<u64>,
 }
 
-impl<R: Read + Seek> MollyReaderAdapter<R> {
+impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
     fn new(reader: R) -> Self {
         Self {
-            inner: molly::XTCReader::new(reader),
-            frame: molly::Frame::default(),
+            reader,
             scratch: Vec::new(),
+            decoded_positions: Vec::new(),
+            decoded_start: None,
         }
     }
 
@@ -171,7 +183,8 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
         frame_index: u64,
         clean_eof: bool,
     ) -> Result<Option<XtcFrameInfo>, TrajectoryError> {
-        let start = self.inner.file.stream_position().map_err(|error| {
+        self.decoded_start = None;
+        let start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xtc),
@@ -180,7 +193,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
             )
         })?;
         let mut header = [0_u8; XTC_HEADER_BYTES];
-        match self.inner.file.read(&mut header[..1]) {
+        match self.reader.read(&mut header[..1]) {
             Ok(0) if clean_eof => return Ok(None),
             Ok(0) => return Err(header_error(source_label, "missing XTC frame header")),
             Ok(_) => {}
@@ -194,7 +207,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
             }
         }
         read_exact(
-            &mut self.inner.file,
+            &mut self.reader,
             &mut header[1..],
             source_label,
             Some(frame_index),
@@ -251,10 +264,55 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
             *value = f64::from(f32::from_be_bytes(chunk.try_into().expect("box")));
         }
         let cell = decode_cell(box_values, options.cell_policy, source_label, frame_index)?;
+        let base_scratch = atom_count
+            .checked_mul(3 * std::mem::size_of::<f32>() + std::mem::size_of::<Point3>())
+            .ok_or_else(|| resource_error(source_label, None, "XTC scratch size overflows"))?;
+        let coordinate_scalars = atom_count
+            .checked_mul(3)
+            .ok_or_else(|| resource_error(source_label, None, "XTC coordinate count overflows"))?;
+        self.decoded_positions.clear();
+        self.decoded_positions
+            .try_reserve_exact(coordinate_scalars)
+            .map_err(|_| {
+                resource_error(
+                    source_label,
+                    Some(frame_index),
+                    "could not reserve XTC decoded coordinate scratch",
+                )
+            })?;
         let (precision, compressed_bytes, end) = if atom_count <= 9 {
             let coordinate_bytes = atom_count
                 .checked_mul(12)
                 .ok_or_else(|| resource_error(source_label, None, "XTC small frame overflows"))?;
+            self.scratch.clear();
+            self.scratch
+                .try_reserve_exact(coordinate_bytes)
+                .map_err(|_| {
+                    resource_error(
+                        source_label,
+                        Some(frame_index),
+                        "could not reserve XTC small-frame scratch",
+                    )
+                })?;
+            self.scratch.resize(coordinate_bytes, 0);
+            read_exact(
+                &mut self.reader,
+                &mut self.scratch,
+                source_label,
+                Some(frame_index),
+                "truncated XTC small-frame coordinates",
+            )?;
+            for chunk in self.scratch.chunks_exact(4) {
+                let value = f32::from_be_bytes(chunk.try_into().expect("small coordinate"));
+                if !value.is_finite() {
+                    return Err(corrupt_error(
+                        source_label,
+                        frame_index,
+                        "XTC small-frame coordinate is not finite",
+                    ));
+                }
+                self.decoded_positions.push(value);
+            }
             let end = start
                 .checked_add(XTC_HEADER_BYTES as u64)
                 .and_then(|offset| offset.checked_add(coordinate_bytes as u64))
@@ -263,7 +321,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
         } else {
             let mut prelude = [0_u8; XTC_COMPRESSED_PRELUDE_BYTES];
             read_exact(
-                &mut self.inner.file,
+                &mut self.reader,
                 &mut prelude,
                 source_label,
                 Some(frame_index),
@@ -271,6 +329,8 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
             )?;
             let precision = f32::from_be_bytes(prelude[..4].try_into().expect("precision"));
             validate_precision(precision, source_label)?;
+            let mut minimum = [0_i32; 3];
+            let mut maximum = [0_i32; 3];
             for axis in 0..3 {
                 let offset = 4 + axis * 4;
                 let min =
@@ -281,6 +341,8 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                         .try_into()
                         .expect("maximum"),
                 );
+                minimum[axis] = min;
+                maximum[axis] = max;
                 if min > max {
                     return Err(corrupt_error(
                         source_label,
@@ -289,16 +351,24 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                     ));
                 }
             }
-            let small_index = u32::from_be_bytes(prelude[28..32].try_into().expect("small index"));
-            if !(9..73).contains(&small_index) {
+            let small_index = usize::try_from(u32::from_be_bytes(
+                prelude[28..32].try_into().expect("small index"),
+            ))
+            .map_err(|_| {
+                resource_error(
+                    source_label,
+                    Some(frame_index),
+                    "XTC small-index does not fit",
+                )
+            })?;
+            if !(XTC_FIRST_SMALL_INDEX..XTC_MAGIC_INTS.len()).contains(&small_index) {
                 return Err(corrupt_error(
                     source_label,
                     frame_index,
                     "XTC compressed small-index is outside the audited table",
                 ));
             }
-            let compressed_bytes =
-                read_nbytes(&mut self.inner.file, magic, source_label, frame_index)?;
+            let compressed_bytes = read_nbytes(&mut self.reader, magic, source_label, frame_index)?;
             if compressed_bytes == 0
                 || compressed_bytes as u64 > limits.max_record_bytes
                 || compressed_bytes > limits.max_scratch_bytes
@@ -309,6 +379,47 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                     "XTC compressed payload is zero or exceeds configured limits",
                 ));
             }
+            if base_scratch
+                .checked_add(compressed_bytes)
+                .is_none_or(|bytes| bytes > limits.max_scratch_bytes)
+            {
+                return Err(resource_error(
+                    source_label,
+                    Some(frame_index),
+                    "XTC aggregate decode scratch exceeds the configured limit",
+                ));
+            }
+            self.scratch.clear();
+            self.scratch
+                .try_reserve_exact(compressed_bytes)
+                .map_err(|_| {
+                    resource_error(
+                        source_label,
+                        Some(frame_index),
+                        "could not reserve XTC compressed validation scratch",
+                    )
+                })?;
+            self.scratch.resize(compressed_bytes, 0);
+            read_exact(
+                &mut self.reader,
+                &mut self.scratch,
+                source_label,
+                Some(frame_index),
+                "truncated XTC compressed payload",
+            )?;
+            decode_compressed_payload(
+                &self.scratch,
+                CompressedLayout {
+                    atom_count,
+                    minimum,
+                    maximum,
+                    initial_small_index: small_index,
+                    precision,
+                },
+                &mut self.decoded_positions,
+                source_label,
+                frame_index,
+            )?;
             let padded = compressed_bytes
                 .checked_add((4 - compressed_bytes % 4) % 4)
                 .ok_or_else(|| resource_error(source_label, None, "XTC padding overflows"))?;
@@ -330,9 +441,6 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                 "XTC frame exceeds the configured byte limit",
             ));
         }
-        let base_scratch = atom_count
-            .checked_mul(3 * std::mem::size_of::<f32>() + std::mem::size_of::<Point3>())
-            .ok_or_else(|| resource_error(source_label, None, "XTC scratch size overflows"))?;
         if base_scratch
             .checked_add(compressed_bytes)
             .is_none_or(|bytes| bytes > limits.max_scratch_bytes)
@@ -343,15 +451,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                 "XTC aggregate decode scratch exceeds the configured limit",
             ));
         }
-        let after_header = self.inner.file.stream_position().map_err(|error| {
-            io_context(
-                TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
-                source_label,
-                error,
-            )
-        })?;
-        let file_end = self.inner.file.seek(SeekFrom::End(0)).map_err(|error| {
+        let file_end = self.reader.seek(SeekFrom::End(0)).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(TrajectoryFormat::Xtc),
@@ -360,17 +460,14 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
             )
         })?;
         if end > file_end {
-            self.inner
-                .file
-                .seek(SeekFrom::Start(start))
-                .map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::ReadHeader,
-                        Some(TrajectoryFormat::Xtc),
-                        source_label,
-                        error,
-                    )
-                })?;
+            self.reader.seek(SeekFrom::Start(start)).map_err(|error| {
+                io_context(
+                    TrajectoryIoOperation::ReadHeader,
+                    Some(TrajectoryFormat::Xtc),
+                    source_label,
+                    error,
+                )
+            })?;
             return Err(truncated_error(
                 source_label,
                 Some(frame_index),
@@ -380,8 +477,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
         if let Some(precision) = precision {
             let padding = (4 - compressed_bytes % 4) % 4;
             if padding > 0 {
-                self.inner
-                    .file
+                self.reader
                     .seek(SeekFrom::Start(end - padding as u64))
                     .map_err(|error| {
                         io_context(
@@ -393,7 +489,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                     })?;
                 let mut pad = [0_u8; 3];
                 read_exact(
-                    &mut self.inner.file,
+                    &mut self.reader,
                     &mut pad[..padding],
                     source_label,
                     Some(frame_index),
@@ -409,18 +505,15 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
             }
             let _ = precision;
         }
-        let _ = after_header;
-        self.inner
-            .file
-            .seek(SeekFrom::Start(start))
-            .map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::ReadHeader,
-                    Some(TrajectoryFormat::Xtc),
-                    source_label,
-                    error,
-                )
-            })?;
+        self.reader.seek(SeekFrom::Start(start)).map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Xtc),
+                source_label,
+                error,
+            )
+        })?;
+        self.decoded_start = Some(start);
         Ok(Some(XtcFrameInfo {
             start,
             end,
@@ -440,9 +533,15 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
         source_label: &str,
         frame_index: u64,
     ) -> Result<(), TrajectoryError> {
-        self.inner
-            .file
-            .seek(SeekFrom::Start(info.start))
+        if self.decoded_start != Some(info.start) {
+            return Err(corrupt_error(
+                source_label,
+                frame_index,
+                "XTC preflight cache does not match the requested frame",
+            ));
+        }
+        self.reader
+            .seek(SeekFrom::Start(info.end))
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
@@ -451,31 +550,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                     error,
                 )
             })?;
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            self.inner.read_frame_with_scratch(
-                &mut self.frame,
-                &mut self.scratch,
-                &molly::selection::AtomSelection::All,
-            )
-        }));
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                return Err(corrupt_error(
-                    source_label,
-                    frame_index,
-                    format!("molly rejected XTC compressed data: {error}"),
-                ))
-            }
-            Err(_) => {
-                return Err(corrupt_error(
-                    source_label,
-                    frame_index,
-                    "molly panicked while decoding bounded XTC data",
-                ))
-            }
-        }
-        let position = self.inner.file.stream_position().map_err(|error| {
+        let position = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(TrajectoryFormat::Xtc),
@@ -483,10 +558,7 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                 error,
             )
         })?;
-        if position != info.end
-            || self.frame.positions.len() != info.atom_count.saturating_mul(3)
-            || u64::from(self.frame.step) != info.step
-            || f64::from(self.frame.time) != info.time
+        if position != info.end || self.decoded_positions.len() != info.atom_count.saturating_mul(3)
         {
             return Err(corrupt_error(
                 source_label,
@@ -494,29 +566,25 @@ impl<R: Read + Seek> MollyReaderAdapter<R> {
                 "XTC adapter output disagrees with bounded preflight metadata",
             ));
         }
-        if self.frame.positions.iter().any(|value| !value.is_finite()) {
+        if self
+            .decoded_positions
+            .iter()
+            .any(|value| !value.is_finite())
+        {
             return Err(corrupt_error(
                 source_label,
                 frame_index,
                 "XTC decoder produced a non-finite coordinate",
             ));
         }
-        if let Some(precision) = info.precision {
-            if self.frame.precision != precision {
-                return Err(corrupt_error(
-                    source_label,
-                    frame_index,
-                    "XTC decoded precision disagrees with preflight",
-                ));
-            }
-        }
+        self.decoded_start = None;
         Ok(())
     }
 }
 
-/// Sequential XTC reader using the private defensive molly adapter.
+/// Sequential XTC reader using a private checked decoder for untrusted input.
 pub struct XtcReader<R> {
-    adapter: MollyReaderAdapter<R>,
+    adapter: CheckedXtcReaderAdapter<R>,
     binding: TrajectoryTopologyBinding,
     options: XtcReadOptions,
     limits: TrajectoryIoLimits,
@@ -538,8 +606,8 @@ impl<R: Read + Seek> XtcReader<R> {
     ) -> Result<Self, TrajectoryError> {
         let source_label = source_label.into();
         validate_atom_count(binding.topology().atom_count(), &limits, &source_label)?;
-        let mut adapter = MollyReaderAdapter::new(reader);
-        let stream_start = adapter.inner.file.stream_position().map_err(|error| {
+        let mut adapter = CheckedXtcReaderAdapter::new(reader);
+        let stream_start = adapter.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Open,
                 Some(TrajectoryFormat::Xtc),
@@ -548,7 +616,8 @@ impl<R: Read + Seek> XtcReader<R> {
             )
         })?;
         let first_info = adapter
-            .preflight(&binding, options, &limits, &source_label, 0, false)?
+            .preflight(&binding, options, &limits, &source_label, 0, false)
+            .map_err(|error| frame_offset_context(error, 0, stream_start))?
             .ok_or_else(|| header_error(&source_label, "XTC stream is empty"))?;
         let atom_count = binding.topology().atom_count();
         let mut positions = Vec::new();
@@ -586,14 +655,24 @@ impl<R: Read + Seek> XtcReader<R> {
         if let Some(info) = self.pending_info.take() {
             return Ok(Some(info));
         }
-        self.adapter.preflight(
-            &self.binding,
-            self.options,
-            &self.limits,
-            &self.source_label,
-            self.frame_cursor,
-            true,
-        )
+        let offset = self.adapter.reader.stream_position().map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Xtc),
+                &self.source_label,
+                error,
+            )
+        })?;
+        self.adapter
+            .preflight(
+                &self.binding,
+                self.options,
+                &self.limits,
+                &self.source_label,
+                self.frame_cursor,
+                true,
+            )
+            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
     }
 
     fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
@@ -607,12 +686,67 @@ impl<R: Read + Seek> XtcReader<R> {
                 "XTC frame count exceeds the configured limit",
             ));
         }
+        if info.magic != self.first_info.magic || info.precision != self.first_info.precision {
+            return Err(TrajectoryCodecErrorContext::new(
+                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Xtc),
+            )
+            .with_source_label(&self.source_label)
+            .with_frame(self.frame_cursor)
+            .with_byte_offset(info.start)
+            .with_detail("XTC magic and coordinate precision must remain constant across frames")
+            .into());
+        }
+        if self.adapter.decoded_start != Some(info.start) {
+            self.adapter
+                .reader
+                .seek(SeekFrom::Start(info.start))
+                .map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::ReadFrame,
+                        Some(TrajectoryFormat::Xtc),
+                        &self.source_label,
+                        error,
+                    )
+                })?;
+            let refreshed = self
+                .adapter
+                .preflight(
+                    &self.binding,
+                    self.options,
+                    &self.limits,
+                    &self.source_label,
+                    self.frame_cursor,
+                    false,
+                )?
+                .ok_or_else(|| {
+                    truncated_error(
+                        &self.source_label,
+                        Some(self.frame_cursor),
+                        "XTC indexed frame disappeared during preflight",
+                    )
+                })?;
+            if refreshed.start != info.start
+                || refreshed.end != info.end
+                || refreshed.magic != info.magic
+                || refreshed.atom_count != info.atom_count
+                || refreshed.step != info.step
+                || refreshed.time != info.time
+            {
+                return Err(corrupt_error(
+                    &self.source_label,
+                    self.frame_cursor,
+                    "XTC repeated preflight metadata changed",
+                ));
+            }
+        }
         self.adapter
             .decode(&info, &self.source_label, self.frame_cursor)?;
         for (point, values) in self
             .positions
             .iter_mut()
-            .zip(self.adapter.frame.positions.chunks_exact(3))
+            .zip(self.adapter.decoded_positions.chunks_exact(3))
         {
             *point = Point3::new(
                 f64::from(values[0]),
@@ -632,7 +766,13 @@ impl<R: Read + Seek> XtcReader<R> {
             }
             destination.replace_from_data(data)?;
         }
-        self.frame_cursor += 1;
+        self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
+            resource_error(
+                &self.source_label,
+                Some(self.frame_cursor),
+                "XTC frame cursor overflows",
+            )
+        })?;
         Ok(true)
     }
 
@@ -641,7 +781,7 @@ impl<R: Read + Seek> XtcReader<R> {
         loop {
             let offset = self.pending_info.as_ref().map_or_else(
                 || {
-                    self.adapter.inner.file.stream_position().map_err(|error| {
+                    self.adapter.reader.stream_position().map_err(|error| {
                         io_context(
                             TrajectoryIoOperation::Index,
                             Some(TrajectoryFormat::Xtc),
@@ -652,7 +792,10 @@ impl<R: Read + Seek> XtcReader<R> {
                 },
                 |info| Ok(info.start),
             )?;
-            if !self.parse_next(None)? {
+            if !self
+                .parse_next(None)
+                .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
+            {
                 break;
             }
             if offsets.len() >= self.limits.max_index_entries {
@@ -691,8 +834,7 @@ impl<R: Read + Seek> XtcReader<R> {
 
     fn rewind(&mut self) -> Result<(), TrajectoryError> {
         self.adapter
-            .inner
-            .file
+            .reader
             .seek(SeekFrom::Start(self.stream_start))
             .map_err(|error| {
                 io_context(
@@ -721,7 +863,21 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+        let offset = self.pending_info.as_ref().map_or_else(
+            || {
+                self.adapter.reader.stream_position().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::ReadFrame,
+                        Some(TrajectoryFormat::Xtc),
+                        &self.source_label,
+                        error,
+                    )
+                })
+            },
+            |info| Ok(info.start),
+        )?;
         self.parse_next(Some(destination))
+            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
     }
 }
 
@@ -769,8 +925,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
         let saved_offset = self
             .inner
             .adapter
-            .inner
-            .file
+            .reader
             .stream_position()
             .map_err(|error| {
                 io_context(
@@ -782,11 +937,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             })?;
         let saved_cursor = self.inner.frame_cursor;
         let saved_pending = self.inner.pending_info.take();
-        let saved_adapter_step = self.inner.adapter.inner.step;
         self.inner
             .adapter
-            .inner
-            .file
+            .reader
             .seek(SeekFrom::Start(offset))
             .map_err(|error| {
                 io_context(
@@ -797,19 +950,21 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
                 )
             })?;
         self.inner.frame_cursor = index;
-        self.inner.adapter.inner.step = usize::try_from(index).unwrap_or(usize::MAX);
-        let result = self.inner.parse_next(Some(destination)).and_then(|read| {
-            if read {
-                Ok(())
-            } else {
-                Err(TrajectoryError::FrameIndexOutOfRange(index))
-            }
-        });
+        let result = self
+            .inner
+            .parse_next(Some(destination))
+            .map_err(|error| frame_offset_context(error, index, offset))
+            .and_then(|read| {
+                if read {
+                    Ok(())
+                } else {
+                    Err(TrajectoryError::FrameIndexOutOfRange(index))
+                }
+            });
         let restore = self
             .inner
             .adapter
-            .inner
-            .file
+            .reader
             .seek(SeekFrom::Start(saved_offset))
             .map_err(|error| {
                 io_context(
@@ -821,7 +976,6 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             });
         self.inner.frame_cursor = saved_cursor;
         self.inner.pending_info = saved_pending;
-        self.inner.adapter.inner.step = saved_adapter_step;
         result.and(restore.map(|_| ()))
     }
 }
@@ -948,7 +1102,11 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             (!frame.props().is_empty(), "properties"),
         ] {
             if present {
-                return Err(TrajectoryError::UnsupportedField(field));
+                return Err(writer_field_error(
+                    &self.source_label,
+                    self.frame_count,
+                    field,
+                ));
             }
         }
         let step = frame.step().ok_or_else(|| {
@@ -1043,8 +1201,15 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 positions
                     .value()
                     .len()
-                    .saturating_mul(3)
-                    .saturating_sub(self.adapter.frame.positions.capacity()),
+                    .checked_mul(3)
+                    .ok_or_else(|| {
+                        resource_error(
+                            &self.source_label,
+                            Some(self.frame_count),
+                            "XTC writer coordinate count overflows",
+                        )
+                    })?
+                    .saturating_sub(self.adapter.frame.positions.len()),
             )
             .map_err(|_| {
                 resource_error(
@@ -1082,6 +1247,446 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             .ok_or_else(|| resource_error(&self.source_label, None, "XTC frame count overflows"))?;
         Ok(())
     }
+}
+
+struct CheckedByteBuffer<'a> {
+    bytes: &'a [u8],
+    index: usize,
+}
+
+impl<'a> CheckedByteBuffer<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, index: 0 }
+    }
+
+    fn pop(&mut self, source_label: &str, frame_index: u64) -> Result<u8, TrajectoryError> {
+        let value = self.bytes.get(self.index).copied().ok_or_else(|| {
+            corrupt_error(
+                source_label,
+                frame_index,
+                "XTC compressed bitstream ends before all atoms are decoded",
+            )
+        })?;
+        self.index += 1;
+        Ok(value)
+    }
+}
+
+#[derive(Default)]
+struct CheckedDecodeState {
+    last_bits: usize,
+    last_byte: u8,
+}
+
+struct CompressedLayout {
+    atom_count: usize,
+    minimum: [i32; 3],
+    maximum: [i32; 3],
+    initial_small_index: usize,
+    precision: f32,
+}
+
+fn decode_compressed_payload(
+    payload: &[u8],
+    layout: CompressedLayout,
+    output: &mut Vec<f32>,
+    source_label: &str,
+    frame_index: u64,
+) -> Result<(), TrajectoryError> {
+    let CompressedLayout {
+        atom_count,
+        minimum,
+        maximum,
+        initial_small_index,
+        precision,
+    } = layout;
+    let mut sizes = [0_u32; 3];
+    let mut axis_bits = [0_u32; 3];
+    for axis in 0..3 {
+        let span = maximum[axis].checked_sub(minimum[axis]).ok_or_else(|| {
+            corrupt_error(
+                source_label,
+                frame_index,
+                "XTC compressed coordinate span exceeds the audited decoder profile",
+            )
+        })?;
+        sizes[axis] = u32::try_from(span)
+            .ok()
+            .and_then(|span| span.checked_add(1))
+            .ok_or_else(|| {
+                corrupt_error(
+                    source_label,
+                    frame_index,
+                    "XTC compressed coordinate size overflows",
+                )
+            })?;
+    }
+    let combined_bits = if sizes.iter().fold(0_u32, |bits, size| bits | size) > 0x00ff_ffff {
+        for (target, size) in axis_bits.iter_mut().zip(sizes) {
+            *target = 32 - size.leading_zeros();
+            if *target == 32 {
+                return Err(corrupt_error(
+                    source_label,
+                    frame_index,
+                    "XTC compressed axis requires a 32-bit scalar unsupported by the audited adapter",
+                ));
+            }
+        }
+        0
+    } else {
+        combined_bit_count(sizes)
+    };
+    let mut buffer = CheckedByteBuffer::new(payload);
+    let mut state = CheckedDecodeState::default();
+    let mut small_index = initial_small_index;
+    let mut smaller = XTC_MAGIC_INTS[small_index.saturating_sub(1).max(XTC_FIRST_SMALL_INDEX)] / 2;
+    let mut small_number = XTC_MAGIC_INTS[small_index] / 2;
+    let mut read_atoms = 0_usize;
+    let inverse_precision = precision.recip();
+
+    while read_atoms < atom_count {
+        let mut coordinate = if combined_bits == 0 {
+            let mut decoded = [0_i32; 3];
+            for axis in 0..3 {
+                let value = decode_checked_bits(
+                    &mut buffer,
+                    &mut state,
+                    axis_bits[axis],
+                    source_label,
+                    frame_index,
+                )?;
+                if value >= sizes[axis] || value > i32::MAX as u32 {
+                    return Err(corrupt_error(
+                        source_label,
+                        frame_index,
+                        "XTC compressed absolute coordinate is outside declared bounds",
+                    ));
+                }
+                decoded[axis] = value as i32;
+            }
+            decoded
+        } else {
+            decode_checked_triplet(
+                &mut buffer,
+                &mut state,
+                combined_bits,
+                sizes,
+                source_label,
+                frame_index,
+            )?
+        };
+        for axis in 0..3 {
+            coordinate[axis] = minimum[axis]
+                .checked_add(coordinate[axis])
+                .filter(|value| *value <= maximum[axis])
+                .ok_or_else(|| {
+                    corrupt_error(
+                        source_label,
+                        frame_index,
+                        "XTC compressed absolute coordinate overflows declared bounds",
+                    )
+                })?;
+        }
+        let mut previous = coordinate;
+        let flag = decode_checked_bits(&mut buffer, &mut state, 1, source_label, frame_index)? != 0;
+        let mut smaller_change = 0_i32;
+        let mut run = 0_u32;
+        if flag {
+            run = decode_checked_bits(&mut buffer, &mut state, 5, source_label, frame_index)?;
+            let remainder = run % 3;
+            run -= remainder;
+            smaller_change = remainder as i32 - 1;
+        }
+        if run == 0 {
+            push_checked_coordinate(
+                output,
+                coordinate,
+                inverse_precision,
+                source_label,
+                frame_index,
+            )?;
+            read_atoms += 1;
+        } else {
+            let emitted_atoms = usize::try_from(run / 3)
+                .ok()
+                .and_then(|count| count.checked_add(1))
+                .ok_or_else(|| {
+                    corrupt_error(
+                        source_label,
+                        frame_index,
+                        "XTC compressed run atom count overflows",
+                    )
+                })?;
+            if emitted_atoms > atom_count - read_atoms {
+                return Err(corrupt_error(
+                    source_label,
+                    frame_index,
+                    "XTC compressed run exceeds the declared atom count",
+                ));
+            }
+            let small_size = u32::try_from(XTC_MAGIC_INTS[small_index])
+                .expect("audited XTC magic integers are positive");
+            let small_sizes = [small_size; 3];
+            for offset in (0..run).step_by(3) {
+                let delta = decode_checked_triplet(
+                    &mut buffer,
+                    &mut state,
+                    small_index as u32,
+                    small_sizes,
+                    source_label,
+                    frame_index,
+                )?;
+                for axis in 0..3 {
+                    coordinate[axis] = previous[axis]
+                        .checked_sub(small_number)
+                        .and_then(|base| base.checked_add(delta[axis]))
+                        .filter(|value| *value >= minimum[axis] && *value <= maximum[axis])
+                        .ok_or_else(|| {
+                            corrupt_error(
+                                source_label,
+                                frame_index,
+                                "XTC compressed run coordinate overflows declared bounds",
+                            )
+                        })?;
+                }
+                if offset == 0 {
+                    std::mem::swap(&mut coordinate, &mut previous);
+                    push_checked_coordinate(
+                        output,
+                        previous,
+                        inverse_precision,
+                        source_label,
+                        frame_index,
+                    )?;
+                    read_atoms += 1;
+                } else {
+                    previous = coordinate;
+                }
+                push_checked_coordinate(
+                    output,
+                    coordinate,
+                    inverse_precision,
+                    source_label,
+                    frame_index,
+                )?;
+                read_atoms += 1;
+            }
+        }
+
+        match smaller_change.cmp(&0) {
+            std::cmp::Ordering::Less => {
+                if small_index <= XTC_FIRST_SMALL_INDEX {
+                    return Err(corrupt_error(
+                        source_label,
+                        frame_index,
+                        "XTC compressed small-index would underflow",
+                    ));
+                }
+                small_index -= 1;
+                small_number = smaller;
+                smaller = if small_index > XTC_FIRST_SMALL_INDEX {
+                    XTC_MAGIC_INTS[small_index - 1] / 2
+                } else {
+                    0
+                };
+            }
+            std::cmp::Ordering::Greater => {
+                if small_index + 1 >= XTC_MAGIC_INTS.len() {
+                    return Err(corrupt_error(
+                        source_label,
+                        frame_index,
+                        "XTC compressed small-index would overflow",
+                    ));
+                }
+                small_index += 1;
+                smaller = small_number;
+                small_number = XTC_MAGIC_INTS[small_index] / 2;
+            }
+            std::cmp::Ordering::Equal => {}
+        }
+    }
+    validate_decoded_count(output, atom_count, source_label, frame_index)?;
+    if buffer.index != payload.len() {
+        return Err(corrupt_error(
+            source_label,
+            frame_index,
+            "XTC compressed payload contains unused trailing bytes",
+        ));
+    }
+    let trailing_mask = if state.last_bits == 0 {
+        0
+    } else {
+        (1_u16 << state.last_bits) - 1
+    };
+    if u16::from(state.last_byte) & trailing_mask != 0 {
+        return Err(corrupt_error(
+            source_label,
+            frame_index,
+            "XTC compressed payload contains nonzero trailing bits",
+        ));
+    }
+    Ok(())
+}
+
+fn decode_checked_bits(
+    buffer: &mut CheckedByteBuffer<'_>,
+    state: &mut CheckedDecodeState,
+    count: u32,
+    source_label: &str,
+    frame_index: u64,
+) -> Result<u32, TrajectoryError> {
+    if count > 32 {
+        return Err(corrupt_error(
+            source_label,
+            frame_index,
+            "XTC compressed scalar requests more than 32 bits",
+        ));
+    }
+    let mask = if count == 32 {
+        u32::MAX
+    } else {
+        (1_u32 << count) - 1
+    };
+    let mut remaining = count as usize;
+    let mut last_bits = state.last_bits;
+    let mut last_byte = u32::from(state.last_byte);
+    let mut value = 0_u32;
+    while remaining >= 8 {
+        last_byte = last_byte.wrapping_shl(8) | u32::from(buffer.pop(source_label, frame_index)?);
+        value |= (last_byte >> last_bits) << (remaining - 8);
+        remaining -= 8;
+    }
+    if remaining > 0 {
+        if last_bits < remaining {
+            last_bits += 8;
+            last_byte =
+                last_byte.wrapping_shl(8) | u32::from(buffer.pop(source_label, frame_index)?);
+        }
+        last_bits -= remaining;
+        value |= (last_byte >> last_bits) & mask;
+    }
+    state.last_bits = last_bits;
+    state.last_byte = (last_byte & 0xff) as u8;
+    Ok(value & mask)
+}
+
+fn push_checked_coordinate(
+    output: &mut Vec<f32>,
+    coordinate: [i32; 3],
+    inverse_precision: f32,
+    source_label: &str,
+    frame_index: u64,
+) -> Result<(), TrajectoryError> {
+    for value in coordinate {
+        let value = value as f32 * inverse_precision;
+        if !value.is_finite() {
+            return Err(corrupt_error(
+                source_label,
+                frame_index,
+                "XTC decoded coordinate is not finite",
+            ));
+        }
+        output.push(value);
+    }
+    Ok(())
+}
+
+fn validate_decoded_count(
+    output: &[f32],
+    atom_count: usize,
+    source_label: &str,
+    frame_index: u64,
+) -> Result<(), TrajectoryError> {
+    if output.len() != atom_count.saturating_mul(3) {
+        return Err(corrupt_error(
+            source_label,
+            frame_index,
+            "XTC compressed bitstream did not produce the declared atom count",
+        ));
+    }
+    Ok(())
+}
+
+fn combined_bit_count(sizes: [u32; 3]) -> u32 {
+    let mut byte_count = 1_usize;
+    let mut bytes = [0_u8; 32];
+    bytes[0] = 1;
+    for size in sizes {
+        let mut carry = 0_u32;
+        for byte in &mut bytes[..byte_count] {
+            carry += u32::from(*byte) * size;
+            *byte = (carry & 0xff) as u8;
+            carry >>= 8;
+        }
+        while carry != 0 {
+            bytes[byte_count] = (carry & 0xff) as u8;
+            byte_count += 1;
+            carry >>= 8;
+        }
+    }
+    let high = bytes[byte_count - 1];
+    (byte_count as u32 - 1) * 8 + (8 - high.leading_zeros())
+}
+
+fn decode_checked_triplet(
+    buffer: &mut CheckedByteBuffer<'_>,
+    state: &mut CheckedDecodeState,
+    mut count: u32,
+    sizes: [u32; 3],
+    source_label: &str,
+    frame_index: u64,
+) -> Result<[i32; 3], TrajectoryError> {
+    let mut encoded = [0_u8; 32];
+    let mut bytes = 0_usize;
+    while count >= 8 {
+        encoded[bytes] = decode_checked_bits(buffer, state, 8, source_label, frame_index)? as u8;
+        bytes += 1;
+        count -= 8;
+    }
+    if count > 0 {
+        encoded[bytes] =
+            decode_checked_bits(buffer, state, count, source_label, frame_index)? as u8;
+        bytes += 1;
+    }
+    let mut decoded = [0_u32; 3];
+    for axis in (1..=2).rev() {
+        let mut remainder = 0_u64;
+        for index in (0..bytes).rev() {
+            remainder = (remainder << 8) | u64::from(encoded[index]);
+            let quotient = remainder / u64::from(sizes[axis]);
+            if quotient > u64::from(u8::MAX) {
+                return Err(corrupt_error(
+                    source_label,
+                    frame_index,
+                    "XTC compressed mixed-radix quotient overflows",
+                ));
+            }
+            encoded[index] = quotient as u8;
+            remainder -= quotient * u64::from(sizes[axis]);
+        }
+        decoded[axis] = remainder as u32;
+    }
+    if bytes > 4 && encoded[4..bytes].iter().any(|byte| *byte != 0) {
+        return Err(corrupt_error(
+            source_label,
+            frame_index,
+            "XTC compressed x coordinate overflows",
+        ));
+    }
+    let mut x = [0_u8; 4];
+    let copied = bytes.min(x.len());
+    x[..copied].copy_from_slice(&encoded[..copied]);
+    decoded[0] = u32::from_le_bytes(x);
+    for axis in 0..3 {
+        if decoded[axis] >= sizes[axis] || decoded[axis] > i32::MAX as u32 {
+            return Err(corrupt_error(
+                source_label,
+                frame_index,
+                "XTC compressed coordinate is outside its mixed-radix bounds",
+            ));
+        }
+    }
+    Ok(decoded.map(|value| value as i32))
 }
 
 fn decode_cell(
@@ -1295,4 +1900,16 @@ fn resource_error(
         context = context.with_frame(frame);
     }
     context.into()
+}
+
+fn writer_field_error(source_label: &str, frame: u64, field: &str) -> TrajectoryError {
+    TrajectoryCodecErrorContext::new(
+        TrajectoryCodecErrorKind::UnsupportedField,
+        TrajectoryIoOperation::WriteFrame,
+        Some(TrajectoryFormat::Xtc),
+    )
+    .with_source_label(source_label)
+    .with_frame(frame)
+    .with_detail(format!("XTC cannot preserve {field}"))
+    .into()
 }
