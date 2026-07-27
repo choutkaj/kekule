@@ -7,6 +7,11 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
+  `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
+  reference coordinates with a proper `RigidTransform`, unit-bearing post-fit
+  RMSD, structured rank/weight/topology/periodic failures, and no coordinate
+  mutation or periodic imaging.
 - Add immutable whole-instance topology subset transformations with complete
   checked lineage plus explicit transactional remapping for topology-bound
   positions, models, selections, ensembles, trajectory frames, trajectories,
