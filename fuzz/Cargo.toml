@@ -70,3 +70,10 @@ path = "fuzz_targets/trajectory_dcd.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "trajectory_trr"
+path = "fuzz_targets/trajectory_trr.rs"
+test = false
+doc = false
+bench = false

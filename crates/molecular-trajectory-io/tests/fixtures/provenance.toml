@@ -64,10 +64,30 @@ reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
 command = "cargo run -p molecular-trajectory-io --example dcd_interop_writer -- OUTPUT.dcd; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame position/cell assertions>"
 verified = ["frame count", "positions", "triclinic cell"]
 
-[[planned_source]]
+[[fixture]]
+path = "mdanalysis-2.9.0-three-atoms.trr"
 format = "trr"
-generators = ["GROMACS", "independent XDR reader/writer"]
-coverage = ["f32", "f64", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
+variant = "GROMACS TRR/XDR f32 with all supported fields"
+generator = "MDAnalysis"
+generator_version = "2.9.0"
+generator_command = "uv run --python 3.12 --with MDAnalysis==2.9.0 python generate_trr.py"
+source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+sha256 = "ff960f93b192e71f9b8962a7f8fe70c0aae23fd842e15aa65f3d3fd26a6b07c0"
+license = "MIT repository fixture; MDAnalysis generator is GPL-2.0-or-later"
+atom_count = 3
+frame_count = 2
+fields = ["positions", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
+native_units = "nm, nm/ps, kJ/mol/nm, ps"
+coverage = ["f32", "all supported fields", "two frames"]
+
+[[writer_observation]]
+format = "trr"
+writer = "molecular-trajectory-io trr_interop_writer example"
+independent_reader = "MDAnalysis"
+reader_version = "2.9.0"
+reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+command = "cargo run -p molecular-trajectory-io --example trr_interop_writer -- OUTPUT.trr; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame all-field assertions>"
+verified = ["frame count", "positions", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
 
 [[planned_source]]
 format = "xtc"

@@ -27,9 +27,9 @@ foundational `molecular` crate.
 - XYZ, DCD, TRR, and XTC are tracked independently. Amber NetCDF, multi-model
   PDB, GRO/G96, Amber ASCII, LAMMPS dump, and compressed wrappers remain
   structured unsupported formats until their own contracts land.
-- The current format-agnostic factory dispatches the implemented XYZ and DCD
-  vertical slices. Recognized TRR and XTC signatures remain typed unsupported
-  results until their independently tracked implementations land.
+- The current format-agnostic factory dispatches the implemented XYZ, DCD, and
+  TRR vertical slices. Recognized XTC signatures remain typed unsupported until
+  its independently tracked adapter lands.
 
 ## Implementation Notes
 
