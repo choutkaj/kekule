@@ -27,8 +27,6 @@ separate feature contract.
 
 Feature contracts currently reserved with `planned` status include:
 
-- `descriptor.molecular`: explicit-policy molecular formula, mass, and related
-  descriptors.
 - `fp.morgan`: a defined-shape Morgan-style circular fingerprint with explicit
   perception dependencies.
 

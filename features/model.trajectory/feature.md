@@ -43,8 +43,9 @@ trajectories through reusable caller-owned buffers.
   allocation.
 - Transformation regressions cover complete owned and borrowed frame transfer,
   frame-index error context, target-buffer identity rejection, unchanged
-  destinations on failure, and stable dense-array pointers and capacities over
-  repeated remaps.
+  positions, cell, vectors, time, step, observation, and properties after a
+  later validation failure, stale optional-state clearing after positions-only
+  remaps, and stable dense-array pointers and capacities over repeated remaps.
 
 ## Out Of Scope
 
@@ -62,3 +63,5 @@ trajectories through reusable caller-owned buffers.
   positions.
 - v4: Add exact-lineage owned frame and finite trajectory remapping plus
   transactional allocation-reusing borrowed-frame copies into target buffers.
+- v5: Strengthen reusable-buffer tests for complete destination transactionality
+  and stale optional-state clearing after positions-only remaps.
