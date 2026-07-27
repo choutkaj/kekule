@@ -23,10 +23,21 @@ Writer interoperability observations record the independent reader and exact
 version used; they do not claim broad format parity.
 """
 
-[[planned_source]]
+[[fixture]]
+path = "ase-3.26.0-water.xyz"
 format = "xyz"
-generators = ["MDTraj", "Chemfiles"]
-coverage = ["comments", "line endings", "multi-frame element order"]
+variant = "strict multi-frame XYZ"
+generator = "Atomic Simulation Environment (ASE)"
+generator_version = "3.26.0"
+generator_command = "uv run --python 3.12 --with ase==3.26.0 python generate_xyz.py"
+source_revision = "6c965f46a9449cbea275a6cc11fefb82da7df4bf"
+sha256 = "91c41f2f0b02034c507bf564dc4084be991f4cc21418604fcb4864e0f2e805ea"
+license = "MIT repository fixture; ASE generator is LGPL-2.1-or-later"
+atom_count = 3
+frame_count = 2
+fields = ["positions", "element symbols"]
+native_units = "angstrom"
+coverage = ["multi-frame element order", "negative and positive decimal coordinates"]
 
 [[planned_source]]
 format = "dcd"

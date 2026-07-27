@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/molecular",
     "crates/molecular-dreiding",
+    "crates/molecular-trajectory-io",
     "crates/xtask",
 ]
 

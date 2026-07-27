@@ -1070,6 +1070,15 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AtomOrderAssertion {
     topology: TopologyIdentity,
+    kind: AtomOrderAssertionKind,
+}
+
+/// Evidence represented by an [`AtomOrderAssertion`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum AtomOrderAssertionKind {
+    SemanticOrder,
+    DeclaredTopologyOrder,
 }
 
 impl AtomOrderAssertion {
@@ -1084,6 +1093,7 @@ impl AtomOrderAssertion {
         }
         Ok(Self {
             topology: topology.identity(),
+            kind: AtomOrderAssertionKind::SemanticOrder,
         })
     }
 
@@ -1095,6 +1105,7 @@ impl AtomOrderAssertion {
     pub fn assert_file_uses_topology_order(topology: &Topology) -> Self {
         Self {
             topology: topology.identity(),
+            kind: AtomOrderAssertionKind::DeclaredTopologyOrder,
         }
     }
 
@@ -1104,6 +1115,10 @@ impl AtomOrderAssertion {
 
     pub fn topology_identity(&self) -> &TopologyIdentity {
         &self.topology
+    }
+
+    pub const fn kind(&self) -> AtomOrderAssertionKind {
+        self.kind
     }
 
     /// Backward-compatible spelling for [`Self::from_semantic_order`].
@@ -1565,8 +1580,8 @@ pub enum TrajectoryError {
     UnsupportedField(&'static str),
     Frame(Box<FrameError>),
     Position(PositionError),
-    Io(TrajectoryIoErrorContext),
-    Codec(TrajectoryCodecErrorContext),
+    Io(Box<TrajectoryIoErrorContext>),
+    Codec(Box<TrajectoryCodecErrorContext>),
 }
 
 impl fmt::Display for TrajectoryError {
@@ -1670,13 +1685,13 @@ impl From<ModelError> for TrajectoryError {
 
 impl From<TrajectoryIoErrorContext> for TrajectoryError {
     fn from(context: TrajectoryIoErrorContext) -> Self {
-        Self::Io(context)
+        Self::Io(Box::new(context))
     }
 }
 
 impl From<TrajectoryCodecErrorContext> for TrajectoryError {
     fn from(context: TrajectoryCodecErrorContext) -> Self {
-        Self::Codec(context)
+        Self::Codec(Box::new(context))
     }
 }
 
@@ -1944,10 +1959,15 @@ mod tests {
         assert!(semantic.is_compatible(&topology));
         assert!(!semantic.is_compatible(&independent));
         assert_eq!(semantic.topology_identity(), &topology.identity());
+        assert_eq!(semantic.kind(), AtomOrderAssertionKind::SemanticOrder);
 
         let asserted = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
         assert!(asserted.is_compatible(&topology));
         assert!(!asserted.is_compatible(&independent));
+        assert_eq!(
+            asserted.kind(),
+            AtomOrderAssertionKind::DeclaredTopologyOrder
+        );
     }
 
     #[test]

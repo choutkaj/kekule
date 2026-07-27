@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 molecular = { path = "../crates/molecular" }
+molecular-trajectory-io = { path = "../crates/molecular-trajectory-io" }
 
 [workspace]
 members = ["."]
@@ -45,6 +46,20 @@ bench = false
 [[bin]]
 name = "mmcif"
 path = "fuzz_targets/mmcif.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trajectory_detection"
+path = "fuzz_targets/trajectory_detection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trajectory_xyz"
+path = "fuzz_targets/trajectory_xyz.rs"
 test = false
 doc = false
 bench = false

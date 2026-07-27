@@ -1,0 +1,803 @@
+//! Bounded pure-Rust file codecs for Molecular fixed-topology trajectories.
+//!
+//! This crate depends one-way on [`molecular`] and implements its reusable
+//! frame-buffer streaming contracts. It does not define another topology,
+//! frame, coordinate, or unit model.
+#![forbid(unsafe_code)]
+#![warn(rustdoc::broken_intra_doc_links)]
+
+mod detect;
+pub mod xyz;
+
+use std::fs::{File, OpenOptions};
+use std::io::{self, BufReader, BufWriter};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use molecular::topology::Topology;
+use molecular::trajectory::{
+    AtomOrderAssertion, AtomOrderAssertionKind, FrameBuffer, SeekableTrajectoryReader,
+    TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat,
+    TrajectoryFrameView, TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryReader,
+    TrajectoryWriter,
+};
+use molecular::units::Unit;
+
+static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Explicit selection or bounded automatic trajectory format detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TrajectoryFormatHint {
+    Auto,
+    Explicit(TrajectoryFormat),
+}
+
+/// Limits applied before attacker-controlled allocation, scanning, or seeking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrajectoryIoLimits {
+    pub max_atoms: usize,
+    pub max_frames: u64,
+    pub max_frame_bytes: u64,
+    pub max_record_bytes: u64,
+    pub max_scratch_bytes: usize,
+    pub max_index_entries: usize,
+    pub max_index_bytes: usize,
+    pub max_text_line_bytes: usize,
+    pub max_comment_bytes: usize,
+    pub max_detection_bytes: usize,
+}
+
+impl Default for TrajectoryIoLimits {
+    fn default() -> Self {
+        Self {
+            max_atoms: 10_000_000,
+            max_frames: 100_000_000,
+            max_frame_bytes: 4 * 1024 * 1024 * 1024,
+            max_record_bytes: 4 * 1024 * 1024 * 1024,
+            max_scratch_bytes: usize::try_from(4_u64 * 1024 * 1024 * 1024).unwrap_or(usize::MAX),
+            max_index_entries: 100_000_000,
+            max_index_bytes: 800_000_000,
+            max_text_line_bytes: 1_048_576,
+            max_comment_bytes: 1_048_576,
+            max_detection_bytes: 4096,
+        }
+    }
+}
+
+/// Exact topology and caller-supplied atom-order evidence for a topology-free file.
+#[derive(Debug, Clone)]
+pub struct TrajectoryTopologyBinding {
+    topology: Topology,
+    atom_order: AtomOrderAssertion,
+}
+
+impl TrajectoryTopologyBinding {
+    pub fn new(
+        topology: Topology,
+        atom_order: AtomOrderAssertion,
+    ) -> Result<Self, TrajectoryError> {
+        if !atom_order.is_compatible(&topology) {
+            return Err(TrajectoryError::TopologyIdentityMismatch);
+        }
+        Ok(Self {
+            topology,
+            atom_order,
+        })
+    }
+
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    pub fn atom_order(&self) -> &AtomOrderAssertion {
+        &self.atom_order
+    }
+}
+
+/// Per-frame availability of one trajectory field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FieldAvailability {
+    Required,
+    Optional,
+    Absent,
+}
+
+/// Field-presence contract reported by a selected codec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrajectoryFieldAvailability {
+    pub positions: FieldAvailability,
+    pub cell: FieldAvailability,
+    pub velocities: FieldAvailability,
+    pub forces: FieldAvailability,
+    pub time: FieldAvailability,
+    pub step: FieldAvailability,
+    pub properties: FieldAvailability,
+}
+
+/// Scalar representation used by native coordinate payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ScalarPrecision {
+    DecimalText,
+    Float32,
+    Float64,
+    Mixed,
+}
+
+/// Scientific coordinate encoding reported by a codec.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum CoordinateEncoding {
+    Lossless {
+        precision: ScalarPrecision,
+    },
+    Lossy {
+        precision: ScalarPrecision,
+        resolution: f64,
+        unit: Unit,
+    },
+}
+
+/// Random-access behavior available from an opened reader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RandomAccessCapability {
+    SequentialOnly,
+    Indexed,
+}
+
+/// Immutable capabilities and structural facts for an opened trajectory.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FileTrajectoryMetadata {
+    format: TrajectoryFormat,
+    atom_count: usize,
+    declared_frame_count: Option<u64>,
+    indexed_frame_count: Option<u64>,
+    fields: TrajectoryFieldAvailability,
+    coordinate_encoding: CoordinateEncoding,
+    random_access: RandomAccessCapability,
+    variant: Option<String>,
+}
+
+impl FileTrajectoryMetadata {
+    pub const fn format(&self) -> TrajectoryFormat {
+        self.format
+    }
+
+    pub const fn atom_count(&self) -> usize {
+        self.atom_count
+    }
+
+    pub const fn declared_frame_count(&self) -> Option<u64> {
+        self.declared_frame_count
+    }
+
+    pub const fn indexed_frame_count(&self) -> Option<u64> {
+        self.indexed_frame_count
+    }
+
+    pub const fn fields(&self) -> TrajectoryFieldAvailability {
+        self.fields
+    }
+
+    pub const fn coordinate_encoding(&self) -> CoordinateEncoding {
+        self.coordinate_encoding
+    }
+
+    pub const fn random_access(&self) -> RandomAccessCapability {
+        self.random_access
+    }
+
+    pub fn variant(&self) -> Option<&str> {
+        self.variant.as_deref()
+    }
+
+    fn xyz(atom_count: usize, indexed_frame_count: Option<u64>) -> Self {
+        Self {
+            format: TrajectoryFormat::Xyz,
+            atom_count,
+            declared_frame_count: None,
+            indexed_frame_count,
+            fields: TrajectoryFieldAvailability {
+                positions: FieldAvailability::Required,
+                cell: FieldAvailability::Absent,
+                velocities: FieldAvailability::Absent,
+                forces: FieldAvailability::Absent,
+                time: FieldAvailability::Absent,
+                step: FieldAvailability::Absent,
+                properties: FieldAvailability::Absent,
+            },
+            coordinate_encoding: CoordinateEncoding::Lossless {
+                precision: ScalarPrecision::DecimalText,
+            },
+            random_access: if indexed_frame_count.is_some() {
+                RandomAccessCapability::Indexed
+            } else {
+                RandomAccessCapability::SequentialOnly
+            },
+            variant: Some("strict multi-frame XYZ".into()),
+        }
+    }
+}
+
+/// Evidence used to select a trajectory format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FormatDetectionEvidence {
+    ExplicitHint,
+    Signature,
+    Extension,
+    ExtensionSignatureAgreement,
+    MissingExtension,
+}
+
+/// Bounded result of format detection without opening a codec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrajectoryFormatDetection {
+    format: TrajectoryFormat,
+    evidence: Vec<FormatDetectionEvidence>,
+}
+
+impl TrajectoryFormatDetection {
+    pub const fn format(&self) -> TrajectoryFormat {
+        self.format
+    }
+
+    pub fn evidence(&self) -> &[FormatDetectionEvidence] {
+        &self.evidence
+    }
+}
+
+/// Detects a trajectory format from a bounded prefix and an optional filename.
+///
+/// The reader is restored to its original stream position before this function
+/// returns. Automatic detection never trusts a known extension without a
+/// conclusive signature.
+pub fn detect_trajectory_format<R: io::Read + io::Seek>(
+    reader: &mut R,
+    source_name: impl AsRef<Path>,
+    hint: TrajectoryFormatHint,
+    limits: &TrajectoryIoLimits,
+) -> Result<TrajectoryFormatDetection, TrajectoryError> {
+    let source_name = source_name.as_ref();
+    let source_label = source_name.display().to_string();
+    let result = detect::select_format(reader, source_name, hint, limits, &source_label)?;
+    Ok(TrajectoryFormatDetection {
+        format: result.format,
+        evidence: result.evidence,
+    })
+}
+
+/// Non-fatal facts recorded while opening a trajectory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrajectoryOpenReport {
+    selected_format: TrajectoryFormat,
+    detection_evidence: Vec<FormatDetectionEvidence>,
+    atom_order_evidence: AtomOrderAssertionKind,
+    notes: Vec<String>,
+}
+
+impl TrajectoryOpenReport {
+    pub const fn selected_format(&self) -> TrajectoryFormat {
+        self.selected_format
+    }
+
+    pub fn detection_evidence(&self) -> &[FormatDetectionEvidence] {
+        &self.detection_evidence
+    }
+
+    pub const fn atom_order_evidence(&self) -> AtomOrderAssertionKind {
+        self.atom_order_evidence
+    }
+
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+}
+
+/// Format-agnostic open configuration.
+#[derive(Debug, Clone)]
+pub struct TrajectoryOpenOptions {
+    format_hint: TrajectoryFormatHint,
+    limits: TrajectoryIoLimits,
+    xyz: xyz::XyzReadOptions,
+}
+
+impl Default for TrajectoryOpenOptions {
+    fn default() -> Self {
+        Self {
+            format_hint: TrajectoryFormatHint::Auto,
+            limits: TrajectoryIoLimits::default(),
+            xyz: xyz::XyzReadOptions::default(),
+        }
+    }
+}
+
+impl TrajectoryOpenOptions {
+    pub fn with_format_hint(mut self, format_hint: TrajectoryFormatHint) -> Self {
+        self.format_hint = format_hint;
+        self
+    }
+
+    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    pub fn with_xyz_options(mut self, options: xyz::XyzReadOptions) -> Self {
+        self.xyz = options;
+        self
+    }
+}
+
+/// Existing-destination policy for a path writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OverwritePolicy {
+    Forbid,
+    Replace,
+}
+
+/// Format-agnostic path-writer configuration.
+#[derive(Debug, Clone)]
+pub struct TrajectoryWriteOptions {
+    format: TrajectoryFormat,
+    overwrite: OverwritePolicy,
+    xyz: xyz::XyzWriteOptions,
+}
+
+impl TrajectoryWriteOptions {
+    pub fn new(format: TrajectoryFormat) -> Self {
+        Self {
+            format,
+            overwrite: OverwritePolicy::Forbid,
+            xyz: xyz::XyzWriteOptions::default(),
+        }
+    }
+
+    pub fn with_overwrite_policy(mut self, overwrite: OverwritePolicy) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+
+    pub fn with_xyz_options(mut self, options: xyz::XyzWriteOptions) -> Self {
+        self.xyz = options;
+        self
+    }
+}
+
+enum SequentialReaderInner {
+    Xyz(xyz::XyzReader<BufReader<File>>),
+}
+
+/// Format-agnostic path-backed sequential reader retaining one file handle.
+pub struct SequentialFileTrajectoryReader {
+    inner: SequentialReaderInner,
+    metadata: FileTrajectoryMetadata,
+}
+
+impl SequentialFileTrajectoryReader {
+    pub fn metadata(&self) -> &FileTrajectoryMetadata {
+        &self.metadata
+    }
+}
+
+impl TrajectoryReader for SequentialFileTrajectoryReader {
+    fn topology(&self) -> &Topology {
+        match &self.inner {
+            SequentialReaderInner::Xyz(reader) => reader.topology(),
+        }
+    }
+
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+        match &mut self.inner {
+            SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
+        }
+    }
+}
+
+enum IndexedReaderInner {
+    Xyz(xyz::IndexedXyzReader<BufReader<File>>),
+}
+
+/// Format-agnostic path-backed indexed reader retaining one file handle.
+pub struct IndexedFileTrajectoryReader {
+    inner: IndexedReaderInner,
+    metadata: FileTrajectoryMetadata,
+}
+
+impl IndexedFileTrajectoryReader {
+    pub fn metadata(&self) -> &FileTrajectoryMetadata {
+        &self.metadata
+    }
+}
+
+impl TrajectoryReader for IndexedFileTrajectoryReader {
+    fn topology(&self) -> &Topology {
+        match &self.inner {
+            IndexedReaderInner::Xyz(reader) => reader.topology(),
+        }
+    }
+
+    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+        match &mut self.inner {
+            IndexedReaderInner::Xyz(reader) => reader.read_next(destination),
+        }
+    }
+}
+
+impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
+    fn frame_count(&self) -> Option<u64> {
+        match &self.inner {
+            IndexedReaderInner::Xyz(reader) => reader.frame_count(),
+        }
+    }
+
+    fn read_frame(
+        &mut self,
+        index: u64,
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryError> {
+        match &mut self.inner {
+            IndexedReaderInner::Xyz(reader) => reader.read_frame(index, destination),
+        }
+    }
+}
+
+/// Opens one fast sequential path-backed trajectory reader.
+pub fn open_trajectory(
+    path: impl AsRef<Path>,
+    binding: TrajectoryTopologyBinding,
+    options: TrajectoryOpenOptions,
+) -> Result<(SequentialFileTrajectoryReader, TrajectoryOpenReport), TrajectoryError> {
+    let path = path.as_ref();
+    let label = path.display().to_string();
+    let file = File::open(path)
+        .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
+    let mut reader = BufReader::new(file);
+    let detection = detect::select_format(
+        &mut reader,
+        path,
+        options.format_hint,
+        &options.limits,
+        &label,
+    )?;
+    let order_kind = binding.atom_order.kind();
+    let (inner, metadata, notes) = match detection.format {
+        TrajectoryFormat::Xyz => {
+            let mut reader =
+                xyz::XyzReader::new(reader, binding, options.xyz, options.limits, label)?;
+            reader.validate_first_frame()?;
+            let atom_count = reader.topology().atom_count();
+            (
+                SequentialReaderInner::Xyz(reader),
+                FileTrajectoryMetadata::xyz(atom_count, None),
+                vec!["XYZ coordinates use the configured explicit/default length unit".into()],
+            )
+        }
+        format => {
+            return Err(unimplemented_format(
+                format,
+                TrajectoryIoOperation::Open,
+                &label,
+            ))
+        }
+    };
+    let report = TrajectoryOpenReport {
+        selected_format: detection.format,
+        detection_evidence: detection.evidence,
+        atom_order_evidence: order_kind,
+        notes,
+    };
+    Ok((SequentialFileTrajectoryReader { inner, metadata }, report))
+}
+
+/// Opens one fully verified indexed path-backed trajectory reader.
+pub fn open_indexed_trajectory(
+    path: impl AsRef<Path>,
+    binding: TrajectoryTopologyBinding,
+    options: TrajectoryOpenOptions,
+) -> Result<(IndexedFileTrajectoryReader, TrajectoryOpenReport), TrajectoryError> {
+    let path = path.as_ref();
+    let label = path.display().to_string();
+    let file = File::open(path)
+        .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
+    let mut reader = BufReader::new(file);
+    let detection = detect::select_format(
+        &mut reader,
+        path,
+        options.format_hint,
+        &options.limits,
+        &label,
+    )?;
+    let order_kind = binding.atom_order.kind();
+    let (inner, metadata, notes) = match detection.format {
+        TrajectoryFormat::Xyz => {
+            let reader = xyz::XyzReader::new(reader, binding, options.xyz, options.limits, label)?;
+            let reader = reader.into_indexed()?;
+            let count = reader.frame_count().unwrap_or(0);
+            let atom_count = reader.topology().atom_count();
+            (
+                IndexedReaderInner::Xyz(reader),
+                FileTrajectoryMetadata::xyz(atom_count, Some(count)),
+                vec!["XYZ index verified every complete frame".into()],
+            )
+        }
+        format => {
+            return Err(unimplemented_format(
+                format,
+                TrajectoryIoOperation::Index,
+                &label,
+            ))
+        }
+    };
+    let report = TrajectoryOpenReport {
+        selected_format: detection.format,
+        detection_evidence: detection.evidence,
+        atom_order_evidence: order_kind,
+        notes,
+    };
+    Ok((IndexedFileTrajectoryReader { inner, metadata }, report))
+}
+
+enum FileWriterInner {
+    Xyz(xyz::XyzWriter<BufWriter<File>>),
+}
+
+impl FileWriterInner {
+    fn topology(&self) -> &Topology {
+        match self {
+            Self::Xyz(writer) => writer.topology(),
+        }
+    }
+
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+        match self {
+            Self::Xyz(writer) => writer.write_frame(frame),
+        }
+    }
+
+    fn flush_and_sync(&mut self, label: &str) -> Result<(), TrajectoryError> {
+        match self {
+            Self::Xyz(writer) => {
+                writer.flush().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Xyz),
+                        label,
+                        error,
+                    )
+                })?;
+                writer.writer().get_ref().sync_all().map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(TrajectoryFormat::Xyz),
+                        label,
+                        error,
+                    )
+                })
+            }
+        }
+    }
+}
+
+/// Strict atomic path writer. A file is published only by successful `finish`.
+pub struct FileTrajectoryWriter {
+    inner: Option<FileWriterInner>,
+    format: TrajectoryFormat,
+    destination: PathBuf,
+    temporary: PathBuf,
+    overwrite: OverwritePolicy,
+    published: bool,
+}
+
+impl FileTrajectoryWriter {
+    /// Flushes, synchronizes, and atomically publishes the completed trajectory.
+    pub fn finish(mut self) -> Result<(), TrajectoryError> {
+        let label = self.destination.display().to_string();
+        if let Some(inner) = &mut self.inner {
+            inner.flush_and_sync(&label)?;
+        }
+        self.inner.take();
+        match self.overwrite {
+            OverwritePolicy::Forbid => {
+                std::fs::hard_link(&self.temporary, &self.destination).map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(self.format()),
+                        &label,
+                        error,
+                    )
+                })?;
+                std::fs::remove_file(&self.temporary).map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(self.format()),
+                        &label,
+                        error,
+                    )
+                })?;
+            }
+            OverwritePolicy::Replace => {
+                std::fs::rename(&self.temporary, &self.destination).map_err(|error| {
+                    io_context(
+                        TrajectoryIoOperation::Finish,
+                        Some(self.format()),
+                        &label,
+                        error,
+                    )
+                })?;
+            }
+        }
+        self.published = true;
+        Ok(())
+    }
+
+    pub const fn format(&self) -> TrajectoryFormat {
+        self.format
+    }
+}
+
+impl TrajectoryWriter for FileTrajectoryWriter {
+    fn topology(&self) -> &Topology {
+        match &self.inner {
+            Some(inner) => inner.topology(),
+            None => unreachable!("finished path writers are consumed"),
+        }
+    }
+
+    fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
+        match &mut self.inner {
+            Some(inner) => inner.write_frame(frame),
+            None => Err(codec_context(
+                TrajectoryCodecErrorKind::InvalidFrame,
+                TrajectoryIoOperation::WriteFrame,
+                Some(TrajectoryFormat::Xyz),
+                &self.destination.display().to_string(),
+                "trajectory writer has already finished",
+            )),
+        }
+    }
+}
+
+impl Drop for FileTrajectoryWriter {
+    fn drop(&mut self) {
+        if !self.published {
+            self.inner.take();
+            let _ = std::fs::remove_file(&self.temporary);
+        }
+    }
+}
+
+/// Creates a strict path writer backed by a temporary sibling file.
+pub fn create_trajectory_writer(
+    path: impl AsRef<Path>,
+    topology: Topology,
+    options: TrajectoryWriteOptions,
+) -> Result<FileTrajectoryWriter, TrajectoryError> {
+    let destination = path.as_ref().to_path_buf();
+    let label = destination.display().to_string();
+    if options.overwrite == OverwritePolicy::Forbid && destination.exists() {
+        return Err(io_context(
+            TrajectoryIoOperation::Open,
+            Some(options.format),
+            &label,
+            io::Error::new(io::ErrorKind::AlreadyExists, "destination already exists"),
+        ));
+    }
+    #[cfg(windows)]
+    if options.overwrite == OverwritePolicy::Replace && destination.exists() {
+        return Err(codec_context(
+            TrajectoryCodecErrorKind::UnsupportedVariant,
+            TrajectoryIoOperation::Open,
+            Some(options.format),
+            &label,
+            "atomic replacement of an existing destination is unavailable on this platform",
+        ));
+    }
+    let temporary = create_temporary_sibling(&destination, options.format)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| {
+            io_context(
+                TrajectoryIoOperation::Open,
+                Some(options.format),
+                &label,
+                error,
+            )
+        })?;
+    let inner = match options.format {
+        TrajectoryFormat::Xyz => FileWriterInner::Xyz(xyz::XyzWriter::new(
+            BufWriter::new(file),
+            topology,
+            options.xyz,
+            label,
+        )?),
+        format => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(unimplemented_format(
+                format,
+                TrajectoryIoOperation::Open,
+                &label,
+            ));
+        }
+    };
+    Ok(FileTrajectoryWriter {
+        inner: Some(inner),
+        format: options.format,
+        destination,
+        temporary,
+        overwrite: options.overwrite,
+        published: false,
+    })
+}
+
+fn create_temporary_sibling(
+    destination: &Path,
+    format: TrajectoryFormat,
+) -> Result<PathBuf, TrajectoryError> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("trajectory");
+    for _ in 0..128 {
+        let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{name}.{}.{}.tmp", std::process::id(), sequence));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(codec_context(
+        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+        TrajectoryIoOperation::Open,
+        Some(format),
+        &destination.display().to_string(),
+        "could not reserve a unique temporary sibling name",
+    ))
+}
+
+pub(crate) fn io_context(
+    operation: TrajectoryIoOperation,
+    format: Option<TrajectoryFormat>,
+    source_label: &str,
+    error: io::Error,
+) -> TrajectoryError {
+    let mut context = TrajectoryIoErrorContext::new(operation, error.kind(), error.to_string())
+        .with_source_label(source_label);
+    if let Some(format) = format {
+        context = context.with_format(format);
+    }
+    context.into()
+}
+
+pub(crate) fn codec_context(
+    kind: TrajectoryCodecErrorKind,
+    operation: TrajectoryIoOperation,
+    format: Option<TrajectoryFormat>,
+    source_label: &str,
+    detail: impl Into<String>,
+) -> TrajectoryError {
+    TrajectoryCodecErrorContext::new(kind, operation, format)
+        .with_source_label(source_label)
+        .with_detail(detail)
+        .into()
+}
+
+fn unimplemented_format(
+    format: TrajectoryFormat,
+    operation: TrajectoryIoOperation,
+    source_label: &str,
+) -> TrajectoryError {
+    codec_context(
+        TrajectoryCodecErrorKind::UnsupportedVariant,
+        operation,
+        Some(format),
+        source_label,
+        format!("{format} is recognized but its codec is not implemented"),
+    )
+}
