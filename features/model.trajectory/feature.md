@@ -44,7 +44,9 @@ trajectories through reusable caller-owned buffers.
   remain a future segmented-topology concept.
 - A minimal in-memory/reference reader and writer validate the streaming
   contracts. Production codecs live in the one-way
-  `molecular-trajectory-io` companion crate and are tracked separately.
+  `molecular-trajectory-io` companion crate. Its supported initial profiles are
+  tracked independently as `io.trajectory.file`, `.xyz`, `.dcd`, `.trr`, and
+  `.xtc`.
 
 ## Tests
 
@@ -86,3 +88,5 @@ trajectories through reusable caller-owned buffers.
 - v6: Add complete transactional borrowed-data publication, explicit exact
   atom-order binding helpers, shared format identity, typed file/codec error
   context, and downstream codec-trait implementation coverage.
+- v7: Record the supported companion-codec integration contract and its use of
+  the same exact-topology, transactional reusable-buffer API.

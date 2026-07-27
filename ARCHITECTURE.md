@@ -1042,6 +1042,29 @@ frame-buffer, geometry, unit, format-identity, and typed error contracts. It
 does not define duplicate domain objects. Molecular-owned codec source forbids
 unsafe code and does not require Chemfiles, a C/C++ compiler, or CMake.
 
+The supported initial companion profile is intentionally explicit:
+
+| Format | Compatibility profile |
+|---|---|
+| XYZ | strict constant-count multi-frame element/x/y/z text; configured units, angstrom by default |
+| DCD | common CHARMM/NAMD/OpenMM 32-bit-record `CORD`, either byte order, common cells, fixed-atom reconstruction |
+| TRR | GROMACS XDR f32/f64 positions, triclinic cell, optional velocities/forces, time, nonnegative step, explicit lambda policy |
+| XTC | GROMACS 1995/2023 magic, small uncompressed and ordinary compressed coordinates, explicit lossy precision |
+
+DCD and default XYZ coordinates use angstrom conventions; TRR and XTC use
+GROMACS nanometre/picosecond conventions and convert once to Molecular units.
+XTC reports nominal lossy resolution as `1 / precision` nanometres. Indexed
+opening is O(file size), verifies every complete frame, and stores bounded
+checked offsets; indexed frame reads decode one frame. Sequential opening
+retains one handle and does not scan the whole file.
+
+All file-controlled lengths and offsets are checked before allocation or seek.
+Codecs validate complete finite dense-order state in reusable scratch before
+transactional publication. Path writers publish only after consuming finish
+flushes, synchronizes, and finalizes metadata; any failed frame write prevents
+publication. Unsupported historical dialects and deferred formats remain typed
+errors rather than inferred or partially decoded behavior.
+
 ## Public API and release policy
 
 The initial release line is `0.x`. Breaking public API changes require a minor
