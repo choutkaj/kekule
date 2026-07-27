@@ -1,0 +1,44 @@
+schema_version = 1
+
+[policy]
+purpose = "Small redistributable interoperability fixtures for trajectory codec regression tests"
+required_fields = [
+    "format",
+    "variant",
+    "generator",
+    "generator_version",
+    "generator_command",
+    "source_revision",
+    "sha256",
+    "license",
+    "atom_count",
+    "frame_count",
+    "fields",
+    "native_units",
+]
+notes = """
+Fixture payloads are added only with complete pinned provenance. Generator
+tools are development references, never Molecular runtime dependencies.
+Writer interoperability observations record the independent reader and exact
+version used; they do not claim broad format parity.
+"""
+
+[[planned_source]]
+format = "xyz"
+generators = ["MDTraj", "Chemfiles"]
+coverage = ["comments", "line endings", "multi-frame element order"]
+
+[[planned_source]]
+format = "dcd"
+generators = ["OpenMM", "NAMD-compatible independent writer"]
+coverage = ["little endian", "big endian", "unit cell", "fixed atoms"]
+
+[[planned_source]]
+format = "trr"
+generators = ["GROMACS", "independent XDR reader/writer"]
+coverage = ["f32", "f64", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
+
+[[planned_source]]
+format = "xtc"
+generators = ["GROMACS", "independent XTC reader/writer"]
+coverage = ["1995 magic", "2023 magic", "small atoms", "compressed atoms", "triclinic cell", "precision"]

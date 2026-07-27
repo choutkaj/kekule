@@ -1,0 +1,8 @@
+id = "io.trajectory.xyz"
+title = "XYZ trajectory codec"
+area = "io"
+domains = ["infrastructure"]
+version = 1
+status = "planned"
+description = "Read and write strict bounded multi-frame XYZ trajectories with explicit units and element-order validation."
+depends_on = ["io.trajectory.file"]

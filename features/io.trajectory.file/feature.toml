@@ -1,0 +1,8 @@
+id = "io.trajectory.file"
+title = "File-backed trajectory I/O"
+area = "io"
+domains = ["infrastructure"]
+version = 1
+status = "planned"
+description = "Open, detect, index, stream, and atomically write bounded fixed-topology trajectory files through Molecular trajectory contracts."
+depends_on = ["model.trajectory", "core.units"]
