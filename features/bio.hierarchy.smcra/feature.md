@@ -30,6 +30,9 @@ sidecar over the shared core molecule graph.
 - Atom-site metadata preserves static type, label/auth chain, and label/auth
   atom identity. Coordinate-model-specific fields live in
   `StructureObservation`.
+- Checked targeted restoration sets distinct residue label/author component
+  IDs and returns mutable chain, residue, or atom-site property maps without
+  exposing parentage, child arrays, complete mutable records, or atom lookup.
 
 ## Implementation Notes
 
@@ -38,6 +41,8 @@ sidecar over the shared core molecule graph.
 - Supports insertion codes and distinct label/author identifiers without
   structural coordinate-model parent nodes.
 - Stores label and author component IDs separately on residues.
+- Child enrichment validates the requested typed ID before mutation and is
+  usable through both builder and transactional editor hierarchy access.
 - mmCIF interpretation populates hierarchy only after molecular boundaries and alternate locations have been resolved.
 
 ## Tests
@@ -49,6 +54,9 @@ sidecar over the shared core molecule graph.
 - The former Biopython evidence exercised the removed whole-file reader rather
   than the format-neutral hierarchy contract, so no current hierarchy parity
   evidence is recorded pending a replacement comparison.
+- Canonical reconstruction tests preserve arbitrary child properties, distinct
+  residue name/label/author component IDs, all atom-site metadata, complete
+  hierarchy equality, and invalid-ID rollback.
 
 ## Out Of Scope
 
@@ -76,3 +84,5 @@ sidecar over the shared core molecule graph.
   `MacroMolecule::validate` default.
 - v11: Add structured chain, residue, and atom-site capacity errors and verify
   hierarchy insertion remains transactional at the fixed-width boundary.
+- v12: Add checked targeted restoration for residue component IDs and
+  chain/residue/atom-site property maps.

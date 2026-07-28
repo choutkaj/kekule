@@ -15,6 +15,9 @@ Provide conservative valence perception for common organic molecules.
 - Defaults to strict reporting. `ValenceOptions { strict: false }` still
   computes assignments but suppresses unsupported-element and valence-excess
   issues for inspection workflows; sanitization continues to use strict mode.
+- Exact installed state is publicly distinguishable as absent, model-neutral,
+  or `ValenceModel::RdkitLike` and can be detached and transactionally restored
+  with every atom-wise implicit-H assignment.
 
 ## Implementation Notes
 
@@ -71,3 +74,5 @@ Provide conservative valence perception for common organic molecules.
   widen valence accounting to graph-sized integers.
 - v15: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v16: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v17: Expose lossless installed-valence section inspection and canonical
+  reconstruction, including the distinct model-neutral state.

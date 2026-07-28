@@ -163,10 +163,27 @@ read-only queries. One installed perception profile exists at a time.
 Alternative-model calculations remain standalone results until explicitly
 installed.
 
+External persistence adapters may inspect every installed section exactly,
+construct one detached `PerceptionState`, and install it through a checked
+whole-state transaction. This surface preserves absent versus model-neutral
+valence, complete implicit-H assignments, membership with or without an
+installed ring basis and work record, imported versus model-perceived
+aromaticity, aromatic membership, and complete CIP assignments. Incremental
+perception installation/mutation remains crate-private. Whole-state
+installation validates stable-slot dimensions, live graph/stereo references,
+duplicate input, and installed-ring coherence before replacing prior state; it
+does not invent dependencies between otherwise independent current sections.
+
 Chemistry- or connectivity-relevant mutation invalidates affected perception
 state immediately. Coordinate and generic annotation edits are
 perception-neutral. Failed transactional operations leave their input
 unchanged.
+
+Stereo-group stable slots, including interior and trailing tombstones, are
+publicly inspectable and replayable without dummy chemistry. Appending a
+tombstone reserves exactly one checked stable group ID and is CIP-neutral.
+Every live stereo group is nonempty; removing or pruning its final member
+tombstones the group while partial pruning preserves the group and stable ID.
 
 ### `SmallMolecule`
 
@@ -209,8 +226,38 @@ Coordinated graph-and-hierarchy mutation is transactional.
 Chain, residue, and atom-site capacity failures are structured and occur before
 parent lists or lookup maps are changed.
 
+Focused hierarchy restoration may set distinct residue label and author
+component IDs and replace or mutate chain, residue, and atom-site property maps
+after validating the typed child ID. It does not expose mutable parentage,
+child arrays, complete node records, or atom lookup internals.
+
 Macromolecule validation is separate from small-molecule sanitization.
 Chemically general algorithms operate on `Molecule` where practical.
+
+### Canonical molecular reconstruction
+
+Molecular owns invariant-preserving reconstruction of Molecular runtime state;
+persistence consumers own their versioned archive DTOs. Molecular does not
+derive Serde for runtime objects and does not define a general molecule or
+topology serialization framework.
+
+Canonical persistence adapters reconstruct in this order:
+
+```text
+atoms, bonds, conformers, and stable layouts
+    -> stereo elements without group side effects
+    -> live stereo-group slots and tombstones in slot order
+    -> stereo bond marks
+    -> SMCRA hierarchy and targeted child enrichment
+    -> complete checked PerceptionState installation
+```
+
+Perception is installed last because normal graph and stereo construction must
+continue to invalidate computed state. Loading never sanitizes, re-perceives,
+renumbers, reparses source data, or silently coerces malformed historical
+state. Process-local topology identity is not persisted; independently rebuilt
+topologies may prove complete static equality through `same_layout` but retain
+distinct exact identities.
 
 ### Local conformers versus system coordinate state
 
