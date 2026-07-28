@@ -9,9 +9,9 @@
 //! | Format | Reader | Writer |
 //! |---|---|---|
 //! | XYZ | strict constant-count multi-frame element/x/y/z text; configured length unit (angstrom by default) | deterministic strict text; optional frame state is rejected |
-//! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, and fixed-atom reconstruction | canonical all-atom `CORD` in either byte order with optional unit cells |
+//! | DCD | common 32-bit-record `CORD` files in either byte order, common unit cells, fixed-atom reconstruction, and strict `NSET` | canonical all-atom `CORD` in either byte order with optional unit cells |
 //! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks |
-//! | XTC | GROMACS magic 1995/2023, small uncompressed and ordinary compressed coordinates | magic 1995/2023 through the private audited encoder adapter at explicit lossy precision |
+//! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 through the private audited encoder adapter at explicit lossy precision |
 //!
 //! Every open requires a [`TrajectoryTopologyBinding`], which couples one exact
 //! Molecular topology identity with caller-supplied atom-order evidence. Equal
@@ -25,7 +25,9 @@
 //! O(file-size) index build, store bounded checked offsets, and then decode one
 //! complete frame per random read. Decoding validates into reusable private
 //! scratch and publishes transactionally into the caller's [`FrameBuffer`].
-//! Clean EOF is accepted only between frames.
+//! Random reads restore all sequential reader state before publication. Clean
+//! EOF is accepted only between frames, including through a bounded probe at
+//! exact frame/index limits.
 //!
 //! Path writers stage a temporary sibling. Only consuming
 //! [`FileTrajectoryWriter::finish`] flushes, synchronizes, finalizes format
@@ -186,7 +188,12 @@ pub enum RandomAccessCapability {
     Indexed,
 }
 
-/// Immutable capabilities and structural facts for an opened trajectory.
+/// Capabilities and structural facts verified for an opened trajectory.
+///
+/// Indexed metadata describes the fully verified file. Sequential TRR metadata
+/// initially reports the first frame's precision and changes to
+/// [`ScalarPrecision::Mixed`] after a frame with the other scalar width is
+/// successfully read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileTrajectoryMetadata {
     format: TrajectoryFormat,
@@ -335,6 +342,19 @@ impl FileTrajectoryMetadata {
                 if header.has_forces() { " forces" } else { "" },
             )),
         }
+    }
+
+    fn update_trr_precision(&mut self, header: &trr::TrrFrameHeader, precision_mixed: bool) {
+        self.coordinate_encoding = CoordinateEncoding::Lossless {
+            precision: if precision_mixed {
+                ScalarPrecision::Mixed
+            } else {
+                match header.precision() {
+                    trr::TrrScalarPrecision::Float32 => ScalarPrecision::Float32,
+                    trr::TrrScalarPrecision::Float64 => ScalarPrecision::Float64,
+                }
+            },
+        };
     }
 
     fn xtc(
@@ -586,6 +606,10 @@ pub struct SequentialFileTrajectoryReader {
 }
 
 impl SequentialFileTrajectoryReader {
+    /// Returns metadata verified through the most recent successful read.
+    ///
+    /// In particular, mixed-width TRR input is reported as mixed as soon as
+    /// the second scalar width has been observed.
     pub fn metadata(&self) -> &FileTrajectoryMetadata {
         &self.metadata
     }
@@ -605,7 +629,12 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
         match &mut self.inner {
             SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
             SequentialReaderInner::Dcd(reader) => reader.read_next(destination),
-            SequentialReaderInner::Trr(reader) => reader.read_next(destination),
+            SequentialReaderInner::Trr(reader) => {
+                let read = reader.read_next(destination)?;
+                self.metadata
+                    .update_trr_precision(reader.first_header(), reader.precision_mixed());
+                Ok(read)
+            }
             SequentialReaderInner::Xtc(reader) => reader.read_next(destination),
         }
     }
@@ -1150,15 +1179,71 @@ pub(crate) fn frame_offset_context(
 ) -> TrajectoryError {
     match error {
         TrajectoryError::Io(context) => {
-            let context = (*context).with_frame(frame).with_byte_offset(byte_offset);
+            let mut context = *context;
+            if context.frame().is_none() {
+                context = context.with_frame(frame);
+            }
+            if context.byte_offset().is_none() {
+                context = context.with_byte_offset(byte_offset);
+            }
             TrajectoryError::Io(Box::new(context))
         }
         TrajectoryError::Codec(context) => {
-            let context = (*context).with_frame(frame).with_byte_offset(byte_offset);
+            let mut context = *context;
+            if context.frame().is_none() {
+                context = context.with_frame(frame);
+            }
+            if context.byte_offset().is_none() {
+                context = context.with_byte_offset(byte_offset);
+            }
             TrajectoryError::Codec(Box::new(context))
         }
         error => error,
     }
+}
+
+pub(crate) fn probe_seekable_eof<R: io::Read + io::Seek>(
+    reader: &mut R,
+    operation: TrajectoryIoOperation,
+    format: TrajectoryFormat,
+    source_label: &str,
+) -> Result<bool, TrajectoryError> {
+    let start = reader
+        .stream_position()
+        .map_err(|error| io_context(operation, Some(format), source_label, error))?;
+    let mut byte = [0_u8; 1];
+    let read = reader.read(&mut byte);
+    let restore = reader
+        .seek(io::SeekFrom::Start(start))
+        .map_err(|error| io_context(operation, Some(format), source_label, error));
+    match (read, restore) {
+        (_, Err(error)) => Err(error),
+        (Err(error), Ok(_)) => Err(io_context(operation, Some(format), source_label, error)),
+        (Ok(0), Ok(_)) => Ok(true),
+        (Ok(_), Ok(_)) => Ok(false),
+    }
+}
+
+pub(crate) fn projected_index_limit(
+    current_entries: usize,
+    limits: &TrajectoryIoLimits,
+) -> Option<&'static str> {
+    if u64::try_from(current_entries).map_or(true, |entries| entries >= limits.max_frames) {
+        return Some("frame count");
+    }
+    let Some(projected_entries) = current_entries.checked_add(1) else {
+        return Some("entry count");
+    };
+    if projected_entries > limits.max_index_entries {
+        return Some("entry count");
+    }
+    if projected_entries
+        .checked_mul(std::mem::size_of::<u64>())
+        .is_none_or(|bytes| bytes > limits.max_index_bytes)
+    {
+        return Some("byte count");
+    }
+    None
 }
 
 fn create_temporary_sibling(

@@ -12,7 +12,8 @@ use molecular::trajectory::{
 use molecular::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT, MODEL_TIME_UNIT};
 
 use crate::{
-    codec_context, frame_offset_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding,
+    codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
+    TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
 
 const HEADER_BYTES: usize = 84;
@@ -217,6 +218,13 @@ pub struct DcdReader<R> {
     positions: Vec<Point3>,
     record: Vec<u8>,
     frame_cursor: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DcdDecodedFrame {
+    cell: Option<PeriodicCell>,
+    step: u64,
+    time: Option<f64>,
 }
 
 impl<R: Read + Seek> DcdReader<R> {
@@ -534,7 +542,10 @@ impl<R: Read + Seek> DcdReader<R> {
         &self.header
     }
 
-    fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
+    fn parse_next(
+        &mut self,
+        capture_fixed_reference: bool,
+    ) -> Result<Option<DcdDecodedFrame>, TrajectoryError> {
         let frame_start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
@@ -543,37 +554,73 @@ impl<R: Read + Seek> DcdReader<R> {
                 error,
             )
         })?;
-        let mut first = [0_u8; 1];
-        match self.reader.read(&mut first) {
-            Ok(0) => return Ok(false),
-            Ok(_) => {
-                self.reader
-                    .seek(SeekFrom::Start(frame_start))
-                    .map_err(|error| {
-                        io_context(
-                            TrajectoryIoOperation::ReadFrame,
-                            Some(TrajectoryFormat::Dcd),
-                            &self.source_label,
-                            error,
-                        )
-                    })?;
+        if self.frame_cursor >= self.header.declared_frames {
+            if probe_seekable_eof(
+                &mut self.reader,
+                TrajectoryIoOperation::ReadFrame,
+                TrajectoryFormat::Dcd,
+                &self.source_label,
+            )? {
+                return Ok(None);
             }
-            Err(error) => {
-                return Err(io_context(
-                    TrajectoryIoOperation::ReadFrame,
-                    Some(TrajectoryFormat::Dcd),
-                    &self.source_label,
-                    error,
-                ))
-            }
+            return Err(TrajectoryCodecErrorContext::new(
+                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Dcd),
+            )
+            .with_source_label(&self.source_label)
+            .with_frame(self.frame_cursor)
+            .with_byte_offset(frame_start)
+            .with_counts(
+                self.header.declared_frames,
+                self.frame_cursor.saturating_add(1),
+            )
+            .with_detail("DCD contains a frame beyond its declared NSET count")
+            .into());
         }
         if self.frame_cursor >= self.limits.max_frames {
+            if probe_seekable_eof(
+                &mut self.reader,
+                TrajectoryIoOperation::ReadFrame,
+                TrajectoryFormat::Dcd,
+                &self.source_label,
+            )? {
+                return Err(TrajectoryCodecErrorContext::new(
+                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::ReadFrame,
+                    Some(TrajectoryFormat::Dcd),
+                )
+                .with_source_label(&self.source_label)
+                .with_frame(self.frame_cursor)
+                .with_byte_offset(frame_start)
+                .with_counts(self.header.declared_frames, self.frame_cursor)
+                .with_detail("DCD ended before its declared NSET count")
+                .into());
+            }
             return Err(resource_error(
                 TrajectoryIoOperation::ReadFrame,
                 &self.source_label,
                 Some(self.frame_cursor),
                 "DCD frame count exceeds the configured limit",
             ));
+        }
+        if probe_seekable_eof(
+            &mut self.reader,
+            TrajectoryIoOperation::ReadFrame,
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+        )? {
+            return Err(TrajectoryCodecErrorContext::new(
+                TrajectoryCodecErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::ReadFrame,
+                Some(TrajectoryFormat::Dcd),
+            )
+            .with_source_label(&self.source_label)
+            .with_frame(self.frame_cursor)
+            .with_byte_offset(frame_start)
+            .with_counts(self.header.declared_frames, self.frame_cursor)
+            .with_detail("DCD ended before its declared NSET count")
+            .into());
         }
         let mut cell = None;
         if self.header.has_cell {
@@ -587,7 +634,12 @@ impl<R: Read + Seek> DcdReader<R> {
                 Some(self.frame_cursor),
                 true,
             )? {
-                return Ok(false);
+                return Err(frame_error(
+                    TrajectoryCodecErrorKind::TruncatedRecord,
+                    &self.source_label,
+                    self.frame_cursor,
+                    "DCD frame ended before its unit-cell record",
+                ));
             }
             if self.record.len() != CELL_BYTES {
                 return Err(frame_error(
@@ -686,7 +738,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 "DCD frame exceeds the configured byte limit",
             ));
         }
-        if self.frame_cursor == 0 && self.header.fixed_count > 0 {
+        if capture_fixed_reference && self.frame_cursor == 0 && self.header.fixed_count > 0 {
             self.fixed_reference.clear();
             self.fixed_reference
                 .try_reserve_exact(self.fixed_indices.len())
@@ -727,29 +779,20 @@ impl<R: Read + Seek> DcdReader<R> {
                     "DCD frame step addition overflows",
                 )
             })?;
-        if let Some(destination) = publish {
-            let mut data = FrameBufferData::new(
-                self.topology(),
-                Quantity::new(self.positions.as_slice(), ANGSTROM),
-            )
-            .with_step(step);
-            if let Some(cell) = cell {
-                data = data.with_cell(cell);
+        let time = if let DcdTimePolicy::HeaderDelta { .. } = self.options.time_policy {
+            let time = (step as f64) * f64::from(self.header.delta);
+            if !time.is_finite() {
+                return Err(frame_error(
+                    TrajectoryCodecErrorKind::InvalidFrame,
+                    &self.source_label,
+                    self.frame_cursor,
+                    "DCD derived frame time is not finite",
+                ));
             }
-            if let DcdTimePolicy::HeaderDelta { unit } = self.options.time_policy {
-                let time = (step as f64) * f64::from(self.header.delta);
-                if !time.is_finite() {
-                    return Err(frame_error(
-                        TrajectoryCodecErrorKind::InvalidFrame,
-                        &self.source_label,
-                        self.frame_cursor,
-                        "DCD derived frame time is not finite",
-                    ));
-                }
-                data = data.with_time(Quantity::new(time, unit));
-            }
-            destination.replace_from_data(data)?;
-        }
+            Some(time)
+        } else {
+            None
+        };
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
                 TrajectoryIoOperation::ReadFrame,
@@ -758,12 +801,87 @@ impl<R: Read + Seek> DcdReader<R> {
                 "DCD frame cursor overflows",
             )
         })?;
-        Ok(true)
+        Ok(Some(DcdDecodedFrame { cell, step, time }))
+    }
+
+    fn publish(
+        &self,
+        positions: &[Point3],
+        decoded: DcdDecodedFrame,
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryError> {
+        let mut data = FrameBufferData::new(self.topology(), Quantity::new(positions, ANGSTROM))
+            .with_step(decoded.step);
+        if let Some(cell) = decoded.cell {
+            data = data.with_cell(cell);
+        }
+        if let (Some(time), DcdTimePolicy::HeaderDelta { unit }) =
+            (decoded.time, self.options.time_policy)
+        {
+            data = data.with_time(Quantity::new(time, unit));
+        }
+        destination.replace_from_data(data).map_err(Into::into)
     }
 
     pub fn into_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
+            if offsets.len() as u64 == self.header.declared_frames {
+                if probe_seekable_eof(
+                    &mut self.reader,
+                    TrajectoryIoOperation::Index,
+                    TrajectoryFormat::Dcd,
+                    &self.source_label,
+                )? {
+                    break;
+                }
+                return Err(TrajectoryCodecErrorContext::new(
+                    TrajectoryCodecErrorKind::InconsistentMetadata,
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Dcd),
+                )
+                .with_source_label(&self.source_label)
+                .with_counts(
+                    self.header.declared_frames,
+                    (offsets.len() as u64).saturating_add(1),
+                )
+                .with_detail("DCD contains frames beyond its declared NSET count")
+                .into());
+            }
+            if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
+                if probe_seekable_eof(
+                    &mut self.reader,
+                    TrajectoryIoOperation::Index,
+                    TrajectoryFormat::Dcd,
+                    &self.source_label,
+                )? {
+                    return Err(TrajectoryCodecErrorContext::new(
+                        TrajectoryCodecErrorKind::InconsistentMetadata,
+                        TrajectoryIoOperation::Index,
+                        Some(TrajectoryFormat::Dcd),
+                    )
+                    .with_source_label(&self.source_label)
+                    .with_counts(self.header.declared_frames, offsets.len() as u64)
+                    .with_detail("DCD ended before its declared NSET count")
+                    .into());
+                }
+                return Err(resource_error(
+                    TrajectoryIoOperation::Index,
+                    &self.source_label,
+                    Some(offsets.len() as u64),
+                    format!("DCD index {limit} exceeds the configured limit"),
+                ));
+            }
+            if offsets.len() == offsets.capacity() {
+                offsets.try_reserve_exact(1).map_err(|_| {
+                    resource_error(
+                        TrajectoryIoOperation::Index,
+                        &self.source_label,
+                        Some(offsets.len() as u64),
+                        "could not grow DCD index",
+                    )
+                })?;
+            }
             let offset = self.reader.stream_position().map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
@@ -772,52 +890,22 @@ impl<R: Read + Seek> DcdReader<R> {
                     error,
                 )
             })?;
-            if !self
-                .parse_next(None)
+            if self
+                .parse_next(true)
                 .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
+                .is_none()
             {
-                break;
-            }
-            if offsets.len() >= self.limits.max_index_entries {
-                return Err(resource_error(
+                return Err(TrajectoryCodecErrorContext::new(
+                    TrajectoryCodecErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Index,
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "DCD index entry limit exceeded",
-                ));
-            }
-            offsets.try_reserve(1).map_err(|_| {
-                resource_error(
-                    TrajectoryIoOperation::Index,
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "could not grow DCD index",
+                    Some(TrajectoryFormat::Dcd),
                 )
-            })?;
-            offsets.push(offset);
-            if offsets
-                .len()
-                .checked_mul(std::mem::size_of::<u64>())
-                .is_none_or(|bytes| bytes > self.limits.max_index_bytes)
-            {
-                return Err(resource_error(
-                    TrajectoryIoOperation::Index,
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "DCD index byte limit exceeded",
-                ));
+                .with_source_label(&self.source_label)
+                .with_counts(self.header.declared_frames, offsets.len() as u64)
+                .with_detail("DCD ended before its declared NSET count")
+                .into());
             }
-        }
-        if offsets.len() as u64 != self.header.declared_frames {
-            return Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::Index,
-                Some(TrajectoryFormat::Dcd),
-            )
-            .with_source_label(&self.source_label)
-            .with_counts(self.header.declared_frames, offsets.len() as u64)
-            .with_detail("DCD declared frame count does not match verified frames")
-            .into());
+            offsets.push(offset);
         }
         self.reader
             .seek(SeekFrom::Start(self.header.data_start))
@@ -830,9 +918,23 @@ impl<R: Read + Seek> DcdReader<R> {
                 )
             })?;
         self.frame_cursor = 0;
+        let mut random_positions = Vec::new();
+        random_positions
+            .try_reserve_exact(self.header.atom_count)
+            .map_err(|_| {
+                resource_error(
+                    TrajectoryIoOperation::Index,
+                    &self.source_label,
+                    None,
+                    "could not reserve DCD indexed position scratch",
+                )
+            })?;
+        random_positions.resize(self.header.atom_count, Point3::new(0.0, 0.0, 0.0));
         Ok(IndexedDcdReader {
             inner: self,
             offsets,
+            random_positions,
+            random_record: Vec::new(),
         })
     }
 }
@@ -843,6 +945,9 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+        if !self.topology().same_identity(destination.topology()) {
+            return Err(TrajectoryError::TopologyIdentityMismatch);
+        }
         let offset = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
@@ -851,8 +956,14 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
                 error,
             )
         })?;
-        self.parse_next(Some(destination))
-            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
+        let decoded = self
+            .parse_next(true)
+            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?;
+        let Some(decoded) = decoded else {
+            return Ok(false);
+        };
+        self.publish(&self.positions, decoded, destination)?;
+        Ok(true)
     }
 }
 
@@ -860,6 +971,8 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
 pub struct IndexedDcdReader<R> {
     inner: DcdReader<R>,
     offsets: Vec<u64>,
+    random_positions: Vec<Point3>,
+    random_record: Vec<u8>,
 }
 
 impl<R: Read + Seek> IndexedDcdReader<R> {
@@ -892,6 +1005,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
+        if !self.topology().same_identity(destination.topology()) {
+            return Err(TrajectoryError::TopologyIdentityMismatch);
+        }
         let offset = self
             .offsets
             .get(usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?)
@@ -917,6 +1033,8 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                     error,
                 )
             })?;
+        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
+        std::mem::swap(&mut self.inner.record, &mut self.random_record);
         self.inner.frame_cursor = index;
         if index > 0 && self.inner.header.fixed_count > 0 {
             for (&atom_index, &position) in self
@@ -930,15 +1048,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         }
         let result = self
             .inner
-            .parse_next(Some(destination))
+            .parse_next(false)
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|read| {
-                if read {
-                    Ok(())
-                } else {
-                    Err(TrajectoryError::FrameIndexOutOfRange(index))
-                }
-            });
+            .and_then(|decoded| decoded.ok_or(TrajectoryError::FrameIndexOutOfRange(index)));
         let restore = self
             .inner
             .reader
@@ -952,7 +1064,12 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
                 )
             });
         self.inner.frame_cursor = saved_cursor;
-        result.and(restore.map(|_| ()))
+        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
+        std::mem::swap(&mut self.inner.record, &mut self.random_record);
+        let decoded = result?;
+        restore?;
+        self.inner
+            .publish(&self.random_positions, decoded, destination)
     }
 }
 

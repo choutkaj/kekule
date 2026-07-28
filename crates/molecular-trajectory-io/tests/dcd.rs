@@ -15,6 +15,9 @@ use molecular_trajectory_io::dcd::{
 use molecular_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 use sha2::{Digest, Sha256};
 
+mod support;
+use support::{buffer_snapshot, GuardedCursor, RestoreSeekFailure};
+
 fn topology() -> Topology {
     let mut graph = Molecule::new();
     for symbol in ["C", "H", "O"] {
@@ -191,6 +194,7 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
     let limits = TrajectoryIoLimits {
         max_frames: 2,
         max_index_entries: 2,
+        max_index_bytes: 2 * std::mem::size_of::<u64>(),
         ..TrajectoryIoLimits::default()
     };
     let mut reader = DcdReader::new(
@@ -217,6 +221,169 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
     .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
+fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
+    let topology = topology();
+    let valid = fixed_atom_fixture(DcdEndian::Little);
+    for (declared, frames_before_error) in [(1_i32, 1_usize), (3_i32, 2_usize)] {
+        let mut bytes = valid.clone();
+        bytes[8..12].copy_from_slice(&declared.to_le_bytes());
+
+        let mut sequential = DcdReader::new(
+            Cursor::new(bytes.clone()),
+            binding(&topology),
+            DcdReadOptions::default(),
+            TrajectoryIoLimits::default(),
+            "declared-sequential.dcd",
+        )
+        .unwrap();
+        let mut destination = FrameBuffer::new(topology.clone());
+        for _ in 0..frames_before_error {
+            assert!(sequential.read_next(&mut destination).unwrap());
+        }
+        assert_eq!(
+            codec_kind(&sequential.read_next(&mut destination).unwrap_err()),
+            Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+        );
+
+        let error = DcdReader::new(
+            Cursor::new(bytes),
+            binding(&topology),
+            DcdReadOptions::default(),
+            TrajectoryIoLimits::default(),
+            "declared-indexed.dcd",
+        )
+        .unwrap()
+        .into_indexed()
+        .err()
+        .unwrap();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::InconsistentMetadata)
+        );
+    }
+}
+
+#[test]
+fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
+    let topology = topology();
+    let (stream, control) = RestoreSeekFailure::new(fixed_atom_fixture(DcdEndian::Little));
+    let mut indexed = DcdReader::new(
+        stream,
+        binding(&topology),
+        DcdReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "restore-failure.dcd",
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology);
+    set_frame(
+        &mut destination,
+        [[9.0, 8.0, 7.0], [6.0, 5.0, 4.0], [3.0, 2.0, 1.0]],
+        99,
+        Some(12.5),
+        None,
+    );
+    destination
+        .props_mut()
+        .insert("sentinel".into(), molecular::core::PropValue::Bool(true));
+    let before = buffer_snapshot(&destination);
+    control.arm_at_current_position();
+    let error = indexed.read_frame(1, &mut destination).unwrap_err();
+    assert!(matches!(error, TrajectoryError::Io(_)));
+    assert_eq!(buffer_snapshot(&destination), before);
+}
+
+#[test]
+fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
+    let topology = topology();
+    let options = DcdWriteOptions::default().with_step_sequence(0, 1);
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        options,
+        "guarded.dcd",
+    )
+    .unwrap();
+    let mut frame = FrameBuffer::new(topology.clone());
+    set_frame(
+        &mut frame,
+        [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+        0,
+        None,
+        None,
+    );
+    writer.write_frame(frame.frame_view()).unwrap();
+    let second_offset = writer.writer().position();
+    set_frame(
+        &mut frame,
+        [[3.0, 3.0, 3.0], [4.0, 4.0, 4.0], [5.0, 5.0, 5.0]],
+        1,
+        None,
+        None,
+    );
+    writer.write_frame(frame.frame_view()).unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let sequential_limits = TrajectoryIoLimits {
+        max_frames: 1,
+        ..TrajectoryIoLimits::default()
+    };
+    let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+    let mut reader = DcdReader::new(
+        stream,
+        binding(&topology),
+        DcdReadOptions::default(),
+        sequential_limits,
+        "guarded-sequential.dcd",
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(
+        codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert!(!control.violated());
+    assert_eq!(control.probed_bytes(), 1);
+
+    for limits in [
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_entries: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_bytes: std::mem::size_of::<u64>(),
+            ..TrajectoryIoLimits::default()
+        },
+    ] {
+        let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+        let error = DcdReader::new(
+            stream,
+            binding(&topology),
+            DcdReadOptions::default(),
+            limits,
+            "guarded-index.dcd",
+        )
+        .unwrap()
+        .into_indexed()
+        .err()
+        .unwrap();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        assert!(!control.violated());
+        assert_eq!(control.probed_bytes(), 1);
+    }
 }
 
 #[test]

@@ -15,6 +15,9 @@ use molecular_trajectory_io::xtc::{
 use molecular_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 use sha2::{Digest, Sha256};
 
+mod support;
+use support::{buffer_snapshot, GuardedCursor, RestoreSeekFailure};
+
 fn topology(atom_count: usize) -> Topology {
     let mut graph = Molecule::new();
     for _ in 0..atom_count {
@@ -222,6 +225,7 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     let limits = TrajectoryIoLimits {
         max_frames: 2,
         max_index_entries: 2,
+        max_index_bytes: 2 * std::mem::size_of::<u64>(),
         ..TrajectoryIoLimits::default()
     };
     let mut reader = XtcReader::new(
@@ -248,6 +252,223 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
+fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
+    let topology = topology(3);
+    let valid = encoded_frame(&topology, XtcMagic::Xtc1995, 1000.0, 0.0, 4);
+
+    for (range, expected_offset, label) in [
+        (4..8, 4, "negative-count.xtc"),
+        (52..56, 52, "negative-repeat.xtc"),
+    ] {
+        let mut negative = valid.clone();
+        negative[range].copy_from_slice(&(-1_i32).to_be_bytes());
+        let error = XtcReader::new(
+            Cursor::new(negative),
+            binding(&topology),
+            XtcReadOptions::default(),
+            TrajectoryIoLimits::default(),
+            label,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::InvalidHeader)
+        );
+        let TrajectoryError::Codec(context) = error else {
+            panic!("expected typed XTC count error");
+        };
+        assert_eq!(context.frame(), Some(0));
+        assert_eq!(context.byte_offset(), Some(expected_offset));
+    }
+
+    let mut negative_step = valid.clone();
+    negative_step[8..12].copy_from_slice(&(-1_i32).to_be_bytes());
+    let error = XtcReader::new(
+        Cursor::new(negative_step),
+        binding(&topology),
+        XtcReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "negative-step.xtc",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep)
+    );
+    let TrajectoryError::Codec(context) = error else {
+        panic!("expected typed XTC step error");
+    };
+    assert_eq!(context.frame(), Some(0));
+    assert_eq!(context.byte_offset(), Some(8));
+
+    let mut maximum_step = valid.clone();
+    maximum_step[8..12].copy_from_slice(&i32::MAX.to_be_bytes());
+    let mut reader = XtcReader::new(
+        Cursor::new(maximum_step),
+        binding(&topology),
+        XtcReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "maximum-step.xtc",
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(destination.frame_view().step(), Some(i32::MAX as u64));
+
+    let mut maximum_count = valid.clone();
+    maximum_count[4..8].copy_from_slice(&i32::MAX.to_be_bytes());
+    maximum_count[52..56].copy_from_slice(&i32::MAX.to_be_bytes());
+    let error = XtcReader::new(
+        Cursor::new(maximum_count),
+        binding(&topology),
+        XtcReadOptions::default(),
+        TrajectoryIoLimits {
+            max_atoms: i32::MAX as usize,
+            ..TrajectoryIoLimits::default()
+        },
+        "maximum-count.xtc",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::InconsistentAtomCount)
+    );
+
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        XtcWriteOptions::default(),
+        "signed-writer.xtc",
+    )
+    .unwrap();
+    let maximum = source_frame(&topology, 0.0, i32::MAX as u64);
+    writer.write_frame(maximum.frame_view()).unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    assert_eq!(
+        i32::from_be_bytes(bytes[8..12].try_into().unwrap()),
+        i32::MAX
+    );
+
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        XtcWriteOptions::default(),
+        "overflow-writer.xtc",
+    )
+    .unwrap();
+    let overflow = source_frame(&topology, 0.0, i32::MAX as u64 + 1);
+    assert_eq!(
+        codec_kind(&writer.write_frame(overflow.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep)
+    );
+    assert!(writer.writer().get_ref().is_empty());
+}
+
+#[test]
+fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
+    let (topology, bytes) = encoded(12, XtcMagic::Xtc1995);
+    let (stream, control) = RestoreSeekFailure::new(bytes);
+    let mut indexed = XtcReader::new(
+        stream,
+        binding(&topology),
+        XtcReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "restore-failure.xtc",
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    let mut destination = source_frame(&topology, 9.0, 99);
+    destination
+        .props_mut()
+        .insert("sentinel".into(), molecular::core::PropValue::Bool(true));
+    let before = buffer_snapshot(&destination);
+    control.arm_at_current_position();
+    let error = indexed.read_frame(1, &mut destination).unwrap_err();
+    assert!(matches!(error, TrajectoryError::Io(_)));
+    assert_eq!(buffer_snapshot(&destination), before);
+}
+
+#[test]
+fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
+    let topology = topology(12);
+    let options = XtcWriteOptions::default().with_precision(1000.0).unwrap();
+    let mut writer = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        options,
+        "guarded.xtc",
+    )
+    .unwrap();
+    writer
+        .write_frame(source_frame(&topology, 0.0, 0).frame_view())
+        .unwrap();
+    let second_offset = writer.writer().position();
+    writer
+        .write_frame(source_frame(&topology, 0.01, 1).frame_view())
+        .unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+    let mut reader = XtcReader::new(
+        stream,
+        binding(&topology),
+        XtcReadOptions::default(),
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        "guarded-sequential.xtc",
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(
+        codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert!(!control.violated());
+    assert_eq!(control.probed_bytes(), 1);
+
+    for limits in [
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_entries: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_bytes: std::mem::size_of::<u64>(),
+            ..TrajectoryIoLimits::default()
+        },
+    ] {
+        let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+        let error = XtcReader::new(
+            stream,
+            binding(&topology),
+            XtcReadOptions::default(),
+            limits,
+            "guarded-index.xtc",
+        )
+        .unwrap()
+        .into_indexed()
+        .err()
+        .unwrap();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        assert!(!control.violated());
+        assert_eq!(control.probed_bytes(), 1);
+    }
 }
 
 #[test]

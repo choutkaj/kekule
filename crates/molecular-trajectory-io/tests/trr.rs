@@ -1,4 +1,7 @@
+use std::fs;
 use std::io::Cursor;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use molecular::core::{Atom, Element, Molecule, PropValue};
 use molecular::geometry::{PeriodicCell, Point3, Vector3};
@@ -13,8 +16,14 @@ use molecular_trajectory_io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision, TrrWriteOptions, TrrWriter,
     TRR_LAMBDA_PROPERTY,
 };
-use molecular_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use molecular_trajectory_io::{
+    open_indexed_trajectory, open_trajectory, CoordinateEncoding, ScalarPrecision,
+    TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryTopologyBinding,
+};
 use sha2::{Digest, Sha256};
+
+mod support;
+use support::{buffer_snapshot, GuardedCursor, RestoreSeekFailure};
 
 fn topology() -> Topology {
     let mut graph = Molecule::new();
@@ -193,6 +202,10 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         assert!(destination.frame_view().velocities().is_none());
         assert!(destination.frame_view().forces().is_none());
         assert_eq!(
+            destination.props().get(TRR_LAMBDA_PROPERTY),
+            Some(&PropValue::Float(0.25))
+        );
+        assert_eq!(
             destination
                 .configuration()
                 .positions()
@@ -215,6 +228,10 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         assert_eq!(
             destination.frame_view().forces().unwrap().value().as_ptr(),
             force_pointer
+        );
+        assert_eq!(
+            destination.props().get(TRR_LAMBDA_PROPERTY),
+            Some(&PropValue::Float(0.375))
         );
         assert!(!reader.read_next(&mut destination).unwrap());
 
@@ -256,6 +273,7 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     let limits = TrajectoryIoLimits {
         max_frames: 2,
         max_index_entries: 2,
+        max_index_bytes: 2 * std::mem::size_of::<u64>(),
         ..TrajectoryIoLimits::default()
     };
     let mut reader = TrrReader::new(
@@ -282,6 +300,119 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
+fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        TrrWriteOptions::default(),
+        "restore-failure.trr",
+    )
+    .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 0.0, 0).frame_view())
+        .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 1.0, 1).frame_view())
+        .unwrap();
+    let (stream, control) = RestoreSeekFailure::new(writer.finish().unwrap().into_inner());
+    let mut indexed = TrrReader::new(
+        stream,
+        binding(&topology),
+        TrrReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "restore-failure.trr",
+    )
+    .unwrap()
+    .into_indexed()
+    .unwrap();
+    let mut destination = populated_frame(&topology, 9.0, 99);
+    destination
+        .props_mut()
+        .insert("sentinel".into(), PropValue::Bool(true));
+    let before = buffer_snapshot(&destination);
+    control.arm_at_current_position();
+    let error = indexed.read_frame(1, &mut destination).unwrap_err();
+    assert!(matches!(error, TrajectoryError::Io(_)));
+    assert_eq!(buffer_snapshot(&destination), before);
+}
+
+#[test]
+fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
+    let topology = topology();
+    let mut writer = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        TrrWriteOptions::default(),
+        "guarded.trr",
+    )
+    .unwrap();
+    writer
+        .write_frame(populated_frame(&topology, 0.0, 0).frame_view())
+        .unwrap();
+    let second_offset = writer.writer().position();
+    writer
+        .write_frame(populated_frame(&topology, 1.0, 1).frame_view())
+        .unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+    let mut reader = TrrReader::new(
+        stream,
+        binding(&topology),
+        TrrReadOptions::default(),
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        "guarded-sequential.trr",
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(
+        codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert!(!control.violated());
+    assert_eq!(control.probed_bytes(), 1);
+
+    for limits in [
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_entries: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_bytes: std::mem::size_of::<u64>(),
+            ..TrajectoryIoLimits::default()
+        },
+    ] {
+        let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+        let error = TrrReader::new(
+            stream,
+            binding(&topology),
+            TrrReadOptions::default(),
+            limits,
+            "guarded-index.trr",
+        )
+        .unwrap()
+        .into_indexed()
+        .err()
+        .unwrap();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        assert!(!control.violated());
+        assert_eq!(control.probed_bytes(), 1);
+    }
 }
 
 #[test]
@@ -452,6 +583,72 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
     assert_eq!(reader.frame_count(), Some(2));
     reader.read_frame(1, &mut destination).unwrap();
     assert_xs_close(&destination, &[10.0, 40.0, 70.0]);
+}
+
+#[test]
+fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed() {
+    let topology = topology();
+    let mut combined = Vec::new();
+    for (precision, shift, step) in [
+        (TrrScalarPrecision::Float32, 0.0, 0),
+        (TrrScalarPrecision::Float64, 1.0, 1),
+    ] {
+        let mut writer = TrrWriter::new(
+            Cursor::new(Vec::new()),
+            topology.clone(),
+            TrrWriteOptions::default().with_precision(precision),
+            "mixed-metadata.trr",
+        )
+        .unwrap();
+        writer
+            .write_frame(populated_frame(&topology, shift, step).frame_view())
+            .unwrap();
+        combined.extend(writer.finish().unwrap().into_inner());
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path: PathBuf = std::env::temp_dir().join(format!(
+        "molecular-mixed-metadata-{}-{nonce}.trr",
+        std::process::id()
+    ));
+    fs::write(&path, combined).unwrap();
+    let options = TrajectoryOpenOptions::default().with_format_hint(
+        TrajectoryFormatHint::Explicit(molecular::trajectory::TrajectoryFormat::Trr),
+    );
+
+    let (mut sequential, _) = open_trajectory(&path, binding(&topology), options.clone()).unwrap();
+    assert_eq!(
+        sequential.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Float32
+        }
+    );
+    let mut destination = FrameBuffer::new(topology.clone());
+    assert!(sequential.read_next(&mut destination).unwrap());
+    assert_eq!(
+        sequential.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Float32
+        }
+    );
+    assert!(sequential.read_next(&mut destination).unwrap());
+    assert_eq!(
+        sequential.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Mixed
+        }
+    );
+
+    let (indexed, _) = open_indexed_trajectory(&path, binding(&topology), options).unwrap();
+    assert_eq!(
+        indexed.metadata().coordinate_encoding(),
+        CoordinateEncoding::Lossless {
+            precision: ScalarPrecision::Mixed
+        }
+    );
+    fs::remove_file(path).unwrap();
 }
 
 #[test]

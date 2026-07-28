@@ -11,7 +11,9 @@ deterministic compatibility profile in either byte order.
   headers, bounded title/atom-count records, all-atom frames, common fixed-atom
   trajectories, and documented unit-cell variants.
 - Validate record sizes and trailing markers, constant atom count, declared
-  versus indexed frame count, fixed/free atom lists, and every checked offset.
+  versus actual frame count, fixed/free atom lists, and every checked offset.
+  Both sequential and indexed modes require `NSET` to match exactly: early EOF
+  and extra frames are structured inconsistent-metadata errors.
 - Preserve defensible step metadata. Time remains absent unless an explicit
   `DcdTimePolicy` establishes its units and conversion.
 - Writers emit positions and optional cells with explicit start step, save
@@ -27,6 +29,8 @@ deterministic compatibility profile in either byte order.
   readers structurally scan records without materializing frames.
 - The first all-atom frame supplies immutable coordinates for fixed atoms;
   later free-atom frames update reusable scratch before complete publication.
+- Random reads use separate reusable decode scratch and restore stream cursor,
+  sequential cursor, and fixed-atom reconstruction state before publication.
 
 ## Tests
 
@@ -68,3 +72,6 @@ deterministic compatibility profile in either byte order.
   conversion validation, frame/offset diagnostics, exact-limit EOF, canonical
   writer finalization, independent writer reads, and local throughput/index
   evidence.
+- v4: Apply one strict sequential/indexed `NSET` policy, preflight projected
+  index limits, and make indexed publication conditional on successful
+  restoration of all reader state.

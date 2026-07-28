@@ -20,6 +20,9 @@ use molecular_trajectory_io::{
 };
 use sha2::{Digest, Sha256};
 
+mod support;
+use support::GuardedCursor;
+
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
 2\nsecond\nC 1.0 2.0 3.0\nH 4.0 5.0 6.0";
 
@@ -529,6 +532,70 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     .into_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
+}
+
+#[test]
+fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
+    let topology = topology();
+    let first = "2\nfirst\nC 0 1 2\nH 3 4 5\n";
+    let second = "not-an-atom-count\nthis frame must never be parsed\n";
+    let bytes = format!("{first}{second}").into_bytes();
+    let second_offset = first.len() as u64;
+
+    let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+    let mut reader = XyzReader::new(
+        stream,
+        binding(&topology),
+        XyzReadOptions::default(),
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        "guarded-sequential.xyz",
+    )
+    .unwrap();
+    let mut destination = FrameBuffer::new(topology.clone());
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert_eq!(
+        codec_kind(&reader.read_next(&mut destination).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+    );
+    assert!(!control.violated());
+    assert_eq!(control.probed_bytes(), 0);
+
+    for limits in [
+        TrajectoryIoLimits {
+            max_frames: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_entries: 1,
+            ..TrajectoryIoLimits::default()
+        },
+        TrajectoryIoLimits {
+            max_index_bytes: std::mem::size_of::<u64>(),
+            ..TrajectoryIoLimits::default()
+        },
+    ] {
+        let (stream, control) = GuardedCursor::new(bytes.clone(), second_offset);
+        let error = XyzReader::new(
+            stream,
+            binding(&topology),
+            XyzReadOptions::default(),
+            limits,
+            "guarded-index.xyz",
+        )
+        .unwrap()
+        .into_indexed()
+        .err()
+        .unwrap();
+        assert_eq!(
+            codec_kind(&error),
+            Some(TrajectoryCodecErrorKind::ResourceLimitExceeded)
+        );
+        assert!(!control.violated());
+        assert_eq!(control.probed_bytes(), 0);
+    }
 }
 
 #[test]

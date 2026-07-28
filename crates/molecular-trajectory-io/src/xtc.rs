@@ -13,7 +13,8 @@ use molecular::trajectory::{
 use molecular::units::{Quantity, NANOMETER, PICOSECOND};
 
 use crate::{
-    codec_context, frame_offset_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding,
+    codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
+    TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
 
 const XTC_HEADER_BYTES: usize = 56;
@@ -218,9 +219,14 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             2023 => XtcMagic::Xtc2023,
             _ => return Err(header_error(source_label, "XTC magic is not 1995 or 2023")),
         };
-        let atom_count =
-            usize::try_from(u32::from_be_bytes(header[4..8].try_into().expect("natoms")))
-                .map_err(|_| resource_error(source_label, None, "XTC atom count does not fit"))?;
+        let atom_count_raw = i32::from_be_bytes(header[4..8].try_into().expect("natoms"));
+        let atom_count = nonnegative_xdr_count(
+            atom_count_raw,
+            "atom count",
+            source_label,
+            frame_index,
+            start + 4,
+        )?;
         validate_atom_count(atom_count, limits, source_label)?;
         let expected_atoms = binding.topology().atom_count();
         if atom_count != expected_atoms {
@@ -234,10 +240,14 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .with_counts(expected_atoms as u64, atom_count as u64)
             .into());
         }
-        let repeated = usize::try_from(u32::from_be_bytes(
-            header[52..56].try_into().expect("repeat"),
-        ))
-        .map_err(|_| resource_error(source_label, None, "XTC repeated count does not fit"))?;
+        let repeated_raw = i32::from_be_bytes(header[52..56].try_into().expect("repeat"));
+        let repeated = nonnegative_xdr_count(
+            repeated_raw,
+            "repeated atom count",
+            source_label,
+            frame_index,
+            start + 52,
+        )?;
         if repeated != atom_count {
             return Err(TrajectoryCodecErrorContext::new(
                 TrajectoryCodecErrorKind::InconsistentAtomCount,
@@ -250,7 +260,18 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .with_detail("XTC repeated atom count differs from its header")
             .into());
         }
-        let step = u64::from(u32::from_be_bytes(header[8..12].try_into().expect("step")));
+        let step_raw = i32::from_be_bytes(header[8..12].try_into().expect("step"));
+        let step = u64::try_from(step_raw).map_err(|_| {
+            TrajectoryCodecErrorContext::new(
+                TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
+                TrajectoryIoOperation::ReadHeader,
+                Some(TrajectoryFormat::Xtc),
+            )
+            .with_source_label(source_label)
+            .with_frame(frame_index)
+            .with_byte_offset(start + 8)
+            .with_detail("XTC step is a negative signed XDR integer")
+        })?;
         let time = f64::from(f32::from_be_bytes(header[12..16].try_into().expect("time")));
         if !time.is_finite() {
             return Err(frame_error(
@@ -675,17 +696,30 @@ impl<R: Read + Seek> XtcReader<R> {
             .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
     }
 
-    fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
-        let Some(info) = self.next_info()? else {
-            return Ok(false);
-        };
+    fn parse_next(&mut self) -> Result<Option<XtcFrameInfo>, TrajectoryError> {
         if self.frame_cursor >= self.limits.max_frames {
+            let clean_eof = if self.pending_info.is_some() {
+                false
+            } else {
+                probe_seekable_eof(
+                    &mut self.adapter.reader,
+                    TrajectoryIoOperation::ReadFrame,
+                    TrajectoryFormat::Xtc,
+                    &self.source_label,
+                )?
+            };
+            if clean_eof {
+                return Ok(None);
+            }
             return Err(resource_error(
                 &self.source_label,
                 Some(self.frame_cursor),
                 "XTC frame count exceeds the configured limit",
             ));
         }
+        let Some(info) = self.next_info()? else {
+            return Ok(None);
+        };
         if info.magic != self.first_info.magic || info.precision != self.first_info.precision {
             return Err(TrajectoryCodecErrorContext::new(
                 TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -754,18 +788,6 @@ impl<R: Read + Seek> XtcReader<R> {
                 f64::from(values[2]),
             );
         }
-        if let Some(destination) = publish {
-            let mut data = FrameBufferData::new(
-                self.topology(),
-                Quantity::new(self.positions.as_slice(), NANOMETER),
-            )
-            .with_time(Quantity::new(info.time, PICOSECOND))
-            .with_step(info.step);
-            if let Some(cell) = info.cell {
-                data = data.with_cell(cell);
-            }
-            destination.replace_from_data(data)?;
-        }
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
                 &self.source_label,
@@ -773,12 +795,56 @@ impl<R: Read + Seek> XtcReader<R> {
                 "XTC frame cursor overflows",
             )
         })?;
-        Ok(true)
+        Ok(Some(info))
+    }
+
+    fn publish(
+        &self,
+        positions: &[Point3],
+        info: &XtcFrameInfo,
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryError> {
+        let mut data = FrameBufferData::new(self.topology(), Quantity::new(positions, NANOMETER))
+            .with_time(Quantity::new(info.time, PICOSECOND))
+            .with_step(info.step);
+        if let Some(cell) = info.cell {
+            data = data.with_cell(cell);
+        }
+        destination.replace_from_data(data).map_err(Into::into)
     }
 
     pub fn into_indexed(mut self) -> Result<IndexedXtcReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
+            if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
+                let clean_eof = if self.pending_info.is_some() {
+                    false
+                } else {
+                    probe_seekable_eof(
+                        &mut self.adapter.reader,
+                        TrajectoryIoOperation::Index,
+                        TrajectoryFormat::Xtc,
+                        &self.source_label,
+                    )?
+                };
+                if clean_eof {
+                    break;
+                }
+                return Err(resource_error(
+                    &self.source_label,
+                    Some(offsets.len() as u64),
+                    format!("XTC index {limit} exceeds the configured limit"),
+                ));
+            }
+            if offsets.len() == offsets.capacity() {
+                offsets.try_reserve_exact(1).map_err(|_| {
+                    resource_error(
+                        &self.source_label,
+                        Some(offsets.len() as u64),
+                        "could not grow XTC index",
+                    )
+                })?;
+            }
             let offset = self.pending_info.as_ref().map_or_else(
                 || {
                     self.adapter.reader.stream_position().map_err(|error| {
@@ -792,43 +858,34 @@ impl<R: Read + Seek> XtcReader<R> {
                 },
                 |info| Ok(info.start),
             )?;
-            if !self
-                .parse_next(None)
+            if self
+                .parse_next()
                 .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
+                .is_none()
             {
                 break;
             }
-            if offsets.len() >= self.limits.max_index_entries {
-                return Err(resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "XTC index entry limit exceeded",
-                ));
-            }
-            offsets.try_reserve(1).map_err(|_| {
-                resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "could not grow XTC index",
-                )
-            })?;
             offsets.push(offset);
-            if offsets
-                .len()
-                .checked_mul(std::mem::size_of::<u64>())
-                .is_none_or(|bytes| bytes > self.limits.max_index_bytes)
-            {
-                return Err(resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "XTC index byte limit exceeded",
-                ));
-            }
         }
         self.rewind()?;
+        let atom_count = self.binding.topology().atom_count();
+        let mut random_positions = Vec::new();
+        random_positions
+            .try_reserve_exact(atom_count)
+            .map_err(|_| {
+                resource_error(
+                    &self.source_label,
+                    None,
+                    "could not reserve indexed XTC position scratch",
+                )
+            })?;
+        random_positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
         Ok(IndexedXtcReader {
             inner: self,
             offsets,
+            random_positions,
+            random_adapter_scratch: Vec::new(),
+            random_decoded_positions: Vec::new(),
         })
     }
 
@@ -863,6 +920,9 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+        if !self.topology().same_identity(destination.topology()) {
+            return Err(TrajectoryError::TopologyIdentityMismatch);
+        }
         let offset = self.pending_info.as_ref().map_or_else(
             || {
                 self.adapter.reader.stream_position().map_err(|error| {
@@ -876,8 +936,14 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
             },
             |info| Ok(info.start),
         )?;
-        self.parse_next(Some(destination))
-            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
+        let info = self
+            .parse_next()
+            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?;
+        let Some(info) = info else {
+            return Ok(false);
+        };
+        self.publish(&self.positions, &info, destination)?;
+        Ok(true)
     }
 }
 
@@ -885,6 +951,9 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
 pub struct IndexedXtcReader<R> {
     inner: XtcReader<R>,
     offsets: Vec<u64>,
+    random_positions: Vec<Point3>,
+    random_adapter_scratch: Vec<u8>,
+    random_decoded_positions: Vec<f32>,
 }
 
 impl<R: Read + Seek> IndexedXtcReader<R> {
@@ -917,6 +986,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
+        if !self.topology().same_identity(destination.topology()) {
+            return Err(TrajectoryError::TopologyIdentityMismatch);
+        }
         let offset = self
             .offsets
             .get(usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?)
@@ -936,7 +1008,8 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
                 )
             })?;
         let saved_cursor = self.inner.frame_cursor;
-        let saved_pending = self.inner.pending_info.take();
+        let saved_pending = self.inner.pending_info.clone();
+        let saved_decoded_start = self.inner.adapter.decoded_start;
         self.inner
             .adapter
             .reader
@@ -949,18 +1022,23 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
                     error,
                 )
             })?;
+        self.inner.pending_info = None;
+        self.inner.adapter.decoded_start = None;
+        std::mem::swap(
+            &mut self.inner.adapter.scratch,
+            &mut self.random_adapter_scratch,
+        );
+        std::mem::swap(
+            &mut self.inner.adapter.decoded_positions,
+            &mut self.random_decoded_positions,
+        );
+        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
         self.inner.frame_cursor = index;
         let result = self
             .inner
-            .parse_next(Some(destination))
+            .parse_next()
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|read| {
-                if read {
-                    Ok(())
-                } else {
-                    Err(TrajectoryError::FrameIndexOutOfRange(index))
-                }
-            });
+            .and_then(|info| info.ok_or(TrajectoryError::FrameIndexOutOfRange(index)));
         let restore = self
             .inner
             .adapter
@@ -976,7 +1054,20 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
             });
         self.inner.frame_cursor = saved_cursor;
         self.inner.pending_info = saved_pending;
-        result.and(restore.map(|_| ()))
+        self.inner.adapter.decoded_start = saved_decoded_start;
+        std::mem::swap(
+            &mut self.inner.adapter.scratch,
+            &mut self.random_adapter_scratch,
+        );
+        std::mem::swap(
+            &mut self.inner.adapter.decoded_positions,
+            &mut self.random_decoded_positions,
+        );
+        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
+        let info = result?;
+        restore?;
+        self.inner
+            .publish(&self.random_positions, &info, destination)
     }
 }
 
@@ -1036,11 +1127,11 @@ impl<W: Write> XtcWriter<W> {
     ) -> Result<Self, TrajectoryError> {
         let source_label = source_label.into();
         validate_precision(options.precision, &source_label)?;
-        if topology.atom_count() == 0 || topology.atom_count() > u32::MAX as usize {
+        if topology.atom_count() == 0 || topology.atom_count() > i32::MAX as usize {
             return Err(resource_error(
                 &source_label,
                 None,
-                "XTC writer atom count must fit a positive u32",
+                "XTC writer atom count must fit a positive signed 32-bit XDR integer",
             ));
         }
         if options.magic == XtcMagic::Xtc1995 && topology.atom_count() > molly::XTC_1995_MAX_NATOMS
@@ -1118,15 +1209,16 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 "XTC requires explicit frame step",
             )
         })?;
-        self.adapter.frame.step = u32::try_from(step).map_err(|_| {
+        let step = i32::try_from(step).map_err(|_| {
             codec_context(
                 TrajectoryCodecErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xtc),
                 &self.source_label,
-                "XTC step exceeds u32 capacity",
+                "XTC step exceeds nonnegative signed 32-bit XDR capacity",
             )
         })?;
+        self.adapter.frame.step = step as u32;
         let time = frame.time().ok_or_else(|| {
             codec_context(
                 TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -1795,6 +1887,27 @@ fn validate_atom_count(
         ));
     }
     Ok(())
+}
+
+fn nonnegative_xdr_count(
+    value: i32,
+    field: &str,
+    source_label: &str,
+    frame: u64,
+    byte_offset: u64,
+) -> Result<usize, TrajectoryError> {
+    usize::try_from(value).map_err(|_| {
+        TrajectoryCodecErrorContext::new(
+            TrajectoryCodecErrorKind::InvalidHeader,
+            TrajectoryIoOperation::ReadHeader,
+            Some(TrajectoryFormat::Xtc),
+        )
+        .with_source_label(source_label)
+        .with_frame(frame)
+        .with_byte_offset(byte_offset)
+        .with_detail(format!("XTC {field} is a negative signed XDR integer"))
+        .into()
+    })
 }
 
 fn validate_precision(precision: f32, source_label: &str) -> Result<(), TrajectoryError> {

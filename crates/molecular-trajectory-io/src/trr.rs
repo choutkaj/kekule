@@ -14,7 +14,8 @@ use molecular::trajectory::{
 use molecular::units::{Quantity, KILOJOULE_PER_MOLE, MODEL_LENGTH_UNIT, NANOMETER, PICOSECOND};
 
 use crate::{
-    codec_context, frame_offset_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding,
+    codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
+    TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
 
 const TRR_MAGIC: i32 = 1993;
@@ -154,6 +155,12 @@ pub struct TrrReader<R> {
     precision_mixed: bool,
 }
 
+#[derive(Debug, Clone)]
+struct TrrDecodedFrame {
+    header: TrrFrameHeader,
+    cell: Option<PeriodicCell>,
+}
+
 impl<R: Read + Seek> TrrReader<R> {
     pub fn new(
         mut reader: R,
@@ -276,17 +283,30 @@ impl<R: Read + Seek> TrrReader<R> {
         .map_err(|error| frame_offset_context(error, self.frame_cursor, self.current_header_offset))
     }
 
-    fn parse_next(&mut self, publish: Option<&mut FrameBuffer>) -> Result<bool, TrajectoryError> {
-        let Some(header) = self.next_header()? else {
-            return Ok(false);
-        };
+    fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryError> {
         if self.frame_cursor >= self.limits.max_frames {
+            let clean_eof = if self.pending_header.is_some() {
+                false
+            } else {
+                probe_seekable_eof(
+                    &mut self.reader,
+                    TrajectoryIoOperation::ReadFrame,
+                    TrajectoryFormat::Trr,
+                    &self.source_label,
+                )?
+            };
+            if clean_eof {
+                return Ok(None);
+            }
             return Err(resource_error(
                 &self.source_label,
                 Some(self.frame_cursor),
                 "TRR frame count exceeds the configured limit",
             ));
         }
+        let Some(header) = self.next_header()? else {
+            return Ok(None);
+        };
         self.precision_mixed |= header.precision != self.first_header.precision;
         validate_lambda(
             header.lambda,
@@ -398,40 +418,15 @@ impl<R: Read + Seek> TrrReader<R> {
                 "force",
             )?;
         }
-        if let Some(destination) = publish {
-            if self.options.lambda_policy == TrrLambdaPolicy::FrameProperty {
-                let Some(PropValue::Float(lambda)) = self.props.get_mut(TRR_LAMBDA_PROPERTY) else {
-                    return Err(frame_error(
-                        &self.source_label,
-                        self.frame_cursor,
-                        "TRR lambda scratch lost its stable property entry",
-                    ));
-                };
-                *lambda = header.lambda;
-            }
-            let mut data = FrameBufferData::new(
-                self.topology(),
-                Quantity::new(self.positions.as_slice(), NANOMETER),
-            )
-            .with_time(Quantity::new(header.time, PICOSECOND))
-            .with_step(header.step)
-            .with_props(&self.props);
-            if let Some(cell) = cell {
-                data = data.with_cell(cell);
-            }
-            if header.has_velocities() {
-                data = data.with_velocities(Quantity::new(
-                    self.velocities.as_slice(),
-                    NANOMETER / PICOSECOND,
+        if self.options.lambda_policy == TrrLambdaPolicy::FrameProperty {
+            let Some(PropValue::Float(lambda)) = self.props.get_mut(TRR_LAMBDA_PROPERTY) else {
+                return Err(frame_error(
+                    &self.source_label,
+                    self.frame_cursor,
+                    "TRR lambda scratch lost its stable property entry",
                 ));
-            }
-            if header.has_forces() {
-                data = data.with_forces(Quantity::new(
-                    self.forces.as_slice(),
-                    KILOJOULE_PER_MOLE / NANOMETER,
-                ));
-            }
-            destination.replace_from_data(data)?;
+            };
+            *lambda = header.lambda;
         }
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
             resource_error(
@@ -440,12 +435,66 @@ impl<R: Read + Seek> TrrReader<R> {
                 "TRR frame cursor overflows",
             )
         })?;
-        Ok(true)
+        Ok(Some(TrrDecodedFrame { header, cell }))
+    }
+
+    fn publish(
+        &self,
+        positions: &[Point3],
+        velocities: &[Vector3],
+        forces: &[Vector3],
+        props: &PropMap,
+        decoded: &TrrDecodedFrame,
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryError> {
+        let mut data = FrameBufferData::new(self.topology(), Quantity::new(positions, NANOMETER))
+            .with_time(Quantity::new(decoded.header.time, PICOSECOND))
+            .with_step(decoded.header.step)
+            .with_props(props);
+        if let Some(cell) = decoded.cell {
+            data = data.with_cell(cell);
+        }
+        if decoded.header.has_velocities() {
+            data = data.with_velocities(Quantity::new(velocities, NANOMETER / PICOSECOND));
+        }
+        if decoded.header.has_forces() {
+            data = data.with_forces(Quantity::new(forces, KILOJOULE_PER_MOLE / NANOMETER));
+        }
+        destination.replace_from_data(data).map_err(Into::into)
     }
 
     pub fn into_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
+            if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
+                let clean_eof = if self.pending_header.is_some() {
+                    false
+                } else {
+                    probe_seekable_eof(
+                        &mut self.reader,
+                        TrajectoryIoOperation::Index,
+                        TrajectoryFormat::Trr,
+                        &self.source_label,
+                    )?
+                };
+                if clean_eof {
+                    break;
+                }
+                return Err(resource_error(
+                    &self.source_label,
+                    Some(offsets.len() as u64),
+                    format!("TRR index {limit} exceeds the configured limit"),
+                ));
+            }
+            if offsets.len() == offsets.capacity() {
+                offsets.try_reserve_exact(1).map_err(|_| {
+                    resource_error(
+                        &self.source_label,
+                        Some(offsets.len() as u64),
+                        "could not grow TRR index",
+                    )
+                })?;
+            }
             let offset = if self.pending_header.is_some() {
                 self.current_header_offset
             } else {
@@ -458,43 +507,57 @@ impl<R: Read + Seek> TrrReader<R> {
                     )
                 })?
             };
-            if !self
-                .parse_next(None)
+            if self
+                .parse_next()
                 .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?
+                .is_none()
             {
                 break;
             }
-            if offsets.len() >= self.limits.max_index_entries {
-                return Err(resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "TRR index entry limit exceeded",
-                ));
-            }
-            offsets.try_reserve(1).map_err(|_| {
-                resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "could not grow TRR index",
-                )
-            })?;
             offsets.push(offset);
-            if offsets
-                .len()
-                .checked_mul(std::mem::size_of::<u64>())
-                .is_none_or(|bytes| bytes > self.limits.max_index_bytes)
-            {
-                return Err(resource_error(
-                    &self.source_label,
-                    Some(offsets.len() as u64),
-                    "TRR index byte limit exceeded",
-                ));
-            }
         }
         self.rewind()?;
+        let atom_count = self.binding.topology().atom_count();
+        let mut random_positions = Vec::new();
+        let mut random_velocities = Vec::new();
+        let mut random_forces = Vec::new();
+        random_positions
+            .try_reserve_exact(atom_count)
+            .map_err(|_| {
+                resource_error(
+                    &self.source_label,
+                    None,
+                    "could not reserve indexed TRR position scratch",
+                )
+            })?;
+        random_velocities
+            .try_reserve_exact(atom_count)
+            .map_err(|_| {
+                resource_error(
+                    &self.source_label,
+                    None,
+                    "could not reserve indexed TRR velocity scratch",
+                )
+            })?;
+        random_forces.try_reserve_exact(atom_count).map_err(|_| {
+            resource_error(
+                &self.source_label,
+                None,
+                "could not reserve indexed TRR force scratch",
+            )
+        })?;
+        random_positions.resize(atom_count, Point3::new(0.0, 0.0, 0.0));
+        random_velocities.resize(atom_count, Vector3::zero());
+        random_forces.resize(atom_count, Vector3::zero());
+        let random_props = self.props.clone();
         Ok(IndexedTrrReader {
             inner: self,
             offsets,
+            random_positions,
+            random_velocities,
+            random_forces,
+            random_raw: Vec::new(),
+            random_props,
         })
     }
 
@@ -529,6 +592,9 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
+        if !self.topology().same_identity(destination.topology()) {
+            return Err(TrajectoryError::TopologyIdentityMismatch);
+        }
         let offset = if self.pending_header.is_some() {
             self.current_header_offset
         } else {
@@ -541,8 +607,21 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
                 )
             })?
         };
-        self.parse_next(Some(destination))
-            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))
+        let decoded = self
+            .parse_next()
+            .map_err(|error| frame_offset_context(error, self.frame_cursor, offset))?;
+        let Some(decoded) = decoded else {
+            return Ok(false);
+        };
+        self.publish(
+            &self.positions,
+            &self.velocities,
+            &self.forces,
+            &self.props,
+            &decoded,
+            destination,
+        )?;
+        Ok(true)
     }
 }
 
@@ -550,6 +629,11 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
 pub struct IndexedTrrReader<R> {
     inner: TrrReader<R>,
     offsets: Vec<u64>,
+    random_positions: Vec<Point3>,
+    random_velocities: Vec<Vector3>,
+    random_forces: Vec<Vector3>,
+    random_raw: Vec<u8>,
+    random_props: PropMap,
 }
 
 impl<R: Read + Seek> IndexedTrrReader<R> {
@@ -586,6 +670,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
+        if !self.topology().same_identity(destination.topology()) {
+            return Err(TrajectoryError::TopologyIdentityMismatch);
+        }
         let offset = self
             .offsets
             .get(usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?)
@@ -600,8 +687,9 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
             )
         })?;
         let saved_cursor = self.inner.frame_cursor;
-        let saved_pending = self.inner.pending_header.take();
+        let saved_pending = self.inner.pending_header.clone();
         let saved_header_offset = self.inner.current_header_offset;
+        let saved_precision_mixed = self.inner.precision_mixed;
         self.inner
             .reader
             .seek(SeekFrom::Start(offset))
@@ -613,19 +701,19 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
                     error,
                 )
             })?;
+        self.inner.pending_header = None;
+        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
+        std::mem::swap(&mut self.inner.velocities, &mut self.random_velocities);
+        std::mem::swap(&mut self.inner.forces, &mut self.random_forces);
+        std::mem::swap(&mut self.inner.raw, &mut self.random_raw);
+        std::mem::swap(&mut self.inner.props, &mut self.random_props);
         self.inner.current_header_offset = offset;
         self.inner.frame_cursor = index;
         let result = self
             .inner
-            .parse_next(Some(destination))
+            .parse_next()
             .map_err(|error| frame_offset_context(error, index, offset))
-            .and_then(|read| {
-                if read {
-                    Ok(())
-                } else {
-                    Err(TrajectoryError::FrameIndexOutOfRange(index))
-                }
-            });
+            .and_then(|decoded| decoded.ok_or(TrajectoryError::FrameIndexOutOfRange(index)));
         let restore = self
             .inner
             .reader
@@ -641,7 +729,22 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         self.inner.frame_cursor = saved_cursor;
         self.inner.pending_header = saved_pending;
         self.inner.current_header_offset = saved_header_offset;
-        result.and(restore.map(|_| ()))
+        self.inner.precision_mixed = saved_precision_mixed;
+        std::mem::swap(&mut self.inner.positions, &mut self.random_positions);
+        std::mem::swap(&mut self.inner.velocities, &mut self.random_velocities);
+        std::mem::swap(&mut self.inner.forces, &mut self.random_forces);
+        std::mem::swap(&mut self.inner.raw, &mut self.random_raw);
+        std::mem::swap(&mut self.inner.props, &mut self.random_props);
+        let decoded = result?;
+        restore?;
+        self.inner.publish(
+            &self.random_positions,
+            &self.random_velocities,
+            &self.random_forces,
+            &self.random_props,
+            &decoded,
+            destination,
+        )
     }
 }
 
