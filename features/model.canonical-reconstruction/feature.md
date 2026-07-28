@@ -24,6 +24,9 @@ dummy chemistry, or stable-ID renumbering.
 - `Molecule::stereo_group_slot_count`, `stereo_group_slots`, and
   `append_stereo_group_tombstone` expose and replay the exact stable group-slot
   layout. Appending a deleted slot preserves CIP state.
+- Stereo-element insertion rejects pre-grouped values transactionally;
+  persistence adapters create ungrouped elements and establish membership only
+  through `add_stereo_group`. Removed elements are returned ungrouped.
 - Live stereo groups are always nonempty. Removing or pruning their final
   member tombstones the group; partial pruning preserves the stable live group.
 
@@ -63,7 +66,9 @@ coordinate/property-only mutation remains perception-neutral.
 - Stereo tests replay live/interior-tombstone/live/trailing-tombstone layouts,
   preserve live and next group IDs, tombstone final-member groups, retain
   partially pruned groups, reject empty groups, and preserve CIP on tombstone
-  append.
+  append. They also prove pre-grouped insertion preserves element slots and
+  installed perception, while grouped removal returns a reinsertable ungrouped
+  element.
 - Independently built original/reconstructed small and macro topologies satisfy
   `Topology::same_layout`.
 - The sibling MolStudio project adapter is locally tested through the ignored
@@ -84,3 +89,6 @@ coordinate/property-only mutation remains perception-neutral.
 - v1: Add focused checked reconstruction for installed perception, enriched
   SMCRA child state, and exact stereo-group tombstone layouts, with MolStudio
   consumer proof.
+- v2: Enforce ungrouped stereo-element insertion and detached removal so
+  canonical replay establishes every relation only through
+  `add_stereo_group`.

@@ -182,6 +182,10 @@ unchanged.
 Stereo-group stable slots, including interior and trailing tombstones, are
 publicly inspectable and replayable without dummy chemistry. Appending a
 tombstone reserves exactly one checked stable group ID and is CIP-neutral.
+Stereo-element insertion accepts only ungrouped values; relation membership is
+established exclusively through checked stereo-group insertion. Rejected
+pre-grouped insertion is transactional, and removing a stereo element returns
+it detached from its former group.
 Every live stereo group is nonempty; removing or pruning its final member
 tombstones the group while partial pruning preserves the group and stable ID.
 
@@ -245,7 +249,7 @@ Canonical persistence adapters reconstruct in this order:
 
 ```text
 atoms, bonds, conformers, and stable layouts
-    -> stereo elements without group side effects
+    -> ungrouped stereo elements without group side effects
     -> live stereo-group slots and tombstones in slot order
     -> stereo bond marks
     -> SMCRA hierarchy and targeted child enrichment

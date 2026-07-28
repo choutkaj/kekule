@@ -12,7 +12,9 @@ series, breaking public API changes increment the minor version.
   graph, stereo, ring, slot, duplicate, and capacity validation; targeted
   enriched SMCRA component-ID and child-property restoration; and exact
   stereo-group tombstone replay with stable next IDs, CIP-neutral deleted-slot
-  append, and automatic final-member group tombstoning. Add public
+  append, automatic final-member group tombstoning, transactional rejection of
+  pre-grouped stereo-element insertion, and detached grouped-element removal.
+  Add public
   original/reconstructed `same_layout` regressions and validate MolStudio
   project round-trips through the ignored sibling path patch without Serde on
   Molecular runtime objects, source reparsing, or reperception.

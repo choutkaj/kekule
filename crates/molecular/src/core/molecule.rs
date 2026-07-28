@@ -955,8 +955,17 @@ impl Molecule {
         self.conformers().next()
     }
 
-    /// Inserts a validated stereo element without narrowing its collection slot.
+    /// Inserts an ungrouped validated stereo element without narrowing its collection slot.
+    ///
+    /// Group membership must be established separately through
+    /// [`Self::add_stereo_group`]. A pre-grouped element is rejected before
+    /// slot allocation or perception invalidation.
     pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
+        if element.group.is_some() {
+            return Err(MoleculeError::InvalidStereoReference(
+                "stereo element group membership must be established through add_stereo_group",
+            ));
+        }
         self.validate_stereo_element_refs(&element)?;
         let id = checked_molecule_id(
             self.stereo_elements.len(),
@@ -1003,14 +1012,16 @@ impl Molecule {
         Ok(previous)
     }
 
+    /// Removes a stereo element and returns it detached from any relation group.
     pub fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
-        let element = self
+        let mut element = self
             .stereo_elements
             .get_mut(id.index())
             .and_then(Option::take)
             .ok_or(MoleculeError::InvalidStereoElementId(id))?;
         self.remove_stereo_element_from_groups(id);
         self.invalidate_stereo();
+        element.group = None;
         Ok(element)
     }
 
