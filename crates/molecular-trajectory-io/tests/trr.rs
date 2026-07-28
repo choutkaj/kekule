@@ -652,6 +652,24 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
 }
 
 #[test]
+fn empty_trr_writer_is_rejected() {
+    let topology = topology();
+    let error = TrrWriter::new(
+        Cursor::new(Vec::new()),
+        topology,
+        TrrWriteOptions::default(),
+        "empty.trr",
+    )
+    .unwrap()
+    .finish()
+    .unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+}
+
+#[test]
 fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     let topology = topology();
     let fixture = include_bytes!("fixtures/mdanalysis-2.9.0-three-atoms.trr");

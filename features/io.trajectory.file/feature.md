@@ -24,9 +24,9 @@ foundational `molecular` crate.
 - Default resource limits bound detection bytes, atoms, frames, record and
   scratch sizes, text lines, and index memory before allocation.
 - Path writers use a temporary sibling and publish only through a successful
-  consuming `finish()`. A failed frame write poisons the writer, so a later
-  `finish()` cannot publish a valid prefix. Unsupported state is rejected
-  rather than discarded.
+  consuming `finish()`. Production files must contain at least one frame. An
+  empty finish or failed frame write cannot publish a destination, and
+  unsupported state is rejected rather than discarded.
 - The supported initial factory profiles are strict multi-frame XYZ, common
   CHARMM/NAMD/OpenMM DCD, GROMACS TRR with f32/f64 XDR payloads, and GROMACS
   XTC with 1995/2023 magic values.
@@ -61,8 +61,11 @@ extensions. A matching extension or atom count never expands the profile.
   frame-start/EOF probe. They neither decode the next frame nor grow the index
   before reporting a configured-limit failure.
 - Sequential readers retain one file handle. Indexed readers retain one handle,
-  fully verify every frame, and store only bounded checked offsets; random
-  access is therefore O(one frame decode) after an O(file size) index build.
+  fully verify every frame, and store only bounded checked offsets. The offset
+  vector grows geometrically up to the smallest configured frame, entry, or
+  byte capacity, so index construction does not copy the accumulated index for
+  each frame. Random access is therefore O(one frame decode) after an O(file
+  size) index build.
 - Defaults cap atoms at 10,000,000; frames and index entries at 100,000,000;
   frame, record, and scratch payloads at 4 GiB; index storage at 800,000,000
   bytes; text lines/comments at 1 MiB; and format detection at 4096 bytes.
@@ -86,6 +89,10 @@ extensions. A matching extension or atom count never expands the profile.
   position/vector allocations after warm-up. Instrumented N/N+1 streams prove
   limit probes do not decode or consume frame N+1, and restoration-seek fault
   streams prove indexed reads publish only after reader state is restored.
+- Shared helper regressions build at least 100,000 offsets and bound capacity
+  growth to logarithmically many events. Direct and atomic path writers reject
+  empty finishes, and path tests verify that neither destinations nor temporary
+  siblings remain.
 
 ## Benchmarks
 
@@ -94,13 +101,15 @@ extensions. A matching extension or atom count never expands the profile.
   and writer MiB/s without a benchmark framework dependency.
 - An informational Windows x86-64 release run on 2026-07-28 (12 logical
   workers) measured sequential frames/s, index ms, random us/frame, and writer
-  MiB/s. For 256 frames x 64 atoms: XYZ 76,140 / 3.994 / 11.24 / 102.5; DCD
-  2,058,871 / 0.105 / 0.52 / 403.6; TRR-f32 1,092,337 / 0.242 / 1.19 / 232.8;
-  XTC 204,666 / 1.191 / 5.14 / 33.6. For 32 frames x 4096 atoms: XYZ 953 /
-  36.917 / 1107.08 / 85.8; DCD 18,745 / 0.962 / 39.21 / 351.3; TRR-f32
-  20,496 / 1.198 / 35.10 / 159.3; XTC 2,493 / 13.409 / 436.88 / 21.0. These
-  local measurements are evidence of the exercised paths, not portable
-  performance guarantees.
+  MiB/s. For 256 frames x 64 atoms: XYZ 82,274 / 2.808 / 13.37 / 150.0; DCD
+  1,730,431 / 0.081 / 0.49 / 901.2; TRR-f32 659,930 / 0.349 / 1.59 / 277.1;
+  XTC 237,865 / 1.425 / 6.85 / 30.2. For 32 frames x 4096 atoms: XYZ 814 /
+  37.988 / 954.32 / 85.6; DCD 26,125 / 0.700 / 25.24 / 515.2; TRR-f32 37,219 /
+  0.675 / 22.10 / 220.1; XTC 3,785 / 12.136 / 386.18 / 38.5. A high-frame
+  profile of 100,000 frames x 1 atom measured index construction at 49.174 ms
+  for XYZ, 18.999 ms for DCD, 111.519 ms for TRR, and 13.376 ms for XTC, with
+  781.25 KiB of logical offsets for each. These local measurements are evidence
+  of the exercised paths, not portable performance guarantees.
 - External-tool comparisons are informational and never imply broad format or
   corpus parity.
 
@@ -126,3 +135,6 @@ extensions. A matching extension or atom count never expands the profile.
 - v4: Enforce projected index limits before parsing or growth, use bounded
   exact-limit EOF probes, and make DCD/TRR/XTC random reads restore all stream
   and codec state before transactional destination publication.
+- v5: Use shared bounded geometric index reservation after successful parsing,
+  require nonempty concrete and atomic writer finishes, and add a 100,000-frame
+  small-frame index benchmark.

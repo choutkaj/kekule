@@ -13,8 +13,8 @@ pure-Rust XDR layer.
   nonnegative step, and explicitly handled lambda metadata.
 - Convert native GROMACS units once to Molecular `f64` model units.
 - Writers use an explicit scalar precision, preserve each frame's optional
-  field presence, and reject every unsupported block or field instead of
-  dropping it.
+  field presence, require at least one frame, and reject every unsupported
+  block or field instead of dropping it.
 - Indexed access verifies every checked XDR block through reusable scratch
   without materializing owned frames or a trajectory.
 - Indexed metadata reports the precision mix verified across the complete
@@ -70,3 +70,5 @@ pure-Rust XDR layer.
 - v4: Keep sequential mixed-precision metadata current, preflight projected
   limits, and restore pending headers, precision tracking, stream position,
   and reusable scratch before indexed publication.
+- v5: Use capped geometric offset growth after successful decode and reject
+  empty concrete and atomic writer finishes.

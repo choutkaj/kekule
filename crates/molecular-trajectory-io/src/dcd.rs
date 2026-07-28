@@ -13,7 +13,7 @@ use molecular::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT, MODEL_TIME_U
 
 use crate::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    TrajectoryIoLimits, TrajectoryTopologyBinding,
+    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
 
 const HEADER_BYTES: usize = 84;
@@ -542,6 +542,20 @@ impl<R: Read + Seek> DcdReader<R> {
         &self.header
     }
 
+    fn early_eof_error(&self, frame_start: u64) -> TrajectoryError {
+        TrajectoryCodecErrorContext::new(
+            TrajectoryCodecErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::ReadFrame,
+            Some(TrajectoryFormat::Dcd),
+        )
+        .with_source_label(&self.source_label)
+        .with_frame(self.frame_cursor)
+        .with_byte_offset(frame_start)
+        .with_counts(self.header.declared_frames, self.frame_cursor)
+        .with_detail("DCD ended before its declared NSET count")
+        .into()
+    }
+
     fn parse_next(
         &mut self,
         capture_fixed_reference: bool,
@@ -585,17 +599,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 TrajectoryFormat::Dcd,
                 &self.source_label,
             )? {
-                return Err(TrajectoryCodecErrorContext::new(
-                    TrajectoryCodecErrorKind::InconsistentMetadata,
-                    TrajectoryIoOperation::ReadFrame,
-                    Some(TrajectoryFormat::Dcd),
-                )
-                .with_source_label(&self.source_label)
-                .with_frame(self.frame_cursor)
-                .with_byte_offset(frame_start)
-                .with_counts(self.header.declared_frames, self.frame_cursor)
-                .with_detail("DCD ended before its declared NSET count")
-                .into());
+                return Err(self.early_eof_error(frame_start));
             }
             return Err(resource_error(
                 TrajectoryIoOperation::ReadFrame,
@@ -603,24 +607,6 @@ impl<R: Read + Seek> DcdReader<R> {
                 Some(self.frame_cursor),
                 "DCD frame count exceeds the configured limit",
             ));
-        }
-        if probe_seekable_eof(
-            &mut self.reader,
-            TrajectoryIoOperation::ReadFrame,
-            TrajectoryFormat::Dcd,
-            &self.source_label,
-        )? {
-            return Err(TrajectoryCodecErrorContext::new(
-                TrajectoryCodecErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Dcd),
-            )
-            .with_source_label(&self.source_label)
-            .with_frame(self.frame_cursor)
-            .with_byte_offset(frame_start)
-            .with_counts(self.header.declared_frames, self.frame_cursor)
-            .with_detail("DCD ended before its declared NSET count")
-            .into());
         }
         let mut cell = None;
         if self.header.has_cell {
@@ -634,12 +620,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 Some(self.frame_cursor),
                 true,
             )? {
-                return Err(frame_error(
-                    TrajectoryCodecErrorKind::TruncatedRecord,
-                    &self.source_label,
-                    self.frame_cursor,
-                    "DCD frame ended before its unit-cell record",
-                ));
+                return Err(self.early_eof_error(frame_start));
             }
             if self.record.len() != CELL_BYTES {
                 return Err(frame_error(
@@ -673,7 +654,8 @@ impl<R: Read + Seek> DcdReader<R> {
             ));
         }
         for axis in 0..3 {
-            read_record(
+            let clean_frame_eof = !self.header.has_cell && axis == 0;
+            if !read_record(
                 &mut self.reader,
                 self.header.endian,
                 &mut self.record,
@@ -681,8 +663,10 @@ impl<R: Read + Seek> DcdReader<R> {
                 &self.source_label,
                 TrajectoryIoOperation::ReadFrame,
                 Some(self.frame_cursor),
-                false,
-            )?;
+                clean_frame_eof,
+            )? {
+                return Err(self.early_eof_error(frame_start));
+            }
             if self.record.len() != coordinate_bytes {
                 return Err(frame_error(
                     TrajectoryCodecErrorKind::InvalidFrame,
@@ -872,16 +856,6 @@ impl<R: Read + Seek> DcdReader<R> {
                     format!("DCD index {limit} exceeds the configured limit"),
                 ));
             }
-            if offsets.len() == offsets.capacity() {
-                offsets.try_reserve_exact(1).map_err(|_| {
-                    resource_error(
-                        TrajectoryIoOperation::Index,
-                        &self.source_label,
-                        Some(offsets.len() as u64),
-                        "could not grow DCD index",
-                    )
-                })?;
-            }
             let offset = self.reader.stream_position().map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
@@ -905,6 +879,13 @@ impl<R: Read + Seek> DcdReader<R> {
                 .with_detail("DCD ended before its declared NSET count")
                 .into());
             }
+            reserve_index_for_push(
+                &mut offsets,
+                &self.limits,
+                TrajectoryFormat::Dcd,
+                &self.source_label,
+                self.frame_cursor.saturating_sub(1),
+            )?;
             offsets.push(offset);
         }
         self.reader
@@ -1191,6 +1172,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         if self.finalized {
             return Ok(());
         }
+        require_nonempty_writer(self.frame_count, TrajectoryFormat::Dcd, &self.source_label)?;
         if self.frame_count > i32::MAX as u64 {
             return Err(codec_context(
                 TrajectoryCodecErrorKind::ResourceLimitExceeded,
@@ -1240,7 +1222,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         Ok(())
     }
 
-    /// Finalizes the declared frame count, flushes, and returns the stream.
+    /// Finalizes the frame count, flushes, and returns the nonempty DCD stream.
     pub fn finish(mut self) -> Result<W, TrajectoryError> {
         self.finalize()?;
         self.writer.flush().map_err(|error| {

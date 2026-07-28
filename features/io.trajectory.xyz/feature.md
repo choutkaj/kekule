@@ -14,8 +14,9 @@ file-backed trajectory I/O.
   default is angstrom because ordinary XYZ carries no reliable unit tag.
 - Comments, ordinary whitespace, final-newline absence, and line endings are
   handled within configured text limits. Extended XYZ schemas are not inferred.
-- Writers use deterministic locale-independent precision and reject cell,
-  velocity, force, time, step, observation, or properties they cannot preserve.
+- Writers require a positive topology and at least one frame, use deterministic
+  locale-independent precision, and reject cell, velocity, force, time, step,
+  observation, or properties they cannot preserve.
 
 ## Implementation Notes
 
@@ -68,3 +69,5 @@ file-backed trajectory I/O.
   allocation-reuse regressions passed with the committed independent fixture.
 - v4: Check projected frame/index limits before parsing or index growth and
   prove with guarded streams that frame N+1 is neither parsed nor consumed.
+- v5: Reject zero-atom writer construction and empty concrete/path finishes,
+  and use bounded geometric offset reservation after successful frame parsing.

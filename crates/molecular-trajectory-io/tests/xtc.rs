@@ -681,6 +681,24 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
 }
 
 #[test]
+fn empty_xtc_writer_is_rejected() {
+    let topology = topology(3);
+    let error = XtcWriter::new(
+        Cursor::new(Vec::new()),
+        topology,
+        XtcWriteOptions::default(),
+        "empty.xtc",
+    )
+    .unwrap()
+    .finish()
+    .unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+}
+
+#[test]
 fn independently_generated_mdanalysis_xtc_matches_lossy_profile() {
     let topology = topology(12);
     let fixture = include_bytes!("fixtures/mdanalysis-2.9.0-twelve-atoms.xtc");

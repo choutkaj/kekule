@@ -30,7 +30,9 @@ series, breaking public API changes increment the minor version.
   Harden the supported profiles with pre-decode frame/index-limit probes,
   restoration-before-publication random reads, strict DCD `NSET` consistency,
   cumulative sequential TRR precision metadata, and signed-i32 XTC counts and
-  steps.
+  steps. Bound index allocation with capped geometric growth, require every
+  production writer to finish at least one frame, and remove ordinary
+  per-frame DCD EOF read/seek probes.
 - Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit

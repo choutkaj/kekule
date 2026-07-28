@@ -1061,12 +1061,16 @@ retains one handle and does not scan the whole file.
 All file-controlled lengths and offsets are checked before allocation or seek.
 Codecs validate complete finite dense-order state in reusable scratch before
 transactional publication. Path writers publish only after consuming finish
-flushes, synchronizes, and finalizes metadata; any failed frame write prevents
+flushes, synchronizes, and finalizes metadata; production files require at
+least one frame, and an empty finish or failed frame write prevents
 publication. Exact frame/index limits use a bounded frame-start/EOF probe
-without decoding the next frame or growing the index. Indexed reads restore
-the stream and all sequential codec state before destination publication.
-Unsupported historical dialects and deferred formats remain typed errors
-rather than inferred or partially decoded behavior.
+without decoding the next frame or growing the index. Offset vectors grow
+geometrically up to the smallest configured frame, entry, or byte capacity.
+DCD uses a probe only at configured or declared-count boundaries; ordinary
+frames detect clean EOF through their first actual record. Indexed reads
+restore the stream and all sequential codec state before destination
+publication. Unsupported historical dialects and deferred formats remain typed
+errors rather than inferred or partially decoded behavior.
 
 ## Public API and release policy
 

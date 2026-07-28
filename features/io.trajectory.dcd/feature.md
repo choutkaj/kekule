@@ -17,7 +17,8 @@ deterministic compatibility profile in either byte order.
 - Preserve defensible step metadata. Time remains absent unless an explicit
   `DcdTimePolicy` establishes its units and conversion.
 - Writers emit positions and optional cells with explicit start step, save
-  interval, and time convention; they do not emit fixed-atom optimization.
+  interval, and time convention; they require at least one frame and do not
+  emit fixed-atom optimization.
 - Unknown record or cell dialects return structured failures rather than being
   guessed or coerced.
 
@@ -27,6 +28,9 @@ deterministic compatibility profile in either byte order.
   Molecular model units.
 - Sequential readers retain one handle and do not build an index; indexed
   readers structurally scan records without materializing frames.
+- Ordinary sequential frames detect EOF through the first actual cell or
+  coordinate record. Read-and-restore probes occur only at exact configured or
+  declared `NSET` boundaries.
 - The first all-atom frame supplies immutable coordinates for fixed atoms;
   later free-atom frames update reusable scratch before complete publication.
 - Random reads use separate reusable decode scratch and restore stream cursor,
@@ -75,3 +79,5 @@ deterministic compatibility profile in either byte order.
 - v4: Apply one strict sequential/indexed `NSET` policy, preflight projected
   index limits, and make indexed publication conditional on successful
   restoration of all reader state.
+- v5: Use capped geometric offset growth, reject empty writer finishes, and
+  remove the ordinary per-frame read-and-seek EOF probe.

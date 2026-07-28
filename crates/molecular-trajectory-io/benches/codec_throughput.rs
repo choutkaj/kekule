@@ -56,6 +56,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             passes: 3,
             random_reads: 64,
         },
+        Profile {
+            name: "high-frame",
+            atoms: 1,
+            frames: 100_000,
+            passes: 1,
+            random_reads: 1_000,
+        },
     ] {
         benchmark_xyz(profile)?;
         benchmark_dcd(profile)?;
