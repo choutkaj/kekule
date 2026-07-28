@@ -66,3 +66,5 @@ file-backed trajectory I/O.
 - v3: Promote the strict profile to supported after exact-limit, late-failure,
   atomic-publication, error-context, sequential/indexed equality, and
   allocation-reuse regressions passed with the committed independent fixture.
+- v4: Check projected frame/index limits before parsing or index growth and
+  prove with guarded streams that frame N+1 is neither parsed nor consumed.

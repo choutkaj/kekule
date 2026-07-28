@@ -17,12 +17,20 @@ pure-Rust XDR layer.
   dropping it.
 - Indexed access verifies every checked XDR block through reusable scratch
   without materializing owned frames or a trajectory.
+- Indexed metadata reports the precision mix verified across the complete
+  file. Sequential metadata starts with frame zero's width and changes to
+  mixed immediately after the other width is successfully read.
 
 ## Implementation Notes
 
 - XDR arithmetic and padding are checked before allocation or seek.
 - Recognized optional blocks not representable by the shipped frame contract
   are either preserved through a documented policy or rejected explicitly.
+- Position, velocity, force, raw-XDR, and private lambda-property scratch are
+  reused after warm-up. Publishing the one-entry lambda `PropMap` clones its
+  map entry under the current `FrameBuffer` property contract, so the
+  allocation-reuse guarantee applies to dense arrays and codec scratch, not
+  destination property-map nodes.
 
 ## Tests
 
@@ -59,3 +67,6 @@ pure-Rust XDR layer.
   mixed-field stale-state clearing, late writer validation, stable
   position/velocity/force/property scratch reuse, exact-limit and truncation
   regressions, independent writer reads, and local performance evidence.
+- v4: Keep sequential mixed-precision metadata current, preflight projected
+  limits, and restore pending headers, precision tracking, stream position,
+  and reusable scratch before indexed publication.

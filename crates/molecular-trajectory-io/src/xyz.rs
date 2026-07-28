@@ -12,7 +12,9 @@ use molecular::trajectory::{
 };
 use molecular::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT};
 
-use crate::{codec_context, io_context, TrajectoryIoLimits, TrajectoryTopologyBinding};
+use crate::{
+    codec_context, io_context, projected_index_limit, TrajectoryIoLimits, TrajectoryTopologyBinding,
+};
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
 
@@ -143,6 +145,30 @@ impl<R: BufRead> XyzReader<R> {
         } else {
             TrajectoryIoOperation::ReadFrame
         };
+        if self.frame_cursor >= self.limits.max_frames {
+            if self
+                .reader
+                .fill_buf()
+                .map_err(|error| {
+                    io_context(
+                        operation,
+                        Some(TrajectoryFormat::Xyz),
+                        &self.source_label,
+                        error,
+                    )
+                })?
+                .is_empty()
+            {
+                return Ok(false);
+            }
+            return Err(frame_codec_error(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                operation,
+                &self.source_label,
+                self.frame_cursor,
+                "XYZ frame count exceeds the configured limit",
+            ));
+        }
         let Some(count_line) = read_line(
             &mut self.reader,
             &mut self.line,
@@ -153,15 +179,6 @@ impl<R: BufRead> XyzReader<R> {
         else {
             return Ok(false);
         };
-        if self.frame_cursor >= self.limits.max_frames {
-            return Err(frame_codec_error(
-                TrajectoryCodecErrorKind::ResourceLimitExceeded,
-                operation,
-                &self.source_label,
-                self.frame_cursor,
-                "XYZ frame count exceeds the configured limit",
-            ));
-        }
         let mut frame_bytes = u64::try_from(count_line.len())
             .ok()
             .and_then(|bytes| bytes.checked_add(1))
@@ -437,6 +454,41 @@ impl<R: BufRead + Seek> XyzReader<R> {
         self.frame_cursor = 0;
         let mut offsets = Vec::new();
         loop {
+            if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
+                if self
+                    .reader
+                    .fill_buf()
+                    .map_err(|error| {
+                        io_context(
+                            TrajectoryIoOperation::Index,
+                            Some(TrajectoryFormat::Xyz),
+                            &self.source_label,
+                            error,
+                        )
+                    })?
+                    .is_empty()
+                {
+                    break;
+                }
+                return Err(codec_context(
+                    TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                    TrajectoryIoOperation::Index,
+                    Some(TrajectoryFormat::Xyz),
+                    &self.source_label,
+                    format!("XYZ index {limit} exceeds the configured limit"),
+                ));
+            }
+            if offsets.len() == offsets.capacity() {
+                offsets.try_reserve_exact(1).map_err(|_| {
+                    codec_context(
+                        TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                        TrajectoryIoOperation::Index,
+                        Some(TrajectoryFormat::Xyz),
+                        &self.source_label,
+                        "could not grow XYZ index",
+                    )
+                })?;
+            }
             let offset = self.reader.stream_position().map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
@@ -447,22 +499,6 @@ impl<R: BufRead + Seek> XyzReader<R> {
             })?;
             if !self.parse_next(false)? {
                 break;
-            }
-            if offsets.len() >= self.limits.max_index_entries
-                || offsets
-                    .len()
-                    .checked_add(1)
-                    .and_then(|len| len.checked_mul(std::mem::size_of::<u64>()))
-                    .is_none_or(|bytes| bytes > self.limits.max_index_bytes)
-                || offsets.len() as u64 >= self.limits.max_frames
-            {
-                return Err(codec_context(
-                    TrajectoryCodecErrorKind::ResourceLimitExceeded,
-                    TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Xyz),
-                    &self.source_label,
-                    "XYZ frame index exceeds configured limits",
-                ));
             }
             offsets.push(offset);
             self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {

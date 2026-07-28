@@ -1047,9 +1047,9 @@ The supported initial companion profile is intentionally explicit:
 | Format | Compatibility profile |
 |---|---|
 | XYZ | strict constant-count multi-frame element/x/y/z text; configured units, angstrom by default |
-| DCD | common CHARMM/NAMD/OpenMM 32-bit-record `CORD`, either byte order, common cells, fixed-atom reconstruction |
-| TRR | GROMACS XDR f32/f64 positions, triclinic cell, optional velocities/forces, time, nonnegative step, explicit lambda policy |
-| XTC | GROMACS 1995/2023 magic, small uncompressed and ordinary compressed coordinates, explicit lossy precision |
+| DCD | common CHARMM/NAMD/OpenMM 32-bit-record `CORD`, either byte order, common cells, fixed-atom reconstruction, strict `NSET` |
+| TRR | GROMACS XDR f32/f64 positions, triclinic cell, optional velocities/forces, time, nonnegative step, explicit lambda policy, cumulative sequential precision metadata |
+| XTC | GROMACS 1995/2023 magic, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates, explicit lossy precision |
 
 DCD and default XYZ coordinates use angstrom conventions; TRR and XTC use
 GROMACS nanometre/picosecond conventions and convert once to Molecular units.
@@ -1062,8 +1062,11 @@ All file-controlled lengths and offsets are checked before allocation or seek.
 Codecs validate complete finite dense-order state in reusable scratch before
 transactional publication. Path writers publish only after consuming finish
 flushes, synchronizes, and finalizes metadata; any failed frame write prevents
-publication. Unsupported historical dialects and deferred formats remain typed
-errors rather than inferred or partially decoded behavior.
+publication. Exact frame/index limits use a bounded frame-start/EOF probe
+without decoding the next frame or growing the index. Indexed reads restore
+the stream and all sequential codec state before destination publication.
+Unsupported historical dialects and deferred formats remain typed errors
+rather than inferred or partially decoded behavior.
 
 ## Public API and release policy
 

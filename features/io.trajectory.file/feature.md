@@ -19,7 +19,8 @@ foundational `molecular` crate.
   Indexed opening verifies every frame and stores checked compact offsets.
 - Metadata distinguishes declared and verified counts, native precision,
   lossy encoding, available fields, format variants, and random-access
-  capability.
+  capability. Sequential TRR metadata reports the precision verified so far
+  and changes to mixed when a later frame uses the other scalar width.
 - Default resource limits bound detection bytes, atoms, frames, record and
   scratch sizes, text lines, and index memory before allocation.
 - Path writers use a temporary sibling and publish only through a successful
@@ -56,6 +57,9 @@ extensions. A matching extension or atom count never expands the profile.
   transactionally into caller-owned `FrameBuffer` storage.
 - Clean EOF is recognized only between frames. Partial headers, records, or
   payloads are truncation errors.
+- At an exact frame or index limit, readers perform only a bounded
+  frame-start/EOF probe. They neither decode the next frame nor grow the index
+  before reporting a configured-limit failure.
 - Sequential readers retain one file handle. Indexed readers retain one handle,
   fully verify every frame, and store only bounded checked offsets; random
   access is therefore O(one frame decode) after an O(file size) index build.
@@ -79,18 +83,22 @@ extensions. A matching extension or atom count never expands the profile.
 - Regression tests prove exact-limit EOF behavior, late-failure destination
   transactionality, stale optional-state clearing, frame/offset error context,
   unsupported writer-state rejection, poisoned atomic output, and stable
-  position/vector allocations after warm-up.
+  position/vector allocations after warm-up. Instrumented N/N+1 streams prove
+  limit probes do not decode or consume frame N+1, and restoration-seek fault
+  streams prove indexed reads publish only after reader state is restored.
 
 ## Benchmarks
 
 - The lightweight `codec_throughput` bench records sequential frames/s and
   MiB/s, index time and offset memory, random-frame latency, allocation reuse,
   and writer MiB/s without a benchmark framework dependency.
-- An informational Windows x86-64 release run on 2026-07-27 (12 logical
-  workers) measured, for 64 frames x 256 atoms, sequential/index/random/writer:
-  XYZ 68,505 frames/s, 4.814 ms, 19.88 us, 116.5 MiB/s; DCD 847,177 frames/s,
-  0.116 ms, 0.59 us, 918.2 MiB/s; TRR-f32 829,929 frames/s, 0.343 ms, 1.40 us,
-  232.9 MiB/s; and XTC 162,914 frames/s, 1.116 ms, 3.37 us, 24.3 MiB/s. These
+- An informational Windows x86-64 release run on 2026-07-28 (12 logical
+  workers) measured sequential frames/s, index ms, random us/frame, and writer
+  MiB/s. For 256 frames x 64 atoms: XYZ 76,140 / 3.994 / 11.24 / 102.5; DCD
+  2,058,871 / 0.105 / 0.52 / 403.6; TRR-f32 1,092,337 / 0.242 / 1.19 / 232.8;
+  XTC 204,666 / 1.191 / 5.14 / 33.6. For 32 frames x 4096 atoms: XYZ 953 /
+  36.917 / 1107.08 / 85.8; DCD 18,745 / 0.962 / 39.21 / 351.3; TRR-f32
+  20,496 / 1.198 / 35.10 / 159.3; XTC 2,493 / 13.409 / 436.88 / 21.0. These
   local measurements are evidence of the exercised paths, not portable
   performance guarantees.
 - External-tool comparisons are informational and never imply broad format or
@@ -115,3 +123,6 @@ extensions. A matching extension or atom count never expands the profile.
   reusable scratch, error context, poisoned atomic publication, checked XTC
   decoding, fuzz corpora, interoperability fixtures, and lightweight
   performance evidence.
+- v4: Enforce projected index limits before parsing or growth, use bounded
+  exact-limit EOF probes, and make DCD/TRR/XTC random reads restore all stream
+  and codec state before transactional destination publication.

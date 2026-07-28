@@ -11,6 +11,10 @@ Molecular validation, limits, units, metadata, and errors.
 - Validate supported 1995 and 2023 magic variants, constant atom count,
   triclinic box, nonnegative representable step, finite time, and compressed
   frame structure.
+- Decode atom counts, repeated atom counts, and steps as signed 32-bit XDR
+  integers. Negative values are typed failures; writers require positive atom
+  counts and nonnegative steps no greater than `i32::MAX` before adapting to
+  `molly` privately.
 - Convert nanometre positions/boxes and picosecond time once to Molecular
   units, while exposing native lossy precision in metadata and reports.
 - Sequential access does not scan the full file. Indexed access records checked
@@ -73,3 +77,6 @@ Molecular validation, limits, units, metadata, and errors.
   decoding with a checked bounded decoder, rejecting mixed per-file magic or
   precision and trailing compressed data, preserving private panic-contained
   encoding, and recording independent interoperability and local performance.
+- v4: Correct signed XDR count/step handling, preflight projected index limits,
+  and restore the stream, pending metadata, decoder cache, and scratch before
+  indexed publication.
