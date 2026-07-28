@@ -13,7 +13,8 @@ use molecular::trajectory::{
 use molecular::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT};
 
 use crate::{
-    codec_context, io_context, projected_index_limit, TrajectoryIoLimits, TrajectoryTopologyBinding,
+    codec_context, io_context, projected_index_limit, require_nonempty_writer,
+    reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
@@ -478,17 +479,6 @@ impl<R: BufRead + Seek> XyzReader<R> {
                     format!("XYZ index {limit} exceeds the configured limit"),
                 ));
             }
-            if offsets.len() == offsets.capacity() {
-                offsets.try_reserve_exact(1).map_err(|_| {
-                    codec_context(
-                        TrajectoryCodecErrorKind::ResourceLimitExceeded,
-                        TrajectoryIoOperation::Index,
-                        Some(TrajectoryFormat::Xyz),
-                        &self.source_label,
-                        "could not grow XYZ index",
-                    )
-                })?;
-            }
             let offset = self.reader.stream_position().map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
@@ -500,6 +490,13 @@ impl<R: BufRead + Seek> XyzReader<R> {
             if !self.parse_next(false)? {
                 break;
             }
+            reserve_index_for_push(
+                &mut offsets,
+                &self.limits,
+                TrajectoryFormat::Xyz,
+                &self.source_label,
+                self.frame_cursor,
+            )?;
             offsets.push(offset);
             self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
                 frame_codec_error(
@@ -670,6 +667,15 @@ impl<W: Write> XyzWriter<W> {
                 format!("XYZ writer comment exceeds the {MAX_WRITER_COMMENT_BYTES}-byte limit"),
             ));
         }
+        if topology.atom_count() == 0 {
+            return Err(codec_context(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoOperation::Open,
+                Some(TrajectoryFormat::Xyz),
+                &source_label,
+                "XYZ writer atom count must be positive",
+            ));
+        }
         Ok(Self {
             writer,
             topology,
@@ -691,7 +697,13 @@ impl<W: Write> XyzWriter<W> {
         self.writer.flush()
     }
 
+    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryError> {
+        require_nonempty_writer(self.frame_count, TrajectoryFormat::Xyz, &self.source_label)
+    }
+
+    /// Flushes and returns the completed nonempty XYZ stream.
     pub fn finish(mut self) -> Result<W, TrajectoryError> {
+        self.validate_finish()?;
         self.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,

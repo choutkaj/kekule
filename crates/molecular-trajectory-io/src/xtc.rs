@@ -14,7 +14,7 @@ use molecular::units::{Quantity, NANOMETER, PICOSECOND};
 
 use crate::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    TrajectoryIoLimits, TrajectoryTopologyBinding,
+    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
 
 const XTC_HEADER_BYTES: usize = 56;
@@ -836,15 +836,6 @@ impl<R: Read + Seek> XtcReader<R> {
                     format!("XTC index {limit} exceeds the configured limit"),
                 ));
             }
-            if offsets.len() == offsets.capacity() {
-                offsets.try_reserve_exact(1).map_err(|_| {
-                    resource_error(
-                        &self.source_label,
-                        Some(offsets.len() as u64),
-                        "could not grow XTC index",
-                    )
-                })?;
-            }
             let offset = self.pending_info.as_ref().map_or_else(
                 || {
                     self.adapter.reader.stream_position().map_err(|error| {
@@ -865,6 +856,13 @@ impl<R: Read + Seek> XtcReader<R> {
             {
                 break;
             }
+            reserve_index_for_push(
+                &mut offsets,
+                &self.limits,
+                TrajectoryFormat::Xtc,
+                &self.source_label,
+                self.frame_cursor.saturating_sub(1),
+            )?;
             offsets.push(offset);
         }
         self.rewind()?;
@@ -1164,7 +1162,13 @@ impl<W: Write> XtcWriter<W> {
         self.adapter.inner.file.flush()
     }
 
+    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryError> {
+        require_nonempty_writer(self.frame_count, TrajectoryFormat::Xtc, &self.source_label)
+    }
+
+    /// Flushes and returns the completed nonempty XTC stream.
     pub fn finish(mut self) -> Result<W, TrajectoryError> {
+        self.validate_finish()?;
         self.adapter.inner.file.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,

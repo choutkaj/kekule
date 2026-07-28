@@ -16,7 +16,7 @@ use molecular_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 use sha2::{Digest, Sha256};
 
 mod support;
-use support::{buffer_snapshot, GuardedCursor, RestoreSeekFailure};
+use support::{buffer_snapshot, GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure};
 
 fn topology() -> Topology {
     let mut graph = Molecule::new();
@@ -384,6 +384,56 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         assert!(!control.violated());
         assert_eq!(control.probed_bytes(), 1);
     }
+}
+
+#[test]
+fn dcd_ordinary_frames_do_not_require_backward_eof_probe_seeks() {
+    let topology = topology();
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology.clone(),
+        DcdWriteOptions::default(),
+        "no-probe.dcd",
+    )
+    .unwrap();
+    let mut frame = FrameBuffer::new(topology.clone());
+    set_frame(&mut frame, [[0.0; 3], [1.0; 3], [2.0; 3]], 0, None, None);
+    writer.write_frame(frame.frame_view()).unwrap();
+    set_frame(&mut frame, [[3.0; 3], [4.0; 3], [5.0; 3]], 1, None, None);
+    writer.write_frame(frame.frame_view()).unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let (stream, control) = NoBackwardSeekCursor::new(bytes);
+    let mut reader = DcdReader::new(
+        stream,
+        binding(&topology),
+        DcdReadOptions::default(),
+        TrajectoryIoLimits::default(),
+        "no-probe.dcd",
+    )
+    .unwrap();
+    control.arm();
+    let mut destination = FrameBuffer::new(topology);
+    assert!(reader.read_next(&mut destination).unwrap());
+    assert!(reader.read_next(&mut destination).unwrap());
+}
+
+#[test]
+fn empty_dcd_writer_is_rejected() {
+    let topology = topology();
+    let error = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology,
+        DcdWriteOptions::default(),
+        "empty.dcd",
+    )
+    .unwrap()
+    .finish()
+    .unwrap_err();
+    assert_eq!(
+        codec_kind(&error),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
 }
 
 #[test]

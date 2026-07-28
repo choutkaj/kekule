@@ -500,6 +500,49 @@ fn path_writer_failure_poisoning_prevents_partial_publication() {
 }
 
 #[test]
+fn empty_concrete_and_atomic_writers_are_rejected_without_publication() {
+    let topology = topology();
+    assert_eq!(
+        codec_kind(
+            &XyzWriter::new(
+                Vec::new(),
+                topology.clone(),
+                XyzWriteOptions::default(),
+                "empty.xyz",
+            )
+            .unwrap()
+            .finish()
+            .unwrap_err()
+        ),
+        Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+
+    let directory = temporary_path(None);
+    std::fs::create_dir(&directory).unwrap();
+    for (format, extension) in [
+        (TrajectoryFormat::Xyz, "xyz"),
+        (TrajectoryFormat::Dcd, "dcd"),
+        (TrajectoryFormat::Trr, "trr"),
+        (TrajectoryFormat::Xtc, "xtc"),
+    ] {
+        let output = directory.join(format!("empty.{extension}"));
+        let writer = create_trajectory_writer(
+            &output,
+            topology.clone(),
+            TrajectoryWriteOptions::new(format),
+        )
+        .unwrap();
+        assert_eq!(
+            codec_kind(&writer.finish().unwrap_err()),
+            Some(TrajectoryCodecErrorKind::InvalidFrame)
+        );
+        assert!(!output.exists());
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 0);
+    }
+    std::fs::remove_dir(directory).unwrap();
+}
+
+#[test]
 fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     let topology = topology();
     let limits = TrajectoryIoLimits {

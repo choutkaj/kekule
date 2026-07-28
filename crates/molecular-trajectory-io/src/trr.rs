@@ -15,7 +15,7 @@ use molecular::units::{Quantity, KILOJOULE_PER_MOLE, MODEL_LENGTH_UNIT, NANOMETE
 
 use crate::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
-    TrajectoryIoLimits, TrajectoryTopologyBinding,
+    require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
 
 const TRR_MAGIC: i32 = 1993;
@@ -486,15 +486,6 @@ impl<R: Read + Seek> TrrReader<R> {
                     format!("TRR index {limit} exceeds the configured limit"),
                 ));
             }
-            if offsets.len() == offsets.capacity() {
-                offsets.try_reserve_exact(1).map_err(|_| {
-                    resource_error(
-                        &self.source_label,
-                        Some(offsets.len() as u64),
-                        "could not grow TRR index",
-                    )
-                })?;
-            }
             let offset = if self.pending_header.is_some() {
                 self.current_header_offset
             } else {
@@ -514,6 +505,13 @@ impl<R: Read + Seek> TrrReader<R> {
             {
                 break;
             }
+            reserve_index_for_push(
+                &mut offsets,
+                &self.limits,
+                TrajectoryFormat::Trr,
+                &self.source_label,
+                self.frame_cursor.saturating_sub(1),
+            )?;
             offsets.push(offset);
         }
         self.rewind()?;
@@ -797,7 +795,13 @@ impl<W: Write> TrrWriter<W> {
         self.writer.flush()
     }
 
+    pub(crate) fn validate_finish(&self) -> Result<(), TrajectoryError> {
+        require_nonempty_writer(self.frame_count, TrajectoryFormat::Trr, &self.source_label)
+    }
+
+    /// Flushes and returns the completed nonempty TRR stream.
     pub fn finish(mut self) -> Result<W, TrajectoryError> {
+        self.validate_finish()?;
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,

@@ -149,3 +149,53 @@ impl Seek for GuardedCursor {
         self.inner.seek(position)
     }
 }
+
+#[derive(Clone)]
+pub struct NoBackwardSeekControl {
+    armed: Arc<AtomicBool>,
+}
+
+impl NoBackwardSeekControl {
+    pub fn arm(&self) {
+        self.armed.store(true, Ordering::SeqCst);
+    }
+}
+
+pub struct NoBackwardSeekCursor {
+    inner: Cursor<Vec<u8>>,
+    control: NoBackwardSeekControl,
+}
+
+impl NoBackwardSeekCursor {
+    pub fn new(bytes: Vec<u8>) -> (Self, NoBackwardSeekControl) {
+        let control = NoBackwardSeekControl {
+            armed: Arc::new(AtomicBool::new(false)),
+        };
+        (
+            Self {
+                inner: Cursor::new(bytes),
+                control: control.clone(),
+            },
+            control,
+        )
+    }
+}
+
+impl Read for NoBackwardSeekCursor {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buffer)
+    }
+}
+
+impl Seek for NoBackwardSeekCursor {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        if let SeekFrom::Start(target) = position {
+            if self.control.armed.load(Ordering::SeqCst) && target < self.inner.position() {
+                return Err(io::Error::other(
+                    "ordinary frame decoding attempted a backward EOF-probe seek",
+                ));
+            }
+        }
+        self.inner.seek(position)
+    }
+}

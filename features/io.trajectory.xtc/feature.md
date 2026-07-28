@@ -20,7 +20,8 @@ Molecular validation, limits, units, metadata, and errors.
 - Sequential access does not scan the full file. Indexed access records checked
   offsets only after fully decoding and validating each frame.
 - Writers require a positive finite inverse-nanometre precision and validate
-  every coordinate against its declared quantization range.
+  every coordinate against its declared quantization range. A completed
+  production file must contain at least one frame.
 - Malformed small- and large-atom frames return structured corruption or
   truncation errors without panicking.
 
@@ -80,3 +81,5 @@ Molecular validation, limits, units, metadata, and errors.
 - v4: Correct signed XDR count/step handling, preflight projected index limits,
   and restore the stream, pending metadata, decoder cache, and scratch before
   indexed publication.
+- v5: Use capped geometric offset growth after successful decode and reject
+  empty concrete and atomic writer finishes.

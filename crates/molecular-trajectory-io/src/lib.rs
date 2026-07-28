@@ -22,16 +22,17 @@
 //!
 //! Sequential readers retain one file handle and avoid a whole-file scan.
 //! Indexed readers retain one handle, fully verify every frame during an
-//! O(file-size) index build, store bounded checked offsets, and then decode one
-//! complete frame per random read. Decoding validates into reusable private
-//! scratch and publishes transactionally into the caller's [`FrameBuffer`].
-//! Random reads restore all sequential reader state before publication. Clean
-//! EOF is accepted only between frames, including through a bounded probe at
-//! exact frame/index limits.
+//! O(file-size) index build, store bounded checked offsets with capped geometric
+//! growth, and then decode one complete frame per random read. Decoding
+//! validates into reusable private scratch and publishes transactionally into
+//! the caller's [`FrameBuffer`]. Random reads restore all sequential reader
+//! state before publication. Clean EOF is accepted only between frames,
+//! including through a bounded probe at exact frame/index limits.
 //!
 //! Path writers stage a temporary sibling. Only consuming
 //! [`FileTrajectoryWriter::finish`] flushes, synchronizes, finalizes format
-//! metadata, and publishes it. Any failed frame write poisons publication.
+//! metadata, and publishes a nonempty trajectory. Any failed frame write or an
+//! empty finish prevents publication.
 //!
 //! # Limits and unsupported formats
 //!
@@ -908,6 +909,7 @@ impl FileWriterInner {
     fn flush_and_sync(&mut self, label: &str) -> Result<(), TrajectoryError> {
         match self {
             Self::Xyz(writer) => {
+                writer.validate_finish()?;
                 writer.flush().map_err(|error| {
                     io_context(
                         TrajectoryIoOperation::Finish,
@@ -945,6 +947,7 @@ impl FileWriterInner {
                 })
             }
             Self::Trr(writer) => {
+                writer.validate_finish()?;
                 writer.flush().map_err(|error| {
                     io_context(
                         TrajectoryIoOperation::Finish,
@@ -963,6 +966,7 @@ impl FileWriterInner {
                 })
             }
             Self::Xtc(writer) => {
+                writer.validate_finish()?;
                 writer.flush().map_err(|error| {
                     io_context(
                         TrajectoryIoOperation::Finish,
@@ -984,7 +988,9 @@ impl FileWriterInner {
     }
 }
 
-/// Strict atomic path writer. A file is published only by successful `finish`.
+/// Strict atomic path writer.
+///
+/// A nonempty file is published only by successful [`Self::finish`].
 pub struct FileTrajectoryWriter {
     inner: Option<FileWriterInner>,
     format: TrajectoryFormat,
@@ -996,7 +1002,10 @@ pub struct FileTrajectoryWriter {
 }
 
 impl FileTrajectoryWriter {
-    /// Flushes, synchronizes, and atomically publishes the completed trajectory.
+    /// Flushes, synchronizes, and atomically publishes a nonempty trajectory.
+    ///
+    /// Finishing before any successful frame write returns a structured error
+    /// and removes the unpublished temporary sibling.
     pub fn finish(mut self) -> Result<(), TrajectoryError> {
         let label = self.destination.display().to_string();
         if self.failed {
@@ -1246,6 +1255,93 @@ pub(crate) fn projected_index_limit(
     None
 }
 
+fn index_hard_capacity(limits: &TrajectoryIoLimits) -> usize {
+    usize::try_from(limits.max_frames)
+        .unwrap_or(usize::MAX)
+        .min(limits.max_index_entries)
+        .min(limits.max_index_bytes / std::mem::size_of::<u64>())
+}
+
+fn next_index_capacity(
+    current_entries: usize,
+    current_capacity: usize,
+    hard_capacity: usize,
+) -> Option<usize> {
+    if current_entries < current_capacity {
+        return None;
+    }
+    let minimum = current_entries.checked_add(1)?;
+    if minimum > hard_capacity {
+        return None;
+    }
+    let geometric = if current_capacity == 0 {
+        8
+    } else {
+        current_capacity.saturating_mul(2)
+    };
+    Some(geometric.max(minimum).min(hard_capacity))
+}
+
+pub(crate) fn reserve_index_for_push(
+    offsets: &mut Vec<u64>,
+    limits: &TrajectoryIoLimits,
+    format: TrajectoryFormat,
+    source_label: &str,
+    frame: u64,
+) -> Result<(), TrajectoryError> {
+    if offsets.len() < offsets.capacity() {
+        return Ok(());
+    }
+    let hard_capacity = index_hard_capacity(limits);
+    let Some(target_capacity) =
+        next_index_capacity(offsets.len(), offsets.capacity(), hard_capacity)
+    else {
+        return Err(TrajectoryCodecErrorContext::new(
+            TrajectoryCodecErrorKind::ResourceLimitExceeded,
+            TrajectoryIoOperation::Index,
+            Some(format),
+        )
+        .with_source_label(source_label)
+        .with_frame(frame)
+        .with_detail(format!(
+            "{format} index reached its configured hard capacity"
+        ))
+        .into());
+    };
+    offsets
+        .try_reserve_exact(target_capacity.saturating_sub(offsets.len()))
+        .map_err(|_| {
+            TrajectoryCodecErrorContext::new(
+                TrajectoryCodecErrorKind::ResourceLimitExceeded,
+                TrajectoryIoOperation::Index,
+                Some(format),
+            )
+            .with_source_label(source_label)
+            .with_frame(frame)
+            .with_detail(format!(
+                "could not grow {format} index toward its bounded capacity"
+            ))
+            .into()
+        })
+}
+
+pub(crate) fn require_nonempty_writer(
+    frame_count: u64,
+    format: TrajectoryFormat,
+    source_label: &str,
+) -> Result<(), TrajectoryError> {
+    if frame_count == 0 {
+        return Err(codec_context(
+            TrajectoryCodecErrorKind::InvalidFrame,
+            TrajectoryIoOperation::Finish,
+            Some(format),
+            source_label,
+            format!("{format} production trajectories must contain at least one frame"),
+        ));
+    }
+    Ok(())
+}
+
 fn create_temporary_sibling(
     destination: &Path,
     format: TrajectoryFormat,
@@ -1310,4 +1406,54 @@ fn unimplemented_format(
         source_label,
         format!("{format} is recognized but its codec is not implemented"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_index_reservation_grows_logarithmically() {
+        let entry_count = 100_000;
+        let limits = TrajectoryIoLimits {
+            max_frames: entry_count as u64,
+            max_index_entries: entry_count,
+            max_index_bytes: entry_count * std::mem::size_of::<u64>(),
+            ..TrajectoryIoLimits::default()
+        };
+        let mut offsets = Vec::new();
+        let mut growth_events = 0;
+        for frame in 0..entry_count {
+            assert_eq!(projected_index_limit(offsets.len(), &limits), None);
+            let previous_capacity = offsets.capacity();
+            reserve_index_for_push(
+                &mut offsets,
+                &limits,
+                TrajectoryFormat::Xyz,
+                "capacity-test.xyz",
+                frame as u64,
+            )
+            .unwrap();
+            growth_events += usize::from(offsets.capacity() != previous_capacity);
+            offsets.push(frame as u64);
+        }
+        assert_eq!(offsets.len(), entry_count);
+        assert!(
+            growth_events <= 16,
+            "{growth_events} growth events are not logarithmic"
+        );
+    }
+
+    #[test]
+    fn index_hard_capacity_uses_the_smallest_configured_bound() {
+        let limits = TrajectoryIoLimits {
+            max_frames: 200,
+            max_index_entries: 150,
+            max_index_bytes: 125 * std::mem::size_of::<u64>(),
+            ..TrajectoryIoLimits::default()
+        };
+        assert_eq!(index_hard_capacity(&limits), 125);
+        assert_eq!(next_index_capacity(64, 64, 125), Some(125));
+        assert_eq!(next_index_capacity(125, 125, 125), None);
+    }
 }
