@@ -7,6 +7,32 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Add the core contracts required by external trajectory codecs: complete
+  transactional allocation-reusing `FrameBuffer` publication, explicit
+  exact-topology atom-order assertions, non-exhaustive trajectory format
+  identity, typed file/codec error context, and downstream trait-implementation
+  tests. Add the supported one-way `molecular-trajectory-io` companion with
+  bounded signature-plus-extension detection, metadata/reports/limits,
+  one-handle sequential and verified indexed access, strict atomic path
+  writers that cannot publish after a failed frame, and strict multi-frame XYZ
+  read/write with explicit units,
+  element-order validation, and a provenance-pinned ASE fixture. Add
+  supported common-profile DCD read/write with both byte orders, cells,
+  fixed-atom reconstruction, checked records and counts, indexed access,
+  explicit step/time policy, and a provenance-pinned MDAnalysis fixture. Add
+  supported pure-Rust TRR/XDR f32/f64 read/write with triclinic cells,
+  optional velocities and forces, time, step, explicit lambda preservation,
+  mixed-precision indexing, and reciprocal MDAnalysis interoperability. Add a
+  supported checked XTC decoder for the 1995/2023 magic profiles, small and
+  compressed coordinates, explicit lossy precision and box policies, bounded
+  full-decode indexing, and a private panic-contained writer adapter over
+  audited pure-Rust `molly` 0.6.1 with reciprocal MDAnalysis interoperability.
+  Harden the supported profiles with pre-decode frame/index-limit probes,
+  restoration-before-publication random reads, strict DCD `NSET` consistency,
+  cumulative sequential TRR precision metadata, and signed-i32 XTC counts and
+  steps. Bound index allocation with capped geometric growth, require every
+  production writer to finish at least one frame, and remove ordinary
+  per-frame DCD EOF read/seek probes.
 - Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit

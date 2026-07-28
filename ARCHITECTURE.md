@@ -742,6 +742,19 @@ compressed format supports inexpensive random access.
 across reads. A frame view allows analyses and potentials to consume decoded
 state without constructing or cloning an owned `Model`.
 
+File decoders publish only complete frames through one transactional borrowed-
+data operation. That operation validates exact topology identity, complete
+array lengths, units, finite values, cell, time, observations, and properties
+before destination-visible mutation; it reuses position, velocity, and force
+allocations and clears every absent optional field. Clean EOF and any failed
+decode leave the caller's buffer unchanged.
+
+Topology-free file readers require an `AtomOrderAssertion` bound to the same
+exact topology. The assertion is either constructed from a complete semantic
+atom sequence proven equal to authoritative dense order or is an explicit
+caller statement that the file uses that order. Neither form is inferred from
+atom count, and readers still validate all stronger format metadata.
+
 ### Topology-bearing and topology-free formats
 
 Some trajectory formats contain only coordinates and atom count. Their readers
@@ -1016,6 +1029,48 @@ remain in focused namespaces. Broad root re-exports are not added casually.
 Dependency-heavy binary trajectory codecs and force-field adapters should live
 in separate crates when required, keeping the foundational `molecular` crate
 lightweight.
+
+Production fixed-topology file codecs live in the one-way
+`molecular-trajectory-io` workspace companion:
+
+```text
+molecular <- molecular-trajectory-io <- applications
+```
+
+The companion implements Molecular's streaming traits and uses its topology,
+frame-buffer, geometry, unit, format-identity, and typed error contracts. It
+does not define duplicate domain objects. Molecular-owned codec source forbids
+unsafe code and does not require Chemfiles, a C/C++ compiler, or CMake.
+
+The supported initial companion profile is intentionally explicit:
+
+| Format | Compatibility profile |
+|---|---|
+| XYZ | strict constant-count multi-frame element/x/y/z text; configured units, angstrom by default |
+| DCD | common CHARMM/NAMD/OpenMM 32-bit-record `CORD`, either byte order, common cells, fixed-atom reconstruction, strict `NSET` |
+| TRR | GROMACS XDR f32/f64 positions, triclinic cell, optional velocities/forces, time, nonnegative step, explicit lambda policy, cumulative sequential precision metadata |
+| XTC | GROMACS 1995/2023 magic, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates, explicit lossy precision |
+
+DCD and default XYZ coordinates use angstrom conventions; TRR and XTC use
+GROMACS nanometre/picosecond conventions and convert once to Molecular units.
+XTC reports nominal lossy resolution as `1 / precision` nanometres. Indexed
+opening is O(file size), verifies every complete frame, and stores bounded
+checked offsets; indexed frame reads decode one frame. Sequential opening
+retains one handle and does not scan the whole file.
+
+All file-controlled lengths and offsets are checked before allocation or seek.
+Codecs validate complete finite dense-order state in reusable scratch before
+transactional publication. Path writers publish only after consuming finish
+flushes, synchronizes, and finalizes metadata; production files require at
+least one frame, and an empty finish or failed frame write prevents
+publication. Exact frame/index limits use a bounded frame-start/EOF probe
+without decoding the next frame or growing the index. Offset vectors grow
+geometrically up to the smallest configured frame, entry, or byte capacity.
+DCD uses a probe only at configured or declared-count boundaries; ordinary
+frames detect clean EOF through their first actual record. Indexed reads
+restore the stream and all sequential codec state before destination
+publication. Unsupported historical dialects and deferred formats remain typed
+errors rather than inferred or partially decoded behavior.
 
 ## Public API and release policy
 
