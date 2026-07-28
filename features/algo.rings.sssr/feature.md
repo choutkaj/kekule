@@ -13,6 +13,8 @@ Compute a compact ring basis for downstream small-molecule perception.
   caching a partial ring set.
 - Sets ring perception state through the existing ring membership machinery.
 - Cached ring sets are accessible only while ring perception remains fresh.
+- `RingSet::from_parts` reconstructs a detached complete basis and `RingWork`;
+  graph references and membership coherence are checked on whole-state install.
 
 ## Implementation Notes
 
@@ -66,3 +68,5 @@ Compute a compact ring basis for downstream small-molecule perception.
   cyclic bond uncovered, while preserving RDKit cage-system ring counts.
 - v12: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v14: Add detached complete `RingSet`/`RingWork` reconstruction with
+  molecule-specific validation deferred to atomic perception installation.

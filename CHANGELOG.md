@@ -7,6 +7,15 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Add focused canonical molecular reconstruction for external persistence:
+  exact detached `PerceptionState` inspection/build/install with transactional
+  graph, stereo, ring, slot, duplicate, and capacity validation; targeted
+  enriched SMCRA component-ID and child-property restoration; and exact
+  stereo-group tombstone replay with stable next IDs, CIP-neutral deleted-slot
+  append, and automatic final-member group tombstoning. Add public
+  original/reconstructed `same_layout` regressions and validate MolStudio
+  project round-trips through the ignored sibling path patch without Serde on
+  Molecular runtime objects, source reparsing, or reperception.
 - Add the core contracts required by external trajectory codecs: complete
   transactional allocation-reusing `FrameBuffer` publication, explicit
   exact-topology atom-order assertions, non-exhaustive trajectory format

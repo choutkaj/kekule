@@ -18,10 +18,11 @@ elements.
 - `CipSkippedReason`
 - `CipAssignmentIssue`
 
-Assignment mutates `StereoElement.descriptor` on the underlying `Molecule`.
-Descriptors are derived cache, not graph truth: assignment clears existing
-descriptors first, and topology or stereo-invalidating mutations clear them
-again.
+Assignment installs descriptors in the underlying molecule's
+`PerceptionState`. Descriptors are derived cache, not graph truth: assignment
+clears existing descriptors first, and topology or stereo-invalidating
+mutations clear them again. Exact assignments are publicly iterable and can be
+included in checked atomic whole-state reconstruction.
 
 The implemented contract assigns `R`/`S`/`r`/`s` for specified tetrahedral
 elements, `E`/`Z` and `seqCis`/`seqTrans` for specified double-bond elements,
@@ -347,3 +348,5 @@ benchmark corpora, isomeric SMILES emission, and stereo enumeration.
   instead of repository-wide required evidence.
 - v41: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public benchmark selection.
 - v42: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v43: Add lossless public CIP assignment inspection and checked whole-state
+  restoration while preserving normal stereo invalidation.

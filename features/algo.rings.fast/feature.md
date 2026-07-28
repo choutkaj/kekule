@@ -11,6 +11,8 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - Ignores deleted graph slots.
 - Sets ring perception state to fresh after successful perception.
 - Cached membership is accessible only while ring perception remains fresh.
+- `RingMembership` exposes and reconstructs complete stable atom/bond slot
+  flags, including false tombstone positions, for checked whole-state restore.
 
 ## Implementation Notes
 
@@ -48,3 +50,5 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
   instead of repository-wide required evidence.
 - v9: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v10: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v11: Add exact stable-slot flag inspection/construction for canonical
+  perception reconstruction.
