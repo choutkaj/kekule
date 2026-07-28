@@ -1,0 +1,14 @@
+id = "model.canonical-reconstruction"
+title = "Canonical molecular reconstruction"
+area = "modeling"
+domains = ["small-molecule", "macromolecule"]
+version = 2
+status = "supported"
+description = "Reconstruct complete installed perception, enriched SMCRA child state, and stable stereo-group tombstone layouts through focused checked public APIs."
+depends_on = [
+  "core.graph",
+  "stereo.representation",
+  "stereo.cip",
+  "bio.hierarchy.smcra",
+  "model.topology",
+]

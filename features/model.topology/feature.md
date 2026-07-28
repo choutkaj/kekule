@@ -65,6 +65,9 @@ definitions and explicitly identified instances.
 - Macro regressions cover successful coordinate-free construction with many
   unused invalid conformers and verify that stored definitions contain no
   conformers while sources remain unchanged.
+- Canonical reconstruction regressions build independent small and macro
+  definitions after lossless perception/hierarchy/stereo restoration and
+  require `same_layout`.
 - Whole-instance transformation regressions cover invalid and duplicate
   requests, empty and no-op results, reused definitions, filtered source order,
   tombstoned local identifiers, roles, properties, hierarchy, and complete
@@ -96,3 +99,6 @@ definitions and explicitly identified instances.
   regressions for every topology identifier space.
 - v6: Add stable checked mapping traversal and deterministic immutable
   whole-instance retain/remove transformations.
+- v7: Require independently reconstructed complete molecule definitions,
+  including perception, hierarchy enrichment, and stable tombstones, to retain
+  exact `same_layout` content.

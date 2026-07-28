@@ -23,6 +23,9 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - Returns scoped `AtomMut` and `BondMut` guards from mutable graph access.
 - Owns one internally consistent `PerceptionState` with read-only valence,
   implicit-H, ring, aromaticity/provenance, and CIP queries.
+- Exposes immutable exact perception-section views, detached checked
+  construction, and one whole-state validated atomic installation operation;
+  incremental perception mutators remain crate-private.
 - Owns the stored perception-result vocabulary (`ValenceModel`,
   `AromaticityModel`, `RingMembership`, `Ring`, `RingSet`, and `RingWork`);
   algorithm implementations depend on core, never the reverse.
@@ -46,6 +49,9 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   mutators remain solely responsible for targeted invalidation.
 - Molecule, atom, and bond property maps are stored on the core data structures.
 - Local stereo state is graph-adjacent storage on `Molecule`, separate from atom and bond payloads and from derived CIP descriptors.
+- Whole-state perception installation validates stable-slot dimensions, live
+  atom/bond/stereo references, duplicate assignments, and ring coherence before
+  replacing prior state. Failed installation is state-preserving.
 
 ## Tests
 
@@ -55,6 +61,8 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   boundaries, transactional capacity rejection, chemistry invalidation,
   state-neutral property/coordinate edits, stereo CRUD, and stereo pruning.
 - Reference-tool golden data is not required for this data-structure feature.
+- Downstream regressions cover exact installed-perception export/install,
+  malformed transactional rejection, and normal post-install invalidation.
 
 ## Out Of Scope
 
@@ -82,3 +90,5 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 - v10: Make atom insertion fallible and enforce one checked fixed-width ID
   strategy across atoms, bonds, conformers, stereo elements, stereo groups,
   and live-ID iterators.
+- v11: Add immutable exact perception-section views, detached construction,
+  and checked atomic whole-state installation for canonical persistence.

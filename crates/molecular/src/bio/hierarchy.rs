@@ -517,6 +517,55 @@ impl SmcraHierarchy {
             .and_then(|id| self.atom_sites.get(id.index()))
     }
 
+    /// Restores distinct label and author component identifiers on one residue.
+    pub fn set_residue_component_ids(
+        &mut self,
+        residue: SmcraResidueId,
+        label_comp_id: Option<String>,
+        author_comp_id: Option<String>,
+    ) -> std::result::Result<(), SmcraHierarchyError> {
+        let residue = self
+            .residues
+            .get_mut(residue.index())
+            .ok_or(SmcraHierarchyError::InvalidResidueId(residue))?;
+        residue.label_comp_id = label_comp_id;
+        residue.author_comp_id = author_comp_id;
+        Ok(())
+    }
+
+    /// Returns checked mutable access to one chain's property map.
+    pub fn chain_props_mut(
+        &mut self,
+        chain: SmcraChainId,
+    ) -> std::result::Result<&mut PropMap, SmcraHierarchyError> {
+        self.chains
+            .get_mut(chain.index())
+            .map(|chain| &mut chain.props)
+            .ok_or(SmcraHierarchyError::InvalidChainId(chain))
+    }
+
+    /// Returns checked mutable access to one residue's property map.
+    pub fn residue_props_mut(
+        &mut self,
+        residue: SmcraResidueId,
+    ) -> std::result::Result<&mut PropMap, SmcraHierarchyError> {
+        self.residues
+            .get_mut(residue.index())
+            .map(|residue| &mut residue.props)
+            .ok_or(SmcraHierarchyError::InvalidResidueId(residue))
+    }
+
+    /// Returns checked mutable access to one atom site's property map.
+    pub fn atom_site_props_mut(
+        &mut self,
+        site: SmcraAtomSiteId,
+    ) -> std::result::Result<&mut PropMap, SmcraHierarchyError> {
+        self.atom_sites
+            .get_mut(site.index())
+            .map(|site| &mut site.props)
+            .ok_or(SmcraHierarchyError::InvalidAtomSiteId(site))
+    }
+
     pub fn chains(&self) -> impl Iterator<Item = (SmcraChainId, &SmcraChain)> {
         self.chains.iter().map(|chain| (chain.id, chain))
     }

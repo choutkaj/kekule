@@ -23,6 +23,9 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   `ImportedAromaticKekulizationLimit`; it is never presented as invalid
   chemistry.
 - Propagates bounded ring-perception failures as `AromaticityError::RingPerception`.
+- Exact installed aromatic atom/bond sets and `Imported` versus
+  `Perceived(model)` provenance are publicly inspectable and reconstructible
+  without requiring a perceived ring basis.
 
 ## Implementation Notes
 
@@ -88,3 +91,5 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   electron counts, and distinguish matching limits from invalid chemistry.
 - v95: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v96: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v97: Expose lossless installed aromaticity membership/provenance for checked
+  canonical reconstruction without adding new section dependencies.
