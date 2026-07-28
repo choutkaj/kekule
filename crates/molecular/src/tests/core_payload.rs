@@ -261,6 +261,79 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
 }
 
 #[test]
+fn stereo_element_group_membership_is_transactional_and_relation_owned() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let c = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let element = mol
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(a),
+                    StereoCarrier::Atom(b),
+                    StereoCarrier::Atom(c),
+                    StereoCarrier::ImplicitHydrogen,
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("stereo element");
+    let group = mol
+        .add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Absolute,
+            members: vec![element],
+        })
+        .expect("stereo group");
+    let perception = PerceptionState::builder()
+        .with_cip_descriptors(vec![(element, StereoDescriptor::R)])
+        .expect("unique CIP assignment")
+        .build();
+    mol.install_perception_state(perception.clone())
+        .expect("valid perception");
+
+    let mut pre_grouped = mol.stereo_element(element).expect("element").clone();
+    let StereoElementKind::Tetrahedral(stereo) = &mut pre_grouped.kind else {
+        unreachable!("test element is tetrahedral");
+    };
+    stereo.center = AtomId::new(999);
+    let slots_before = mol.stereo_elements.clone();
+    assert!(matches!(
+        mol.add_stereo_element(pre_grouped),
+        Err(MoleculeError::InvalidStereoReference(
+            "stereo element group membership must be established through add_stereo_group"
+        ))
+    ));
+    assert_eq!(mol.stereo_elements.len(), slots_before.len());
+    assert_eq!(mol.stereo_elements, slots_before);
+    assert_eq!(mol.perception(), &perception);
+
+    let removed = mol
+        .remove_stereo_element(element)
+        .expect("grouped element removal");
+    assert_eq!(removed.group, None);
+    assert!(mol.stereo_group(group).is_err());
+
+    let readded = mol
+        .add_stereo_element(removed)
+        .expect("detached element can be re-added");
+    assert_eq!(readded, StereoElementId::new(1));
+    let regrouped = mol
+        .add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Relative,
+            members: vec![readded],
+        })
+        .expect("re-added element can be grouped");
+    assert_eq!(
+        mol.stereo_element(readded).expect("re-added element").group,
+        Some(regrouped)
+    );
+}
+
+#[test]
 fn topology_deletions_prune_referencing_stereo_state() {
     let mut mol = Molecule::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");

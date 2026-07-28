@@ -20,6 +20,27 @@ pub struct RingMembership {
 }
 
 impl RingMembership {
+    /// Constructs detached ring membership over complete stable atom and bond slots.
+    ///
+    /// Slot lengths and live references are checked when the containing
+    /// [`super::PerceptionState`] is installed on a molecule.
+    pub fn from_slot_flags(atom_flags: Vec<bool>, bond_flags: Vec<bool>) -> Self {
+        Self {
+            atom_flags,
+            bond_flags,
+        }
+    }
+
+    /// Returns the complete stable atom-slot flags, including tombstones.
+    pub fn atom_slot_flags(&self) -> &[bool] {
+        &self.atom_flags
+    }
+
+    /// Returns the complete stable bond-slot flags, including tombstones.
+    pub fn bond_slot_flags(&self) -> &[bool] {
+        &self.bond_flags
+    }
+
     pub fn atom_in_ring(&self, atom: AtomId) -> bool {
         self.atom_flags.get(atom.index()).copied().unwrap_or(false)
     }
@@ -69,6 +90,14 @@ pub struct RingSet {
 }
 
 impl RingSet {
+    /// Constructs a detached deterministic ring basis and its complete work record.
+    ///
+    /// Ring references and graph coherence are checked when the containing
+    /// [`super::PerceptionState`] is installed on a molecule.
+    pub fn from_parts(rings: Vec<Ring>, work: RingWork) -> Self {
+        Self { rings, work }
+    }
+
     pub fn rings(&self) -> &[Ring] {
         &self.rings
     }

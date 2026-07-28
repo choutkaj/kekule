@@ -5,6 +5,10 @@ pub struct StereoElement {
     pub kind: StereoElementKind,
     pub specifiedness: StereoSpecifiedness,
     pub source: StereoSource,
+    /// Owning relation group, assigned only by [`Molecule::add_stereo_group`].
+    ///
+    /// [`Molecule::add_stereo_element`] rejects values with this field set, and
+    /// [`Molecule::remove_stereo_element`] clears it on the returned value.
     pub group: Option<StereoGroupId>,
     #[cfg(test)]
     pub(crate) descriptor: Option<StereoDescriptor>,

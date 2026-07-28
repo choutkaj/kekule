@@ -39,6 +39,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MmcifInterpretation::into_model` consumes an interpretation when callers do
   not need to retain its report.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
+- Focused canonical reconstruction remains under `core` and `bio`: detached
+  exact perception construction plus whole-state installation, targeted SMCRA
+  child enrichment, and exact stereo-group tombstone replay do not widen the
+  crate root or prelude.
 - Immutable system structure, coordinate containers, and frames live under
   `topology`, `structure`, and `trajectory`; potentials and minimization remain
   under `modeling`. These focused types are not added to the prelude.
@@ -85,6 +89,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - External integration tests compile public happy-path, namespaced, low-level
   graph, macro-molecule, topology/configuration/model, mmCIF, and borrowed-view
   examples as downstream user code.
+- Downstream reconstruction tests compile and exercise every new checked
+  perception, hierarchy enrichment, stereo-slot, and topology-layout surface.
 - Public topology tests compile the exact-identity, same-layout, checked
   identity-mapping, and checked edit-result surface.
 - Downstream transformation tests compile instance retain/remove, stable
@@ -151,3 +157,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   topology-bound state-remapping public surface without expanding the prelude.
 - v24: Add the focused same-topology weighted rigid-alignment analysis surface
   without expanding the crate root aliases or prelude.
+- v25: Expose focused canonical persistence reconstruction through existing
+  `core` and `bio` modules without adding Serde, root aliases, or prelude items.

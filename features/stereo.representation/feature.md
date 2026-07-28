@@ -18,10 +18,20 @@ not atom/bond payload flags.
   methods.
 - Stereo-element and stereo-group insertion checks the fixed-width ID space
   before commit and returns the focused molecule capacity error when exhausted.
+- Stereo-element insertion accepts only ungrouped elements. A pre-set relation
+  group is rejected transactionally before reference validation, slot
+  allocation, mutation, or perception invalidation; membership is established
+  only through `add_stereo_group`.
 - Stereo-element replacement validates every carrier and central reference
   before commit. An element already in a relation group cannot change group
   membership implicitly; callers must use the group operations explicitly.
+- Stereo-element removal prunes or tombstones its prior live group as required
+  and returns the detached element with `group = None`, ready for explicit
+  re-insertion and regrouping.
 - Stereo groups must contain at least one unique live stereo element.
+- Complete stereo-group slot iteration includes interior and trailing
+  tombstones. A checked append operation reserves one deleted stable ID without
+  creating dummy chemistry or invalidating CIP.
 - Local stereo is the authoritative representation. `R/S`, `E/Z`, `M/P`,
   sequence cis/trans, and pseudoasymmetric descriptors are optional derived
   descriptors and must be treated as cacheable views over local stereo.
@@ -50,8 +60,8 @@ not atom/bond payload flags.
   the authoritative public model. Core atom and bond payloads remain chemically
   general graph payloads; stereo lives on `Molecule`.
 - Topology deletion prunes stereo elements and source bond marks that reference
-  deleted atoms or bonds, and removes pruned stereo elements from relation
-  groups.
+  deleted atoms or bonds, removes pruned stereo elements from relation groups,
+  and tombstones a group when its final member is removed.
 - Topology or stereo mutation invalidates the stereo perception cache state.
 - Source bond marks intentionally preserve parser syntax or Molfile wedge/either
   fields even before perception can assemble them into validated stereo
@@ -67,7 +77,9 @@ not atom/bond payload flags.
 
 - Unit tests cover stereo element, group, and source bond mark CRUD; invalid
   references; synthetic ID-capacity boundaries; mutation invalidation;
-  topology-aware pruning; and parser/writer adapter behavior.
+  topology-aware pruning; exact live/tombstone slot replay; stable next IDs;
+  CIP-neutral tombstone append; transactional rejection of pre-grouped
+  insertion; detached removal/re-insertion; and parser/writer adapter behavior.
 
 ## Benchmarks
 
@@ -117,3 +129,8 @@ not atom/bond payload flags.
 - v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v14: Check stereo-element and stereo-group identifier capacity before
   transactional insertion and iterate their stable slots without narrowing.
+- v15: Expose exact stereo-group slots plus checked tombstone append, and
+  tombstone groups whose final live member is pruned.
+- v16: Reject pre-grouped stereo-element insertion before mutation or
+  invalidation, and return removed stereo elements detached from their prior
+  relation group.
