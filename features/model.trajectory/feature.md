@@ -44,7 +44,7 @@ trajectories through reusable caller-owned buffers.
   remain a future segmented-topology concept.
 - A minimal in-memory/reference reader and writer validate the streaming
   contracts. Production codecs live in the one-way
-  `molecular-trajectory-io` companion crate. Its supported initial profiles are
+  `kekule-trajectory-io` companion crate. Its supported initial profiles are
   tracked independently as `io.trajectory.file`, `.xyz`, `.dcd`, `.trr`, and
   `.xtc`.
 

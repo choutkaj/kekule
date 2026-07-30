@@ -8,4 +8,4 @@ description = "One-sentence description."
 depends_on = []
 
 # reference = ["rdkit.Chem.example"]
-# public_api = ["molecular::path::function"]
+# public_api = ["kekule::path::function"]

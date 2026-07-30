@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/molecular",
-    "crates/molecular-dreiding",
-    "crates/molecular-trajectory-io",
+    "crates/kekule",
+    "crates/kekule-dreiding",
+    "crates/kekule-trajectory-io",
     "crates/xtask",
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.89"
-repository = "https://github.com/choutkaj/molecular"
+repository = "https://github.com/choutkaj/kekule"
 license = "MIT"
 readme = "README.md"
 keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]

@@ -1,26 +1,26 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/choutkaj/molecular/main/assets/molecular-logo-dark.svg">
-    <img alt="MOLECULAR - cheminformatics in Rust" src="https://raw.githubusercontent.com/choutkaj/molecular/main/assets/molecular-logo-light.svg" width="250">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/choutkaj/kekule/main/assets/kekule-logo-dark.svg">
+    <img alt="KEKULE - cheminformatics in Rust" src="https://raw.githubusercontent.com/choutkaj/kekule/main/assets/kekule-logo-light.svg" width="250">
   </picture>
 </p>
 
 <p align="center">
-  <a href="https://github.com/choutkaj/molecular/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/molecular/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/choutkaj/molecular/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
-  <a href="https://github.com/choutkaj/molecular/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="https://github.com/choutkaj/kekule/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/kekule/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/choutkaj/kekule/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
+  <a href="https://github.com/choutkaj/kekule/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-`molecular` is an experimental pure-Rust chemistry backend scoped for both
+`kekule` is an experimental pure-Rust chemistry backend scoped for both
 small molecules and macromolecules. Capabilities are tracked in canonical
 feature contracts; optional external-reference benchmarks use tools such as
 RDKit, Biopython, and DSSP without making them runtime dependencies or release
 gates. This project is human-architected and AI-coded.
 
-For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/molecular/).
+For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/kekule/).
 
 > [!NOTE]
-> `molecular` is in early development. Breaking API changes will happen without notice.
+> `kekule` is in early development. Breaking API changes will happen without notice.
 
 
 ## Concept
@@ -59,7 +59,7 @@ Parse and inspect a simple chiral molecule, assign its stereochemistry, and writ
 ```rust
 use std::error::Error;
 
-use molecular::{perception::stereo, small::SmallMolecule};
+use kekule::{perception::stereo, small::SmallMolecule};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse a chiral amino acid and run the explicit sanitization workflow.
@@ -90,13 +90,13 @@ Load a ligand from SDF, minimize its coordinates with the DREIDING force field, 
 ```rust
 use std::{error::Error, fs};
 
-use molecular::{
+use kekule::{
     modeling::{minimize, MinimizeOptions},
     sdf::{self, SdfParseOptions, SdfRecord},
     structure::Model,
     units::MODEL_GRADIENT_UNIT,
 };
-use molecular_dreiding::{DreidingPotential, DreidingPrepareOptions};
+use kekule_dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and interpret one SDF record without silently sanitizing it.
@@ -165,4 +165,4 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ## License
 
-`molecular` is available under the MIT license.
+`kekule` is available under the MIT license.

@@ -45,6 +45,9 @@ release status, CI success, or whether the repository is ready for development.
 - The benchmark input digest covers manifests, corpus descriptors, source
   locks, fixtures, goldens, implementation/comparison source, reference
   generators/environments, and normalized external dependency lock entries.
+- Core implementation sources use package-neutral
+  `implementation/core/src/...` digest labels, so renaming the package
+  directory does not change benchmark identity by itself.
 - Digest inputs exclude absolute checkout paths, repository and package
   identity, workspace-local package names, feature status/docs, and timestamps.
 - UTF-8 inputs are normalized to LF before hashing; binary inputs remain
@@ -89,3 +92,5 @@ release status, CI success, or whether the repository is ready for development.
   validation CLI and required-manifest schema, default to PubChem-1k/PDB-100,
   record neutral match/difference/error observations, migrate legacy snapshots,
   and make input digests independent of repository identity.
+- v42: Discover implementation sources from the Kekule core crate while
+  labeling them through a package-neutral digest namespace.

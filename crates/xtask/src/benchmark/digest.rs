@@ -87,11 +87,43 @@ pub(crate) fn build_benchmark_input_digest(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn build_benchmark_input_digest_with_core_source_root(
+    repo_root: &Path,
+    manifest_path: &Path,
+    manifest: &BenchmarkManifest,
+    core_source_root: &Path,
+) -> Result<BenchmarkInputDigest, Box<dyn Error>> {
+    build_benchmark_input_digest_cached_with_core_source_root(
+        repo_root,
+        manifest_path,
+        manifest,
+        &BenchmarkHashCache::default(),
+        core_source_root,
+    )
+}
+
 pub(crate) fn build_benchmark_input_digest_cached(
     repo_root: &Path,
     manifest_path: &Path,
     manifest: &BenchmarkManifest,
     hash_cache: &BenchmarkHashCache,
+) -> Result<BenchmarkInputDigest, Box<dyn Error>> {
+    build_benchmark_input_digest_cached_with_core_source_root(
+        repo_root,
+        manifest_path,
+        manifest,
+        hash_cache,
+        &repo_root.join("crates/kekule/src"),
+    )
+}
+
+fn build_benchmark_input_digest_cached_with_core_source_root(
+    repo_root: &Path,
+    manifest_path: &Path,
+    manifest: &BenchmarkManifest,
+    hash_cache: &BenchmarkHashCache,
+    core_source_root: &Path,
 ) -> Result<BenchmarkInputDigest, Box<dyn Error>> {
     let corpus_root = manifest_path
         .parent()
@@ -101,7 +133,7 @@ pub(crate) fn build_benchmark_input_digest_cached(
     paths.insert(manifest_path.to_path_buf());
     paths.insert(corpus_root.join("corpus.toml"));
     paths.insert(corpus_root.join("sources.lock.json"));
-    collect_files(&repo_root.join("crates/molecular/src"), &mut paths)?;
+    collect_files(core_source_root, &mut paths)?;
     collect_files(&repo_root.join("crates/xtask/src"), &mut paths)?;
 
     match manifest.reference_tool.as_str() {
@@ -146,7 +178,7 @@ pub(crate) fn build_benchmark_input_digest_cached(
             continue;
         }
         inputs.push(DigestInput {
-            path: relative_path(repo_root, &path)?,
+            path: benchmark_digest_input_path(repo_root, core_source_root, &path)?,
             sha256: hash_cache.normalized_hash(&path)?,
         });
     }
@@ -169,6 +201,20 @@ pub(crate) fn build_benchmark_input_digest_cached(
         input_count,
         sha256,
     })
+}
+
+fn benchmark_digest_input_path(
+    repo_root: &Path,
+    core_source_root: &Path,
+    path: &Path,
+) -> Result<String, Box<dyn Error>> {
+    if path.strip_prefix(core_source_root).is_ok() {
+        return Ok(format!(
+            "implementation/core/src/{}",
+            relative_path(core_source_root, path)?
+        ));
+    }
+    relative_path(repo_root, path)
 }
 
 fn external_dependency_hash(path: &Path) -> Result<String, Box<dyn Error>> {
