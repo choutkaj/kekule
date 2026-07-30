@@ -3,9 +3,9 @@
 ## Status and purpose
 
 This document is the normative architecture contract for `kekule`. The
-topology-centered 0.2 design and the initial complete-instance topology-
-transformation milestone are implemented. Current work must follow the object
-boundaries and invariants defined here.
+topology-centered design introduced in 0.2 and the initial complete-instance
+topology-transformation milestone are implemented. Current work must follow
+the object boundaries and invariants defined here.
 
 `kekule` is a pure-Rust foundation for cheminformatics, structural
 bioinformatics, molecular structure handling, and molecular modelling. It
