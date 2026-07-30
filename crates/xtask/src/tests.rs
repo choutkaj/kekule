@@ -109,6 +109,50 @@ fn local_only_corpus_descriptors_match_the_registry() {
 }
 
 #[test]
+fn kekule_package_metadata_uses_the_hard_cutover_names() {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workspace_manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(workspace_root.join("Cargo.toml"))
+            .expect("workspace manifest should read"),
+    )
+    .expect("workspace manifest should parse");
+    let workspace_package = &workspace_manifest["workspace"]["package"];
+    assert_eq!(workspace_package["version"].as_str(), Some("0.3.0"));
+    assert_eq!(
+        workspace_package["repository"].as_str(),
+        Some("https://github.com/choutkaj/kekule")
+    );
+
+    for (relative_path, package_name) in [
+        ("crates/kekule/Cargo.toml", "kekule"),
+        ("crates/kekule-dreiding/Cargo.toml", "kekule-dreiding"),
+        (
+            "crates/kekule-trajectory-io/Cargo.toml",
+            "kekule-trajectory-io",
+        ),
+        ("fuzz/Cargo.toml", "kekule-fuzz"),
+    ] {
+        let manifest: toml::Value = toml::from_str(
+            &fs::read_to_string(workspace_root.join(relative_path))
+                .expect("package manifest should read"),
+        )
+        .expect("package manifest should parse");
+        assert_eq!(manifest["package"]["name"].as_str(), Some(package_name));
+    }
+
+    for legacy_path in [
+        "crates/molecular",
+        "crates/molecular-dreiding",
+        "crates/molecular-trajectory-io",
+    ] {
+        assert!(
+            !workspace_root.join(legacy_path).exists(),
+            "legacy package directory still exists: {legacy_path}"
+        );
+    }
+}
+
+#[test]
 fn feature_metadata_does_not_require_benchmark_manifests() {
     let root = temp_feature_root("optional-benchmark-manifest");
     write_feature(
@@ -734,7 +778,7 @@ description: Builder skill.
 # Feature Work
 add -> optional research -> plan -> implement
 Use feature.md. Set status = "supported", declare depends_on, and remember the `validation_required` key has no replacement.
-Molecular benchmark fixtures must be externally supplied.
+Kekule benchmark fixtures must be externally supplied.
 Run cargo xtask dashboard --check. Cargo xtask benchmark --feature <feature-id> --corpus <corpus-id> is never a routine acceptance condition.
 "#,
     );
@@ -1328,7 +1372,7 @@ fn benchmark_digest_changes_after_material_input_changes() {
     let original = build_benchmark_input_digest(&root, &manifest_path, &manifest)
         .expect("digest should build");
 
-    fs::write(root.join("crates/molecular/src/lib.rs"), "changed source\n")
+    fs::write(root.join("crates/kekule/src/lib.rs"), "changed source\n")
         .expect("source should mutate");
     let source_changed = build_benchmark_input_digest(&root, &manifest_path, &manifest)
         .expect("digest should build");
@@ -1448,6 +1492,43 @@ fn benchmark_digest_ignores_checkout_and_workspace_identity() {
             .expect("renamed digest should build");
     assert_eq!(first_digest.sha256, renamed_digest.sha256);
 
+    fs::remove_dir_all(first).ok();
+    fs::remove_dir_all(second).ok();
+}
+
+#[test]
+fn benchmark_digest_ignores_core_package_directory_identity() {
+    let first = temp_feature_root("digest-package-identity-first");
+    let second = temp_feature_root("digest-package-identity-second");
+    let (_, _, first_manifest_path) = write_digest_test_repo(&first);
+    let (_, _, second_manifest_path) = write_digest_test_repo(&second);
+    let first_manifest =
+        read_benchmark_manifest(&first_manifest_path).expect("manifest should read");
+    let second_manifest =
+        read_benchmark_manifest(&second_manifest_path).expect("manifest should read");
+
+    let first_core_source = first.join("crates/kekule/src");
+    let renamed_package = second.join("crates/renamed-core");
+    fs::rename(second.join("crates/kekule"), &renamed_package)
+        .expect("core package directory should rename");
+    let second_core_source = renamed_package.join("src");
+
+    let first_digest = build_benchmark_input_digest_with_core_source_root(
+        &first,
+        &first_manifest_path,
+        &first_manifest,
+        &first_core_source,
+    )
+    .expect("first digest should build");
+    let second_digest = build_benchmark_input_digest_with_core_source_root(
+        &second,
+        &second_manifest_path,
+        &second_manifest,
+        &second_core_source,
+    )
+    .expect("renamed-package digest should build");
+
+    assert_eq!(first_digest.sha256, second_digest.sha256);
     fs::remove_dir_all(first).ok();
     fs::remove_dir_all(second).ok();
 }
@@ -2154,7 +2235,7 @@ fn temp_feature_root(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("time should be available")
         .as_nanos();
-    let root = env::temp_dir().join(format!("molecular-xtask-{label}-{}-{nonce}", process::id()));
+    let root = env::temp_dir().join(format!("kekule-xtask-{label}-{}-{nonce}", process::id()));
     fs::create_dir_all(&root).expect("temp feature root should create");
     root
 }
@@ -2217,9 +2298,9 @@ fn write_digest_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
         "registry+https://github.com/rust-lang/crates.io-index",
     );
     for path in [
-        "crates/molecular/Cargo.toml",
+        "crates/kekule/Cargo.toml",
         "crates/xtask/Cargo.toml",
-        "crates/molecular/src/lib.rs",
+        "crates/kekule/src/lib.rs",
         "crates/xtask/src/main.rs",
         "benchmarks/reference/rdkit/run_feature.py",
         "benchmarks/reference/rdkit/environment.yml",

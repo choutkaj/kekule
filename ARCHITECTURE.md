@@ -2,12 +2,12 @@
 
 ## Status and purpose
 
-This document is the normative architecture contract for `molecular`. The
-topology-centered 0.2 design and the initial complete-instance topology-
-transformation milestone are implemented. Current work must follow the object
-boundaries and invariants defined here.
+This document is the normative architecture contract for `kekule`. The
+topology-centered design introduced in 0.2 and the initial complete-instance
+topology-transformation milestone are implemented. Current work must follow
+the object boundaries and invariants defined here.
 
-`molecular` is a pure-Rust foundation for cheminformatics, structural
+`kekule` is a pure-Rust foundation for cheminformatics, structural
 bioinformatics, molecular structure handling, and molecular modelling. It
 serves small molecules and biological macromolecules without making a
 file-format record, a simulation-engine particle list, or one flattened graph
@@ -240,8 +240,8 @@ Chemically general algorithms operate on `Molecule` where practical.
 
 ### Canonical molecular reconstruction
 
-Molecular owns invariant-preserving reconstruction of Molecular runtime state;
-persistence consumers own their versioned archive DTOs. Molecular does not
+Kekule owns invariant-preserving reconstruction of Kekule runtime state;
+persistence consumers own their versioned archive DTOs. Kekule does not
 derive Serde for runtime objects and does not define a general molecule or
 topology serialization framework.
 
@@ -1003,7 +1003,7 @@ they operate over the whole topology, molecule instances, connected
 components, or explicit groups. The architecture never treats those scopes as
 interchangeable by accident.
 
-`molecular-dreiding` remains an adapter crate demonstrating this boundary. It
+`kekule-dreiding` remains an adapter crate demonstrating this boundary. It
 may assign atom types and fixed charges during explicit preparation, but
 evaluation does not sanitize, change topology, or update charges implicitly.
 
@@ -1078,19 +1078,19 @@ format internals, trajectory codecs, modelling objects, and expert algorithms
 remain in focused namespaces. Broad root re-exports are not added casually.
 
 Dependency-heavy binary trajectory codecs and force-field adapters should live
-in separate crates when required, keeping the foundational `molecular` crate
+in separate crates when required, keeping the foundational `kekule` crate
 lightweight.
 
 Production fixed-topology file codecs live in the one-way
-`molecular-trajectory-io` workspace companion:
+`kekule-trajectory-io` workspace companion:
 
 ```text
-molecular <- molecular-trajectory-io <- applications
+kekule <- kekule-trajectory-io <- applications
 ```
 
-The companion implements Molecular's streaming traits and uses its topology,
+The companion implements Kekule's streaming traits and uses its topology,
 frame-buffer, geometry, unit, format-identity, and typed error contracts. It
-does not define duplicate domain objects. Molecular-owned codec source forbids
+does not define duplicate domain objects. Kekule-owned codec source forbids
 unsafe code and does not require Chemfiles, a C/C++ compiler, or CMake.
 
 The supported initial companion profile is intentionally explicit:
@@ -1103,7 +1103,7 @@ The supported initial companion profile is intentionally explicit:
 | XTC | GROMACS 1995/2023 magic, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates, explicit lossy precision |
 
 DCD and default XYZ coordinates use angstrom conventions; TRR and XTC use
-GROMACS nanometre/picosecond conventions and convert once to Molecular units.
+GROMACS nanometre/picosecond conventions and convert once to Kekule units.
 XTC reports nominal lossy resolution as `1 / precision` nanometres. Indexed
 opening is O(file size), verifies every complete frame, and stores bounded
 checked offsets; indexed frame reads decode one frame. Sequential opening

@@ -55,6 +55,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "kekule"
+version = "0.3.0"
+
+[[package]]
+name = "kekule-fuzz"
+version = "0.0.0"
+dependencies = [
+ "kekule",
+ "kekule-trajectory-io",
+ "libfuzzer-sys",
+]
+
+[[package]]
+name = "kekule-trajectory-io"
+version = "0.3.0"
+dependencies = [
+ "kekule",
+ "molly",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -68,27 +89,6 @@ checksum = "a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2"
 dependencies = [
  "arbitrary",
  "cc",
-]
-
-[[package]]
-name = "molecular"
-version = "0.2.0"
-
-[[package]]
-name = "molecular-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "molecular",
- "molecular-trajectory-io",
-]
-
-[[package]]
-name = "molecular-trajectory-io"
-version = "0.2.0"
-dependencies = [
- "molecular",
- "molly",
 ]
 
 [[package]]

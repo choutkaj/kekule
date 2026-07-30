@@ -3,7 +3,7 @@
 ## Summary
 
 Let external persistence adapters reconstruct the complete canonical molecular
-state that Molecular owns without source reparsing, perception, sanitization,
+state that Kekule owns without source reparsing, perception, sanitization,
 dummy chemistry, or stable-ID renumbering.
 
 ## Behavior/API
@@ -77,7 +77,7 @@ coordinate/property-only mutation remains perception-neutral.
 
 ## Out Of Scope
 
-- Serde derives or a Molecular-owned archive/wire format.
+- Serde derives or a Kekule-owned archive/wire format.
 - General molecule or topology reconstruction DTOs.
 - Process-local `TopologyIdentity` persistence.
 - Public incremental perception mutation.

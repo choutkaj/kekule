@@ -6,6 +6,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Behavior/API
 
+- The published foundation package and Rust import root are both named
+  `kekule`; the 0.3 hard cutover provides no compatibility package or alias
+  under a previous project name.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
@@ -159,3 +162,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   without expanding the crate root aliases or prelude.
 - v25: Expose focused canonical persistence reconstruction through existing
   `core` and `bio` modules without adding Serde, root aliases, or prelude items.
+- v26: Hard-rename the published foundation package and Rust import root to
+  `kekule` for the 0.3 release without compatibility aliases.

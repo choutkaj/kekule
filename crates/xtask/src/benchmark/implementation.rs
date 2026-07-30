@@ -767,12 +767,12 @@ pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) 
             "title": record.title,
         });
     }
-    let policy = molecular::descriptors::HydrogenCountPolicy::IncludePerceived;
+    let policy = kekule::descriptors::HydrogenCountPolicy::IncludePerceived;
     let result = (|| {
-        let formula = molecular::descriptors::molecular_formula(&record.molecule, policy)?;
-        let average = molecular::descriptors::average_mass(&record.molecule, policy)?;
-        let monoisotopic = molecular::descriptors::monoisotopic_mass(&record.molecule, policy)?;
-        Ok::<_, molecular::descriptors::MolecularDescriptorError>((
+        let formula = kekule::descriptors::molecular_formula(&record.molecule, policy)?;
+        let average = kekule::descriptors::average_mass(&record.molecule, policy)?;
+        let monoisotopic = kekule::descriptors::monoisotopic_mass(&record.molecule, policy)?;
+        Ok::<_, kekule::descriptors::MolecularDescriptorError>((
             formula,
             *average.value(),
             *monoisotopic.value(),

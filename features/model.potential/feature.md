@@ -9,8 +9,8 @@ harmonic bond potential.
 ## Behavior/API
 
 - Exposes `Potential`, `PotentialEvaluation`, `PotentialError`, and
-  `PotentialGeometryError` under `molecular::modeling::potential`; shared
-  `Vector3` lives in `molecular::geometry`.
+  `PotentialGeometryError` under `kekule::modeling::potential`; shared
+  `Vector3` lives in `kekule::geometry`.
 - Requires one finite Cartesian gradient vector per model atom and rejects non-finite energy or gradients.
 - Exposes `HarmonicBondParameter` and `HarmonicBondPotential` for explicit
   `InstanceBondId` parameters; atom errors use `InstanceAtomId` and gradients

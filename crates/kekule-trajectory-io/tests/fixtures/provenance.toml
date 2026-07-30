@@ -1,0 +1,124 @@
+schema_version = 1
+
+[policy]
+purpose = "Small redistributable interoperability fixtures for trajectory codec regression tests"
+required_fields = [
+    "format",
+    "variant",
+    "generator",
+    "generator_version",
+    "generator_command",
+    "source_revision",
+    "sha256",
+    "license",
+    "atom_count",
+    "frame_count",
+    "fields",
+    "native_units",
+]
+notes = """
+Fixture payloads are added only with complete pinned provenance. Generator
+tools are development references, never Kekule runtime dependencies.
+Writer interoperability observations record the independent reader and exact
+version used; they do not claim broad format parity.
+"""
+
+[[fixture]]
+path = "ase-3.26.0-water.xyz"
+format = "xyz"
+variant = "strict multi-frame XYZ"
+generator = "Atomic Simulation Environment (ASE)"
+generator_version = "3.26.0"
+generator_command = "uv run --python 3.12 --with ase==3.26.0 python generate_xyz.py"
+source_revision = "6c965f46a9449cbea275a6cc11fefb82da7df4bf"
+sha256 = "91c41f2f0b02034c507bf564dc4084be991f4cc21418604fcb4864e0f2e805ea"
+license = "MIT repository fixture; ASE generator is LGPL-2.1-or-later"
+atom_count = 3
+frame_count = 2
+fields = ["positions", "element symbols"]
+native_units = "angstrom"
+coverage = ["multi-frame element order", "negative and positive decimal coordinates"]
+
+[[writer_observation]]
+format = "xyz"
+writer = "kekule-trajectory-io xyz_interop_writer example"
+independent_reader = "Atomic Simulation Environment (ASE)"
+reader_version = "3.26.0"
+reader_source_revision = "6c965f46a9449cbea275a6cc11fefb82da7df4bf"
+command = "cargo run -p kekule-trajectory-io --example xyz_interop_writer -- OUTPUT.xyz; uv run --python 3.12 --with ase==3.26.0 python -c <two-frame element-order/coordinate assertions>"
+verified = ["frame count", "element order", "positions"]
+
+[[fixture]]
+path = "mdanalysis-2.9.0-three-atoms.dcd"
+format = "dcd"
+variant = "CHARMM-compatible little-endian DCD with unit cell"
+generator = "MDAnalysis"
+generator_version = "2.9.0"
+generator_command = "uv run --python 3.12 --with MDAnalysis==2.9.0 python generate_dcd.py"
+source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+sha256 = "baabffaca935dff654d1466fe43ba469fb0b1b84d077b6afc3c10f5208cc7d0e"
+license = "MIT repository fixture; MDAnalysis generator is GPL-2.0-or-later"
+atom_count = 3
+frame_count = 2
+fields = ["positions", "unit cell", "step", "header delta"]
+native_units = "angstrom; DCD DELTA left uninterpreted without an explicit reader policy"
+coverage = ["little endian", "unit cell", "two frames"]
+
+[[writer_observation]]
+format = "dcd"
+writer = "kekule-trajectory-io dcd_interop_writer example"
+independent_reader = "MDAnalysis"
+reader_version = "2.9.0"
+reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+command = "cargo run -p kekule-trajectory-io --example dcd_interop_writer -- OUTPUT.dcd; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame position/cell assertions>"
+verified = ["frame count", "positions", "triclinic cell"]
+
+[[fixture]]
+path = "mdanalysis-2.9.0-three-atoms.trr"
+format = "trr"
+variant = "GROMACS TRR/XDR f32 with all supported fields"
+generator = "MDAnalysis"
+generator_version = "2.9.0"
+generator_command = "uv run --python 3.12 --with MDAnalysis==2.9.0 python generate_trr.py"
+source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+sha256 = "ff960f93b192e71f9b8962a7f8fe70c0aae23fd842e15aa65f3d3fd26a6b07c0"
+license = "MIT repository fixture; MDAnalysis generator is GPL-2.0-or-later"
+atom_count = 3
+frame_count = 2
+fields = ["positions", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
+native_units = "nm, nm/ps, kJ/mol/nm, ps"
+coverage = ["f32", "all supported fields", "two frames"]
+
+[[writer_observation]]
+format = "trr"
+writer = "kekule-trajectory-io trr_interop_writer example"
+independent_reader = "MDAnalysis"
+reader_version = "2.9.0"
+reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+command = "cargo run -p kekule-trajectory-io --example trr_interop_writer -- OUTPUT.trr; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame all-field assertions>"
+verified = ["frame count", "positions", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
+
+[[fixture]]
+path = "mdanalysis-2.9.0-twelve-atoms.xtc"
+format = "xtc"
+variant = "XTC 1995 compressed coordinates with triclinic cell"
+generator = "MDAnalysis"
+generator_version = "2.9.0"
+generator_command = "uv run --python 3.12 --with MDAnalysis==2.9.0 python generate_xtc.py"
+source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+sha256 = "4983aea35f003d170bca0933942559a6d1968d6ec7030f7def0cc0fdfc757fec"
+license = "MIT repository fixture; MDAnalysis generator is GPL-2.0-or-later"
+atom_count = 12
+frame_count = 2
+fields = ["lossy positions", "triclinic cell", "time", "step", "precision"]
+native_units = "nm, ps; precision scale 1000 nm^-1"
+coverage = ["1995 magic", "compressed atoms", "triclinic cell", "two frames"]
+
+[[writer_observation]]
+format = "xtc"
+writer = "kekule-trajectory-io xtc_interop_writer example"
+independent_reader = "MDAnalysis"
+reader_version = "2.9.0"
+reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
+command = "cargo run -p kekule-trajectory-io --example xtc_interop_writer -- OUTPUT.xtc; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame lossy position/time/step/cell assertions>"
+verified = ["frame count", "lossy positions", "triclinic cell", "time", "step"]
