@@ -4,11 +4,12 @@
 
 Provide bounded format-agnostic file and stream I/O for production
 fixed-topology trajectories without adding codec dependencies to the
-foundational `molecular` crate.
+foundational `kekule` crate.
 
 ## Behavior/API
 
-- `molecular-trajectory-io` depends one-way on `molecular` and implements its
+- The `kekule-trajectory-io` package and `kekule_trajectory_io` Rust import
+  root depend one-way on `kekule` and implement its
   sequential, seekable, and writer traits without defining another topology,
   frame, coordinate, or unit model.
 - Opening requires an exact `Topology` plus an explicit
@@ -40,18 +41,18 @@ foundational `molecular` crate.
 |---|---|---|---|
 | XYZ | strict constant-count multi-frame element/x/y/z text | deterministic strict multi-frame text | configured length unit, angstrom by default; decimal text |
 | DCD | 32-bit little/big-endian `CORD`, common cell records, all-atom and fixed-atom frames | canonical all-atom `CORD`, little or big endian, optional cell | angstrom positions/cell; f32 coordinates; step from `ISTART`/`NSAVC`; time only by explicit `DELTA` policy |
-| TRR | GROMACS `GMX_trn_file`, f32/f64 XDR, optional box/velocity/force blocks | one explicit f32 or f64 precision with per-frame optional blocks | nm, ps, nm/ps, and kJ mol-1 nm-1 converted to Molecular units; lambda by explicit policy |
-| XTC | magic 1995 and 2023, small uncompressed and ordinary compressed coordinates | magic 1995 or 2023 at explicit positive inverse-nm precision | nm and ps converted to Molecular units; lossy resolution nominally `1 / precision` nm |
+| TRR | GROMACS `GMX_trn_file`, f32/f64 XDR, optional box/velocity/force blocks | one explicit f32 or f64 precision with per-frame optional blocks | nm, ps, nm/ps, and kJ mol-1 nm-1 converted to Kekule units; lambda by explicit policy |
+| XTC | magic 1995 and 2023, small uncompressed and ordinary compressed coordinates | magic 1995 or 2023 at explicit positive inverse-nm precision | nm and ps converted to Kekule units; lossy resolution nominally `1 / precision` nm |
 
 The matrix is deliberately narrower than all historical files using these
 extensions. A matching extension or atom count never expands the profile.
 
 ## Implementation Notes
 
-- Molecular-owned source forbids unsafe code and has no native Chemfiles,
+- Kekule-owned source forbids unsafe code and has no native Chemfiles,
   C/C++, or CMake runtime.
 - The companion crate is a publishable workspace member depending one-way on
-  `molecular`; XYZ, DCD, and TRR have no production dependency beyond the
+  `kekule`; XYZ, DCD, and TRR have no production dependency beyond the
   semantic core, while XTC adds only the audited pure-Rust `molly` adapter.
 - Codecs decode complete frames into reusable private scratch and publish
   transactionally into caller-owned `FrameBuffer` storage.
@@ -138,3 +139,5 @@ extensions. A matching extension or atom count never expands the profile.
 - v5: Use shared bounded geometric index reservation after successful parsing,
   require nonempty concrete and atomic writer finishes, and add a 100,000-frame
   small-frame index benchmark.
+- v6: Hard-rename the companion package and Rust import root to
+  `kekule-trajectory-io` and `kekule_trajectory_io`.

@@ -1046,6 +1046,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "kekule"
+version = "0.3.0"
+
+[[package]]
+name = "kekule-dreiding"
+version = "0.3.0"
+dependencies = [
+ "dreid-forge",
+ "dreid-kernel",
+ "kekule",
+]
+
+[[package]]
+name = "kekule-trajectory-io"
+version = "0.3.0"
+dependencies = [
+ "kekule",
+ "molly",
+ "sha2",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1124,28 +1146,6 @@ checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
  "simd-adler32",
-]
-
-[[package]]
-name = "molecular"
-version = "0.2.0"
-
-[[package]]
-name = "molecular-dreiding"
-version = "0.2.0"
-dependencies = [
- "dreid-forge",
- "dreid-kernel",
- "molecular",
-]
-
-[[package]]
-name = "molecular-trajectory-io"
-version = "0.2.0"
-dependencies = [
- "molecular",
- "molly",
- "sha2",
 ]
 
 [[package]]
@@ -2337,10 +2337,10 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "flate2",
- "molecular",
+ "kekule",
  "serde",
  "serde_json",
  "sha2",

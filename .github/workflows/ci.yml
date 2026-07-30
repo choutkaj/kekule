@@ -28,12 +28,12 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
       - name: Check packaged license copies
         run: |
-          cmp LICENSE crates/molecular/LICENSE
-          cmp LICENSE crates/molecular-dreiding/LICENSE
-      - run: cargo package -p molecular --locked
-      # Full packaging resolves `molecular` through crates.io and is enabled only after the
+          cmp LICENSE crates/kekule/LICENSE
+          cmp LICENSE crates/kekule-dreiding/LICENSE
+      - run: cargo package -p kekule --locked
+      # Full packaging resolves `kekule` through crates.io and is enabled only after the
       # foundational crate is published. Until then, validate the exact package file set.
-      - run: cargo package -p molecular-dreiding --locked --list
+      - run: cargo package -p kekule-dreiding --locked --list
       - run: cargo xtask dashboard --check
       - run: cargo xtask skills --check
 

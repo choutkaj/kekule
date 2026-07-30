@@ -9,7 +9,8 @@ gradients once for supported nonperiodic structural views.
 ## Behavior/API
 
 - Exposes `DreidingPotential`, `DreidingPrepareOptions`, `QeqGrouping`, and
-  `DreidingPrepareError` from the separate `molecular-dreiding` crate.
+  `DreidingPrepareError` from the separate `kekule-dreiding` package and
+  `kekule_dreiding` Rust import root.
 - Prepares with an explicit `&Topology`, reference `ModelView`, and QEq grouping
   policy, then implements the core borrowed-view `Potential` contract.
 - The adapter is nonperiodic. Preparation rejects a reference view carrying a
@@ -32,7 +33,7 @@ gradients once for supported nonperiodic structural views.
 - Uses shared exact topology identity rather than rebuilding an
   adapter-specific signature during each evaluation.
 - Maps aromatic-flagged localized single and double bonds to DREIDING aromatic bonds
-  without changing the bond orders stored by Molecular.
+  without changing the bond orders stored by Kekule.
 - Makes QEq grouping explicit as whole topology, molecule instances, or actual
   connected components; molecule-instance grouping is the default. Charges
   remain fixed during evaluation and minimization.
@@ -85,3 +86,5 @@ gradients once for supported nonperiodic structural views.
   molecule-instance, and connected-component QEq grouping.
 - v8: Declare DREIDING nonperiodic and reject periodic reference and evaluation
   views structurally instead of silently applying direct Cartesian geometry.
+- v9: Hard-rename the adapter package and Rust import root to
+  `kekule-dreiding` and `kekule_dreiding`.

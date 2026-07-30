@@ -7,6 +7,10 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Hard-rename the project, foundational crate, DREIDING adapter, trajectory I/O
+  companion, Rust import roots, repository URLs, generated Molfile provenance,
+  and visual identity to Kekule for the breaking 0.3 release. Benchmark input
+  digests now label core sources through a package-neutral namespace.
 - Add focused canonical molecular reconstruction for external persistence:
   exact detached `PerceptionState` inspection/build/install with transactional
   graph, stereo, ring, slot, duplicate, and capacity validation; targeted
@@ -17,12 +21,12 @@ series, breaking public API changes increment the minor version.
   Add public
   original/reconstructed `same_layout` regressions and validate MolStudio
   project round-trips through the ignored sibling path patch without Serde on
-  Molecular runtime objects, source reparsing, or reperception.
+  Kekule runtime objects, source reparsing, or reperception.
 - Add the core contracts required by external trajectory codecs: complete
   transactional allocation-reusing `FrameBuffer` publication, explicit
   exact-topology atom-order assertions, non-exhaustive trajectory format
   identity, typed file/codec error context, and downstream trait-implementation
-  tests. Add the supported one-way `molecular-trajectory-io` companion with
+  tests. Add the supported one-way `kekule-trajectory-io` companion with
   bounded signature-plus-extension detection, metadata/reports/limits,
   one-handle sequential and verified indexed access, strict atomic path
   writers that cannot publish after a failed frame, and strict multi-frame XYZ
@@ -44,7 +48,7 @@ series, breaking public API changes increment the minor version.
   steps. Bound index allocation with capped geometric growth, require every
   production writer to finish at least one frame, and remove ordinary
   per-frame DCD EOF read/seek probes.
-- Add focused `molecular::alignment` weighted Kabsch fitting over exact-topology
+- Add focused `kekule::alignment` weighted Kabsch fitting over exact-topology
   `ModelView` and `AtomSelection` inputs. Results map moving coordinates into
   reference coordinates with a proper `RigidTransform`, unit-bearing post-fit
   RMSD, structured rank/weight/topology/periodic failures, and no coordinate
@@ -94,14 +98,14 @@ series, breaking public API changes increment the minor version.
   exposes explicit whole-topology, molecule-instance, and connected-component
   QEq grouping.
 - Remove the obsolete public model-owned topology types and move general
-  geometry to `molecular::geometry`.
+  geometry to `kekule::geometry`.
 - Reclassify RDKit, Biopython, and DSSP external parity from a required
   repository gate to optional benchmarking; preserve corpora and goldens, add
   neutral result observations, and remove repository identity from benchmark
   input digests and corpus selection identifiers.
-- Hard-rename the repository and publishable crates from `molecules` to
-  `molecular`, including the DREIDING adapter, Rust import paths, benchmark
-  tooling, generated writer provenance, and project branding.
+- Consolidate the then-current repository and publishable-crate branding,
+  including the DREIDING adapter, Rust import paths, benchmark tooling,
+  generated writer provenance, and project assets.
 
 ## 0.1.0 - 2026-07-16
 

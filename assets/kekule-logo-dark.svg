@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="720"
+    height="220"
+    viewBox="0 0 720 220"
+    role="img"
+    aria-labelledby="title description"
+>
+    <title id="title">Kekule</title>
+    <desc id="description">Kekule: cheminformatics in Rust</desc>
+    <text
+        x="360"
+        y="112"
+        text-anchor="middle"
+        font-family="Consolas, 'Liberation Mono', monospace"
+        font-size="96"
+        font-weight="700"
+        letter-spacing="8"
+        fill="#FAFAFA"
+    >KEKULE</text>
+    <text
+        x="360"
+        y="178"
+        text-anchor="middle"
+        font-family="Consolas, 'Liberation Mono', monospace"
+        font-size="34"
+        fill="#D4D4D4"
+    >cheminformatics in Rust</text>
+</svg>

@@ -1,11 +1,11 @@
 ---
 name: feature-work
-description: Add, plan, implement, or maintain molecular features through the canonical feature workflow. Use for feature metadata, feature.md, implementation, tests, optional benchmark fixtures, or dashboard updates.
+description: Add, plan, implement, or maintain Kekule features through the canonical feature workflow. Use for feature metadata, feature.md, implementation, tests, optional benchmark fixtures, or dashboard updates.
 ---
 
 # Feature Work
 
-Use this skill for builder-mode work in `molecular`.
+Use this skill for builder-mode work in `kekule`.
 
 Canonical flow: add -> optional research -> plan -> implement.
 

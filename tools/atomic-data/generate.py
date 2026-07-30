@@ -40,7 +40,7 @@ def main() -> int:
         type=Path,
         default=Path(__file__).resolve().parents[3]
         / "crates"
-        / "molecular"
+        / "kekule"
         / "src"
         / "descriptors"
         / "data.rs",
