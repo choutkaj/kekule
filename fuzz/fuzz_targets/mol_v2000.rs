@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use molecular::molfile::{interpret, parse_str, write_v2000};
+use kekule::molfile::{interpret, parse_str, write_v2000};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {

@@ -2,9 +2,9 @@
 
 ## Summary
 
-Read and write compact lossy GROMACS XTC through a checked Molecular decoder
+Read and write compact lossy GROMACS XTC through a checked Kekule decoder
 and a private writer adapter over an audited pure-Rust codec while retaining
-Molecular validation, limits, units, metadata, and errors.
+Kekule validation, limits, units, metadata, and errors.
 
 ## Behavior/API
 
@@ -15,7 +15,7 @@ Molecular validation, limits, units, metadata, and errors.
   integers. Negative values are typed failures; writers require positive atom
   counts and nonnegative steps no greater than `i32::MAX` before adapting to
   `molly` privately.
-- Convert nanometre positions/boxes and picosecond time once to Molecular
+- Convert nanometre positions/boxes and picosecond time once to Kekule
   units, while exposing native lossy precision in metadata and reports.
 - Sequential access does not scan the full file. Indexed access records checked
   offsets only after fully decoding and validating each frame.
@@ -33,14 +33,14 @@ Molecular validation, limits, units, metadata, and errors.
 - Audit findings: `molly`'s public convenience path can allocate from an untrusted
   compressed byte count and contains assertions/expectations reachable from
   malformed data. Its optional file-buffered fast path contains one
-  `get_unchecked` access. Molecular calls neither read path.
-- Reading is Molecular-owned checked code with bounded preflight, checked
+  `get_unchecked` access. Kekule calls neither read path.
+- Reading is Kekule-owned checked code with bounded preflight, checked
   arithmetic, exact atom accounting, padding/trailing-bit validation, and
   reusable scratch. `molly` is confined to encoding, where the adapter
   validates the complete frame first, avoids its unsafe buffered path, and
   contains dependency panics as typed codec errors. `molly` types do not
   appear in public APIs.
-- Molecular-owned source remains `#![forbid(unsafe_code)]`; there is no native
+- Kekule-owned source remains `#![forbid(unsafe_code)]`; there is no native
   library, C/C++, or CMake runtime.
 
 ## Tests

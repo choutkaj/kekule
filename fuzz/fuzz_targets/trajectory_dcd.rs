@@ -4,12 +4,12 @@ use std::io::Cursor;
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
-use molecular::core::{Atom, Element, Molecule};
-use molecular::small::SmallMolecule;
-use molecular::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use molecular::trajectory::{AtomOrderAssertion, FrameBuffer, TrajectoryReader};
-use molecular_trajectory_io::dcd::{DcdReadOptions, DcdReader};
-use molecular_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule::core::{Atom, Element, Molecule};
+use kekule::small::SmallMolecule;
+use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::trajectory::{AtomOrderAssertion, FrameBuffer, TrajectoryReader};
+use kekule_trajectory_io::dcd::{DcdReadOptions, DcdReader};
+use kekule_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 
 fn topology() -> &'static Topology {
     static TOPOLOGY: OnceLock<Topology> = OnceLock::new();

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use molecular::mmcif::{
+use kekule::mmcif::{
     interpret, interpret_ensemble, parse_str, MmcifEnsembleInterpretOptions, MmcifEntry,
     MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
 };

@@ -1,5 +1,5 @@
 [package]
-name = "molecular-fuzz"
+name = "kekule-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -9,8 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-molecular = { path = "../crates/molecular" }
-molecular-trajectory-io = { path = "../crates/molecular-trajectory-io" }
+kekule = { path = "../crates/kekule" }
+kekule-trajectory-io = { path = "../crates/kekule-trajectory-io" }
 
 [workspace]
 members = ["."]

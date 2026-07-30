@@ -11,7 +11,7 @@ pure-Rust XDR layer.
   constant atom count, and per-frame block sizes.
 - Preserve positions, triclinic box, optional velocities and forces, time,
   nonnegative step, and explicitly handled lambda metadata.
-- Convert native GROMACS units once to Molecular `f64` model units.
+- Convert native GROMACS units once to Kekule `f64` model units.
 - Writers use an explicit scalar precision, preserve each frame's optional
   field presence, require at least one frame, and reject every unsupported
   block or field instead of dropping it.

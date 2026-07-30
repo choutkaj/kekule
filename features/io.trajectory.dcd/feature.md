@@ -25,7 +25,7 @@ deterministic compatibility profile in either byte order.
 ## Implementation Notes
 
 - Coordinate values use the documented angstrom profile and convert once into
-  Molecular model units.
+  Kekule model units.
 - Sequential readers retain one handle and do not build an index; indexed
   readers structurally scan records without materializing frames.
 - Ordinary sequential frames detect EOF through the first actual cell or

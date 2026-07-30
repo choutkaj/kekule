@@ -1,6 +1,6 @@
 ---
 name: feature-review
-description: Independently audit molecular feature work for architecture compliance, correctness, benchmark claims, tests, resource safety, stale docs, metadata drift, and dashboard or skill synchronization.
+description: Independently audit Kekule feature work for architecture compliance, correctness, benchmark claims, tests, resource safety, stale docs, metadata drift, and dashboard or skill synchronization.
 ---
 
 # Feature Review

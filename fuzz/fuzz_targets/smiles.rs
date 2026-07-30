@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use molecular::smiles::{interpret, parse_str, write_with_options, SmilesWriteOptions};
+use kekule::smiles::{interpret, parse_str, write_with_options, SmilesWriteOptions};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {

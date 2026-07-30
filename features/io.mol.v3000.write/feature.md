@@ -7,7 +7,7 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 ## Behavior/API
 
 - Exposes `molfile::write_v3000`.
-- Emits `molecular` as the generated Molfile program identifier.
+- Emits `kekule` as the generated Molfile program identifier.
 - Emits three-line Molfile headers, V3000 `CTAB`, `COUNTS`, `ATOM`, and `BOND` sections in graph order.
 - Emits neutral generated headers plus coordinates from the first conformer,
   bond orders, maps, charges, isotopes, radicals, and supported source `CFG`
@@ -69,3 +69,4 @@ SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom ster
 - v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v14: Generate V3000 atom and bond serials directly in `u64` so one-based
   formatting cannot overflow fixed-width graph identifiers.
+- v15: Rename generated Molfile program provenance to `kekule`.
