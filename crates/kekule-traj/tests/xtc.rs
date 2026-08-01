@@ -4,13 +4,13 @@ use kekule::core::{Atom, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use kekule::trajectory::{
+use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule_traj::io::xtc::{XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
+use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule_traj::{
     AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
     TrajectoryError, TrajectoryReader, TrajectoryWriter,
 };
-use kekule::units::{Quantity, NANOMETER, PICOSECOND};
-use kekule_trajectory_io::xtc::{XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
-use kekule_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 use sha2::{Digest, Sha256};
 
 mod support;

@@ -9,17 +9,17 @@ use kekule::core::{Atom, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use kekule::trajectory::{
-    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
-};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
-use kekule_trajectory_io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
-use kekule_trajectory_io::trr::{
+use kekule_traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
+use kekule_traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter,
 };
-use kekule_trajectory_io::xtc::{XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
-use kekule_trajectory_io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
-use kekule_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule_traj::io::xtc::{XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
+use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
+use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule_traj::{
+    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter,
+};
 
 #[derive(Clone, Copy)]
 struct Profile {

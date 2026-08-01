@@ -1,0 +1,25 @@
+//! Fixed-topology molecular trajectory storage, streaming, file I/O, and
+//! trajectory-oriented workflows built on [`kekule`].
+//!
+//! `kekule-traj` owns ordered frame state and trajectory-specific operations.
+//! It reuses Kekule's immutable [`kekule::topology::Topology`], structural
+//! [`kekule::structure::Configuration`] values, units, geometry, selections,
+//! and borrowed [`kekule::structure::ModelView`] contract rather than defining
+//! a second molecular model.
+//!
+//! The crate provides owned [`TrajectoryFrame`] values, reusable
+//! [`FrameBuffer`] storage, finite in-memory [`Trajectory`] collections, and
+//! streaming reader/writer traits. Production file codecs and format-agnostic
+//! path factories live under [`io`].
+//!
+//! Coordinate-dependent kernels in `kekule` and external potential adapters
+//! can consume [`TrajectoryFrameView::model_view`] or
+//! [`FrameBuffer::model_view`] without copying coordinates.
+#![forbid(unsafe_code)]
+#![warn(rustdoc::broken_intra_doc_links)]
+
+mod trajectory;
+
+pub mod io;
+
+pub use trajectory::*;

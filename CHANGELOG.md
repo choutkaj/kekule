@@ -7,7 +7,7 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
-- Hard-rename the project, foundational crate, DREIDING adapter, trajectory I/O
+- Hard-rename the project, foundational crate, DREIDING adapter, trajectory
   companion, Rust import roots, repository URLs, generated Molfile provenance,
   and visual identity to Kekule for the breaking 0.3 release. Benchmark input
   digests now label core sources through a package-neutral namespace.
@@ -22,11 +22,16 @@ series, breaking public API changes increment the minor version.
   original/reconstructed `same_layout` regressions and validate MolStudio
   project round-trips through the ignored sibling path patch without Serde on
   Kekule runtime objects, source reparsing, or reperception.
-- Add the core contracts required by external trajectory codecs: complete
+- Establish `kekule-traj` as the one-way trajectory layer over `kekule`,
+  owning ordered frames, reusable buffers, in-memory trajectories, streaming
+  traits, production codecs under `kekule_traj::io`, and future MDTraj-like
+  trajectory workflows. Remove the pre-release `kekule::trajectory` module
+  and `kekule-trajectory-io` package without compatibility aliases.
+- Add the core contracts required by trajectory codecs: complete
   transactional allocation-reusing `FrameBuffer` publication, explicit
   exact-topology atom-order assertions, non-exhaustive trajectory format
   identity, typed file/codec error context, and downstream trait-implementation
-  tests. Add the supported one-way `kekule-trajectory-io` companion with
+  tests. Add supported bounded trajectory I/O with
   bounded signature-plus-extension detection, metadata/reports/limits,
   one-handle sequential and verified indexed access, strict atomic path
   writers that cannot publish after a failed frame, and strict multi-frame XYZ

@@ -41,11 +41,11 @@ coverage = ["multi-frame element order", "negative and positive decimal coordina
 
 [[writer_observation]]
 format = "xyz"
-writer = "kekule-trajectory-io xyz_interop_writer example"
+writer = "kekule-traj xyz_interop_writer example"
 independent_reader = "Atomic Simulation Environment (ASE)"
 reader_version = "3.26.0"
 reader_source_revision = "6c965f46a9449cbea275a6cc11fefb82da7df4bf"
-command = "cargo run -p kekule-trajectory-io --example xyz_interop_writer -- OUTPUT.xyz; uv run --python 3.12 --with ase==3.26.0 python -c <two-frame element-order/coordinate assertions>"
+command = "cargo run -p kekule-traj --example xyz_interop_writer -- OUTPUT.xyz; uv run --python 3.12 --with ase==3.26.0 python -c <two-frame element-order/coordinate assertions>"
 verified = ["frame count", "element order", "positions"]
 
 [[fixture]]
@@ -66,11 +66,11 @@ coverage = ["little endian", "unit cell", "two frames"]
 
 [[writer_observation]]
 format = "dcd"
-writer = "kekule-trajectory-io dcd_interop_writer example"
+writer = "kekule-traj dcd_interop_writer example"
 independent_reader = "MDAnalysis"
 reader_version = "2.9.0"
 reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
-command = "cargo run -p kekule-trajectory-io --example dcd_interop_writer -- OUTPUT.dcd; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame position/cell assertions>"
+command = "cargo run -p kekule-traj --example dcd_interop_writer -- OUTPUT.dcd; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame position/cell assertions>"
 verified = ["frame count", "positions", "triclinic cell"]
 
 [[fixture]]
@@ -91,11 +91,11 @@ coverage = ["f32", "all supported fields", "two frames"]
 
 [[writer_observation]]
 format = "trr"
-writer = "kekule-trajectory-io trr_interop_writer example"
+writer = "kekule-traj trr_interop_writer example"
 independent_reader = "MDAnalysis"
 reader_version = "2.9.0"
 reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
-command = "cargo run -p kekule-trajectory-io --example trr_interop_writer -- OUTPUT.trr; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame all-field assertions>"
+command = "cargo run -p kekule-traj --example trr_interop_writer -- OUTPUT.trr; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame all-field assertions>"
 verified = ["frame count", "positions", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
 
 [[fixture]]
@@ -116,9 +116,9 @@ coverage = ["1995 magic", "compressed atoms", "triclinic cell", "two frames"]
 
 [[writer_observation]]
 format = "xtc"
-writer = "kekule-trajectory-io xtc_interop_writer example"
+writer = "kekule-traj xtc_interop_writer example"
 independent_reader = "MDAnalysis"
 reader_version = "2.9.0"
 reader_source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
-command = "cargo run -p kekule-trajectory-io --example xtc_interop_writer -- OUTPUT.xtc; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame lossy position/time/step/cell assertions>"
+command = "cargo run -p kekule-traj --example xtc_interop_writer -- OUTPUT.xtc; uv run --python 3.12 --with MDAnalysis==2.9.0 python -c <two-frame lossy position/time/step/cell assertions>"
 verified = ["frame count", "lossy positions", "triclinic cell", "time", "step"]

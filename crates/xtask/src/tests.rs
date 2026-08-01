@@ -126,10 +126,7 @@ fn kekule_package_metadata_uses_the_hard_cutover_names() {
     for (relative_path, package_name) in [
         ("crates/kekule/Cargo.toml", "kekule"),
         ("crates/kekule-dreiding/Cargo.toml", "kekule-dreiding"),
-        (
-            "crates/kekule-trajectory-io/Cargo.toml",
-            "kekule-trajectory-io",
-        ),
+        ("crates/kekule-traj/Cargo.toml", "kekule-traj"),
         ("fuzz/Cargo.toml", "kekule-fuzz"),
     ] {
         let manifest: toml::Value = toml::from_str(
