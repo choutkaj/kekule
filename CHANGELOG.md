@@ -24,9 +24,12 @@ series, breaking public API changes increment the minor version.
   Kekule runtime objects, source reparsing, or reperception.
 - Establish `kekule-traj` as the one-way trajectory layer over `kekule`,
   owning ordered frames, reusable buffers, in-memory trajectories, streaming
-  traits, production codecs under `kekule_traj::io`, and future MDTraj-like
-  trajectory workflows. Remove the pre-release `kekule::trajectory` module
-  and `kekule-trajectory-io` package without compatibility aliases.
+  traits, production codecs under `kekule_traj::io`, and focused workflows
+  under `kekule_traj::analysis`. Add transactional complete-state rigid
+  superposition, explicit direct RMSD, and zero-copy fused aligned RMSD with
+  independent fit and measurement selections. Remove the pre-release
+  `kekule::trajectory` module and `kekule-trajectory-io` package without
+  compatibility aliases.
 - Add the core contracts required by trajectory codecs: complete
   transactional allocation-reusing `FrameBuffer` publication, explicit
   exact-topology atom-order assertions, non-exhaustive trajectory format

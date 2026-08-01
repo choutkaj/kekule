@@ -12,6 +12,11 @@
 //! streaming reader/writer traits. Production file codecs and format-agnostic
 //! path factories live under [`io`].
 //!
+//! In-memory trajectory superposition and RMSD workflows live under
+//! [`analysis`]. Direct RMSD never fits coordinates implicitly; the explicitly
+//! named aligned RMSD convenience performs fitting without materializing a
+//! transformed trajectory.
+//!
 //! Coordinate-dependent kernels in `kekule` and external potential adapters
 //! can consume [`TrajectoryFrameView::model_view`] or
 //! [`FrameBuffer::model_view`] without copying coordinates.
@@ -20,6 +25,7 @@
 
 mod trajectory;
 
+pub mod analysis;
 pub mod io;
 
 pub use trajectory::*;

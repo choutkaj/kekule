@@ -12,8 +12,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
-  `alignment`, and `modeling`. Ordered trajectory state and codecs live in the
-  one-way `kekule-traj` companion.
+  `alignment`, and `modeling`. Ordered trajectory state, codecs, and focused
+  trajectory workflows live in the one-way `kekule-traj` companion, whose
+  specialized options, reports, and errors remain under `kekule_traj::analysis`
+  and `kekule_traj::io`.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -102,6 +104,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   `kekule-traj` separately covers owned trajectory and reusable-buffer remaps.
 - A downstream alignment test compiles the focused options, result, structured
   error, topology-selection, transform-direction, and RMSD-unit surface.
+- A downstream `kekule-traj` analysis test compiles explicit direct RMSD,
+  transactional superposition, and fused aligned RMSD without adding companion
+  analysis types to the foundational Kekule facade or prelude.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
 
 ## Out Of Scope
@@ -168,3 +173,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v27: Keep the foundational facade focused by moving ordered frames,
   trajectory storage, streaming traits, and codecs to `kekule-traj` without a
   compatibility module in `kekule`.
+- v28: Add the companion's focused `analysis` namespace for explicit direct
+  RMSD, transactional superposition, and fused aligned RMSD while keeping the
+  foundational crate and prelude unchanged.

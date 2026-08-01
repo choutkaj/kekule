@@ -4,7 +4,7 @@
 
 Provide the `kekule-traj` companion as Kekule's coherent trajectory layer:
 ordered frames over one immutable topology, reusable storage, streaming file
-I/O, and future trajectory-oriented analysis workflows.
+I/O, and focused trajectory-oriented analysis workflows.
 
 ## Behavior/API
 
@@ -41,10 +41,12 @@ I/O, and future trajectory-oriented analysis workflows.
   `TrajectoryCodecErrorKind` values plus cloneable I/O/codec contexts report
   typed format, operation, source, frame, byte offset, count, and underlying
   I/O information.
-- General single-configuration geometry, selections, and potential kernels
-  remain in `kekule`. `kekule-traj` supplies zero-copy frame views and owns
-  trajectory-scale orchestration such as future slicing, superposition,
-  distance/contact series, RMSD/RMSF, and similar MDTraj-like workflows.
+- General single-configuration geometry, selections, alignment, and potential
+  kernels remain in `kekule`. `kekule-traj` supplies zero-copy frame views and
+  owns trajectory-scale orchestration. Initial superposition and direct/fused
+  RMSD workflows are tracked by `algo.trajectory-superposition` and
+  `algo.trajectory-rmsd`; slicing, distance/contact series, RMSF, and related
+  MDTraj-like workflows remain incremental companion features.
 
 ## Implementation Notes
 
@@ -79,8 +81,9 @@ I/O, and future trajectory-oriented analysis workflows.
 
 ## Out Of Scope
 
-- Reactive trajectories, dynamics integration, neighbor lists, and the planned
-  higher-level MDTraj-like slicing and analysis operations.
+- Reactive trajectories, dynamics integration, neighbor lists, and higher-level
+  MDTraj-like slicing, distance/contact, and RMSF operations not tracked by
+  focused implemented features.
 
 ## Revision Notes
 
@@ -103,3 +106,5 @@ I/O, and future trajectory-oriented analysis workflows.
 - v8: Move the full trajectory model and production codecs into the one-way
   `kekule-traj` companion, remove `kekule::trajectory`, and reserve this crate
   as the home for future trajectory-oriented workflows over Kekule kernels.
+- v9: Establish the companion analysis namespace and delegate implemented
+  trajectory superposition and RMSD behavior to focused feature contracts.
