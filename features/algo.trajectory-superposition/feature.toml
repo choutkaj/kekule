@@ -1,0 +1,8 @@
+id = "algo.trajectory-superposition"
+title = "Trajectory rigid superposition"
+area = "algorithms"
+domains = ["small-molecule", "macromolecule"]
+version = 1
+status = "supported"
+description = "Transactionally superpose every fixed-topology trajectory frame onto a selected reference frame while preserving coherent dynamic geometric state."
+depends_on = ["model.trajectory", "algo.rigid-alignment"]

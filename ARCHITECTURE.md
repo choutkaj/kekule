@@ -758,6 +758,24 @@ data may vary by frame.
 An in-memory `Trajectory` may own a finite collection of frames. Large
 trajectory I/O must not require materializing that collection.
 
+### Analysis and transformations
+
+Trajectory analysis remains explicit about whether coordinates are fitted.
+Direct RMSD measures selected coordinates exactly as stored and never centers,
+rotates, translates, or mutates them. Rigid superposition is a separately named
+transactional transformation over a finite in-memory trajectory: one
+topology-bound selection determines each frame transform, which is then applied
+to every position. Velocities, forces, and retained cell basis vectors rotate
+with the frame; time, step, observation provenance, and properties remain
+unchanged.
+
+A fused aligned-RMSD convenience computes the same fit-and-measure pipeline
+without materializing transformed frames. Its fit and measurement selections
+are independent so that global motion can be removed with one group while
+another group is measured. Failed fitting or replacement leaves the source
+trajectory unchanged. Periodic data is rejected by default; explicitly using
+stored coordinates performs no imaging, unwrapping, or minimum-image handling.
+
 ### Streaming and random access
 
 Trajectory I/O is streaming-first and uses caller-owned reusable buffers:
@@ -1096,8 +1114,9 @@ kekule <- kekule-traj <- applications
 reader/writer traits, typed trajectory errors, and the `io` codec namespace.
 It uses Kekule's topology, configuration, borrowed view, geometry, unit,
 selection, and topology-lineage contracts. General coordinate kernels remain
-in `kekule`; the companion may provide batch orchestration over ordered frames
-for slicing, superposition, distance/contact series, RMSD/RMSF, and similar
+in `kekule`; the companion provides transactional finite-trajectory
+superposition plus direct and fused aligned RMSD, and may add batch
+orchestration for slicing, distance/contact series, RMSF, and similar
 MDTraj-like workflows. It does not define duplicate domain objects. Codec
 source forbids unsafe code and does not require Chemfiles, a C/C++ compiler,
 or CMake.
