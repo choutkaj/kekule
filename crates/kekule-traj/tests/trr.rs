@@ -7,18 +7,18 @@ use kekule::core::{Atom, Element, Molecule, PropValue};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use kekule::trajectory::{
-    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryError, TrajectoryReader, TrajectoryWriter,
-};
 use kekule::units::{Quantity, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
-use kekule_trajectory_io::trr::{
+use kekule_traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision, TrrWriteOptions, TrrWriter,
     TRR_LAMBDA_PROPERTY,
 };
-use kekule_trajectory_io::{
+use kekule_traj::io::{
     open_indexed_trajectory, open_trajectory, CoordinateEncoding, ScalarPrecision,
     TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryTopologyBinding,
+};
+use kekule_traj::{
+    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
+    TrajectoryError, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -615,7 +615,7 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
     ));
     fs::write(&path, combined).unwrap();
     let options = TrajectoryOpenOptions::default().with_format_hint(
-        TrajectoryFormatHint::Explicit(kekule::trajectory::TrajectoryFormat::Trr),
+        TrajectoryFormatHint::Explicit(kekule_traj::TrajectoryFormat::Trr),
     );
 
     let (mut sequential, _) = open_trajectory(&path, binding(&topology), options.clone()).unwrap();

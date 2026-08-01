@@ -7,9 +7,9 @@ use libfuzzer_sys::fuzz_target;
 use kekule::core::{Atom, Element, Molecule};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use kekule::trajectory::{AtomOrderAssertion, FrameBuffer, TrajectoryReader};
-use kekule_trajectory_io::dcd::{DcdReadOptions, DcdReader};
-use kekule_trajectory_io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule_traj::{AtomOrderAssertion, FrameBuffer, TrajectoryReader};
+use kekule_traj::io::dcd::{DcdReadOptions, DcdReader};
+use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 
 fn topology() -> &'static Topology {
     static TOPOLOGY: OnceLock<Topology> = OnceLock::new();

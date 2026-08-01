@@ -81,3 +81,5 @@ deterministic compatibility profile in either byte order.
   restoration of all reader state.
 - v5: Use capped geometric offset growth, reject empty writer finishes, and
   remove the ordinary per-frame read-and-seek EOF probe.
+- v6: Publish the codec under `kekule_traj::io::dcd` as part of the unified
+  `kekule-traj` trajectory crate.

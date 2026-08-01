@@ -2,16 +2,16 @@
 
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::topology::Topology;
-use kekule::trajectory::{
+use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
     TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT, MODEL_TIME_UNIT};
 
-use crate::{
+use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
     require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
@@ -1117,7 +1117,7 @@ impl<W: Write + Seek> DcdWriter<W> {
         )?;
         let mut title = vec![0_u8; 84];
         title[..4].copy_from_slice(&options.endian.encode_i32(1));
-        let text = b"Created by kekule-trajectory-io";
+        let text = b"Created by kekule-traj";
         title[4..4 + text.len()].copy_from_slice(text);
         write_record(
             &mut writer,

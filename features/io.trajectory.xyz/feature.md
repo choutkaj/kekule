@@ -71,3 +71,5 @@ file-backed trajectory I/O.
   prove with guarded streams that frame N+1 is neither parsed nor consumed.
 - v5: Reject zero-atom writer construction and empty concrete/path finishes,
   and use bounded geometric offset reservation after successful frame parsing.
+- v6: Publish the codec under `kekule_traj::io::xyz` as part of the unified
+  `kekule-traj` trajectory crate.

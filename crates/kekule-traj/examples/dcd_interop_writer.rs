@@ -7,10 +7,10 @@ use kekule::core::{Atom, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, TopologyBuilder};
-use kekule::trajectory::{FrameBuffer, TrajectoryFormat, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM};
-use kekule_trajectory_io::dcd::DcdWriteOptions;
-use kekule_trajectory_io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
+use kekule_traj::io::dcd::DcdWriteOptions;
+use kekule_traj::io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
+use kekule_traj::{FrameBuffer, TrajectoryFormat, TrajectoryWriter};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let output = std::env::args_os()
