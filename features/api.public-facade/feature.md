@@ -12,7 +12,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
-  `trajectory`, `alignment`, and `modeling`.
+  `alignment`, and `modeling`. Ordered trajectory state and codecs live in the
+  one-way `kekule-traj` companion.
 - The crate root no longer blanket re-exports implementation modules.
 - The prelude is intentionally small and limited to common user-facing types.
 - `SmallMolecule` owns small-molecule convenience methods and hides its raw graph field behind `graph()`, `graph_mut()`, and `into_graph()`.
@@ -46,17 +47,17 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   exact perception construction plus whole-state installation, targeted SMCRA
   child enrichment, and exact stereo-group tombstone replay do not widen the
   crate root or prelude.
-- Immutable system structure, coordinate containers, and frames live under
-  `topology`, `structure`, and `trajectory`; potentials and minimization remain
-  under `modeling`. These focused types are not added to the prelude.
+- Immutable system topology and single-configuration containers live under
+  `topology` and `structure`; potentials and minimization remain under
+  `modeling`. These focused types are not added to the prelude.
 - The topology facade names complete static equality `Topology::same_layout`
   and restricts `TopologyMapping::between_identical_layouts` to identity maps
   over that exact layout. Checked explicit mappings and topology-edit results
   expose structured consistency failures.
 - Immutable whole-instance edits live under the focused
-  `topology::transform` namespace. Structure and trajectory containers expose
-  explicit remapping methods and typed errors without expanding the crate root
-  or prelude.
+  `topology::transform` namespace. Core structure containers expose explicit
+  remapping methods and typed errors; `kekule-traj` builds frame and trajectory
+  remapping on that public lineage contract.
 - `Model::instance_to_conformer` provides an explicit transactional path from
   instance-qualified model positions back to a compatible local conformer.
 - Explicit small-molecule hydrogen topology transforms live under `hydrogens`
@@ -97,8 +98,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Public topology tests compile the exact-identity, same-layout, checked
   identity-mapping, and checked edit-result surface.
 - Downstream transformation tests compile instance retain/remove, stable
-  mapping traversal, model and selection remapping, ensemble remapping, owned
-  trajectory remapping, and reusable target-buffer remapping.
+  mapping traversal, model and selection remapping, and ensemble remapping;
+  `kekule-traj` separately covers owned trajectory and reusable-buffer remaps.
 - A downstream alignment test compiles the focused options, result, structured
   error, topology-selection, transform-direction, and RMSD-unit surface.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
@@ -164,3 +165,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   `core` and `bio` modules without adding Serde, root aliases, or prelude items.
 - v26: Hard-rename the published foundation package and Rust import root to
   `kekule` for the 0.3 release without compatibility aliases.
+- v27: Keep the foundational facade focused by moving ordered frames,
+  trajectory storage, streaming traits, and codecs to `kekule-traj` without a
+  compatibility module in `kekule`.

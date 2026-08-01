@@ -5,7 +5,7 @@ use kekule::modeling::potential::{Potential, PotentialError};
 use kekule::small::SmallMolecule;
 use kekule::structure::{Ensemble, Model};
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
-use kekule::trajectory::{FrameBuffer, TrajectoryFrame};
+use kekule_traj::{FrameBuffer, TrajectoryFrame};
 
 use crate::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions, QeqGrouping};
 

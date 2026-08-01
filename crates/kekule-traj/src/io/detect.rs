@@ -1,11 +1,9 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use kekule::trajectory::{
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation,
-};
+use crate::{TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryIoOperation};
 
-use crate::{
+use super::{
     codec_context, io_context, FormatDetectionEvidence, TrajectoryFormatHint, TrajectoryIoLimits,
 };
 

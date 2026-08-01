@@ -1,8 +1,8 @@
-//! Bounded pure-Rust file codecs for Kekule fixed-topology trajectories.
+//! Bounded pure-Rust file codecs for fixed-topology trajectories.
 //!
-//! This crate depends one-way on [`kekule`] and implements its reusable
-//! frame-buffer streaming contracts. It does not define another topology,
-//! frame, coordinate, or unit model.
+//! The codecs implement this crate's reusable frame-buffer streaming
+//! contracts and depend on [`kekule`] only for topology, structural state,
+//! geometry, and units.
 //!
 //! # Supported profiles
 //!
@@ -41,9 +41,6 @@
 //! seeking. Amber NetCDF, PDB, GRO/G96, Amber ASCII, LAMMPS dump, reactive
 //! trajectories, and compressed wrappers are outside this initial profile and
 //! return structured unsupported-format or unsupported-variant errors.
-#![forbid(unsafe_code)]
-#![warn(rustdoc::broken_intra_doc_links)]
-
 pub mod dcd;
 mod detect;
 pub mod trr;
@@ -55,13 +52,13 @@ use std::io::{self, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use kekule::topology::Topology;
-use kekule::trajectory::{
+use crate::{
     AtomOrderAssertion, AtomOrderAssertionKind, FrameBuffer, SeekableTrajectoryReader,
     TrajectoryCodecErrorContext, TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat,
     TrajectoryFrameView, TrajectoryIoErrorContext, TrajectoryIoOperation, TrajectoryReader,
     TrajectoryWriter,
 };
+use kekule::topology::Topology;
 use kekule::units::Unit;
 
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -773,13 +770,6 @@ pub fn open_trajectory(
                 ],
             )
         }
-        format => {
-            return Err(unimplemented_format(
-                format,
-                TrajectoryIoOperation::Open,
-                &label,
-            ))
-        }
     };
     let report = TrajectoryOpenReport {
         selected_format: detection.format,
@@ -862,13 +852,6 @@ pub fn open_indexed_trajectory(
                 metadata,
                 vec!["XTC index fully decoded and verified every compressed frame".into()],
             )
-        }
-        format => {
-            return Err(unimplemented_format(
-                format,
-                TrajectoryIoOperation::Index,
-                &label,
-            ))
         }
     };
     let report = TrajectoryOpenReport {
@@ -1154,14 +1137,6 @@ pub fn create_trajectory_writer(
             xtc::XtcWriter::new(BufWriter::new(file), topology, options.xtc, label)
                 .map(FileWriterInner::Xtc)
         }
-        format => {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(unimplemented_format(
-                format,
-                TrajectoryIoOperation::Open,
-                &label,
-            ));
-        }
     };
     let inner = match inner_result {
         Ok(inner) => inner,
@@ -1392,20 +1367,6 @@ pub(crate) fn codec_context(
         .with_source_label(source_label)
         .with_detail(detail)
         .into()
-}
-
-fn unimplemented_format(
-    format: TrajectoryFormat,
-    operation: TrajectoryIoOperation,
-    source_label: &str,
-) -> TrajectoryError {
-    codec_context(
-        TrajectoryCodecErrorKind::UnsupportedVariant,
-        operation,
-        Some(format),
-        source_label,
-        format!("{format} is recognized but its codec is not implemented"),
-    )
 }
 
 #[cfg(test)]

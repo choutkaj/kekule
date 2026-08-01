@@ -1,5 +1,5 @@
 [package]
-name = "kekule-trajectory-io"
+name = "kekule-traj"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Pure-Rust file codecs for Kekule fixed-topology trajectories."
+description = "Trajectory storage, streaming, workflows, and pure-Rust file codecs for Kekule."
 publish = true
 
 [dependencies]

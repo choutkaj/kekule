@@ -15,9 +15,10 @@ compatible topology-bound structure state through checked lineage.
 - Transform results contain one exact target topology and a complete checked
   `TopologyMapping` across definitions, instances, qualified atoms and bonds,
   and dense atom and bond indices.
-- Topology-bound positions, configurations, observations, models, atom
-  selections, ensembles, trajectory frames, in-memory trajectories, and
-  reusable frame buffers can be remapped explicitly.
+- Foundational topology-bound positions, configurations, observations, models,
+  atom selections, and ensembles can be remapped explicitly. `kekule-traj`
+  uses the same public mapping helpers for trajectory frames, in-memory
+  trajectories, and reusable frame buffers.
 - Every remap validates exact source, mapping-source, mapping-target, and target
   topology identity.
 - Removed selected atoms require an explicit strict or drop policy.
@@ -70,3 +71,6 @@ compatible topology-bound structure state through checked lineage.
 - v1: Track the complete-instance subset and explicit state-remapping milestone.
 - v2: Correct the ordered-map complexity contract and strengthen reusable-buffer
   transactionality and stale-state regressions.
+- v3: Separate foundational topology and structure remapping from the
+  `kekule-traj` frame/trajectory layer, exposing narrow complete dense-state
+  validation helpers for external topology-bound containers.

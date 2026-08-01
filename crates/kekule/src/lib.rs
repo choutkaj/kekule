@@ -12,7 +12,9 @@
 //! - [`structure::Model`] = one [`topology::Topology`] plus one
 //!   [`structure::Configuration`];
 //! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
-//! - [`trajectory::Trajectory`] = one topology plus ordered frames.
+//!
+//! Ordered multi-frame trajectories and their file codecs live in the
+//! one-way `kekule-traj` companion crate.
 //!
 //! Coordinate-dependent kernels consume borrowed [`structure::ModelView`]
 //! values, allowing the same analysis or prepared potential to operate over a
@@ -44,7 +46,6 @@ pub mod query;
 pub mod small;
 pub mod structure;
 pub mod topology;
-pub mod trajectory;
 pub mod units;
 
 /// Syntax-independent substructure matching algorithms.
