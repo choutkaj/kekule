@@ -3,15 +3,15 @@
 
 use std::{fmt, io};
 
-use crate::core::PropMap;
-use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::{
-    remap_dense_values, validate_state_mapping, Configuration, ConfigurationView, ModelError,
-    ModelView, ObservationError, PositionError, Positions, StructureObservation,
-    TopologyRemapError,
+use kekule::core::PropMap;
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::structure::{
+    remap::{dense_atom_values, validate_complete_atom_mapping},
+    Configuration, ConfigurationView, ModelError, ModelView, ObservationError, PositionError,
+    Positions, StructureObservation, TopologyRemapError,
 };
-use crate::topology::{InstanceAtomId, Topology, TopologyIdentity, TopologyMapping};
-use crate::units::{
+use kekule::topology::{InstanceAtomId, Topology, TopologyIdentity, TopologyMapping};
+use kekule::units::{
     Quantity, Unit, UnitError, MODEL_FORCE_UNIT, MODEL_TIME_UNIT, MODEL_VELOCITY_UNIT,
 };
 
@@ -128,7 +128,7 @@ impl TopologyVectors {
         }
         Ok(Self {
             topology: target.identity(),
-            values: remap_dense_values(&self.values, source, target, mapping)?,
+            values: dense_atom_values(&self.values, source, target, mapping)?,
             unit: self.unit,
         })
     }
@@ -559,7 +559,7 @@ impl FrameBuffer {
         Ok(())
     }
 
-    pub fn set_cell(&mut self, cell: Option<crate::geometry::PeriodicCell>) {
+    pub fn set_cell(&mut self, cell: Option<kekule::geometry::PeriodicCell>) {
         self.configuration.set_cell(cell);
     }
 
@@ -672,10 +672,9 @@ impl FrameBuffer {
             return Err(FrameError::TopologyIdentityMismatch);
         }
 
-        let position_factor = self
-            .configuration
+        self.configuration
             .positions()
-            .validate_replacement(&self.topology, &data.positions)?;
+            .validate_all(&self.topology, &data.positions)?;
         let velocities = data
             .velocities
             .map(|values| {
@@ -715,7 +714,7 @@ impl FrameBuffer {
 
         self.configuration
             .positions_mut()
-            .copy_from_validated(data.positions.value(), position_factor);
+            .set_all(&self.topology, data.positions)?;
         self.configuration.set_cell(data.cell);
         match velocities {
             Some((values, factor)) => {
@@ -767,7 +766,7 @@ impl FrameBuffer {
         {
             return Err(TrajectoryRemapError::SourceFrameTopologyMismatch);
         }
-        validate_state_mapping(frame.topology, &self.topology, mapping)?;
+        validate_complete_atom_mapping(frame.topology, &self.topology, mapping)?;
         validate_borrowed_array(frame.velocities, frame.topology)?;
         validate_borrowed_array(frame.forces, frame.topology)?;
 
@@ -785,9 +784,12 @@ impl FrameBuffer {
             .transpose()?;
         let props = frame.props.clone();
 
-        self.configuration
-            .positions_mut()
-            .copy_remapped_from_validated(frame.configuration.positions(), mapping);
+        self.configuration.positions_mut().copy_remapped_from(
+            frame.configuration.positions(),
+            frame.topology,
+            &self.topology,
+            mapping,
+        )?;
         self.configuration
             .set_cell(frame.configuration.cell().copied());
         match (frame.velocities, velocity_factor) {
@@ -1150,7 +1152,7 @@ impl CoordinateFrameReader {
             .into_iter()
             .map(|frame| {
                 Positions::new(&topology, frame)
-                    .map(|positions| positions.values_raw().to_vec())
+                    .map(|positions| positions.values().value().to_vec())
                     .map_err(TrajectoryError::Position)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1176,7 +1178,7 @@ impl TrajectoryReader for CoordinateFrameReader {
         };
         destination.set_positions(Quantity::new(
             frame.as_slice(),
-            crate::units::MODEL_LENGTH_UNIT,
+            kekule::units::MODEL_LENGTH_UNIT,
         ))?;
         destination.reset_dynamic_state();
         self.cursor += 1;
@@ -1698,10 +1700,12 @@ impl From<TrajectoryCodecErrorContext> for TrajectoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, Element, Molecule, PropValue};
-    use crate::small::SmallMolecule;
-    use crate::topology::{transform::retain_instances, MoleculeInstanceMetadata, TopologyBuilder};
-    use crate::units::{ANGSTROM, PICOSECOND};
+    use kekule::core::{Atom, Element, Molecule, PropValue};
+    use kekule::small::SmallMolecule;
+    use kekule::topology::{
+        transform::retain_instances, MoleculeInstanceMetadata, TopologyBuilder,
+    };
+    use kekule::units::{ANGSTROM, PICOSECOND};
 
     fn one_atom_topology() -> Topology {
         let mut graph = Molecule::new();
@@ -1801,7 +1805,7 @@ mod tests {
         let mut first = frame(&topology, 0.0, 0.0);
         let observation = StructureObservation::empty(&topology);
         first.set_observation(Some(observation)).unwrap();
-        let cell = crate::geometry::PeriodicCell::orthorhombic(
+        let cell = kekule::geometry::PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
             [true; 3],
         )
@@ -1871,8 +1875,7 @@ mod tests {
             )
             .unwrap();
 
-        let position_pointer = buffer.configuration.positions().values_raw().as_ptr();
-        let position_capacity = buffer.configuration.positions().capacity();
+        let position_pointer = buffer.configuration.positions().values().value().as_ptr();
         let velocity_pointer = buffer.velocities.0.values.as_ptr();
         let velocity_capacity = buffer.velocities.0.values.capacity();
         let force_pointer = buffer.forces.0.values.as_ptr();
@@ -1899,19 +1902,15 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(
-            buffer.configuration.positions().values_raw().as_ptr(),
+            buffer.configuration.positions().values().value().as_ptr(),
             position_pointer
-        );
-        assert_eq!(
-            buffer.configuration.positions().capacity(),
-            position_capacity
         );
         assert_eq!(buffer.velocities.0.values.as_ptr(), velocity_pointer);
         assert_eq!(buffer.velocities.0.values.capacity(), velocity_capacity);
         assert_eq!(buffer.forces.0.values.as_ptr(), force_pointer);
         assert_eq!(buffer.forces.0.values.capacity(), force_capacity);
         assert_eq!(
-            buffer.configuration.positions().values_raw(),
+            buffer.configuration.positions().values().value(),
             &replacement_positions
         );
         assert!(buffer.configuration.cell().is_none());
@@ -2080,7 +2079,7 @@ mod tests {
         )
         .unwrap();
         let mut buffer = FrameBuffer::new(topology.clone());
-        let cell = crate::geometry::PeriodicCell::orthorhombic(
+        let cell = kekule::geometry::PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
             [true; 3],
         )
@@ -2186,7 +2185,6 @@ mod tests {
         let position_pointer = buffer.configuration.positions().values().value().as_ptr();
         let velocity_pointer = buffer.velocities.0.values.as_ptr();
         let force_pointer = buffer.forces.0.values.as_ptr();
-        let position_capacity = buffer.configuration.positions().capacity();
         let velocity_capacity = buffer.velocities.0.values.capacity();
         let force_capacity = buffer.forces.0.values.capacity();
 
@@ -2200,10 +2198,6 @@ mod tests {
             );
             assert_eq!(buffer.velocities.0.values.as_ptr(), velocity_pointer);
             assert_eq!(buffer.forces.0.values.as_ptr(), force_pointer);
-            assert_eq!(
-                buffer.configuration.positions().capacity(),
-                position_capacity
-            );
             assert_eq!(buffer.velocities.0.values.capacity(), velocity_capacity);
             assert_eq!(buffer.forces.0.values.capacity(), force_capacity);
         }

@@ -15,12 +15,12 @@ use kekule::topology::{
     AtomSelection, InstanceAtomId, InstanceBondId, MoleculeDefinitionId, MoleculeInstanceId,
     MoleculeInstanceMetadata, MoleculeRole, Topology, TopologyBuilder, TopologyMapping,
 };
-use kekule::trajectory::{
-    Forces, FrameBuffer, Trajectory, TrajectoryFrame, TrajectoryRemapError, Velocities,
-};
 use kekule::units::{
     Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT,
     PICOSECOND,
+};
+use kekule_traj::{
+    Forces, FrameBuffer, Trajectory, TrajectoryFrame, TrajectoryRemapError, Velocities,
 };
 
 struct Fixture {
@@ -543,6 +543,28 @@ fn state_remapping_rejects_identity_substitutes_and_unmapped_target_atoms() {
         ),
         Err(TopologyRemapError::MappingTargetMismatch)
     );
+
+    let mut wrong_destination = Positions::zeros(independent_edit.topology());
+    assert_eq!(
+        wrong_destination.copy_remapped_from(
+            source.configuration().positions(),
+            &fixture.topology,
+            edit.topology(),
+            edit.mapping(),
+        ),
+        Err(TopologyRemapError::TargetTopologyMismatch)
+    );
+    let mut destination = Positions::zeros(edit.topology());
+    let allocation = destination.values().value().as_ptr();
+    destination
+        .copy_remapped_from(
+            source.configuration().positions(),
+            &fixture.topology,
+            edit.topology(),
+            edit.mapping(),
+        )
+        .expect("valid allocation-reusing position remap");
+    assert_eq!(destination.values().value().as_ptr(), allocation);
 
     let (source_topology, target_topology, mapping, target_added) = mapping_with_added_atom();
     let positions = Positions::new(

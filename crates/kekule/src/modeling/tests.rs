@@ -14,7 +14,6 @@ use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole,
     TopologyBuildError,
 };
-use crate::trajectory::{FrameBuffer, TrajectoryFrame};
 use crate::units::{
     Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
     NANOMETER,
@@ -385,7 +384,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
 }
 
 #[test]
-fn harmonic_potential_rejects_periodic_state_across_all_structural_views() {
+fn harmonic_potential_rejects_periodic_model_and_ensemble_state() {
     let (small, conformer, _, _, bond) = two_atom_small(9.8);
     let mut model = Model::from_small_molecule(&small, conformer).unwrap();
     model
@@ -410,19 +409,6 @@ fn harmonic_potential_rejects_periodic_state_across_all_structural_views() {
     assert!(potential
         .evaluate(nonperiodic_ensemble.views().next().unwrap())
         .is_ok());
-    let nonperiodic_frame = TrajectoryFrame::new(model.configuration().clone());
-    assert!(potential
-        .evaluate(
-            nonperiodic_frame
-                .view(model.topology())
-                .unwrap()
-                .model_view()
-        )
-        .is_ok());
-    let mut nonperiodic_buffer = FrameBuffer::new(model.topology().clone());
-    nonperiodic_buffer.set_positions(model.positions()).unwrap();
-    assert!(potential.evaluate(nonperiodic_buffer.model_view()).is_ok());
-
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
         [true; 3],
@@ -440,19 +426,6 @@ fn harmonic_potential_rejects_periodic_state_across_all_structural_views() {
         potential.evaluate(periodic_ensemble.views().next().unwrap()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
-    let periodic_frame = TrajectoryFrame::new(periodic_model.configuration().clone());
-    assert_eq!(
-        potential.evaluate(periodic_frame.view(model.topology()).unwrap().model_view()),
-        Err(PotentialError::UnsupportedPeriodicCell)
-    );
-    let mut periodic_buffer = FrameBuffer::new(model.topology().clone());
-    periodic_buffer.set_positions(model.positions()).unwrap();
-    periodic_buffer.set_cell(Some(cell));
-    assert_eq!(
-        potential.evaluate(periodic_buffer.model_view()),
-        Err(PotentialError::UnsupportedPeriodicCell)
-    );
-
     let mut independent = Model::from_small_molecule(&small, conformer).unwrap();
     independent.set_cell(Some(cell));
     assert_eq!(

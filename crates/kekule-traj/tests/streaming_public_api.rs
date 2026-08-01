@@ -2,11 +2,11 @@ use kekule::core::{Atom, Element, Molecule};
 use kekule::geometry::Point3;
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use kekule::trajectory::{
+use kekule::units::{Quantity, ANGSTROM};
+use kekule_traj::{
     AtomOrderAssertion, FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryError,
     TrajectoryFrameView, TrajectoryReader, TrajectoryWriter,
 };
-use kekule::units::{Quantity, ANGSTROM};
 
 fn topology() -> Topology {
     let mut graph = Molecule::new();

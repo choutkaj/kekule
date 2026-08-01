@@ -63,8 +63,9 @@ Trajectory
   ordered collection or stream of TrajectoryFrame values
 ```
 
-`Topology` is shared by `Model`, `Ensemble`, `Trajectory`, prepared force
-fields, compiled selections, and analyses. Coordinate updates never modify it.
+`Topology` is shared by `Model`, `Ensemble`, the companion crate's
+`Trajectory`, prepared force fields, compiled selections, and analyses.
+Coordinate updates never modify it.
 
 ## Architectural boundaries
 
@@ -718,6 +719,11 @@ error; they are not represented by silently sparse dense arrays.
 
 ### Semantics
 
+Trajectory ownership belongs to the one-way `kekule-traj` companion rather
+than the foundational `kekule` crate. The companion reuses `kekule::Topology`,
+`Configuration`, `ModelView`, geometry, units, selections, and general
+single-configuration kernels; it does not define a second molecular model.
+
 `Trajectory` represents an ordered sequence of frames sharing one exact,
 immutable topology:
 
@@ -850,8 +856,9 @@ pub struct ModelView<'a> {
 }
 ```
 
-`Model`, ensemble members, trajectory frames, and reusable frame buffers can
-all provide `ModelView` without copying topology or coordinates.
+`Model` and ensemble members in `kekule`, plus trajectory frames and reusable
+frame buffers in `kekule-traj`, can all provide `ModelView` without copying
+topology or coordinates.
 
 Read-only analyses such as DSSP, RMSD, alignment, contact analysis, and
 geometric measurements should accept this view or a narrower equivalent.
@@ -1035,10 +1042,6 @@ structure
     Positions, Configuration, Model, Ensemble, borrowed structural views,
     structure-observation state
 
-trajectory
-    TrajectoryFrame, FrameBuffer, in-memory Trajectory,
-    reader/writer traits and trajectory errors
-
 smiles / molfile / sdf / mmcif
     format-specific documents, interpretation, reports, and writers
 
@@ -1081,17 +1084,23 @@ Dependency-heavy binary trajectory codecs and force-field adapters should live
 in separate crates when required, keeping the foundational `kekule` crate
 lightweight.
 
-Production fixed-topology file codecs live in the one-way
-`kekule-trajectory-io` workspace companion:
+Ordered trajectory state, storage, streaming, file codecs, and
+trajectory-oriented workflows live in the one-way `kekule-traj` workspace
+companion:
 
 ```text
-kekule <- kekule-trajectory-io <- applications
+kekule <- kekule-traj <- applications
 ```
 
-The companion implements Kekule's streaming traits and uses its topology,
-frame-buffer, geometry, unit, format-identity, and typed error contracts. It
-does not define duplicate domain objects. Kekule-owned codec source forbids
-unsafe code and does not require Chemfiles, a C/C++ compiler, or CMake.
+`kekule-traj` owns `TrajectoryFrame`, `FrameBuffer`, in-memory `Trajectory`,
+reader/writer traits, typed trajectory errors, and the `io` codec namespace.
+It uses Kekule's topology, configuration, borrowed view, geometry, unit,
+selection, and topology-lineage contracts. General coordinate kernels remain
+in `kekule`; the companion may provide batch orchestration over ordered frames
+for slicing, superposition, distance/contact series, RMSD/RMSF, and similar
+MDTraj-like workflows. It does not define duplicate domain objects. Codec
+source forbids unsafe code and does not require Chemfiles, a C/C++ compiler,
+or CMake.
 
 The supported initial companion profile is intentionally explicit:
 
@@ -1156,7 +1165,8 @@ The following statements summarize the design:
 5. One topology has one immutable authoritative dense ordering.
 6. `Model` is one topology plus one complete configuration.
 7. `Ensemble` is one topology plus finite non-temporal members.
-8. `Trajectory` is one topology plus ordered frames and supports streaming I/O.
+8. `kekule-traj::Trajectory` is one Kekule topology plus ordered frames and
+   supports streaming I/O.
 9. Periodic cells, velocities, forces, time, and observation data are dynamic
    state, not topology.
 10. Prepared systems and compiled selections bind to exact topology identity.

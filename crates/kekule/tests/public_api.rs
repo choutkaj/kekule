@@ -304,15 +304,11 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
-fn topology_ensemble_and_streaming_trajectory_public_api() -> Result<(), Box<dyn std::error::Error>>
-{
+fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::geometry::Point3;
     use kekule::structure::{Configuration, Ensemble, EnsembleMember, Model, Positions};
     use kekule::topology::{
         AtomSelection, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
-    };
-    use kekule::trajectory::{
-        FrameBuffer, MemoryTrajectoryReader, Trajectory, TrajectoryFrame, TrajectoryReader,
     };
     use kekule::units::{Quantity, ANGSTROM};
 
@@ -360,15 +356,6 @@ fn topology_ensemble_and_streaming_trajectory_public_api() -> Result<(), Box<dyn
     )?;
     assert_eq!(ensemble.views().count(), 2);
 
-    let trajectory = Trajectory::from_frames(
-        topology.clone(),
-        [TrajectoryFrame::new(Configuration::new(second_positions))],
-    )?;
-    let mut reader = MemoryTrajectoryReader::new(&trajectory);
-    let mut buffer = FrameBuffer::new(topology);
-    assert!(reader.read_next(&mut buffer)?);
-    assert_eq!(buffer.model_view().positions().value()[0].x, 0.1);
-    assert!(!reader.read_next(&mut buffer)?);
     Ok(())
 }
 

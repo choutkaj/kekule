@@ -6,17 +6,17 @@ use kekule::core::{Atom, Element, Molecule, PropValue};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use kekule::trajectory::{
-    AtomOrderAssertion, FrameBuffer, FrameBufferData, SeekableTrajectoryReader,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryReader,
-    TrajectoryWriter,
-};
 use kekule::units::{Quantity, ANGSTROM, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
-use kekule_trajectory_io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
-use kekule_trajectory_io::{
+use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
+use kekule_traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
     FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
     TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryTopologyBinding, TrajectoryWriteOptions,
+};
+use kekule_traj::{
+    AtomOrderAssertion, FrameBuffer, FrameBufferData, SeekableTrajectoryReader,
+    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryReader,
+    TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
@@ -83,7 +83,7 @@ fn temporary_path(extension: Option<&str>) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let mut name = format!("kekule-trajectory-io-{}-{nonce}", std::process::id());
+    let mut name = format!("kekule-traj-{}-{nonce}", std::process::id());
     if let Some(extension) = extension {
         name.push('.');
         name.push_str(extension);

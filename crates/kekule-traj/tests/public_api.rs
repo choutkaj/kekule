@@ -5,12 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use kekule::core::{Atom, Element, Molecule};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
-use kekule::trajectory::{
-    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryReader,
-};
-use kekule_trajectory_io::{
+use kekule_traj::io::{
     open_indexed_trajectory, open_trajectory, FieldAvailability, RandomAccessCapability,
     TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryTopologyBinding,
+};
+use kekule_traj::{
+    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryReader,
 };
 
 fn topology() -> Topology {

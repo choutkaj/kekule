@@ -2,17 +2,17 @@
 
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 
-use kekule::core::Element;
-use kekule::geometry::Point3;
-use kekule::topology::Topology;
-use kekule::trajectory::{
+use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
     TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
+use kekule::core::Element;
+use kekule::geometry::Point3;
+use kekule::topology::Topology;
 use kekule::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT};
 
-use crate::{
+use super::{
     codec_context, io_context, projected_index_limit, require_nonempty_writer,
     reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
 };
@@ -57,7 +57,7 @@ impl Default for XyzWriteOptions {
         Self {
             length_unit: ANGSTROM,
             decimal_places: 8,
-            comment: "written by kekule-trajectory-io".into(),
+            comment: "written by kekule-traj".into(),
         }
     }
 }

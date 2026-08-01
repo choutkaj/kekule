@@ -3,17 +3,17 @@
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use kekule::core::{PropMap, PropValue};
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::topology::Topology;
-use kekule::trajectory::{
+use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
     TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryFrameView,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
+use kekule::core::{PropMap, PropValue};
+use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::topology::Topology;
 use kekule::units::{Quantity, KILOJOULE_PER_MOLE, MODEL_LENGTH_UNIT, NANOMETER, PICOSECOND};
 
-use crate::{
+use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
     require_nonempty_writer, reserve_index_for_push, TrajectoryIoLimits, TrajectoryTopologyBinding,
 };

@@ -72,3 +72,5 @@ pure-Rust XDR layer.
   and reusable scratch before indexed publication.
 - v5: Use capped geometric offset growth after successful decode and reject
   empty concrete and atomic writer finishes.
+- v6: Publish the codec under `kekule_traj::io::trr` as part of the unified
+  `kekule-traj` trajectory crate.

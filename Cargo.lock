@@ -1056,10 +1056,11 @@ dependencies = [
  "dreid-forge",
  "dreid-kernel",
  "kekule",
+ "kekule-traj",
 ]
 
 [[package]]
-name = "kekule-trajectory-io"
+name = "kekule-traj"
 version = "0.3.0"
 dependencies = [
  "kekule",

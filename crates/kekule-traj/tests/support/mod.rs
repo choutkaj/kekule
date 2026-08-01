@@ -4,7 +4,7 @@ use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use kekule::trajectory::FrameBuffer;
+use kekule_traj::FrameBuffer;
 
 pub fn buffer_snapshot(buffer: &FrameBuffer) -> String {
     format!("{buffer:#?}")

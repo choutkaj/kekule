@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 kekule = { path = "../crates/kekule" }
-kekule-trajectory-io = { path = "../crates/kekule-trajectory-io" }
+kekule-traj = { path = "../crates/kekule-traj" }
 
 [workspace]
 members = ["."]

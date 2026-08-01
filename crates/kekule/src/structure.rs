@@ -85,11 +85,41 @@ impl Positions {
         if !self.is_compatible(source) {
             return Err(TopologyRemapError::SourceTopologyMismatch);
         }
-        let values = remap_dense_values(&self.values, source, target, mapping)?;
+        let values = remap::dense_atom_values(&self.values, source, target, mapping)?;
         Ok(Self {
             topology: target.identity(),
             values,
         })
+    }
+
+    /// Copies complete positions through a checked topology lineage mapping
+    /// while retaining this array's allocation.
+    ///
+    /// Validation completes before any destination position changes.
+    pub fn copy_remapped_from(
+        &mut self,
+        source: &Self,
+        source_topology: &Topology,
+        target_topology: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<(), TopologyRemapError> {
+        if !source.is_compatible(source_topology) {
+            return Err(TopologyRemapError::SourceTopologyMismatch);
+        }
+        if !self.is_compatible(target_topology) {
+            return Err(TopologyRemapError::TargetTopologyMismatch);
+        }
+        if source.values.len() != source_topology.atom_count() {
+            return Err(TopologyRemapError::SourceAtomCountMismatch {
+                expected: source_topology.atom_count(),
+                actual: source.values.len(),
+            });
+        }
+        remap::validate_complete_atom_mapping(source_topology, target_topology, mapping)?;
+        for (source_index, target_index) in mapping.atom_index_pairs() {
+            self.values[target_index.index()] = source.values[source_index.index()];
+        }
+        Ok(())
     }
 
     pub fn position_at(&self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
@@ -145,6 +175,21 @@ impl Positions {
         Ok(())
     }
 
+    /// Validates a complete replacement without changing this array.
+    ///
+    /// This supports external topology-bound containers that must validate
+    /// several coupled fields before publishing any of them transactionally.
+    pub fn validate_all<T>(
+        &self,
+        topology: &Topology,
+        positions: &Quantity<T>,
+    ) -> Result<(), PositionError>
+    where
+        T: AsRef<[Point3]>,
+    {
+        self.validate_replacement(topology, positions).map(drop)
+    }
+
     pub(crate) fn validate_replacement<T>(
         &self,
         topology: &Topology,
@@ -176,21 +221,6 @@ impl Positions {
 
     pub(crate) fn values_raw(&self) -> &[Point3] {
         &self.values
-    }
-
-    #[cfg(test)]
-    pub(crate) fn capacity(&self) -> usize {
-        self.values.capacity()
-    }
-
-    pub(crate) fn copy_remapped_from_validated(
-        &mut self,
-        source: &Self,
-        mapping: &TopologyMapping,
-    ) {
-        for (source_index, target_index) in mapping.atom_index_pairs() {
-            self.values[target_index.index()] = source.values[source_index.index()];
-        }
     }
 
     fn ensure_compatible(&self, topology: &Topology) -> Result<(), PositionError> {
@@ -549,7 +579,7 @@ impl StructureObservation {
         Ok(Self {
             topology: target.identity(),
             source_model_id: self.source_model_id.clone(),
-            atoms: remap_dense_values(&self.atoms, source, target, mapping)?,
+            atoms: remap::dense_atom_values(&self.atoms, source, target, mapping)?,
             props: self.props.clone(),
         })
     }
@@ -1443,69 +1473,86 @@ impl Ensemble {
     }
 }
 
-pub(crate) fn validate_state_mapping(
-    source: &Topology,
-    target: &Topology,
-    mapping: &TopologyMapping,
-) -> Result<(), TopologyRemapError> {
-    if !mapping.is_source(source) {
-        return Err(TopologyRemapError::MappingSourceMismatch);
-    }
-    if !mapping.is_target(target) {
-        return Err(TopologyRemapError::MappingTargetMismatch);
-    }
-    if let Some(target_atom) = mapping.added_atoms().first().copied() {
-        return Err(TopologyRemapError::AddedAtomsRequireState { target_atom });
-    }
-    if mapping.atom_index_pairs().len() != target.atom_count() {
-        let mapped = mapping
-            .atom_pairs()
-            .map(|(_, target)| target)
-            .collect::<std::collections::BTreeSet<_>>();
-        let target_atom = target
-            .atom_ids()
-            .iter()
-            .copied()
-            .find(|atom| !mapped.contains(atom))
-            .expect("incomplete target mapping has an unmapped target atom");
-        return Err(TopologyRemapError::AddedAtomsRequireState { target_atom });
-    }
-    Ok(())
-}
+/// Focused helpers for external topology-bound state containers.
+///
+/// These functions validate and apply complete dense atom mappings without
+/// exposing mutable topology, structure, or mapping internals. Companion
+/// crates such as `kekule-traj` use them to preserve the same exact-identity
+/// and complete-state rules as Kekule's built-in structure containers.
+pub mod remap {
+    use super::*;
 
-pub(crate) fn remap_dense_values<T: Clone>(
-    source_values: &[T],
-    source: &Topology,
-    target: &Topology,
-    mapping: &TopologyMapping,
-) -> Result<Vec<T>, TopologyRemapError> {
-    if source_values.len() != source.atom_count() {
-        return Err(TopologyRemapError::SourceAtomCountMismatch {
-            expected: source.atom_count(),
-            actual: source_values.len(),
-        });
-    }
-    validate_state_mapping(source, target, mapping)?;
-
-    let mut values = std::iter::repeat_with(|| None)
-        .take(target.atom_count())
-        .collect::<Vec<Option<T>>>();
-    for (source_index, target_index) in mapping.atom_index_pairs() {
-        let slot = &mut values[target_index.index()];
-        if slot.is_some() {
-            return Err(TopologyRemapError::DuplicateTargetAssignment { target_index });
+    /// Validates that `mapping` transfers complete per-atom state from `source`
+    /// to `target`.
+    ///
+    /// Added or otherwise unmapped target atoms are rejected because complete
+    /// dense state cannot invent values for them.
+    pub fn validate_complete_atom_mapping(
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<(), TopologyRemapError> {
+        if !mapping.is_source(source) {
+            return Err(TopologyRemapError::MappingSourceMismatch);
         }
-        *slot = Some(source_values[source_index.index()].clone());
+        if !mapping.is_target(target) {
+            return Err(TopologyRemapError::MappingTargetMismatch);
+        }
+        if let Some(target_atom) = mapping.added_atoms().first().copied() {
+            return Err(TopologyRemapError::AddedAtomsRequireState { target_atom });
+        }
+        if mapping.atom_index_pairs().len() != target.atom_count() {
+            let mapped = mapping
+                .atom_pairs()
+                .map(|(_, target)| target)
+                .collect::<std::collections::BTreeSet<_>>();
+            let target_atom = target
+                .atom_ids()
+                .iter()
+                .copied()
+                .find(|atom| !mapped.contains(atom))
+                .expect("incomplete target mapping has an unmapped target atom");
+            return Err(TopologyRemapError::AddedAtomsRequireState { target_atom });
+        }
+        Ok(())
     }
-    values
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| {
-            value.ok_or_else(|| TopologyRemapError::AddedAtomsRequireState {
-                target_atom: target.atom_ids()[index],
+
+    /// Remaps one complete dense atom array into the target topology's
+    /// authoritative dense order.
+    pub fn dense_atom_values<T: Clone>(
+        source_values: &[T],
+        source: &Topology,
+        target: &Topology,
+        mapping: &TopologyMapping,
+    ) -> Result<Vec<T>, TopologyRemapError> {
+        if source_values.len() != source.atom_count() {
+            return Err(TopologyRemapError::SourceAtomCountMismatch {
+                expected: source.atom_count(),
+                actual: source_values.len(),
+            });
+        }
+        validate_complete_atom_mapping(source, target, mapping)?;
+
+        let mut values = std::iter::repeat_with(|| None)
+            .take(target.atom_count())
+            .collect::<Vec<Option<T>>>();
+        for (source_index, target_index) in mapping.atom_index_pairs() {
+            let slot = &mut values[target_index.index()];
+            if slot.is_some() {
+                return Err(TopologyRemapError::DuplicateTargetAssignment { target_index });
+            }
+            *slot = Some(source_values[source_index.index()].clone());
+        }
+        values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                value.ok_or_else(|| TopologyRemapError::AddedAtomsRequireState {
+                    target_atom: target.atom_ids()[index],
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 /// Failure to remap complete topology-bound structure state.
@@ -1514,6 +1561,8 @@ pub(crate) fn remap_dense_values<T: Clone>(
 pub enum TopologyRemapError {
     /// The source state is not bound to the supplied source topology.
     SourceTopologyMismatch,
+    /// The destination state is not bound to the supplied target topology.
+    TargetTopologyMismatch,
     /// The mapping is not sourced from the supplied source topology.
     MappingSourceMismatch,
     /// The mapping does not target the supplied target topology.
@@ -1536,6 +1585,9 @@ impl fmt::Display for TopologyRemapError {
         match self {
             Self::SourceTopologyMismatch => {
                 formatter.write_str("source state does not belong to the supplied topology")
+            }
+            Self::TargetTopologyMismatch => {
+                formatter.write_str("target state does not belong to the supplied topology")
             }
             Self::MappingSourceMismatch => {
                 formatter.write_str("topology mapping does not match the source topology")

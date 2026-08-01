@@ -8,10 +8,10 @@ foundational `kekule` crate.
 
 ## Behavior/API
 
-- The `kekule-trajectory-io` package and `kekule_trajectory_io` Rust import
-  root depend one-way on `kekule` and implement its
-  sequential, seekable, and writer traits without defining another topology,
-  frame, coordinate, or unit model.
+- The `kekule-traj` package and `kekule_traj` Rust import root depend one-way
+  on `kekule`. Trajectory types and streaming traits live at the package root;
+  codecs and format-agnostic factories live under `kekule_traj::io`, without
+  defining another topology, coordinate, or unit model.
 - Opening requires an exact `Topology` plus an explicit
   `AtomOrderAssertion`; equal atom count is never sufficient evidence.
 - Auto-detection combines a bounded signature inspection with extension
@@ -51,7 +51,7 @@ extensions. A matching extension or atom count never expands the profile.
 
 - Kekule-owned source forbids unsafe code and has no native Chemfiles,
   C/C++, or CMake runtime.
-- The companion crate is a publishable workspace member depending one-way on
+- The trajectory crate is a publishable workspace member depending one-way on
   `kekule`; XYZ, DCD, and TRR have no production dependency beyond the
   semantic core, while XTC adds only the audited pure-Rust `molly` adapter.
 - Codecs decode complete frames into reusable private scratch and publish
@@ -74,7 +74,7 @@ extensions. A matching extension or atom count never expands the profile.
 
 ## Tests
 
-- Public downstream tests prove the companion crate implements
+- Public downstream tests prove codecs and external implementations satisfy
   `TrajectoryReader`, `SeekableTrajectoryReader`, and `TrajectoryWriter`.
 - Detection, limits, topology/order binding, metadata, transactionality,
   allocation reuse, indexing, atomic finish, and malformed/truncated input
@@ -139,5 +139,7 @@ extensions. A matching extension or atom count never expands the profile.
 - v5: Use shared bounded geometric index reservation after successful parsing,
   require nonempty concrete and atomic writer finishes, and add a 100,000-frame
   small-frame index benchmark.
-- v6: Hard-rename the companion package and Rust import root to
-  `kekule-trajectory-io` and `kekule_trajectory_io`.
+- v6: Hard-rename the pre-release codec companion to the Kekule namespace.
+- v7: Fold the codecs into the broader `kekule-traj` package and move the
+  public I/O surface under `kekule_traj::io` before the first crates.io
+  release.
