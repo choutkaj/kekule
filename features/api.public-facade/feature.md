@@ -7,8 +7,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 ## Behavior/API
 
 - The published foundation package and Rust import root are both named
-  `kekule`; the 0.3 hard cutover provides no compatibility package or alias
-  under a previous project name.
+  `kekule`; the initial `0.1.0` release provides no compatibility package or
+  alias under a previous project name.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
@@ -87,8 +87,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   error state is private behind accessors or checked constructors.
 - Extensible public error enums are non-exhaustive. Deliberate value, options,
   and report payloads may retain direct public fields.
-- The topology-centered hard break is released as `0.2.0`; later breaking
-  changes in the `0.x` line likewise require a minor version increment.
+- The topology-centered API and Kekule package names form the initial `0.1.0`
+  contract; later breaking changes in the `0.x` line require a minor version
+  increment.
 
 ## Tests
 
@@ -144,7 +145,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v15: Establish the hard-break release facade: real format interpretation
   results/reports, checked macromolecule lifecycle, private invariant-bearing
   hierarchy/provenance/error state, non-exhaustive extensible errors, and the
-  published `0.1.0` contract.
+  initial `0.1.0` contract.
 - v16: Expose configurable resource-bounded SMILES, Molfile, and SDF parsing
   without widening the crate root or prelude.
 - v17: Add the core formal-charge aggregate, transactional model-instance
@@ -153,7 +154,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   focused mmCIF facade.
 - v19: Add the focused `descriptors` facade for explicit-policy molecular
   formula and mass calculation without expanding the prelude.
-- v20: Add the 0.2 `geometry`, `topology`, `structure`, and `trajectory`
+- v20: Add the `geometry`, `topology`, `structure`, and `trajectory`
   modules; remove obsolete model-owned topology concepts; expose separate
   mmCIF ensemble interpretation; and migrate DSSP/potentials to borrowed views.
 - v21: Replace the misleading topology structural-equivalence names with
@@ -169,10 +170,12 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v25: Expose focused canonical persistence reconstruction through existing
   `core` and `bio` modules without adding Serde, root aliases, or prelude items.
 - v26: Hard-rename the published foundation package and Rust import root to
-  `kekule` for the 0.3 release without compatibility aliases.
+  `kekule` for the initial release without compatibility aliases.
 - v27: Keep the foundational facade focused by moving ordered frames,
   trajectory storage, streaming traits, and codecs to `kekule-traj` without a
   compatibility module in `kekule`.
 - v28: Add the companion's focused `analysis` namespace for explicit direct
   RMSD, transactional superposition, and fused aligned RMSD while keeping the
   foundational crate and prelude unchanged.
+- v29: Set the foundation and companion packages to the shared initial
+  `0.1.0` release line and synchronize their internal dependency requirements.

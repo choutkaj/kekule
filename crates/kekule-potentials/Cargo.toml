@@ -18,10 +18,10 @@ dreiding = ["dep:dreid-forge", "dep:dreid-kernel"]
 [dependencies]
 dreid-forge = { version = "=0.4.2", default-features = false, optional = true }
 dreid-kernel = { version = "=0.4.2", optional = true }
-kekule = { version = "0.3.0", path = "../kekule" }
+kekule = { version = "0.1.0", path = "../kekule" }
 
 [dev-dependencies]
-kekule-traj = { version = "0.3.0", path = "../kekule-traj" }
+kekule-traj = { version = "0.1.0", path = "../kekule-traj" }
 
 [[example]]
 name = "ligand_workflow"
