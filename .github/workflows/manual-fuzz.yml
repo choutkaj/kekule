@@ -1,10 +1,10 @@
-name: Scheduled parser fuzzing
+name: Manual bounded fuzzing
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: Parser target to fuzz
+        description: Fuzz target
         required: true
         default: smiles
         type: choice
@@ -14,12 +14,17 @@ on:
           - sdf_v2000
           - smiles
           - mmcif
+          - trajectory_detection
+          - trajectory_xyz
+          - trajectory_dcd
+          - trajectory_trr
+          - trajectory_xtc
 
 permissions:
   contents: read
 
 concurrency:
-  group: parser-fuzz-${{ inputs.target }}
+  group: fuzz-${{ inputs.target }}
   cancel-in-progress: true
 
 jobs:
@@ -32,7 +37,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-fuzz
-      - name: Run bounded long campaign
+      - name: Run bounded campaign
         env:
           TARGET: ${{ inputs.target }}
         run: cargo +nightly fuzz run "$TARGET" -- -max_total_time=300 -max_len=65536
