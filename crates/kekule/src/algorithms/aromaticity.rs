@@ -22,14 +22,11 @@ pub enum AromaticityError {
     RingPerception(RingPerceptionError),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AromaticElectronDonorType {
     Vacant,
     One,
     Two,
-    OneOrTwo,
-    Any,
     None,
 }
 
@@ -749,47 +746,21 @@ fn rdkit_outer_electrons(atom: &Atom) -> Option<u8> {
     }
 }
 
-fn aromatic_donor_electron_range(donor: AromaticElectronDonorType) -> (u8, u8) {
+fn aromatic_donor_electron_count(donor: AromaticElectronDonorType) -> usize {
     match donor {
-        AromaticElectronDonorType::Vacant | AromaticElectronDonorType::None => (0, 0),
-        AromaticElectronDonorType::One => (1, 1),
-        AromaticElectronDonorType::Two => (2, 2),
-        AromaticElectronDonorType::OneOrTwo => (1, 2),
-        AromaticElectronDonorType::Any => (0, 2),
+        AromaticElectronDonorType::Vacant | AromaticElectronDonorType::None => 0,
+        AromaticElectronDonorType::One => 1,
+        AromaticElectronDonorType::Two => 2,
     }
 }
 
 fn huckel_electron_count_for_donors(donors: &[AromaticElectronDonorType]) -> Option<usize> {
-    if donors
+    let electrons = donors
         .iter()
-        .filter(|donor| matches!(donor, AromaticElectronDonorType::Any))
-        .count()
-        > 1
-    {
-        return None;
-    }
-
-    let min_electrons = donors
-        .iter()
-        .map(|donor| usize::from(aromatic_donor_electron_range(*donor).0))
+        .copied()
+        .map(aromatic_donor_electron_count)
         .sum();
-    let max_electrons = donors
-        .iter()
-        .map(|donor| usize::from(aromatic_donor_electron_range(*donor).1))
-        .sum();
-    huckel_electron_count_in_range(min_electrons, max_electrons)
-}
-
-fn huckel_electron_count_in_range(min_electrons: usize, max_electrons: usize) -> Option<usize> {
-    if max_electrons == 2 {
-        return Some(2);
-    }
-    if max_electrons < 6 {
-        return None;
-    }
-    (min_electrons..=max_electrons)
-        .filter(|electrons| *electrons >= 6)
-        .find(|electrons| (electrons - 2) % 4 == 0)
+    (electrons == 2 || (electrons >= 6 && (electrons - 2) % 4 == 0)).then_some(electrons)
 }
 
 fn atom_explicit_pi_bond_count(mol: &Molecule, atom_id: AtomId) -> usize {
@@ -1038,13 +1009,6 @@ mod tests {
         let atom = mol.atom(carbonyl_carbon).expect("carbonyl carbon");
 
         assert!(!membership.bond_in_ring(carbonyl_bond));
-        assert!(atom_is_rdkit_aromatic_candidate_for_donor(
-            &mol,
-            carbonyl_carbon,
-            atom,
-            AromaticElectronDonorType::Any,
-            RdkitAromaticCandidateOptions::default()
-        ));
         assert!(!atom_is_rdkit_aromatic_candidate_for_donor(
             &mol,
             carbonyl_carbon,

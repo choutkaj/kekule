@@ -21,7 +21,7 @@ pub(super) fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize)
     let mut time = 0usize;
     let mut stack_peak = 0usize;
 
-    for atom_id in mol.atom_ids().collect::<Vec<_>>() {
+    for atom_id in mol.atom_ids() {
         if discovery[atom_id.index()].is_none() {
             stack_peak = stack_peak.max(ring_dfs_iterative(
                 atom_id,
