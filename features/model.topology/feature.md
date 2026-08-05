@@ -85,7 +85,7 @@ definitions and explicitly identified instances.
 
 ## Revision Notes
 
-- v1: Track the topology-centered public contract for the 0.2.0 transition.
+- v1: Track the topology-centered public contract for the initial release.
 - v2: Implement independent immutable topology, explicit reusable definitions,
   exact identity, dense mappings, selections, and lineage mappings.
 - v3: Replace the misleading structural-equivalence name with exact

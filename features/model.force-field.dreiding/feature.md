@@ -98,3 +98,5 @@ gradients once for supported nonperiodic structural views.
 - v10: Generalize the companion package to `kekule-potentials` and move the
   DREIDING public surface under `kekule_potentials::dreiding` without changing
   preparation or evaluation behavior.
+- v11: Set the publishable `kekule-potentials` package and its Kekule companion
+  dependencies to the shared initial `0.1.0` release line.
