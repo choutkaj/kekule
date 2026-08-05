@@ -1,2 +1,3 @@
 # Provenance-pinned external fixtures must retain byte-exact source checksums.
 benchmarks/corpora/*/data/** binary
+crates/kekule-traj/tests/fixtures/*.xyz binary
