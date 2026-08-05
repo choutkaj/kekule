@@ -28,9 +28,10 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
       - name: Check packaged license copies
         run: |
-          cmp LICENSE crates/kekule/LICENSE
-          cmp LICENSE crates/kekule-potentials/LICENSE
-          cmp LICENSE crates/kekule-traj/LICENSE
+          for package in kekule kekule-potentials kekule-traj; do
+            cmp LICENSE-APACHE "crates/$package/LICENSE-APACHE"
+            cmp LICENSE-MIT "crates/$package/LICENSE-MIT"
+          done
       - run: cargo package -p kekule --locked
       # Full companion packaging resolves `kekule` through crates.io and is
       # enabled only after the foundational crate is published. Until then,
