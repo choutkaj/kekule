@@ -13,7 +13,7 @@ use kekule::topology::{
 };
 use kekule::units::{Quantity, ELEMENTARY_CHARGE};
 
-use crate::DreidingPrepareError;
+use super::DreidingPrepareError;
 
 pub(crate) const KCAL_TO_KJ: f64 = 4.184;
 pub(crate) const COULOMB_KJ_ANGSTROM_PER_MOL_E2: f64 = 1_389.354_576_443_82;

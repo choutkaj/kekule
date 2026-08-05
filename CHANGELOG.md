@@ -7,6 +7,10 @@ series, breaking public API changes increment the minor version.
 
 ## Unreleased
 
+- Generalize the concrete potential companion from `kekule-dreiding` to
+  `kekule-potentials`, exposing DREIDING through the focused
+  `kekule_potentials::dreiding` module and feature-gating its implementation
+  dependencies for future independent potential families.
 - Hard-rename the project, foundational crate, DREIDING adapter, trajectory
   companion, Rust import roots, repository URLs, generated Molfile provenance,
   and visual identity to Kekule for the breaking 0.3 release. Benchmark input

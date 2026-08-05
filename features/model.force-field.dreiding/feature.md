@@ -9,8 +9,12 @@ gradients once for supported nonperiodic structural views.
 ## Behavior/API
 
 - Exposes `DreidingPotential`, `DreidingPrepareOptions`, `QeqGrouping`, and
-  `DreidingPrepareError` from the separate `kekule-dreiding` package and
-  `kekule_dreiding` Rust import root.
+  `DreidingPrepareError` from the `kekule-potentials` companion package under
+  the focused `kekule_potentials::dreiding` namespace. The companion crate
+  does not re-export DREIDING types from its root.
+- The package's default `dreiding` feature owns the optional `dreid-forge` and
+  `dreid-kernel` dependencies, allowing future independent implementations to
+  be selected without forcing DREIDING dependencies.
 - Prepares with an explicit `&Topology`, reference `ModelView`, and QEq grouping
   policy, then implements the core borrowed-view `Potential` contract.
 - The adapter is nonperiodic. Preparation rejects a reference view carrying a
@@ -30,6 +34,9 @@ gradients once for supported nonperiodic structural views.
 
 - Uses pinned `dreid-forge` and matching `dreid-kernel` releases; upstream types do not
   cross the adapter's public API.
+- Keeps the dependency-light `Potential` evaluation contract in `kekule`; the
+  companion package owns concrete implementations and namespaces them by
+  preparation model.
 - Uses shared exact topology identity rather than rebuilding an
   adapter-specific signature during each evaluation.
 - Maps aromatic-flagged localized single and double bonds to DREIDING aromatic bonds
@@ -88,3 +95,6 @@ gradients once for supported nonperiodic structural views.
   views structurally instead of silently applying direct Cartesian geometry.
 - v9: Hard-rename the adapter package and Rust import root to
   `kekule-dreiding` and `kekule_dreiding`.
+- v10: Generalize the companion package to `kekule-potentials` and move the
+  DREIDING public surface under `kekule_potentials::dreiding` without changing
+  preparation or evaluation behavior.
