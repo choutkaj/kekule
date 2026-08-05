@@ -33,30 +33,6 @@ Use trunk-based development with short-lived feature branches.
 - Delete branches after merge.
 - Prefer squash merge for normal feature PRs so `main` remains readable.
 
-## MolStudio co-development
-
-- MolStudio is the application and visualization layer over Kekule and is
-  normally checked out at `../molstudio`.
-- Work directly in both sibling repositories. Do not require a GitHub Actions
-  token or a cross-repository checkout for local consumer validation.
-- Keep MolStudio's committed Kekule dependency pinned to an exact Git
-  revision. For active sibling development, use an untracked
-  `../.cargo/config.toml` shared from the directory containing both repositories:
-
-  ```toml
-  [patch."https://github.com/choutkaj/kekule.git"]
-  kekule = { path = "kekule/crates/kekule" }
-  ```
-
-- Run `cargo update -p kekule` in MolStudio after enabling the patch. Its
-  path-source `Cargo.lock` change is local-only and must not be committed;
-  regenerate the lockfile from the pinned Git revision at integration.
-- After chemistry or public API changes, run Kekule's checks and then
-  MolStudio's workspace checks against the local patch. Update MolStudio's
-  pinned revision only at an integration checkpoint.
-- GitHub-hosted CI is temporarily manual-only. Local check results are
-  authoritative during this period and must be reported at handoff.
-
 
 ## Architecture guardrails
 

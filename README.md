@@ -11,11 +11,7 @@
   <a href="#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg"></a>
 </p>
 
-`kekule` is an experimental pure-Rust chemistry backend scoped for both
-small molecules and macromolecules. Capabilities are tracked in canonical
-feature contracts; optional external-reference benchmarks use tools such as
-RDKit, Biopython, and DSSP without making them runtime dependencies or release
-gates. This project is human-architected and AI-coded.
+`kekule` is an experimental chemistry backend scoped for both small molecules and macromolecules. The project is intended to cover regular cheminformatic workflows, as well as modeling-oriented tasks. `kekule` is human-architected and AI-coded.
 
 For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/kekule/).
 
@@ -25,39 +21,24 @@ For feature overview and parity checks, see the [feature dashboard](https://chou
 
 ## Concept
 
-The `Molecule` type is the raw graph kernel for one user-asserted molecular
-entity. It is usually connected, although disconnected graphs are allowed for
-salts and complexes. `SmallMolecule` adds ordinary cheminformatics workflows;
-`MacroMolecule` pairs a graph with a coordinate-independent `SmcraHierarchy`.
-
-System structure is represented separately by `Topology`: an immutable,
-coordinate-free collection of reusable molecule definitions and explicit
-molecule instances. Qualified atom/bond IDs retain chemical meaning, while
-topology-owned dense indices define the array order used by coordinates and
-gradients. Exact topology identity controls compatibility.
-`Topology::same_layout` compares complete static layout, including semantic
-identifiers and dense order; general order-independent structural equivalence
-and isomorphism mapping are planned future capabilities.
-
-`Model` and `Ensemble` reuse that structure in the foundational `kekule`
-crate. Ordered trajectory state, streaming, file I/O, and future
-trajectory-scale workflows live in the one-way `kekule-traj` companion:
+The `Molecule` type is the raw graph kernel for one user-asserted molecular entity. It is usually a connected molecular graph, although disconnected graphs are allowed (to handle salts, complexes, and such). The `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`. `SmallMolecule` handles ordinary cheminformatics workflows; `MacroMolecule` pairs a graph with a `SmcraHierarchy`.
 
 ```text
 Molecule
-|- SmallMolecule
-`- MacroMolecule + SmcraHierarchy
-
-Topology = reusable definitions + explicit instances + dense ordering
-|- Model      = Topology + one Configuration
-`- Ensemble   = Topology + finite non-temporal members
-
-kekule-traj
-`- Trajectory = kekule::Topology + ordered frames / reusable streaming buffers
+┣ SmallMolecule
+┗ MacroMolecule (Molecule + SmcraHierarchy)
 ```
 
-The workspace also publishes `kekule-potentials` as a companion for concrete
-potential implementations, including DREIDING under its `dreiding` module.
+Higher, modeling-based objects are built around `Topology`: an immutable topological construct containing one or multiple molecule instances. 
+
+
+```text
+Topology = reusable definitions + explicit instances + dense ordering
+┣ Model      = Topology + one Configuration
+┣ Ensemble   = Topology + finite non-temporal members
+┗ Trajectory = Topology + ordered frames / reusable streaming buffers
+```
+
 
 ## Basic Usage
 
@@ -92,11 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ## Modeling
 
-Load a ligand from SDF, minimize its coordinates with the DREIDING force field,
-and write the optimized structure back to SDF. Concrete implementations live
-in the `kekule-potentials` companion crate; DREIDING is exposed through its
-focused `dreiding` module. Run modeling examples with `--release` for optimized
-numerical kernels.
+Load a ligand from SDF, minimize its coordinates with the DREIDING force field, and write the optimized structure back to SDF: 
 
 ```rust
 use std::{error::Error, fs};
@@ -174,7 +151,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
+## Contributing
+
+Currently not accepting contributions.
+
 ## License
 
-`kekule` is available under either the [Apache License 2.0](LICENSE-APACHE) or
-the [MIT license](LICENSE-MIT), at your option.
+`kekule` is available under either the [Apache License 2.0](LICENSE-APACHE) or the [MIT license](LICENSE-MIT), at your option.
