@@ -125,7 +125,7 @@ fn kekule_package_metadata_uses_the_hard_cutover_names() {
 
     for (relative_path, package_name) in [
         ("crates/kekule/Cargo.toml", "kekule"),
-        ("crates/kekule-dreiding/Cargo.toml", "kekule-dreiding"),
+        ("crates/kekule-potentials/Cargo.toml", "kekule-potentials"),
         ("crates/kekule-traj/Cargo.toml", "kekule-traj"),
         ("fuzz/Cargo.toml", "kekule-fuzz"),
     ] {
@@ -141,6 +141,8 @@ fn kekule_package_metadata_uses_the_hard_cutover_names() {
         "crates/molecular",
         "crates/molecular-dreiding",
         "crates/molecular-trajectory-io",
+        "crates/kekule-dreiding",
+        "crates/kekule-trajectory-io",
     ] {
         assert!(
             !workspace_root.join(legacy_path).exists(),

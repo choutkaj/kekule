@@ -71,9 +71,9 @@ I/O, and focused trajectory-oriented analysis workflows.
   remaps, and stable dense-array pointers and capacities over repeated remaps.
 - Downstream tests prove external applications can implement sequential,
   seekable, and writer traits and publish complete data without private access.
-- Cross-crate tests prove `kekule` potentials and the `kekule-dreiding`
-  adapter consume `kekule-traj` frame and buffer views without copying
-  coordinates.
+- Cross-crate tests prove `kekule` potentials and the
+  `kekule_potentials::dreiding` adapter consume `kekule-traj` frame and buffer
+  views without copying coordinates.
 - Publication regressions cover late validation failure, complete destination
   transactionality, stale property/optional-field clearing, exact order-token
   identity, typed error context, and stable position/vector pointers and

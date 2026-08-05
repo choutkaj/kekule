@@ -56,8 +56,8 @@ kekule-traj
 `- Trajectory = kekule::Topology + ordered frames / reusable streaming buffers
 ```
 
-The workspace also publishes `kekule-dreiding` as a convenience force-field
-adapter while the broader force-field and potential setup evolves.
+The workspace also publishes `kekule-potentials` as a companion for concrete
+potential implementations, including DREIDING under its `dreiding` module.
 
 ## Basic Usage
 
@@ -92,7 +92,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ## Modeling
 
-Load a ligand from SDF, minimize its coordinates with the DREIDING force field, and write the optimized structure back to SDF. Run modeling examples with `--release` for optimized numerical kernels.
+Load a ligand from SDF, minimize its coordinates with the DREIDING force field,
+and write the optimized structure back to SDF. Concrete implementations live
+in the `kekule-potentials` companion crate; DREIDING is exposed through its
+focused `dreiding` module. Run modeling examples with `--release` for optimized
+numerical kernels.
 
 ```rust
 use std::{error::Error, fs};
@@ -103,7 +107,7 @@ use kekule::{
     structure::Model,
     units::MODEL_GRADIENT_UNIT,
 };
-use kekule_dreiding::{DreidingPotential, DreidingPrepareOptions};
+use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and interpret one SDF record without silently sanitizing it.

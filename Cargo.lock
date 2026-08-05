@@ -1050,7 +1050,7 @@ name = "kekule"
 version = "0.3.0"
 
 [[package]]
-name = "kekule-dreiding"
+name = "kekule-potentials"
 version = "0.3.0"
 dependencies = [
  "dreid-forge",

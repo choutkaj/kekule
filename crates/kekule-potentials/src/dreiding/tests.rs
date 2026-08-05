@@ -7,7 +7,7 @@ use kekule::structure::{Ensemble, Model};
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
 
-use crate::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions, QeqGrouping};
+use super::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions, QeqGrouping};
 
 fn explicit_atom(symbol: &str) -> Atom {
     let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
