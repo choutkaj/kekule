@@ -1717,7 +1717,7 @@ fn plan_smiles_write(
     }
 
     let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds.into_iter()) {
+    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds) {
         closures.entry(first).or_default().push(SmilesRingClosure {
             bond: bond_id,
             number,
@@ -2073,7 +2073,7 @@ fn plan_canonical_smiles_component(
     }
 
     let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds.into_iter()) {
+    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds) {
         closures.entry(first).or_default().push(SmilesRingClosure {
             bond: bond_id,
             number,
