@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/kekule",
-    "crates/kekule-dreiding",
+    "crates/kekule-potentials",
     "crates/kekule-trajectory-io",
     "crates/xtask",
 ]

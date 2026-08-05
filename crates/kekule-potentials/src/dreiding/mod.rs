@@ -3,7 +3,7 @@
 //! DREIDING force-field preparation and evaluation for topology-bound
 //! structural views.
 //!
-//! This adapter keeps automatic force-field preparation outside the lightweight
+//! This module keeps automatic force-field preparation outside the lightweight
 //! `kekule` core crate. Preparation is explicit: it never sanitizes input,
 //! adds hydrogens, changes topology, or updates charges during evaluation.
 //!

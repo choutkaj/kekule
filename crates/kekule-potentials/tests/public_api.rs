@@ -1,10 +1,14 @@
+#![cfg(feature = "dreiding")]
+
 use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
 use kekule::small::SmallMolecule;
 use kekule::structure::Model;
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
-use kekule_dreiding::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions};
+use kekule_potentials::dreiding::{
+    DreidingPotential, DreidingPrepareError, DreidingPrepareOptions,
+};
 
 #[test]
 fn downstream_preparation_and_evaluation() {

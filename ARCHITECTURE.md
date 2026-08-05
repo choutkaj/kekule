@@ -1003,9 +1003,13 @@ they operate over the whole topology, molecule instances, connected
 components, or explicit groups. The architecture never treats those scopes as
 interchangeable by accident.
 
-`kekule-dreiding` remains an adapter crate demonstrating this boundary. It
-may assign atom types and fixed charges during explicit preparation, but
-evaluation does not sanitize, change topology, or update charges implicitly.
+`kekule-potentials` is the companion package for concrete topology-bound
+potential implementations while the dependency-light `Potential` contract
+remains in `kekule`. Its `dreiding` module demonstrates this boundary: it may
+assign atom types and fixed charges during explicit preparation, but evaluation
+does not sanitize, change topology, or update charges implicitly. Implementations
+with heavyweight or incompatible runtime dependencies may remain separate
+adapter crates rather than forcing those dependencies into the companion.
 
 ## Public module responsibilities
 
@@ -1080,6 +1084,18 @@ remain in focused namespaces. Broad root re-exports are not added casually.
 Dependency-heavy binary trajectory codecs and force-field adapters should live
 in separate crates when required, keeping the foundational `kekule` crate
 lightweight.
+
+The curated potential-implementation companion follows a one-way dependency:
+
+```text
+kekule <- kekule-potentials <- applications
+```
+
+`kekule-potentials` organizes concrete implementations under focused modules,
+such as `dreiding`, without duplicating the core potential contract or exposing
+every implementation from its crate root. Implementation-specific dependencies
+are feature-gated so future independent modules do not force unrelated
+parameterization or numerical dependencies.
 
 Production fixed-topology file codecs live in the one-way
 `kekule-trajectory-io` workspace companion:

@@ -6,7 +6,7 @@ use kekule::{
     structure::Model,
     units::MODEL_GRADIENT_UNIT,
 };
-use kekule_dreiding::{DreidingPotential, DreidingPrepareOptions};
+use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and interpret one SDF record without silently sanitizing it.

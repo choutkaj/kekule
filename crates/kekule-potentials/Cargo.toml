@@ -1,0 +1,25 @@
+[package]
+name = "kekule-potentials"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Concrete potential implementations for topology-bound Kekule structural views."
+publish = true
+
+[features]
+default = ["dreiding"]
+dreiding = ["dep:dreid-forge", "dep:dreid-kernel"]
+
+[dependencies]
+dreid-forge = { version = "=0.4.2", default-features = false, optional = true }
+dreid-kernel = { version = "=0.4.2", optional = true }
+kekule = { version = "0.3.0", path = "../kekule" }
+
+[[example]]
+name = "ligand_workflow"
+required-features = ["dreiding"]
