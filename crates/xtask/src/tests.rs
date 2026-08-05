@@ -109,7 +109,7 @@ fn local_only_corpus_descriptors_match_the_registry() {
 }
 
 #[test]
-fn kekule_package_metadata_uses_the_hard_cutover_names() {
+fn kekule_package_metadata_uses_the_initial_release_contract() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let workspace_manifest: toml::Value = toml::from_str(
         &fs::read_to_string(workspace_root.join("Cargo.toml"))
@@ -117,17 +117,21 @@ fn kekule_package_metadata_uses_the_hard_cutover_names() {
     )
     .expect("workspace manifest should parse");
     let workspace_package = &workspace_manifest["workspace"]["package"];
-    assert_eq!(workspace_package["version"].as_str(), Some("0.3.0"));
+    assert_eq!(workspace_package["version"].as_str(), Some("0.1.0"));
     assert_eq!(
         workspace_package["repository"].as_str(),
         Some("https://github.com/choutkaj/kekule")
     );
 
-    for (relative_path, package_name) in [
-        ("crates/kekule/Cargo.toml", "kekule"),
-        ("crates/kekule-potentials/Cargo.toml", "kekule-potentials"),
-        ("crates/kekule-traj/Cargo.toml", "kekule-traj"),
-        ("fuzz/Cargo.toml", "kekule-fuzz"),
+    for (relative_path, package_name, publish) in [
+        ("crates/kekule/Cargo.toml", "kekule", true),
+        (
+            "crates/kekule-potentials/Cargo.toml",
+            "kekule-potentials",
+            true,
+        ),
+        ("crates/kekule-traj/Cargo.toml", "kekule-traj", true),
+        ("crates/xtask/Cargo.toml", "xtask", false),
     ] {
         let manifest: toml::Value = toml::from_str(
             &fs::read_to_string(workspace_root.join(relative_path))
@@ -135,6 +139,47 @@ fn kekule_package_metadata_uses_the_hard_cutover_names() {
         )
         .expect("package manifest should parse");
         assert_eq!(manifest["package"]["name"].as_str(), Some(package_name));
+        assert_eq!(
+            manifest["package"]["version"]["workspace"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(manifest["package"]["publish"].as_bool(), Some(publish));
+    }
+
+    let fuzz_manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(workspace_root.join("fuzz/Cargo.toml"))
+            .expect("fuzz manifest should read"),
+    )
+    .expect("fuzz manifest should parse");
+    assert_eq!(
+        fuzz_manifest["package"]["name"].as_str(),
+        Some("kekule-fuzz")
+    );
+    assert_eq!(fuzz_manifest["package"]["version"].as_str(), Some("0.0.0"));
+    assert_eq!(fuzz_manifest["package"]["publish"].as_bool(), Some(false));
+
+    for (relative_path, section, dependency) in [
+        ("crates/kekule-traj/Cargo.toml", "dependencies", "kekule"),
+        (
+            "crates/kekule-potentials/Cargo.toml",
+            "dependencies",
+            "kekule",
+        ),
+        (
+            "crates/kekule-potentials/Cargo.toml",
+            "dev-dependencies",
+            "kekule-traj",
+        ),
+    ] {
+        let manifest: toml::Value = toml::from_str(
+            &fs::read_to_string(workspace_root.join(relative_path))
+                .expect("package manifest should read"),
+        )
+        .expect("package manifest should parse");
+        assert_eq!(
+            manifest[section][dependency]["version"].as_str(),
+            Some("0.1.0")
+        );
     }
 
     for legacy_path in [

@@ -3,9 +3,9 @@
 ## Status and purpose
 
 This document is the normative architecture contract for `kekule`. The
-topology-centered design introduced in 0.2 and the initial complete-instance
-topology-transformation milestone are implemented. Current work must follow
-the object boundaries and invariants defined here.
+topology-centered design and the initial complete-instance topology-
+transformation milestone form the initial `0.1.0` release contract. Current
+work must follow the object boundaries and invariants defined here.
 
 `kekule` is a pure-Rust foundation for cheminformatics, structural
 bioinformatics, molecular structure handling, and molecular modelling. It
@@ -1169,9 +1169,10 @@ errors rather than inferred or partially decoded behavior.
 
 ## Public API and release policy
 
-The initial release line is `0.x`. Breaking public API changes require a minor
-version increment. The topology-centered refactor is a deliberate breaking
-transition and targets the next minor release.
+The initial release is `0.1.0`. While the project remains in the `0.x` line,
+breaking public API changes require a minor version increment. The topology-
+centered architecture and Kekule package names are the initial public contract,
+not a migration from a published predecessor.
 
 Invariant-bearing topology, hierarchy, coordinate, document, provenance, and
 error state is private behind accessors and checked constructors. Public direct

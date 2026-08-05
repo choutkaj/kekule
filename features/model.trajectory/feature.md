@@ -108,3 +108,5 @@ I/O, and focused trajectory-oriented analysis workflows.
   as the home for future trajectory-oriented workflows over Kekule kernels.
 - v9: Establish the companion analysis namespace and delegate implemented
   trajectory superposition and RMSD behavior to focused feature contracts.
+- v10: Set the publishable `kekule-traj` package and its foundational Kekule
+  dependency to the shared initial `0.1.0` release line.
