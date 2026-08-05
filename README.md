@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/choutkaj/kekule/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/kekule/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/choutkaj/kekule/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
-  <a href="https://github.com/choutkaj/kekule/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg"></a>
 </p>
 
 `kekule` is an experimental pure-Rust chemistry backend scoped for both
@@ -176,4 +176,5 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ## License
 
-`kekule` is available under the MIT license.
+`kekule` is available under either the [Apache License 2.0](LICENSE-APACHE) or
+the [MIT license](LICENSE-MIT), at your option.

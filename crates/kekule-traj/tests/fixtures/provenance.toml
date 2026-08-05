@@ -32,7 +32,7 @@ generator_version = "3.26.0"
 generator_command = "uv run --python 3.12 --with ase==3.26.0 python generate_xyz.py"
 source_revision = "6c965f46a9449cbea275a6cc11fefb82da7df4bf"
 sha256 = "91c41f2f0b02034c507bf564dc4084be991f4cc21418604fcb4864e0f2e805ea"
-license = "MIT repository fixture; ASE generator is LGPL-2.1-or-later"
+license = "MIT OR Apache-2.0 repository fixture; ASE generator is LGPL-2.1-or-later"
 atom_count = 3
 frame_count = 2
 fields = ["positions", "element symbols"]
@@ -57,7 +57,7 @@ generator_version = "2.9.0"
 generator_command = "uv run --python 3.12 --with MDAnalysis==2.9.0 python generate_dcd.py"
 source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
 sha256 = "baabffaca935dff654d1466fe43ba469fb0b1b84d077b6afc3c10f5208cc7d0e"
-license = "MIT repository fixture; MDAnalysis generator is GPL-2.0-or-later"
+license = "MIT OR Apache-2.0 repository fixture; MDAnalysis generator is GPL-2.0-or-later"
 atom_count = 3
 frame_count = 2
 fields = ["positions", "unit cell", "step", "header delta"]
@@ -82,7 +82,7 @@ generator_version = "2.9.0"
 generator_command = "uv run --python 3.12 --with MDAnalysis==2.9.0 python generate_trr.py"
 source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
 sha256 = "ff960f93b192e71f9b8962a7f8fe70c0aae23fd842e15aa65f3d3fd26a6b07c0"
-license = "MIT repository fixture; MDAnalysis generator is GPL-2.0-or-later"
+license = "MIT OR Apache-2.0 repository fixture; MDAnalysis generator is GPL-2.0-or-later"
 atom_count = 3
 frame_count = 2
 fields = ["positions", "triclinic cell", "velocities", "forces", "time", "step", "lambda"]
@@ -107,7 +107,7 @@ generator_version = "2.9.0"
 generator_command = "uv run --python 3.12 --with MDAnalysis==2.9.0 python generate_xtc.py"
 source_revision = "908317e1d5be7c9129c149495f16585667ed83f1"
 sha256 = "4983aea35f003d170bca0933942559a6d1968d6ec7030f7def0cc0fdfc757fec"
-license = "MIT repository fixture; MDAnalysis generator is GPL-2.0-or-later"
+license = "MIT OR Apache-2.0 repository fixture; MDAnalysis generator is GPL-2.0-or-later"
 atom_count = 12
 frame_count = 2
 fields = ["lossy positions", "triclinic cell", "time", "step", "precision"]
