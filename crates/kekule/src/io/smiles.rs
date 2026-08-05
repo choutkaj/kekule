@@ -3,8 +3,10 @@ use std::fmt;
 use std::ops::Range;
 
 use crate::algorithms::{
-    allowed_valences, canonical_atom_ranking, explicit_valence, ordered_atom_pair,
-    rdkit_charge_adjusted_default_valence, rdkit_default_valence, CanonicalAtomRanking,
+    allowed_valences, canonical_atom_ranking, double_bond_between_aromatic_atoms,
+    double_bond_endpoint_carriers, double_bond_has_noncarbon_endpoint, double_bond_is_in_ring,
+    explicit_valence, ordered_atom_pair, rdkit_charge_adjusted_default_valence,
+    rdkit_default_valence, CanonicalAtomRanking,
 };
 use crate::core::*;
 use crate::io::MolWriteError;
@@ -2403,10 +2405,8 @@ fn source_directional_mark_needs_perceived_stereo(
                 continue;
             }
             if double_bond_stereo_candidate_is_supported(mol, bond_id, bond)
-                && !double_bond_candidate_endpoint_carriers(mol, bond.a(), bond.b(), bond_id)
-                    .is_empty()
-                && !double_bond_candidate_endpoint_carriers(mol, bond.b(), bond.a(), bond_id)
-                    .is_empty()
+                && !double_bond_endpoint_carriers(mol, bond.a(), bond.b(), bond_id).is_empty()
+                && !double_bond_endpoint_carriers(mol, bond.b(), bond.a(), bond_id).is_empty()
             {
                 return Ok(true);
             }
@@ -2436,68 +2436,6 @@ fn smiles_has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {
             StereoElementKind::DoubleBond(stereo) if stereo.bond == bond
         )
     })
-}
-
-fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
-    mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
-        && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true)
-}
-
-fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
-    mol.ring_membership()
-        .map(|membership| membership.bond_in_ring(bond))
-        .unwrap_or(false)
-}
-
-fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
-    [bond.a(), bond.b()].into_iter().any(|atom_id| {
-        mol.atom(atom_id)
-            .map(|atom| atom.element.symbol() != "C")
-            .unwrap_or(true)
-    })
-}
-
-fn double_bond_candidate_endpoint_carriers(
-    mol: &Molecule,
-    endpoint: AtomId,
-    other_endpoint: AtomId,
-    focus_bond: BondId,
-) -> Vec<StereoCarrier> {
-    let mut carriers = Vec::new();
-    if let Ok(incident) = mol.incident_bonds(endpoint) {
-        for (bond_id, bond) in incident {
-            if bond_id == focus_bond || bond.order != BondOrder::Single {
-                continue;
-            }
-            let other = bond.other_atom(endpoint);
-            if other != other_endpoint {
-                carriers.push(StereoCarrier::Atom(other));
-            }
-        }
-    }
-    carriers.sort_by_key(carrier_key);
-    if atom_hydrogen_count(mol, endpoint) == 1 {
-        carriers.push(StereoCarrier::ImplicitHydrogen);
-    }
-    carriers
-}
-
-fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
-    let atom_id = atom;
-    mol.atom(atom_id)
-        .map(|atom| {
-            atom.explicit_hydrogens
-                .saturating_add(mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0))
-        })
-        .unwrap_or(0)
-}
-
-fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
-    match carrier {
-        StereoCarrier::Atom(atom) => (0, atom.raw()),
-        StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
-        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
-    }
 }
 
 fn add_double_bond_directional_constraints(

@@ -446,7 +446,7 @@ impl<'a> Parser<'a> {
                 RingOpen {
                     atom: current,
                     bond: self.pending_bond.take(),
-                    span: span.clone(),
+                    span,
                 },
             );
         }

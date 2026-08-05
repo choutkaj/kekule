@@ -284,7 +284,7 @@ fn validate_tetrahedral(
                 }
             }
             StereoCarrier::ImplicitHydrogen => {
-                if hydrogen_count(mol, stereo.center) == 0 {
+                if atom_hydrogen_count(mol, stereo.center) == 0 {
                     issues.push(
                         StereoPerceptionIssue::TetrahedralHydrogenCarrierUnavailable {
                             element,
@@ -380,7 +380,7 @@ fn validate_double_bond_carrier(
             }
         }
         StereoCarrier::ImplicitHydrogen => {
-            if hydrogen_count(mol, endpoint) == 0 {
+            if atom_hydrogen_count(mol, endpoint) == 0 {
                 issues.push(
                     StereoPerceptionIssue::DoubleBondHydrogenCarrierUnavailable {
                         element,
@@ -480,7 +480,7 @@ fn tetrahedral_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
             atom_carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
         }
         atom_carriers.sort_by_key(carrier_key);
-        let hydrogens = hydrogen_count(mol, center);
+        let hydrogens = atom_hydrogen_count(mol, center);
         if single_bonded && hydrogens <= 1 && atom_carriers.len() + usize::from(hydrogens) == 4 {
             if hydrogens == 1 {
                 atom_carriers.push(StereoCarrier::ImplicitHydrogen);
@@ -510,7 +510,7 @@ fn tetrahedral_carriers(mol: &Molecule, center: AtomId) -> Option<Vec<StereoCarr
         carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
     }
     carriers.sort_by_key(carrier_key);
-    let hydrogens = hydrogen_count(mol, center);
+    let hydrogens = atom_hydrogen_count(mol, center);
     if hydrogens == 0
         && carriers.len() == 3
         && stable_tetrahedral_lone_pair_center(atom.element.symbol())
@@ -562,18 +562,18 @@ fn double_bond_stereo_is_unsupported(mol: &Molecule, bond_id: BondId, bond: &Bon
         || (double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond))
 }
 
-fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
+pub(crate) fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
     mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
         && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true)
 }
 
-fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
+pub(crate) fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
     mol.ring_membership()
         .map(|membership| membership.bond_in_ring(bond))
         .unwrap_or(false)
 }
 
-fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
+pub(crate) fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
     [bond.a(), bond.b()].into_iter().any(|atom_id| {
         mol.atom(atom_id)
             .map(|atom| atom.element.symbol() != "C")
@@ -581,7 +581,7 @@ fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
     })
 }
 
-fn double_bond_endpoint_carriers(
+pub(crate) fn double_bond_endpoint_carriers(
     mol: &Molecule,
     endpoint: AtomId,
     other_endpoint: AtomId,
@@ -600,7 +600,7 @@ fn double_bond_endpoint_carriers(
         }
     }
     carriers.sort_by_key(carrier_key);
-    if hydrogen_count(mol, endpoint) == 1 {
+    if atom_hydrogen_count(mol, endpoint) == 1 {
         carriers.push(StereoCarrier::ImplicitHydrogen);
     }
     carriers
@@ -1094,7 +1094,7 @@ fn atom_is_atropisomeric_sp2_endpoint(
         .collect::<Vec<_>>();
     let total_degree = incident
         .len()
-        .saturating_add(usize::from(hydrogen_count(mol, atom_id)));
+        .saturating_add(usize::from(atom_hydrogen_count(mol, atom_id)));
     if !(2..=3).contains(&total_degree) {
         return false;
     }
@@ -1725,13 +1725,13 @@ fn has_tetrahedral_element(mol: &Molecule, center: AtomId) -> bool {
     })
 }
 
-fn hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
-    let atom_id = atom;
-    let Ok(atom) = mol.atom(atom_id) else {
+pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
+    let Ok(payload) = mol.atom(atom) else {
         return 0;
     };
-    atom.explicit_hydrogens
-        .saturating_add(mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0))
+    payload
+        .explicit_hydrogens
+        .saturating_add(mol.implicit_hydrogens(atom).ok().flatten().unwrap_or(0))
 }
 
 fn implicit_lone_pair_available(mol: &Molecule, atom: AtomId) -> bool {
@@ -1740,7 +1740,7 @@ fn implicit_lone_pair_available(mol: &Molecule, atom: AtomId) -> bool {
             matches!(
                 atom_payload.element.symbol(),
                 "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
-            ) && hydrogen_count(mol, atom) == 0
+            ) && atom_hydrogen_count(mol, atom) == 0
         })
         .unwrap_or(false)
 }
