@@ -9,6 +9,10 @@ use crate::algorithms::{
 use crate::core::*;
 
 use super::rings::{bond_in_ring_smaller_than, compute_ring_membership};
+use super::{
+    atom_hydrogen_count, double_bond_between_aromatic_atoms, double_bond_endpoint_carriers,
+    double_bond_has_noncarbon_endpoint, double_bond_is_in_ring,
+};
 
 type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
 
@@ -250,25 +254,6 @@ fn double_bond_cip_stereogenic(mol: &Molecule, stereo: &DoubleBondStereo) -> Opt
     Some(true)
 }
 
-fn double_bond_between_aromatic_atoms(mol: &Molecule, bond: &Bond) -> bool {
-    mol.atom_is_aromatic(bond.a()).ok().flatten() == Some(true)
-        && mol.atom_is_aromatic(bond.b()).ok().flatten() == Some(true)
-}
-
-fn double_bond_is_in_ring(mol: &Molecule, bond: BondId) -> bool {
-    mol.ring_membership()
-        .map(|membership| membership.bond_in_ring(bond))
-        .unwrap_or(false)
-}
-
-fn double_bond_has_noncarbon_endpoint(mol: &Molecule, bond: &Bond) -> bool {
-    [bond.a(), bond.b()].into_iter().any(|atom_id| {
-        mol.atom(atom_id)
-            .map(|atom| atom.element.symbol() != "C")
-            .unwrap_or(true)
-    })
-}
-
 fn clear_stereo_descriptors(mol: &mut Molecule) {
     mol.clear_cip_descriptors();
 }
@@ -490,12 +475,7 @@ fn axis_endpoint_carriers(
             }
         }
     }
-    if mol
-        .atom(endpoint)
-        .ok()
-        .map(|atom| hydrogen_count(mol, endpoint, atom))
-        .unwrap_or(0)
-        > 0
+    if atom_hydrogen_count(mol, endpoint) > 0
         && mol
             .bond_between(endpoint, other_endpoint)
             .ok()
@@ -2251,10 +2231,8 @@ impl LigandNode {
         let Ok(payload) = mol.atom(*atom) else {
             return;
         };
-        {
-            for _ in 0..hydrogen_count(mol, *atom, payload) {
-                next.push(LigandNode::Hydrogen);
-            }
+        for _ in 0..atom_hydrogen_count(mol, *atom) {
+            next.push(LigandNode::Hydrogen);
         }
         let Ok(incident) = mol.incident_bonds(*atom) else {
             return;
@@ -2296,17 +2274,6 @@ impl LigandNode {
                     duplicate: Some(DuplicateNode::Ring { reference_depth }),
                     terminal: true,
                 });
-                for _ in 0..duplicate_count {
-                    next.push(LigandNode::Atom {
-                        atom: neighbor,
-                        previous: Some(*atom),
-                        path: Vec::new(),
-                        duplicate: Some(DuplicateNode::Bond {
-                            atomic_number: bond_duplicate_atomic_number,
-                        }),
-                        terminal: true,
-                    });
-                }
             } else {
                 let mut next_path = path.clone();
                 next_path.push(neighbor);
@@ -2317,17 +2284,17 @@ impl LigandNode {
                     duplicate: None,
                     terminal: false,
                 });
-                for _ in 0..duplicate_count {
-                    next.push(LigandNode::Atom {
-                        atom: neighbor,
-                        previous: Some(*atom),
-                        path: Vec::new(),
-                        duplicate: Some(DuplicateNode::Bond {
-                            atomic_number: bond_duplicate_atomic_number,
-                        }),
-                        terminal: true,
-                    });
-                }
+            }
+            for _ in 0..duplicate_count {
+                next.push(LigandNode::Atom {
+                    atom: neighbor,
+                    previous: Some(*atom),
+                    path: Vec::new(),
+                    duplicate: Some(DuplicateNode::Bond {
+                        atomic_number: bond_duplicate_atomic_number,
+                    }),
+                    terminal: true,
+                });
             }
         }
     }
@@ -2422,7 +2389,7 @@ fn seed_mancude_atom_types(
 ) -> Vec<MancudeAtomType> {
     let mut types = vec![MancudeAtomType::Other; mol.atoms.len()];
     for (atom_id, atom) in mol.atoms() {
-        let mut bond_types = u32::from(hydrogen_count(mol, atom_id, atom));
+        let mut bond_types = u32::from(atom_hydrogen_count(mol, atom_id));
         let mut in_ring = false;
         if let Ok(incident) = mol.incident_bonds(atom_id) {
             for (bond_id, bond) in incident {
@@ -2658,11 +2625,6 @@ fn atom_neighbors(mol: &Molecule, atom_id: AtomId) -> Vec<AtomId> {
         .flatten()
         .map(|(_, bond)| bond.other_atom(atom_id))
         .collect()
-}
-
-fn hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
-    atom.explicit_hydrogens
-        .saturating_add(mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0))
 }
 
 fn bond_duplicate_count_for_atom(
@@ -3115,43 +3077,6 @@ fn descriptor_ref(descriptor: StereoDescriptor) -> Option<DescriptorRef> {
         | StereoDescriptor::LowerP
         | StereoDescriptor::E
         | StereoDescriptor::Z => None,
-    }
-}
-
-fn double_bond_endpoint_carriers(
-    mol: &Molecule,
-    endpoint: AtomId,
-    other_endpoint: AtomId,
-    focus_bond: BondId,
-) -> Vec<StereoCarrier> {
-    let mut carriers = Vec::new();
-    if let Ok(incident) = mol.incident_bonds(endpoint) {
-        for (bond_id, bond) in incident {
-            if bond_id == focus_bond || bond.order != BondOrder::Single {
-                continue;
-            }
-            let other = bond.other_atom(endpoint);
-            if other != other_endpoint {
-                carriers.push(StereoCarrier::Atom(other));
-            }
-        }
-    }
-    carriers.sort_by_key(carrier_key);
-    if mol
-        .atom(endpoint)
-        .map(|atom| hydrogen_count(mol, endpoint, atom) == 1)
-        .unwrap_or(false)
-    {
-        carriers.push(StereoCarrier::ImplicitHydrogen);
-    }
-    carriers
-}
-
-fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
-    match carrier {
-        StereoCarrier::Atom(atom) => (0, atom.raw()),
-        StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
-        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
     }
 }
 
