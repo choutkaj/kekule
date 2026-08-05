@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "kekule"
-version = "0.3.0"
+version = "0.1.0"
 
 [[package]]
 name = "kekule-fuzz"
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "kekule-traj"
-version = "0.3.0"
+version = "0.1.0"
 dependencies = [
  "kekule",
  "molly",
