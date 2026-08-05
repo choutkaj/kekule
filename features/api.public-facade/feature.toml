@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 26
+version = 28
 status = "supported"
-description = "Expose the 0.3 Kekule release facade with focused topology, structure, trajectory, alignment, modeling, chemistry, and format modules."
+description = "Expose the 0.3 foundational Kekule facade with focused topology, structure, alignment, modeling, chemistry, and format modules."
 depends_on = [
   "core.units",
   "core.graph",
@@ -33,9 +33,10 @@ depends_on = [
   "model.canonical-reconstruction",
   "model.system",
   "model.ensemble",
-  "model.trajectory",
   "model.topology-transform",
   "model.potential",
   "algo.geometry-minimization",
   "algo.rigid-alignment",
+  "algo.trajectory-superposition",
+  "algo.trajectory-rmsd",
 ]

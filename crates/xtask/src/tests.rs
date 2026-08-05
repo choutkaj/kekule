@@ -126,10 +126,7 @@ fn kekule_package_metadata_uses_the_hard_cutover_names() {
     for (relative_path, package_name) in [
         ("crates/kekule/Cargo.toml", "kekule"),
         ("crates/kekule-potentials/Cargo.toml", "kekule-potentials"),
-        (
-            "crates/kekule-trajectory-io/Cargo.toml",
-            "kekule-trajectory-io",
-        ),
+        ("crates/kekule-traj/Cargo.toml", "kekule-traj"),
         ("fuzz/Cargo.toml", "kekule-fuzz"),
     ] {
         let manifest: toml::Value = toml::from_str(
@@ -145,6 +142,7 @@ fn kekule_package_metadata_uses_the_hard_cutover_names() {
         "crates/molecular-dreiding",
         "crates/molecular-trajectory-io",
         "crates/kekule-dreiding",
+        "crates/kekule-trajectory-io",
     ] {
         assert!(
             !workspace_root.join(legacy_path).exists(),

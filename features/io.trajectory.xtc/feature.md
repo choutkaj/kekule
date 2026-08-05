@@ -83,3 +83,5 @@ Kekule validation, limits, units, metadata, and errors.
   indexed publication.
 - v5: Use capped geometric offset growth after successful decode and reject
   empty concrete and atomic writer finishes.
+- v6: Publish the codec under `kekule_traj::io::xtc` as part of the unified
+  `kekule-traj` trajectory crate.

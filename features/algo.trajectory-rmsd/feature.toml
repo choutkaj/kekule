@@ -1,0 +1,8 @@
+id = "algo.trajectory-rmsd"
+title = "Trajectory RMSD series"
+area = "algorithms"
+domains = ["small-molecule", "macromolecule"]
+version = 1
+status = "supported"
+description = "Calculate explicit direct or fused aligned RMSD series from fixed-topology trajectories with independent fit and measurement selections."
+depends_on = ["model.trajectory", "algo.trajectory-superposition", "core.units"]

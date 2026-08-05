@@ -23,6 +23,17 @@ The next topology-editing direction is explicit topology composition, followed
 by instance-definition replacement and definition-edit scope, each as a
 separate feature contract.
 
+## Trajectory direction
+
+`kekule` remains the dependency-light home for topology, single-configuration
+state, selections, geometry, units, and reusable analysis/potential kernels.
+The one-way `kekule-traj` companion owns ordered frames, storage, streaming,
+file I/O, transactional finite-trajectory superposition, and explicit direct
+or fused aligned RMSD. Future trajectory-scale slicing, RMSF, distance,
+contact, and related MDTraj-like workflows build on those kernels.
+Reactive topology changes remain a separately tracked segmented-trajectory
+concept.
+
 ## Next tracked capabilities
 
 Feature contracts currently reserved with `planned` status include:

@@ -39,7 +39,9 @@ gradients. Exact topology identity controls compatibility.
 identifiers and dense order; general order-independent structural equivalence
 and isomorphism mapping are planned future capabilities.
 
-`Model`, `Ensemble`, and `Trajectory` reuse that structure:
+`Model` and `Ensemble` reuse that structure in the foundational `kekule`
+crate. Ordered trajectory state, streaming, file I/O, and future
+trajectory-scale workflows live in the one-way `kekule-traj` companion:
 
 ```text
 Molecule
@@ -48,9 +50,14 @@ Molecule
 
 Topology = reusable definitions + explicit instances + dense ordering
 |- Model      = Topology + one Configuration
-|- Ensemble   = Topology + finite non-temporal members
-`- Trajectory = Topology + ordered frames / reusable streaming buffers
+`- Ensemble   = Topology + finite non-temporal members
+
+kekule-traj
+`- Trajectory = kekule::Topology + ordered frames / reusable streaming buffers
 ```
+
+The workspace also publishes `kekule-potentials` as a companion for concrete
+potential implementations, including DREIDING under its `dreiding` module.
 
 ## Basic Usage
 

@@ -2,12 +2,16 @@
 
 ## Summary
 
-Represent ordered frames over one immutable topology and process large
-trajectories through reusable caller-owned buffers.
+Provide the `kekule-traj` companion as Kekule's coherent trajectory layer:
+ordered frames over one immutable topology, reusable storage, streaming file
+I/O, and focused trajectory-oriented analysis workflows.
 
 ## Behavior/API
 
-- The `trajectory` module provides topology-bound frames with required
+- The `kekule-traj` package and `kekule_traj` Rust import root depend one-way
+  on the foundational `kekule` package. Trajectory types are exported from the
+  `kekule_traj` root; codecs and path factories live under `kekule_traj::io`.
+- The crate provides topology-bound frames with required
   positions and optional cell, velocities, forces, time, step, observation
   state, and frame metadata.
 - In-memory `Trajectory` stores ordered frames directly rather than as
@@ -34,19 +38,24 @@ trajectories through reusable caller-owned buffers.
   caller's explicit assertion that a topology-free file uses authoritative
   topology order, and remains bound to exact topology identity.
 - Non-exhaustive `TrajectoryFormat`, `TrajectoryIoOperation`, and
-  `TrajectoryCodecErrorKind` values plus cloneable I/O/codec contexts let
-  companion codecs report typed format, operation, source, frame, byte offset,
-  count, and underlying I/O information without a dependency cycle.
+  `TrajectoryCodecErrorKind` values plus cloneable I/O/codec contexts report
+  typed format, operation, source, frame, byte offset, count, and underlying
+  I/O information.
+- General single-configuration geometry, selections, alignment, and potential
+  kernels remain in `kekule`. `kekule-traj` supplies zero-copy frame views and
+  owns trajectory-scale orchestration. Initial superposition and direct/fused
+  RMSD workflows are tracked by `algo.trajectory-superposition` and
+  `algo.trajectory-rmsd`; slicing, distance/contact series, RMSF, and related
+  MDTraj-like workflows remain incremental companion features.
 
 ## Implementation Notes
 
 - Ordinary trajectories retain one fixed exact topology. Reactive trajectories
   remain a future segmented-topology concept.
 - A minimal in-memory/reference reader and writer validate the streaming
-  contracts. Production codecs live in the one-way
-  `kekule-trajectory-io` companion crate. Its supported initial profiles are
-  tracked independently as `io.trajectory.file`, `.xyz`, `.dcd`, `.trr`, and
-  `.xtc`.
+  contracts. Production codecs are part of the same `kekule-traj` crate and
+  are tracked independently as `io.trajectory.file`, `.xyz`, `.dcd`, `.trr`,
+  and `.xtc`.
 
 ## Tests
 
@@ -60,8 +69,11 @@ trajectories through reusable caller-owned buffers.
   positions, cell, vectors, time, step, observation, and properties after a
   later validation failure, stale optional-state clearing after positions-only
   remaps, and stable dense-array pointers and capacities over repeated remaps.
-- Downstream tests prove an external companion crate can implement sequential,
+- Downstream tests prove external applications can implement sequential,
   seekable, and writer traits and publish complete data without private access.
+- Cross-crate tests prove `kekule` potentials and the
+  `kekule_potentials::dreiding` adapter consume `kekule-traj` frame and buffer
+  views without copying coordinates.
 - Publication regressions cover late validation failure, complete destination
   transactionality, stale property/optional-field clearing, exact order-token
   identity, typed error context, and stable position/vector pointers and
@@ -69,8 +81,9 @@ trajectories through reusable caller-owned buffers.
 
 ## Out Of Scope
 
-- File codec implementations, reactive trajectories, dynamics integration, and
-  neighbor lists.
+- Reactive trajectories, dynamics integration, neighbor lists, and higher-level
+  MDTraj-like slicing, distance/contact, and RMSF operations not tracked by
+  focused implemented features.
 
 ## Revision Notes
 
@@ -90,3 +103,8 @@ trajectories through reusable caller-owned buffers.
   context, and downstream codec-trait implementation coverage.
 - v7: Record the supported companion-codec integration contract and its use of
   the same exact-topology, transactional reusable-buffer API.
+- v8: Move the full trajectory model and production codecs into the one-way
+  `kekule-traj` companion, remove `kekule::trajectory`, and reserve this crate
+  as the home for future trajectory-oriented workflows over Kekule kernels.
+- v9: Establish the companion analysis namespace and delegate implemented
+  trajectory superposition and RMSD behavior to focused feature contracts.

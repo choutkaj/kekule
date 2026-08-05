@@ -1,0 +1,23 @@
+[package]
+name = "kekule-traj"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Trajectory storage, streaming, workflows, and pure-Rust file codecs for Kekule."
+publish = true
+
+[dependencies]
+kekule = { version = "0.3.0", path = "../kekule" }
+molly = "=0.6.1"
+
+[dev-dependencies]
+sha2 = "0.11"
+
+[[bench]]
+name = "codec_throughput"
+harness = false
