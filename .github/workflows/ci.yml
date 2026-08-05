@@ -41,14 +41,17 @@ jobs:
       - run: cargo xtask skills --check
 
   fuzz-smoke:
-    name: Parser fuzz smoke
+    name: Fuzz smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo install cargo-fuzz --locked
-      - run: cargo +nightly fuzz run mol_v2000 -- -runs=256 -max_len=4096 -seed=1
-      - run: cargo +nightly fuzz run mol_v3000 -- -runs=256 -max_len=4096 -seed=2
-      - run: cargo +nightly fuzz run sdf_v2000 -- -runs=256 -max_len=4096 -seed=3
-      - run: cargo +nightly fuzz run smiles -- -runs=256 -max_len=4096 -seed=4
-      - run: cargo +nightly fuzz run mmcif -- -runs=256 -max_len=4096 -seed=5
+      - uses: taiki-e/install-action@cargo-fuzz
+      - name: Run every registered target
+        shell: bash
+        run: |
+          seed=0
+          cargo +nightly fuzz list | while read -r target; do
+            seed=$((seed + 1))
+            cargo +nightly fuzz run "$target" -- -runs=256 -max_len=4096 -seed="$seed"
+          done
