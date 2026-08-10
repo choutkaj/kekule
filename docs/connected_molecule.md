@@ -26,16 +26,18 @@ Each `SmilesComponentInterpretation` owns one connected `SmallMolecule` and comp
 
 ## mmCIF connectivity
 
-mmCIF interpretation now completes covalent connectivity from semantic format data before publishing the public interpretation result:
+The public mmCIF interpretation path now completes covalent connectivity from semantic format data before returning the final model:
 
 1. existing `_struct_conn` handling supplies explicit and special covalent links;
 2. `_chem_comp_bond` supplies intra-component bonds and bond orders for observed atoms;
 3. ordinary polymer links are added only when two observed residues have consecutive `label_seq_id` values and the polymer type defines an unambiguous standard linkage;
 4. `_pdbx_entity_branch_link`, resolved through `_pdbx_branch_scheme`, supplies covalent links for branched entities such as oligosaccharides.
 
-Coordinate-distance inference remains diagnostic-only and never becomes asserted connectivity. Missing atoms are simply omitted from component-template bonds. Missing sequence positions are not bridged by a fabricated peptide or phosphodiester bond. Polymer entities declaring nonstandard linkage are treated conservatively rather than receiving guessed standard inter-residue bonds.
+Coordinate-distance inference never becomes asserted connectivity. Missing atoms are simply omitted from component-template bonds. Missing sequence positions are not bridged by a fabricated peptide or phosphodiester bond. Polymer entities declaring nonstandard linkage are treated conservatively rather than receiving guessed standard inter-residue bonds.
 
 `MmcifInterpretationReport::template_bonds_pending()` now counts multi-atom molecule instances that remain disconnected after this authoritative completion step. Such a result means the observed structure does not contain enough authoritative connectivity to produce one connected represented graph.
+
+The older coordinate-distance candidate diagnostic is produced by the lower interpretation stage before semantic template completion; it remains diagnostic only and must not be interpreted as the final set of missing bonds.
 
 ## Remaining macromolecular design decision
 
