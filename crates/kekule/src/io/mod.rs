@@ -3,6 +3,7 @@ mod mmcif_interpret;
 mod mmcif_write;
 mod sdf_document;
 mod smiles;
+mod smiles_components;
 mod structure_documents;
 mod v2000;
 mod v3000;
@@ -14,7 +15,13 @@ pub use mmcif_document::*;
 pub use mmcif_interpret::*;
 pub use mmcif_write::*;
 pub use sdf_document::*;
-pub use smiles::*;
+pub use smiles::{
+    parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
+    write_isomeric_smiles, write_smiles, CanonicalSmilesWriteOptions,
+    IsomericSmilesWriteOptions, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
+    SmilesParseError, SmilesParseOptions, SmilesWriteOptions,
+};
+pub use smiles_components::*;
 pub use structure_documents::*;
 pub use v2000::*;
 pub use v3000::*;
