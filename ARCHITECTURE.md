@@ -13,9 +13,10 @@ serves small molecules and biological macromolecules without making a
 file-format record, a simulation-engine particle list, or one flattened graph
 the universal data model.
 
-The foundational chemical concept is `Molecule`: one asserted chemical entity.
-The foundational system-level concept is `Topology`: one immutable,
-coordinate-free molecular system composed of one or more molecule instances.
+The foundational chemical concept is `Molecule`: one connected represented
+chemical entity. The foundational system-level concept is `Topology`: one
+immutable, coordinate-free molecular system composed of one or more connected
+molecule instances.
 
 ## Canonical object model
 
@@ -23,7 +24,7 @@ coordinate-free molecular system composed of one or more molecule instances.
 format text or binary data
     -> format-specific Document or streaming decoder
     -> explicit interpretation + report
-    -> canonical chemical and structural objects
+    -> one or more canonical connected molecular objects
        Molecule
          |- SmallMolecule
          `- MacroMolecule
@@ -39,9 +40,17 @@ The central ownership relationships are:
 
 ```text
 Molecule
-  local asserted chemical graph
+  one connected local asserted chemical graph
   local AtomId and BondId
   optional source conformers
+
+SmallMolecule
+  one connected Molecule
+  small-molecule workflow semantics
+
+MacroMolecule
+  one connected Molecule
+  one validated SmcraHierarchy
 
 Topology
   immutable coordinate-free system
@@ -74,14 +83,23 @@ These boundaries are requirements rather than naming conventions:
 - Parsing recognizes and preserves format syntax. It does not sanitize
   chemistry, run perception, parameterize a force field, or silently choose
   ambiguous structural records.
+- A format `Document` may represent zero, one, or several disconnected source
+  components without weakening the canonical molecule invariant.
 - Interpretation applies format semantics and documented policies. It creates
-  canonical objects, source-to-canonical mappings, imported annotations, and a
-  structured report. It still does not sanitize implicitly.
+  canonical connected molecular objects, source-to-canonical mappings,
+  imported annotations, and a structured report. When a source describes
+  several disconnected represented entities, interpretation returns or builds
+  several molecule objects rather than one disconnected `Molecule`.
+- Interpretation never invents a covalent bond merely to force connectedness.
+  When authoritative chemistry is insufficient to connect an observed
+  structure, residual connected components remain separate represented
+  molecules and their common source identity is retained as provenance.
 - Perception derives chemical state from asserted molecular topology.
 - Sanitization is an explicit transactional workflow over canonical chemical
   objects.
-- Topology construction assembles already asserted molecular entities into one
-  coordinate-free system. It does not invent coordinates or force-field state.
+- Topology construction assembles already asserted connected molecular entities
+  into one coordinate-free system. It does not invent coordinates or
+  force-field state.
 - Coordinate construction validates complete state against one exact topology.
 - Analysis is read-only unless the operation is explicitly named as a
   transformation.
@@ -130,8 +148,8 @@ values after one checked conversion.
 
 ### `Molecule`
 
-`Molecule` is the raw chemical graph kernel and the asserted entity boundary.
-It owns:
+`Molecule` is the raw chemical graph kernel and the canonical boundary for one
+connected represented chemical entity. It owns:
 
 - stable typed `AtomId` and `BondId` values;
 - atoms, bonds, adjacency, graph-adjacent stereo elements, stereo groups, and
@@ -140,18 +158,39 @@ It owns:
 - arbitrary scalar annotations;
 - one internally consistent `PerceptionState`.
 
-Deletion leaves tombstones and stable local identifiers are never reused.
-`Molecule` may be disconnected, unsanitized, incomplete, or chemically invalid.
-Atom, bond, conformer, stereo-element, and stereo-group insertion checks the
-fixed-width identifier slot before mutation and returns a focused structured
-capacity error when exhausted. Iteration never reconstructs these identifiers
-through unchecked narrowing from platform-sized collection indices.
+Every non-empty canonical `Molecule` is one connected atom/bond graph. A
+singleton atom is therefore a valid molecule. `Molecule::new()` may represent
+an empty neutral/default value during construction, but empty molecules are not
+valid topology definitions.
 
-Graph connectedness is not the definition of a molecular entity. A salt such as
-`[Na+].[Cl-]`, a coordination compound such as ferrocene, and an ordinary
-connected organic compound may each be represented as one `Molecule`.
-Connected-component algorithms report the actual graph components without
-overriding the asserted entity boundary.
+Temporary disconnection belongs to explicit construction or editing state, not
+to the published domain object. `MoleculeBuilder` may contain several graph
+components while atoms and bonds are assembled; `build()` validates the final
+connectedness invariant. `MoleculeEditor` performs topology-changing edits on a
+private candidate and publishes the result only when `commit()` succeeds.
+Failed construction or editing is transactional.
+
+Raw operations that can create disconnection, such as atom insertion and
+atom/bond deletion, remain crate-private or live behind checked builder/editor
+APIs. Public mutation of an already published molecule may alter chemistry,
+annotations, conformers, stereo, or add a bond between existing atoms, but it
+must not expose a route that leaves the molecule disconnected.
+
+Deletion in internal/editing state leaves tombstones and stable local
+identifiers are never reused. Atom, bond, conformer, stereo-element, and
+stereo-group insertion checks the fixed-width identifier slot before mutation
+and returns a focused structured capacity error when exhausted. Iteration never
+reconstructs these identifiers through unchecked narrowing from platform-sized
+collection indices.
+
+Disconnected source chemistry is represented above this boundary. For example,
+`[Na+].[Cl-]` is two connected molecules, ordinarily placed in one `Topology`.
+A protein-ligand complex is a topology containing at least a protein molecule
+and a ligand molecule. If a coordination or organometallic interaction is
+represented by an asserted Kekule bond, it contributes to graph connectedness;
+if it is not represented as a bond, the participating graph components remain
+separate molecules. Noncovalent association never becomes a graph bond merely
+to satisfy this invariant.
 
 Topology facts stored directly on atoms, bonds, and stereo elements include
 element, isotope, formal charge, radical state, explicit-hydrogen declarations,
@@ -192,13 +231,22 @@ tombstones the group while partial pruning preserves the group and stable ID.
 
 ### `SmallMolecule`
 
-`SmallMolecule` is the ordinary cheminformatics wrapper around one `Molecule`.
-It provides ergonomic small-molecule workflows while retaining read access and
-controlled mutation of the graph.
+`SmallMolecule` is the ordinary cheminformatics wrapper around one connected
+`Molecule`. It provides ergonomic small-molecule workflows while retaining read
+access and controlled mutation of the graph.
+
+A `SmallMolecule` never represents several disconnected salt/mixture
+components. Format interpretation may return several `SmallMolecule` values
+when the source record contains several disconnected represented entities.
 
 `SmallMolecule::from_smiles` is an intentional parse-then-interpret convenience
-and does not sanitize. Any convenience that also sanitizes must state that
-operation in its name.
+for exactly one connected SMILES component and does not sanitize. Dot-separated
+input is rejected by this single-molecule convenience rather than silently
+choosing or merging a component. Component-aware SMILES interpretation operates
+on `SmilesDocument` and returns one `SmallMolecule` per disconnected SMILES
+component with component-local IDs and source mappings.
+
+Any convenience that also sanitizes must state that operation in its name.
 
 The physical wrapper type remains dependency-light. I/O, perception,
 sanitization, modelling, and workflow facades may depend on it; lower layers do
@@ -206,8 +254,9 @@ not depend back on workflow conveniences.
 
 ### `MacroMolecule` and `SmcraHierarchy`
 
-`MacroMolecule` is one `Molecule` plus one validated `SmcraHierarchy`.
-`SmcraHierarchy` stores coordinate-independent structural identity:
+`MacroMolecule` is one connected `Molecule` plus one validated
+`SmcraHierarchy`. `SmcraHierarchy` stores coordinate-independent structural
+identity:
 
 - chains;
 - residues;
@@ -223,11 +272,22 @@ observation-specific values belong to interpretation provenance or
 configuration-associated observation data. The hierarchy must not require a
 coordinate-model node as the parent of a chain in the final architecture.
 
-Every public `MacroMolecule` is valid: every live graph atom has exactly one
-atom site, every atom site references a live graph atom, hierarchy parentage is
-consistent, and static identifiers satisfy their documented invariants.
-Construction uses checked builders or checked assembly from parts.
-Coordinated graph-and-hierarchy mutation is transactional.
+Every public `MacroMolecule` is valid: its graph is connected, every live graph
+atom has exactly one atom site, every atom site references a live graph atom,
+hierarchy parentage is consistent, and static identifiers satisfy their
+documented invariants. Public macro construction is connected-by-construction:
+the first atom may be inserted directly, while subsequent atom insertion is
+paired with an asserted bond to an existing atom. Coordinated graph-and-
+hierarchy editing is transactional and must preserve connectedness at commit.
+
+An experimental macromolecular source may describe a physical polymer whose
+observed atoms are separated by unresolved residues or atoms. Kekule does not
+fabricate a direct bond across that gap. After all authoritative source
+connectivity has been applied, each residual connected observed fragment is
+represented as its own `MacroMolecule` instance. Those instances retain shared
+source entity, asymmetry/chain, coordinate-model, and atom-site provenance so
+that biological source identity is not confused with graph connectedness.
+
 Chain, residue, and atom-site capacity failures are structured and occur before
 parent lists or lookup maps are changed.
 
@@ -249,13 +309,18 @@ topology serialization framework.
 Canonical persistence adapters reconstruct in this order:
 
 ```text
-atoms, bonds, conformers, and stable layouts
+atoms, bonds, conformers, and stable layouts in temporary construction state
+    -> connectedness validation
     -> ungrouped stereo elements without group side effects
     -> live stereo-group slots and tombstones in slot order
     -> stereo bond marks
     -> SMCRA hierarchy and targeted child enrichment
     -> complete checked PerceptionState installation
 ```
+
+Historical or external state that describes several disconnected graph
+components must be explicitly partitioned or rejected before publication as a
+canonical `Molecule`; reconstruction never weakens the connectedness invariant.
 
 Perception is installed last because normal graph and stereo construction must
 continue to invalidate computed state. Loading never sanitizes, re-perceives,
@@ -297,7 +362,7 @@ system. It is a first-class public object independent of `Model`.
 
 A `Topology` owns:
 
-- molecule definitions;
+- connected molecule definitions;
 - molecule instances referencing those definitions;
 - all asserted atoms and covalent bonds available through instance-qualified
   identities;
@@ -335,8 +400,8 @@ Users should work with `Topology`, not with `Arc<Topology>` directly.
 
 ### Molecule definitions and molecule instances
 
-Topology distinguishes what a molecule is from one occurrence of that molecule
-in a system:
+Topology distinguishes what a connected represented molecule is from one
+occurrence of that molecule in a system:
 
 ```rust
 pub struct MoleculeDefinitionId(u32);
@@ -358,8 +423,9 @@ pub struct MoleculeInstance {
 }
 ```
 
-A definition stores one conformer-free small- or macromolecular entity. An
-instance identifies one occurrence of that definition in the topology.
+A definition stores one conformer-free connected small- or macromolecular
+entity. An instance identifies one occurrence of that definition in the
+topology.
 
 Definition reuse is explicit. For example, one water definition may be
 referenced by many water instances. Each instance still has a unique
@@ -376,29 +442,40 @@ semantic redesign.
 
 ### Molecular boundaries and connectivity
 
-Every topology atom belongs to exactly one molecule instance.
+Every topology atom belongs to exactly one molecule instance, and every
+non-empty molecule instance contains exactly one connected asserted graph.
+System-level disconnection is represented by multiple molecule instances, not
+by a disconnected molecule definition.
 
 In the fixed-topology architecture, asserted covalent bonds belong within one
-molecule instance. If two structural entities are covalently linked, they are
-represented as one asserted molecular entity or are explicitly merged during
-interpretation before topology construction.
+molecule instance. If source entities are connected by an asserted covalent
+bond, interpretation merges the corresponding temporary source groups before
+final topology construction so that the resulting connected chemistry belongs
+to one molecule instance.
 
-Molecule instances are not synonyms for connected components. One molecule
-definition may itself contain multiple graph components. Downstream operations
-must distinguish, as applicable:
+Conversely, association alone does not merge molecules. Salts, solvents,
+protein-ligand complexes, ion pairs, and other noncovalent assemblies are
+represented as several molecule instances in one `Topology`. Hydrogen bonds,
+restraints, spatial neighbors, and coordinate-derived interactions are not
+topology bonds.
 
-- asserted molecule instances;
-- connected components;
+A source-level identity may legitimately span several molecule instances. The
+important example is an experimental polymer chain containing unresolved
+residues: the physical/source entity remains one biological entity, but the
+represented atom graph has several connected fragments. Those fragments are
+separate `MacroMolecule` instances with common source provenance.
+
+Downstream operations must still distinguish, as applicable:
+
+- molecule instances;
+- source entities/chains from provenance;
 - charge-assignment groups;
 - nonbonded exclusion groups;
 - periodic imaging groups;
 - user-defined atom groups.
 
-Noncovalent contacts, hydrogen bonds, restraints, spatial neighbors, and
-coordinate-derived interactions are not topology bonds.
-
 Topology provides system-wide graph queries using qualified identities while
-preserving local molecule graphs. It must support iteration and lookup of:
+preserving local molecule graphs. It supports iteration and lookup of:
 
 ```text
 molecule definitions
@@ -406,10 +483,13 @@ molecule instances
 instance-qualified atoms
 instance-qualified bonds
 neighbors and incident bonds
-connected components within each instance
 instance and definition membership
 hierarchy views for macromolecular instances
 ```
+
+Connected-component queries may remain available as validation/algorithmic
+primitives, but a canonical non-empty molecule instance is expected to yield
+exactly one component.
 
 ### Semantic identifiers and dense indices
 
@@ -521,6 +601,11 @@ construct a solvated system
 apply a chemical reaction
 ```
 
+Any topology-changing operation that would disconnect one molecule definition
+must either return several connected molecule instances or reject the edit; it
+must not publish a disconnected `Molecule` merely to preserve a prior instance
+boundary.
+
 A topology edit never mutates existing models, ensembles, trajectories, or
 prepared systems. Remapping coordinate state is a separate explicit operation.
 Added atoms may remain without coordinates until a geometry-building operation
@@ -542,7 +627,7 @@ unmapped target atoms, and selection loss requires an explicit policy.
 
 It supports:
 
-- adding checked molecule definitions;
+- adding checked connected molecule definitions;
 - adding multiple instances of one definition;
 - attaching instance roles and static annotations;
 - reserving capacity for large systems;
@@ -562,6 +647,7 @@ A built topology rejects:
 
 - no molecule instances;
 - empty molecule definitions;
+- disconnected molecule definitions;
 - invalid macromolecule graph/hierarchy pairs;
 - invalid instance-to-definition references;
 - identifier capacity overflow;
@@ -596,7 +682,9 @@ keys.
 
 Source provenance remains in format documents, interpretation reports, or
 dedicated provenance objects. Exact source record identifiers are not injected
-indiscriminately into generic atom and molecule property maps.
+indiscriminately into generic atom and molecule property maps. Provenance may
+map one source entity or chain onto several represented connected molecule
+instances when the observed source graph contains genuine gaps.
 
 ## Coordinate state
 
@@ -842,7 +930,9 @@ lengths. A matching atom count alone is not treated as proof of chemical
 identity when stronger metadata is available.
 
 Formats that contain topology may construct it explicitly through
-`TopologyBuilder` and return interpretation provenance.
+`TopologyBuilder` and return interpretation provenance. Any disconnected source
+chemistry is partitioned into connected molecule definitions before the
+canonical topology is published.
 
 ### Fixed and changing topology
 
@@ -932,18 +1022,44 @@ that topology.
 There is no generic text-format `Document` trait. Each textual format exposes a
 loss-preserving type appropriate to its grammar.
 
-- `SmilesDocument` preserves source syntax and interprets to one
+- `SmilesDocument` preserves the complete source syntax, including component
+  separators, and component-aware interpretation yields one connected
+  `SmallMolecule` per disconnected SMILES component with source mappings.
+- `MolfileDocument` preserves V2000 or V3000 syntax. The current single-molecule
+  interpretation contract accepts exactly one connected CTAB graph; a
+  disconnected CTAB is rejected instead of becoming one disconnected
   `SmallMolecule`.
-- `MolfileDocument` preserves V2000 or V3000 syntax and interprets to one
-  `SmallMolecule` plus mappings and a report.
 - `SdfDocument` owns ordered records with raw data fields and interprets to
-  canonical records. Record metadata is not injected into molecule properties.
+  canonical records. Because each current SDF record wraps the single-molecule
+  Molfile interpretation contract, a disconnected CTAB in a record is likewise
+  rejected. Record metadata is not injected into molecule properties.
 - `MmcifDocument` preserves blocks, items, loops, missing-value markers,
   unknown categories, and source locations.
 
 Ordinary mmCIF model interpretation selects exactly one coordinate-model ID.
 The default rejects ambiguous multi-model input. Named and first-model
 selection are explicit policies. Alternate-location handling is explicit.
+
+mmCIF interpretation first constructs syntax-faithful temporary structure and
+then completes evidence-backed covalent connectivity. The current semantic
+layers include explicit/special covalent `_struct_conn` links,
+`_chem_comp_bond` component bonds when supplied by the document, standard
+polypeptide or nucleic-acid links only between observed consecutive
+`label_seq_id` residues, and `_pdbx_entity_branch_link` resolved through
+`_pdbx_branch_scheme` for branched entities. Missing atoms are not synthesized,
+missing sequence positions are not bridged, and nonstandard polymer-linkage
+metadata suppresses generic linkage assumptions when the exact linkage is not
+proved.
+
+Coordinate-distance connectivity candidates remain diagnostic only; they never
+become asserted bonds merely to force one component.
+
+After authoritative connectivity completion, mmCIF interpretation partitions
+every residual graph component into its own connected `SmallMolecule` or
+`MacroMolecule` instance. Positions, observations, SMCRA hierarchy, source atom
+identity, and interpretation provenance are remapped explicitly. Several final
+molecule instances may therefore retain the same source entity/asymmetry
+identity when an experimental chain contains a genuine unresolved gap.
 
 Single-model mmCIF interpretation produces:
 
@@ -957,10 +1073,10 @@ MmcifInterpretationReport
 and exposes a convenience `Model`.
 
 Multi-model mmCIF interpretation is a separate ensemble operation. It may
-produce one `Ensemble` only after proving a consistent chemical topology,
-molecule-instance partition, atom identity mapping, and dense ordering across
-members. Coordinate-model identifiers and per-model observation values belong
-to ensemble-member metadata. Inconsistent atom presence or topology produces a
+produce one `Ensemble` only after proving a consistent final connected-fragment
+topology, atom identity mapping, and dense ordering across members.
+Coordinate-model identifiers and per-model observation values belong to
+ensemble-member metadata. Inconsistent atom presence or topology produces a
 structured error unless an explicit reconciliation policy is requested.
 Source atom correspondence uses residue sequence and insertion identity,
 label/author asymmetry identity, component and atom labels, an explicit
@@ -970,8 +1086,9 @@ from derived molecule insertion order.
 
 Only evidence-backed covalent links establish topology connectivity.
 Distance-based candidates, unresolved connections, model selection, altloc
-selection, ignored records, and source classification remain visible in
-reports and provenance. Interpretation must not assert fabricated bond orders.
+selection, ignored records, source classification, and source-to-fragment
+relationships remain visible in reports and provenance. Interpretation must not
+assert fabricated bond orders.
 
 Text writers operate on canonical objects and reject unsupported semantics.
 Writer-generated one-based numeric serials use widened integer arithmetic;
@@ -981,9 +1098,9 @@ forcing a loss-preserving whole-file document abstraction for binary data.
 
 ## Perception, transformations, and derived state
 
-Perception algorithms operate primarily on local `Molecule` definitions.
-Topology may expose convenient iteration over definitions and instances, but it
-does not duplicate perception algorithms.
+Perception algorithms operate primarily on local connected `Molecule`
+definitions. Topology may expose convenient iteration over definitions and
+instances, but it does not duplicate perception algorithms.
 
 Topology construction preserves the installed coordinate-independent
 perception state of each inserted definition. It does not sanitize or perceive
@@ -991,8 +1108,9 @@ implicitly.
 
 Hydrogen addition and removal remain explicit topology-changing chemical
 transforms. Applied to standalone molecules, they preserve local stable IDs as
-documented. Applied to a topology, they return a new topology and lineage
-mapping. Newly materialized atoms do not receive invented coordinates.
+documented and must preserve the connected-molecule invariant. Applied to a
+topology, they return a new topology and lineage mapping. Newly materialized
+atoms do not receive invented coordinates.
 
 Coordinate-derived analyses return snapshot results. Updating positions or
 advancing a trajectory does not mutate an earlier analysis result. Callers
@@ -1024,9 +1142,10 @@ periodic-cell handling and returns a structured error when a compatible view
 contains unsupported state.
 
 Policies that group atoms, such as charge equilibration, must state whether
-they operate over the whole topology, molecule instances, connected
-components, or explicit groups. The architecture never treats those scopes as
-interchangeable by accident.
+they operate over the whole topology, molecule instances, source provenance
+groups, or explicit user-defined groups. Because every canonical molecule
+instance is connected, graph connectedness does not provide an alternative
+hidden molecular boundary.
 
 `kekule-potentials` is the companion package for concrete topology-bound
 potential implementations while the dependency-light `Potential` contract
@@ -1042,7 +1161,8 @@ The target public facade is focused:
 
 ```text
 core
-    Molecule graph kernel, local IDs, atom and bond chemistry
+    connected Molecule graph kernel, local IDs, atom and bond chemistry,
+    MoleculeBuilder and transactional MoleculeEditor
 
 geometry
     Point3, Vector3, matrices, periodic cells, rigid transforms
@@ -1054,10 +1174,11 @@ small
     SmallMolecule and small-molecule workflow conveniences
 
 bio
-    MacroMolecule, coordinate-independent SmcraHierarchy, validation
+    connected MacroMolecule, coordinate-independent SmcraHierarchy,
+    checked construction/editing, validation
 
 topology
-    Topology, TopologyBuilder, molecule definitions and instances,
+    Topology, TopologyBuilder, connected molecule definitions and instances,
     instance-qualified IDs, dense topology indices, topology mappings
 
 structure
@@ -1065,7 +1186,8 @@ structure
     structure-observation state
 
 smiles / molfile / sdf / mmcif
-    format-specific documents, interpretation, reports, and writers
+    format-specific documents, component-aware interpretation where required,
+    reports, provenance, and writers
 
 perception
     explicit valence, ring, aromaticity, stereo, and sanitization workflows
@@ -1174,9 +1296,10 @@ breaking public API changes require a minor version increment. The topology-
 centered architecture and Kekule package names are the initial public contract,
 not a migration from a published predecessor.
 
-Invariant-bearing topology, hierarchy, coordinate, document, provenance, and
-error state is private behind accessors and checked constructors. Public direct
-fields are reserved for deliberate value, options, and report payloads.
+Invariant-bearing molecule, topology, hierarchy, coordinate, document,
+provenance, and error state is private behind accessors and checked constructors.
+Public direct fields are reserved for deliberate value, options, and report
+payloads.
 
 Extensible public error enums are `#[non_exhaustive]`.
 
@@ -1185,31 +1308,38 @@ coordinate construction, preparation, analysis, and writing remain visibly
 separate in names and documentation.
 
 Compatibility shims may exist during the staged refactor, but the final public
-surface must use `Topology`, `TopologyAtomIndex`, topology-bound prepared
-objects, and shared structural views. Deprecated aliases are removed before the
-new minor release unless a deliberate deprecation release is chosen.
+surface must use connected `Molecule`, `Topology`, `TopologyAtomIndex`,
+topology-bound prepared objects, and shared structural views. Deprecated
+aliases are removed before the new minor release unless a deliberate
+deprecation release is chosen.
 
 ## Architectural invariants
 
 The following statements summarize the design:
 
-1. `Molecule` is one asserted local chemical entity; connectedness is not its
-   defining invariant.
-2. `Topology` is one immutable coordinate-free molecular system.
-3. Topology preserves molecule definitions and molecule-instance boundaries.
-4. Semantic identities and dense numerical indices are separate.
-5. One topology has one immutable authoritative dense ordering.
-6. `Model` is one topology plus one complete configuration.
-7. `Ensemble` is one topology plus finite non-temporal members.
-8. `kekule-traj::Trajectory` is one Kekule topology plus ordered frames and
+1. Every non-empty canonical `Molecule` is exactly one connected represented
+   atom/bond graph; temporary disconnection exists only inside explicit
+   construction/editing state.
+2. Disconnected chemistry or unresolved experimental fragments are represented
+   as multiple molecule instances, with source relationships retained as
+   provenance rather than encoded as fake bonds.
+3. `Topology` is one immutable coordinate-free molecular system composed of
+   one or more connected molecule instances.
+4. Topology preserves molecule definitions and molecule-instance boundaries.
+5. Semantic identities and dense numerical indices are separate.
+6. One topology has one immutable authoritative dense ordering.
+7. `Model` is one topology plus one complete configuration.
+8. `Ensemble` is one topology plus finite non-temporal members.
+9. `kekule-traj::Trajectory` is one Kekule topology plus ordered frames and
    supports streaming I/O.
-9. Periodic cells, velocities, forces, time, and observation data are dynamic
-   state, not topology.
-10. Prepared systems and compiled selections bind to exact topology identity.
-11. Topology-changing operations return a new topology and explicit mappings.
-12. Reactive trajectories are segmented by topology rather than weakening
+10. Periodic cells, velocities, forces, time, and observation data are dynamic
+    state, not topology.
+11. Prepared systems and compiled selections bind to exact topology identity.
+12. Topology-changing operations return a new topology and explicit mappings
+    and never publish a disconnected molecule definition.
+13. Reactive trajectories are segmented by topology rather than weakening
     fixed-topology containers.
-13. Parsing, interpretation, perception, sanitization, topology construction,
+14. Parsing, interpretation, perception, sanitization, topology construction,
     coordinate construction, and preparation are explicit distinct operations.
-14. Canonical chemistry and structure containers never silently absorb
+15. Canonical chemistry and structure containers never silently absorb
     backend-specific mechanical state.
