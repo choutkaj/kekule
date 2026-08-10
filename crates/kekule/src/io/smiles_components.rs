@@ -133,6 +133,50 @@ impl SmilesInterpretation {
             .map(SmilesComponentInterpretation::into_molecule)
             .collect()
     }
+
+    /// Convenience access for callers that require exactly one component.
+    ///
+    /// Prefer [`Self::components`] for general SMILES input. This method keeps
+    /// the pre-component API convenient for callers whose input contract is
+    /// already single-molecule and fails loudly rather than discarding data.
+    pub fn molecule(&self) -> &SmallMolecule {
+        self.single_component().molecule()
+    }
+
+    /// Convenience report access for an interpretation known to contain one component.
+    pub fn report(&self) -> &SmilesInterpretationReport {
+        self.single_component().report()
+    }
+
+    /// Consumes an interpretation known to contain exactly one component.
+    pub fn into_molecule(self) -> SmallMolecule {
+        self.into_single_component().into_molecule()
+    }
+
+    /// Consumes an interpretation known to contain exactly one component and its report.
+    pub fn into_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
+        self.into_single_component().into_parts()
+    }
+
+    fn single_component(&self) -> &SmilesComponentInterpretation {
+        match self.components.as_slice() {
+            [component] => component,
+            components => panic!(
+                "single-molecule SMILES access requires exactly one component, found {}",
+                components.len()
+            ),
+        }
+    }
+
+    fn into_single_component(mut self) -> SmilesComponentInterpretation {
+        if self.components.len() != 1 {
+            panic!(
+                "single-molecule SMILES access requires exactly one component, found {}",
+                self.components.len()
+            );
+        }
+        self.components.pop().expect("exactly one SMILES component")
+    }
 }
 
 /// Interprets each dot-delimited SMILES component independently.
@@ -269,5 +313,14 @@ mod tests {
             interpretation.components()[1].report().atom_mappings()[0].source_span(),
             2..7
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "requires exactly one component")]
+    fn single_component_convenience_never_discards_dot_smiles_components() {
+        let document = smiles::parse_smiles_document("C.O").expect("valid components");
+        interpret_smiles_document(&document)
+            .expect("interpret components")
+            .into_molecule();
     }
 }
