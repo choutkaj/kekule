@@ -786,12 +786,12 @@ impl Model {
     /// };
     /// use kekule::units::{Quantity, ANGSTROM};
     ///
-    /// let mut ligand_graph = Molecule::new();
-    /// ligand_graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
-    /// let ligand = SmallMolecule::from_graph(ligand_graph);
-    /// let mut water_graph = Molecule::new();
-    /// water_graph.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-    /// let water = SmallMolecule::from_graph(water_graph);
+    /// let mut ligand_builder = Molecule::builder();
+    /// ligand_builder.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+    /// let ligand = SmallMolecule::from_graph(ligand_builder.build()?);
+    /// let mut water_builder = Molecule::builder();
+    /// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+    /// let water = SmallMolecule::from_graph(water_builder.build()?);
     /// let mut builder = TopologyBuilder::new();
     /// let ligand_definition = builder.add_small_molecule_definition(&ligand)?;
     /// let water_definition = builder.add_small_molecule_definition(&water)?;

@@ -646,11 +646,12 @@ impl Molecule {
             .sum()
     }
 
-    /// Inserts an atom and returns its stable identifier.
+    /// Inserts an atom into crate-private construction/edit state.
     ///
-    /// The insertion fails without changing the molecule when the fixed-width
-    /// atom identifier space is exhausted.
-    pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
+    /// Public molecule construction goes through [`Molecule::builder`], because
+    /// adding an atom to an already populated graph would temporarily violate
+    /// the connected-molecule invariant.
+    pub(crate) fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
         self.add_atom_at_slot(atom, self.atoms.len())
     }
 
@@ -663,7 +664,8 @@ impl Molecule {
         Ok(id)
     }
 
-    pub fn delete_atom(&mut self, id: AtomId) -> Result<Atom> {
+    /// Removes an atom only inside crate-private construction/edit state.
+    pub(crate) fn delete_atom(&mut self, id: AtomId) -> Result<Atom> {
         self.atom(id)?;
         let incident = self.adjacency[id.index()].clone();
         for bond_id in incident {
@@ -716,7 +718,8 @@ impl Molecule {
 
     /// Inserts a bond after validating its endpoints and identifier capacity.
     ///
-    /// Every failure leaves the molecule unchanged.
+    /// Adding a bond cannot disconnect a valid molecule, so it remains a safe
+    /// direct public topology mutation. Every failure leaves the molecule unchanged.
     pub fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
         self.atom(a)?;
         self.atom(b)?;
@@ -734,7 +737,8 @@ impl Molecule {
         Ok(id)
     }
 
-    pub fn delete_bond(&mut self, id: BondId) -> Result<Bond> {
+    /// Removes a bond only inside crate-private construction/edit state.
+    pub(crate) fn delete_bond(&mut self, id: BondId) -> Result<Bond> {
         let bond = self
             .bonds
             .get_mut(id.index())
