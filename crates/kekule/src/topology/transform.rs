@@ -27,9 +27,9 @@ use super::{
 ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
 /// };
 ///
-/// let mut water = Molecule::new();
-/// water.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-/// let water = SmallMolecule::from_graph(water);
+/// let mut water_builder = Molecule::builder();
+/// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+/// let water = SmallMolecule::from_graph(water_builder.build()?);
 ///
 /// let mut builder = TopologyBuilder::new();
 /// let definition = builder.add_small_molecule_definition(&water)?;
