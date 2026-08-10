@@ -53,13 +53,12 @@ impl MacroMoleculeBuilder {
         order: BondOrder,
     ) -> Result<(AtomId, BondId), MacroGraphEditError> {
         self.graph().atom(parent)?;
+        let before = self.graph().clone();
         let atom_id = self.graph_mut().add_atom(atom)?;
         match self.graph_mut().add_bond(parent, atom_id, order) {
             Ok(bond_id) => Ok((atom_id, bond_id)),
             Err(error) => {
-                self.graph_mut()
-                    .delete_atom(atom_id)
-                    .expect("new unattached atom can be rolled back");
+                *self.graph_mut() = before;
                 Err(error.into())
             }
         }
@@ -96,13 +95,12 @@ impl MacroMoleculeEditor<'_> {
         order: BondOrder,
     ) -> Result<(AtomId, BondId), MacroGraphEditError> {
         self.graph().atom(parent)?;
+        let before = self.graph().clone();
         let atom_id = self.graph_mut().add_atom(atom)?;
         match self.graph_mut().add_bond(parent, atom_id, order) {
             Ok(bond_id) => Ok((atom_id, bond_id)),
             Err(error) => {
-                self.graph_mut()
-                    .delete_atom(atom_id)
-                    .expect("new unattached atom can be rolled back");
+                *self.graph_mut() = before;
                 Err(error.into())
             }
         }
