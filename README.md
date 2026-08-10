@@ -7,11 +7,11 @@
 
 <p align="center">
   <a href="https://github.com/choutkaj/kekule/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/choutkaj/kekule/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/choutkaj/kekule/blob/main/Cargo.toml"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
+  <a href="#license"><img alt="MSRV 1.89" src="https://img.shields.io/badge/MSRV-1.89-blue.svg"></a>
   <a href="#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg"></a>
 </p>
 
-`kekule` is an experimental chemistry backend scoped for both small molecules and macromolecules. The project is intended to cover regular cheminformatic workflows, as well as modeling-oriented tasks. `kekule` is human-architected and AI-coded.
+`kekule` is an experimental chemistry backend scoped for both small molecules and macromolecules. The project is intended to cover regular cheminformatics workflows, as well as modeling-oriented tasks. `kekule` is human-architected and AI-coded.
 
 For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/kekule/).
 
@@ -21,15 +21,15 @@ For feature overview and parity checks, see the [feature dashboard](https://chou
 
 ## Concept
 
-The `Molecule` type is the raw graph kernel for one user-asserted molecular entity. It is usually a connected molecular graph, although disconnected graphs are allowed (to handle salts, complexes, and such). The `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`. `SmallMolecule` handles ordinary cheminformatics workflows; `MacroMolecule` pairs a graph with a `SmcraHierarchy`.
+The `Molecule` type is the raw graph kernel for one connected represented chemical entity. Disconnected sources such as salts, mixtures, or experimentally unresolved macromolecular fragments are represented as multiple molecule instances rather than one disconnected `Molecule`. `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`; `SmallMolecule` handles ordinary cheminformatics workflows, while `MacroMolecule` pairs one connected graph with a `SmcraHierarchy`.
 
 ```text
-Molecule
+Molecule (one connected graph)
 ┣ SmallMolecule
 ┗ MacroMolecule (Molecule + SmcraHierarchy)
 ```
 
-Higher, modeling-based objects are built around `Topology`: an immutable topological construct containing one or multiple molecule instances. 
+Higher, modeling-based objects are built around `Topology`: an immutable topological construct containing one or multiple molecule instances. Source-level identities such as an mmCIF entity or chain may map to more than one represented molecule instance when the observed structure contains a genuine unresolved gap.
 
 
 ```text
