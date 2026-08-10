@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::core::{AtomId, BondOrder, Molecule};
 use crate::structure::{
     Configuration, Ensemble, EnsembleMember, Model, ModelBuilder, Positions, StructureObservation,
 };
-use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology, TopologyAtomIndex};
+use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, ANGSTROM};
 
 use super::mmcif_interpret as raw;
@@ -157,10 +157,32 @@ struct ComponentBond {
     order: BondOrder,
 }
 
+#[derive(Debug, Clone)]
+struct BranchSchemeSite {
+    entity_id: String,
+    asym_id: String,
+    number: i32,
+    component_id: String,
+    author_sequence_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct BranchLink {
+    entity_id: String,
+    number_1: i32,
+    atom_1: String,
+    number_2: i32,
+    atom_2: String,
+    order: BondOrder,
+}
+
 #[derive(Debug, Default)]
 struct ConnectivityCatalog {
     component_bonds: BTreeMap<String, Vec<ComponentBond>>,
     polymer_types: BTreeMap<String, String>,
+    nonstandard_polymer_linkage: BTreeSet<String>,
+    branch_sites: Vec<BranchSchemeSite>,
+    branch_links: Vec<BranchLink>,
 }
 
 impl ConnectivityCatalog {
@@ -194,6 +216,62 @@ impl ConnectivityCatalog {
                 catalog
                     .polymer_types
                     .insert(entity.to_owned(), kind.to_owned());
+                if optional(table, row, "_entity_poly.nstd_linkage")
+                    .is_some_and(is_yes)
+                {
+                    catalog
+                        .nonstandard_polymer_linkage
+                        .insert(entity.to_owned());
+                }
+            }
+        }
+        if let Some(table) = block.loop_with_tag("_pdbx_branch_scheme.entity_id") {
+            for row in 0..table.row_count() {
+                let entity_id = required(table, row, "_pdbx_branch_scheme.entity_id")?;
+                let asym_id = required(table, row, "_pdbx_branch_scheme.asym_id")?;
+                let number = required_i32(table, row, "_pdbx_branch_scheme.num")?;
+                let component_id = required(table, row, "_pdbx_branch_scheme.mon_id")?;
+                let author_sequence_id = optional(table, row, "_pdbx_branch_scheme.pdb_seq_num")
+                    .or_else(|| optional(table, row, "_pdbx_branch_scheme.auth_seq_num"))
+                    .map(str::to_owned);
+                catalog.branch_sites.push(BranchSchemeSite {
+                    entity_id: entity_id.to_owned(),
+                    asym_id: asym_id.to_owned(),
+                    number,
+                    component_id: component_id.to_owned(),
+                    author_sequence_id,
+                });
+            }
+        }
+        if let Some(table) = block.loop_with_tag("_pdbx_entity_branch_link.entity_id") {
+            for row in 0..table.row_count() {
+                let entity_id = required(table, row, "_pdbx_entity_branch_link.entity_id")?;
+                let number_1 = required_i32(
+                    table,
+                    row,
+                    "_pdbx_entity_branch_link.entity_branch_list_num_1",
+                )?;
+                let atom_1 = required(table, row, "_pdbx_entity_branch_link.atom_id_1")?;
+                let number_2 = required_i32(
+                    table,
+                    row,
+                    "_pdbx_entity_branch_link.entity_branch_list_num_2",
+                )?;
+                let atom_2 = required(table, row, "_pdbx_entity_branch_link.atom_id_2")?;
+                let order = component_bond_order(
+                    optional(table, row, "_pdbx_entity_branch_link.value_order")
+                        .unwrap_or("sing"),
+                    table,
+                    row,
+                )?;
+                catalog.branch_links.push(BranchLink {
+                    entity_id: entity_id.to_owned(),
+                    number_1,
+                    atom_1: atom_1.to_owned(),
+                    number_2,
+                    atom_2: atom_2.to_owned(),
+                    order,
+                });
             }
         }
         Ok(catalog)
@@ -329,6 +407,7 @@ fn apply_instance_connectivity(
             }
         }
     }
+    apply_branch_links(graph, &residues, catalog)?;
     apply_polymer_links(graph, &residues, catalog)
 }
 
@@ -358,6 +437,59 @@ fn residue_atoms(
     residues
 }
 
+fn apply_branch_links(
+    graph: &mut Molecule,
+    residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+    catalog: &ConnectivityCatalog,
+) -> Result<(), raw::MmcifInterpretError> {
+    for link in &catalog.branch_links {
+        let left = resolve_branch_residue(
+            residues,
+            catalog,
+            &link.entity_id,
+            link.number_1,
+        );
+        let right = resolve_branch_residue(
+            residues,
+            catalog,
+            &link.entity_id,
+            link.number_2,
+        );
+        let (Some(left), Some(right)) = (left, right) else {
+            continue;
+        };
+        let (Some(&left_atom), Some(&right_atom)) =
+            (left.atoms.get(&link.atom_1), right.atoms.get(&link.atom_2))
+        else {
+            continue;
+        };
+        add_bond_if_missing(graph, left_atom, right_atom, link.order)?;
+    }
+    Ok(())
+}
+
+fn resolve_branch_residue<'a>(
+    residues: &'a BTreeMap<ResidueKey, ResidueAtoms>,
+    catalog: &ConnectivityCatalog,
+    entity_id: &str,
+    number: i32,
+) -> Option<&'a ResidueAtoms> {
+    catalog
+        .branch_sites
+        .iter()
+        .filter(|site| site.entity_id == entity_id && site.number == number)
+        .find_map(|site| {
+            residues.values().find(|residue| {
+                residue.key.asym_id == site.asym_id
+                    && residue.key.entity_id.as_deref() == Some(site.entity_id.as_str())
+                    && normalized(&residue.key.component_id) == normalized(&site.component_id)
+                    && site.author_sequence_id.as_deref().is_none_or(|expected| {
+                        residue.key.author_sequence_id.as_deref() == Some(expected)
+                    })
+            })
+        })
+}
+
 fn apply_polymer_links(
     graph: &mut Molecule,
     residues: &BTreeMap<ResidueKey, ResidueAtoms>,
@@ -381,6 +513,12 @@ fn apply_polymer_links(
         let Some(polymer_type) = catalog.polymer_types.get(entity) else {
             continue;
         };
+        // The flag states that at least one monomer-to-monomer linkage differs
+        // from the linkage implied by the polymer type, but does not identify
+        // that pair. Remain conservative rather than inventing a standard bond.
+        if catalog.nonstandard_polymer_linkage.contains(entity) {
+            continue;
+        }
         for pair in chain.windows(2) {
             let left = pair[0];
             let right = pair[1];
@@ -390,6 +528,8 @@ fn apply_polymer_links(
             ) else {
                 continue;
             };
+            // label_seq_id includes unmodelled residues, so only adjacent values
+            // prove that the two observed residues are consecutive in sequence.
             if right_seq != left_seq.saturating_add(1) {
                 continue;
             }
@@ -424,6 +564,10 @@ fn add_bond_if_missing(
         graph.add_bond(left, right, order).map_err(interpret_error)?;
     }
     Ok(())
+}
+
+fn is_yes(value: &str) -> bool {
+    matches!(value.to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 fn is_polypeptide(value: &str) -> bool {
@@ -492,6 +636,16 @@ fn required<'a>(
         .ok_or_else(|| row_error(table, row, format!("missing required {tag}")))
 }
 
+fn required_i32(
+    table: &MmcifLoopTable,
+    row: usize,
+    tag: &str,
+) -> Result<i32, raw::MmcifInterpretError> {
+    required(table, row, tag)?
+        .parse::<i32>()
+        .map_err(|_| row_error(table, row, format!("invalid integer {tag}")))
+}
+
 fn optional<'a>(table: &'a MmcifLoopTable, row: usize, tag: &str) -> Option<&'a str> {
     table.value(row, tag).and_then(MmcifValue::optional_text)
 }
@@ -528,7 +682,8 @@ _entity.type
 loop_
 _entity_poly.entity_id
 _entity_poly.type
-1 'polypeptide(L)'
+_entity_poly.nstd_linkage
+1 'polypeptide(L)' no
 loop_
 _struct_asym.id
 _struct_asym.entity_id
@@ -570,6 +725,68 @@ ATOM 7 C C GLY A 1 2 6.9 0.0 0.0
 ATOM 8 O O GLY A 1 2 7.9 0.0 0.0
 "#;
 
+    const BRANCH: &str = r#"
+data_branch
+loop_
+_entity.id
+_entity.type
+2 branched
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+B 2
+loop_
+_pdbx_entity_branch_list.entity_id
+_pdbx_entity_branch_list.comp_id
+_pdbx_entity_branch_list.num
+_pdbx_entity_branch_list.hetero
+2 NAG 1 n
+2 GAL 2 n
+loop_
+_pdbx_branch_scheme.asym_id
+_pdbx_branch_scheme.entity_id
+_pdbx_branch_scheme.mon_id
+_pdbx_branch_scheme.num
+_pdbx_branch_scheme.pdb_seq_num
+B 2 NAG 1 10
+B 2 GAL 2 11
+loop_
+_pdbx_entity_branch_link.link_id
+_pdbx_entity_branch_link.entity_id
+_pdbx_entity_branch_link.entity_branch_list_num_1
+_pdbx_entity_branch_link.comp_id_1
+_pdbx_entity_branch_link.atom_id_1
+_pdbx_entity_branch_link.entity_branch_list_num_2
+_pdbx_entity_branch_link.comp_id_2
+_pdbx_entity_branch_link.atom_id_2
+_pdbx_entity_branch_link.value_order
+1 2 1 NAG O4 2 GAL C1 sing
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+NAG C4 O4 sing
+GAL C1 O5 sing
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.auth_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 C C4 NAG B 2 . 10 0.0 0.0 0.0
+HETATM 2 O O4 NAG B 2 . 10 1.4 0.0 0.0
+HETATM 3 C C1 GAL B 2 . 11 2.8 0.0 0.0
+HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
+"#;
+
     #[test]
     fn component_templates_and_polymer_links_complete_peptide_graph() {
         let document = super::super::mmcif_document::parse_mmcif_str(
@@ -590,12 +807,12 @@ ATOM 8 O O GLY A 1 2 7.9 0.0 0.0
 
     #[test]
     fn sequence_gap_is_not_bridged_by_a_fake_polymer_bond() {
-        let input = PEPTIDE.replace("A 1 2 GLY", "A 1 3 GLY").replace(
-            "GLY A 1 2 4.1",
-            "GLY A 1 3 4.1",
-        ).replace("GLY A 1 2 5.5", "GLY A 1 3 5.5")
-          .replace("GLY A 1 2 6.9", "GLY A 1 3 6.9")
-          .replace("GLY A 1 2 7.9", "GLY A 1 3 7.9");
+        let input = PEPTIDE
+            .replace("A 1 2 GLY", "A 1 3 GLY")
+            .replace("GLY A 1 2 4.1", "GLY A 1 3 4.1")
+            .replace("GLY A 1 2 5.5", "GLY A 1 3 5.5")
+            .replace("GLY A 1 2 6.9", "GLY A 1 3 6.9")
+            .replace("GLY A 1 2 7.9", "GLY A 1 3 7.9");
         let document = super::super::mmcif_document::parse_mmcif_str(
             &input,
             super::super::mmcif_document::MmcifParseOptions::default(),
@@ -609,5 +826,23 @@ ATOM 8 O O GLY A 1 2 7.9 0.0 0.0
             .expect("peptide instance");
         assert_eq!(graph.connected_components().len(), 2);
         assert_eq!(interpretation.report().template_bonds_pending(), 1);
+    }
+
+    #[test]
+    fn branch_link_connects_branched_macromolecule() {
+        let document = super::super::mmcif_document::parse_mmcif_str(
+            BRANCH,
+            super::super::mmcif_document::MmcifParseOptions::default(),
+        )
+        .expect("parse branch");
+        let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
+            .expect("interpret branch");
+        let graph = interpretation
+            .topology()
+            .graph_for_instance(MoleculeInstanceId::new(0))
+            .expect("branch instance");
+        assert_eq!(graph.bond_count(), 3);
+        assert!(graph.is_connected());
+        assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
 }
