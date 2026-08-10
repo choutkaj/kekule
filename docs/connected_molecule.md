@@ -41,6 +41,11 @@ The older coordinate-distance candidate diagnostic is produced by the lower inte
 
 ## Remaining macromolecular design decision
 
-A structure can legitimately omit residues or atoms from a chemically continuous macromolecule. The represented atom graph is then disconnected even though the physical polymer is one molecule. This is the remaining blocker to making connectedness an unconditional `MacroMolecule`/`Molecule` invariant.
+Bond reconstruction itself is no longer the blocker. A structure can legitimately omit residues or atoms from a chemically continuous macromolecule. The represented atom graph is then disconnected even though the physical polymer is one molecule.
 
-The transition should therefore not invent bonds across unresolved gaps. Before the final invariant is enforced, Kekule needs one explicit policy for incomplete macromolecular observations: either represent disconnected observed fragments as separate molecule instances while preserving their common source/entity identity, or introduce a dedicated incomplete-structure boundary distinct from a finalized connected `Molecule`.
+The transition should not invent bonds across unresolved gaps. Before connectedness becomes an unconditional `MacroMolecule`/`Molecule` invariant, Kekule needs one explicit representation policy for this case. The two principled choices are:
+
+- split the observed connected fragments into separate molecule instances while preserving their common source/entity/chain identity above the molecule layer; or
+- introduce an explicit incomplete-macromolecule/observed-structure boundary that may contain several connected fragments and is finalized into connected `Molecule` objects only when appropriate.
+
+Until that policy is chosen, authoritative mmCIF connectivity is completed as far as the file proves it, residual disconnection is reported, and no fictitious chemistry is added.
