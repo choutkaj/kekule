@@ -1,6 +1,7 @@
 mod mmcif_connectivity;
 mod mmcif_document;
 mod mmcif_interpret;
+mod mmcif_partition;
 mod mmcif_write;
 mod sdf_document;
 mod smiles;
@@ -12,15 +13,15 @@ mod v3000;
 use crate::algorithms::{allowed_valences, explicit_valence};
 use crate::core::{BondOrder, Molecule, StereoBondMarkKind};
 
-pub use mmcif_connectivity::{
-    interpret_mmcif, interpret_mmcif_ensemble, MmcifEnsembleInterpretation, MmcifInterpretation,
-};
 pub use mmcif_document::*;
 pub use mmcif_interpret::{
     MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
     MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEntityKind,
     MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
     MmcifInterpretationReport, MmcifModelSelection,
+};
+pub use mmcif_partition::{
+    interpret_mmcif, interpret_mmcif_ensemble, MmcifEnsembleInterpretation, MmcifInterpretation,
 };
 pub use mmcif_write::*;
 pub use sdf_document::*;
