@@ -2,7 +2,7 @@
 
 ## Summary
 
-Interpret V3000 records from the version-autodetected loss-preserving
+Interpret a connected V3000 CTAB from the version-autodetected loss-preserving
 `MolfileDocument` as one `SmallMolecule` plus source mappings.
 
 ## Behavior/API
@@ -17,6 +17,9 @@ Interpret V3000 records from the version-autodetected loss-preserving
   representation.
 - Interpretation returns `MolfileInterpretation`; its report maps source atom
   and bond records to stable canonical `AtomId` and `BondId` values.
+- Interpretation rejects a CTAB whose completed graph has multiple connected
+  components with a structured `MolfileInterpretError`; parsing continues to
+  preserve the document independently of that semantic boundary.
 - Preserves title/program/comment document metadata, atom coordinates, bond
   orders, atom map numbers, formal charges, isotopes via `MASS`, radical
   multiplicities, and supported V3000 bond `CFG` stereo as source bond marks.
@@ -45,15 +48,18 @@ Interpret V3000 records from the version-autodetected loss-preserving
 
 ## Tests
 
-- Unit tests cover successful raw parsing, line continuations, metadata fields, no-perception behavior, malformed counts, count mismatches, non-finite coordinates, bad endpoints, supported source bond stereo marks, unsupported atom stereo, and unsupported bond types.
+- Unit tests cover successful raw parsing, line continuations, metadata fields,
+  no-perception behavior, disconnected CTAB rejection, malformed counts, count
+  mismatches, non-finite coordinates, bad endpoints, supported source bond
+  stereo marks, unsupported atom stereo, and unsupported bond types.
 - A dedicated bounded fuzz target exercises V3000 parse, interpretation, write,
   and reparse in CI smoke tests and scheduled campaigns.
 
 ## Benchmarks
 
 - RDKit-generated goldens compare Molfile-preserved atom, bond, metadata, and coordinate records for the same external PubChem fixtures used by the V2000 parser tier.
-- PubChem-1k is required baseline evidence; manifest-backed broader corpora
-  remain available for deliberate local parity checks.
+- Manifest-backed corpora remain available for deliberate optional parity
+  checks; they are not routine feature-health or release gates.
 - Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
 - Benchmark observations are informational and never determine this feature's release status or repository health.
 
@@ -93,3 +99,5 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
   record-discard paths.
 - v17: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v18: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v19: Reject disconnected V3000 CTAB interpretation at the connected
+  `SmallMolecule` boundary while retaining loss-preserving document parsing.

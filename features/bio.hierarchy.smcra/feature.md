@@ -3,24 +3,32 @@
 ## Summary
 
 Represent coordinate-independent chain, residue, and atom-site hierarchy as a
-sidecar over the shared core molecule graph.
+sidecar over one connected shared core molecule graph.
 
 ## Behavior/API
 
 - Exposes `SmcraChain`, `SmcraResidue`, and `SmcraAtomSite` nodes plus
   correspondingly prefixed typed IDs.
 - Stores biomolecular labels and atom-site metadata in `SmcraHierarchy`, not core `Atom`.
-- `MacroMolecule` owns one core `Molecule` plus one `SmcraHierarchy`.
+- `MacroMolecule` owns one connected core `Molecule` plus one
+  `SmcraHierarchy`.
 - `MacroMolecule` exposes chain, residue, and atom-site iterators plus
   `atom_site_for_atom`.
 - `MacroMolecule::validate` checks graph/hierarchy consistency and all retained
   conformer coordinates without mutation.
+- Static validation rejects a graph with multiple components through
+  `MacroValidateError::DisconnectedGraph`.
 - `MacroMolecule::validate_with_options` can restrict work to static
   graph/hierarchy validation for coordinate-independent consumers.
 - `MacroMoleculeBuilder` and `MacroMolecule::try_from_parts` are the only raw
-  assembly paths and reject invalid graph/hierarchy pairs.
+  assembly paths and reject invalid graph/hierarchy pairs, including a
+  disconnected graph.
+- Public macro graph growth starts with `add_atom` and then uses the atomic
+  `add_atom_bonded_to` operation; a second unattached atom returns
+  `MacroGraphEditError::DisconnectedAtomInsertion` without mutation.
 - `MacroMolecule::edit` provides coordinated transactional graph/hierarchy
-  mutation; commit validates before atomically replacing the original.
+  mutation; its working copy may be temporarily disconnected, but commit
+  validates connectedness before atomically replacing the original.
 - Every live graph atom must have exactly one atom site, and every atom site
   must reference a live graph atom.
 - Atom-site insertion validates that referenced core atoms exist.
@@ -47,9 +55,10 @@ sidecar over the shared core molecule graph.
 
 ## Tests
 
-- Unit tests cover hierarchy construction, checked assembly, transactional
-  mutation, lookup, full versus static-only validation reports, unused
-  conformer skipping, synthetic ID-capacity boundaries, capacity rollback, and
+- Unit tests cover hierarchy construction, checked assembly, disconnected
+  builder/parts rejection, transactional mutation, disconnecting-edit rollback,
+  lookup, full versus static-only validation reports, unused conformer
+  skipping, synthetic ID-capacity boundaries, capacity rollback, and
   failed-commit rollback.
 - The former Biopython evidence exercised the removed whole-file reader rather
   than the format-neutral hierarchy contract, so no current hierarchy parity
@@ -86,3 +95,6 @@ sidecar over the shared core molecule graph.
   hierarchy insertion remains transactional at the fixed-width boundary.
 - v12: Add checked targeted restoration for residue component IDs and
   chain/residue/atom-site property maps.
+- v13: Require a connected graph at every completed `MacroMolecule` boundary,
+  expose structured disconnected validation, and preserve the original value
+  when a staged edit would disconnect it.

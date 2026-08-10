@@ -301,7 +301,7 @@ pub(super) fn interpret_v2000_syntax(
             .expect("parsed coordinates reference live atoms");
     }
 
-    Ok(SmallMolecule::from_graph(mol))
+    Ok(SmallMolecule::from_graph_unchecked_connectedness(mol))
 }
 
 pub(super) fn parse_counts_line(line: &str) -> Option<(usize, usize)> {

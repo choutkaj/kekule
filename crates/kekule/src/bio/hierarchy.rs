@@ -3,6 +3,7 @@ use std::fmt;
 
 use crate::core::*;
 
+/// One connected macromolecular graph with its coordinated SMCRA sidecar.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MacroMolecule {
     graph: Molecule,
@@ -97,6 +98,7 @@ impl MacroMolecule {
     }
 }
 
+/// Mutable staging for one final connected [`MacroMolecule`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MacroMoleculeBuilder {
     graph: Molecule,
@@ -141,6 +143,7 @@ impl MacroMoleculeBuilder {
     }
 }
 
+/// Transactional coordinated editing for a connected [`MacroMolecule`].
 pub struct MacroMoleculeEditor<'a> {
     target: &'a mut MacroMolecule,
     graph: Molecule,

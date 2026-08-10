@@ -513,6 +513,11 @@ fn check_install_component_capacity(
         .map_err(|_| PerceptionStateInstallError::ComponentCapacityExceeded(component))
 }
 
+/// One completed connected molecular graph.
+///
+/// Empty and single-atom values are valid boundary cases. Build nontrivial
+/// graphs with [`Molecule::builder`] and change topology transactionally with
+/// [`Molecule::edit`], both of which enforce connectedness before publication.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Molecule {
     pub(crate) atoms: Vec<Option<Atom>>,
@@ -625,6 +630,7 @@ impl From<&Bond> for BondChemistry {
 }
 
 impl Molecule {
+    /// Creates the valid empty molecule boundary case.
     pub fn new() -> Self {
         Self::default()
     }
@@ -785,6 +791,11 @@ impl Molecule {
             .map(move |bond| bond.other_atom(id)))
     }
 
+    /// Returns graph components for validation and graph algorithms.
+    ///
+    /// A completed nonempty public molecule has exactly one component. The
+    /// general result shape also supports empty values and private builder,
+    /// editor, and format-interpretation staging.
     pub fn connected_components(&self) -> Vec<Vec<AtomId>> {
         let mut seen = vec![false; self.atoms.len()];
         let mut components = Vec::new();

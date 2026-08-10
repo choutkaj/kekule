@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 29
+version = 30
 status = "supported"
-description = "Expose the initial 0.1.0 foundational Kekule facade with focused topology, structure, alignment, modeling, chemistry, and format modules."
+description = "Expose the focused Kekule facade with connected molecule boundaries, explicit format interpretation, topology, structure, alignment, modeling, and chemistry modules."
 depends_on = [
   "core.units",
   "core.graph",

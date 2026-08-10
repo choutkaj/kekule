@@ -2049,7 +2049,7 @@ fn build_molecule(
             provenance,
         })
     } else {
-        let molecule = SmallMolecule::from_graph(graph);
+        let molecule = SmallMolecule::from_graph_unchecked_connectedness(graph);
         Ok(BuiltMolecule::Small {
             molecule,
             conformer,

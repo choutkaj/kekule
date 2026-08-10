@@ -4,7 +4,8 @@
 
 Interpret one explicitly selected coordinate model from a loss-preserving
 `MmcifDocument` into separated topology, configuration, observation state, and
-report, or use a separate path for a verified shared-topology ensemble.
+report whose molecule instances are connected, or use a separate path for a
+verified shared-topology ensemble.
 
 ## Behavior/API
 
@@ -27,8 +28,16 @@ report, or use a separate path for a verified shared-topology ensemble.
 - Treats `_atom_site.Cartn_*` coordinates as explicit angstrom quantities before
   model construction.
 - Uses entity, structural-instance, atom-site, polymer-sequence, and
-  declared-connection metadata to build Small/Macro instances. Only declared
-  local covalent links merge boundaries; symmetry-mate links remain unresolved.
+  declared-connection metadata to build Small/Macro instances. Document-local
+  component-template bonds, polymer continuity/branch links, and resolved local
+  covalent `_struct_conn` links establish authoritative connectivity;
+  symmetry-mate links remain unresolved.
+- After connectivity completion, every remaining graph component is emitted as
+  a separate connected molecule instance. Topology, configuration,
+  observation, role, report, and provenance identities are remapped together so
+  no public interpretation result contains a disconnected `Molecule`.
+- Resolved local covalent links can merge components before final partitioning;
+  noncovalent and unresolved links never merge them.
 - Resolves each `_struct_conn` partner against every supplied non-missing label
   and author selector: asymmetry, component, sequence, atom, insertion code, and
   alternate location. Label and author fields must identify one common
@@ -75,9 +84,14 @@ report, or use a separate path for a verified shared-topology ensemble.
   separately rather than matching label selectors against author fallbacks.
   Explicit altloc diagnostics compare selected atoms with the selected model's
   pre-altloc rows without using coordinates as evidence.
-- Polymer/branched instances establish conservative macro boundaries; nonpolymer
-  and water occurrences remain distinct unless a declared covalent link joins
-  them.
+- Interpretation uses private unchecked staging only while collecting mmCIF
+  rows and completing connectivity. The ordinary public `Molecule`,
+  `MacroMolecule`, `Topology`, and `Model` boundaries are entered only after
+  connected component partitioning.
+- Polymer/branched candidates establish conservative macro staging boundaries;
+  nonpolymer and water occurrences remain distinct unless authoritative
+  connectivity joins them. Any residual disconnected staging boundary is split
+  into connected final instances.
 - Within merged macro instances, hierarchy chains follow their first
   `_pdbx_poly_seq_scheme.asym_id` occurrence rather than incidental atom-row or
   map order.
@@ -87,9 +101,10 @@ report, or use a separate path for a verified shared-topology ensemble.
 
 - Tests cover mixed typed instances and roles, complete positions, default
   multi-model rejection, explicit selection, altloc policy/reporting, missing
-  coordinates, covalent merging, noncovalent separation, symmetry-mate
-  rejection, deposited polymer-chain ordering, supported connection order
-  interpretation, and unknown-order rejection.
+  coordinates, component-template and polymer connectivity, connected final
+  instance partitioning, covalent merging, noncovalent separation,
+  symmetry-mate rejection, deposited polymer-chain ordering, supported
+  connection order interpretation, and unknown-order rejection.
 - Declared-connection regressions cover repeated label atom names distinguished
   by label sequence, repeated author sequences distinguished by insertion code,
   auth-only and consistent mixed label/auth selectors, conflicting selector
@@ -111,8 +126,8 @@ report, or use a separate path for a verified shared-topology ensemble.
 
 ## Out Of Scope
 
-- CCD/template lookup, inferred polymer bonds, assembly generation, sanitization,
-  force-field preparation, and serialization.
+- External CCD/template lookup, proximity-inferred bonds, assembly generation,
+  sanitization, force-field preparation, and serialization.
 
 ## Revision Notes
 
@@ -146,3 +161,6 @@ report, or use a separate path for a verified shared-topology ensemble.
   label/author selector resolution, distinguish unresolved and ambiguous
   candidates in source-aware reports, and prevent omitted altlocs from binding
   to retained conformers.
+- v14: Complete document-declared component/polymer connectivity, partition
+  residual components into separate connected instances with coordinated state
+  remapping, and keep unchecked disconnected staging private to interpretation.

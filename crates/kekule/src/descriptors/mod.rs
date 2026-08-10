@@ -339,7 +339,7 @@ fn molecular_mass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, AtomRadical, Molecule};
+    use crate::core::{Atom, AtomRadical, BondOrder, Molecule};
     use crate::perception;
 
     fn element(symbol: &str) -> Element {
@@ -378,20 +378,31 @@ mod tests {
     #[test]
     fn hill_order_isotope_order_and_accessors_are_stable() {
         let mut graph = Molecule::new();
-        let mut carbon_13 = Atom::new(element("C"));
-        carbon_13.isotope = Some(13);
-        graph
-            .add_atom(carbon_13.clone())
+        let mut carbon_13_atom = Atom::new(element("C"));
+        carbon_13_atom.isotope = Some(13);
+        let mut carbon_12_atom = carbon_13_atom.clone();
+        carbon_12_atom.isotope = Some(12);
+        let carbon_13 = graph
+            .add_atom(carbon_13_atom)
             .expect("atom identifier capacity");
-        graph
+        let oxygen = graph
             .add_atom(Atom::new(element("O")))
             .expect("atom identifier capacity");
-        graph
+        let carbon = graph
             .add_atom(Atom::new(element("C")))
             .expect("atom identifier capacity");
-        let mut carbon_12 = carbon_13;
-        carbon_12.isotope = Some(12);
-        graph.add_atom(carbon_12).expect("atom identifier capacity");
+        let carbon_12 = graph
+            .add_atom(carbon_12_atom)
+            .expect("atom identifier capacity");
+        graph
+            .add_bond(carbon_13, oxygen, BondOrder::Single)
+            .expect("first connecting bond");
+        graph
+            .add_bond(oxygen, carbon, BondOrder::Single)
+            .expect("second connecting bond");
+        graph
+            .add_bond(carbon, carbon_12, BondOrder::Single)
+            .expect("third connecting bond");
         let formula = molecular_formula(
             &SmallMolecule::from_graph(graph),
             HydrogenCountPolicy::StoredOnly,
