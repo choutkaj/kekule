@@ -21,7 +21,7 @@ For feature overview and parity checks, see the [feature dashboard](https://chou
 
 ## Concept
 
-The `Molecule` type is the raw graph kernel for one connected represented chemical entity. Disconnected sources such as salts, mixtures, or experimentally unresolved macromolecular fragments are represented as multiple molecule instances rather than one disconnected `Molecule`. `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`; `SmallMolecule` handles ordinary cheminformatics workflows, while `MacroMolecule` pairs one connected graph with a `SmcraHierarchy`.
+The `Molecule` type is the raw graph kernel for one connected molecular graph. `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`. `SmallMolecule` handles ordinary cheminformatics workflows, while `MacroMolecule` pairs one connected graph with a `SmcraHierarchy`.
 
 ```text
 Molecule (one connected graph)
