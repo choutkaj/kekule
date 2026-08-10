@@ -1,0 +1,613 @@
+use std::collections::BTreeMap;
+
+use crate::core::{AtomId, BondOrder, Molecule};
+use crate::structure::{
+    Configuration, Ensemble, EnsembleMember, Model, ModelBuilder, Positions, StructureObservation,
+};
+use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology, TopologyAtomIndex};
+use crate::units::{Quantity, ANGSTROM};
+
+use super::mmcif_interpret as raw;
+use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
+
+/// Interpreted mmCIF model after authoritative component and polymer
+/// connectivity has been materialized into the canonical molecule graphs.
+#[derive(Debug, Clone)]
+pub struct MmcifInterpretation {
+    model: Model,
+    report: raw::MmcifInterpretationReport,
+}
+
+impl MmcifInterpretation {
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    pub fn report(&self) -> &raw::MmcifInterpretationReport {
+        &self.report
+    }
+
+    pub fn topology(&self) -> &Topology {
+        self.model.topology()
+    }
+
+    pub fn configuration(&self) -> &Configuration {
+        self.model.configuration()
+    }
+
+    pub fn observation(&self) -> Option<&StructureObservation> {
+        self.model.observation()
+    }
+
+    pub fn into_model(self) -> Model {
+        self.model
+    }
+
+    pub fn into_parts(self) -> (Model, raw::MmcifInterpretationReport) {
+        (self.model, self.report)
+    }
+}
+
+/// Interprets mmCIF syntax first, then completes authoritative covalent
+/// connectivity without using coordinate-distance guesses.
+pub fn interpret_mmcif(
+    document: &MmcifDocument,
+    options: raw::MmcifInterpretOptions,
+) -> Result<MmcifInterpretation, raw::MmcifInterpretError> {
+    let interpretation = raw::interpret_mmcif(document, options)?;
+    let (model, mut report) = interpretation.into_parts();
+    let (model, pending) = rebuild_model_with_connectivity(document, model, &report)?;
+    report.template_bonds_pending = pending;
+    Ok(MmcifInterpretation { model, report })
+}
+
+#[derive(Debug, Clone)]
+pub struct MmcifEnsembleInterpretation {
+    ensemble: Ensemble,
+    reports: Vec<raw::MmcifInterpretationReport>,
+}
+
+impl MmcifEnsembleInterpretation {
+    pub fn ensemble(&self) -> &Ensemble {
+        &self.ensemble
+    }
+
+    pub fn reports(&self) -> &[raw::MmcifInterpretationReport] {
+        &self.reports
+    }
+
+    pub fn into_parts(self) -> (Ensemble, Vec<raw::MmcifInterpretationReport>) {
+        (self.ensemble, self.reports)
+    }
+}
+
+/// Completes the shared topology of a parsed mmCIF ensemble once, then rebinds
+/// every member to the repaired topology without changing dense atom order.
+pub fn interpret_mmcif_ensemble(
+    document: &MmcifDocument,
+    options: raw::MmcifEnsembleInterpretOptions,
+) -> Result<MmcifEnsembleInterpretation, raw::MmcifEnsembleInterpretError> {
+    let interpretation = raw::interpret_mmcif_ensemble(document, options)?;
+    let (source, mut reports) = interpretation.into_parts();
+    let first = source
+        .member(0)
+        .ok_or(raw::MmcifEnsembleInterpretError::EmptyModelSelection)?;
+    let model_id = reports
+        .first()
+        .and_then(raw::MmcifInterpretationReport::selected_model)
+        .unwrap_or("<unknown>")
+        .to_owned();
+    let prototype = Model::with_observation(
+        source.topology().clone(),
+        first.configuration().clone(),
+        first.observation().cloned(),
+    )
+    .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
+        model_id: model_id.clone(),
+        error: interpret_error(error),
+    })?;
+    let first_report = reports
+        .first()
+        .ok_or(raw::MmcifEnsembleInterpretError::EmptyModelSelection)?;
+    let (prototype, pending) = rebuild_model_with_connectivity(document, prototype, first_report)
+        .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
+            model_id: model_id.clone(),
+            error,
+        })?;
+    let topology = prototype.topology().clone();
+    let mut ensemble = Ensemble::new(topology.clone());
+
+    for member in source.members() {
+        let positions = Positions::new(&topology, member.configuration().positions().values())
+            .map_err(raw::MmcifEnsembleInterpretError::Position)?;
+        let configuration = match member.configuration().cell().copied() {
+            Some(cell) => Configuration::with_cell(positions, cell),
+            None => Configuration::new(positions),
+        };
+        let mut rebuilt = EnsembleMember::new(configuration);
+        rebuilt
+            .set_weight(member.weight())
+            .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+        if let Some(observation) = member.observation() {
+            rebuilt
+                .set_observation(Some(rebound_observation(observation, &topology).map_err(
+                    |error| raw::MmcifEnsembleInterpretError::Model {
+                        model_id: model_id.clone(),
+                        error,
+                    },
+                )?))
+                .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+        }
+        rebuilt.props_mut().clone_from(member.props());
+        ensemble
+            .push(rebuilt)
+            .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
+    }
+
+    for report in &mut reports {
+        report.template_bonds_pending = pending;
+    }
+    Ok(MmcifEnsembleInterpretation { ensemble, reports })
+}
+
+#[derive(Debug, Clone)]
+struct ComponentBond {
+    atom_1: String,
+    atom_2: String,
+    order: BondOrder,
+}
+
+#[derive(Debug, Default)]
+struct ConnectivityCatalog {
+    component_bonds: BTreeMap<String, Vec<ComponentBond>>,
+    polymer_types: BTreeMap<String, String>,
+}
+
+impl ConnectivityCatalog {
+    fn from_block(block: &MmcifDataBlock) -> Result<Self, raw::MmcifInterpretError> {
+        let mut catalog = Self::default();
+        if let Some(table) = block.loop_with_tag("_chem_comp_bond.comp_id") {
+            for row in 0..table.row_count() {
+                let comp_id = required(table, row, "_chem_comp_bond.comp_id")?;
+                let atom_1 = required(table, row, "_chem_comp_bond.atom_id_1")?;
+                let atom_2 = required(table, row, "_chem_comp_bond.atom_id_2")?;
+                let order = component_bond_order(
+                    optional(table, row, "_chem_comp_bond.value_order").unwrap_or("sing"),
+                    table,
+                    row,
+                )?;
+                catalog
+                    .component_bonds
+                    .entry(normalized(comp_id))
+                    .or_default()
+                    .push(ComponentBond {
+                        atom_1: atom_1.to_owned(),
+                        atom_2: atom_2.to_owned(),
+                        order,
+                    });
+            }
+        }
+        if let Some(table) = block.loop_with_tag("_entity_poly.entity_id") {
+            for row in 0..table.row_count() {
+                let entity = required(table, row, "_entity_poly.entity_id")?;
+                let kind = required(table, row, "_entity_poly.type")?;
+                catalog
+                    .polymer_types
+                    .insert(entity.to_owned(), kind.to_owned());
+            }
+        }
+        Ok(catalog)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ResidueKey {
+    asym_id: String,
+    entity_id: Option<String>,
+    label_sequence_id: Option<i32>,
+    author_sequence_id: Option<String>,
+    insertion_code: Option<String>,
+    occurrence: Option<usize>,
+    component_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct ResidueAtoms {
+    key: ResidueKey,
+    atoms: BTreeMap<String, AtomId>,
+}
+
+fn rebuild_model_with_connectivity(
+    document: &MmcifDocument,
+    source: Model,
+    report: &raw::MmcifInterpretationReport,
+) -> Result<(Model, usize), raw::MmcifInterpretError> {
+    let block = document
+        .block(report.data_block())
+        .ok_or_else(|| interpret_error("interpreted mmCIF data block is unavailable"))?;
+    let catalog = ConnectivityCatalog::from_block(block)?;
+    let topology = source.topology().clone();
+    let mut builder = ModelBuilder::new();
+    let mut pending = 0usize;
+
+    for (instance_id, instance) in topology.instances() {
+        let definition = topology
+            .definition_for_instance(instance_id)
+            .map_err(interpret_error)?;
+        let provenance = report
+            .instances()
+            .iter()
+            .find(|provenance| provenance.molecule() == instance_id)
+            .ok_or_else(|| interpret_error("mmCIF instance provenance is incomplete"))?;
+        let positions = definition
+            .graph()
+            .atom_ids()
+            .map(|atom| {
+                source
+                    .position(InstanceAtomId::new(instance_id, atom))
+                    .and_then(|position| position.into_unit(ANGSTROM).map_err(Into::into))
+                    .map(|position| position.into_value())
+                    .map_err(interpret_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let new_instance = if let Some(molecule) = definition.macro_molecule() {
+            let mut molecule = molecule.clone();
+            let mut editor = molecule.edit();
+            apply_instance_connectivity(editor.graph_mut(), provenance, &catalog)?;
+            let connected = editor.graph().is_connected();
+            editor.commit().map_err(interpret_error)?;
+            if molecule.graph().atom_count() > 1 && !connected {
+                pending += 1;
+            }
+            let definition = builder
+                .add_macro_molecule_definition(&molecule)
+                .map_err(interpret_error)?;
+            builder
+                .add_instance(
+                    definition,
+                    Quantity::new(positions, ANGSTROM),
+                    instance.metadata().clone(),
+                )
+                .map_err(interpret_error)?
+        } else if let Some(molecule) = definition.small_molecule() {
+            let mut molecule = molecule.clone();
+            apply_instance_connectivity(molecule.graph_mut(), provenance, &catalog)?;
+            if molecule.graph().atom_count() > 1 && !molecule.graph().is_connected() {
+                pending += 1;
+            }
+            let definition = builder
+                .add_small_molecule_definition(&molecule)
+                .map_err(interpret_error)?;
+            builder
+                .add_instance(
+                    definition,
+                    Quantity::new(positions, ANGSTROM),
+                    instance.metadata().clone(),
+                )
+                .map_err(interpret_error)?
+        } else {
+            return Err(interpret_error("mmCIF topology definition has no molecule payload"));
+        };
+
+        if new_instance != instance_id {
+            return Err(interpret_error(
+                "mmCIF connectivity rebuild changed molecule instance order",
+            ));
+        }
+    }
+
+    let mut model = builder.build().map_err(interpret_error)?;
+    model.set_cell(source.cell().copied());
+    if let Some(observation) = source.observation() {
+        model
+            .set_observation(Some(rebound_observation(observation, model.topology())?))
+            .map_err(interpret_error)?;
+    }
+    Ok((model, pending))
+}
+
+fn apply_instance_connectivity(
+    graph: &mut Molecule,
+    provenance: &raw::MmcifInstanceProvenance,
+    catalog: &ConnectivityCatalog,
+) -> Result<(), raw::MmcifInterpretError> {
+    let residues = residue_atoms(provenance);
+    for residue in residues.values() {
+        if let Some(template) = catalog
+            .component_bonds
+            .get(&normalized(&residue.key.component_id))
+        {
+            for bond in template {
+                let (Some(&left), Some(&right)) = (
+                    residue.atoms.get(&bond.atom_1),
+                    residue.atoms.get(&bond.atom_2),
+                ) else {
+                    continue;
+                };
+                add_bond_if_missing(graph, left, right, bond.order)?;
+            }
+        }
+    }
+    apply_polymer_links(graph, &residues, catalog)
+}
+
+fn residue_atoms(
+    provenance: &raw::MmcifInstanceProvenance,
+) -> BTreeMap<ResidueKey, ResidueAtoms> {
+    let mut residues = BTreeMap::new();
+    for atom in provenance.atoms() {
+        let key = ResidueKey {
+            asym_id: atom.asym_id().to_owned(),
+            entity_id: atom.entity_id().map(str::to_owned),
+            label_sequence_id: atom.label_sequence_id(),
+            author_sequence_id: atom.author_sequence_id().map(str::to_owned),
+            insertion_code: atom.insertion_code().map(str::to_owned),
+            occurrence: atom.occurrence(),
+            component_id: atom.component_id().to_owned(),
+        };
+        residues
+            .entry(key.clone())
+            .or_insert_with(|| ResidueAtoms {
+                key,
+                atoms: BTreeMap::new(),
+            })
+            .atoms
+            .insert(atom.atom_name().to_owned(), atom.atom().atom());
+    }
+    residues
+}
+
+fn apply_polymer_links(
+    graph: &mut Molecule,
+    residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+    catalog: &ConnectivityCatalog,
+) -> Result<(), raw::MmcifInterpretError> {
+    let mut chains = BTreeMap::<(String, String), Vec<&ResidueAtoms>>::new();
+    for residue in residues.values() {
+        let (Some(entity), Some(_)) = (
+            residue.key.entity_id.as_ref(),
+            residue.key.label_sequence_id,
+        ) else {
+            continue;
+        };
+        chains
+            .entry((residue.key.asym_id.clone(), entity.clone()))
+            .or_default()
+            .push(residue);
+    }
+    for ((_, entity), chain) in &mut chains {
+        chain.sort_by_key(|residue| residue.key.label_sequence_id);
+        let Some(polymer_type) = catalog.polymer_types.get(entity) else {
+            continue;
+        };
+        for pair in chain.windows(2) {
+            let left = pair[0];
+            let right = pair[1];
+            let (Some(left_seq), Some(right_seq)) = (
+                left.key.label_sequence_id,
+                right.key.label_sequence_id,
+            ) else {
+                continue;
+            };
+            if right_seq != left_seq.saturating_add(1) {
+                continue;
+            }
+            if is_polypeptide(polymer_type) {
+                if let (Some(&carbonyl), Some(&nitrogen)) =
+                    (left.atoms.get("C"), right.atoms.get("N"))
+                {
+                    add_bond_if_missing(graph, carbonyl, nitrogen, BondOrder::Single)?;
+                }
+            } else if is_nucleic_acid(polymer_type) {
+                let oxygen = left.atoms.get("O3'").or_else(|| left.atoms.get("O3*"));
+                if let (Some(&oxygen), Some(&phosphorus)) = (oxygen, right.atoms.get("P")) {
+                    add_bond_if_missing(graph, oxygen, phosphorus, BondOrder::Single)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn add_bond_if_missing(
+    graph: &mut Molecule,
+    left: AtomId,
+    right: AtomId,
+    order: BondOrder,
+) -> Result<(), raw::MmcifInterpretError> {
+    if graph
+        .bond_between(left, right)
+        .map_err(interpret_error)?
+        .is_none()
+    {
+        graph.add_bond(left, right, order).map_err(interpret_error)?;
+    }
+    Ok(())
+}
+
+fn is_polypeptide(value: &str) -> bool {
+    value.to_ascii_lowercase().contains("polypeptide")
+}
+
+fn is_nucleic_acid(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("polyribonucleotide") || value.contains("polydeoxyribonucleotide")
+}
+
+fn component_bond_order(
+    value: &str,
+    table: &MmcifLoopTable,
+    row: usize,
+) -> Result<BondOrder, raw::MmcifInterpretError> {
+    match value.to_ascii_lowercase().as_str() {
+        "sing" | "poly" => Ok(BondOrder::Single),
+        "doub" | "pi" => Ok(BondOrder::Double),
+        "trip" => Ok(BondOrder::Triple),
+        "quad" => Ok(BondOrder::Quadruple),
+        "arom" | "delo" => Ok(BondOrder::Aromatic),
+        other => Err(row_error(
+            table,
+            row,
+            format!("unsupported component bond order `{other}`"),
+        )),
+    }
+}
+
+fn rebound_observation(
+    source: &StructureObservation,
+    target: &Topology,
+) -> Result<StructureObservation, raw::MmcifInterpretError> {
+    let mut atoms = Vec::with_capacity(target.atom_count());
+    for index in 0..target.atom_count() {
+        let raw = u32::try_from(index)
+            .map_err(|_| interpret_error("mmCIF atom index capacity exceeded"))?;
+        atoms.push(
+            source
+                .atom_at(TopologyAtomIndex::new(raw))
+                .ok_or_else(|| interpret_error("mmCIF observation is incomplete"))?
+                .clone(),
+        );
+    }
+    let mut observation = StructureObservation::new(target, atoms).map_err(interpret_error)?;
+    observation.set_source_model_id(source.source_model_id().map(str::to_owned));
+    observation.props_mut().clone_from(source.props());
+    Ok(observation)
+}
+
+fn normalized(value: &str) -> String {
+    value.to_ascii_uppercase()
+}
+
+fn required<'a>(
+    table: &'a MmcifLoopTable,
+    row: usize,
+    tag: &str,
+) -> Result<&'a str, raw::MmcifInterpretError> {
+    let value = table
+        .value(row, tag)
+        .ok_or_else(|| row_error(table, row, format!("missing required {tag}")))?;
+    value
+        .optional_text()
+        .ok_or_else(|| row_error(table, row, format!("missing required {tag}")))
+}
+
+fn optional<'a>(table: &'a MmcifLoopTable, row: usize, tag: &str) -> Option<&'a str> {
+    table.value(row, tag).and_then(MmcifValue::optional_text)
+}
+
+fn row_error(
+    table: &MmcifLoopTable,
+    row: usize,
+    message: impl Into<String>,
+) -> raw::MmcifInterpretError {
+    raw::MmcifInterpretError {
+        line: table.row(row).and_then(|values| values.first()).map(MmcifValue::line),
+        message: message.into(),
+    }
+}
+
+fn interpret_error(error: impl std::fmt::Display) -> raw::MmcifInterpretError {
+    raw::MmcifInterpretError {
+        line: None,
+        message: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::topology::MoleculeInstanceId;
+
+    const PEPTIDE: &str = r#"
+data_peptide
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_entity_poly.entity_id
+_entity_poly.type
+1 'polypeptide(L)'
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_pdbx_poly_seq_scheme.asym_id
+_pdbx_poly_seq_scheme.entity_id
+_pdbx_poly_seq_scheme.seq_id
+_pdbx_poly_seq_scheme.mon_id
+A 1 1 GLY
+A 1 2 GLY
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+GLY N CA sing
+GLY CA C sing
+GLY C O doub
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N N GLY A 1 1 0.0 0.0 0.0
+ATOM 2 C CA GLY A 1 1 1.4 0.0 0.0
+ATOM 3 C C GLY A 1 1 2.8 0.0 0.0
+ATOM 4 O O GLY A 1 1 3.8 0.0 0.0
+ATOM 5 N N GLY A 1 2 4.1 0.0 0.0
+ATOM 6 C CA GLY A 1 2 5.5 0.0 0.0
+ATOM 7 C C GLY A 1 2 6.9 0.0 0.0
+ATOM 8 O O GLY A 1 2 7.9 0.0 0.0
+"#;
+
+    #[test]
+    fn component_templates_and_polymer_links_complete_peptide_graph() {
+        let document = super::super::mmcif_document::parse_mmcif_str(
+            PEPTIDE,
+            super::super::mmcif_document::MmcifParseOptions::default(),
+        )
+        .expect("parse peptide");
+        let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
+            .expect("interpret peptide");
+        let graph = interpretation
+            .topology()
+            .graph_for_instance(MoleculeInstanceId::new(0))
+            .expect("peptide instance");
+        assert_eq!(graph.bond_count(), 7);
+        assert!(graph.is_connected());
+        assert_eq!(interpretation.report().template_bonds_pending(), 0);
+    }
+
+    #[test]
+    fn sequence_gap_is_not_bridged_by_a_fake_polymer_bond() {
+        let input = PEPTIDE.replace("A 1 2 GLY", "A 1 3 GLY").replace(
+            "GLY A 1 2 4.1",
+            "GLY A 1 3 4.1",
+        ).replace("GLY A 1 2 5.5", "GLY A 1 3 5.5")
+          .replace("GLY A 1 2 6.9", "GLY A 1 3 6.9")
+          .replace("GLY A 1 2 7.9", "GLY A 1 3 7.9");
+        let document = super::super::mmcif_document::parse_mmcif_str(
+            &input,
+            super::super::mmcif_document::MmcifParseOptions::default(),
+        )
+        .expect("parse gapped peptide");
+        let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
+            .expect("interpret gapped peptide");
+        let graph = interpretation
+            .topology()
+            .graph_for_instance(MoleculeInstanceId::new(0))
+            .expect("peptide instance");
+        assert_eq!(graph.connected_components().len(), 2);
+        assert_eq!(interpretation.report().template_bonds_pending(), 1);
+    }
+}
