@@ -582,7 +582,7 @@ fn interpret_sdf(input: &str) -> Result<Vec<SdfRecord>, Box<dyn Error>> {
 
 fn interpret_smiles(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
-    Ok(smiles::interpret(&document)?.into_molecule())
+    Ok(smiles::interpret(&document)?.into_molecule()?)
 }
 
 pub(crate) fn read_smiles_records(path: &Path) -> Result<Vec<IndexedSmilesRecord>, Box<dyn Error>> {

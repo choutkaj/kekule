@@ -5,6 +5,12 @@ _entity.id
 _entity.type
 1 polymer
 loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+GLY C1 C2 sing
+loop_
 _atom_site.type_symbol
 _atom_site.label_atom_id
 _atom_site.label_comp_id

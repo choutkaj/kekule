@@ -157,7 +157,10 @@ pub fn interpret_mmcif_ensemble(
                 &partition.source_atoms,
             )
             .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
-                model_id: observation.source_model_id().unwrap_or("<unknown>").to_owned(),
+                model_id: observation
+                    .source_model_id()
+                    .unwrap_or("<unknown>")
+                    .to_owned(),
                 error,
             })?;
             rebuilt
@@ -174,9 +177,8 @@ pub fn interpret_mmcif_ensemble(
         .into_iter()
         .map(|report| {
             let model_id = report.selected_model().unwrap_or("<unknown>").to_owned();
-            remap_report(report, &partition).map_err(|error| {
-                raw::MmcifEnsembleInterpretError::Model { model_id, error }
-            })
+            remap_report(report, &partition)
+                .map_err(|error| raw::MmcifEnsembleInterpretError::Model { model_id, error })
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(MmcifEnsembleInterpretation { ensemble, reports })
@@ -224,15 +226,20 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
                 let target_atom = InstanceAtomId::new(target_instance, atom);
                 source_atoms.push(source_atom);
                 if atom_map.insert(source_atom, target_atom).is_some() {
-                    return Err(interpret_error("duplicate mmCIF source atom during partition"));
+                    return Err(interpret_error(
+                        "duplicate mmCIF source atom during partition",
+                    ));
                 }
             }
             continue;
         }
 
         for component in components {
-            let (graph, local_map, ordered_source_atoms) =
-                extract_connected_graph(definition.graph(), &component)?;
+            let ExtractedConnectedGraph {
+                graph,
+                atom_map: local_map,
+                ordered_source_atoms,
+            } = extract_connected_graph(definition.graph(), &component)?;
             let definition_id = if let Some(molecule) = definition.macro_molecule() {
                 let hierarchy = extract_hierarchy(molecule.hierarchy(), &local_map)?;
                 let molecule =
@@ -257,7 +264,9 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
                 let target_atom = InstanceAtomId::new(target_instance, target_local);
                 source_atoms.push(source_atom);
                 if atom_map.insert(source_atom, target_atom).is_some() {
-                    return Err(interpret_error("duplicate mmCIF source atom during partition"));
+                    return Err(interpret_error(
+                        "duplicate mmCIF source atom during partition",
+                    ));
                 }
             }
         }
@@ -294,10 +303,16 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
     })
 }
 
+struct ExtractedConnectedGraph {
+    graph: Molecule,
+    atom_map: BTreeMap<AtomId, AtomId>,
+    ordered_source_atoms: Vec<AtomId>,
+}
+
 fn extract_connected_graph(
     source: &Molecule,
     component: &[AtomId],
-) -> Result<(Molecule, BTreeMap<AtomId, AtomId>, Vec<AtomId>), raw::MmcifInterpretError> {
+) -> Result<ExtractedConnectedGraph, raw::MmcifInterpretError> {
     let selected = component.iter().copied().collect::<BTreeSet<_>>();
     let mut ordered = component.to_vec();
     ordered.sort_unstable();
@@ -330,8 +345,12 @@ fn extract_connected_graph(
         .molecule_mut()
         .props_mut()
         .clone_from(source.props());
-    let molecule = builder.build().map_err(interpret_error)?;
-    Ok((molecule, atom_map, ordered))
+    let graph = builder.build().map_err(interpret_error)?;
+    Ok(ExtractedConnectedGraph {
+        graph,
+        atom_map,
+        ordered_source_atoms: ordered,
+    })
 }
 
 fn extract_hierarchy(
@@ -420,11 +439,9 @@ fn remap_report(
     for source in source_instances {
         let mut groups = BTreeMap::<MoleculeInstanceId, Vec<raw::MmcifAtomProvenance>>::new();
         for mut atom in source.atoms.clone() {
-            let target = partition
-                .atom_map
-                .get(&atom.atom)
-                .copied()
-                .ok_or_else(|| interpret_error("mmCIF provenance atom was lost during partition"))?;
+            let target = partition.atom_map.get(&atom.atom).copied().ok_or_else(|| {
+                interpret_error("mmCIF provenance atom was lost during partition")
+            })?;
             atom.atom = target;
             groups.entry(target.molecule()).or_default().push(atom);
         }
@@ -487,11 +504,8 @@ fn remap_configuration(
                 .map_err(interpret_error)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let positions = Positions::new(
-        target_topology,
-        Quantity::new(positions, MODEL_LENGTH_UNIT),
-    )
-    .map_err(interpret_error)?;
+    let positions = Positions::new(target_topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
+        .map_err(interpret_error)?;
     Ok(match source.cell().copied() {
         Some(cell) => Configuration::with_cell(positions, cell),
         None => Configuration::new(positions),
@@ -507,7 +521,12 @@ fn remap_observation(
     let atoms = source_atoms
         .iter()
         .copied()
-        .map(|atom| source.atom(source_topology, atom).cloned().map_err(interpret_error))
+        .map(|atom| {
+            source
+                .atom(source_topology, atom)
+                .cloned()
+                .map_err(interpret_error)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let mut observation =
         StructureObservation::new(target_topology, atoms).map_err(interpret_error)?;
@@ -597,9 +616,11 @@ ATOM 8 O O GLY A 1 3 11.8 0.0 0.0
                 .is_ok_and(|components| components.len() == 1)
         }));
         assert_eq!(interpretation.report().instances().len(), 2);
-        assert!(interpretation.report().instances().iter().all(|instance| {
-            instance.asym_ids() == ["A"] && instance.entity_ids() == ["1"]
-        }));
+        assert!(interpretation
+            .report()
+            .instances()
+            .iter()
+            .all(|instance| { instance.asym_ids() == ["A"] && instance.entity_ids() == ["1"] }));
         assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
 }

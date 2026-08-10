@@ -296,12 +296,17 @@ where
 }
 
 fn topology(atom_count: usize) -> Result<Topology, Box<dyn Error>> {
-    let mut molecule = Molecule::new();
+    let mut molecule = Molecule::builder();
     let carbon = Element::from_symbol("C").expect("carbon is a built-in element");
+    let mut previous = None;
     for _ in 0..atom_count {
-        molecule.add_atom(Atom::new(carbon))?;
+        let atom = molecule.add_atom(Atom::new(carbon))?;
+        if let Some(parent) = previous {
+            molecule.add_bond(parent, atom, kekule::core::BondOrder::Single)?;
+        }
+        previous = Some(atom);
     }
-    let molecule = SmallMolecule::from_graph(molecule);
+    let molecule = SmallMolecule::from_graph(molecule.build()?);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;

@@ -29,9 +29,9 @@ pub use molfile_connected::interpret_molfile_document;
 pub use sdf_document::*;
 pub use smiles::{
     parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
-    write_isomeric_smiles, write_smiles, CanonicalSmilesWriteOptions,
-    IsomericSmilesWriteOptions, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
-    SmilesParseError, SmilesParseOptions, SmilesWriteOptions,
+    write_isomeric_smiles, write_smiles, CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions,
+    SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesParseError,
+    SmilesParseOptions, SmilesWriteOptions,
 };
 pub use smiles_components::*;
 pub use structure_documents::{

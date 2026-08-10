@@ -12,7 +12,7 @@ use kekule_potentials::dreiding::{
 
 #[test]
 fn downstream_preparation_and_evaluation() {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let mut explicit_atom = |symbol: &str| {
         let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
         atom.no_implicit_hydrogens = true;
@@ -49,8 +49,8 @@ fn downstream_preparation_and_evaluation() {
             ),
         )
         .unwrap();
-    let conformer = graph.add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    let conformer = graph.molecule_mut().add_conformer(conformer).unwrap();
+    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     let independently_built = Model::from_small_molecule(&molecule, conformer).unwrap();
     let mut periodic = model.clone();

@@ -27,8 +27,22 @@ impl MacroMolecule {
         Ok(molecule)
     }
 
+    /// Builds private interpretation staging state before component partitioning.
+    pub(crate) fn try_from_parts_unchecked_connectedness(
+        graph: Molecule,
+        hierarchy: SmcraHierarchy,
+    ) -> std::result::Result<Self, MacroValidateError> {
+        let molecule = Self { graph, hierarchy };
+        validate_macro_molecule_contents(&molecule, MacroValidateOptions::default())?;
+        Ok(molecule)
+    }
+
     pub fn graph(&self) -> &Molecule {
         &self.graph
+    }
+
+    pub(crate) fn graph_mut_unchecked_connectedness(&mut self) -> &mut Molecule {
+        &mut self.graph
     }
 
     pub fn hierarchy(&self) -> &SmcraHierarchy {
@@ -194,6 +208,7 @@ pub struct MacroValidateReport {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MacroValidateError {
+    DisconnectedGraph(MoleculeConnectivityError),
     InvalidResidueChain {
         residue: SmcraResidueId,
         chain: SmcraChainId,
@@ -222,6 +237,7 @@ pub enum MacroValidateError {
 impl fmt::Display for MacroValidateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DisconnectedGraph(error) => write!(f, "invalid macromolecule graph: {error}"),
             Self::InvalidResidueChain { residue, chain } => write!(
                 f,
                 "residue {} references invalid chain {}",
@@ -258,6 +274,17 @@ impl fmt::Display for MacroValidateError {
 impl std::error::Error for MacroValidateError {}
 
 fn validate_macro_molecule(
+    molecule: &MacroMolecule,
+    options: MacroValidateOptions,
+) -> std::result::Result<MacroValidateReport, MacroValidateError> {
+    molecule
+        .graph
+        .validate_connected()
+        .map_err(MacroValidateError::DisconnectedGraph)?;
+    validate_macro_molecule_contents(molecule, options)
+}
+
+fn validate_macro_molecule_contents(
     molecule: &MacroMolecule,
     options: MacroValidateOptions,
 ) -> std::result::Result<MacroValidateReport, MacroValidateError> {

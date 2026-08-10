@@ -443,10 +443,10 @@ ATOM 2 C C1 GLY Z 1 1 1.0 0.0 0.0 1
 }
 
 #[test]
-fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
+fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     let interpreted = mmcif::interpret(&parse(MIXED), MmcifInterpretOptions::default()).unwrap();
     let model = interpreted.model();
-    assert_eq!(model.topology().instance_count(), 3);
+    assert_eq!(model.topology().instance_count(), 4);
     assert_eq!(model.atom_count(), 4);
     assert_eq!(model.positions().len(), 4);
     assert!(model.positions().iter().all(|point| point.x.is_finite()));
@@ -465,11 +465,13 @@ fn interpretation_builds_distinct_typed_instances_and_complete_positions() {
         .collect::<Vec<_>>();
     assert!(instances[0].1.macro_molecule().is_some());
     assert!(instances[0].0.has_role(MoleculeRole::Polymer));
-    assert!(instances[1].1.small_molecule().is_some());
-    assert!(instances[1].0.has_role(MoleculeRole::NonPolymer));
-    assert!(instances[2].0.has_role(MoleculeRole::Solvent));
+    assert!(instances[1].1.macro_molecule().is_some());
+    assert!(instances[1].0.has_role(MoleculeRole::Polymer));
+    assert!(instances[2].1.small_molecule().is_some());
+    assert!(instances[2].0.has_role(MoleculeRole::NonPolymer));
+    assert!(instances[3].0.has_role(MoleculeRole::Solvent));
     assert_eq!(interpreted.report().selected_model.as_deref(), Some("1"));
-    assert_eq!(interpreted.report().instances.len(), 3);
+    assert_eq!(interpreted.report().instances.len(), 4);
     assert_eq!(
         interpreted
             .report()
@@ -509,16 +511,14 @@ fn mmcif_connectivity_candidates_do_not_create_bonds() {
         "ATOM 2 C CA GLY A 1 1 1.45 0.0 0.0 1\nATOM 5 C C GLY A 1 1 2.90 0.0 0.0 1",
     );
     let interpreted = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
-    let polymer = interpreted
+    assert_eq!(interpreted.model().topology().instance_count(), 5);
+    assert_eq!(interpreted.model().topology().atom_count(), 5);
+    assert_eq!(interpreted.model().topology().bonds().count(), 0);
+    assert!(interpreted
         .model()
         .topology()
         .definitions()
-        .next()
-        .unwrap()
-        .1;
-
-    assert_eq!(polymer.graph().atom_count(), 3);
-    assert_eq!(polymer.graph().bond_count(), 0);
+        .all(|(_, definition)| definition.graph().validate_connected().is_ok()));
     assert_eq!(interpreted.report().connectivity_candidates(), 2);
 }
 
@@ -732,7 +732,7 @@ fn ensemble_identity_preserves_repeated_nonpolymer_occurrences() {
     .expect("stable occurrence discriminators form an ensemble");
 
     assert_eq!(interpreted.ensemble().len(), 2);
-    assert_eq!(interpreted.ensemble().topology().instance_count(), 2);
+    assert_eq!(interpreted.ensemble().topology().instance_count(), 4);
     for report in interpreted.reports() {
         let occurrences = report
             .instances()
@@ -1206,16 +1206,23 @@ hydrog A N 1 W O .
 "#;
     let input = format!("{MIXED}\n{connections}");
     let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
-    assert_eq!(result.model().topology().instance_count(), 2);
-    let (first_id, first_instance) = result.model().topology().instances().next().unwrap();
-    let first_definition = result
+    assert_eq!(result.model().topology().instance_count(), 3);
+    let (merged_id, merged_instance) = result
         .model()
         .topology()
-        .definition_for_instance(first_id)
+        .instances()
+        .find(|(_, instance)| {
+            instance.has_role(MoleculeRole::Polymer) && instance.has_role(MoleculeRole::NonPolymer)
+        })
+        .expect("covalently linked entities should share one instance");
+    let merged_definition = result
+        .model()
+        .topology()
+        .definition_for_instance(merged_id)
         .unwrap();
-    assert!(first_definition.macro_molecule().is_some());
-    assert!(first_instance.has_role(MoleculeRole::Polymer));
-    assert!(first_instance.has_role(MoleculeRole::NonPolymer));
+    assert!(merged_definition.macro_molecule().is_some());
+    assert!(merged_instance.has_role(MoleculeRole::Polymer));
+    assert!(merged_instance.has_role(MoleculeRole::NonPolymer));
     assert_eq!(result.report().applied_connections, 1);
 }
 
@@ -1418,6 +1425,9 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
     let right = graph
         .add_atom(Atom::new(carbon))
         .expect("atom identifier capacity");
+    graph
+        .add_bond(left, right, BondOrder::Single)
+        .expect("connected duplicate-identity fixture");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(

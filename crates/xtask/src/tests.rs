@@ -1977,8 +1977,12 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(phosphinine.graph(), phosphinine_phosphorus),
         3
     );
-    let mut anionic_macrocycle = SmallMolecule::from_smiles("CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]")
-    .expect("anionic macrocycle parses");
+    let document = kekule::smiles::parse_str("CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]")
+        .expect("anionic macrocycle mixture parses");
+    let mut anionic_macrocycle = kekule::smiles::interpret(&document)
+        .expect("anionic macrocycle mixture interprets")
+        .into_molecules()
+        .swap_remove(1);
     perception::sanitize_with_options(&mut anionic_macrocycle, SanitizeOptions::default())
         .expect("anionic macrocycle should sanitize");
     let anionic_nitrogen = anionic_macrocycle

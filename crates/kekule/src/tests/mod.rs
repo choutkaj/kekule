@@ -23,7 +23,30 @@ pub(super) fn read_smiles(
     input: &str,
 ) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.into_molecule())
+    Ok(smiles_api::interpret(&document)?.into_molecule()?)
+}
+
+pub(super) fn read_smiles_components(
+    input: &str,
+) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
+    let document = smiles_api::parse_str(input)?;
+    Ok(smiles_api::interpret(&document)?.into_molecules())
+}
+
+pub(super) fn read_smiles_component(
+    input: &str,
+    component: usize,
+) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
+    read_smiles_components(input)?
+        .into_iter()
+        .nth(component)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("SMILES has no component at index {component}"),
+            )
+            .into()
+        })
 }
 
 pub(super) fn read_molfile(
