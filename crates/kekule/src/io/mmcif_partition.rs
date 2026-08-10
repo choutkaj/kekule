@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bio::{MacroMolecule, SmcraHierarchy};
-use crate::core::{AtomId, BondOrder, Molecule};
+use crate::core::{AtomId, Molecule};
 use crate::small::SmallMolecule;
 use crate::structure::{
     Configuration, Ensemble, EnsembleMember, Model, Positions, StructureObservation,
 };
 use crate::topology::{
-    InstanceAtomId, MoleculeInstanceId, MoleculeRole, Topology, TopologyAtomIndex, TopologyBuilder,
+    InstanceAtomId, MoleculeInstanceId, MoleculeRole, Topology, TopologyBuilder,
 };
 use crate::units::{Quantity, MODEL_LENGTH_UNIT};
 
@@ -66,7 +66,7 @@ pub fn interpret_mmcif(
 ) -> Result<MmcifInterpretation, raw::MmcifInterpretError> {
     let interpretation = connectivity::interpret_mmcif(document, options)?;
     let (source, report) = interpretation.into_parts();
-    let partition = partition_topology(source.topology(), report)?;
+    let partition = partition_topology(source.topology())?;
     let configuration = remap_configuration(
         source.configuration(),
         source.topology(),
@@ -84,13 +84,10 @@ pub fn interpret_mmcif(
             )
         })
         .transpose()?;
-    let mut model = Model::with_observation(partition.topology, configuration, observation)
+    let model = Model::with_observation(partition.topology.clone(), configuration, observation)
         .map_err(interpret_error)?;
-    model.set_cell(source.cell().copied());
-    Ok(MmcifInterpretation {
-        model,
-        report: partition.report,
-    })
+    let report = remap_report(report, &partition)?;
+    Ok(MmcifInterpretation { model, report })
 }
 
 #[derive(Debug, Clone)]
@@ -119,12 +116,8 @@ pub fn interpret_mmcif_ensemble(
     options: raw::MmcifEnsembleInterpretOptions,
 ) -> Result<MmcifEnsembleInterpretation, raw::MmcifEnsembleInterpretError> {
     let interpretation = connectivity::interpret_mmcif_ensemble(document, options)?;
-    let (source, mut reports) = interpretation.into_parts();
-    let first_report = reports
-        .first()
-        .cloned()
-        .ok_or(raw::MmcifEnsembleInterpretError::EmptyModelSelection)?;
-    let partition = partition_topology(source.topology(), first_report).map_err(|error| {
+    let (source, reports) = interpretation.into_parts();
+    let partition = partition_topology(source.topology()).map_err(|error| {
         raw::MmcifEnsembleInterpretError::Model {
             model_id: reports
                 .first()
@@ -135,7 +128,7 @@ pub fn interpret_mmcif_ensemble(
         }
     })?;
 
-    let topology = partition.topology;
+    let topology = partition.topology.clone();
     let mut ensemble = Ensemble::new(topology.clone());
     for member in source.members() {
         let configuration = remap_configuration(
@@ -177,9 +170,15 @@ pub fn interpret_mmcif_ensemble(
             .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
     }
 
-    for report in &mut reports {
-        *report = partition_report_for_model(&partition.report, report.selected_model());
-    }
+    let reports = reports
+        .into_iter()
+        .map(|report| {
+            let model_id = report.selected_model().unwrap_or("<unknown>").to_owned();
+            remap_report(report, &partition).map_err(|error| {
+                raw::MmcifEnsembleInterpretError::Model { model_id, error }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(MmcifEnsembleInterpretation { ensemble, reports })
 }
 
@@ -187,26 +186,19 @@ struct PartitionedTopology {
     topology: Topology,
     /// Source atom corresponding to each dense atom of `topology`.
     source_atoms: Vec<InstanceAtomId>,
-    report: raw::MmcifInterpretationReport,
+    /// Complete source-to-partitioned semantic atom mapping.
+    atom_map: BTreeMap<InstanceAtomId, InstanceAtomId>,
 }
 
-fn partition_topology(
-    source: &Topology,
-    mut report: raw::MmcifInterpretationReport,
-) -> Result<PartitionedTopology, raw::MmcifInterpretError> {
+fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::MmcifInterpretError> {
     let mut builder = TopologyBuilder::new();
     let mut source_atoms = Vec::with_capacity(source.atom_count());
-    let mut instances = Vec::new();
+    let mut atom_map = BTreeMap::new();
 
     for (source_instance, source_metadata) in source.instances() {
         let definition = source
             .definition_for_instance(source_instance)
             .map_err(interpret_error)?;
-        let provenance = report
-            .instances()
-            .iter()
-            .find(|candidate| candidate.molecule() == source_instance)
-            .ok_or_else(|| interpret_error("mmCIF instance provenance is incomplete"))?;
         let components = definition.graph().connected_components();
         if components.is_empty() {
             return Err(interpret_error("mmCIF molecule instance has no atoms"));
@@ -224,31 +216,27 @@ fn partition_topology(
             } else {
                 return Err(interpret_error("mmCIF definition has no molecule payload"));
             };
-            let instance = builder
+            let target_instance = builder
                 .add_instance(definition_id, source_metadata.metadata().clone())
                 .map_err(interpret_error)?;
-            let identity_map = components[0]
-                .iter()
-                .copied()
-                .map(|atom| (atom, atom))
-                .collect::<BTreeMap<_, _>>();
-            instances.push(remap_provenance(provenance, instance, &identity_map));
-            source_atoms.extend(
-                definition
-                    .graph()
-                    .atom_ids()
-                    .map(|atom| InstanceAtomId::new(source_instance, atom)),
-            );
+            for atom in definition.graph().atom_ids() {
+                let source_atom = InstanceAtomId::new(source_instance, atom);
+                let target_atom = InstanceAtomId::new(target_instance, atom);
+                source_atoms.push(source_atom);
+                if atom_map.insert(source_atom, target_atom).is_some() {
+                    return Err(interpret_error("duplicate mmCIF source atom during partition"));
+                }
+            }
             continue;
         }
 
         for component in components {
-            let (graph, atom_map, ordered_source_atoms) =
+            let (graph, local_map, ordered_source_atoms) =
                 extract_connected_graph(definition.graph(), &component)?;
             let definition_id = if let Some(molecule) = definition.macro_molecule() {
-                let hierarchy = extract_hierarchy(molecule.hierarchy(), &atom_map)?;
-                let molecule = MacroMolecule::try_from_parts(graph, hierarchy)
-                    .map_err(interpret_error)?;
+                let hierarchy = extract_hierarchy(molecule.hierarchy(), &local_map)?;
+                let molecule =
+                    MacroMolecule::try_from_parts(graph, hierarchy).map_err(interpret_error)?;
                 builder
                     .add_macro_molecule_definition(&molecule)
                     .map_err(interpret_error)?
@@ -260,60 +248,49 @@ fn partition_topology(
             } else {
                 return Err(interpret_error("mmCIF definition has no molecule payload"));
             };
-            let instance = builder
+            let target_instance = builder
                 .add_instance(definition_id, source_metadata.metadata().clone())
                 .map_err(interpret_error)?;
-            instances.push(remap_provenance(provenance, instance, &atom_map));
-            source_atoms.extend(
-                ordered_source_atoms
-                    .into_iter()
-                    .map(|atom| InstanceAtomId::new(source_instance, atom)),
-            );
+            for source_local in ordered_source_atoms {
+                let target_local = local_map[&source_local];
+                let source_atom = InstanceAtomId::new(source_instance, source_local);
+                let target_atom = InstanceAtomId::new(target_instance, target_local);
+                source_atoms.push(source_atom);
+                if atom_map.insert(source_atom, target_atom).is_some() {
+                    return Err(interpret_error("duplicate mmCIF source atom during partition"));
+                }
+            }
         }
     }
 
     let topology = builder.build().map_err(interpret_error)?;
-    if topology.atom_count() != source_atoms.len() {
+    if topology.atom_count() != source_atoms.len() || atom_map.len() != source.atom_count() {
         return Err(interpret_error(
             "mmCIF fragment partition changed the represented atom count",
         ));
     }
-    if topology
-        .instances()
-        .any(|(instance, _)| topology.connected_components(instance).is_ok_and(|parts| parts.len() != 1))
-    {
+    for (index, target_atom) in topology.atom_ids().iter().copied().enumerate() {
+        let source_atom = source_atoms[index];
+        if atom_map.get(&source_atom).copied() != Some(target_atom) {
+            return Err(interpret_error(
+                "mmCIF fragment partition produced inconsistent dense atom order",
+            ));
+        }
+    }
+    if topology.instances().any(|(instance, _)| {
+        topology
+            .connected_components(instance)
+            .is_ok_and(|parts| parts.len() != 1)
+    }) {
         return Err(interpret_error(
             "mmCIF fragment partition produced a disconnected molecule instance",
         ));
     }
 
-    report.instances = instances;
-    report.template_bonds_pending = 0;
-    report.macromolecules = topology
-        .instances()
-        .filter(|(id, _)| {
-            topology
-                .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.macro_molecule().is_some())
-        })
-        .count();
-    report.small_molecules = topology
-        .instances()
-        .filter(|(id, _)| {
-            topology
-                .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.small_molecule().is_some())
-        })
-        .count();
-    report.solvent_molecules = topology
-        .instances()
-        .filter(|(_, molecule)| molecule.has_role(MoleculeRole::Solvent))
-        .count();
-
     Ok(PartitionedTopology {
         topology,
         source_atoms,
-        report,
+        atom_map,
     })
 }
 
@@ -433,40 +410,64 @@ fn extract_hierarchy(
     Ok(hierarchy)
 }
 
-fn remap_provenance(
-    source: &raw::MmcifInstanceProvenance,
-    target_instance: MoleculeInstanceId,
-    atom_map: &BTreeMap<AtomId, AtomId>,
-) -> raw::MmcifInstanceProvenance {
-    raw::MmcifInstanceProvenance {
-        molecule: target_instance,
-        coordinate_model_id: source.coordinate_model_id().to_owned(),
-        asym_ids: source.asym_ids().to_vec(),
-        entity_ids: source.entity_ids().to_vec(),
-        entity_kinds: source.entity_kinds().to_vec(),
-        atoms: source
-            .atoms()
-            .iter()
-            .filter_map(|atom| {
-                let target_atom = atom_map.get(&atom.atom().atom()).copied()?;
-                Some(raw::MmcifAtomProvenance {
-                    atom: InstanceAtomId::new(target_instance, target_atom),
-                    source_line: atom.source_line(),
-                    atom_site_id: atom.atom_site_id().map(str::to_owned),
-                    atom_name: atom.atom_name().to_owned(),
-                    component_id: atom.component_id().to_owned(),
-                    asym_id: atom.asym_id().to_owned(),
-                    auth_asym_id: atom.auth_asym_id().map(str::to_owned),
-                    entity_id: atom.entity_id().map(str::to_owned),
-                    label_sequence_id: atom.label_sequence_id(),
-                    author_sequence_id: atom.author_sequence_id().map(str::to_owned),
-                    insertion_code: atom.insertion_code().map(str::to_owned),
-                    occurrence: atom.occurrence(),
-                    selected_alternate_location: atom.selected_alternate_location().map(str::to_owned),
-                })
-            })
-            .collect(),
+fn remap_report(
+    mut report: raw::MmcifInterpretationReport,
+    partition: &PartitionedTopology,
+) -> Result<raw::MmcifInterpretationReport, raw::MmcifInterpretError> {
+    let source_instances = std::mem::take(&mut report.instances);
+    let mut target_instances = Vec::new();
+
+    for source in source_instances {
+        let mut groups = BTreeMap::<MoleculeInstanceId, Vec<raw::MmcifAtomProvenance>>::new();
+        for mut atom in source.atoms.clone() {
+            let target = partition
+                .atom_map
+                .get(&atom.atom)
+                .copied()
+                .ok_or_else(|| interpret_error("mmCIF provenance atom was lost during partition"))?;
+            atom.atom = target;
+            groups.entry(target.molecule()).or_default().push(atom);
+        }
+        for (molecule, atoms) in groups {
+            target_instances.push(raw::MmcifInstanceProvenance {
+                molecule,
+                coordinate_model_id: source.coordinate_model_id.clone(),
+                asym_ids: source.asym_ids.clone(),
+                entity_ids: source.entity_ids.clone(),
+                entity_kinds: source.entity_kinds.clone(),
+                atoms,
+            });
+        }
     }
+    target_instances.sort_by_key(raw::MmcifInstanceProvenance::molecule);
+    report.instances = target_instances;
+    report.template_bonds_pending = 0;
+    report.macromolecules = partition
+        .topology
+        .instances()
+        .filter(|(id, _)| {
+            partition
+                .topology
+                .definition_for_instance(*id)
+                .is_ok_and(|definition| definition.macro_molecule().is_some())
+        })
+        .count();
+    report.small_molecules = partition
+        .topology
+        .instances()
+        .filter(|(id, _)| {
+            partition
+                .topology
+                .definition_for_instance(*id)
+                .is_ok_and(|definition| definition.small_molecule().is_some())
+        })
+        .count();
+    report.solvent_molecules = partition
+        .topology
+        .instances()
+        .filter(|(_, molecule)| molecule.has_role(MoleculeRole::Solvent))
+        .count();
+    Ok(report)
 }
 
 fn remap_configuration(
@@ -515,15 +516,6 @@ fn remap_observation(
     Ok(observation)
 }
 
-fn partition_report_for_model(
-    template: &raw::MmcifInterpretationReport,
-    source_model_id: Option<&str>,
-) -> raw::MmcifInterpretationReport {
-    let mut report = template.clone();
-    report.selected_model = source_model_id.map(str::to_owned);
-    report
-}
-
 fn interpret_error(error: impl std::fmt::Display) -> raw::MmcifInterpretError {
     raw::MmcifInterpretError {
         line: None,
@@ -536,82 +528,78 @@ mod tests {
     use super::*;
 
     const GAPPED_PEPTIDE: &str = r#"
-+data_gapped
-+loop_
-+_entity.id
-+_entity.type
-+1 polymer
-+loop_
-+_entity_poly.entity_id
-+_entity_poly.type
-+_entity_poly.nstd_linkage
-+1 'polypeptide(L)' no
-+loop_
-+_struct_asym.id
-+_struct_asym.entity_id
-+A 1
-+loop_
-+_pdbx_poly_seq_scheme.asym_id
-+_pdbx_poly_seq_scheme.entity_id
-+_pdbx_poly_seq_scheme.seq_id
-+_pdbx_poly_seq_scheme.mon_id
-+A 1 1 GLY
-+A 1 2 GLY
-+A 1 3 GLY
-+loop_
-+_chem_comp_bond.comp_id
-+_chem_comp_bond.atom_id_1
-+_chem_comp_bond.atom_id_2
-+_chem_comp_bond.value_order
-+GLY N CA sing
-+GLY CA C sing
-+GLY C O doub
-+loop_
-+_atom_site.group_PDB
-+_atom_site.id
-+_atom_site.type_symbol
-+_atom_site.label_atom_id
-+_atom_site.label_comp_id
-+_atom_site.label_asym_id
-+_atom_site.label_entity_id
-+_atom_site.label_seq_id
-+_atom_site.Cartn_x
-+_atom_site.Cartn_y
-+_atom_site.Cartn_z
-+ATOM 1 N N GLY A 1 1 0.0 0.0 0.0
-+ATOM 2 C CA GLY A 1 1 1.4 0.0 0.0
-+ATOM 3 C C GLY A 1 1 2.8 0.0 0.0
-+ATOM 4 O O GLY A 1 1 3.8 0.0 0.0
-+ATOM 5 N N GLY A 1 3 8.0 0.0 0.0
-+ATOM 6 C CA GLY A 1 3 9.4 0.0 0.0
-+ATOM 7 C C GLY A 1 3 10.8 0.0 0.0
-+ATOM 8 O O GLY A 1 3 11.8 0.0 0.0
-+"#;
+data_gapped
+loop_
+_entity.id
+_entity.type
+1 polymer
+loop_
+_entity_poly.entity_id
+_entity_poly.type
+_entity_poly.nstd_linkage
+1 'polypeptide(L)' no
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_pdbx_poly_seq_scheme.asym_id
+_pdbx_poly_seq_scheme.entity_id
+_pdbx_poly_seq_scheme.seq_id
+_pdbx_poly_seq_scheme.mon_id
+A 1 1 GLY
+A 1 2 GLY
+A 1 3 GLY
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+GLY N CA sing
+GLY CA C sing
+GLY C O doub
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+ATOM 1 N N GLY A 1 1 0.0 0.0 0.0
+ATOM 2 C CA GLY A 1 1 1.4 0.0 0.0
+ATOM 3 C C GLY A 1 1 2.8 0.0 0.0
+ATOM 4 O O GLY A 1 1 3.8 0.0 0.0
+ATOM 5 N N GLY A 1 3 8.0 0.0 0.0
+ATOM 6 C CA GLY A 1 3 9.4 0.0 0.0
+ATOM 7 C C GLY A 1 3 10.8 0.0 0.0
+ATOM 8 O O GLY A 1 3 11.8 0.0 0.0
+"#;
 
     #[test]
     fn gapped_polymer_is_partitioned_into_connected_macro_instances() {
-        let input = GAPPED_PEPTIDE.replace("+", "");
         let document = super::super::mmcif_document::parse_mmcif_str(
-            &input,
+            GAPPED_PEPTIDE,
             super::super::mmcif_document::MmcifParseOptions::default(),
         )
         .expect("parse gapped peptide");
         let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
             .expect("interpret gapped peptide");
         assert_eq!(interpretation.topology().instances().count(), 2);
-        assert!(interpretation
-            .topology()
-            .instances()
-            .all(|(instance, _)| interpretation
+        assert!(interpretation.topology().instances().all(|(instance, _)| {
+            interpretation
                 .topology()
                 .connected_components(instance)
-                .is_ok_and(|components| components.len() == 1)));
+                .is_ok_and(|components| components.len() == 1)
+        }));
         assert_eq!(interpretation.report().instances().len(), 2);
-        assert!(interpretation
-            .report()
-            .instances()
-            .iter()
-            .all(|instance| instance.asym_ids() == ["A"] && instance.entity_ids() == ["1"]));
+        assert!(interpretation.report().instances().iter().all(|instance| {
+            instance.asym_ids() == ["A"] && instance.entity_ids() == ["1"]
+        }));
         assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
 }
