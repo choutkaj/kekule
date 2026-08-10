@@ -69,21 +69,24 @@ fn ring_membership_excludes_tail_from_ring() {
 }
 
 #[test]
-fn ring_membership_handles_fused_and_disconnected_components() {
+fn ring_membership_handles_fused_rings_with_an_acyclic_tail() {
     let mut mol = Molecule::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let d = mol.add_atom(carbon()).expect("atom identifier capacity");
-    let isolated_a = mol.add_atom(oxygen()).expect("atom identifier capacity");
-    let isolated_b = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let tail_a = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let tail_b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let ab = mol.add_bond(a, b, BondOrder::Single).expect("bond");
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
     let cd = mol.add_bond(c, d, BondOrder::Single).expect("bond");
     let da = mol.add_bond(d, a, BondOrder::Single).expect("bond");
+    let linker = mol
+        .add_bond(d, tail_a, BondOrder::Single)
+        .expect("tail linker");
     let bridge = mol
-        .add_bond(isolated_a, isolated_b, BondOrder::Single)
+        .add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("bond");
 
     let membership = rings_api::perceive_ring_membership(&mut mol);
@@ -96,6 +99,7 @@ fn ring_membership_handles_fused_and_disconnected_components() {
         sorted_bond_ids(membership.ring_bond_ids()),
         vec![ab, bc, ca, cd, da]
     );
+    assert!(!membership.bond_in_ring(linker));
     assert!(!membership.bond_in_ring(bridge));
 }
 

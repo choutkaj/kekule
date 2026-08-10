@@ -6,9 +6,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Behavior/API
 
-- The published foundation package and Rust import root are both named
-  `kekule`; the initial `0.1.0` release provides no compatibility package or
-  alias under a previous project name.
+- The foundation package and Rust import root are both named `kekule`; there is
+  no compatibility package or alias under a previous project name.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
   `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
@@ -22,6 +21,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MacroMolecule` exposes read-only graph/hierarchy access plus checked
   construction and transactional coordinated editing; completed values cannot
   be independently mutated into an invalid graph/hierarchy pair.
+- Macro graph growth uses atomic bonded-atom insertion after the first atom and
+  reports `MacroGraphEditError` rather than exposing an unattached public atom.
 - `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and
   read-only validation. The placeholder macro sanitization surface is absent.
 - SMILES, Molfile, SDF, and mmCIF expose format-specific Documents and explicit
@@ -30,12 +31,21 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - SMILES and Molfile retain simple default-bounded `parse_str` entry points and
   expose focused parse-options overloads; SDF and mmCIF accept their parse
   options directly.
+- Dot-separated SMILES interpretation exposes one connected component result
+  per component. Single-molecule accessors and convenience readers return a
+  structured component-count error when the document contains more than one.
+- Molfile and SDF interpretation reject CTAB records whose graph contains more
+  than one component. mmCIF completes declared connectivity and then partitions
+  any remaining components into separate connected molecule instances.
 - `mmcif::write` exposes explicit supported `Model` serialization with
   format-specific options and structured rejection errors.
-- `Molecule` is one asserted entity and may have disconnected graph topology.
-- `Molecule::add_atom` is fallible. Graph, conformer, stereo, SMCRA hierarchy,
-  and topology insertion surfaces report focused fixed-width identifier
-  capacity errors before mutation rather than truncating or panicking.
+- `Molecule` is one asserted connected entity; empty and single-atom values are
+  valid boundary cases. `Molecule::builder()` and transactional `edit()` are the
+  public topology-construction surfaces, and reject a disconnected completed
+  graph without exposing partial mutation.
+- Graph staging, conformer, stereo, SMCRA hierarchy, and topology insertion
+  surfaces report focused fixed-width identifier capacity errors before
+  mutation rather than truncating or panicking.
 - `Molecule::formal_charge` exposes the asserted live-atom charge aggregate as
   an `i64` without hiding sanitization or perception.
 - `mmcif::interpret` returns a selected-coordinate `Model` plus report;
@@ -77,8 +87,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 ## Implementation Notes
 
 - Existing algorithm and I/O internals remain available through focused facade modules rather than root aliases.
-- `SmallMolecule::from_smiles` orchestrates parse/interpret without sanitizing;
-  `from_smiles_sanitized` names the additional operation explicitly.
+- `SmallMolecule::from_smiles` orchestrates parse/interpret without sanitizing
+  and accepts exactly one dot component; `from_smiles_sanitized` names the
+  additional operation explicitly and has the same component-count boundary.
 - `graph_mut()` itself is state-neutral; chemistry and topology mutators on the
   returned graph perform their own targeted invalidation, allowing perception
   operations to consume already-installed prerequisite state.
@@ -87,9 +98,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   error state is private behind accessors or checked constructors.
 - Extensible public error enums are non-exhaustive. Deliberate value, options,
   and report payloads may retain direct public fields.
-- The topology-centered API and Kekule package names form the initial `0.1.0`
-  contract; later breaking changes in the `0.x` line require a minor version
-  increment.
+- The topology-centered API and Kekule package names form the public contract;
+  breaking changes in the `0.x` line require a minor version increment.
 
 ## Tests
 
@@ -109,6 +119,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   transactional superposition, and fused aligned RMSD without adding companion
   analysis types to the foundational Kekule facade or prelude.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
+- Downstream tests verify connected builder/editor behavior, structured
+  multi-component SMILES handling, disconnected Molfile/SDF rejection, and
+  connected mmCIF topology instances.
 
 ## Out Of Scope
 
@@ -179,3 +192,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   foundational crate and prelude unchanged.
 - v29: Set the foundation and companion packages to the shared initial
   `0.1.0` release line and synchronize their internal dependency requirements.
+- v30: Align the facade with connected `Molecule` boundaries, component-aware
+  SMILES interpretation, disconnected CTAB rejection, and connected mmCIF
+  instance partitioning without widening the crate root or prelude.

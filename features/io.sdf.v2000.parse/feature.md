@@ -3,7 +3,7 @@
 ## Summary
 
 Parse ordered SDF records into a loss-preserving `SdfDocument`, then interpret
-their Molfile documents into canonical `SdfRecord` values plus qualified
+their connected Molfile CTABs into canonical `SdfRecord` values plus qualified
 per-record reports.
 
 ## Behavior/API
@@ -15,6 +15,9 @@ per-record reports.
 - Interpretation returns ordered records plus an `SdfInterpretationReport`.
   Each `SdfRecordInterpretationReport` qualifies the underlying Molfile
   atom/bond mappings with its record index and source start line.
+- A record whose interpreted CTAB contains multiple connected components is
+  rejected through the qualified structured interpretation error rather than
+  being published as one disconnected `SmallMolecule`.
 - Headers and SDF fields are record metadata and are never injected into
   `Molecule::props`.
 - The final record requires its own `$$$$` delimiter unless
@@ -34,13 +37,14 @@ per-record reports.
 ## Tests
 
 - Tests cover ordered records, raw headers/data fields, record round trips,
-  V2000 metadata/stereo inheritance, malformed input, and absence of implicit
-  perception. Existing external corpora remain the reference evidence.
+  V2000 metadata/stereo inheritance, disconnected-record rejection, qualified
+  errors, malformed input, and absence of implicit perception. Existing
+  external corpora remain optional reference evidence.
 
 ## Benchmarks
 
-- PubChem-1k is required baseline evidence; manifest-backed broader corpora
-  remain available for deliberate local parity checks.
+- Manifest-backed corpora remain available for deliberate optional parity
+  checks; they are not routine feature-health or release gates.
 - Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
 - Benchmark observations are informational and never determine this feature's release status or repository health.
 
@@ -71,3 +75,5 @@ per-record reports.
   end-of-input without a blank line.
 - v18: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v19: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v20: Reject an SDF record whose Molfile CTAB is disconnected while retaining
+  record-qualified interpretation diagnostics and loss-preserving parsing.

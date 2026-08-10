@@ -2,14 +2,20 @@
 
 ## Summary
 
-Write deterministic non-stereo canonical SMILES for supported small-molecule graphs.
+Write deterministic non-stereo canonical SMILES for one supported connected
+small-molecule graph.
 
 ## Behavior/API
 
 - Exposes `smiles::{CanonicalSmilesWriteOptions, write_canonical, write_canonical_with_options}`.
 - Reuses the noncanonical writer's supported chemistry subset and structured write errors.
-- Chooses a deterministic representation by ranking atoms, trying every atom in each connected component as a root, rendering rank-ordered branches and ring closures, and selecting the smallest rank-guided component string using SMILES syntax tie-breakers.
-- Sorts disconnected component strings before joining with `.`.
+- Chooses a deterministic representation by ranking atoms, trying every atom in
+  the connected molecule as a root, rendering rank-ordered branches and ring
+  closures, and selecting the smallest rank-guided string using SMILES syntax
+  tie-breakers.
+- Multi-component source documents are canonicalized per interpreted component;
+  callers may sort the resulting strings when a document-level ordering is
+  required.
 - Does not sanitize or perceive chemistry before writing.
 - Applies non-isomeric normalization on a clone: isotope labels are suppressed,
   ordinary explicit hydrogen atoms are collapsed into parent hydrogen counts
@@ -19,7 +25,9 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 ## Implementation Notes
 
 - Builds on `canon::atom_ranking` for atom symmetry classes.
-- Follows the RDKit-inspired split between canonical atom ranking and canonical traversal/output: graph-derived atom and bond invariants drive traversal, branch order, ring closure order, and disconnected-component ordering.
+- Follows the RDKit-inspired split between canonical atom ranking and canonical
+  traversal/output: graph-derived atom and bond invariants drive traversal,
+  branch order, and ring closure order.
 - Symmetric ties are handled by candidate string selection across roots and bond-order traversal preferences, with `AtomId` only as a final deterministic fallback inside rank-equivalent traversal choices.
 - Canonical candidate ranking is derived from the graph and emitted SMILES syntax only; it does not reparse candidates, run sanitization, or switch to motif-specific stored-Kekule fallback spellings.
 - Uses stored Kekule atom/bond spelling when a mixed aromatic/aliphatic pi component has non-aromatic multiple-bonded framework atoms that aromatic shorthand cannot represent without seeding a different aromaticity partition on reparse, and only when concrete stored single/double bond orders are available.
@@ -31,7 +39,9 @@ Write deterministic non-stereo canonical SMILES for supported small-molecule gra
 
 ## Tests
 
-- Unit tests cover atom-order-independent tree output, component sorting, branch/ring round trips, and inherited unsupported-chemistry errors through the noncanonical writer contract.
+- Unit tests cover atom-order-independent tree output, caller-managed ordering
+  of separately interpreted components, branch/ring round trips, and inherited
+  unsupported-chemistry errors through the noncanonical writer contract.
 
 ## Benchmarks
 
@@ -85,3 +95,5 @@ symmetry edge case.
   instead of repository-wide required evidence.
 - v31: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v32: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v33: Align canonical writer input with connected `SmallMolecule` values and
+  move document-level component ordering explicitly to the caller.

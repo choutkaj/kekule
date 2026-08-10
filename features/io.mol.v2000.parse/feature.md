@@ -2,8 +2,8 @@
 
 ## Summary
 
-Parse a Molfile into `MolfileDocument`, then explicitly interpret V2000 chemistry
-as one `SmallMolecule` plus source mappings.
+Parse a Molfile into `MolfileDocument`, then explicitly interpret a connected
+V2000 CTAB as one `SmallMolecule` plus source mappings.
 
 ## Behavior/API
 
@@ -19,6 +19,9 @@ as one `SmallMolecule` plus source mappings.
   silently omitted from the structured view.
 - Interpretation returns `MolfileInterpretation`; its report maps source atom
   and bond records to stable canonical `AtomId` and `BondId` values.
+- Interpretation rejects a CTAB whose completed graph has multiple connected
+  components with a structured `MolfileInterpretError`; parsing remains a
+  loss-preserving syntax operation and does not impose that semantic boundary.
 - Interpretation preserves atom coordinates, bond orders, atom maps, charges,
   isotopes, radicals, and supported source stereo marks. Headers remain document
   metadata rather than molecule properties.
@@ -46,14 +49,17 @@ as one `SmallMolecule` plus source mappings.
 
 ## Tests
 
-- Unit tests cover coordinates, `M  CHG`, `M  ISO`, radical multiplicities, supported and unsupported source bond stereo marks, atom maps, zero endpoints, non-ASCII/truncated fields, extreme counts, and malformed blocks.
+- Unit tests cover coordinates, `M  CHG`, `M  ISO`, radical multiplicities,
+  supported and unsupported source bond stereo marks, atom maps, disconnected
+  CTAB rejection, zero endpoints, non-ASCII/truncated fields, extreme counts,
+  and malformed blocks.
 - The standalone `mol_v2000` fuzz target checks panic safety and successful parse/write/parse paths.
 
 ## Benchmarks
 
 - RDKit-generated goldens compare raw Molfile-preserved atom, bond, metadata, and coordinate records for external PubChem fixtures.
-- PubChem-1k is required baseline evidence; manifest-backed broader corpora
-  remain available for deliberate local parity checks.
+- Manifest-backed corpora remain available for deliberate optional parity
+  checks; they are not routine feature-health or release gates.
 - Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
 - Benchmark observations are informational and never determine this feature's release status or repository health.
 
@@ -93,3 +99,5 @@ as one `SmallMolecule` plus source mappings.
   document content instead of retaining them only in the raw source string.
 - v17: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v18: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v19: Reject disconnected V2000 CTAB interpretation at the connected
+  `SmallMolecule` boundary while retaining loss-preserving document parsing.

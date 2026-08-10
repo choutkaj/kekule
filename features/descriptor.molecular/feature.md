@@ -3,7 +3,7 @@
 ## Summary
 
 Provide read-only, explicit-policy molecular formula, average mass, and
-monoisotopic mass descriptors for `SmallMolecule` values.
+monoisotopic mass descriptors for connected `SmallMolecule` values.
 
 ## Behavior/API
 
@@ -21,8 +21,7 @@ monoisotopic mass descriptors for `SmallMolecule` values.
     live atom whose asserted state does not suppress implicit hydrogens.
 - Formula construction retains separate counts for unlabeled elements and
   explicit isotopes, plus the aggregate asserted formal charge. It counts all
-  live atoms across every graph component because one `Molecule` is one
-  caller-asserted entity.
+  live atoms in the one connected caller-asserted molecule.
 - `MolecularFormula` has private invariant-bearing state with read-only count,
   isotope, charge, and iteration accessors. Its stable text form uses Hill
   order: carbon, hydrogen, then remaining elements alphabetically when carbon
@@ -52,7 +51,7 @@ monoisotopic mass descriptors for `SmallMolecule` values.
 - Formula and mass calculations are one pass over live atoms, with time linear
   in live atoms plus stored hydrogen declarations and memory linear in the
   number of distinct element/isotope terms. They do not traverse bonds,
-  conformers, properties, or connected components and use no recursion.
+  conformers, properties, or component structure and use no recursion.
 - Stored explicit-hydrogen declarations represent unlabeled hydrogen. An
   isotopic hydrogen must be a live isotope-labeled hydrogen atom.
 - The implementation vendors immutable, source-pinned numeric tables rather
@@ -81,14 +80,15 @@ monoisotopic mass descriptors for `SmallMolecule` values.
   than relaxed string comparison; mass comparison uses explicit tolerances
   narrow enough to detect table or hydrogen-count drift.
 - Focused unit regressions cover Hill ordering with and without carbon,
-  disconnected salts, explicit and perceived hydrogens, isotope labels,
-  positive and negative ions, radicals, empty molecules, missing perception,
-  unavailable standard weights or isotopes, and checked count overflow.
+  component-aware salt handling as separate formulas, explicit and perceived
+  hydrogens, isotope labels, positive and negative ions, radicals, empty
+  molecules, missing perception, unavailable standard weights or isotopes, and
+  checked count overflow.
 
 ## Benchmarks
 
-- `pubchem-1k` is the required benchmark corpus. Its provenance-pinned rows
-  are generated with the repository's RDKit 2026.03.3 reference environment.
+- Optional `pubchem-1k` benchmark rows are provenance-pinned and generated with
+  the repository's RDKit 2026.03.3 reference environment.
 - RDKit `CalcMolFormula` with separated, non-abbreviated isotopes, `MolWt`, and
   `ExactMolWt` are the common-organic reference behavior. Differences caused
   by newer pinned standards, charge-mass correction, or deliberate rejection
@@ -121,3 +121,5 @@ monoisotopic mass descriptors for `SmallMolecule` values.
   AME 2020, and CODATA 2022 tables, focused regressions, public API coverage,
   and required PubChem-1k RDKit validation.
 - v4: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v5: Align descriptor scope with connected `SmallMolecule` values and treat
+  multi-component salts as explicit per-component descriptor operations.

@@ -2,7 +2,8 @@
 
 ## Summary
 
-Detect whether atoms and bonds are members of any graph cycle without computing a canonical ring basis.
+Detect whether atoms and bonds in a connected molecular graph are members of
+any cycle without computing a canonical ring basis.
 
 ## Behavior/API
 
@@ -20,12 +21,14 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - Uses an explicit DFS frame stack, so graph depth does not consume the Rust call stack.
 - A bond is a ring bond exactly when it is not a bridge.
 - Ring atoms are atoms incident to at least one ring bond.
-- Handles disconnected components.
+- Traversal remains component-safe internally, but the public molecule boundary
+  supplies one connected graph.
 - Topology or chemistry mutation clears cached membership rather than exposing stale results.
 
 ## Tests
 
-- Unit tests cover core graph-cycle membership behavior.
+- Unit tests cover empty/single-atom boundary cases, linear graphs, rings, fused
+  rings with acyclic tails, tombstones, and core graph-cycle membership.
 
 ## Benchmarks
 
@@ -52,3 +55,5 @@ Detect whether atoms and bonds are members of any graph cycle without computing 
 - v10: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v11: Add exact stable-slot flag inspection/construction for canonical
   perception reconstruction.
+- v12: Align the public contract and regressions with the connected
+  `Molecule` invariant while retaining component-safe internal traversal.
