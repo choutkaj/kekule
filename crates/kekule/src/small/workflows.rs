@@ -19,7 +19,13 @@ use super::model::SmallMolecule;
 impl SmallMolecule {
     pub fn from_smiles(input: &str) -> Result<Self, SmallMoleculeReadError> {
         let document = parse_smiles_document(input)?;
-        Ok(interpret_smiles_document(&document)?.into_molecule())
+        let mut molecules = interpret_smiles_document(&document)?.into_molecules();
+        if molecules.len() != 1 {
+            return Err(SmallMoleculeReadError::ComponentCount {
+                actual: molecules.len(),
+            });
+        }
+        Ok(molecules.pop().expect("exactly one interpreted component"))
     }
 
     pub fn from_smiles_sanitized(input: &str) -> Result<Self, SmallMoleculeReadError> {
@@ -81,6 +87,8 @@ impl SmallMolecule {
 pub enum SmallMoleculeReadError {
     Parse(SmilesParseError),
     Interpret(SmilesInterpretError),
+    /// A `SmallMolecule` convenience requires one connected SMILES component.
+    ComponentCount { actual: usize },
     Sanitize(SanitizeError),
 }
 
@@ -89,6 +97,10 @@ impl fmt::Display for SmallMoleculeReadError {
         match self {
             Self::Parse(error) => write!(f, "{error}"),
             Self::Interpret(error) => write!(f, "{error}"),
+            Self::ComponentCount { actual } => write!(
+                f,
+                "SmallMolecule requires exactly one connected SMILES component, found {actual}"
+            ),
             Self::Sanitize(error) => write!(f, "{error}"),
         }
     }
