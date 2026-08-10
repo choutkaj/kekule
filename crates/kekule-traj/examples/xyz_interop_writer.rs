@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::path::PathBuf;
 
-use kekule::core::{Atom, Element, Molecule};
+use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::Point3;
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, TopologyBuilder};
@@ -17,13 +17,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .ok_or("usage: xyz_interop_writer OUTPUT.xyz")?;
-    let mut molecule = Molecule::new();
+    let mut molecule = Molecule::builder();
+    let mut atoms = Vec::new();
     for symbol in ["O", "H", "H"] {
-        molecule.add_atom(Atom::new(
+        atoms.push(molecule.add_atom(Atom::new(
             Element::from_symbol(symbol).ok_or("unknown element")?,
-        ))?;
+        ))?);
     }
-    let molecule = SmallMolecule::from_graph(molecule);
+    molecule.add_bond(atoms[0], atoms[1], BondOrder::Single)?;
+    molecule.add_bond(atoms[0], atoms[2], BondOrder::Single)?;
+    let molecule = SmallMolecule::from_graph(molecule.build()?);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;

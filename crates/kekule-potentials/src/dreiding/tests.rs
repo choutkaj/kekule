@@ -20,7 +20,7 @@ fn molecule(
     bonds: &[(usize, usize, BondOrder)],
     positions: &[Point3],
 ) -> (SmallMolecule, kekule::core::ConformerId) {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let atoms = elements
         .iter()
         .map(|symbol| {
@@ -41,8 +41,14 @@ fn molecule(
             )
             .unwrap();
     }
-    let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    (SmallMolecule::from_graph(graph), conformer)
+    let conformer = graph
+        .molecule_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
+    (
+        SmallMolecule::from_graph(graph.build().expect("connected test molecule")),
+        conformer,
+    )
 }
 
 fn water(offset: f64) -> (SmallMolecule, kekule::core::ConformerId) {
@@ -147,7 +153,7 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
 fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
     let (molecule, conformer) = molecule(
         &["C", "C"],
-        &[],
+        &[(0, 1, BondOrder::Single)],
         &[Point3::new(0.1, 0.0, 0.0), Point3::new(9.9, 0.0, 0.0)],
     );
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
@@ -232,7 +238,7 @@ fn qeq_grouping_policy_is_explicit() {
 
 #[test]
 fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let oxygen = graph
         .add_atom(explicit_atom("O"))
         .expect("atom identifier capacity");
@@ -274,8 +280,12 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
             ),
         )
         .unwrap();
-    let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    let model = Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer).unwrap();
+    let conformer = graph
+        .molecule_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
+    let molecule = SmallMolecule::from_graph(graph.build().expect("connected water"));
+    let model = Model::from_small_molecule(&molecule, conformer).unwrap();
 
     let potential = DreidingPotential::prepare(
         model.topology(),
@@ -317,7 +327,7 @@ fn eligible_macro_molecules_are_supported() {
 #[test]
 fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let mut atom = Atom::new(Element::from_symbol("C").unwrap());
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let id = graph
         .add_atom(atom.clone())
         .expect("atom identifier capacity");
@@ -328,9 +338,12 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             kekule::units::Quantity::new(Point3::default(), kekule::units::ANGSTROM),
         )
         .unwrap();
-    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
-    let model =
-        Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
+    let conformer_id = graph
+        .molecule_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
+    let molecule = SmallMolecule::from_graph(graph.build().expect("single atom molecule"));
+    let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
             model.topology(),
@@ -343,7 +356,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
 
     atom.no_implicit_hydrogens = true;
     atom.explicit_hydrogens = 1;
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let id = graph.add_atom(atom).expect("atom identifier capacity");
     let mut conformer = Conformer::new(kekule::units::ANGSTROM).unwrap();
     conformer
@@ -352,9 +365,12 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             kekule::units::Quantity::new(Point3::default(), kekule::units::ANGSTROM),
         )
         .unwrap();
-    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
-    let model =
-        Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer_id).unwrap();
+    let conformer_id = graph
+        .molecule_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
+    let molecule = SmallMolecule::from_graph(graph.build().expect("single atom molecule"));
+    let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
             model.topology(),
@@ -369,7 +385,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
 fn prepared_potential_uses_exact_topology_identity() {
     let (combined, combined_conf) = molecule(
         &["C", "C"],
-        &[],
+        &[(0, 1, BondOrder::Single)],
         &[Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 0.0, 0.0)],
     );
     let combined_model = Model::from_small_molecule(&combined, combined_conf).unwrap();

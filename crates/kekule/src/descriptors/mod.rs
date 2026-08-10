@@ -414,11 +414,20 @@ mod tests {
     }
 
     #[test]
-    fn no_carbon_formula_and_disconnected_charge_use_one_entity() {
-        let salt = SmallMolecule::from_smiles("[NH4+].[Cl-]").expect("salt parses");
-        let formula = molecular_formula(&salt, HydrogenCountPolicy::StoredOnly).expect("formula");
-        assert_eq!(formula.to_string(), "ClH4N");
-        assert_eq!(formula.formal_charge(), 0);
+    fn no_carbon_formula_and_charge_are_reported_per_connected_entity() {
+        let document = crate::smiles::parse_str("[NH4+].[Cl-]").expect("salt parses");
+        let components = crate::smiles::interpret(&document)
+            .expect("salt interprets")
+            .into_molecules();
+        let formulas = components
+            .iter()
+            .map(|component| {
+                molecular_formula(component, HydrogenCountPolicy::StoredOnly)
+                    .expect("component formula")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(formulas, vec!["H4N+", "Cl-"]);
 
         let ammonium = SmallMolecule::from_smiles("[NH4+]").expect("ammonium parses");
         assert_eq!(

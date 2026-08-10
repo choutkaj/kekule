@@ -306,9 +306,10 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
 
 #[test]
 fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
-    let disconnected = sanitized("O.O");
+    let connected_target = sanitized("OCO");
     let query = parse_smarts("[#8].[#8]").unwrap();
-    let matches = substructure::find_substructure_matches(disconnected.graph(), &query).unwrap();
+    let matches =
+        substructure::find_substructure_matches(connected_target.graph(), &query).unwrap();
     assert_eq!(matches.len(), 1);
     assert_ne!(matches[0].atoms()[0], matches[0].atoms()[1]);
 

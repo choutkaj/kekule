@@ -19,13 +19,11 @@ use super::model::SmallMolecule;
 impl SmallMolecule {
     pub fn from_smiles(input: &str) -> Result<Self, SmallMoleculeReadError> {
         let document = parse_smiles_document(input)?;
-        let mut molecules = interpret_smiles_document(&document)?.into_molecules();
-        if molecules.len() != 1 {
-            return Err(SmallMoleculeReadError::ComponentCount {
-                actual: molecules.len(),
-            });
-        }
-        Ok(molecules.pop().expect("exactly one interpreted component"))
+        interpret_smiles_document(&document)?
+            .into_molecule()
+            .map_err(|error| SmallMoleculeReadError::ComponentCount {
+                actual: error.actual(),
+            })
     }
 
     pub fn from_smiles_sanitized(input: &str) -> Result<Self, SmallMoleculeReadError> {
@@ -88,7 +86,9 @@ pub enum SmallMoleculeReadError {
     Parse(SmilesParseError),
     Interpret(SmilesInterpretError),
     /// A `SmallMolecule` convenience requires one connected SMILES component.
-    ComponentCount { actual: usize },
+    ComponentCount {
+        actual: usize,
+    },
     Sanitize(SanitizeError),
 }
 

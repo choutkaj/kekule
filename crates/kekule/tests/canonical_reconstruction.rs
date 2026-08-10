@@ -66,7 +66,7 @@ fn tetrahedral_element(center: AtomId, carriers: [AtomId; 4]) -> StereoElement {
 }
 
 fn stereo_fixture() -> (Molecule, Vec<StereoElementId>) {
-    let mut molecule = Molecule::new();
+    let mut molecule = Molecule::builder();
     let center = molecule.add_atom(carbon()).expect("center");
     let carriers = [
         molecule.add_atom(carbon()).expect("carrier"),
@@ -74,6 +74,12 @@ fn stereo_fixture() -> (Molecule, Vec<StereoElementId>) {
         molecule.add_atom(carbon()).expect("carrier"),
         molecule.add_atom(carbon()).expect("carrier"),
     ];
+    for carrier in carriers {
+        molecule
+            .add_bond(center, carrier, BondOrder::Single)
+            .expect("carrier bond");
+    }
+    let mut molecule = molecule.build().expect("connected stereo fixture");
     let elements = (0..4)
         .map(|_| {
             molecule
@@ -126,8 +132,9 @@ fn full_installed_perception_round_trips_through_public_api() {
 
 #[test]
 fn exact_section_presence_and_provenance_round_trip() {
-    let mut molecule = Molecule::new();
-    let atom = molecule.add_atom(carbon()).expect("atom");
+    let mut builder = Molecule::builder();
+    let atom = builder.add_atom(carbon()).expect("atom");
+    let mut molecule = builder.build().expect("single atom molecule");
 
     let model_neutral = PerceptionState::builder()
         .with_valence(None, vec![(atom, 4)])
@@ -167,7 +174,7 @@ fn exact_section_presence_and_provenance_round_trip() {
 
 #[test]
 fn ring_membership_round_trips_with_and_without_ring_set() {
-    let mut molecule = Molecule::new();
+    let mut molecule = Molecule::builder();
     let atoms = [
         molecule.add_atom(carbon()).unwrap(),
         molecule.add_atom(carbon()).unwrap(),
@@ -184,6 +191,7 @@ fn ring_membership_round_trips_with_and_without_ring_set() {
             .add_bond(atoms[2], atoms[0], BondOrder::Single)
             .unwrap(),
     ];
+    let mut molecule = molecule.build().expect("connected ring");
     let membership = || RingMembership::from_slot_flags(vec![true; 3], vec![true; 3]);
 
     let membership_only = PerceptionState::builder()
@@ -251,10 +259,11 @@ fn ring_membership_round_trips_with_and_without_ring_set() {
 
 #[test]
 fn malformed_perception_is_rejected_transactionally() {
-    let mut molecule = Molecule::new();
-    let live = molecule.add_atom(carbon()).unwrap();
-    let deleted = molecule.add_atom(carbon()).unwrap();
-    molecule.delete_atom(deleted).unwrap();
+    let mut builder = Molecule::builder();
+    let live = builder.add_atom(carbon()).unwrap();
+    let deleted = builder.add_atom(carbon()).unwrap();
+    builder.delete_atom(deleted).unwrap();
+    let mut molecule = builder.build().expect("connected live atom");
     let previous = PerceptionState::builder()
         .with_valence(Some(ValenceModel::RdkitLike), vec![(live, 4)])
         .unwrap()
@@ -298,10 +307,12 @@ fn malformed_perception_is_rejected_transactionally() {
 #[test]
 fn malformed_ring_and_stereo_references_are_rejected() {
     let (mut molecule, elements) = stereo_fixture();
-    let deleted_bond = molecule
-        .add_bond(AtomId::new(0), AtomId::new(1), BondOrder::Single)
+    let mut editor = molecule.edit();
+    let deleted_bond = editor
+        .add_bond(AtomId::new(1), AtomId::new(2), BondOrder::Single)
         .unwrap();
-    molecule.delete_bond(deleted_bond).unwrap();
+    editor.delete_bond(deleted_bond).unwrap();
+    editor.commit().expect("star graph remains connected");
     let removed = elements[3];
     molecule.remove_stereo_element(removed).unwrap();
     let previous = molecule.perception().clone();
@@ -330,8 +341,11 @@ fn malformed_ring_and_stereo_references_are_rejected() {
     );
     assert_eq!(molecule.perception(), &previous);
 
+    let mut atom_membership = vec![false; molecule.atom_count()];
+    atom_membership[0] = true;
+    atom_membership[1] = true;
     let membership =
-        RingMembership::from_slot_flags(vec![true; molecule.atom_count()], vec![false]);
+        RingMembership::from_slot_flags(atom_membership, vec![false; deleted_bond.index() + 1]);
     let malformed = PerceptionState::builder()
         .with_rings(
             membership,
@@ -342,16 +356,19 @@ fn malformed_ring_and_stereo_references_are_rejected() {
                 }],
                 RingWork {
                     atom_count: molecule.atom_count(),
-                    bond_count: 0,
+                    bond_count: molecule.bond_count(),
                     ..RingWork::default()
                 },
             )),
         )
         .build();
-    assert!(matches!(
-        molecule.install_perception_state(malformed),
-        Err(PerceptionStateInstallError::MalformedRing { .. })
-    ));
+    let error = molecule
+        .install_perception_state(malformed)
+        .expect_err("two-atom ring should be rejected");
+    assert!(
+        matches!(error, PerceptionStateInstallError::MalformedRing { .. }),
+        "unexpected error: {error:?}"
+    );
     assert_eq!(molecule.perception(), &previous);
 }
 
@@ -388,8 +405,9 @@ fn installed_perception_follows_normal_invalidation_rules() {
 
 #[test]
 fn enriched_smcra_state_round_trips_and_invalid_ids_are_transactional() {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let atom = graph.add_atom(carbon()).unwrap();
+    let graph = graph.build().expect("single atom molecule");
     let mut source = SmcraHierarchy::new();
     let chain = source.add_chain("A", Some("AUTH_A".into())).unwrap();
     let residue = source

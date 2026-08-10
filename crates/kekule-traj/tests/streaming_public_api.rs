@@ -9,11 +9,11 @@ use kekule_traj::{
 };
 
 fn topology() -> Topology {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule).unwrap();
     builder

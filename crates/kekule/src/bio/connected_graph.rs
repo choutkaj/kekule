@@ -137,7 +137,11 @@ mod tests {
         let (second, _) = builder
             .add_atom_bonded_to(first, carbon(), BondOrder::Single)
             .expect("bonded atom");
-        assert!(builder.graph().bond_between(first, second).unwrap().is_some());
+        assert!(builder
+            .graph()
+            .bond_between(first, second)
+            .unwrap()
+            .is_some());
         assert!(builder.graph().is_connected());
     }
 }
