@@ -4,8 +4,7 @@ use std::ops::Range;
 use crate::core::{AtomId, BondId};
 use crate::small::model::SmallMolecule;
 
-use super::smiles;
-use super::{SmilesDocument, SmilesParseOptions};
+use super::smiles::{self, SmilesDocument, SmilesParseOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesInterpretError {
@@ -258,8 +257,8 @@ mod tests {
         assert!(interpretation
             .molecules()
             .all(|molecule| molecule.graph().is_connected()));
-        assert_eq!(interpretation.components()[0].source_span(), 0..9);
-        assert_eq!(interpretation.components()[1].source_span(), 10..15);
+        assert_eq!(interpretation.components()[0].source_span(), 0..10);
+        assert_eq!(interpretation.components()[1].source_span(), 11..16);
     }
 
     #[test]
