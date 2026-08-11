@@ -24,6 +24,22 @@ C C1 GLY A 1 1 0.0 0.0 0.0
 C C2 GLY A 1 1 1.0 0.0 0.0
 "#;
 
+fn with_struct_conn(order: &str) -> String {
+    format!(
+        r#"{MINIMAL_MMCIF}
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.pdbx_value_order
+duplicate covale A C1 A C2 {order}
+"#
+    )
+}
+
 #[test]
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions, MmcifWriteOptions};
@@ -66,4 +82,40 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert!(mmcif::parse_str(&written, MmcifParseOptions::default()).is_ok());
 
     Ok(())
+}
+
+#[test]
+fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
+    use kekule::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions};
+
+    let document = mmcif::parse_str(&with_struct_conn("sing"), MmcifParseOptions::default())
+        .expect("duplicate agreeing connectivity parses");
+    let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())
+        .expect("duplicate agreeing connectivity is accepted");
+    let graph = interpreted
+        .model()
+        .topology()
+        .definitions()
+        .next()
+        .expect("one molecule definition")
+        .1
+        .graph();
+
+    assert_eq!(graph.bond_count(), 1);
+}
+
+#[test]
+fn duplicate_conflicting_authoritative_bond_evidence_is_rejected() {
+    use kekule::mmcif::{self, MmcifInterpretError, MmcifInterpretOptions, MmcifParseOptions};
+
+    let document = mmcif::parse_str(&with_struct_conn("doub"), MmcifParseOptions::default())
+        .expect("duplicate conflicting connectivity parses");
+    let error: MmcifInterpretError = mmcif::interpret(&document, MmcifInterpretOptions::default())
+        .expect_err("conflicting authoritative bond orders must be rejected");
+
+    assert_eq!(error.line(), None);
+    assert_eq!(
+        error.message(),
+        "conflicting authoritative mmCIF bond evidence for one atom pair: Double versus Single"
+    );
 }
