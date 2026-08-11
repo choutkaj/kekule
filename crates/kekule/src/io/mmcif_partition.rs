@@ -318,6 +318,7 @@ fn extract_connected_graph(
     ordered.sort_unstable();
     let mut builder = Molecule::builder();
     let mut atom_map = BTreeMap::new();
+    let mut bond_props = Vec::new();
 
     for source_atom in ordered.iter().copied() {
         let atom = source.atom(source_atom).map_err(interpret_error)?.clone();
@@ -334,18 +335,13 @@ fn extract_connected_graph(
         let target_bond = builder
             .add_bond(target_left, target_right, bond.order)
             .map_err(interpret_error)?;
-        builder
-            .molecule_mut()
-            .bond_mut(target_bond)
-            .map_err(interpret_error)?
-            .props
-            .clone_from(&bond.props);
+        bond_props.push((target_bond, bond.props.clone()));
     }
-    builder
-        .molecule_mut()
-        .props_mut()
-        .clone_from(source.props());
-    let graph = builder.build().map_err(interpret_error)?;
+    let mut graph = builder.build().map_err(interpret_error)?;
+    for (target_bond, props) in bond_props {
+        graph.bond_mut(target_bond).map_err(interpret_error)?.props = props;
+    }
+    graph.props_mut().clone_from(source.props());
     Ok(ExtractedConnectedGraph {
         graph,
         atom_map,

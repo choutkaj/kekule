@@ -13,12 +13,13 @@ single-atom values are valid connected boundary cases.
   component.
 - Constructs topology through `MoleculeBuilder` and changes topology through a
   transactional `MoleculeEditor`. Their working copies may be temporarily
-  disconnected, but `build` and `commit` reject disconnected results with a
-  structured error.
+  disconnected, but the staging `Molecule` cannot be publicly borrowed, cloned,
+  replaced, or otherwise extracted. `build` and `commit` are the only public
+  publication routes and reject disconnected results with a structured error.
 - Failed builds and edit commits do not expose or install an invalid graph; a
   failed edit leaves the original molecule unchanged.
-- Keeps raw atom/bond insertion and deletion crate-private so public callers
-  cannot bypass the connectedness boundary.
+- Keeps raw atom/bond insertion and deletion plus builder/editor staging access
+  crate-private so public callers cannot bypass the connectedness boundary.
 - Supports first-class stereo elements, stereo groups, and source bond marks attached to stable graph IDs.
 - Replaces stereo elements through a validating transactional operation; direct
   mutable access cannot bypass graph-reference or stereo-group invariants.
@@ -41,8 +42,11 @@ single-atom values are valid connected boundary cases.
 ## Implementation Notes
 
 - Uses slot storage with tombstones so IDs remain stable.
-- Builder/editor staging owns the only temporarily disconnected public workflow;
-  all completed values exposed through the core API satisfy connectedness.
+- Builder/editor staging owns the only temporarily disconnected public workflow,
+  but exposes only focused topology operations rather than a staging-graph
+  reference. Ordinary conformer, property, and chemistry operations occur after
+  `build`; all completed values exposed through the core API satisfy
+  connectedness.
 - Checks atom, bond, conformer, stereo-element, and stereo-group collection
   slots before insertion and returns `MoleculeError::IdentifierCapacityExceeded`
   without changing graph state.
@@ -72,6 +76,8 @@ single-atom values are valid connected boundary cases.
   synthetic capacity boundaries, transactional capacity rejection, chemistry
   invalidation, state-neutral property/coordinate edits, stereo CRUD, and
   stereo pruning.
+- Downstream compile-fail rustdoc regressions prove neither immutable cloning
+  nor mutable `mem::take` can extract builder/editor staging as a `Molecule`.
 - Reference-tool golden data is not required for this data-structure feature.
 - Downstream regressions cover exact installed-perception export/install,
   malformed transactional rejection, and normal post-install invalidation.
@@ -107,3 +113,6 @@ single-atom values are valid connected boundary cases.
 - v12: Make connectedness a completed-`Molecule` invariant, route public
   topology construction and mutation through checked builder/editor staging,
   and guarantee rollback when an edit would disconnect the graph.
+- v13: Remove public builder/editor staging-graph access, make `build` and
+  `commit` the only publication routes, migrate ordinary mutation after
+  finalization, and add downstream compile-fail extraction regressions.

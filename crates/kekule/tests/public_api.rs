@@ -213,8 +213,9 @@ fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::
             ),
         )
         .unwrap();
-    let conformer = graph.molecule_mut().add_conformer(conformer)?;
-    let molecule = SmallMolecule::from_graph(graph.build()?);
+    let mut graph = graph.build()?;
+    let conformer = graph.add_conformer(conformer)?;
+    let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer)?;
 
     assert_eq!(model.atom_count(), 1);
@@ -258,8 +259,9 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
             ),
         )
         .unwrap();
-    let conformer = graph.molecule_mut().add_conformer(conformer).unwrap();
-    let mut molecule = SmallMolecule::from_graph(graph.build()?);
+    let mut graph = graph.build()?;
+    let conformer = graph.add_conformer(conformer).unwrap();
+    let mut molecule = SmallMolecule::from_graph(graph);
 
     let mut builder = Model::builder();
     let instance = builder.add_small_molecule(&molecule, conformer)?;
