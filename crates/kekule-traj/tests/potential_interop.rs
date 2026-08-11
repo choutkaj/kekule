@@ -10,7 +10,7 @@ use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
 
 fn bonded_model() -> (Model, InstanceBondId) {
-    let mut molecule = Molecule::new();
+    let mut molecule = Molecule::builder();
     let carbon = Element::from_symbol("C").unwrap();
     let first = molecule.add_atom(Atom::new(carbon)).unwrap();
     let second = molecule.add_atom(Atom::new(carbon)).unwrap();
@@ -22,9 +22,10 @@ fn bonded_model() -> (Model, InstanceBondId) {
     conformer
         .set_position(second, Quantity::new(Point3::new(1.1, 0.0, 0.0), ANGSTROM))
         .unwrap();
+    let mut molecule = molecule.build().unwrap();
     let conformer = molecule.add_conformer(conformer).unwrap();
-    let model =
-        Model::from_small_molecule(&SmallMolecule::from_graph(molecule), conformer).unwrap();
+    let molecule = SmallMolecule::from_graph(molecule);
+    let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     (model, InstanceBondId::new(MoleculeInstanceId::new(0), bond))
 }
 

@@ -43,9 +43,23 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
     let residue_three = residues[2];
     let strongest_acceptor = residue_three.acceptors()[0].expect("reference acceptor");
     let strongest_donor = residue_three.donors()[0].expect("reference donor");
-    assert_eq!(strongest_acceptor.partner.residue().raw(), 32);
+    assert_eq!(
+        result
+            .get(strongest_acceptor.partner)
+            .expect("acceptor partner is in the result")
+            .source()
+            .label_sequence_id,
+        Some(33)
+    );
     assert!((strongest_acceptor.energy_kcal_per_mol - -2.4).abs() < 0.05);
-    assert_eq!(strongest_donor.partner.residue().raw(), 32);
+    assert_eq!(
+        result
+            .get(strongest_donor.partner)
+            .expect("donor partner is in the result")
+            .source()
+            .label_sequence_id,
+        Some(33)
+    );
     assert!((strongest_donor.energy_kcal_per_mol - -2.8).abs() < 0.05);
 }
 

@@ -2,15 +2,24 @@
 
 ## Summary
 
-Store one asserted chemical entity as a possibly disconnected graph with stable
-typed IDs, graph-adjacent stereo, properties, conformers, and private perception.
+Store one asserted chemical entity as a connected graph with stable typed IDs,
+graph-adjacent stereo, properties, conformers, and private perception. Empty and
+single-atom values are valid connected boundary cases.
 
 ## Behavior/API
 
 - Provides one shared `Molecule` graph used by both `SmallMolecule` and `MacroMolecule`.
-- Permits disconnected topology; connectedness is queried from the graph and is
-  not an asserted-entity invariant.
-- Supports fallible atom and bond insertion plus stable-ID deletion.
+- Requires every completed nontrivial `Molecule` to contain exactly one graph
+  component.
+- Constructs topology through `MoleculeBuilder` and changes topology through a
+  transactional `MoleculeEditor`. Their working copies may be temporarily
+  disconnected, but the staging `Molecule` cannot be publicly borrowed, cloned,
+  replaced, or otherwise extracted. `build` and `commit` are the only public
+  publication routes and reject disconnected results with a structured error.
+- Failed builds and edit commits do not expose or install an invalid graph; a
+  failed edit leaves the original molecule unchanged.
+- Keeps raw atom/bond insertion and deletion plus builder/editor staging access
+  crate-private so public callers cannot bypass the connectedness boundary.
 - Supports first-class stereo elements, stereo groups, and source bond marks attached to stable graph IDs.
 - Replaces stereo elements through a validating transactional operation; direct
   mutable access cannot bypass graph-reference or stereo-group invariants.
@@ -33,6 +42,11 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 ## Implementation Notes
 
 - Uses slot storage with tombstones so IDs remain stable.
+- Builder/editor staging owns the only temporarily disconnected public workflow,
+  but exposes only focused topology operations rather than a staging-graph
+  reference. Ordinary conformer, property, and chemistry operations occur after
+  `build`; all completed values exposed through the core API satisfy
+  connectedness.
 - Checks atom, bond, conformer, stereo-element, and stereo-group collection
   slots before insertion and returns `MoleculeError::IdentifierCapacityExceeded`
   without changing graph state.
@@ -56,10 +70,14 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
 ## Tests
 
 - Current coverage is unit-test based.
-- Tests cover empty molecules, insertion, deletion, invalid IDs, self-bonds,
-  duplicates, iteration, stable IDs, counts, checked synthetic capacity
-  boundaries, transactional capacity rejection, chemistry invalidation,
-  state-neutral property/coordinate edits, stereo CRUD, and stereo pruning.
+- Tests cover empty and single-atom boundary cases, connected builder success,
+  disconnected builder rejection, editor rollback on a disconnecting change,
+  invalid IDs, self-bonds, duplicates, iteration, stable IDs, counts, checked
+  synthetic capacity boundaries, transactional capacity rejection, chemistry
+  invalidation, state-neutral property/coordinate edits, stereo CRUD, and
+  stereo pruning.
+- Downstream compile-fail rustdoc regressions prove neither immutable cloning
+  nor mutable `mem::take` can extract builder/editor staging as a `Molecule`.
 - Reference-tool golden data is not required for this data-structure feature.
 - Downstream regressions cover exact installed-perception export/install,
   malformed transactional rejection, and normal post-install invalidation.
@@ -92,3 +110,9 @@ typed IDs, graph-adjacent stereo, properties, conformers, and private perception
   and live-ID iterators.
 - v11: Add immutable exact perception-section views, detached construction,
   and checked atomic whole-state installation for canonical persistence.
+- v12: Make connectedness a completed-`Molecule` invariant, route public
+  topology construction and mutation through checked builder/editor staging,
+  and guarantee rollback when an edit would disconnect the graph.
+- v13: Remove public builder/editor staging-graph access, make `build` and
+  `commit` the only publication routes, migrate ordinary mutation after
+  finalization, and add downstream compile-fail extraction regressions.

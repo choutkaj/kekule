@@ -19,28 +19,14 @@ pub struct MmcifInterpretation {
 }
 
 impl MmcifInterpretation {
-    pub fn model(&self) -> &Model {
-        &self.model
-    }
-
+    #[cfg(test)]
     pub fn report(&self) -> &raw::MmcifInterpretationReport {
         &self.report
     }
 
+    #[cfg(test)]
     pub fn topology(&self) -> &Topology {
         self.model.topology()
-    }
-
-    pub fn configuration(&self) -> &Configuration {
-        self.model.configuration()
-    }
-
-    pub fn observation(&self) -> Option<&StructureObservation> {
-        self.model.observation()
-    }
-
-    pub fn into_model(self) -> Model {
-        self.model
     }
 
     pub fn into_parts(self) -> (Model, raw::MmcifInterpretationReport) {
@@ -68,14 +54,6 @@ pub struct MmcifEnsembleInterpretation {
 }
 
 impl MmcifEnsembleInterpretation {
-    pub fn ensemble(&self) -> &Ensemble {
-        &self.ensemble
-    }
-
-    pub fn reports(&self) -> &[raw::MmcifInterpretationReport] {
-        &self.reports
-    }
-
     pub fn into_parts(self) -> (Ensemble, Vec<raw::MmcifInterpretationReport>) {
         (self.ensemble, self.reports)
     }
@@ -111,9 +89,9 @@ pub fn interpret_mmcif_ensemble(
         .ok_or(raw::MmcifEnsembleInterpretError::EmptyModelSelection)?;
     let (prototype, pending) = rebuild_model_with_connectivity(document, prototype, first_report)
         .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
-            model_id: model_id.clone(),
-            error,
-        })?;
+        model_id: model_id.clone(),
+        error,
+    })?;
     let topology = prototype.topology().clone();
     let mut ensemble = Ensemble::new(topology.clone());
 
@@ -216,9 +194,7 @@ impl ConnectivityCatalog {
                 catalog
                     .polymer_types
                     .insert(entity.to_owned(), kind.to_owned());
-                if optional(table, row, "_entity_poly.nstd_linkage")
-                    .is_some_and(is_yes)
-                {
+                if optional(table, row, "_entity_poly.nstd_linkage").is_some_and(is_yes) {
                     catalog
                         .nonstandard_polymer_linkage
                         .insert(entity.to_owned());
@@ -259,8 +235,7 @@ impl ConnectivityCatalog {
                 )?;
                 let atom_2 = required(table, row, "_pdbx_entity_branch_link.atom_id_2")?;
                 let order = component_bond_order(
-                    optional(table, row, "_pdbx_entity_branch_link.value_order")
-                        .unwrap_or("sing"),
+                    optional(table, row, "_pdbx_entity_branch_link.value_order").unwrap_or("sing"),
                     table,
                     row,
                 )?;
@@ -331,15 +306,17 @@ fn rebuild_model_with_connectivity(
 
         let new_instance = if let Some(molecule) = definition.macro_molecule() {
             let mut molecule = molecule.clone();
-            let mut editor = molecule.edit();
-            apply_instance_connectivity(editor.graph_mut(), provenance, &catalog)?;
-            let connected = editor.graph().is_connected();
-            editor.commit().map_err(interpret_error)?;
+            apply_instance_connectivity(
+                molecule.graph_mut_unchecked_connectedness(),
+                provenance,
+                &catalog,
+            )?;
+            let connected = molecule.graph().is_connected();
             if molecule.graph().atom_count() > 1 && !connected {
                 pending += 1;
             }
             let definition = builder
-                .add_macro_molecule_definition(&molecule)
+                .add_macro_molecule_definition_unchecked_connectedness(&molecule)
                 .map_err(interpret_error)?;
             builder
                 .add_instance(
@@ -355,7 +332,7 @@ fn rebuild_model_with_connectivity(
                 pending += 1;
             }
             let definition = builder
-                .add_small_molecule_definition(&molecule)
+                .add_small_molecule_definition_unchecked_connectedness(&molecule)
                 .map_err(interpret_error)?;
             builder
                 .add_instance(
@@ -365,7 +342,9 @@ fn rebuild_model_with_connectivity(
                 )
                 .map_err(interpret_error)?
         } else {
-            return Err(interpret_error("mmCIF topology definition has no molecule payload"));
+            return Err(interpret_error(
+                "mmCIF topology definition has no molecule payload",
+            ));
         };
 
         if new_instance != instance_id {
@@ -411,9 +390,7 @@ fn apply_instance_connectivity(
     apply_polymer_links(graph, &residues, catalog)
 }
 
-fn residue_atoms(
-    provenance: &raw::MmcifInstanceProvenance,
-) -> BTreeMap<ResidueKey, ResidueAtoms> {
+fn residue_atoms(provenance: &raw::MmcifInstanceProvenance) -> BTreeMap<ResidueKey, ResidueAtoms> {
     let mut residues = BTreeMap::new();
     for atom in provenance.atoms() {
         let key = ResidueKey {
@@ -443,18 +420,8 @@ fn apply_branch_links(
     catalog: &ConnectivityCatalog,
 ) -> Result<(), raw::MmcifInterpretError> {
     for link in &catalog.branch_links {
-        let left = resolve_branch_residue(
-            residues,
-            catalog,
-            &link.entity_id,
-            link.number_1,
-        );
-        let right = resolve_branch_residue(
-            residues,
-            catalog,
-            &link.entity_id,
-            link.number_2,
-        );
+        let left = resolve_branch_residue(residues, catalog, &link.entity_id, link.number_1);
+        let right = resolve_branch_residue(residues, catalog, &link.entity_id, link.number_2);
         let (Some(left), Some(right)) = (left, right) else {
             continue;
         };
@@ -522,10 +489,9 @@ fn apply_polymer_links(
         for pair in chain.windows(2) {
             let left = pair[0];
             let right = pair[1];
-            let (Some(left_seq), Some(right_seq)) = (
-                left.key.label_sequence_id,
-                right.key.label_sequence_id,
-            ) else {
+            let (Some(left_seq), Some(right_seq)) =
+                (left.key.label_sequence_id, right.key.label_sequence_id)
+            else {
                 continue;
             };
             // label_seq_id includes unmodelled residues, so only adjacent values
@@ -556,12 +522,18 @@ fn add_bond_if_missing(
     right: AtomId,
     order: BondOrder,
 ) -> Result<(), raw::MmcifInterpretError> {
-    if graph
-        .bond_between(left, right)
-        .map_err(interpret_error)?
-        .is_none()
-    {
-        graph.add_bond(left, right, order).map_err(interpret_error)?;
+    let existing = graph.bond_between(left, right).map_err(interpret_error)?;
+    let Some(existing) = existing else {
+        graph
+            .add_bond(left, right, order)
+            .map_err(interpret_error)?;
+        return Ok(());
+    };
+    let existing_order = graph.bond(existing).map_err(interpret_error)?.order;
+    if existing_order != order {
+        return Err(interpret_error(format!(
+            "conflicting authoritative mmCIF bond evidence for one atom pair: {existing_order:?} versus {order:?}"
+        )));
     }
     Ok(())
 }
@@ -656,7 +628,10 @@ fn row_error(
     message: impl Into<String>,
 ) -> raw::MmcifInterpretError {
     raw::MmcifInterpretError {
-        line: table.row(row).and_then(|values| values.first()).map(MmcifValue::line),
+        line: table
+            .row(row)
+            .and_then(|values| values.first())
+            .map(MmcifValue::line),
         message: message.into(),
     }
 }
@@ -801,6 +776,20 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .graph_for_instance(MoleculeInstanceId::new(0))
             .expect("peptide instance");
         assert_eq!(graph.bond_count(), 7);
+        assert_eq!(
+            graph
+                .bonds()
+                .filter(|(_, bond)| bond.order == BondOrder::Single)
+                .count(),
+            5
+        );
+        assert_eq!(
+            graph
+                .bonds()
+                .filter(|(_, bond)| bond.order == BondOrder::Double)
+                .count(),
+            2
+        );
         assert!(graph.is_connected());
         assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
@@ -842,6 +831,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .graph_for_instance(MoleculeInstanceId::new(0))
             .expect("branch instance");
         assert_eq!(graph.bond_count(), 3);
+        assert!(graph
+            .bonds()
+            .all(|(_, bond)| bond.order == BondOrder::Single));
         assert!(graph.is_connected());
         assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }

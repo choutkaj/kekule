@@ -26,6 +26,11 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 - All macro-molecule instances are considered together so hydrogen bonds and
   beta-sheet topology may cross chain and molecule-instance boundaries. Small
   molecules and non-peptide residues are ignored and counted in the report.
+- Connected mmCIF partitioning may place fragments of one deposited hierarchy
+  chain in separate molecule instances. DSSP reassembles fragments that share
+  label/author chain identity only when their canonical residue identities are
+  disjoint; overlapping residue identities remain separate logical chains so
+  repeated molecular copies are never collapsed.
 - `DsspResidueKey` qualifies each local `SmcraResidueId` with its
   `MoleculeInstanceId`. Results never flatten or renumber topology.
 - `DsspSecondaryStructure` represents the complete DSSP 4 summary alphabet:
@@ -62,14 +67,17 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 - Use `SmcraHierarchy` chain and residue order plus atom-site labels to identify
   peptide backbone atoms. Preserve author and label identifiers only as source
   metadata; result identity is the qualified canonical residue key.
+- Logical-chain reconstruction sorts disjoint connected fragments by canonical
+  label sequence and insertion identity for continuity analysis. Public result
+  keys remain instance-qualified local residue IDs, so this internal
+  reassembly never renumbers topology or merges result identities.
 - Treat a polymer-sequence residue with the required `N`, `CA`, `C`, and `O`
   backbone positions as analyzable. A label sequence ID is the canonical
   polymer-membership signal; covalently attached non-polymer components remain
   ignored even when their atom names resemble a peptide backbone. Determine
-  peptide continuity with DSSP-compatible chain and
-  coordinate checks because mmCIF interpretation does not infer template
-  polymer bonds. Missing or discontinuous residues split local pattern
-  recognition.
+  peptide continuity with DSSP-compatible hierarchy and coordinate checks;
+  graph connectivity alone does not establish DSSP residue continuity. Missing
+  or discontinuous residues split local pattern recognition.
 - Backbone amide hydrogens are reconstructed deterministically according to the
   DSSP convention; proline is not treated as an amide-hydrogen donor. DSSP's
   compatibility behavior of deriving a non-initial residue's hydrogen from the
@@ -103,6 +111,10 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   resource-limit class.
 - Public integration and benchmark-adapter tests exercise the borrowed-view
   entry point without owned-model reconstruction.
+- The pinned crambin regression verifies reference parity after connected
+  mmCIF instance partitioning, including partner lookup by source residue
+  identity across reconstructed logical-chain fragments and all resource-limit
+  paths.
 - Exact categorical fields must match the pinned reference. Floating-point
   tolerances may not be widened merely to make mismatches pass.
 
@@ -161,3 +173,6 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 - v5: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v6: Move the primary kernel to borrowed `ModelView` input so any compatible
   configuration container can be analyzed without coordinate copying.
+- v7: Reassemble disjoint fragments of one logical hierarchy chain across
+  connected molecule instances while keeping overlapping repeated copies
+  separate and preserving instance-qualified public residue identities.

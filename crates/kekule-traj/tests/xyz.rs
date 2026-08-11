@@ -2,7 +2,7 @@ use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::core::{Atom, Element, Molecule, PropValue};
+use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
@@ -27,14 +27,15 @@ const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
 2\nsecond\nC 1.0 2.0 3.0\nH 4.0 5.0 6.0";
 
 fn topology() -> Topology {
-    let mut graph = Molecule::new();
-    graph
+    let mut graph = Molecule::builder();
+    let carbon = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();
-    graph
+    let hydrogen = graph
         .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
         .unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    graph.add_bond(carbon, hydrogen, BondOrder::Single).unwrap();
+    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule).unwrap();
     builder
@@ -44,13 +45,22 @@ fn topology() -> Topology {
 }
 
 fn water_topology() -> Topology {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
+    let mut atoms = Vec::new();
     for symbol in ["O", "H", "H"] {
-        graph
-            .add_atom(Atom::new(Element::from_symbol(symbol).unwrap()))
-            .unwrap();
+        atoms.push(
+            graph
+                .add_atom(Atom::new(Element::from_symbol(symbol).unwrap()))
+                .unwrap(),
+        );
     }
-    let molecule = SmallMolecule::from_graph(graph);
+    graph
+        .add_bond(atoms[0], atoms[1], BondOrder::Single)
+        .unwrap();
+    graph
+        .add_bond(atoms[0], atoms[2], BondOrder::Single)
+        .unwrap();
+    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule).unwrap();
     builder

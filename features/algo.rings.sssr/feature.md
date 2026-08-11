@@ -2,7 +2,8 @@
 
 ## Summary
 
-Compute a compact ring basis for downstream small-molecule perception.
+Compute a compact ring basis for downstream perception of connected
+small-molecule graphs.
 
 ## Behavior/API
 
@@ -35,8 +36,11 @@ Compute a compact ring basis for downstream small-molecule perception.
 
 ## Tests
 
-- Unit tests cover monocyclic, fused, and disconnected cases.
-- Adversarial tests cover long chains, ladders, theta graphs, fused/bridged systems, symmetric cages, and disconnected mixtures using work counters rather than timing.
+- Unit tests cover monocyclic, fused, bridged, and connected acyclic-decoration
+  cases.
+- Adversarial tests cover long chains, ladders, theta graphs with acyclic tails,
+  fused/bridged systems, and symmetric cages using work counters rather than
+  timing.
 
 ## Benchmarks
 
@@ -70,3 +74,5 @@ Compute a compact ring basis for downstream small-molecule perception.
 - v13: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v14: Add detached complete `RingSet`/`RingWork` reconstruction with
   molecule-specific validation deferred to atomic perception installation.
+- v15: Align the documented input and adversarial regressions with the
+  connected `Molecule` boundary.

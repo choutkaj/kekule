@@ -364,7 +364,7 @@ pub(super) fn interpret_v3000_syntax(
         mol.add_conformer(conformer)
             .expect("parsed coordinates reference live atoms");
     }
-    Ok(SmallMolecule::from_graph(mol))
+    Ok(SmallMolecule::from_graph_unchecked_connectedness(mol))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

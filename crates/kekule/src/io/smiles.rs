@@ -233,18 +233,6 @@ pub struct SmilesInterpretation {
 }
 
 impl SmilesInterpretation {
-    pub fn molecule(&self) -> &SmallMolecule {
-        &self.molecule
-    }
-
-    pub fn report(&self) -> &SmilesInterpretationReport {
-        &self.report
-    }
-
-    pub fn into_molecule(self) -> SmallMolecule {
-        self.molecule
-    }
-
     pub fn into_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }

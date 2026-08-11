@@ -665,11 +665,12 @@ fn mol_and_sdf_v2000_writers_round_trip_metadata_and_fields() {
 ammonium_acetate_like
 kekule benchmark
 M CHG and M ISO fixture
-  4  2  0  0  0  0            999 V2000
+  4  3  0  0  0  0            999 V2000
     0.0000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
     1.4000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
     2.6000    0.7000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
     2.6000   -0.7000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
   2  3  2  0  0  0  0
   2  4  1  0  0  0  0
 M  CHG  2   1   1   4  -1
@@ -730,7 +731,29 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         );
     }
 
-    let mut molecule = SmallMolecule::default();
+    let mut graph_builder = Molecule::builder();
+    let mut atom_ids = Vec::new();
+    for index in 0..9u32 {
+        let mut atom = carbon();
+        atom.formal_charge = 1;
+        atom.isotope = Some(13 + index as u16);
+        atom.radical = Some(AtomRadical::Doublet);
+        atom.atom_map = Some(index + 1);
+        let atom_id = graph_builder
+            .add_atom(atom)
+            .expect("atom identifier capacity");
+        if let Some(previous) = atom_ids.last().copied() {
+            graph_builder
+                .add_bond(previous, atom_id, BondOrder::Single)
+                .expect("chain bond");
+        }
+        atom_ids.push(atom_id);
+    }
+    let mut molecule = SmallMolecule::from_graph(
+        graph_builder
+            .build()
+            .expect("metadata fixture should be connected"),
+    );
     molecule.graph_mut().props_mut().insert(
         "sdf.title".to_owned(),
         PropValue::String("metadata title".to_owned()),
@@ -748,16 +771,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         PropValue::String("line one\nline two".to_owned()),
     );
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    for index in 0..9u32 {
-        let mut atom = carbon();
-        atom.formal_charge = 1;
-        atom.isotope = Some(13 + index as u16);
-        atom.radical = Some(AtomRadical::Doublet);
-        atom.atom_map = Some(index + 1);
-        let atom_id = molecule
-            .graph_mut()
-            .add_atom(atom)
-            .expect("atom identifier capacity");
+    for (index, atom_id) in atom_ids.into_iter().enumerate() {
         conformer
             .set_position(
                 atom_id,

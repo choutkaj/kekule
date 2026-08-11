@@ -339,7 +339,7 @@ fn molecular_mass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, AtomRadical, Molecule};
+    use crate::core::{Atom, AtomRadical, BondOrder, Molecule};
     use crate::perception;
 
     fn element(symbol: &str) -> Element {
@@ -378,20 +378,31 @@ mod tests {
     #[test]
     fn hill_order_isotope_order_and_accessors_are_stable() {
         let mut graph = Molecule::new();
-        let mut carbon_13 = Atom::new(element("C"));
-        carbon_13.isotope = Some(13);
-        graph
-            .add_atom(carbon_13.clone())
+        let mut carbon_13_atom = Atom::new(element("C"));
+        carbon_13_atom.isotope = Some(13);
+        let mut carbon_12_atom = carbon_13_atom.clone();
+        carbon_12_atom.isotope = Some(12);
+        let carbon_13 = graph
+            .add_atom(carbon_13_atom)
             .expect("atom identifier capacity");
-        graph
+        let oxygen = graph
             .add_atom(Atom::new(element("O")))
             .expect("atom identifier capacity");
-        graph
+        let carbon = graph
             .add_atom(Atom::new(element("C")))
             .expect("atom identifier capacity");
-        let mut carbon_12 = carbon_13;
-        carbon_12.isotope = Some(12);
-        graph.add_atom(carbon_12).expect("atom identifier capacity");
+        let carbon_12 = graph
+            .add_atom(carbon_12_atom)
+            .expect("atom identifier capacity");
+        graph
+            .add_bond(carbon_13, oxygen, BondOrder::Single)
+            .expect("first connecting bond");
+        graph
+            .add_bond(oxygen, carbon, BondOrder::Single)
+            .expect("second connecting bond");
+        graph
+            .add_bond(carbon, carbon_12, BondOrder::Single)
+            .expect("third connecting bond");
         let formula = molecular_formula(
             &SmallMolecule::from_graph(graph),
             HydrogenCountPolicy::StoredOnly,
@@ -414,11 +425,20 @@ mod tests {
     }
 
     #[test]
-    fn no_carbon_formula_and_disconnected_charge_use_one_entity() {
-        let salt = SmallMolecule::from_smiles("[NH4+].[Cl-]").expect("salt parses");
-        let formula = molecular_formula(&salt, HydrogenCountPolicy::StoredOnly).expect("formula");
-        assert_eq!(formula.to_string(), "ClH4N");
-        assert_eq!(formula.formal_charge(), 0);
+    fn no_carbon_formula_and_charge_are_reported_per_connected_entity() {
+        let document = crate::smiles::parse_str("[NH4+].[Cl-]").expect("salt parses");
+        let components = crate::smiles::interpret(&document)
+            .expect("salt interprets")
+            .into_molecules();
+        let formulas = components
+            .iter()
+            .map(|component| {
+                molecular_formula(component, HydrogenCountPolicy::StoredOnly)
+                    .expect("component formula")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(formulas, vec!["H4N+", "Cl-"]);
 
         let ammonium = SmallMolecule::from_smiles("[NH4+]").expect("ammonium parses");
         assert_eq!(

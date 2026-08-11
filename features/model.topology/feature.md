@@ -2,8 +2,8 @@
 
 ## Summary
 
-Construct one immutable coordinate-free molecular system from reusable molecule
-definitions and explicitly identified instances.
+Construct one immutable coordinate-free molecular system from connected,
+reusable molecule definitions and explicitly identified instances.
 
 ## Behavior/API
 
@@ -19,12 +19,16 @@ definitions and explicitly identified instances.
 - `TopologyBuilder` is independently usable without coordinates, supports
   explicit definition reuse, uses checked fixed-width identifiers, and commits
   additions only after validation.
+- Every small or macro molecule definition must contain one connected graph.
+  `TopologyBuildError::DisconnectedMoleculeDefinition` rejects an invalid
+  definition transactionally before it can become part of a topology.
 - Capacity failures identify definitions, instances, dense atoms, or dense
   bonds through `TopologyIdKind`; shared checked conversion is used for both
   insertion and reservation limits.
-- Macro definitions receive static graph/hierarchy validation with coordinate
-  checking disabled. Topology construction neither scans nor validates source
-  conformers and strips them only from the stored definition clone.
+- Macro definitions receive static graph/hierarchy validation, including
+  connectedness, with coordinate checking disabled. Topology construction
+  neither scans nor validates source conformers and strips them only from the
+  stored definition clone.
 - `TopologyMapping::between_identical_layouts` produces identity maps only
   when complete layouts already match. Explicit mappings validate injectivity,
   definition/instance/atom/bond relationships, mapped bond endpoints, and both
@@ -58,10 +62,10 @@ definitions and explicitly identified instances.
 - Tests cover exact identity versus equal layout, differing definition,
   instance, and dense insertion order, repeated identical definitions and
   instances, explicit definition reuse, qualified identifiers, dense inverse
-  mappings, tombstones, checked capacity failures, transactional construction,
-  selections, mapping target mismatch, duplicate and cross-instance atom maps,
-  mapped-bond endpoint consistency, and added/removed reporting at every
-  topology level.
+  mappings, tombstones, disconnected-definition rejection, checked capacity
+  failures, transactional construction, selections, mapping target mismatch,
+  duplicate and cross-instance atom maps, mapped-bond endpoint consistency,
+  and added/removed reporting at every topology level.
 - Macro regressions cover successful coordinate-free construction with many
   unused invalid conformers and verify that stored definitions contain no
   conformers while sources remain unchanged.
@@ -102,3 +106,6 @@ definitions and explicitly identified instances.
 - v7: Require independently reconstructed complete molecule definitions,
   including perception, hierarchy enrichment, and stable tombstones, to retain
   exact `same_layout` content.
+- v8: Require every topology definition graph to be connected, add structured
+  transactional rejection for invalid definitions, and preserve connectedness
+  through whole-instance transformations.

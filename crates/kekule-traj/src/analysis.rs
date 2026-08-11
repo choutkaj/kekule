@@ -615,7 +615,7 @@ impl std::error::Error for RmsdError {
 mod tests {
     use super::*;
     use kekule::alignment::{AlignmentGeometry, PeriodicAlignmentPolicy};
-    use kekule::core::{Atom, Element, Molecule, PropValue};
+    use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
     use kekule::geometry::{Matrix3, Point3, Vector3};
     use kekule::small::SmallMolecule;
     use kekule::structure::StructureObservation;
@@ -623,13 +623,18 @@ mod tests {
     use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
 
     fn make_topology(atom_count: usize) -> Topology {
-        let mut graph = Molecule::new();
+        let mut graph = Molecule::builder();
+        let mut previous = None;
         for _ in 0..atom_count {
-            graph
+            let atom = graph
                 .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
                 .unwrap();
+            if let Some(parent) = previous {
+                graph.add_bond(parent, atom, BondOrder::Single).unwrap();
+            }
+            previous = Some(atom);
         }
-        let molecule = SmallMolecule::from_graph(graph);
+        let molecule = SmallMolecule::from_graph(graph.build().unwrap());
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
         builder
