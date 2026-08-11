@@ -2,12 +2,15 @@
 
 ## Summary
 
-Write small molecules as deterministic noncanonical SMILES for round-trip workflows.
+Write one connected small molecule as deterministic noncanonical SMILES for
+round-trip workflows.
 
 ## Behavior/API
 
 - Exposes `smiles::{SmilesWriteOptions, write, write_with_options}`.
-- Emits graph-order-based noncanonical SMILES with branches, ring closures, dot fragments, common bond symbols, and bracket atoms when needed.
+- Emits graph-order-based noncanonical SMILES with branches, ring closures,
+  common bond symbols, and bracket atoms when needed. Multi-component documents
+  are interpreted and written component-by-component by callers.
 - Emits `[nH]` for sanitized aromatic donor nitrogen when the perceived hydrogen must survive reparse.
 - Preserves bracket-only no-implicit-hydrogen semantics.
 - Rejects zero, dative, quadruple, stored stereo elements, source bond stereo
@@ -23,7 +26,8 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - A deterministic DFS tree is rendered with preassigned ring closures at both endpoints and branch children before the selected continuation path.
 - One-based ring-closure labels are assigned in `u64` after enforcing the
   supported maximum of 99 simultaneous closures.
-- Tree collection, subtree sizing, and component emission use explicit stacks so graph depth does not consume the Rust call stack.
+- Tree collection, subtree sizing, and molecule emission use explicit stacks so
+  graph depth does not consume the Rust call stack.
 - Unsupported stereo/query details are read from the first-class stereo representation and return structured write errors until isomeric SMILES support can encode them faithfully.
 - Representable radicals need no nonstandard token: bracket atom syntax carries
   the valence state and the parser reconstructs doublet through quintet
@@ -31,7 +35,9 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 
 ## Tests
 
-- Unit tests cover parse/write/parse round trips for branches, rings, brackets, fragments, aromatic examples, and unsupported lossy bond/stereo cases from the graph-adjacent stereo model.
+- Unit tests cover parse/write/parse round trips for branches, rings, brackets,
+  individually interpreted components, aromatic examples, and unsupported
+  lossy bond/stereo cases from the graph-adjacent stereo model.
 
 ## Benchmarks
 
@@ -60,3 +66,5 @@ Write small molecules as deterministic noncanonical SMILES for round-trip workfl
 - v11: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v12: Generate one-based ring labels in `u64` so formatting never relies on
   overflow-prone collection-index arithmetic.
+- v13: Align writer input and multi-component workflows with the connected
+  `SmallMolecule` boundary.

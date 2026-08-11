@@ -269,6 +269,12 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
     graph
         .add_bond(third_carbon, property_hydrogen, BondOrder::Single)
         .expect("property bond");
+    graph
+        .add_bond(first_carbon, second_carbon, BondOrder::Single)
+        .expect("first carbon link");
+    graph
+        .add_bond(second_carbon, third_carbon, BondOrder::Single)
+        .expect("second carbon link");
 
     let _ = valence_api::perceive_valence(&mut graph, ValenceModel::RdkitLike);
     let mut molecule = SmallMolecule::from_graph(graph);

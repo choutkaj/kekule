@@ -3,7 +3,7 @@ use kekule::{
         kabsch, kabsch_with_options, AlignmentError, AlignmentWeighting, KabschOptions,
         PeriodicAlignmentPolicy, RigidAlignment,
     },
-    core::{Atom, Element, Molecule},
+    core::{Atom, BondOrder, Element, Molecule},
     geometry::Point3,
     small::SmallMolecule,
     structure::{Configuration, Model, Positions},
@@ -13,11 +13,16 @@ use kekule::{
 
 #[test]
 fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::error::Error>> {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
+    let mut previous = None;
     for _ in 0..4 {
-        graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+        let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+        if let Some(previous) = previous {
+            graph.add_bond(previous, atom, BondOrder::Single)?;
+        }
+        previous = Some(atom);
     }
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_graph(graph.build()?);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;

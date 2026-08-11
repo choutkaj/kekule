@@ -62,9 +62,9 @@ fn molecular_descriptor_public_api() -> Result<(), Box<dyn std::error::Error>> {
 fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
     let document = kekule::smiles::parse_str("CC(=O)O")?;
     let interpreted = kekule::smiles::interpret(&document)?;
-    assert_eq!(interpreted.report().atom_mappings().len(), 4);
-    assert_eq!(interpreted.report().bond_mappings().len(), 3);
-    let mut mol = interpreted.into_molecule();
+    assert_eq!(interpreted.report()?.atom_mappings().len(), 4);
+    assert_eq!(interpreted.report()?.bond_mappings().len(), 3);
+    let mut mol = interpreted.into_molecule()?;
     kekule::perception::sanitize(&mut mol)?;
     let smiles = kekule::smiles::write_canonical(&mol)?;
     assert!(!smiles.is_empty());
@@ -152,7 +152,7 @@ fn query_graph_smarts_and_substructure_public_api() -> Result<(), Box<dyn std::e
 fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::core::*;
 
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let carbon = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
     ))?;
@@ -161,6 +161,7 @@ fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
     ))?;
 
     let bond = graph.add_bond(carbon, oxygen, BondOrder::Double)?;
+    let graph = graph.build()?;
 
     assert_eq!(graph.atom_count(), 2);
     assert_eq!(graph.bond_count(), 1);
@@ -171,7 +172,7 @@ fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = MacroMolecule::builder();
-    let atom = builder.graph_mut().add_atom(Atom::new(
+    let atom = builder.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
     ))?;
 
@@ -198,7 +199,7 @@ fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::
     let chain = hierarchy.add_chain("A", None)?;
     assert_eq!(hierarchy.chain(chain)?.label_id(), "A");
 
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let atom = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
     ))?;
@@ -212,8 +213,10 @@ fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::
             ),
         )
         .unwrap();
+    let mut graph = graph.build()?;
     let conformer = graph.add_conformer(conformer)?;
-    let model = Model::from_small_molecule(&SmallMolecule::from_graph(graph), conformer)?;
+    let molecule = SmallMolecule::from_graph(graph);
+    let model = Model::from_small_molecule(&molecule, conformer)?;
 
     assert_eq!(model.atom_count(), 1);
     Ok(())
@@ -229,7 +232,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     use kekule::structure::Model;
     use kekule::topology::InstanceBondId;
 
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let carbon = graph.add_atom(Atom::new(
         Element::from_symbol("C").expect("carbon is a known element"),
     ))?;
@@ -256,6 +259,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
             ),
         )
         .unwrap();
+    let mut graph = graph.build()?;
     let conformer = graph.add_conformer(conformer).unwrap();
     let mut molecule = SmallMolecule::from_graph(graph);
 
@@ -389,7 +393,7 @@ fn production_smiles_stereo_uses_installed_perception_state(
     use kekule::perception::{self, stereo, SanitizeOptions};
 
     let document = kekule::smiles::parse_str(r"C(=C\F)\F")?;
-    let mut molecule = kekule::smiles::interpret(&document)?.into_molecule();
+    let mut molecule = kekule::smiles::interpret(&document)?.into_molecule()?;
     perception::sanitize_with_options(
         &mut molecule,
         SanitizeOptions {
@@ -444,7 +448,7 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
 fn production_canonical_smiles_preserves_collapsed_hydrogen_without_perception(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let document = kekule::smiles::parse_str("[H][C](F)(Cl)Br")?;
-    let molecule = kekule::smiles::interpret(&document)?.into_molecule();
+    let molecule = kekule::smiles::interpret(&document)?.into_molecule()?;
     assert!(!molecule.graph().perception().has_valence());
 
     let written = kekule::smiles::write_canonical(&molecule)?;

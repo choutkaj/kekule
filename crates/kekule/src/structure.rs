@@ -978,6 +978,24 @@ impl ModelBuilder {
         Ok(self.topology.add_macro_molecule_definition(molecule)?)
     }
 
+    pub(crate) fn add_small_molecule_definition_unchecked_connectedness(
+        &mut self,
+        molecule: &SmallMolecule,
+    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
+        Ok(self
+            .topology
+            .add_small_molecule_definition_unchecked_connectedness(molecule)?)
+    }
+
+    pub(crate) fn add_macro_molecule_definition_unchecked_connectedness(
+        &mut self,
+        molecule: &MacroMolecule,
+    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
+        Ok(self
+            .topology
+            .add_macro_molecule_definition_unchecked_connectedness(molecule)?)
+    }
+
     pub fn add_instance<T>(
         &mut self,
         definition: MoleculeDefinitionId,
@@ -1031,6 +1049,28 @@ impl ModelBuilder {
         Ok(instance)
     }
 
+    pub(crate) fn add_small_molecule_with_metadata_unchecked_connectedness(
+        &mut self,
+        molecule: &SmallMolecule,
+        conformer: ConformerId,
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        if molecule.graph().atom_count() == 0 {
+            return Err(ModelBuildError::Topology(
+                TopologyBuildError::EmptyMoleculeDefinition,
+            ));
+        }
+        let staged = stage_conformer_positions(molecule.graph(), conformer)?;
+        self.positions
+            .try_reserve(staged.len())
+            .map_err(|_| ModelBuildError::CapacityOverflow)?;
+        let (_, instance) = self
+            .topology
+            .add_small_molecule_instance_unchecked_connectedness(molecule, metadata)?;
+        self.positions.extend(staged);
+        Ok(instance)
+    }
+
     pub fn add_macro_molecule(
         &mut self,
         molecule: &MacroMolecule,
@@ -1061,6 +1101,28 @@ impl ModelBuilder {
         let (_, instance) = self
             .topology
             .add_macro_molecule_instance(molecule, metadata)?;
+        self.positions.extend(staged);
+        Ok(instance)
+    }
+
+    pub(crate) fn add_macro_molecule_with_metadata_unchecked_connectedness(
+        &mut self,
+        molecule: &MacroMolecule,
+        conformer: ConformerId,
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        if molecule.graph().atom_count() == 0 {
+            return Err(ModelBuildError::Topology(
+                TopologyBuildError::EmptyMoleculeDefinition,
+            ));
+        }
+        let staged = stage_conformer_positions(molecule.graph(), conformer)?;
+        self.positions
+            .try_reserve(staged.len())
+            .map_err(|_| ModelBuildError::CapacityOverflow)?;
+        let (_, instance) = self
+            .topology
+            .add_macro_molecule_instance_unchecked_connectedness(molecule, metadata)?;
         self.positions.extend(staged);
         Ok(instance)
     }

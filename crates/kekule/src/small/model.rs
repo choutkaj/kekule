@@ -1,6 +1,9 @@
 use crate::core::{Atom, AtomId, Bond, BondId, Molecule};
 
-/// The small-molecule domain wrapper around one raw molecular graph.
+/// The small-molecule domain wrapper around one connected molecular graph.
+///
+/// Empty and single-atom values retain the core graph's valid boundary-case
+/// semantics.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SmallMolecule {
     pub(crate) graph: Molecule,
@@ -11,7 +14,15 @@ impl SmallMolecule {
         Self::default()
     }
 
+    /// Wraps a completed connected core graph.
     pub fn from_graph(graph: Molecule) -> Self {
+        debug_assert!(graph.is_connected(), "completed molecule must be connected");
+        Self { graph }
+    }
+
+    /// Wraps private interpretation staging before its graph is partitioned or
+    /// rejected at the public format boundary.
+    pub(crate) fn from_graph_unchecked_connectedness(graph: Molecule) -> Self {
         Self { graph }
     }
 

@@ -41,15 +41,15 @@ fn element(symbol: &str) -> Element {
 }
 
 fn one_atom_small(symbol: &str) -> SmallMolecule {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     graph
         .add_atom(Atom::new(element(symbol)))
         .expect("test atom capacity");
-    SmallMolecule::from_graph(graph)
+    SmallMolecule::from_graph(graph.build().expect("connected single atom"))
 }
 
 fn ligand_with_tombstones() -> SmallMolecule {
-    let mut graph = Molecule::new();
+    let mut graph = Molecule::builder();
     let carbon = graph
         .add_atom(Atom::new(element("C")))
         .expect("test atom capacity");
@@ -66,13 +66,12 @@ fn ligand_with_tombstones() -> SmallMolecule {
         .add_bond(carbon, oxygen, BondOrder::Double)
         .expect("test bond capacity");
     graph.delete_atom(deleted).expect("delete test tombstone");
-    SmallMolecule::from_graph(graph)
+    SmallMolecule::from_graph(graph.build().expect("connected ligand"))
 }
 
 fn one_atom_macro() -> MacroMolecule {
     let mut builder = MacroMolecule::builder();
     let atom = builder
-        .graph_mut()
         .add_atom(Atom::new(element("C")))
         .expect("test atom capacity");
     let chain = builder

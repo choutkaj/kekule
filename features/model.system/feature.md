@@ -3,7 +3,8 @@
 ## Summary
 
 Represent one concrete molecular structure as an immutable `Topology` plus one
-complete mutable `Configuration` and optional observation state.
+complete mutable `Configuration` and optional observation state, with each
+molecule instance backed by a connected definition graph.
 
 ## Behavior/API
 
@@ -12,6 +13,9 @@ complete mutable `Configuration` and optional observation state.
   structure live in the separate `topology` module.
 - Builder insertion uses `add_small_molecule[_with_metadata]` and
   `add_macro_molecule[_with_metadata]` and returns a stable instance ID.
+- Model staging delegates molecule-definition validation to `TopologyBuilder`;
+  disconnected input is rejected transactionally through the structured
+  topology build error before positions or observations are committed.
 - Preserves molecule-local atom and bond IDs, including tombstones; qualification
   adds instance ownership and topology dense indices round-trip to qualified IDs.
 - Copies one complete finite source conformer into authoritative model positions
@@ -35,8 +39,8 @@ complete mutable `Configuration` and optional observation state.
 - `Model::instance_to_conformer` maps current instance positions back through
   preserved local atom IDs, converts them to the target conformer unit, and
   commits only after the target live-atom set and all conversions validate.
-- Rejects empty topologies/molecules, invalid conformers, missing positions, and
-  non-finite positions transactionally.
+- Rejects empty topologies/molecules, disconnected definitions, invalid
+  conformers, missing positions, and non-finite positions transactionally.
 - Validates every `MacroMolecule` graph/hierarchy pair before accepting it as a
   model instance.
 
@@ -52,9 +56,9 @@ complete mutable `Configuration` and optional observation state.
 ## Tests
 
 - Unit tests cover independent topology/configuration construction, exact
-  identity rejection, shared topology after cloning, unit conversion,
-  allocation reuse, periodic cells, source immutability, conformer export, and
-  transactional failures.
+  identity rejection, connected-definition enforcement, shared topology after
+  cloning, unit conversion, allocation reuse, periodic cells, source
+  immutability, conformer export, and transactional failures.
 - Macro construction tests cover one valid selected conformer alongside many
   unrelated invalid conformers, rejection when an invalid conformer is selected,
   and preservation of all source conformers.
@@ -90,3 +94,5 @@ complete mutable `Configuration` and optional observation state.
   staging, leaving unrelated conformers to optional standalone full validation.
 - v10: Add explicit transactional remapping of complete positions,
   configurations, observations, and models through exact topology lineage.
+- v11: Carry the connected molecule-definition invariant through model staging
+  and keep rejection transactional before topology-bound state is published.

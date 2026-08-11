@@ -34,6 +34,30 @@ impl fmt::Display for SmilesInterpretError {
 
 impl std::error::Error for SmilesInterpretError {}
 
+/// A single-molecule accessor was used for a component-aware interpretation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmilesComponentCountError {
+    actual: usize,
+}
+
+impl SmilesComponentCountError {
+    pub const fn actual(self) -> usize {
+        self.actual
+    }
+}
+
+impl fmt::Display for SmilesComponentCountError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "single-molecule SMILES access requires exactly one component, found {}",
+            self.actual
+        )
+    }
+}
+
+impl std::error::Error for SmilesComponentCountError {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesAtomMapping {
     atom: AtomId,
@@ -124,7 +148,9 @@ impl SmilesInterpretation {
     }
 
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &SmallMolecule> + DoubleEndedIterator {
-        self.components.iter().map(SmilesComponentInterpretation::molecule)
+        self.components
+            .iter()
+            .map(SmilesComponentInterpretation::molecule)
     }
 
     pub fn into_molecules(self) -> Vec<SmallMolecule> {
@@ -139,43 +165,50 @@ impl SmilesInterpretation {
     /// Prefer [`Self::components`] for general SMILES input. This method keeps
     /// the pre-component API convenient for callers whose input contract is
     /// already single-molecule and fails loudly rather than discarding data.
-    pub fn molecule(&self) -> &SmallMolecule {
-        self.single_component().molecule()
+    pub fn molecule(&self) -> Result<&SmallMolecule, SmilesComponentCountError> {
+        Ok(self.single_component()?.molecule())
     }
 
     /// Convenience report access for an interpretation known to contain one component.
-    pub fn report(&self) -> &SmilesInterpretationReport {
-        self.single_component().report()
+    pub fn report(&self) -> Result<&SmilesInterpretationReport, SmilesComponentCountError> {
+        Ok(self.single_component()?.report())
     }
 
     /// Consumes an interpretation known to contain exactly one component.
-    pub fn into_molecule(self) -> SmallMolecule {
-        self.into_single_component().into_molecule()
+    pub fn into_molecule(self) -> Result<SmallMolecule, SmilesComponentCountError> {
+        Ok(self.into_single_component()?.into_molecule())
     }
 
     /// Consumes an interpretation known to contain exactly one component and its report.
-    pub fn into_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
-        self.into_single_component().into_parts()
+    pub fn into_parts(
+        self,
+    ) -> Result<(SmallMolecule, SmilesInterpretationReport), SmilesComponentCountError> {
+        Ok(self.into_single_component()?.into_parts())
     }
 
-    fn single_component(&self) -> &SmilesComponentInterpretation {
+    fn single_component(
+        &self,
+    ) -> Result<&SmilesComponentInterpretation, SmilesComponentCountError> {
         match self.components.as_slice() {
-            [component] => component,
-            components => panic!(
-                "single-molecule SMILES access requires exactly one component, found {}",
-                components.len()
-            ),
+            [component] => Ok(component),
+            components => Err(SmilesComponentCountError {
+                actual: components.len(),
+            }),
         }
     }
 
-    fn into_single_component(mut self) -> SmilesComponentInterpretation {
+    fn into_single_component(
+        mut self,
+    ) -> Result<SmilesComponentInterpretation, SmilesComponentCountError> {
         if self.components.len() != 1 {
-            panic!(
-                "single-molecule SMILES access requires exactly one component, found {}",
-                self.components.len()
-            );
+            return Err(SmilesComponentCountError {
+                actual: self.components.len(),
+            });
         }
-        self.components.pop().expect("exactly one SMILES component")
+        Ok(self
+            .components
+            .pop()
+            .expect("length was checked to contain one SMILES component"))
     }
 }
 
@@ -191,12 +224,14 @@ pub fn interpret_smiles_document(
     let mut components = Vec::with_capacity(document.component_token_ranges().len());
     for token_range in document.component_token_ranges() {
         let source_span = component_source_span(document, token_range.clone())?;
-        let source = document.source().get(source_span.clone()).ok_or_else(|| {
-            SmilesInterpretError {
-                offset: source_span.start,
-                message: "component source span is outside the SMILES document".to_owned(),
-            }
-        })?;
+        let source =
+            document
+                .source()
+                .get(source_span.clone())
+                .ok_or_else(|| SmilesInterpretError {
+                    offset: source_span.start,
+                    message: "component source span is outside the SMILES document".to_owned(),
+                })?;
 
         // The complete document has already passed the caller's resource policy.
         // Reparse the isolated component only to reuse the mature single-component
@@ -245,9 +280,7 @@ pub fn interpret_smiles_document(
             .iter()
             .map(|mapping| SmilesBondMapping {
                 bond: mapping.bond(),
-                source_offset: source_span
-                    .start
-                    .saturating_add(mapping.source_offset()),
+                source_offset: source_span.start.saturating_add(mapping.source_offset()),
             })
             .collect();
 
@@ -273,12 +306,13 @@ fn component_source_span(
             message: "empty SMILES component".to_owned(),
         });
     }
-    let first = document.tokens().get(token_range.start).ok_or_else(|| {
-        SmilesInterpretError {
+    let first = document
+        .tokens()
+        .get(token_range.start)
+        .ok_or_else(|| SmilesInterpretError {
             offset: document.source().len(),
             message: "component token range starts outside the SMILES document".to_owned(),
-        }
-    })?;
+        })?;
     let last = document
         .tokens()
         .get(token_range.end.saturating_sub(1))
@@ -316,11 +350,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "requires exactly one component")]
-    fn single_component_convenience_never_discards_dot_smiles_components() {
+    fn single_component_convenience_rejects_dot_smiles_without_panicking() {
         let document = smiles::parse_smiles_document("C.O").expect("valid components");
-        interpret_smiles_document(&document)
+        let error = interpret_smiles_document(&document)
             .expect("interpret components")
-            .into_molecule();
+            .into_molecule()
+            .expect_err("single-component access must reject two components");
+        assert_eq!(error.actual(), 2);
     }
 }

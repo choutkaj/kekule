@@ -124,7 +124,7 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
 }
 
 #[test]
-fn theta_graph_and_disconnected_mixture_are_deterministic() {
+fn theta_graph_with_acyclic_tail_is_deterministic() {
     let mut mol = Molecule::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -137,8 +137,10 @@ fn theta_graph_and_disconnected_mixture_are_deterministic() {
     }
     let tail_a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let tail_b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    mol.add_bond(right, tail_a, BondOrder::Single)
+        .expect("tail linker");
     mol.add_bond(tail_a, tail_b, BondOrder::Single)
-        .expect("disconnected tail");
+        .expect("tail bond");
 
     let first = rings_api::perceive_ring_set(&mut mol).expect("theta graph should perceive rings");
     let first_rings = first.rings().to_vec();

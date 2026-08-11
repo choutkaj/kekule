@@ -1615,9 +1615,9 @@ fn cip_matches_rdkit_for_pubchem_359164_sulfur_lone_pair() {
 }
 
 #[test]
-fn cip_matches_rdkit_for_pubchem_444295_disconnected_metal_fragments() {
+fn cip_matches_rdkit_for_pubchem_444295_with_spectators_interpreted_separately() {
     let mut molecule =
-        read_smiles("C1=NC(=C2C(=N1)N(C=N2)[C@H]3[C@@H]([C@@H]([C@H](O3)COP(=O)(O)OP(=O)(O)OP(=O)(O)OP(=O)(O)OP(=O)(O)O)O)O)N.[NH2-].[NH2-].[NH2-].[NH2-].[NH2-].[OH3+].[OH3+].O.[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac]")
+        read_smiles_component("C1=NC(=C2C(=N1)N(C=N2)[C@H]3[C@@H]([C@@H]([C@H](O3)COP(=O)(O)OP(=O)(O)OP(=O)(O)OP(=O)(O)OP(=O)(O)O)O)O)N.[NH2-].[NH2-].[NH2-].[NH2-].[NH2-].[OH3+].[OH3+].O.[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac]", 0)
             .expect("CID 444295 parses");
     perception_api::sanitize(&mut molecule).expect("CID 444295 sanitizes");
 
@@ -1640,9 +1640,9 @@ fn cip_matches_rdkit_for_pubchem_444295_disconnected_metal_fragments() {
 }
 
 #[test]
-fn cip_matches_rdkit_for_pubchem_446291_disconnected_unsupported_spectator() {
+fn cip_matches_rdkit_for_pubchem_446291_with_unsupported_spectator_interpreted_separately() {
     let mut molecule =
-        read_smiles("CCCCCCCCCCCCC(=O)CSCCNC(=O)CCNC(=O)[C@H](C(C)(C)COP(=O)(O)OP(=O)(O)OC[C@@H]1[C@H]([C@H]([C@@H](O1)N2C=NC3=C(N=CN=C32)N)O)OP(=O)(O)O)O.[Cf]")
+        read_smiles_component("CCCCCCCCCCCCC(=O)CSCCNC(=O)CCNC(=O)[C@H](C(C)(C)COP(=O)(O)OP(=O)(O)OC[C@@H]1[C@H]([C@H]([C@@H](O1)N2C=NC3=C(N=CN=C32)N)O)OP(=O)(O)O)O.[Cf]", 0)
             .expect("CID 446291 parses");
     perception_api::sanitize(&mut molecule).expect("CID 446291 sanitizes");
 

@@ -12,7 +12,9 @@ use crate::bio::{
     MacroMolecule, MacroValidateError, MacroValidateOptions, SmcraAtomSite, SmcraAtomSiteId,
     SmcraHierarchy,
 };
-use crate::core::{Atom, AtomId, Bond, BondId, Element, Molecule, PropMap};
+use crate::core::{
+    Atom, AtomId, Bond, BondId, Element, Molecule, MoleculeConnectivityError, PropMap,
+};
 use crate::small::SmallMolecule;
 use crate::substructure::QueryMatch;
 
@@ -672,6 +674,24 @@ impl TopologyBuilder {
         ))
     }
 
+    pub(crate) fn add_small_molecule_definition_unchecked_connectedness(
+        &mut self,
+        molecule: &SmallMolecule,
+    ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
+        validate_nonempty_graph(molecule.graph())?;
+        let payload = MoleculeDefinitionPayload::Small(molecule.clone_without_conformers());
+        self.commit_definition(payload)
+    }
+
+    pub(crate) fn add_macro_molecule_definition_unchecked_connectedness(
+        &mut self,
+        molecule: &MacroMolecule,
+    ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
+        validate_nonempty_graph(molecule.graph())?;
+        let payload = MoleculeDefinitionPayload::Macro(molecule.clone_without_conformers());
+        self.commit_definition(payload)
+    }
+
     pub fn add_instance(
         &mut self,
         definition: MoleculeDefinitionId,
@@ -707,6 +727,28 @@ impl TopologyBuilder {
         metadata: MoleculeInstanceMetadata,
     ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
         validate_macro(molecule)?;
+        let payload = MoleculeDefinitionPayload::Macro(molecule.clone_without_conformers());
+        self.commit_definition_and_instance(payload, metadata)
+    }
+
+    /// Stages private format interpretation before disconnected components are partitioned.
+    pub(crate) fn add_small_molecule_instance_unchecked_connectedness(
+        &mut self,
+        molecule: &SmallMolecule,
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
+        validate_nonempty_graph(molecule.graph())?;
+        let payload = MoleculeDefinitionPayload::Small(molecule.clone_without_conformers());
+        self.commit_definition_and_instance(payload, metadata)
+    }
+
+    /// Stages private format interpretation before disconnected components are partitioned.
+    pub(crate) fn add_macro_molecule_instance_unchecked_connectedness(
+        &mut self,
+        molecule: &MacroMolecule,
+        metadata: MoleculeInstanceMetadata,
+    ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
+        validate_nonempty_graph(molecule.graph())?;
         let payload = MoleculeDefinitionPayload::Macro(molecule.clone_without_conformers());
         self.commit_definition_and_instance(payload, metadata)
     }
@@ -875,6 +917,13 @@ fn checked_future_len(
 }
 
 fn validate_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
+    validate_nonempty_graph(graph)?;
+    graph
+        .validate_connected()
+        .map_err(TopologyBuildError::DisconnectedMoleculeDefinition)
+}
+
+fn validate_nonempty_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
     if graph.atom_count() == 0 {
         return Err(TopologyBuildError::EmptyMoleculeDefinition);
     }
@@ -921,6 +970,7 @@ impl fmt::Display for TopologyIdKind {
 pub enum TopologyBuildError {
     NoMoleculeInstances,
     EmptyMoleculeDefinition,
+    DisconnectedMoleculeDefinition(MoleculeConnectivityError),
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     InvalidMacroMolecule(MacroValidateError),
     /// A topology collection exceeded the fixed-width identifier space for `kind`.
@@ -935,6 +985,9 @@ impl fmt::Display for TopologyBuildError {
             }
             Self::EmptyMoleculeDefinition => {
                 formatter.write_str("molecule definition must contain at least one atom")
+            }
+            Self::DisconnectedMoleculeDefinition(error) => {
+                write!(formatter, "molecule definition is disconnected: {error}")
             }
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "invalid molecule definition: {id}")
@@ -2142,18 +2195,25 @@ mod tests {
 
     #[test]
     fn selections_distinguish_instances_components_elements_and_queries() {
-        let molecule = SmallMolecule::from_smiles_sanitized("CC.O").unwrap();
+        let ethane = SmallMolecule::from_smiles_sanitized("CC").unwrap();
+        let water = SmallMolecule::from_smiles_sanitized("O").unwrap();
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let ethane_definition = builder.add_small_molecule_definition(&ethane).unwrap();
+        let water_definition = builder.add_small_molecule_definition(&water).unwrap();
         let mut metadata = MoleculeInstanceMetadata::default();
         metadata.insert_role(MoleculeRole::Ligand);
-        let instance = builder.add_instance(definition, metadata).unwrap();
+        let ethane_instance = builder
+            .add_instance(ethane_definition, metadata.clone())
+            .unwrap();
+        let water_instance = builder.add_instance(water_definition, metadata).unwrap();
         let topology = builder.build().unwrap();
 
         let ligand = AtomSelection::for_roles(&topology, [MoleculeRole::Ligand]).unwrap();
         assert_eq!(ligand.indices().len(), 3);
-        let first_component = AtomSelection::connected_component(&topology, instance, 0).unwrap();
-        let second_component = AtomSelection::connected_component(&topology, instance, 1).unwrap();
+        let first_component =
+            AtomSelection::connected_component(&topology, ethane_instance, 0).unwrap();
+        let second_component =
+            AtomSelection::connected_component(&topology, water_instance, 0).unwrap();
         assert_eq!(first_component.indices().len(), 2);
         assert_eq!(second_component.indices().len(), 1);
         let oxygen =
@@ -2161,8 +2221,9 @@ mod tests {
         assert_eq!(oxygen.indices().len(), 1);
 
         let query = query::parse_smarts("O").unwrap();
-        let matches = substructure::find_substructure_matches(molecule.graph(), &query).unwrap();
-        let from_query = AtomSelection::from_query_matches(&topology, instance, &matches).unwrap();
+        let matches = substructure::find_substructure_matches(water.graph(), &query).unwrap();
+        let from_query =
+            AtomSelection::from_query_matches(&topology, water_instance, &matches).unwrap();
         assert_eq!(
             from_query.semantic_ids(&topology).unwrap(),
             oxygen.semantic_ids(&topology).unwrap()
@@ -2170,7 +2231,7 @@ mod tests {
 
         let mut independent_builder = TopologyBuilder::new();
         let definition = independent_builder
-            .add_small_molecule_definition(&molecule)
+            .add_small_molecule_definition(&ethane)
             .unwrap();
         independent_builder
             .add_instance(definition, MoleculeInstanceMetadata::default())

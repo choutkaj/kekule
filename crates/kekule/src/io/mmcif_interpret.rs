@@ -11,8 +11,8 @@ use crate::structure::{
     Positions, StructureObservation,
 };
 use crate::topology::{
-    InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole, Topology,
-    TopologyAtomIndex, TopologyMapping,
+    InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole, TopologyAtomIndex,
+    TopologyMapping,
 };
 use crate::units::{Quantity, ANGSTROM};
 
@@ -372,30 +372,6 @@ pub struct MmcifInterpretation {
 }
 
 impl MmcifInterpretation {
-    pub fn model(&self) -> &Model {
-        &self.model
-    }
-
-    pub fn report(&self) -> &MmcifInterpretationReport {
-        &self.report
-    }
-
-    pub fn topology(&self) -> &Topology {
-        self.model.topology()
-    }
-
-    pub fn configuration(&self) -> &Configuration {
-        self.model.configuration()
-    }
-
-    pub fn observation(&self) -> Option<&StructureObservation> {
-        self.model.observation()
-    }
-
-    pub fn into_model(self) -> Model {
-        self.model
-    }
-
     pub fn into_parts(self) -> (Model, MmcifInterpretationReport) {
         (self.model, self.report)
     }
@@ -513,7 +489,9 @@ fn interpret_block(
                 provenance,
             } => {
                 let id = builder
-                    .add_macro_molecule_with_metadata(&molecule, conformer, metadata)
+                    .add_macro_molecule_with_metadata_unchecked_connectedness(
+                        &molecule, conformer, metadata,
+                    )
                     .map_err(graph_error)?;
                 let (provenance, observations) = provenance.qualify(id);
                 report.instances.push(provenance);
@@ -526,7 +504,9 @@ fn interpret_block(
                 provenance,
             } => {
                 let id = builder
-                    .add_small_molecule_with_metadata(&molecule, conformer, metadata)
+                    .add_small_molecule_with_metadata_unchecked_connectedness(
+                        &molecule, conformer, metadata,
+                    )
                     .map_err(graph_error)?;
                 let (provenance, observations) = provenance.qualify(id);
                 report.instances.push(provenance);
@@ -1579,14 +1559,6 @@ pub struct MmcifEnsembleInterpretation {
 }
 
 impl MmcifEnsembleInterpretation {
-    pub fn ensemble(&self) -> &Ensemble {
-        &self.ensemble
-    }
-
-    pub fn reports(&self) -> &[MmcifInterpretationReport] {
-        &self.reports
-    }
-
     pub fn into_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
         (self.ensemble, self.reports)
     }
@@ -2070,13 +2042,14 @@ fn build_molecule(
     if is_macro {
         let hierarchy = build_hierarchy(&graph, &representative, &atoms)?;
         Ok(BuiltMolecule::Macro {
-            molecule: MacroMolecule::try_from_parts(graph, hierarchy).map_err(graph_error)?,
+            molecule: MacroMolecule::try_from_parts_unchecked_connectedness(graph, hierarchy)
+                .map_err(graph_error)?,
             conformer,
             metadata,
             provenance,
         })
     } else {
-        let molecule = SmallMolecule::from_graph(graph);
+        let molecule = SmallMolecule::from_graph_unchecked_connectedness(graph);
         Ok(BuiltMolecule::Small {
             molecule,
             conformer,
