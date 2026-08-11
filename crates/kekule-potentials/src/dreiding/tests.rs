@@ -41,14 +41,9 @@ fn molecule(
             )
             .unwrap();
     }
-    let conformer = graph
-        .molecule_mut()
-        .add_conformer(conformer)
-        .expect("valid conformer");
-    (
-        SmallMolecule::from_graph(graph.build().expect("connected test molecule")),
-        conformer,
-    )
+    let mut graph = graph.build().expect("connected test molecule");
+    let conformer = graph.add_conformer(conformer).expect("valid conformer");
+    (SmallMolecule::from_graph(graph), conformer)
 }
 
 fn water(offset: f64) -> (SmallMolecule, kekule::core::ConformerId) {
@@ -280,11 +275,9 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
             ),
         )
         .unwrap();
-    let conformer = graph
-        .molecule_mut()
-        .add_conformer(conformer)
-        .expect("valid conformer");
-    let molecule = SmallMolecule::from_graph(graph.build().expect("connected water"));
+    let mut graph = graph.build().expect("connected water");
+    let conformer = graph.add_conformer(conformer).expect("valid conformer");
+    let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
 
     let potential = DreidingPotential::prepare(
@@ -338,11 +331,9 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             kekule::units::Quantity::new(Point3::default(), kekule::units::ANGSTROM),
         )
         .unwrap();
-    let conformer_id = graph
-        .molecule_mut()
-        .add_conformer(conformer)
-        .expect("valid conformer");
-    let molecule = SmallMolecule::from_graph(graph.build().expect("single atom molecule"));
+    let mut graph = graph.build().expect("single atom molecule");
+    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
+    let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
@@ -365,11 +356,9 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             kekule::units::Quantity::new(Point3::default(), kekule::units::ANGSTROM),
         )
         .unwrap();
-    let conformer_id = graph
-        .molecule_mut()
-        .add_conformer(conformer)
-        .expect("valid conformer");
-    let molecule = SmallMolecule::from_graph(graph.build().expect("single atom molecule"));
+    let mut graph = graph.build().expect("single atom molecule");
+    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
+    let molecule = SmallMolecule::from_graph(graph);
     let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(

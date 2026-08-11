@@ -74,6 +74,18 @@ impl Molecule {
 ///
 /// Connectivity is intentionally checked only by [`Self::build`], allowing
 /// ordinary graph construction such as adding all atoms before adding bonds.
+/// The staging graph is not publicly borrowable, so even a cloned or replaced
+/// builder must pass through `build` before yielding a `Molecule`.
+///
+/// ```compile_fail
+/// use kekule::core::{Atom, Element, Molecule};
+///
+/// let mut builder = Molecule::builder();
+/// builder.add_atom(Atom::new(Element::from_atomic_number(6).unwrap())).unwrap();
+/// builder.add_atom(Atom::new(Element::from_atomic_number(8).unwrap())).unwrap();
+/// let leaked: Molecule = builder.molecule().clone();
+/// # let _ = leaked;
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MoleculeBuilder {
     molecule: Molecule,
@@ -82,18 +94,6 @@ pub struct MoleculeBuilder {
 impl MoleculeBuilder {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn molecule(&self) -> &Molecule {
-        &self.molecule
-    }
-
-    /// Mutably borrows non-connectivity state on the molecule under construction.
-    ///
-    /// Topology-changing atom/bond removal and atom insertion are exposed by the
-    /// builder itself rather than through public `Molecule` methods.
-    pub fn molecule_mut(&mut self) -> &mut Molecule {
-        &mut self.molecule
     }
 
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
@@ -119,20 +119,30 @@ impl MoleculeBuilder {
 }
 
 /// Transactional topology edit over one existing connected [`Molecule`].
+///
+/// The private working graph can be temporarily disconnected, but it cannot be
+/// borrowed or extracted as a completed `Molecule`; only [`Self::commit`] can
+/// publish it.
+///
+/// ```compile_fail
+/// use kekule::core::{Atom, BondOrder, Element, Molecule};
+///
+/// let mut builder = Molecule::builder();
+/// let carbon = builder.add_atom(Atom::new(Element::from_atomic_number(6).unwrap())).unwrap();
+/// let oxygen = builder.add_atom(Atom::new(Element::from_atomic_number(8).unwrap())).unwrap();
+/// let bond = builder.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
+/// let mut molecule = builder.build().unwrap();
+/// let mut editor = molecule.edit();
+/// editor.delete_bond(bond).unwrap();
+/// let leaked: Molecule = std::mem::take(editor.molecule_mut());
+/// # let _ = leaked;
+/// ```
 pub struct MoleculeEditor<'a> {
     working: Molecule,
     target: &'a mut Molecule,
 }
 
 impl MoleculeEditor<'_> {
-    pub fn molecule(&self) -> &Molecule {
-        &self.working
-    }
-
-    pub fn molecule_mut(&mut self) -> &mut Molecule {
-        &mut self.working
-    }
-
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
         self.working.add_atom(atom)
     }

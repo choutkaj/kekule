@@ -41,8 +41,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   format-specific options and structured rejection errors.
 - `Molecule` is one asserted connected entity; empty and single-atom values are
   valid boundary cases. `Molecule::builder()` and transactional `edit()` are the
-  public topology-construction surfaces, and reject a disconnected completed
-  graph without exposing partial mutation.
+  public topology-construction surfaces. Their staging graphs are not exposed;
+  only `build()` and `commit()` can publish a completed graph, and both reject a
+  disconnected result without exposing partial mutation.
 - Graph staging, conformer, stereo, SMCRA hierarchy, and topology insertion
   surfaces report focused fixed-width identifier capacity errors before
   mutation rather than truncating or panicking.
@@ -96,6 +97,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Internal benchmark tooling uses the same public namespaces as user code.
 - Invariant-bearing hierarchy, provenance, document, model, and structured
   error state is private behind accessors or checked constructors.
+- Builder/editor staging `Molecule` state is likewise private; public callers
+  receive focused topology operations and perform ordinary graph operations
+  only after successful finalization.
 - Extensible public error enums are non-exhaustive. Deliberate value, options,
   and report payloads may retain direct public fields.
 - The topology-centered API and Kekule package names form the public contract;
@@ -122,6 +126,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Downstream tests verify connected builder/editor behavior, structured
   multi-component SMILES handling, disconnected Molfile/SDF rejection, and
   connected mmCIF topology instances.
+- Downstream compile-fail tests verify builder/editor staging cannot be cloned
+  or taken out as a public `Molecule`.
 
 ## Out Of Scope
 
@@ -195,3 +201,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v30: Align the facade with connected `Molecule` boundaries, component-aware
   SMILES interpretation, disconnected CTAB rejection, and connected mmCIF
   instance partitioning without widening the crate root or prelude.
+- v31: Seal builder/editor staging graphs behind focused operations so `build`
+  and `commit` are the only public routes to a completed `Molecule`.

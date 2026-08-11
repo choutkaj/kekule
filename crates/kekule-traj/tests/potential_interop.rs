@@ -22,8 +22,9 @@ fn bonded_model() -> (Model, InstanceBondId) {
     conformer
         .set_position(second, Quantity::new(Point3::new(1.1, 0.0, 0.0), ANGSTROM))
         .unwrap();
-    let conformer = molecule.molecule_mut().add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_graph(molecule.build().unwrap());
+    let mut molecule = molecule.build().unwrap();
+    let conformer = molecule.add_conformer(conformer).unwrap();
+    let molecule = SmallMolecule::from_graph(molecule);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     (model, InstanceBondId::new(MoleculeInstanceId::new(0), bond))
 }
