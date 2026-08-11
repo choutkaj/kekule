@@ -32,6 +32,10 @@ verified shared-topology ensemble.
   component-template bonds, polymer continuity/branch links, and resolved local
   covalent `_struct_conn` links establish authoritative connectivity;
   symmetry-mate links remain unresolved.
+- Repeated authoritative evidence for one atom pair is idempotent only when its
+  bond order agrees. Conflicting bond orders across component templates,
+  polymer links, branch links, or `_struct_conn` rows are rejected as structured
+  interpretation errors; no source takes precedence.
 - After connectivity completion, every remaining graph component is emitted as
   a separate connected molecule instance. Topology, configuration,
   observation, role, report, and provenance identities are remapped together so
@@ -111,6 +115,9 @@ verified shared-topology ensemble.
   families, zero and multiple candidates, selected-out alternate locations,
   atom-row reordering, ordinary unique links, default single bond order,
   unsupported explicit bond order, and unsupported symmetry mates.
+- Connectivity-reconciliation regressions cover agreeing duplicate evidence,
+  conflicting authoritative bond-order rejection, and unchanged component-
+  template, polymer-link, and branch-link reconstruction.
 - Multi-model tests cover shared-topology ensemble construction, distinct
   per-member source IDs/occupancy/B-factors, repeated residue/atom names,
   insertion-code variants, repeated sequence-free non-polymer occurrences,
@@ -164,3 +171,6 @@ verified shared-topology ensemble.
 - v14: Complete document-declared component/polymer connectivity, partition
   residual components into separate connected instances with coordinated state
   remapping, and keep unchecked disconnected staging private to interpretation.
+- v15: Reject conflicting authoritative mmCIF bond-order evidence while keeping
+  agreeing duplicate component, polymer, branch, and `_struct_conn` evidence
+  idempotent.

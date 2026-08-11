@@ -522,14 +522,18 @@ fn add_bond_if_missing(
     right: AtomId,
     order: BondOrder,
 ) -> Result<(), raw::MmcifInterpretError> {
-    if graph
-        .bond_between(left, right)
-        .map_err(interpret_error)?
-        .is_none()
-    {
+    let existing = graph.bond_between(left, right).map_err(interpret_error)?;
+    let Some(existing) = existing else {
         graph
             .add_bond(left, right, order)
             .map_err(interpret_error)?;
+        return Ok(());
+    };
+    let existing_order = graph.bond(existing).map_err(interpret_error)?.order;
+    if existing_order != order {
+        return Err(interpret_error(format!(
+            "conflicting authoritative mmCIF bond evidence for one atom pair: {existing_order:?} versus {order:?}"
+        )));
     }
     Ok(())
 }
@@ -772,6 +776,20 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .graph_for_instance(MoleculeInstanceId::new(0))
             .expect("peptide instance");
         assert_eq!(graph.bond_count(), 7);
+        assert_eq!(
+            graph
+                .bonds()
+                .filter(|(_, bond)| bond.order == BondOrder::Single)
+                .count(),
+            5
+        );
+        assert_eq!(
+            graph
+                .bonds()
+                .filter(|(_, bond)| bond.order == BondOrder::Double)
+                .count(),
+            2
+        );
         assert!(graph.is_connected());
         assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
@@ -813,6 +831,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .graph_for_instance(MoleculeInstanceId::new(0))
             .expect("branch instance");
         assert_eq!(graph.bond_count(), 3);
+        assert!(graph
+            .bonds()
+            .all(|(_, bond)| bond.order == BondOrder::Single));
         assert!(graph.is_connected());
         assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
