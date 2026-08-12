@@ -283,9 +283,9 @@ fn validate_measurement_selection(
     trajectory: &Trajectory,
     selection: &AtomSelection,
 ) -> Result<(), RmsdError> {
-    selection
-        .ensure_compatible(&trajectory.shared_topology())
-        .map_err(|_| RmsdError::SelectionTopologyMismatch)?;
+    if !std::ptr::eq(selection.topology(), trajectory.topology()) {
+        return Err(RmsdError::SelectionTopologyMismatch);
+    }
     if selection.indices().is_empty() {
         return Err(RmsdError::EmptySelection);
     }
@@ -327,7 +327,7 @@ fn transform_frame(
     source: crate::TrajectoryFrameView<'_>,
     transform: RigidTransform,
 ) -> Result<TrajectoryFrame, TransformFrameError> {
-    let topology = source.shared_topology();
+    let topology = source.topology_arc();
     let configuration = source.configuration();
     let positions = configuration.positions().values();
     let positions = positions
@@ -336,7 +336,7 @@ fn transform_frame(
         .copied()
         .map(|point| transform.transform_point(point))
         .collect::<Vec<_>>();
-    let positions = Positions::new(&topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
+    let positions = Positions::new(topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
         .map_err(FrameError::from)
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     let cell = configuration
@@ -357,7 +357,7 @@ fn transform_frame(
             .copied()
             .map(|value| transform.transform_vector(value))
             .collect::<Vec<_>>();
-        let velocities = Velocities::new(&topology, Quantity::new(rotated, values.unit()))
+        let velocities = Velocities::new(topology, Quantity::new(rotated, values.unit()))
             .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
         transformed
             .set_velocities(Some(velocities))
@@ -370,7 +370,7 @@ fn transform_frame(
             .copied()
             .map(|value| transform.transform_vector(value))
             .collect::<Vec<_>>();
-        let forces = Forces::new(&topology, Quantity::new(rotated, values.unit()))
+        let forces = Forces::new(topology, Quantity::new(rotated, values.unit()))
             .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
         transformed
             .set_forces(Some(forces))

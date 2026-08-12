@@ -76,6 +76,10 @@ impl TopologyVectors {
         Arc::ptr_eq(&self.topology, topology)
     }
 
+    fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
     fn values(&self) -> Quantity<&[Vector3]> {
         Quantity::new(self.values.as_slice(), self.unit)
     }
@@ -180,6 +184,10 @@ macro_rules! vector_array {
                 self.0.is_compatible(topology)
             }
 
+            pub(crate) fn topology(&self) -> &Topology {
+                self.0.topology()
+            }
+
             pub fn values(&self) -> Quantity<&[Vector3]> {
                 self.0.values()
             }
@@ -259,11 +267,9 @@ impl TrajectoryFrame {
     }
 
     pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), FrameError> {
-        let topology = self.configuration.positions().shared_topology();
-        if velocities
-            .as_ref()
-            .is_some_and(|values| !values.is_compatible(&topology))
-        {
+        if velocities.as_ref().is_some_and(|values| {
+            !std::ptr::eq(self.configuration.positions().topology(), values.topology())
+        }) {
             return Err(FrameError::TopologyMismatch);
         }
         self.velocities = velocities;
@@ -271,11 +277,9 @@ impl TrajectoryFrame {
     }
 
     pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), FrameError> {
-        let topology = self.configuration.positions().shared_topology();
-        if forces
-            .as_ref()
-            .is_some_and(|values| !values.is_compatible(&topology))
-        {
+        if forces.as_ref().is_some_and(|values| {
+            !std::ptr::eq(self.configuration.positions().topology(), values.topology())
+        }) {
             return Err(FrameError::TopologyMismatch);
         }
         self.forces = forces;
@@ -304,11 +308,12 @@ impl TrajectoryFrame {
         &mut self,
         observation: Option<StructureObservation>,
     ) -> Result<(), FrameError> {
-        let topology = self.configuration.positions().shared_topology();
-        if observation
-            .as_ref()
-            .is_some_and(|observation| !observation.is_compatible(&topology))
-        {
+        if observation.as_ref().is_some_and(|observation| {
+            !std::ptr::eq(
+                self.configuration.positions().topology(),
+                observation.topology(),
+            )
+        }) {
             return Err(FrameError::TopologyMismatch);
         }
         self.observation = observation;
@@ -410,6 +415,10 @@ impl<'a> TrajectoryFrameView<'a> {
 
     pub fn shared_topology(self) -> Arc<Topology> {
         Arc::clone(self.topology)
+    }
+
+    pub(crate) const fn topology_arc(self) -> &'a Arc<Topology> {
+        self.topology
     }
 
     pub const fn configuration(self) -> ConfigurationView<'a> {

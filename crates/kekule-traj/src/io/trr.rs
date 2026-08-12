@@ -448,11 +448,13 @@ impl<R: Read + Seek> TrrReader<R> {
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let topology = self.binding.shared_topology();
-        let mut data = FrameBufferData::new(&topology, Quantity::new(positions, NANOMETER))
-            .with_time(Quantity::new(decoded.header.time, PICOSECOND))
-            .with_step(decoded.header.step)
-            .with_props(props);
+        let mut data = FrameBufferData::new(
+            self.binding.topology_arc(),
+            Quantity::new(positions, NANOMETER),
+        )
+        .with_time(Quantity::new(decoded.header.time, PICOSECOND))
+        .with_step(decoded.header.step)
+        .with_props(props);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
@@ -596,10 +598,7 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.binding.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = if self.pending_header.is_some() {
@@ -681,10 +680,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.inner.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
@@ -840,7 +836,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(&frame.shared_topology(), &self.topology) {
+        if !std::ptr::eq(frame.topology(), self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         if frame.observation().is_some() {

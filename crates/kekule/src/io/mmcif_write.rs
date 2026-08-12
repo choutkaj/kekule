@@ -669,9 +669,9 @@ fn collect_small_rows(
 }
 
 fn atom_observation(model: &Model, atom: InstanceAtomId) -> Option<&AtomObservation> {
-    model
-        .observation()
-        .and_then(|observation| observation.atom(&model.shared_topology(), atom).ok())
+    let observation = model.observation()?;
+    let index = model.topology().atom_index(atom)?;
+    observation.atom_at(index)
 }
 
 fn normalized_group_pdb(
