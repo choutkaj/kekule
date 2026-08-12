@@ -53,6 +53,9 @@ reusable molecule definitions and explicitly identified instances.
 
 - Molecule definitions retain coordinate-independent graph, perception, and
   hierarchy state but do not copy local conformers into topology.
+- Private `instance_atoms` and `instance_bonds` vectors store the authoritative
+  dense instance-qualified ID sequences; `atom_indices` and `bond_indices` are
+  their exact inverse maps.
 - Dense ordering follows instance insertion order and live local atom or bond
   order and is immutable for the topology lifetime.
 - Builder transactionality stages only the new addition and never clones the
