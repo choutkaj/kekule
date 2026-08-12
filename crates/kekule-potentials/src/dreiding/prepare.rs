@@ -72,7 +72,7 @@ impl DreidingPotential {
         reference: ModelView<'_>,
         options: DreidingPrepareOptions,
     ) -> Result<Self, DreidingPrepareError> {
-        if !Arc::ptr_eq(topology, &reference.shared_topology()) {
+        if !std::ptr::eq(topology.as_ref(), reference.topology()) {
             return Err(DreidingPrepareError::TopologyMismatch);
         }
         if reference.cell().is_some() {

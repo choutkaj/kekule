@@ -86,7 +86,7 @@ impl TrajectoryWriter for CompanionWriter {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(&self.topology, &frame.shared_topology()) {
+        if !std::ptr::eq(self.topology.as_ref(), frame.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         Ok(())

@@ -795,9 +795,11 @@ impl<R: Read + Seek> DcdReader<R> {
         decoded: DcdDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let topology = self.binding.shared_topology();
-        let mut data = FrameBufferData::new(&topology, Quantity::new(positions, ANGSTROM))
-            .with_step(decoded.step);
+        let mut data = FrameBufferData::new(
+            self.binding.topology_arc(),
+            Quantity::new(positions, ANGSTROM),
+        )
+        .with_step(decoded.step);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
@@ -932,10 +934,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.binding.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self.reader.stream_position().map_err(|error| {
@@ -999,10 +998,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.inner.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
@@ -1272,7 +1268,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "cannot write a DCD frame after finalization",
             ));
         }
-        if !Arc::ptr_eq(&frame.shared_topology(), &self.topology) {
+        if !std::ptr::eq(frame.topology(), self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         if frame.velocities().is_some() {

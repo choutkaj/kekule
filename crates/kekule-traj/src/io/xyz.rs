@@ -379,7 +379,7 @@ impl<R: BufRead> XyzReader<R> {
     fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryError> {
         destination
             .replace_from_data(FrameBufferData::new(
-                &self.binding.shared_topology(),
+                self.binding.topology_arc(),
                 Quantity::new(self.positions.as_slice(), self.options.length_unit),
             ))
             .map_err(Into::into)
@@ -396,10 +396,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.binding.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         if !self.parse_next(true)? {
@@ -571,10 +568,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.reader.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let index_usize =
@@ -741,7 +735,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(&self.topology, &frame.shared_topology()) {
+        if !std::ptr::eq(self.topology(), frame.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let configuration = frame.configuration();

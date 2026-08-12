@@ -135,6 +135,10 @@ impl TrajectoryTopologyBinding {
         Arc::clone(&self.topology)
     }
 
+    pub(crate) fn topology_arc(&self) -> &Arc<Topology> {
+        &self.topology
+    }
+
     pub fn atom_order(&self) -> &AtomOrderAssertion {
         &self.atom_order
     }

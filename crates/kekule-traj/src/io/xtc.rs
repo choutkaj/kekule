@@ -805,10 +805,12 @@ impl<R: Read + Seek> XtcReader<R> {
         info: &XtcFrameInfo,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let topology = self.binding.shared_topology();
-        let mut data = FrameBufferData::new(&topology, Quantity::new(positions, NANOMETER))
-            .with_time(Quantity::new(info.time, PICOSECOND))
-            .with_step(info.step);
+        let mut data = FrameBufferData::new(
+            self.binding.topology_arc(),
+            Quantity::new(positions, NANOMETER),
+        )
+        .with_time(Quantity::new(info.time, PICOSECOND))
+        .with_step(info.step);
         if let Some(cell) = info.cell {
             data = data.with_cell(cell);
         }
@@ -924,10 +926,7 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.binding.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self.pending_info.as_ref().map_or_else(
@@ -997,10 +996,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(
-            &self.inner.shared_topology(),
-            &destination.shared_topology(),
-        ) {
+        if !std::ptr::eq(self.topology(), destination.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
@@ -1207,7 +1203,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
     }
 
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !Arc::ptr_eq(&frame.shared_topology(), &self.topology) {
+        if !std::ptr::eq(frame.topology(), self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
         for (present, field) in [

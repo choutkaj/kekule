@@ -1,3 +1,7 @@
+use super::geometry::{
+    angle_cosine, displacement, hydrogen_bond_cosine, inversion_cosine, torsion, GeometryError,
+};
+use super::prepare::{AngleTerm, DreidingPotential, InversionTerm};
 use dreid_kernel::potentials::bonded::{
     CosineHarmonic, CosineLinear, Harmonic, PlanarInversion, Torsion, UmbrellaInversion,
 };
@@ -10,16 +14,10 @@ use kekule::modeling::potential::{
 use kekule::structure::ModelView;
 use kekule::topology::InstanceAtomId;
 use kekule::units::{Quantity, MODEL_ENERGY_UNIT, MODEL_GRADIENT_UNIT};
-use std::sync::Arc;
-
-use super::geometry::{
-    angle_cosine, displacement, hydrogen_bond_cosine, inversion_cosine, torsion, GeometryError,
-};
-use super::prepare::{AngleTerm, DreidingPotential, InversionTerm};
 
 impl Potential for DreidingPotential {
     fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
-        if !Arc::ptr_eq(&self.topology, &model.shared_topology()) {
+        if !std::ptr::eq(self.topology.as_ref(), model.topology()) {
             return Err(PotentialError::IncompatibleTopology);
         }
         if model.cell().is_some() {
