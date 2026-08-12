@@ -10,6 +10,7 @@ use kekule::{
     topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder},
     units::{Quantity, ANGSTROM, MODEL_LENGTH_UNIT},
 };
+use std::sync::Arc;
 
 #[test]
 fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,7 +27,7 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
-    let topology = builder.build()?;
+    let topology = Arc::new(builder.build()?);
     let moving_points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
@@ -36,14 +37,14 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
     let reference_points =
         moving_points.map(|point| Point3::new(-point.y + 4.0, point.x - 2.0, point.z + 0.5));
     let moving = Model::new(
-        topology.clone(),
+        Arc::clone(&topology),
         Configuration::new(Positions::new(
             &topology,
             Quantity::new(moving_points, ANGSTROM),
         )?),
     )?;
     let reference = Model::new(
-        topology.clone(),
+        Arc::clone(&topology),
         Configuration::new(Positions::new(
             &topology,
             Quantity::new(reference_points, ANGSTROM),

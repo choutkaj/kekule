@@ -20,6 +20,7 @@
 //! use kekule::structure::{Configuration, Model, Positions};
 //! use kekule::topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder};
 //! use kekule::units::{Quantity, ANGSTROM};
+//! use std::sync::Arc;
 //!
 //! let mut graph = Molecule::builder();
 //! let mut previous = None;
@@ -34,7 +35,7 @@
 //! let mut builder = TopologyBuilder::new();
 //! let definition = builder.add_small_molecule_definition(&molecule)?;
 //! builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
-//! let topology = builder.build()?;
+//! let topology = Arc::new(builder.build()?);
 //! let moving_points = [
 //!     Point3::new(0.0, 0.0, 0.0),
 //!     Point3::new(1.0, 0.0, 0.0),
@@ -46,14 +47,14 @@
 //!     point.z + 0.5,
 //! ));
 //! let moving = Model::new(
-//!     topology.clone(),
+//!     Arc::clone(&topology),
 //!     Configuration::new(Positions::new(
 //!         &topology,
 //!         Quantity::new(moving_points, ANGSTROM),
 //!     )?),
 //! )?;
 //! let reference = Model::new(
-//!     topology.clone(),
+//!     Arc::clone(&topology),
 //!     Configuration::new(Positions::new(
 //!         &topology,
 //!         Quantity::new(reference_points, ANGSTROM),
@@ -72,6 +73,7 @@
 //! ```
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
 use crate::structure::ModelView;
@@ -104,7 +106,7 @@ pub fn kabsch(
 /// Fits `moving` onto `reference` with explicit weighting and periodic policy.
 ///
 /// Correspondence follows the selection's sorted dense-index order. The two
-/// views and selection must share one exact topology identity. Explicit weights
+/// views and selection must share one `Arc<Topology>` allocation. Explicit weights
 /// use selection order, not complete-topology order.
 ///
 /// The fit minimizes `sum(w_i * |R x_i + t - y_i|^2)` subject to a proper
@@ -116,12 +118,12 @@ pub fn kabsch_with_options(
     selection: &AtomSelection,
     options: KabschOptions<'_>,
 ) -> Result<RigidAlignment, AlignmentError> {
-    if !moving.topology().same_identity(reference.topology()) {
-        return Err(AlignmentError::TopologyIdentityMismatch);
+    if !Arc::ptr_eq(moving.topology_arc(), reference.topology_arc()) {
+        return Err(AlignmentError::TopologyMismatch);
     }
     selection
-        .ensure_compatible(moving.topology())
-        .map_err(|_| AlignmentError::SelectionTopologyIdentityMismatch)?;
+        .ensure_compatible(moving.topology_arc())
+        .map_err(|_| AlignmentError::SelectionTopologyMismatch)?;
 
     let selected_atom_count = selection.indices().len();
     if selected_atom_count < MIN_SELECTED_ATOMS {
@@ -265,10 +267,10 @@ pub enum AlignmentGeometry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AlignmentError {
-    /// Moving and reference views do not share exact topology identity.
-    TopologyIdentityMismatch,
-    /// The atom selection belongs to another exact topology identity.
-    SelectionTopologyIdentityMismatch,
+    /// Moving and reference views do not share one topology allocation.
+    TopologyMismatch,
+    /// The atom selection belongs to another topology allocation.
+    SelectionTopologyMismatch,
     /// Fewer than three atoms were selected.
     InsufficientSelectedAtoms {
         /// Actual selected atom count.
@@ -316,11 +318,11 @@ pub enum AlignmentError {
 impl fmt::Display for AlignmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyIdentityMismatch => formatter.write_str(
-                "moving and reference models belong to different topology identities",
+            Self::TopologyMismatch => formatter.write_str(
+                "moving and reference models belong to different topology allocations",
             ),
-            Self::SelectionTopologyIdentityMismatch => {
-                formatter.write_str("atom selection belongs to a different topology identity")
+            Self::SelectionTopologyMismatch => {
+                formatter.write_str("atom selection belongs to a different topology allocation")
             }
             Self::InsufficientSelectedAtoms { selected, minimum } => write!(
                 formatter,
@@ -824,7 +826,7 @@ mod tests {
     use crate::topology::{AtomSelection, MoleculeInstanceMetadata, Topology, TopologyBuilder};
     use crate::units::{Quantity, ANGSTROM, NANOMETER};
 
-    fn topology(atom_count: usize) -> Topology {
+    fn topology(atom_count: usize) -> Arc<Topology> {
         let mut graph = Molecule::builder();
         let mut previous = None;
         for _ in 0..atom_count {
@@ -842,15 +844,15 @@ mod tests {
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        builder.build().unwrap()
+        Arc::new(builder.build().unwrap())
     }
 
-    fn model(topology: &Topology, points: &[Point3]) -> Model {
+    fn model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
         let positions = Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap();
-        Model::new(topology.clone(), Configuration::new(positions)).unwrap()
+        Model::new(Arc::clone(topology), Configuration::new(positions)).unwrap()
     }
 
-    fn models(moving: &[Point3], reference: &[Point3]) -> (Topology, Model, Model) {
+    fn models(moving: &[Point3], reference: &[Point3]) -> (Arc<Topology>, Model, Model) {
         assert_eq!(moving.len(), reference.len());
         let topology = topology(moving.len());
         let moving = model(&topology, moving);
@@ -858,7 +860,7 @@ mod tests {
         (topology, moving, reference)
     }
 
-    fn all(topology: &Topology) -> AtomSelection {
+    fn all(topology: &Arc<Topology>) -> AtomSelection {
         AtomSelection::from_atoms(topology, topology.atom_ids().iter().copied()).unwrap()
     }
 
@@ -1344,22 +1346,22 @@ mod tests {
     }
 
     #[test]
-    fn exact_topology_and_selection_identity_are_required() {
+    fn exact_shared_topology_is_required_for_views_and_selection() {
         let points = fixture_points();
         let topology_a = topology(points.len());
         let topology_b = topology(points.len());
         assert!(topology_a.same_layout(&topology_b));
-        assert!(!topology_a.same_identity(&topology_b));
+        assert!(!Arc::ptr_eq(&topology_a, &topology_b));
         let moving_a = model(&topology_a, &points);
         let reference_a = model(&topology_a, &points);
         let reference_b = model(&topology_b, &points);
         assert_eq!(
             kabsch(moving_a.view(), reference_b.view(), &all(&topology_a)),
-            Err(AlignmentError::TopologyIdentityMismatch)
+            Err(AlignmentError::TopologyMismatch)
         );
         assert_eq!(
             kabsch(moving_a.view(), reference_a.view(), &all(&topology_b)),
-            Err(AlignmentError::SelectionTopologyIdentityMismatch)
+            Err(AlignmentError::SelectionTopologyMismatch)
         );
     }
 

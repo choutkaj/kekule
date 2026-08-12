@@ -10,17 +10,17 @@ compatible topology-bound structure state through checked lineage.
 - `topology::transform` retains or removes complete molecule instances without
   mutating the source topology.
 - Duplicate requests are normalized; source definition and instance order is
-  filtered deterministically; empty results are rejected; and exact identity is
-  preserved only for no-op edits.
-- Transform results contain one exact target topology and a complete checked
+  filtered deterministically; empty results are rejected; and the original
+  source `Arc<Topology>` is preserved for no-op edits.
+- Transform results retain one exact target `Arc<Topology>` and a complete checked
   `TopologyMapping` across definitions, instances, qualified atoms and bonds,
   and dense atom and bond indices.
 - Foundational topology-bound positions, configurations, observations, models,
   atom selections, and ensembles can be remapped explicitly. `kekule-traj`
   uses the same public mapping helpers for trajectory frames, in-memory
   trajectories, and reusable frame buffers.
-- Every remap validates exact source, mapping-source, mapping-target, and target
-  topology identity.
+- Every remap validates the exact shared source, mapping-source, mapping-target,
+  and target topology allocations.
 - Removed selected atoms require an explicit strict or drop policy.
 - Periodic cells, observation provenance and properties, ensemble weights and
   properties, velocities, forces, time, step, frame properties, and source
@@ -46,7 +46,7 @@ compatible topology-bound structure state through checked lineage.
 ## Tests
 
 - Focused unit and downstream public-API tests cover deterministic subsetting,
-  complete lineage, identity checks, state preservation, transactional
+  complete lineage, shared-allocation checks, state preservation, transactional
   failures, strict/drop selection policy, member/frame error context, and
   reusable buffer allocation stability. Buffer regressions preserve every
   pre-existing destination field after a later unmapped-target-atom failure and
@@ -74,3 +74,6 @@ compatible topology-bound structure state through checked lineage.
 - v3: Separate foundational topology and structure remapping from the
   `kekule-traj` frame/trajectory layer, exposing narrow complete dense-state
   validation helpers for external topology-bound containers.
+- v4: Retain exact source and target `Arc<Topology>` values in mappings and
+  edit results, preserving the source Arc on no-ops and avoiding raw topology
+  clones during transformation.

@@ -1,6 +1,7 @@
 //! Strict bounded multi-frame XYZ trajectory I/O.
 
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
@@ -378,7 +379,7 @@ impl<R: BufRead> XyzReader<R> {
     fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryError> {
         destination
             .replace_from_data(FrameBufferData::new(
-                self.topology(),
+                &self.binding.shared_topology(),
                 Quantity::new(self.positions.as_slice(), self.options.length_unit),
             ))
             .map_err(Into::into)
@@ -390,9 +391,16 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
         self.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.binding.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(
+            &self.binding.shared_topology(),
+            &destination.shared_topology(),
+        ) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         if !self.parse_next(true)? {
             return Ok(false);
@@ -544,6 +552,10 @@ impl<R: BufRead + Seek> TrajectoryReader for IndexedXyzReader<R> {
         self.reader.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.reader.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
         self.reader.read_next(destination)
     }
@@ -559,8 +571,11 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(
+            &self.reader.shared_topology(),
+            &destination.shared_topology(),
+        ) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let index_usize =
             usize::try_from(index).map_err(|_| TrajectoryError::FrameIndexOutOfRange(index))?;
@@ -614,7 +629,7 @@ impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
 /// Strict multi-frame XYZ writer over a caller-supplied stream.
 pub struct XyzWriter<W> {
     writer: W,
-    topology: Topology,
+    topology: Arc<Topology>,
     options: XyzWriteOptions,
     source_label: String,
     frame_count: u64,
@@ -623,7 +638,7 @@ pub struct XyzWriter<W> {
 impl<W: Write> XyzWriter<W> {
     pub fn new(
         writer: W,
-        topology: Topology,
+        topology: Arc<Topology>,
         options: XyzWriteOptions,
         source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryError> {
@@ -721,9 +736,13 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
         &self.topology
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !self.topology.same_identity(frame.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(&self.topology, &frame.shared_topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let configuration = frame.configuration();
         let unsupported = [

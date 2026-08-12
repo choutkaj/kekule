@@ -8,7 +8,7 @@ use kekule::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
 #[non_exhaustive]
 pub enum DreidingPrepareError {
     /// The reference view does not share the requested exact topology.
-    TopologyIdentityMismatch,
+    TopologyMismatch,
     /// DREIDING preparation has no periodic-coordinate policy.
     UnsupportedPeriodicCell,
     /// An atom has no resolved implicit-hydrogen count.
@@ -60,7 +60,7 @@ pub enum DreidingPrepareError {
 impl fmt::Display for DreidingPrepareError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyIdentityMismatch => f.write_str(
+            Self::TopologyMismatch => f.write_str(
                 "DREIDING reference configuration belongs to a different exact topology",
             ),
             Self::UnsupportedPeriodicCell => {

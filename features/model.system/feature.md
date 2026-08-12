@@ -26,15 +26,16 @@ molecule instance backed by a connected definition graph.
   fail.
 - Converts source coordinates once to `MODEL_LENGTH_UNIT`; model position
   getters and setters expose explicit quantities and accept compatible length units.
-- `Positions` bind to exact topology identity, reject incomplete or non-finite
+- `Positions` retain one `Arc<Topology>`, reject independently allocated,
+  incomplete, or non-finite
   arrays, and reuse their allocation for validated full-coordinate updates.
 - `Configuration` owns positions and an optional validated periodic cell.
 - `ModelView` borrows topology plus configuration without copying coordinates.
 - `StructureObservation` stores topology-bound coordinate-model-specific atom
   values outside topology.
 - `Positions`, `Configuration`, `StructureObservation`, and `Model` remap
-  explicitly through checked topology lineage. Exact identities are required
-  at both ends, complete target atom state is mandatory, cells and observation
+  explicitly through checked topology lineage. Exact shared source and target
+  allocations are required, complete target atom state is mandatory, cells and observation
   metadata are preserved, and failures leave sources unchanged.
 - `Model::instance_to_conformer` maps current instance positions back through
   preserved local atom IDs, converts them to the target conformer unit, and
@@ -46,24 +47,24 @@ molecule instance backed by a connected definition graph.
 
 ## Implementation Notes
 
-- `Model = Topology + Configuration`; cloning a model shares topology identity
+- `Model = Arc<Topology> + Configuration`; cloning a model shares the topology allocation
   while copying dynamic configuration and observation state.
-- Complete positions and cells may change without changing topology identity.
+- Complete positions and cells may change without changing the shared topology.
 - Conformer export belongs to the modeling layer, validates exact live local
   atom-ID compatibility, and does not mutate topology or chemistry.
 - Construction never sanitizes, perceives, prepares, or merges source molecules.
 
 ## Tests
 
-- Unit tests cover independent topology/configuration construction, exact
-  identity rejection, connected-definition enforcement, shared topology after
+- Unit tests cover independent topology/configuration construction, equal-layout
+  allocation rejection, connected-definition enforcement, shared topology after
   cloning, unit conversion, allocation reuse, periodic cells, source
   immutability, conformer export, and transactional failures.
 - Macro construction tests cover one valid selected conformer alongside many
   unrelated invalid conformers, rejection when an invalid conformer is selected,
   and preservation of all source conformers.
 - Public transformation tests cover dense-index compaction, equal-layout
-  identity rejection, complete coordinate transfer, cells, every observation
+  allocation rejection, complete coordinate transfer, cells, every observation
   field and property, missing target state, and source immutability.
 
 ## Out Of Scope
@@ -96,3 +97,6 @@ molecule instance backed by a connected definition graph.
   configurations, observations, and models through exact topology lineage.
 - v11: Carry the connected molecule-definition invariant through model staging
   and keep rejection transactional before topology-bound state is published.
+- v12: Store `Arc<Topology>` in topology-bound structure state, remove
+  identity-specific errors, and use pointer-compatible sharing while preserving
+  explicit `same_layout` as a separate comparison.

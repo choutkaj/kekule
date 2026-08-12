@@ -100,7 +100,7 @@ These boundaries are requirements rather than naming conventions:
 - Topology construction assembles already asserted connected molecular entities
   into one coordinate-free system. It does not invent coordinates or
   force-field state.
-- Coordinate construction validates complete state against one exact topology.
+- Coordinate construction validates complete state against one shared topology allocation.
 - Analysis is read-only unless the operation is explicitly named as a
   transformation.
 - Force-field preparation and backend preparation create downstream objects
@@ -325,9 +325,9 @@ canonical `Molecule`; reconstruction never weakens the connectedness invariant.
 Perception is installed last because normal graph and stereo construction must
 continue to invalidate computed state. Loading never sanitizes, re-perceives,
 renumbers, reparses source data, or silently coerces malformed historical
-state. Process-local topology identity is not persisted; independently rebuilt
-topologies may prove complete static equality through `same_layout` but retain
-distinct exact identities.
+state. Process-local `Arc<Topology>` sharing relationships are not persisted;
+independently rebuilt topologies may prove complete static equality through
+`same_layout` but remain separate allocations.
 
 ### Local conformers versus system coordinate state
 
@@ -371,8 +371,7 @@ A `Topology` owns:
 - molecule roles and instance annotations;
 - one authoritative dense atom ordering;
 - one authoritative dense bond ordering;
-- mappings between semantic identifiers and dense indices;
-- exact topology identity used by topology-bound downstream objects.
+- mappings between semantic identifiers and dense indices.
 
 A `Topology` does not own:
 
@@ -387,16 +386,22 @@ A `Topology` does not own:
 - constraints, virtual sites, Drude particles, or backend particles;
 - execution-engine state.
 
-Public `Topology` is a cheap-clone immutable handle, conceptually:
+Public `Topology` directly owns this data, conceptually:
 
 ```rust
-#[derive(Clone)]
 pub struct Topology {
-    inner: Arc<TopologyData>,
+    definitions: Vec<MoleculeDefinition>,
+    instances: Vec<MoleculeInstance>,
+    atom_order: Vec<InstanceAtomId>,
+    bond_order: Vec<InstanceBondId>,
+    atom_indices: BTreeMap<InstanceAtomId, TopologyAtomIndex>,
+    bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
 }
 ```
 
-Users should work with `Topology`, not with `Arc<Topology>` directly.
+Raw `Topology` deliberately does not implement `Clone`. Objects that need
+shared ownership or exact compatibility store `Arc<Topology>` and share it
+with `Arc::clone`; ordinary accessors expose `&Topology`.
 
 ### Molecule definitions and molecule instances
 
@@ -531,7 +536,7 @@ position, velocity, force, gradient, and per-atom result arrays.
 The dense ordering is authoritative and immutable for the lifetime of one
 topology. It need not be identical between independently constructed
 topologies representing the same chemistry. Every topology-bound dense array
-uses the ordering published by that exact topology.
+uses the ordering published by that topology.
 
 Local `AtomId` and `BondId` values, including tombstone positions, survive
 definition insertion. Qualification adds instance ownership without remapping
@@ -541,27 +546,27 @@ All conversions from collection lengths to fixed-width public identifiers are
 checked. Capacity overflow produces structured errors rather than truncation or
 wrapping.
 
-### Identity and layout equality
+### Shared-allocation compatibility and layout equality
 
-Exact topology identity is the compatibility criterion for positions, prepared
-systems, compiled selections, and frame buffers.
+Sharing one `Arc<Topology>` allocation is the compatibility criterion for
+positions, prepared systems, compiled selections, and frame buffers.
 
-Clones of one `Topology` retain exact identity. Independently constructed
-topologies have different identity even when their complete static layouts are
-equal.
+Clones of one `Arc<Topology>` remain compatible. Independently constructed
+topologies are not compatible even when their complete static layouts are equal.
 
-The API distinguishes:
+Compatibility checks are private and use `Arc::ptr_eq`; structural layout
+comparison remains explicit and public:
 
 ```rust
-topology_a.same_identity(&topology_b)
+Arc::ptr_eq(&shared_topology_a, &shared_topology_b)
 topology_a.same_layout(&topology_b)
 ```
 
 `same_layout` compares chemical and hierarchy content, definition and instance
 partitioning, instance metadata, semantic identifiers, authoritative dense
-order, and the corresponding index maps. It excludes only exact identity.
-Therefore it is not order-independent structural equivalence and does not
-silently imply compatibility for topology-bound state.
+order, and the corresponding index maps. It does not compare ownership or
+allocation. Therefore it is not order-independent structural equivalence and
+does not silently imply compatibility for topology-bound state.
 
 General structural equivalence and validated isomorphism mapping across
 different definition, instance, atom, or bond orderings remain planned future
@@ -582,8 +587,8 @@ mappings:
 
 ```rust
 pub struct TopologyEditResult {
-    pub topology: Topology,
-    pub mapping: TopologyMapping,
+    topology: Arc<Topology>,
+    mapping: TopologyMapping,
 }
 ```
 
@@ -618,8 +623,9 @@ local atom and bond identifiers while returning complete checked lineage.
 Positions, configurations, observations, models, compiled atom selections,
 finite ensembles, owned frames, in-memory trajectories, and borrowed frame
 state in reusable target buffers provide explicit remapping operations. Every
-operation checks exact source and target identity; complete dense arrays reject
-unmapped target atoms, and selection loss requires an explicit policy.
+operation checks the exact source and target `Arc<Topology>` allocations;
+complete dense arrays reject unmapped target atoms, and selection loss requires
+an explicit policy.
 
 ### Construction
 
@@ -695,7 +701,7 @@ instances when the observed source graph contains genuine gaps.
 
 Construction validates:
 
-- exact topology identity or an explicit assertion against one topology;
+- one exact shared `Arc<Topology>` allocation or an explicit assertion against it;
 - one position for every topology atom;
 - compatible length units;
 - finite coordinates;
@@ -733,7 +739,7 @@ or raw source text.
 Such data is stored beside a model or ensemble member in a typed
 `StructureObservation` or dedicated provenance object. Per-atom observation
 arrays use `TopologyAtomIndex` order and validate their lengths. They are not
-part of topology identity.
+part of static topology data.
 
 ## `Model`
 
@@ -752,8 +758,9 @@ Conceptually, in the common non-periodic case:
 Model = Topology + Positions
 ```
 
-The topology is immutable and cheap to clone. Positions and the periodic cell
-may be replaced transactionally while preserving topology identity.
+The topology is immutable and cheaply shared with `Arc::clone`. Positions and
+the periodic cell may be replaced transactionally while preserving the shared
+topology allocation.
 
 A model rejects incomplete, non-finite, dimensionally incompatible, or
 topology-incompatible coordinate state.
@@ -769,11 +776,11 @@ observation state.
 ## `Ensemble`
 
 `Ensemble` represents a finite collection of non-temporal structural
-realizations sharing one exact topology:
+realizations sharing one `Arc<Topology>`:
 
 ```rust
 pub struct Ensemble {
-    topology: Topology,
+    topology: Arc<Topology>,
     members: Vec<EnsembleMember>,
 }
 
@@ -799,7 +806,7 @@ have a finite non-negative weight, score, energy, source label, or other typed
 or scalar annotations. Weight normalization is an explicit operation rather
 than an insertion side effect.
 
-Every member has complete state for the same exact topology. Formats with
+Every member has complete state for the same shared topology allocation. Formats with
 missing or inconsistent atoms require explicit reconciliation or a structured
 error; they are not represented by silently sparse dense arrays.
 
@@ -871,6 +878,7 @@ Trajectory I/O is streaming-first and uses caller-owned reusable buffers:
 ```rust
 pub trait TrajectoryReader {
     fn topology(&self) -> &Topology;
+    fn shared_topology(&self) -> Arc<Topology>;
 
     fn read_next(
         &mut self,
@@ -890,6 +898,7 @@ pub trait SeekableTrajectoryReader: TrajectoryReader {
 
 pub trait TrajectoryWriter {
     fn topology(&self) -> &Topology;
+    fn shared_topology(&self) -> Arc<Topology>;
 
     fn write_frame(
         &mut self,
@@ -901,19 +910,19 @@ pub trait TrajectoryWriter {
 Sequential and seekable capabilities remain separate because not every
 compressed format supports inexpensive random access.
 
-`FrameBuffer` is initialized for one exact topology and reuses allocations
+`FrameBuffer` is initialized with one `Arc<Topology>` and reuses allocations
 across reads. A frame view allows analyses and potentials to consume decoded
 state without constructing or cloning an owned `Model`.
 
 File decoders publish only complete frames through one transactional borrowed-
-data operation. That operation validates exact topology identity, complete
-array lengths, units, finite values, cell, time, observations, and properties
+data operation. That operation validates the shared topology allocation,
+complete array lengths, units, finite values, cell, time, observations, and properties
 before destination-visible mutation; it reuses position, velocity, and force
 allocations and clears every absent optional field. Clean EOF and any failed
 decode leave the caller's buffer unchanged.
 
-Topology-free file readers require an `AtomOrderAssertion` bound to the same
-exact topology. The assertion is either constructed from a complete semantic
+Topology-free file readers require an `AtomOrderAssertion` retaining the same
+`Arc<Topology>`. The assertion is either constructed from a complete semantic
 atom sequence proven equal to authoritative dense order or is an explicit
 caller statement that the file uses that order. Neither form is inferred from
 atom count, and readers still validate all stronger format metadata.
@@ -959,7 +968,7 @@ Coordinate-dependent algorithms consume a common borrowed view:
 
 ```rust
 pub struct ModelView<'a> {
-    topology: &'a Topology,
+    topology: &'a Arc<Topology>,
     configuration: ConfigurationView<'a>,
 }
 ```
@@ -974,7 +983,7 @@ Existing convenience functions accepting `&Model` may delegate to the view
 kernel.
 
 Rigid alignment lives in the focused `alignment` analysis module. Its first
-milestone fits two `ModelView` values sharing one exact topology through one
+milestone fits two `ModelView` values sharing one topology allocation through one
 topology-bound `AtomSelection`. The returned proper `RigidTransform` maps
 moving coordinates into reference coordinates, while post-fit weighted RMSD is
 reported in the model length unit. Uniform or explicit positive finite
@@ -986,17 +995,17 @@ canonical coordinates.
 Determined alignment requires at least three selected atoms and rank-two
 geometry on both sides. Planar non-collinear selections are valid. Coincident,
 collinear, and scale-relatively near-collinear inputs are rejected through
-structured errors. Exact topology identity is mandatory; equal layout or atom
-count never establishes correspondence.
+structured errors. One shared topology allocation is mandatory; equal layout
+or atom count never establishes correspondence.
 
 ## Topology-bound selections
 
-Compiled atom and bond selections bind to exact topology identity and store
-dense indices:
+Compiled atom and bond selections retain one `Arc<Topology>` and store dense
+indices:
 
 ```rust
 pub struct AtomSelection {
-    topology: TopologyIdentity,
+    topology: Arc<Topology>,
     indices: Vec<TopologyAtomIndex>,
 }
 ```
@@ -1126,7 +1135,7 @@ execution-engine objects do not belong in `Topology`, `Model`, `Ensemble`, or
 A prepared system:
 
 - is constructed explicitly from one topology;
-- binds to exact topology identity;
+- retains the exact shared `Arc<Topology>` used during preparation;
 - provides mappings between backend particles and
   `TopologyAtomIndex`/`InstanceAtomId`;
 - may contain particles not in canonical topology, such as virtual sites;
@@ -1334,7 +1343,8 @@ The following statements summarize the design:
    supports streaming I/O.
 10. Periodic cells, velocities, forces, time, and observation data are dynamic
     state, not topology.
-11. Prepared systems and compiled selections bind to exact topology identity.
+11. Prepared systems and compiled selections retain one exact shared
+    `Arc<Topology>` allocation.
 12. Topology-changing operations return a new topology and explicit mappings
     and never publish a disconnected molecule definition.
 13. Reactive trajectories are segmented by topology rather than weakening

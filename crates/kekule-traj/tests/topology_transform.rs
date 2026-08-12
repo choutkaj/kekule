@@ -24,7 +24,7 @@ use kekule_traj::{
 };
 
 struct Fixture {
-    topology: Topology,
+    topology: Arc<Topology>,
     water_definition: MoleculeDefinitionId,
     ligand_definition: MoleculeDefinitionId,
     macro_definition: MoleculeDefinitionId,
@@ -140,7 +140,7 @@ fn fixture() -> Fixture {
         .expect("ion instance");
 
     Fixture {
-        topology: builder.build().expect("test topology"),
+        topology: Arc::new(builder.build().expect("test topology")),
         water_definition,
         ligand_definition,
         macro_definition,
@@ -169,15 +169,15 @@ fn retained_fixture(fixture: &Fixture) -> kekule::topology::TopologyEditResult {
 #[test]
 fn whole_instance_subset_is_deterministic_complete_and_non_mutating() {
     let fixture = fixture();
-    let source_clone = fixture.topology.clone();
+    let source_clone = Arc::clone(&fixture.topology);
     let edit = retained_fixture(&fixture);
-    let target = edit.topology();
+    let target = edit.shared_topology();
     let mapping = edit.mapping();
 
-    assert!(fixture.topology.same_identity(&source_clone));
+    assert!(Arc::ptr_eq(&fixture.topology, &source_clone));
     assert_eq!(fixture.topology.definition_count(), 4);
     assert_eq!(fixture.topology.instance_count(), 5);
-    assert!(!fixture.topology.same_identity(target));
+    assert!(!Arc::ptr_eq(&fixture.topology, &target));
     assert_eq!(target.definition_count(), 3);
     assert_eq!(target.instance_count(), 3);
 
@@ -198,7 +198,10 @@ fn whole_instance_subset_is_deterministic_complete_and_non_mutating() {
         ]
     );
     assert!(mapping.is_source(&fixture.topology));
-    assert!(mapping.is_target(target));
+    assert!(mapping.is_target(&target));
+    assert!(Arc::ptr_eq(&mapping.source_arc(), &fixture.topology));
+    assert!(Arc::ptr_eq(&mapping.target_arc(), &target));
+    assert!(Arc::ptr_eq(&edit.shared_topology(), &target));
     assert_eq!(mapping.removed_definitions(), &[fixture.ion_definition]);
     assert_eq!(
         mapping.removed_instances(),
@@ -279,7 +282,7 @@ fn whole_instance_subset_is_deterministic_complete_and_non_mutating() {
 }
 
 #[test]
-fn subset_normalization_identity_and_failures_are_explicit() {
+fn subset_normalization_no_ops_and_failures_are_explicit() {
     let fixture = fixture();
     let mut all = fixture
         .topology
@@ -289,14 +292,14 @@ fn subset_normalization_identity_and_failures_are_explicit() {
     all.reverse();
     all.push(fixture.ligand);
     let retained = retain_instances(&fixture.topology, all).expect("retain-all no-op");
-    assert!(retained.topology().same_identity(&fixture.topology));
+    assert!(Arc::ptr_eq(&retained.shared_topology(), &fixture.topology));
     assert_eq!(
         retained.mapping().atom_pairs().len(),
         fixture.topology.atom_count()
     );
 
     let removed = remove_instances(&fixture.topology, []).expect("remove-none no-op");
-    assert!(removed.topology().same_identity(&fixture.topology));
+    assert!(Arc::ptr_eq(&removed.shared_topology(), &fixture.topology));
 
     assert!(matches!(
         retain_instances(&fixture.topology, []),
@@ -351,7 +354,7 @@ fn point_values(topology: &Topology, offset: f64) -> Vec<Point3> {
         .collect()
 }
 
-fn observation(topology: &Topology) -> StructureObservation {
+fn observation(topology: &Arc<Topology>) -> StructureObservation {
     let atoms = (0..topology.atom_count())
         .map(|index| {
             let mut atom = AtomObservation::default();
@@ -394,7 +397,7 @@ fn model(fixture: &Fixture, offset: f64) -> Model {
     )
     .expect("valid test cell");
     Model::with_observation(
-        fixture.topology.clone(),
+        Arc::clone(&fixture.topology),
         Configuration::with_cell(positions, cell),
         Some(observation(&fixture.topology)),
     )
@@ -405,14 +408,15 @@ fn model(fixture: &Fixture, offset: f64) -> Model {
 fn model_observation_and_selection_remapping_preserve_complete_state() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
+    let target_topology = edit.shared_topology();
     let source = model(&fixture, 1.0);
     let source_clone = source.clone();
     let target = source
-        .remap_to(edit.topology(), edit.mapping())
+        .remap_to(&target_topology, edit.mapping())
         .expect("model remap");
 
     assert_eq!(source, source_clone);
-    assert!(target.topology().same_identity(edit.topology()));
+    assert!(Arc::ptr_eq(&target.shared_topology(), &target_topology));
     assert_eq!(target.cell(), source.cell());
     let source_observation = source.observation().expect("source observation");
     let target_observation = target.observation().expect("target observation");
@@ -439,7 +443,7 @@ fn model_observation_and_selection_remapping_preserve_complete_state() {
     assert_eq!(
         selection.remap_to(
             &fixture.topology,
-            edit.topology(),
+            &target_topology,
             edit.mapping(),
             RemovedSelectionPolicy::Error,
         ),
@@ -448,14 +452,14 @@ fn model_observation_and_selection_remapping_preserve_complete_state() {
     let dropped = selection
         .remap_to(
             &fixture.topology,
-            edit.topology(),
+            &target_topology,
             edit.mapping(),
             RemovedSelectionPolicy::Drop,
         )
         .expect("explicit selection drop");
     assert_eq!(
         dropped
-            .semantic_ids(edit.topology())
+            .semantic_ids(&target_topology)
             .expect("target selection"),
         vec![edit
             .mapping()
@@ -466,7 +470,7 @@ fn model_observation_and_selection_remapping_preserve_complete_state() {
         .expect("removed-only selection")
         .remap_to(
             &fixture.topology,
-            edit.topology(),
+            &target_topology,
             edit.mapping(),
             RemovedSelectionPolicy::Drop,
         )
@@ -474,7 +478,12 @@ fn model_observation_and_selection_remapping_preserve_complete_state() {
     assert!(empty.indices().is_empty());
 }
 
-fn mapping_with_added_atom() -> (Topology, Topology, TopologyMapping, InstanceAtomId) {
+fn mapping_with_added_atom() -> (
+    Arc<Topology>,
+    Arc<Topology>,
+    TopologyMapping,
+    InstanceAtomId,
+) {
     let one = one_atom_small("C");
     let mut source_builder = TopologyBuilder::new();
     let source_definition = source_builder
@@ -483,7 +492,7 @@ fn mapping_with_added_atom() -> (Topology, Topology, TopologyMapping, InstanceAt
     let source_instance = source_builder
         .add_instance(source_definition, MoleculeInstanceMetadata::default())
         .expect("source instance");
-    let source_topology = source_builder.build().expect("source topology");
+    let source_topology = Arc::new(source_builder.build().expect("source topology"));
     let mut target_builder = TopologyBuilder::new();
     let target_definition = target_builder
         .add_small_molecule_definition(&one)
@@ -494,7 +503,7 @@ fn mapping_with_added_atom() -> (Topology, Topology, TopologyMapping, InstanceAt
     let target_added = target_builder
         .add_instance(target_definition, MoleculeInstanceMetadata::default())
         .expect("target added instance");
-    let target_topology = target_builder.build().expect("target topology");
+    let target_topology = Arc::new(target_builder.build().expect("target topology"));
     let mapping = TopologyMapping::from_pairs(
         &source_topology,
         &target_topology,
@@ -516,50 +525,55 @@ fn mapping_with_added_atom() -> (Topology, Topology, TopologyMapping, InstanceAt
 }
 
 #[test]
-fn state_remapping_rejects_identity_substitutes_and_unmapped_target_atoms() {
+fn state_remapping_rejects_equal_layout_substitutes_and_unmapped_target_atoms() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
+    let target_topology = edit.shared_topology();
     let source = model(&fixture, 2.0);
     let independent_source = self::fixture();
     let independent_edit = retained_fixture(&independent_source);
+    let independent_target = independent_edit.shared_topology();
 
     assert!(fixture.topology.same_layout(&independent_source.topology));
-    assert!(!fixture.topology.same_identity(&independent_source.topology));
+    assert!(!Arc::ptr_eq(
+        &fixture.topology,
+        &independent_source.topology
+    ));
     assert_eq!(
         source.configuration().positions().remap_to(
             &independent_source.topology,
-            edit.topology(),
+            &target_topology,
             edit.mapping(),
         ),
         Err(TopologyRemapError::SourceTopologyMismatch)
     );
-    assert!(edit.topology().same_layout(independent_edit.topology()));
+    assert!(target_topology.same_layout(&independent_target));
     assert_eq!(
         source.configuration().positions().remap_to(
             &fixture.topology,
-            independent_edit.topology(),
+            &independent_target,
             edit.mapping(),
         ),
         Err(TopologyRemapError::MappingTargetMismatch)
     );
 
-    let mut wrong_destination = Positions::zeros(independent_edit.topology());
+    let mut wrong_destination = Positions::zeros(&independent_target);
     assert_eq!(
         wrong_destination.copy_remapped_from(
             source.configuration().positions(),
             &fixture.topology,
-            edit.topology(),
+            &target_topology,
             edit.mapping(),
         ),
         Err(TopologyRemapError::TargetTopologyMismatch)
     );
-    let mut destination = Positions::zeros(edit.topology());
+    let mut destination = Positions::zeros(&target_topology);
     let allocation = destination.values().value().as_ptr();
     destination
         .copy_remapped_from(
             source.configuration().positions(),
             &fixture.topology,
-            edit.topology(),
+            &target_topology,
             edit.mapping(),
         )
         .expect("valid allocation-reusing position remap");
@@ -583,6 +597,7 @@ fn state_remapping_rejects_identity_substitutes_and_unmapped_target_atoms() {
 fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
+    let target_topology = edit.shared_topology();
     let first = model(&fixture, 3.0);
     let second = model(&fixture, 30.0);
     let mut first_member = EnsembleMember::new(first.configuration().clone());
@@ -601,8 +616,9 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
     second_member
         .props_mut()
         .insert("member".to_owned(), PropValue::Int(2));
-    let ensemble = Ensemble::from_members(fixture.topology.clone(), [first_member, second_member])
-        .expect("valid ensemble");
+    let ensemble =
+        Ensemble::from_members(Arc::clone(&fixture.topology), [first_member, second_member])
+            .expect("valid ensemble");
     let source_weights = ensemble
         .members()
         .map(EnsembleMember::weight)
@@ -612,9 +628,9 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
         .map(|member| member.props().clone())
         .collect::<Vec<_>>();
     let remapped = ensemble
-        .remap_to(edit.topology(), edit.mapping())
+        .remap_to(&target_topology, edit.mapping())
         .expect("ensemble remap");
-    assert!(remapped.topology().same_identity(edit.topology()));
+    assert!(Arc::ptr_eq(&remapped.shared_topology(), &target_topology));
     assert_eq!(
         remapped
             .members()
@@ -645,11 +661,11 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
         assert!(member
             .configuration()
             .positions()
-            .is_compatible(edit.topology()));
+            .is_compatible(&target_topology));
         assert!(member
             .observation()
             .expect("preserved observation")
-            .is_compatible(edit.topology()));
+            .is_compatible(&target_topology));
     }
 
     let (added_source, added_target, added_mapping, added_atom) = mapping_with_added_atom();
@@ -710,6 +726,7 @@ fn frame(fixture: &Fixture, offset: f64, step: u64) -> TrajectoryFrame {
 fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
+    let target_topology = edit.shared_topology();
     let positions_only = TrajectoryFrame::new(Configuration::new(
         Positions::new(
             &fixture.topology,
@@ -722,12 +739,12 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
         positions_only,
         frame(&fixture, 8.0, 80),
     ];
-    let trajectory = Trajectory::from_frames(fixture.topology.clone(), frames.clone())
+    let trajectory = Trajectory::from_frames(Arc::clone(&fixture.topology), frames.clone())
         .expect("valid trajectory");
     let remapped = trajectory
-        .remap_to(edit.topology(), edit.mapping())
+        .remap_to(&target_topology, edit.mapping())
         .expect("trajectory remap");
-    assert!(remapped.topology().same_identity(edit.topology()));
+    assert!(Arc::ptr_eq(&remapped.shared_topology(), &target_topology));
     assert_eq!(remapped.len(), 3);
     for (source_frame, target_frame) in trajectory.frames().zip(remapped.frames()) {
         assert_eq!(
@@ -779,7 +796,7 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
         .forces()
         .is_none());
 
-    let mut buffer = FrameBuffer::new(edit.topology().clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&target_topology));
     buffer
         .copy_remapped_from(
             frames[0]
@@ -792,17 +809,17 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
     assert_eq!(buffer_view.time(), frames[0].time());
     assert_eq!(buffer_view.step(), frames[0].step());
     assert_eq!(buffer_view.props(), frames[0].props());
-    assert!(buffer
-        .model_view()
-        .topology()
-        .same_identity(edit.topology()));
+    assert!(Arc::ptr_eq(
+        &buffer.model_view().shared_topology(),
+        &target_topology
+    ));
     let source_bond = InstanceBondId::new(fixture.ligand, BondId::new(1));
     let target_bond = edit
         .mapping()
         .map_bond(source_bond)
         .expect("retained ligand bond");
     let mut potential = HarmonicBondPotential::new(
-        edit.topology(),
+        &target_topology,
         [HarmonicBondParameter::new(
             target_bond,
             Quantity::new(1.2, ANGSTROM),
@@ -820,7 +837,7 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
 
     let independent = self::fixture();
     let independent_edit = retained_fixture(&independent);
-    let mut wrong_buffer = FrameBuffer::new(independent_edit.topology().clone());
+    let mut wrong_buffer = FrameBuffer::new(independent_edit.shared_topology());
     let before_positions = wrong_buffer
         .configuration()
         .positions()
@@ -867,6 +884,7 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
 fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
+    let target_topology = edit.shared_topology();
     let full = frame(&fixture, 4.0, 40);
     let positions_only = TrajectoryFrame::new(Configuration::new(
         Positions::new(
@@ -875,7 +893,7 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
         )
         .expect("positions-only frame"),
     ));
-    let mut buffer = FrameBuffer::new(edit.topology().clone());
+    let mut buffer = FrameBuffer::new(target_topology);
     buffer
         .copy_remapped_from(
             full.view(&fixture.topology).expect("full borrowed frame"),
@@ -921,7 +939,7 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
         )
         .expect("source positions"),
     ));
-    let mut destination = FrameBuffer::new(target.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&target));
     destination
         .set_positions(Quantity::new(
             vec![Point3::new(11.0, 12.0, 13.0), Point3::new(21.0, 22.0, 23.0)],
@@ -985,7 +1003,10 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
 
     let before = before.frame_view();
     let after = destination.frame_view();
-    assert!(after.topology().same_identity(before.topology()));
+    assert!(Arc::ptr_eq(
+        &after.shared_topology(),
+        &before.shared_topology()
+    ));
     assert_eq!(
         after.configuration().positions(),
         before.configuration().positions()
@@ -1029,7 +1050,7 @@ fn solvent_rich_subset_regression_avoids_quadratic_builder_cloning() {
             retained_waters.push(water_instance);
         }
     }
-    let topology = builder.build().expect("synthetic solvent topology");
+    let topology = Arc::new(builder.build().expect("synthetic solvent topology"));
     let requested = std::iter::once(ligand_instance).chain(retained_waters.iter().copied());
     let edit = retain_instances(&topology, requested).expect("large solvent-rich subset");
     assert_eq!(edit.topology().definition_count(), 2);
@@ -1037,3 +1058,4 @@ fn solvent_rich_subset_regression_avoids_quadratic_builder_cloning() {
     assert_eq!(edit.mapping().instance_pairs().len(), WATER_COUNT / 2 + 1);
     assert_eq!(edit.mapping().atom_pairs().len(), WATER_COUNT / 2 + 1);
 }
+use std::sync::Arc;

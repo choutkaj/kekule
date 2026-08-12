@@ -9,8 +9,8 @@ transform over an exact-topology atom selection.
 
 - Exposes `alignment::kabsch` and `alignment::kabsch_with_options` over two
   borrowed `ModelView` values and one topology-bound `AtomSelection`.
-- Requires moving, reference, and selection to share one exact `Topology`
-  identity. Correspondence follows the selection's sorted dense-index order.
+- Requires moving, reference, and selection to retain the same `Arc<Topology>`
+  allocation. Correspondence follows the selection's sorted dense-index order.
 - Returns a `RigidAlignment` containing the existing `geometry::RigidTransform`
   mapping moving coordinates into reference coordinates, post-fit weighted RMSD
   in `MODEL_LENGTH_UNIT`, and the selected atom count.
@@ -66,3 +66,5 @@ transform over an exact-topology atom selection.
 
 - v1: Add same-topology selection-based uniform or explicitly weighted proper
   Kabsch alignment with explicit periodic policy and structured failures.
+- v2: Use exact shared-allocation checks
+  across both views and the compiled selection.

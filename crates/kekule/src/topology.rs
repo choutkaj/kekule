@@ -5,7 +5,6 @@ pub mod transform;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use crate::bio::{
@@ -101,33 +100,6 @@ impl InstanceBondId {
 impl fmt::Display for InstanceBondId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}:{}", self.molecule, self.bond)
-    }
-}
-
-/// Opaque exact identity shared by clones of one topology.
-#[derive(Clone)]
-pub struct TopologyIdentity(Arc<IdentityToken>);
-
-#[derive(Debug)]
-struct IdentityToken;
-
-impl fmt::Debug for TopologyIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("TopologyIdentity(..)")
-    }
-}
-
-impl PartialEq for TopologyIdentity {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for TopologyIdentity {}
-
-impl Hash for TopologyIdentity {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Arc::as_ptr(&self.0).hash(state);
     }
 }
 
@@ -314,8 +286,32 @@ impl InstanceSmcraHierarchy<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct TopologyData {
+/// An immutable, coordinate-free molecular system.
+///
+/// `Topology` directly owns its definitions, instances, and authoritative
+/// dense layouts. It intentionally does not implement [`Clone`]; shared exact
+/// topology ownership uses [`Arc<Topology>`]. [`Topology::same_layout`]
+/// compares complete static layout without making independently allocated
+/// topologies compatible with topology-bound state.
+///
+/// The removed identity-handle API is deliberately unavailable:
+///
+/// ```compile_fail
+/// fn removed_identity_api(topology: &kekule::topology::Topology) {
+///     use kekule::topology::TopologyIdentity;
+///     let _ = topology.identity();
+/// }
+/// ```
+///
+/// Raw topologies are also deliberately not cloneable:
+///
+/// ```compile_fail
+/// fn raw_topology_is_not_cloneable(topology: kekule::topology::Topology) {
+///     let _ = topology.clone();
+/// }
+/// ```
+#[derive(Debug)]
+pub struct Topology {
     definitions: Vec<MoleculeDefinition>,
     instances: Vec<MoleculeInstance>,
     atom_order: Vec<InstanceAtomId>,
@@ -324,41 +320,9 @@ struct TopologyData {
     bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
 }
 
-/// An immutable, coordinate-free molecular system.
-///
-/// Cloning this handle is constant-time and retains exact identity.
-/// [`Topology::same_layout`] compares the complete static layout, including
-/// semantic identifiers and dense order, but does not make independently
-/// constructed topologies compatible with topology-bound state.
-#[derive(Clone)]
-pub struct Topology {
-    data: Arc<TopologyData>,
-    identity: TopologyIdentity,
-}
-
-impl fmt::Debug for Topology {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Topology")
-            .field("definitions", &self.data.definitions)
-            .field("instances", &self.data.instances)
-            .field("atom_order", &self.data.atom_order)
-            .field("bond_order", &self.data.bond_order)
-            .finish()
-    }
-}
-
 impl Topology {
     pub fn builder() -> TopologyBuilder {
         TopologyBuilder::new()
-    }
-
-    pub fn identity(&self) -> TopologyIdentity {
-        self.identity.clone()
-    }
-
-    pub fn same_identity(&self, other: &Self) -> bool {
-        self.identity == other.identity
     }
 
     /// Returns whether two topologies have the same complete static layout.
@@ -366,21 +330,26 @@ impl Topology {
     /// Layout equality includes chemical and hierarchy content, definition and
     /// instance partitioning, instance metadata, semantic identifiers,
     /// authoritative dense atom and bond order, and the corresponding index
-    /// maps. Exact topology identity is deliberately excluded.
+    /// maps. Whether two values share one `Arc` allocation is deliberately
+    /// excluded.
     ///
     /// This is stricter than order-independent structural equivalence. It does
     /// not perform graph isomorphism, reorder definitions or instances, or
     /// resolve repeated indistinguishable content.
     pub fn same_layout(&self, other: &Self) -> bool {
-        self.data.as_ref() == other.data.as_ref()
+        self.definitions == other.definitions
+            && self.instances == other.instances
+            && self.atom_order == other.atom_order
+            && self.bond_order == other.bond_order
+            && self.atom_indices == other.atom_indices
+            && self.bond_indices == other.bond_indices
     }
 
     pub fn definition(
         &self,
         id: MoleculeDefinitionId,
     ) -> Result<&MoleculeDefinition, TopologyError> {
-        self.data
-            .definitions
+        self.definitions
             .get(id.index())
             .ok_or(TopologyError::InvalidMoleculeDefinitionId(id))
     }
@@ -388,19 +357,17 @@ impl Topology {
     pub fn definitions(
         &self,
     ) -> impl ExactSizeIterator<Item = (MoleculeDefinitionId, &MoleculeDefinition)> {
-        self.data
-            .definitions
+        self.definitions
             .iter()
             .map(|definition| (definition.id, definition))
     }
 
     pub fn definition_count(&self) -> usize {
-        self.data.definitions.len()
+        self.definitions.len()
     }
 
     pub fn instance(&self, id: MoleculeInstanceId) -> Result<&MoleculeInstance, TopologyError> {
-        self.data
-            .instances
+        self.instances
             .get(id.index())
             .ok_or(TopologyError::InvalidMoleculeInstanceId(id))
     }
@@ -408,14 +375,13 @@ impl Topology {
     pub fn instances(
         &self,
     ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
-        self.data
-            .instances
+        self.instances
             .iter()
             .map(|instance| (instance.id, instance))
     }
 
     pub fn instance_count(&self) -> usize {
-        self.data.instances.len()
+        self.instances.len()
     }
 
     pub fn definition_for_instance(
@@ -432,7 +398,6 @@ impl Topology {
     ) -> Result<impl Iterator<Item = &MoleculeInstance>, TopologyError> {
         self.definition(definition)?;
         Ok(self
-            .data
             .instances
             .iter()
             .filter(move |instance| instance.definition == definition))
@@ -471,7 +436,7 @@ impl Topology {
     }
 
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &Atom)> {
-        self.data.atom_order.iter().copied().map(|id| {
+        self.atom_order.iter().copied().map(|id| {
             (
                 id,
                 self.atom(id)
@@ -481,7 +446,7 @@ impl Topology {
     }
 
     pub fn bonds(&self) -> impl ExactSizeIterator<Item = (InstanceBondId, &Bond)> {
-        self.data.bond_order.iter().copied().map(|id| {
+        self.bond_order.iter().copied().map(|id| {
             (
                 id,
                 self.bond(id)
@@ -491,35 +456,35 @@ impl Topology {
     }
 
     pub fn atom_count(&self) -> usize {
-        self.data.atom_order.len()
+        self.atom_order.len()
     }
 
     pub fn bond_count(&self) -> usize {
-        self.data.bond_order.len()
+        self.bond_order.len()
     }
 
     pub fn atom_ids(&self) -> &[InstanceAtomId] {
-        &self.data.atom_order
+        &self.atom_order
     }
 
     pub fn bond_ids(&self) -> &[InstanceBondId] {
-        &self.data.bond_order
+        &self.bond_order
     }
 
     pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
-        self.data.atom_indices.get(&atom).copied()
+        self.atom_indices.get(&atom).copied()
     }
 
     pub fn atom_id(&self, index: TopologyAtomIndex) -> Option<InstanceAtomId> {
-        self.data.atom_order.get(index.index()).copied()
+        self.atom_order.get(index.index()).copied()
     }
 
     pub fn bond_index(&self, bond: InstanceBondId) -> Option<TopologyBondIndex> {
-        self.data.bond_indices.get(&bond).copied()
+        self.bond_indices.get(&bond).copied()
     }
 
     pub fn bond_id(&self, index: TopologyBondIndex) -> Option<InstanceBondId> {
-        self.data.bond_order.get(index.index()).copied()
+        self.bond_order.get(index.index()).copied()
     }
 
     pub fn neighbors(
@@ -820,15 +785,12 @@ impl TopologyBuilder {
         }
 
         Ok(Topology {
-            data: Arc::new(TopologyData {
-                definitions: self.definitions,
-                instances: self.instances,
-                atom_order,
-                bond_order,
-                atom_indices,
-                bond_indices,
-            }),
-            identity: TopologyIdentity(Arc::new(IdentityToken)),
+            definitions: self.definitions,
+            instances: self.instances,
+            atom_order,
+            bond_order,
+            atom_indices,
+            bond_indices,
         })
     }
 
@@ -1039,15 +1001,23 @@ impl fmt::Display for TopologyError {
 impl std::error::Error for TopologyError {}
 
 /// A topology-bound, sorted, unique dense atom selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AtomSelection {
-    topology: TopologyIdentity,
+    topology: Arc<Topology>,
     indices: Vec<TopologyAtomIndex>,
 }
 
+impl PartialEq for AtomSelection {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.topology, &other.topology) && self.indices == other.indices
+    }
+}
+
+impl Eq for AtomSelection {}
+
 impl AtomSelection {
     pub fn from_atoms(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         atoms: impl IntoIterator<Item = InstanceAtomId>,
     ) -> Result<Self, SelectionError> {
         let mut indices = atoms
@@ -1061,13 +1031,13 @@ impl AtomSelection {
         indices.sort_unstable();
         indices.dedup();
         Ok(Self {
-            topology: topology.identity(),
+            topology: Arc::clone(topology),
             indices,
         })
     }
 
     pub fn from_indices(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         indices: impl IntoIterator<Item = TopologyAtomIndex>,
     ) -> Result<Self, SelectionError> {
         let atoms = indices
@@ -1082,7 +1052,7 @@ impl AtomSelection {
     }
 
     pub fn for_instances(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         instances: impl IntoIterator<Item = MoleculeInstanceId>,
     ) -> Result<Self, SelectionError> {
         let instances = instances.into_iter().collect::<BTreeSet<_>>();
@@ -1102,7 +1072,7 @@ impl AtomSelection {
     }
 
     pub fn for_definitions(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         definitions: impl IntoIterator<Item = MoleculeDefinitionId>,
     ) -> Result<Self, SelectionError> {
         let definitions = definitions.into_iter().collect::<BTreeSet<_>>();
@@ -1119,7 +1089,7 @@ impl AtomSelection {
     }
 
     pub fn for_roles(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         roles: impl IntoIterator<Item = MoleculeRole>,
     ) -> Result<Self, SelectionError> {
         let roles = roles.into_iter().collect::<BTreeSet<_>>();
@@ -1131,7 +1101,7 @@ impl AtomSelection {
     }
 
     pub fn for_elements(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         elements: impl IntoIterator<Item = Element>,
     ) -> Result<Self, SelectionError> {
         let elements = elements.into_iter().collect::<BTreeSet<_>>();
@@ -1144,7 +1114,7 @@ impl AtomSelection {
         )
     }
 
-    pub fn for_chain_label(topology: &Topology, label: &str) -> Result<Self, SelectionError> {
+    pub fn for_chain_label(topology: &Arc<Topology>, label: &str) -> Result<Self, SelectionError> {
         let mut atoms = Vec::new();
         for (instance_id, _) in topology.instances() {
             let Some(qualified) = topology
@@ -1176,7 +1146,7 @@ impl AtomSelection {
     }
 
     pub fn connected_component(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         instance: MoleculeInstanceId,
         component: usize,
     ) -> Result<Self, SelectionError> {
@@ -1193,7 +1163,7 @@ impl AtomSelection {
     }
 
     pub fn from_query_matches(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         instance: MoleculeInstanceId,
         matches: &[QueryMatch],
     ) -> Result<Self, SelectionError> {
@@ -1212,18 +1182,25 @@ impl AtomSelection {
         )
     }
 
-    pub fn ensure_compatible(&self, topology: &Topology) -> Result<(), SelectionError> {
-        if self.topology != topology.identity {
-            return Err(SelectionError::TopologyIdentityMismatch);
+    pub fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), SelectionError> {
+        if !Arc::ptr_eq(&self.topology, topology) {
+            return Err(SelectionError::TopologyMismatch);
         }
         Ok(())
+    }
+
+    pub fn topology(&self) -> &Topology {
+        &self.topology
     }
 
     pub fn indices(&self) -> &[TopologyAtomIndex] {
         &self.indices
     }
 
-    pub fn semantic_ids(&self, topology: &Topology) -> Result<Vec<InstanceAtomId>, SelectionError> {
+    pub fn semantic_ids(
+        &self,
+        topology: &Arc<Topology>,
+    ) -> Result<Vec<InstanceAtomId>, SelectionError> {
         self.ensure_compatible(topology)?;
         Ok(self
             .indices
@@ -1242,12 +1219,12 @@ impl AtomSelection {
     /// to `policy`; removal is never implicit.
     pub fn remap_to(
         &self,
-        source: &Topology,
-        target: &Topology,
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
         policy: transform::RemovedSelectionPolicy,
     ) -> Result<Self, transform::SelectionRemapError> {
-        if self.topology != source.identity {
+        if !Arc::ptr_eq(&self.topology, source) {
             return Err(transform::SelectionRemapError::SourceTopologyMismatch);
         }
         if !mapping.is_source(source) {
@@ -1277,7 +1254,7 @@ impl AtomSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SelectionError {
-    TopologyIdentityMismatch,
+    TopologyMismatch,
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     InvalidMoleculeInstanceId(MoleculeInstanceId),
     InvalidAtomId(InstanceAtomId),
@@ -1291,7 +1268,7 @@ pub enum SelectionError {
 impl fmt::Display for SelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyIdentityMismatch => {
+            Self::TopologyMismatch => {
                 formatter.write_str("atom selection belongs to a different topology")
             }
             Self::InvalidMoleculeDefinitionId(id) => {
@@ -1316,10 +1293,10 @@ impl fmt::Display for SelectionError {
 impl std::error::Error for SelectionError {}
 
 /// Explicit old-to-new lineage for a topology-changing operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct TopologyMapping {
-    old: TopologyIdentity,
-    new: TopologyIdentity,
+    source: Arc<Topology>,
+    target: Arc<Topology>,
     definitions: BTreeMap<MoleculeDefinitionId, MoleculeDefinitionId>,
     instances: BTreeMap<MoleculeInstanceId, MoleculeInstanceId>,
     atoms: BTreeMap<InstanceAtomId, InstanceAtomId>,
@@ -1336,6 +1313,29 @@ pub struct TopologyMapping {
     added_bonds: Vec<InstanceBondId>,
 }
 
+impl PartialEq for TopologyMapping {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.source, &other.source)
+            && Arc::ptr_eq(&self.target, &other.target)
+            && self.definitions == other.definitions
+            && self.instances == other.instances
+            && self.atoms == other.atoms
+            && self.bonds == other.bonds
+            && self.atom_indices == other.atom_indices
+            && self.bond_indices == other.bond_indices
+            && self.removed_definitions == other.removed_definitions
+            && self.added_definitions == other.added_definitions
+            && self.removed_instances == other.removed_instances
+            && self.added_instances == other.added_instances
+            && self.removed_atoms == other.removed_atoms
+            && self.added_atoms == other.added_atoms
+            && self.removed_bonds == other.removed_bonds
+            && self.added_bonds == other.added_bonds
+    }
+}
+
+impl Eq for TopologyMapping {}
+
 impl TopologyMapping {
     /// Constructs identity mappings between two topologies with identical
     /// static layouts.
@@ -1345,8 +1345,8 @@ impl TopologyMapping {
     /// be identical. This method does not solve a graph isomorphism or infer a
     /// mapping between reordered layouts.
     pub fn between_identical_layouts(
-        old: &Topology,
-        new: &Topology,
+        old: &Arc<Topology>,
+        new: &Arc<Topology>,
     ) -> Result<Self, TopologyMappingError> {
         if !old.same_layout(new) {
             return Err(TopologyMappingError::NotSameLayout);
@@ -1369,8 +1369,8 @@ impl TopologyMapping {
     /// agree with the atom mapping. Added and removed values are derived as the
     /// unmapped complements in authoritative topology order.
     pub fn from_pairs(
-        old: &Topology,
-        new: &Topology,
+        old: &Arc<Topology>,
+        new: &Arc<Topology>,
         definitions: impl IntoIterator<Item = (MoleculeDefinitionId, MoleculeDefinitionId)>,
         instances: impl IntoIterator<Item = (MoleculeInstanceId, MoleculeInstanceId)>,
         atoms: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
@@ -1449,8 +1449,8 @@ impl TopologyMapping {
             .collect();
 
         Ok(Self {
-            old: old.identity(),
-            new: new.identity(),
+            source: Arc::clone(old),
+            target: Arc::clone(new),
             definitions,
             instances,
             atom_indices,
@@ -1488,22 +1488,30 @@ impl TopologyMapping {
         })
     }
 
-    pub fn old_identity(&self) -> &TopologyIdentity {
-        &self.old
+    pub fn source(&self) -> &Topology {
+        &self.source
     }
 
-    pub fn new_identity(&self) -> &TopologyIdentity {
-        &self.new
+    pub fn source_arc(&self) -> Arc<Topology> {
+        Arc::clone(&self.source)
+    }
+
+    pub fn target(&self) -> &Topology {
+        &self.target
+    }
+
+    pub fn target_arc(&self) -> Arc<Topology> {
+        Arc::clone(&self.target)
     }
 
     /// Returns whether this mapping's source is exactly `topology`.
-    pub fn is_source(&self, topology: &Topology) -> bool {
-        self.old == topology.identity
+    pub fn is_source(&self, topology: &Arc<Topology>) -> bool {
+        Arc::ptr_eq(&self.source, topology)
     }
 
     /// Returns whether this mapping's target is exactly `topology`.
-    pub fn is_target(&self, topology: &Topology) -> bool {
-        self.new == topology.identity
+    pub fn is_target(&self, topology: &Arc<Topology>) -> bool {
+        Arc::ptr_eq(&self.target, topology)
     }
 
     /// Iterates definition pairs in source identifier order.
@@ -1887,14 +1895,17 @@ impl std::error::Error for TopologyMappingError {}
 /// Result of an immutable topology-changing operation.
 #[derive(Debug, Clone)]
 pub struct TopologyEditResult {
-    topology: Topology,
+    topology: Arc<Topology>,
     mapping: TopologyMapping,
 }
 
 impl TopologyEditResult {
-    /// Constructs a topology edit result after checking target identity.
-    pub fn new(topology: Topology, mapping: TopologyMapping) -> Result<Self, TopologyMappingError> {
-        if &topology.identity() != mapping.new_identity() {
+    /// Constructs a topology edit result after checking the exact target.
+    pub fn new(
+        topology: Arc<Topology>,
+        mapping: TopologyMapping,
+    ) -> Result<Self, TopologyMappingError> {
+        if !mapping.is_target(&topology) {
             return Err(TopologyMappingError::TargetTopologyMismatch);
         }
         Ok(Self { topology, mapping })
@@ -1904,11 +1915,16 @@ impl TopologyEditResult {
         &self.topology
     }
 
+    /// Shares the exact target topology allocation retained by this result.
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     pub fn mapping(&self) -> &TopologyMapping {
         &self.mapping
     }
 
-    pub fn into_parts(self) -> (Topology, TopologyMapping) {
+    pub fn into_parts(self) -> (Arc<Topology>, TopologyMapping) {
         (self.topology, self.mapping)
     }
 }
@@ -1941,7 +1957,7 @@ mod tests {
         (SmallMolecule::from_graph(graph), carbon, oxygen, bond)
     }
 
-    fn topology_with_reused_definition() -> (Topology, AtomId, AtomId, BondId) {
+    fn topology_with_reused_definition() -> (Arc<Topology>, AtomId, AtomId, BondId) {
         let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
@@ -1951,13 +1967,13 @@ mod tests {
         let mut second = MoleculeInstanceMetadata::default();
         second.insert_role(MoleculeRole::Solvent);
         builder.add_instance(definition, second).unwrap();
-        (builder.build().unwrap(), carbon, oxygen, bond)
+        (Arc::new(builder.build().unwrap()), carbon, oxygen, bond)
     }
 
     fn topology_from_smiles(
         smiles: &str,
     ) -> (
-        Topology,
+        Arc<Topology>,
         MoleculeDefinitionId,
         MoleculeInstanceId,
         Vec<AtomId>,
@@ -1971,10 +1987,16 @@ mod tests {
         let instance = builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        (builder.build().unwrap(), definition, instance, atoms, bonds)
+        (
+            Arc::new(builder.build().unwrap()),
+            definition,
+            instance,
+            atoms,
+            bonds,
+        )
     }
 
-    fn topology_with_two_distinct_definitions(reverse: bool) -> Topology {
+    fn topology_with_two_distinct_definitions(reverse: bool) -> Arc<Topology> {
         let carbon = SmallMolecule::from_smiles_sanitized("C").unwrap();
         let carbon_oxygen = SmallMolecule::from_smiles_sanitized("CO").unwrap();
         let molecules = if reverse {
@@ -1989,10 +2011,10 @@ mod tests {
                 .add_instance(definition, MoleculeInstanceMetadata::default())
                 .unwrap();
         }
-        builder.build().unwrap()
+        Arc::new(builder.build().unwrap())
     }
 
-    fn topology_with_repeated_identical_definitions() -> Topology {
+    fn topology_with_repeated_identical_definitions() -> Arc<Topology> {
         let water = SmallMolecule::from_smiles_sanitized("O").unwrap();
         let mut builder = TopologyBuilder::new();
         for _ in 0..2 {
@@ -2003,7 +2025,7 @@ mod tests {
                     .unwrap();
             }
         }
-        builder.build().unwrap()
+        Arc::new(builder.build().unwrap())
     }
 
     #[test]
@@ -2049,14 +2071,25 @@ mod tests {
     }
 
     #[test]
-    fn topology_identity_is_exact_while_layout_can_match() {
+    fn topology_directly_owns_its_layout_collections() {
         let (topology, ..) = topology_with_reused_definition();
-        let clone = topology.clone();
+        assert_eq!(topology.definitions.len(), 1);
+        assert_eq!(topology.instances.len(), 2);
+        assert_eq!(topology.atom_order.len(), 4);
+        assert_eq!(topology.bond_order.len(), 2);
+        assert_eq!(topology.atom_indices.len(), 4);
+        assert_eq!(topology.bond_indices.len(), 2);
+    }
+
+    #[test]
+    fn shared_allocation_is_exact_while_layout_can_match() {
+        let (topology, ..) = topology_with_reused_definition();
+        let clone = Arc::clone(&topology);
         let (independent, ..) = topology_with_reused_definition();
 
-        assert!(topology.same_identity(&clone));
+        assert!(Arc::ptr_eq(&topology, &clone));
         assert!(topology.same_layout(&clone));
-        assert!(!topology.same_identity(&independent));
+        assert!(!Arc::ptr_eq(&topology, &independent));
         assert!(topology.same_layout(&independent));
         assert_eq!(clone.atom_ids(), topology.atom_ids());
     }
@@ -2066,7 +2099,7 @@ mod tests {
         let forward = topology_with_two_distinct_definitions(false);
         let reverse = topology_with_two_distinct_definitions(true);
 
-        assert!(!forward.same_identity(&reverse));
+        assert!(!Arc::ptr_eq(&forward, &reverse));
         assert!(!forward.same_layout(&reverse));
         assert_eq!(
             TopologyMapping::between_identical_layouts(&forward, &reverse),
@@ -2080,7 +2113,7 @@ mod tests {
         let target = topology_with_repeated_identical_definitions();
 
         assert!(source.same_layout(&target));
-        assert!(!source.same_identity(&target));
+        assert!(!Arc::ptr_eq(&source, &target));
         let mapping = TopologyMapping::between_identical_layouts(&source, &target).unwrap();
         for (definition, _) in source.definitions() {
             assert_eq!(mapping.map_definition(definition), Some(definition));
@@ -2133,7 +2166,7 @@ mod tests {
         builder
             .add_instance(second, MoleculeInstanceMetadata::default())
             .unwrap();
-        let topology = builder.build().unwrap();
+        let topology = Arc::new(builder.build().unwrap());
         assert_eq!(topology.definition_count(), 2);
         assert_eq!(topology.instance_count(), 2);
         assert_eq!(
@@ -2206,7 +2239,7 @@ mod tests {
             .add_instance(ethane_definition, metadata.clone())
             .unwrap();
         let water_instance = builder.add_instance(water_definition, metadata).unwrap();
-        let topology = builder.build().unwrap();
+        let topology = Arc::new(builder.build().unwrap());
 
         let ligand = AtomSelection::for_roles(&topology, [MoleculeRole::Ligand]).unwrap();
         assert_eq!(ligand.indices().len(), 3);
@@ -2236,10 +2269,10 @@ mod tests {
         independent_builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        let independent = independent_builder.build().unwrap();
+        let independent = Arc::new(independent_builder.build().unwrap());
         assert_eq!(
             ligand.ensure_compatible(&independent),
-            Err(SelectionError::TopologyIdentityMismatch)
+            Err(SelectionError::TopologyMismatch)
         );
     }
 
@@ -2273,7 +2306,7 @@ mod tests {
         let second = builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        let topology = builder.build().unwrap();
+        let topology = Arc::new(builder.build().unwrap());
         assert_eq!(topology.definition_count(), 2);
         assert!(topology
             .definition(definition)
@@ -2314,7 +2347,7 @@ mod tests {
         let old_extra_instance = old_builder
             .add_instance(old_extra_definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        let old = old_builder.build().unwrap();
+        let old = Arc::new(old_builder.build().unwrap());
 
         let mut new_graph = Molecule::new();
         let new_carbon = new_graph
@@ -2335,7 +2368,7 @@ mod tests {
         let new_extra_instance = new_builder
             .add_instance(new_extra_definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        let new = new_builder.build().unwrap();
+        let new = Arc::new(new_builder.build().unwrap());
 
         let old_carbon = InstanceAtomId::new(old_instance, carbon);
         let mapping = TopologyMapping::from_pairs(
@@ -2524,7 +2557,7 @@ mod tests {
     }
 
     #[test]
-    fn topology_edit_result_checks_mapping_target_identity() {
+    fn topology_edit_result_checks_exact_mapping_target_arc() {
         let source = topology_with_repeated_identical_definitions();
         let target = topology_with_repeated_identical_definitions();
         let wrong_target = topology_with_repeated_identical_definitions();
@@ -2535,7 +2568,7 @@ mod tests {
             TopologyMappingError::TargetTopologyMismatch
         );
         let mapping = TopologyMapping::between_identical_layouts(&source, &target).unwrap();
-        let result = TopologyEditResult::new(target.clone(), mapping).unwrap();
-        assert!(result.topology().same_identity(&target));
+        let result = TopologyEditResult::new(Arc::clone(&target), mapping).unwrap();
+        assert!(Arc::ptr_eq(&result.mapping().target_arc(), &target));
     }
 }

@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::hint::black_box;
 use std::io::Cursor;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kekule::core::{Atom, Element, Molecule};
@@ -232,7 +233,7 @@ fn benchmark_xtc(profile: Profile) -> Result<(), Box<dyn Error>> {
 fn benchmark_readers<Sequential, Indexed, MakeSequential, MakeIndexed>(
     codec: &str,
     profile: Profile,
-    topology: &Topology,
+    topology: &Arc<Topology>,
     bytes: &[u8],
     writer_elapsed: Duration,
     mut make_sequential: MakeSequential,
@@ -244,7 +245,7 @@ where
     MakeSequential: FnMut() -> Sequential,
     MakeIndexed: FnMut() -> Indexed,
 {
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(topology));
     let sequential_start = Instant::now();
     let mut decoded_frames = 0_usize;
     for _ in 0..profile.passes {
@@ -295,7 +296,7 @@ where
     Ok(())
 }
 
-fn topology(atom_count: usize) -> Result<Topology, Box<dyn Error>> {
+fn topology(atom_count: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
     let mut molecule = Molecule::builder();
     let carbon = Element::from_symbol("C").expect("carbon is a built-in element");
     let mut previous = None;
@@ -310,12 +311,12 @@ fn topology(atom_count: usize) -> Result<Topology, Box<dyn Error>> {
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
-    Ok(builder.build()?)
+    Ok(Arc::new(builder.build()?))
 }
 
-fn binding(topology: &Topology) -> TrajectoryTopologyBinding {
+fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
     TrajectoryTopologyBinding::new(
-        topology.clone(),
+        Arc::clone(topology),
         AtomOrderAssertion::assert_file_uses_topology_order(topology),
     )
     .expect("benchmark binding")
@@ -334,13 +335,13 @@ fn positions(topology: &Topology) -> Vec<Point3> {
         .collect()
 }
 
-fn base_frame(topology: &Topology) -> Result<FrameBuffer, Box<dyn Error>> {
-    let mut frame = FrameBuffer::new(topology.clone());
+fn base_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
+    let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame.set_positions(Quantity::new(positions(topology), NANOMETER))?;
     Ok(frame)
 }
 
-fn dynamic_frame(topology: &Topology) -> Result<FrameBuffer, Box<dyn Error>> {
+fn dynamic_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = base_frame(topology)?;
     frame.set_cell(Some(PeriodicCell::new(
         Quantity::new(
@@ -358,10 +359,10 @@ fn dynamic_frame(topology: &Topology) -> Result<FrameBuffer, Box<dyn Error>> {
     Ok(frame)
 }
 
-fn encode_xyz(topology: &Topology, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+fn encode_xyz(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut writer = XyzWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(topology),
         XyzWriteOptions::default(),
         "bench.xyz",
     )?;
@@ -372,10 +373,10 @@ fn encode_xyz(topology: &Topology, frames: usize) -> Result<Vec<u8>, Box<dyn Err
     Ok(writer.finish()?.into_inner())
 }
 
-fn encode_dcd(topology: &Topology, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+fn encode_dcd(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(topology),
         DcdWriteOptions::default().with_step_sequence(0, 1),
         "bench.dcd",
     )?;
@@ -387,10 +388,10 @@ fn encode_dcd(topology: &Topology, frames: usize) -> Result<Vec<u8>, Box<dyn Err
     Ok(writer.finish()?.into_inner())
 }
 
-fn encode_trr(topology: &Topology, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+fn encode_trr(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(topology),
         TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
         "bench.trr",
     )?;
@@ -403,10 +404,10 @@ fn encode_trr(topology: &Topology, frames: usize) -> Result<Vec<u8>, Box<dyn Err
     Ok(writer.finish()?.into_inner())
 }
 
-fn encode_xtc(topology: &Topology, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+fn encode_xtc(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(topology),
         XtcWriteOptions::default(),
         "bench.xtc",
     )?;
