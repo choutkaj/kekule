@@ -18,7 +18,7 @@ harmonic bond potential.
 - Accepts explicit compatible quantities for harmonic parameters and potential
   outputs, then converts once to the modelling kernel's declared length,
   energy, gradient, and force-constant units.
-- Distinguishes incompatible exact topology identity, coordinate singularities,
+- Distinguishes incompatible topology allocations, coordinate singularities,
   unsupported periodic configurations, malformed outputs, and backend failures.
 - `ModelView` is a common transport for topology plus configuration state, not
   a promise that every potential supports every field. Each implementation
@@ -31,7 +31,7 @@ harmonic bond potential.
 
 - `Potential::evaluate(ModelView)` takes `&mut self` so implementations may
   retain caches while remaining object-safe.
-- Prepared potentials bind to exact `TopologyIdentity` and remain compatible
+- Prepared potentials retain one `Arc<Topology>` and remain compatible
   with supported model and ensemble-member configurations in `kekule`, plus
   `kekule-traj` frame and buffer views sharing that topology.
 - Harmonic terms use `0.5 * k * (r - r0)^2` and validate positive finite parameters, unique bond terms, and the topology observed at construction.
@@ -64,10 +64,13 @@ harmonic bond potential.
 - v5: Make energies, Cartesian gradients, harmonic lengths, and force constants
   quantity-valued instead of relying on documentation-only units.
 - v6: Evaluate borrowed `ModelView` values, bind preparation and gradients to
-  exact topology identity/dense order, and move vector geometry to the common
+  one exact topology/dense order, and move vector geometry to the common
   `geometry` module.
 - v7: Add a structured unsupported-periodic-cell error and make the built-in
   harmonic potential's nonperiodic capability explicit across every structural
   view.
 - v8: Move trajectory-owned view regressions to `kekule-traj` while preserving
   the dependency-light `ModelView` potential contract in `kekule`.
+- v9: Use retained `Arc<Topology>` values and
+  pointer-compatible evaluation across model, ensemble, trajectory, and buffer
+  views.

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kekule::core::{Atom, Element, Molecule};
@@ -13,7 +14,7 @@ use kekule_traj::{
     AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryReader,
 };
 
-fn topology() -> Topology {
+fn topology() -> Arc<Topology> {
     let mut graph = Molecule::builder();
     graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
@@ -24,12 +25,12 @@ fn topology() -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
-fn binding(topology: &Topology) -> TrajectoryTopologyBinding {
+fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
     TrajectoryTopologyBinding::new(
-        topology.clone(),
+        Arc::clone(topology),
         AtomOrderAssertion::assert_file_uses_topology_order(topology),
     )
     .unwrap()
@@ -65,7 +66,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
         sequential.metadata().random_access(),
         RandomAccessCapability::SequentialOnly
     );
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(sequential.read_next(&mut destination).unwrap());
     assert!(!sequential.read_next(&mut destination).unwrap());
 

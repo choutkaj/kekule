@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -32,11 +33,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
-    let topology = builder.build()?;
+    let topology = Arc::new(builder.build()?);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc)
         .with_overwrite_policy(OverwritePolicy::Replace)
         .with_xtc_options(XtcWriteOptions::default().with_precision(1000.0)?);
-    let mut writer = create_trajectory_writer(&output, topology.clone(), options)?;
+    let mut writer = create_trajectory_writer(&output, Arc::clone(&topology), options)?;
     let cell = PeriodicCell::new(
         Quantity::new(
             [

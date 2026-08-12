@@ -79,7 +79,7 @@ coordinate/property-only mutation remains perception-neutral.
 
 - Serde derives or a Kekule-owned archive/wire format.
 - General molecule or topology reconstruction DTOs.
-- Process-local `TopologyIdentity` persistence.
+- Persistence of process-local `Arc<Topology>` sharing relationships.
 - Public incremental perception mutation.
 - Mutable SMCRA parentage, child arrays, records, or lookup internals.
 - Repairing malformed historical state through coercion or reperception.

@@ -6,6 +6,7 @@ use crate::structure::{
 };
 use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, ANGSTROM};
+use std::sync::Arc;
 
 use super::mmcif_interpret as raw;
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
@@ -76,7 +77,7 @@ pub fn interpret_mmcif_ensemble(
         .unwrap_or("<unknown>")
         .to_owned();
     let prototype = Model::with_observation(
-        source.topology().clone(),
+        source.shared_topology(),
         first.configuration().clone(),
         first.observation().cloned(),
     )
@@ -92,8 +93,8 @@ pub fn interpret_mmcif_ensemble(
         model_id: model_id.clone(),
         error,
     })?;
-    let topology = prototype.topology().clone();
-    let mut ensemble = Ensemble::new(topology.clone());
+    let topology = prototype.shared_topology();
+    let mut ensemble = Ensemble::new(Arc::clone(&topology));
 
     for member in source.members() {
         let positions = Positions::new(&topology, member.configuration().positions().values())
@@ -279,7 +280,7 @@ fn rebuild_model_with_connectivity(
         .block(report.data_block())
         .ok_or_else(|| interpret_error("interpreted mmCIF data block is unavailable"))?;
     let catalog = ConnectivityCatalog::from_block(block)?;
-    let topology = source.topology().clone();
+    let topology = source.topology();
     let mut builder = ModelBuilder::new();
     let mut pending = 0usize;
 
@@ -358,7 +359,10 @@ fn rebuild_model_with_connectivity(
     model.set_cell(source.cell().copied());
     if let Some(observation) = source.observation() {
         model
-            .set_observation(Some(rebound_observation(observation, model.topology())?))
+            .set_observation(Some(rebound_observation(
+                observation,
+                &model.shared_topology(),
+            )?))
             .map_err(interpret_error)?;
     }
     Ok((model, pending))
@@ -572,7 +576,7 @@ fn component_bond_order(
 
 fn rebound_observation(
     source: &StructureObservation,
-    target: &Topology,
+    target: &Arc<Topology>,
 ) -> Result<StructureObservation, raw::MmcifInterpretError> {
     let mut atoms = Vec::with_capacity(target.atom_count());
     for index in 0..target.atom_count() {

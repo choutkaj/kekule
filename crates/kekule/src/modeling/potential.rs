@@ -1,23 +1,32 @@
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::geometry::Vector3;
 use crate::structure::ModelView;
-use crate::topology::{InstanceAtomId, InstanceBondId, Topology, TopologyIdentity};
+use crate::topology::{InstanceAtomId, InstanceBondId, Topology};
 use crate::units::{
     Quantity, UnitError, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
     MODEL_LENGTH_UNIT,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 /// Validated energy and Cartesian gradient from a [`Potential`].
 ///
 /// Values are converted once to the modelling kernel's explicit canonical
 /// energy and gradient units.
 pub struct PotentialEvaluation {
-    topology: TopologyIdentity,
+    topology: Arc<Topology>,
     energy: Quantity<f64>,
     gradient: Quantity<Vec<Vector3>>,
+}
+
+impl PartialEq for PotentialEvaluation {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.topology, &other.topology)
+            && self.energy == other.energy
+            && self.gradient == other.gradient
+    }
 }
 
 impl PotentialEvaluation {
@@ -45,7 +54,7 @@ impl PotentialEvaluation {
             }
         }
         Ok(Self {
-            topology: model.topology().identity(),
+            topology: model.shared_topology(),
             energy,
             gradient,
         })
@@ -64,7 +73,7 @@ impl PotentialEvaluation {
         model: ModelView<'_>,
         atom: InstanceAtomId,
     ) -> Option<Quantity<Vector3>> {
-        if self.topology != model.topology().identity() {
+        if !Arc::ptr_eq(&self.topology, model.topology_arc()) {
             return None;
         }
         let index = model.topology().atom_index(atom)?;
@@ -80,7 +89,7 @@ impl PotentialEvaluation {
 ///
 /// Implementations may retain mutable caches between calls. Every returned
 /// evaluation must contain one finite gradient vector per topology atom.
-/// Prepared implementations bind to exact topology identity. Accepting a
+/// Prepared implementations bind to one shared `Arc<Topology>` allocation. Accepting a
 /// [`ModelView`] does not imply support for every configuration field;
 /// implementations must document capabilities such as periodic-cell support
 /// and return a structured error for unsupported state.
@@ -113,7 +122,7 @@ impl HarmonicBondParameter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 /// Caller-parameterized harmonic bond potential.
 ///
 /// Each term contributes `0.5 * k * (r - r0)^2`. No parameters are inferred,
@@ -121,8 +130,14 @@ impl HarmonicBondParameter {
 /// This potential is nonperiodic and rejects any evaluated configuration with
 /// a periodic cell.
 pub struct HarmonicBondPotential {
-    topology: TopologyIdentity,
+    topology: Arc<Topology>,
     terms: Vec<HarmonicBondTerm>,
+}
+
+impl PartialEq for HarmonicBondPotential {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.topology, &other.topology) && self.terms == other.terms
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,7 +150,7 @@ struct HarmonicBondTerm {
 
 impl HarmonicBondPotential {
     pub fn new(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         parameters: impl IntoIterator<Item = HarmonicBondParameter>,
     ) -> Result<Self, PotentialError> {
         let mut seen = BTreeSet::new();
@@ -178,7 +193,7 @@ impl HarmonicBondPotential {
             });
         }
         Ok(Self {
-            topology: topology.identity(),
+            topology: Arc::clone(topology),
             terms,
         })
     }
@@ -186,7 +201,7 @@ impl HarmonicBondPotential {
 
 impl Potential for HarmonicBondPotential {
     fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
-        if self.topology != model.topology().identity() {
+        if !Arc::ptr_eq(&self.topology, model.topology_arc()) {
             return Err(PotentialError::IncompatibleTopology);
         }
         if model.cell().is_some() {

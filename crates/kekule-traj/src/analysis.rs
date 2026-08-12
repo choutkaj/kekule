@@ -160,7 +160,7 @@ impl Trajectory {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let transformed = Trajectory::from_frames(self.topology().clone(), transformed_frames)
+        let transformed = Trajectory::from_frames(self.shared_topology(), transformed_frames)
             .map_err(|source| SuperpositionError::TrajectoryPublication(Box::new(source)))?;
         *self = transformed;
 
@@ -284,8 +284,8 @@ fn validate_measurement_selection(
     selection: &AtomSelection,
 ) -> Result<(), RmsdError> {
     selection
-        .ensure_compatible(trajectory.topology())
-        .map_err(|_| RmsdError::SelectionTopologyIdentityMismatch)?;
+        .ensure_compatible(&trajectory.shared_topology())
+        .map_err(|_| RmsdError::SelectionTopologyMismatch)?;
     if selection.indices().is_empty() {
         return Err(RmsdError::EmptySelection);
     }
@@ -327,7 +327,7 @@ fn transform_frame(
     source: crate::TrajectoryFrameView<'_>,
     transform: RigidTransform,
 ) -> Result<TrajectoryFrame, TransformFrameError> {
-    let topology = source.topology();
+    let topology = source.shared_topology();
     let configuration = source.configuration();
     let positions = configuration.positions().values();
     let positions = positions
@@ -336,7 +336,7 @@ fn transform_frame(
         .copied()
         .map(|point| transform.transform_point(point))
         .collect::<Vec<_>>();
-    let positions = Positions::new(topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
+    let positions = Positions::new(&topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
         .map_err(FrameError::from)
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     let cell = configuration
@@ -357,7 +357,7 @@ fn transform_frame(
             .copied()
             .map(|value| transform.transform_vector(value))
             .collect::<Vec<_>>();
-        let velocities = Velocities::new(topology, Quantity::new(rotated, values.unit()))
+        let velocities = Velocities::new(&topology, Quantity::new(rotated, values.unit()))
             .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
         transformed
             .set_velocities(Some(velocities))
@@ -370,7 +370,7 @@ fn transform_frame(
             .copied()
             .map(|value| transform.transform_vector(value))
             .collect::<Vec<_>>();
-        let forces = Forces::new(topology, Quantity::new(rotated, values.unit()))
+        let forces = Forces::new(&topology, Quantity::new(rotated, values.unit()))
             .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
         transformed
             .set_forces(Some(forces))
@@ -537,7 +537,7 @@ pub enum RmsdError {
     /// The requested reference frame does not exist.
     ReferenceFrameOutOfRange { index: usize, frame_count: usize },
     /// The measurement selection belongs to another exact topology.
-    SelectionTopologyIdentityMismatch,
+    SelectionTopologyMismatch,
     /// Direct RMSD requires at least one selected atom.
     EmptySelection,
     /// Explicit measurement weights do not match the selected atom count.
@@ -568,8 +568,8 @@ impl fmt::Display for RmsdError {
                 formatter,
                 "trajectory reference frame {index} is out of range for {frame_count} frames"
             ),
-            Self::SelectionTopologyIdentityMismatch => {
-                formatter.write_str("RMSD selection belongs to another topology identity")
+            Self::SelectionTopologyMismatch => {
+                formatter.write_str("RMSD selection belongs to another topology allocation")
             }
             Self::EmptySelection => formatter.write_str("RMSD requires at least one selected atom"),
             Self::WeightCountMismatch { expected, actual } => write!(
@@ -613,6 +613,8 @@ impl std::error::Error for RmsdError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use kekule::alignment::{AlignmentGeometry, PeriodicAlignmentPolicy};
     use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
@@ -622,7 +624,7 @@ mod tests {
     use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
 
-    fn make_topology(atom_count: usize) -> Topology {
+    fn make_topology(atom_count: usize) -> Arc<Topology> {
         let mut graph = Molecule::builder();
         let mut previous = None;
         for _ in 0..atom_count {
@@ -640,10 +642,10 @@ mod tests {
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        builder.build().unwrap()
+        Arc::new(builder.build().unwrap())
     }
 
-    fn selection(topology: &Topology, indices: &[usize]) -> AtomSelection {
+    fn selection(topology: &Arc<Topology>, indices: &[usize]) -> AtomSelection {
         AtomSelection::from_atoms(
             topology,
             indices
@@ -654,11 +656,11 @@ mod tests {
         .unwrap()
     }
 
-    fn all(topology: &Topology) -> AtomSelection {
+    fn all(topology: &Arc<Topology>) -> AtomSelection {
         AtomSelection::from_atoms(topology, topology.atom_ids().iter().copied()).unwrap()
     }
 
-    fn frame(topology: &Topology, points: &[Point3]) -> TrajectoryFrame {
+    fn frame(topology: &Arc<Topology>, points: &[Point3]) -> TrajectoryFrame {
         TrajectoryFrame::new(Configuration::new(
             Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap(),
         ))
@@ -709,7 +711,7 @@ mod tests {
         let reference = [Point3::origin(), Point3::origin()];
         let moving = [Point3::new(1.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)];
         let trajectory = Trajectory::from_frames(
-            topology.clone(),
+            Arc::clone(&topology),
             [frame(&topology, &reference), frame(&topology, &moving)],
         )
         .unwrap();
@@ -759,7 +761,7 @@ mod tests {
         let mut reference = transformed(&moving, transform);
         reference[3].x += 2.0;
         let trajectory = Trajectory::from_frames(
-            topology.clone(),
+            Arc::clone(&topology),
             [frame(&topology, &reference), frame(&topology, &moving)],
         )
         .unwrap();
@@ -862,7 +864,8 @@ mod tests {
             .props_mut()
             .insert("label".to_owned(), PropValue::String("moving".to_owned()));
         let mut trajectory =
-            Trajectory::from_frames(topology.clone(), [reference_frame, moving_frame]).unwrap();
+            Trajectory::from_frames(Arc::clone(&topology), [reference_frame, moving_frame])
+                .unwrap();
 
         let report = trajectory
             .superpose_to_frame_with_options(
@@ -932,7 +935,7 @@ mod tests {
             Point3::new(3.0, 0.0, 0.0),
         ];
         let mut trajectory = Trajectory::from_frames(
-            topology.clone(),
+            Arc::clone(&topology),
             [
                 frame(&topology, &reference),
                 frame(&topology, &moving),
@@ -984,7 +987,7 @@ mod tests {
             Positions::new(&topology, Quantity::new(&points, ANGSTROM)).unwrap(),
             cell,
         ));
-        let trajectory = Trajectory::from_frames(topology.clone(), [periodic_frame]).unwrap();
+        let trajectory = Trajectory::from_frames(Arc::clone(&topology), [periodic_frame]).unwrap();
 
         assert_eq!(
             trajectory.rmsd_to_frame(1, &all(&topology)),
@@ -1001,7 +1004,7 @@ mod tests {
         let independent = make_topology(4);
         assert_eq!(
             trajectory.rmsd_to_frame(0, &all(&independent)),
-            Err(RmsdError::SelectionTopologyIdentityMismatch)
+            Err(RmsdError::SelectionTopologyMismatch)
         );
         let weights = [1.0];
         assert_eq!(
@@ -1072,7 +1075,7 @@ mod tests {
             Point3::new(3.0, 0.0, 0.0),
         ];
         let trajectory = Trajectory::from_frames(
-            topology.clone(),
+            Arc::clone(&topology),
             [frame(&topology, &reference), frame(&topology, &collinear)],
         )
         .unwrap();

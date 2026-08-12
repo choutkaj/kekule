@@ -671,7 +671,7 @@ fn collect_small_rows(
 fn atom_observation(model: &Model, atom: InstanceAtomId) -> Option<&AtomObservation> {
     model
         .observation()
-        .and_then(|observation| observation.atom(model.topology(), atom).ok())
+        .and_then(|observation| observation.atom(&model.shared_topology(), atom).ok())
 }
 
 fn normalized_group_pdb(

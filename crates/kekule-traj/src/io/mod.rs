@@ -13,8 +13,8 @@
 //! | TRR | GROMACS XDR frames with f32 or f64 position, box, velocity, and force blocks | one explicit f32 or f64 precision with per-frame optional blocks |
 //! | XTC | GROMACS magic 1995/2023, signed nonnegative i32 counts/steps, small uncompressed and ordinary compressed coordinates | magic 1995/2023 through the private audited encoder adapter at explicit lossy precision |
 //!
-//! Every open requires a [`TrajectoryTopologyBinding`], which couples one exact
-//! Kekule topology identity with caller-supplied atom-order evidence. Equal
+//! Every open requires a [`TrajectoryTopologyBinding`], which couples one shared
+//! `Arc<Topology>` with caller-supplied atom-order evidence. Equal
 //! atom count is never correspondence evidence. Native units are converted once
 //! at the codec boundary: DCD and default XYZ use angstrom, while TRR/XTC use
 //! GROMACS nanometre/picosecond conventions. XTC coordinate resolution is
@@ -50,7 +50,10 @@ pub mod xyz;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 use crate::{
     AtomOrderAssertion, AtomOrderAssertionKind, FrameBuffer, SeekableTrajectoryReader,
@@ -106,17 +109,17 @@ impl Default for TrajectoryIoLimits {
 /// Exact topology and caller-supplied atom-order evidence for a topology-free file.
 #[derive(Debug, Clone)]
 pub struct TrajectoryTopologyBinding {
-    topology: Topology,
+    topology: Arc<Topology>,
     atom_order: AtomOrderAssertion,
 }
 
 impl TrajectoryTopologyBinding {
     pub fn new(
-        topology: Topology,
+        topology: Arc<Topology>,
         atom_order: AtomOrderAssertion,
     ) -> Result<Self, TrajectoryError> {
         if !atom_order.is_compatible(&topology) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+            return Err(TrajectoryError::TopologyMismatch);
         }
         Ok(Self {
             topology,
@@ -126,6 +129,10 @@ impl TrajectoryTopologyBinding {
 
     pub fn topology(&self) -> &Topology {
         &self.topology
+    }
+
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
     }
 
     pub fn atom_order(&self) -> &AtomOrderAssertion {
@@ -623,6 +630,15 @@ impl TrajectoryReader for SequentialFileTrajectoryReader {
         }
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        match &self.inner {
+            SequentialReaderInner::Xyz(reader) => reader.shared_topology(),
+            SequentialReaderInner::Dcd(reader) => reader.shared_topology(),
+            SequentialReaderInner::Trr(reader) => reader.shared_topology(),
+            SequentialReaderInner::Xtc(reader) => reader.shared_topology(),
+        }
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
         match &mut self.inner {
             SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
@@ -664,6 +680,15 @@ impl TrajectoryReader for IndexedFileTrajectoryReader {
             IndexedReaderInner::Dcd(reader) => reader.topology(),
             IndexedReaderInner::Trr(reader) => reader.topology(),
             IndexedReaderInner::Xtc(reader) => reader.topology(),
+        }
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        match &self.inner {
+            IndexedReaderInner::Xyz(reader) => reader.shared_topology(),
+            IndexedReaderInner::Dcd(reader) => reader.shared_topology(),
+            IndexedReaderInner::Trr(reader) => reader.shared_topology(),
+            IndexedReaderInner::Xtc(reader) => reader.shared_topology(),
         }
     }
 
@@ -880,6 +905,15 @@ impl FileWriterInner {
         }
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        match self {
+            Self::Xyz(writer) => writer.shared_topology(),
+            Self::Dcd(writer) => writer.shared_topology(),
+            Self::Trr(writer) => writer.shared_topology(),
+            Self::Xtc(writer) => writer.shared_topology(),
+        }
+    }
+
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
         match self {
             Self::Xyz(writer) => writer.write_frame(frame),
@@ -1045,6 +1079,13 @@ impl TrajectoryWriter for FileTrajectoryWriter {
         }
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        match &self.inner {
+            Some(inner) => inner.shared_topology(),
+            None => unreachable!("finished path writers are consumed"),
+        }
+    }
+
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
         if self.failed {
             return Err(codec_context(
@@ -1084,7 +1125,7 @@ impl Drop for FileTrajectoryWriter {
 /// Creates a strict path writer backed by a temporary sibling file.
 pub fn create_trajectory_writer(
     path: impl AsRef<Path>,
-    topology: Topology,
+    topology: Arc<Topology>,
     options: TrajectoryWriteOptions,
 ) -> Result<FileTrajectoryWriter, TrajectoryError> {
     let destination = path.as_ref().to_path_buf();

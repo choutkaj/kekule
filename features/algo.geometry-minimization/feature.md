@@ -39,7 +39,7 @@ Minimize a fixed-topology molecular model without mutating the input, using dete
 ## Revision Notes
 
 - v1: Add normalized steepest descent with Armijo backtracking and structured convergence results.
-- v2: Migrate topology identity and gradients to the instance-qualified model.
+- v2: Migrate topology binding and gradients to the instance-qualified model.
 - v3: Backtrack recoverable coordinate singularities while preserving fatal
   potential and backend failures.
 - v4: Migrate minimization input and result signatures to the renamed `Model`

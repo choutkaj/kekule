@@ -12,8 +12,8 @@ foundational `kekule` crate.
   on `kekule`. Trajectory types and streaming traits live at the package root;
   codecs and format-agnostic factories live under `kekule_traj::io`, without
   defining another topology, coordinate, or unit model.
-- Opening requires an exact `Topology` plus an explicit
-  `AtomOrderAssertion`; equal atom count is never sufficient evidence.
+- Opening requires one shared `Arc<Topology>` plus an explicit
+  `AtomOrderAssertion` retaining that Arc; equal atom count is never sufficient evidence.
 - Auto-detection combines a bounded signature inspection with extension
   evidence. Explicit format selection still validates the selected header.
 - Sequential opening retains one handle and does not scan the full file.
@@ -143,3 +143,6 @@ extensions. A matching extension or atom count never expands the profile.
 - v7: Fold the codecs into the broader `kekule-traj` package and move the
   public I/O surface under `kekule_traj::io` before the first crates.io
   release.
+- v8: Make topology bindings, codec readers, and codec writers retain exact
+  `Arc<Topology>` values and expose shared topology ownership through the
+  streaming traits.

@@ -67,6 +67,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   and restricts `TopologyMapping::between_identical_layouts` to identity maps
   over that exact layout. Checked explicit mappings and topology-edit results
   expose structured consistency failures.
+- Raw `Topology` directly owns its private layout data and is not cloneable;
+  topology-bound containers use `Arc<Topology>` for cheap sharing and exact
+  compatibility without exposing a public identity type.
 - Immutable whole-instance edits live under the focused
   `topology::transform` namespace. Core structure containers expose explicit
   remapping methods and typed errors; `kekule-traj` builds frame and trajectory
@@ -112,8 +115,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   examples as downstream user code.
 - Downstream reconstruction tests compile and exercise every new checked
   perception, hierarchy enrichment, stereo-slot, and topology-layout surface.
-- Public topology tests compile the exact-identity, same-layout, checked
-  identity-mapping, and checked edit-result surface.
+- Public topology tests compile the shared-Arc, same-layout, checked
+  identical-layout mapping, and checked edit-result surface, while compile-fail
+  coverage keeps the removed raw-clone and identity APIs unavailable.
 - Downstream transformation tests compile instance retain/remove, stable
   mapping traversal, model and selection remapping, and ensemble remapping;
   `kekule-traj` separately covers owned trajectory and reusable-buffer remaps.
@@ -203,3 +207,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   instance partitioning without widening the crate root or prelude.
 - v31: Seal builder/editor staging graphs behind focused operations so `build`
   and `commit` are the only public routes to a completed `Molecule`.
+- v32: Make raw `Topology` a directly owned non-cloneable value and move exact
+  compatibility and cheap sharing to `Arc<Topology>` throughout the focused
+  structure, selection, mapping, alignment, potential, and companion APIs.

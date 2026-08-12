@@ -2,6 +2,7 @@
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
@@ -804,7 +805,8 @@ impl<R: Read + Seek> XtcReader<R> {
         info: &XtcFrameInfo,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(self.topology(), Quantity::new(positions, NANOMETER))
+        let topology = self.binding.shared_topology();
+        let mut data = FrameBufferData::new(&topology, Quantity::new(positions, NANOMETER))
             .with_time(Quantity::new(info.time, PICOSECOND))
             .with_step(info.step);
         if let Some(cell) = info.cell {
@@ -917,9 +919,16 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
         self.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.binding.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(
+            &self.binding.shared_topology(),
+            &destination.shared_topology(),
+        ) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self.pending_info.as_ref().map_or_else(
             || {
@@ -969,6 +978,10 @@ impl<R: Read + Seek> TrajectoryReader for IndexedXtcReader<R> {
         self.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.inner.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
         self.inner.read_next(destination)
     }
@@ -984,8 +997,11 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedXtcReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(
+            &self.inner.shared_topology(),
+            &destination.shared_topology(),
+        ) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
             .offsets
@@ -1110,7 +1126,7 @@ impl<W: Write> MollyWriterAdapter<W> {
 /// Strict XTC writer using explicit lossy precision.
 pub struct XtcWriter<W> {
     adapter: MollyWriterAdapter<W>,
-    topology: Topology,
+    topology: Arc<Topology>,
     options: XtcWriteOptions,
     source_label: String,
     frame_count: u64,
@@ -1119,7 +1135,7 @@ pub struct XtcWriter<W> {
 impl<W: Write> XtcWriter<W> {
     pub fn new(
         writer: W,
-        topology: Topology,
+        topology: Arc<Topology>,
         options: XtcWriteOptions,
         source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryError> {
@@ -1186,9 +1202,13 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         &self.topology
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if frame.topology().identity() != self.topology.identity() {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(&frame.shared_topology(), &self.topology) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         for (present, field) in [
             (frame.velocities().is_some(), "velocities"),

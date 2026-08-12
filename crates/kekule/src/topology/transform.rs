@@ -5,6 +5,7 @@
 //! implicitly.
 
 use std::fmt;
+use std::sync::Arc;
 
 use super::{
     InstanceAtomId, InstanceBondId, MoleculeDefinitionPayload, MoleculeInstanceId, SelectionError,
@@ -15,7 +16,7 @@ use super::{
 /// Retains complete molecule instances in source topology order.
 ///
 /// Duplicate identifiers are treated as one membership request. A request
-/// containing every source instance preserves exact topology identity. Empty
+/// containing every source instance preserves the source `Arc<Topology>`. Empty
 /// results and invalid identifiers are rejected before target construction.
 ///
 /// # Examples
@@ -26,6 +27,7 @@ use super::{
 /// use kekule::topology::{
 ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
 /// };
+/// use std::sync::Arc;
 ///
 /// let mut water_builder = Molecule::builder();
 /// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
@@ -37,16 +39,16 @@ use super::{
 /// metadata.insert_role(MoleculeRole::Solvent);
 /// let first = builder.add_instance(definition, metadata.clone())?;
 /// builder.add_instance(definition, metadata)?;
-/// let source = builder.build()?;
+/// let source = Arc::new(builder.build()?);
 ///
 /// let edit = transform::retain_instances(&source, [first])?;
 /// assert_eq!(edit.topology().instance_count(), 1);
 /// assert_eq!(edit.topology().definition_count(), 1);
-/// assert!(!edit.topology().same_identity(&source));
+/// assert!(!Arc::ptr_eq(&source, &edit.mapping().target_arc()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn retain_instances(
-    topology: &Topology,
+    topology: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<TopologyEditResult, TopologyTransformError> {
     let retained = validate_instances(topology, instances)?;
@@ -55,10 +57,10 @@ pub fn retain_instances(
 
 /// Removes complete molecule instances while preserving filtered source order.
 ///
-/// Duplicate identifiers are harmless. Removing no instances preserves exact
-/// topology identity; removing every instance is rejected.
+/// Duplicate identifiers are harmless. Removing no instances preserves the
+/// source `Arc<Topology>`; removing every instance is rejected.
 pub fn remove_instances(
-    topology: &Topology,
+    topology: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
 ) -> Result<TopologyEditResult, TopologyTransformError> {
     let removed = validate_instances(topology, instances)?;
@@ -105,7 +107,7 @@ fn validate_instances(
 }
 
 fn retain_normalized(
-    topology: &Topology,
+    topology: &Arc<Topology>,
     retained: &InstanceMembership,
 ) -> Result<TopologyEditResult, TopologyTransformError> {
     if retained.len == 0 {
@@ -113,7 +115,7 @@ fn retain_normalized(
     }
     if retained.len == topology.instance_count() {
         let mapping = TopologyMapping::between_identical_layouts(topology, topology)?;
-        return Ok(TopologyEditResult::new(topology.clone(), mapping)?);
+        return Ok(TopologyEditResult::new(Arc::clone(topology), mapping)?);
     }
 
     let mut referenced_definitions = vec![false; topology.definition_count()];
@@ -160,7 +162,7 @@ fn retain_normalized(
         instances.push((source_id, target_id));
     }
 
-    let target = builder.build()?;
+    let target = Arc::new(builder.build()?);
     let atoms = instances
         .iter()
         .flat_map(|(source_instance, target_instance)| {

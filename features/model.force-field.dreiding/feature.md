@@ -15,13 +15,13 @@ gradients once for supported nonperiodic structural views.
 - The package's default `dreiding` feature owns the optional `dreid-forge` and
   `dreid-kernel` dependencies, allowing future independent implementations to
   be selected without forcing DREIDING dependencies.
-- Prepares with an explicit `&Topology`, reference `ModelView`, and QEq grouping
+- Prepares with an explicit `&Arc<Topology>`, reference `ModelView`, and QEq grouping
   policy, then implements the core borrowed-view `Potential` contract.
 - The adapter is nonperiodic. Preparation rejects a reference view carrying a
   periodic cell with `DreidingPrepareError::UnsupportedPeriodicCell`, and
   evaluation rejects periodic views with
   `PotentialError::UnsupportedPeriodicCell`.
-- Binds preparation to exact topology identity, accepting models, ensemble
+- Binds preparation to one shared topology allocation, accepting models, ensemble
   members, and trajectory frames sharing it while rejecting independently
   constructed equal topology.
 - Exposes read-only per-atom type diagnostics and quantity-valued partial charges.
@@ -37,7 +37,7 @@ gradients once for supported nonperiodic structural views.
 - Keeps the dependency-light `Potential` evaluation contract in `kekule`; the
   companion package owns concrete implementations and namespaces them by
   preparation model.
-- Uses shared exact topology identity rather than rebuilding an
+- Retains the shared `Arc<Topology>` rather than rebuilding an
   adapter-specific signature during each evaluation.
 - Maps aromatic-flagged localized single and double bonds to DREIDING aromatic bonds
   without changing the bond orders stored by Kekule.
@@ -60,7 +60,7 @@ gradients once for supported nonperiodic structural views.
   molecule-instance charge isolation, exclusions, topology binding, singular geometry, and
   minimization integration.
 - Tests prepare once and evaluate model, ensemble-member, and trajectory-frame
-  views, reject independent topology identity, and exercise every QEq grouping
+  views, reject independently allocated equal-layout topologies, and exercise every QEq grouping
   policy.
 - Periodic-policy tests use atoms on opposite box faces and verify structured
   preparation failure plus consistent model, ensemble, trajectory-frame, and
@@ -88,7 +88,7 @@ gradients once for supported nonperiodic structural views.
   `Model` API.
 - v6: Integrate explicit coordinate, energy, gradient, and charge quantities at
   the adapter boundary while retaining raw numeric inner kernels.
-- v7: Bind preparation to exact `TopologyIdentity`, evaluate `ModelView`, make
+- v7: Bind preparation to the exact topology used at preparation, evaluate `ModelView`, make
   reference-geometry use explicit, and distinguish whole-topology,
   molecule-instance, and connected-component QEq grouping.
 - v8: Declare DREIDING nonperiodic and reject periodic reference and evaluation
@@ -100,3 +100,5 @@ gradients once for supported nonperiodic structural views.
   preparation or evaluation behavior.
 - v11: Set the publishable `kekule-potentials` package and its Kekule companion
   dependencies to the shared initial `0.1.0` release line.
+- v12: Retain `Arc<Topology>` during preparation and use shared-allocation
+  compatibility without a separate token.

@@ -83,3 +83,5 @@ deterministic compatibility profile in either byte order.
   remove the ordinary per-frame read-and-seek EOF probe.
 - v6: Publish the codec under `kekule_traj::io::dcd` as part of the unified
   `kekule-traj` trajectory crate.
+- v7: Retain the exact caller-supplied `Arc<Topology>` across DCD readers,
+  writers, and reusable destination buffers.

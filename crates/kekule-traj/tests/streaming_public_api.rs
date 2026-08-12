@@ -8,7 +8,7 @@ use kekule_traj::{
     TrajectoryFrameView, TrajectoryReader, TrajectoryWriter,
 };
 
-fn topology() -> Topology {
+fn topology() -> Arc<Topology> {
     let mut graph = Molecule::builder();
     graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
@@ -19,16 +19,20 @@ fn topology() -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
 struct CompanionSequential {
-    topology: Topology,
+    topology: Arc<Topology>,
 }
 
 impl TrajectoryReader for CompanionSequential {
     fn topology(&self) -> &Topology {
         &self.topology
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
     }
 
     fn read_next(&mut self, _destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
@@ -37,12 +41,16 @@ impl TrajectoryReader for CompanionSequential {
 }
 
 struct CompanionIndexed {
-    topology: Topology,
+    topology: Arc<Topology>,
 }
 
 impl TrajectoryReader for CompanionIndexed {
     fn topology(&self) -> &Topology {
         &self.topology
+    }
+
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
     }
 
     fn read_next(&mut self, _destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
@@ -65,7 +73,7 @@ impl SeekableTrajectoryReader for CompanionIndexed {
 }
 
 struct CompanionWriter {
-    topology: Topology,
+    topology: Arc<Topology>,
 }
 
 impl TrajectoryWriter for CompanionWriter {
@@ -73,9 +81,13 @@ impl TrajectoryWriter for CompanionWriter {
         &self.topology
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if !self.topology.same_identity(frame.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(&self.topology, &frame.shared_topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         Ok(())
     }
@@ -92,7 +104,7 @@ fn companion_crate_can_publish_frames_and_implement_all_streaming_traits() {
     assert!(assertion.is_compatible(&topology));
 
     let points = [Point3::new(1.0, 2.0, 3.0)];
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
         .replace_from_data(FrameBufferData::new(
             &topology,
@@ -101,10 +113,10 @@ fn companion_crate_can_publish_frames_and_implement_all_streaming_traits() {
         .unwrap();
 
     let mut sequential = CompanionSequential {
-        topology: topology.clone(),
+        topology: Arc::clone(&topology),
     };
     let mut indexed = CompanionIndexed {
-        topology: topology.clone(),
+        topology: Arc::clone(&topology),
     };
     let mut writer = CompanionWriter { topology };
     assert_sequential(&mut sequential);
@@ -112,3 +124,4 @@ fn companion_crate_can_publish_frames_and_implement_all_streaming_traits() {
     assert_writer(&mut writer);
     writer.write_frame(buffer.frame_view()).unwrap();
 }
+use std::sync::Arc;
