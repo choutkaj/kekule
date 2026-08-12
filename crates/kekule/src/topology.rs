@@ -314,8 +314,8 @@ impl InstanceSmcraHierarchy<'_> {
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,
     instances: Vec<MoleculeInstance>,
-    atom_order: Vec<InstanceAtomId>,
-    bond_order: Vec<InstanceBondId>,
+    instance_atoms: Vec<InstanceAtomId>,
+    instance_bonds: Vec<InstanceBondId>,
     atom_indices: BTreeMap<InstanceAtomId, TopologyAtomIndex>,
     bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
 }
@@ -339,8 +339,8 @@ impl Topology {
     pub fn same_layout(&self, other: &Self) -> bool {
         self.definitions == other.definitions
             && self.instances == other.instances
-            && self.atom_order == other.atom_order
-            && self.bond_order == other.bond_order
+            && self.instance_atoms == other.instance_atoms
+            && self.instance_bonds == other.instance_bonds
             && self.atom_indices == other.atom_indices
             && self.bond_indices == other.bond_indices
     }
@@ -436,39 +436,39 @@ impl Topology {
     }
 
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &Atom)> {
-        self.atom_order.iter().copied().map(|id| {
+        self.instance_atoms.iter().copied().map(|id| {
             (
                 id,
                 self.atom(id)
-                    .expect("built topology atom order contains only live atoms"),
+                    .expect("built topology instance atoms contain only live atoms"),
             )
         })
     }
 
     pub fn bonds(&self) -> impl ExactSizeIterator<Item = (InstanceBondId, &Bond)> {
-        self.bond_order.iter().copied().map(|id| {
+        self.instance_bonds.iter().copied().map(|id| {
             (
                 id,
                 self.bond(id)
-                    .expect("built topology bond order contains only live bonds"),
+                    .expect("built topology instance bonds contain only live bonds"),
             )
         })
     }
 
     pub fn atom_count(&self) -> usize {
-        self.atom_order.len()
+        self.instance_atoms.len()
     }
 
     pub fn bond_count(&self) -> usize {
-        self.bond_order.len()
+        self.instance_bonds.len()
     }
 
     pub fn atom_ids(&self) -> &[InstanceAtomId] {
-        &self.atom_order
+        &self.instance_atoms
     }
 
     pub fn bond_ids(&self) -> &[InstanceBondId] {
-        &self.bond_order
+        &self.instance_bonds
     }
 
     pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
@@ -476,7 +476,7 @@ impl Topology {
     }
 
     pub fn atom_id(&self, index: TopologyAtomIndex) -> Option<InstanceAtomId> {
-        self.atom_order.get(index.index()).copied()
+        self.instance_atoms.get(index.index()).copied()
     }
 
     pub fn bond_index(&self, bond: InstanceBondId) -> Option<TopologyBondIndex> {
@@ -484,7 +484,7 @@ impl Topology {
     }
 
     pub fn bond_id(&self, index: TopologyBondIndex) -> Option<InstanceBondId> {
-        self.bond_order.get(index.index()).copied()
+        self.instance_bonds.get(index.index()).copied()
     }
 
     pub fn neighbors(
@@ -755,14 +755,14 @@ impl TopologyBuilder {
         })?;
         checked_future_len(0, bond_count, TopologyIdKind::Bond)?;
 
-        let mut atom_order = Vec::new();
-        let mut bond_order = Vec::new();
+        let mut instance_atoms = Vec::new();
+        let mut instance_bonds = Vec::new();
         let mut atom_indices = BTreeMap::new();
         let mut bond_indices = BTreeMap::new();
-        atom_order
+        instance_atoms
             .try_reserve_exact(atom_count)
             .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::Atom))?;
-        bond_order
+        instance_bonds
             .try_reserve_exact(bond_count)
             .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::Bond))?;
 
@@ -771,24 +771,24 @@ impl TopologyBuilder {
             for atom in graph.atom_ids() {
                 let qualified = instance.qualify_atom(atom);
                 let index =
-                    checked_id::<TopologyAtomIndex>(atom_order.len(), TopologyIdKind::Atom)?;
+                    checked_id::<TopologyAtomIndex>(instance_atoms.len(), TopologyIdKind::Atom)?;
                 atom_indices.insert(qualified, index);
-                atom_order.push(qualified);
+                instance_atoms.push(qualified);
             }
             for bond in graph.bond_ids() {
                 let qualified = instance.qualify_bond(bond);
                 let index =
-                    checked_id::<TopologyBondIndex>(bond_order.len(), TopologyIdKind::Bond)?;
+                    checked_id::<TopologyBondIndex>(instance_bonds.len(), TopologyIdKind::Bond)?;
                 bond_indices.insert(qualified, index);
-                bond_order.push(qualified);
+                instance_bonds.push(qualified);
             }
         }
 
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
-            atom_order,
-            bond_order,
+            instance_atoms,
+            instance_bonds,
             atom_indices,
             bond_indices,
         })
@@ -2075,10 +2075,26 @@ mod tests {
         let (topology, ..) = topology_with_reused_definition();
         assert_eq!(topology.definitions.len(), 1);
         assert_eq!(topology.instances.len(), 2);
-        assert_eq!(topology.atom_order.len(), 4);
-        assert_eq!(topology.bond_order.len(), 2);
+        assert_eq!(topology.instance_atoms.len(), 4);
+        assert_eq!(topology.instance_bonds.len(), 2);
         assert_eq!(topology.atom_indices.len(), 4);
         assert_eq!(topology.bond_indices.len(), 2);
+        for &atom in &topology.instance_atoms {
+            assert_eq!(
+                topology.instance_atoms[topology.atom_indices[&atom].index()],
+                atom
+            );
+        }
+        for &bond in &topology.instance_bonds {
+            assert_eq!(
+                topology.instance_bonds[topology.bond_indices[&bond].index()],
+                bond
+            );
+        }
+
+        let debug = format!("{topology:?}");
+        assert!(debug.contains("instance_atoms"));
+        assert!(debug.contains("instance_bonds"));
     }
 
     #[test]

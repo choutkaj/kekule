@@ -392,11 +392,18 @@ Public `Topology` directly owns this data, conceptually:
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,
     instances: Vec<MoleculeInstance>,
-    atom_order: Vec<InstanceAtomId>,
-    bond_order: Vec<InstanceBondId>,
+    instance_atoms: Vec<InstanceAtomId>,
+    instance_bonds: Vec<InstanceBondId>,
     atom_indices: BTreeMap<InstanceAtomId, TopologyAtomIndex>,
     bond_indices: BTreeMap<InstanceBondId, TopologyBondIndex>,
 }
+```
+
+The dense instance-ID sequences and their inverse maps satisfy:
+
+```rust
+topology.instance_atoms[topology.atom_indices[&atom].index()] == atom
+topology.instance_bonds[topology.bond_indices[&bond].index()] == bond
 ```
 
 Raw `Topology` deliberately does not implement `Clone`. Objects that need
