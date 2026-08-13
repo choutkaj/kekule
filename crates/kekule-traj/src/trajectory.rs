@@ -502,9 +502,10 @@ impl<'a> TrajectoryFrameView<'a> {
 /// Complete borrowed frame state ready for transactional publication.
 ///
 /// A decoder builds this value only after it has read one complete frame into
-/// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field
-/// before changing the destination, converts units once, reuses dense-array
-/// allocations, and clears optional fields omitted from this value.
+/// reusable scratch. [`FrameBuffer::replace_from_data`] validates every field,
+/// including topology-bound atom and bond data, before changing the destination,
+/// converts units once, reuses dense-array allocations, and clears optional
+/// fields omitted from this value.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameBufferData<'a> {
     topology: &'a Arc<Topology>,
@@ -783,10 +784,10 @@ impl FrameBuffer {
 
     /// Replaces the complete visible frame transactionally.
     ///
-    /// All topology, count, unit, finite-value, atom-data, and optional-array
-    /// validation completes before any destination field changes. Existing
-    /// position, velocity, and force allocations are reused. Optional fields
-    /// absent from `data`, including properties, are cleared.
+    /// All topology, count, unit, finite-value, atom-data, bond-data, and
+    /// optional-array validation completes before any destination field changes.
+    /// Existing position, velocity, and force allocations are reused. Optional
+    /// fields absent from `data`, including properties, are cleared.
     pub fn replace_from_data(&mut self, data: FrameBufferData<'_>) -> Result<(), FrameError> {
         if !Arc::ptr_eq(&self.topology, data.topology) {
             return Err(FrameError::TopologyMismatch);

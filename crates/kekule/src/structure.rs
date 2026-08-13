@@ -1332,7 +1332,7 @@ impl PartialEq for Model {
 }
 
 impl Model {
-    /// Creates a non-periodic model without per-atom scientific data.
+    /// Creates a non-periodic model with empty atom and bond data.
     pub fn new(topology: Arc<Topology>, positions: Positions) -> Result<Self, ModelError> {
         if !positions.is_compatible(&topology) {
             return Err(ModelError::TopologyMismatch);
@@ -1604,8 +1604,8 @@ impl Model {
 
     /// Remaps this model to an explicitly related target topology.
     ///
-    /// The source model is unchanged. Positions, cell, and atom data are staged
-    /// before the target model is returned.
+    /// The source model is unchanged. Positions, cell, [`AtomData`], and
+    /// [`BondData`] are staged before the target model is returned.
     ///
     /// # Examples
     ///
