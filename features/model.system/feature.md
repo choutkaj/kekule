@@ -39,6 +39,10 @@ connected definition graph.
   atom count and finite values and support semantic-ID and dense-index access.
   Occupancy is dimensionless; B-factor APIs use length-squared `Quantity`
   values and normalize storage to square angstroms.
+- Canonical occupancy, canonical B-factor, and custom scalar properties reuse
+  one private dense unit-aware column implementation. Canonical columns remain
+  explicit `AtomData` fields with dedicated APIs and never enter the custom
+  property namespace.
 - `AtomData::new` starts with no columns. Field-specific setters replace or
   clear occupancy and B-factor columns without a positional all-future-fields
   constructor. `atom_count()` reports topology cardinality and `is_empty()`
@@ -78,6 +82,10 @@ connected definition graph.
 
 - `Model = Arc<Topology> + Positions + Option<PeriodicCell> + AtomData + BondData`;
   cloning a model shares the topology allocation while copying mutable state.
+- One private scalar-column implementation stages complete replacements,
+  individual mutation, all-missing normalization, unit conversion, and atom
+  remapping for canonical and custom `AtomData` columns. Public errors retain
+  canonical field context.
 - Complete positions and cells may change without changing the shared topology.
 - Conformer export belongs to the modeling layer, validates exact live local
   atom-ID compatibility, and does not mutate topology or chemistry.
@@ -97,6 +105,10 @@ connected definition graph.
   and reserved names, exact lengths, non-finite rejection, compatible unit
   conversion, incompatible units, transactionality, and a complete
   `conformational_entropy` visualization column.
+- Canonical/custom coexistence regressions verify fixed canonical units,
+  case-insensitive reserved names, custom-only property iteration, shared dense
+  normalization and validation behavior, transactional replacement, remapping,
+  and unchanged mmCIF occupancy/B-factor round trips.
 - Macro construction tests cover one valid selected conformer alongside many
   unrelated invalid conformers, rejection when an invalid conformer is selected,
   and preservation of all source conformers.
@@ -154,3 +166,6 @@ connected definition graph.
 - v17: Add exact-topology-bound `BondData`, conservative unit-aware scalar
   custom properties on atom and bond data, zero-copy model views, and complete
   atom/bond property remapping.
+- v18: Reuse one private dense unit-aware scalar-column implementation for
+  canonical occupancy, canonical B-factor, and custom properties while
+  preserving dedicated canonical APIs, units, errors, and format semantics.
