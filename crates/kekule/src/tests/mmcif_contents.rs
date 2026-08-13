@@ -9,7 +9,7 @@ use crate::mmcif::{
 use crate::small::SmallMolecule;
 use crate::structure::{Model, ModelBuilder};
 use crate::topology::{MoleculeInstanceMetadata, MoleculeRole};
-use crate::units::{Quantity, NANOMETER};
+use crate::units::{Quantity, DIMENSIONLESS, NANOMETER};
 
 const MIXED: &str = r#"
 data_mixed
@@ -1370,6 +1370,13 @@ covale A N 1 A CA 1 doub
             Some(Quantity::new(0.125, NANOMETER.powi(2))),
         )
         .unwrap();
+    original
+        .atom_data_mut()
+        .set_property(
+            "analysis_score",
+            Quantity::new(vec![Some(3.0), None, None, None], DIMENSIONLESS),
+        )
+        .unwrap();
     let written = mmcif::write(
         &original,
         MmcifWriteOptions {
@@ -1401,6 +1408,12 @@ covale A N 1 A CA 1 doub
         round_trip.model().atom_data().b_factors(),
         original.atom_data().b_factors()
     );
+    assert!(round_trip
+        .model()
+        .atom_data()
+        .property("analysis_score")
+        .unwrap()
+        .is_none());
     let (first_id, first_instance) = round_trip.model().topology().instances().next().unwrap();
     let first = round_trip
         .model()
