@@ -2,9 +2,9 @@ id = "model.topology"
 title = "Topology construction and shared ownership"
 area = "modeling"
 domains = ["small-molecule", "macromolecule"]
-version = 10
+version = 11
 status = "supported"
-description = "Construct directly owned immutable coordinate-free systems from connected reusable molecule definitions with Arc-based sharing, instance-qualified hierarchy navigation, checked lineage mappings, and bound selections."
+description = "Construct directly owned immutable coordinate-free systems from connected reusable molecule definitions with Arc-based sharing, borrowed instance-qualified hierarchy navigation, checked lineage mappings, and bound selections."
 depends_on = [
   "core.graph",
   "core.atom-bond",

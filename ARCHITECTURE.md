@@ -271,8 +271,11 @@ identity:
 The hierarchy and its `SmcraChainId`, `SmcraResidueId`, and
 `SmcraAtomSiteId` values are definition-local. A reusable `MacroMolecule`
 definition may occur more than once in a system, so `Topology` qualifies these
-local IDs with `MoleculeInstanceId`. `Model` borrows that authoritative
-topology navigation; it never copies hierarchy state.
+local IDs with `MoleculeInstanceId` and exposes lightweight borrowed
+`InstanceChain`, `InstanceResidue`, and `InstanceAtomSite` views. Navigation
+through those views remains qualified; crossing back to a raw definition-local
+node is an explicit operation. `Model` borrows that authoritative topology
+navigation and never copies hierarchy state.
 
 Coordinate-model membership is not topology. Source model identifiers,
 alternate-location choices, occupancy, B-factors, raw Cartesian text, and other
@@ -565,10 +568,11 @@ position, velocity, force, gradient, and per-atom result arrays.
 
 The SMCRA-qualified IDs solve the same ambiguity for reusable macromolecule
 definitions. System-wide chain, residue, and atom-site iteration yields these
-qualified IDs in molecule-instance then definition-hierarchy order. Parent
-navigation returns qualified identities alongside borrowed definition-owned
-nodes. A valid small-molecule atom has no SMCRA parent and therefore returns
-`None`; malformed or cross-instance identities return structured errors.
+qualified borrowed views in molecule-instance then definition-hierarchy order.
+Their IDs and parent/child navigation remain instance-qualified while metadata
+is borrowed directly from definition-owned nodes. A valid small-molecule atom
+has no SMCRA parent and therefore returns `None`; malformed or cross-instance
+identities return structured errors.
 
 The dense ordering is authoritative and immutable for the lifetime of one
 topology. It need not be identical between independently constructed
@@ -798,9 +802,11 @@ topology allocation.
 
 `Model` is also the ordinary application-facing navigation object. Common atom,
 bond, molecule-instance, and qualified SMCRA lookups are thin read-only
-forwards to its shared `Topology`. `ModelView` provides the corresponding
-zero-copy navigation surface, so algorithms can use identical static hierarchy
-access with a model, ensemble member, trajectory frame, or frame buffer.
+forwards to its shared `Topology`. Qualified SMCRA lookups return borrowed
+instance views rather than raw definition-local nodes. `ModelView` provides the
+corresponding zero-copy navigation surface, so algorithms can use identical
+static hierarchy access with a model, ensemble member, trajectory frame, or
+frame buffer.
 
 A model rejects incomplete, non-finite, dimensionally incompatible, or
 topology-incompatible coordinate state.
@@ -1241,7 +1247,8 @@ bio
 
 topology
     Topology, TopologyBuilder, connected molecule definitions and instances,
-    instance-qualified IDs, dense topology indices, topology mappings
+    instance-qualified IDs and borrowed hierarchy views, dense topology
+    indices, topology mappings
 
 structure
     Positions, AtomData, Model, Ensemble, borrowed structural views

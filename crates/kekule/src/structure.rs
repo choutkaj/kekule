@@ -4,15 +4,15 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::bio::{MacroMolecule, SmcraAtomSite, SmcraChain, SmcraResidue};
+use crate::bio::MacroMolecule;
 use crate::core::{Atom, AtomId, Bond, ConformerError, ConformerId, Molecule, PropMap};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::small::SmallMolecule;
 use crate::topology::{
-    InstanceAtomId, InstanceAtomSiteId, InstanceBondId, InstanceChainId, InstanceResidueId,
-    InstanceSmcraHierarchy, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId,
-    MoleculeInstanceMetadata, Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder,
-    TopologyError, TopologyMapping,
+    InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
+    InstanceChainId, InstanceResidue, InstanceResidueId, InstanceSmcraHierarchy,
+    MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
+    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyError, TopologyMapping,
 };
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
 
@@ -764,30 +764,33 @@ impl Model {
         self.topology.hierarchy(instance)
     }
 
-    pub fn chains(&self) -> impl Iterator<Item = (InstanceChainId, &SmcraChain)> {
+    pub fn chains(&self) -> impl Iterator<Item = InstanceChain<'_>> {
         self.topology.chains()
     }
 
-    pub fn residues(&self) -> impl Iterator<Item = (InstanceResidueId, &SmcraResidue)> {
+    pub fn residues(&self) -> impl Iterator<Item = InstanceResidue<'_>> {
         self.topology.residues()
     }
 
-    pub fn atom_sites(&self) -> impl Iterator<Item = (InstanceAtomSiteId, &SmcraAtomSite)> {
+    pub fn atom_sites(&self) -> impl Iterator<Item = InstanceAtomSite<'_>> {
         self.topology.atom_sites()
     }
 
-    pub fn chain(&self, chain: InstanceChainId) -> Result<&SmcraChain, TopologyError> {
+    pub fn chain(&self, chain: InstanceChainId) -> Result<InstanceChain<'_>, TopologyError> {
         self.topology.chain(chain)
     }
 
-    pub fn residue(&self, residue: InstanceResidueId) -> Result<&SmcraResidue, TopologyError> {
+    pub fn residue(
+        &self,
+        residue: InstanceResidueId,
+    ) -> Result<InstanceResidue<'_>, TopologyError> {
         self.topology.residue(residue)
     }
 
     pub fn atom_site(
         &self,
         atom_site: InstanceAtomSiteId,
-    ) -> Result<&SmcraAtomSite, TopologyError> {
+    ) -> Result<InstanceAtomSite<'_>, TopologyError> {
         self.topology.atom_site(atom_site)
     }
 
@@ -801,35 +804,35 @@ impl Model {
     pub fn atom_site_for_atom(
         &self,
         atom: InstanceAtomId,
-    ) -> Result<Option<(InstanceAtomSiteId, &SmcraAtomSite)>, TopologyError> {
+    ) -> Result<Option<InstanceAtomSite<'_>>, TopologyError> {
         self.topology.atom_site_for_atom(atom)
     }
 
     pub fn residue_for_atom(
         &self,
         atom: InstanceAtomId,
-    ) -> Result<Option<(InstanceResidueId, &SmcraResidue)>, TopologyError> {
+    ) -> Result<Option<InstanceResidue<'_>>, TopologyError> {
         self.topology.residue_for_atom(atom)
     }
 
     pub fn chain_for_atom(
         &self,
         atom: InstanceAtomId,
-    ) -> Result<Option<(InstanceChainId, &SmcraChain)>, TopologyError> {
+    ) -> Result<Option<InstanceChain<'_>>, TopologyError> {
         self.topology.chain_for_atom(atom)
     }
 
     pub fn residue_for_site(
         &self,
         atom_site: InstanceAtomSiteId,
-    ) -> Result<(InstanceResidueId, &SmcraResidue), TopologyError> {
+    ) -> Result<InstanceResidue<'_>, TopologyError> {
         self.topology.residue_for_site(atom_site)
     }
 
     pub fn chain_for_residue(
         &self,
         residue: InstanceResidueId,
-    ) -> Result<(InstanceChainId, &SmcraChain), TopologyError> {
+    ) -> Result<InstanceChain<'_>, TopologyError> {
         self.topology.chain_for_residue(residue)
     }
 
@@ -1073,30 +1076,30 @@ impl<'a> ModelView<'a> {
         self.topology.hierarchy(instance)
     }
 
-    pub fn chains(self) -> impl Iterator<Item = (InstanceChainId, &'a SmcraChain)> + 'a {
+    pub fn chains(self) -> impl Iterator<Item = InstanceChain<'a>> + 'a {
         self.topology.chains()
     }
 
-    pub fn residues(self) -> impl Iterator<Item = (InstanceResidueId, &'a SmcraResidue)> + 'a {
+    pub fn residues(self) -> impl Iterator<Item = InstanceResidue<'a>> + 'a {
         self.topology.residues()
     }
 
-    pub fn atom_sites(self) -> impl Iterator<Item = (InstanceAtomSiteId, &'a SmcraAtomSite)> + 'a {
+    pub fn atom_sites(self) -> impl Iterator<Item = InstanceAtomSite<'a>> + 'a {
         self.topology.atom_sites()
     }
 
-    pub fn chain(self, chain: InstanceChainId) -> Result<&'a SmcraChain, TopologyError> {
+    pub fn chain(self, chain: InstanceChainId) -> Result<InstanceChain<'a>, TopologyError> {
         self.topology.chain(chain)
     }
 
-    pub fn residue(self, residue: InstanceResidueId) -> Result<&'a SmcraResidue, TopologyError> {
+    pub fn residue(self, residue: InstanceResidueId) -> Result<InstanceResidue<'a>, TopologyError> {
         self.topology.residue(residue)
     }
 
     pub fn atom_site(
         self,
         atom_site: InstanceAtomSiteId,
-    ) -> Result<&'a SmcraAtomSite, TopologyError> {
+    ) -> Result<InstanceAtomSite<'a>, TopologyError> {
         self.topology.atom_site(atom_site)
     }
 
@@ -1110,35 +1113,35 @@ impl<'a> ModelView<'a> {
     pub fn atom_site_for_atom(
         self,
         atom: InstanceAtomId,
-    ) -> Result<Option<(InstanceAtomSiteId, &'a SmcraAtomSite)>, TopologyError> {
+    ) -> Result<Option<InstanceAtomSite<'a>>, TopologyError> {
         self.topology.atom_site_for_atom(atom)
     }
 
     pub fn residue_for_atom(
         self,
         atom: InstanceAtomId,
-    ) -> Result<Option<(InstanceResidueId, &'a SmcraResidue)>, TopologyError> {
+    ) -> Result<Option<InstanceResidue<'a>>, TopologyError> {
         self.topology.residue_for_atom(atom)
     }
 
     pub fn chain_for_atom(
         self,
         atom: InstanceAtomId,
-    ) -> Result<Option<(InstanceChainId, &'a SmcraChain)>, TopologyError> {
+    ) -> Result<Option<InstanceChain<'a>>, TopologyError> {
         self.topology.chain_for_atom(atom)
     }
 
     pub fn residue_for_site(
         self,
         atom_site: InstanceAtomSiteId,
-    ) -> Result<(InstanceResidueId, &'a SmcraResidue), TopologyError> {
+    ) -> Result<InstanceResidue<'a>, TopologyError> {
         self.topology.residue_for_site(atom_site)
     }
 
     pub fn chain_for_residue(
         self,
         residue: InstanceResidueId,
-    ) -> Result<(InstanceChainId, &'a SmcraChain), TopologyError> {
+    ) -> Result<InstanceChain<'a>, TopologyError> {
         self.topology.chain_for_residue(residue)
     }
 
@@ -2129,33 +2132,63 @@ mod tests {
         let first_atom = InstanceAtomId::new(first, atom);
 
         assert_eq!(
-            model.chains().map(|(id, _)| id).collect::<Vec<_>>(),
-            view.chains().map(|(id, _)| id).collect::<Vec<_>>()
+            model.chains().map(InstanceChain::id).collect::<Vec<_>>(),
+            view.chains().map(InstanceChain::id).collect::<Vec<_>>()
         );
         assert_eq!(
-            model.residues().map(|(id, _)| id).collect::<Vec<_>>(),
-            view.residues().map(|(id, _)| id).collect::<Vec<_>>()
+            model
+                .residues()
+                .map(InstanceResidue::id)
+                .collect::<Vec<_>>(),
+            view.residues().map(InstanceResidue::id).collect::<Vec<_>>()
         );
         assert_eq!(
-            model.atom_sites().map(|(id, _)| id).collect::<Vec<_>>(),
-            view.atom_sites().map(|(id, _)| id).collect::<Vec<_>>()
+            model
+                .atom_sites()
+                .map(InstanceAtomSite::id)
+                .collect::<Vec<_>>(),
+            view.atom_sites()
+                .map(InstanceAtomSite::id)
+                .collect::<Vec<_>>()
         );
         assert!(std::ptr::eq(
-            model.chain(first_chain).unwrap(),
-            view.chain(first_chain).unwrap()
+            model.chain(first_chain).unwrap().local(),
+            view.chain(first_chain).unwrap().local()
         ));
         assert!(std::ptr::eq(
-            model.residue(second_residue).unwrap(),
-            view.residue(second_residue).unwrap()
+            model.residue(second_residue).unwrap().local(),
+            view.residue(second_residue).unwrap().local()
         ));
         assert!(std::ptr::eq(
-            model.atom_site(first_site).unwrap(),
-            view.atom_site(first_site).unwrap()
+            model.atom_site(first_site).unwrap().local(),
+            view.atom_site(first_site).unwrap().local()
         ));
         assert_eq!(
-            model.atom_site_for_atom(first_atom).unwrap().unwrap().0,
-            view.atom_site_for_atom(first_atom).unwrap().unwrap().0
+            model.atom_site_for_atom(first_atom).unwrap().unwrap().id(),
+            view.atom_site_for_atom(first_atom).unwrap().unwrap().id()
         );
+        let model_site = model
+            .chain(first_chain)
+            .unwrap()
+            .residues()
+            .next()
+            .unwrap()
+            .atom_sites()
+            .next()
+            .unwrap();
+        let view_site = view
+            .chain(first_chain)
+            .unwrap()
+            .residues()
+            .next()
+            .unwrap()
+            .atom_sites()
+            .next()
+            .unwrap();
+        assert_eq!(model_site.id(), first_site);
+        assert_eq!(view_site.id(), first_site);
+        assert_eq!(model_site.atom(), first_atom);
+        assert_eq!(view_site.atom(), first_atom);
         assert_eq!(
             model.hierarchy(first).unwrap().unwrap().molecule(),
             view.hierarchy(first).unwrap().unwrap().molecule()
