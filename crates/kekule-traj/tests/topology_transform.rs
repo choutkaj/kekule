@@ -3,10 +3,7 @@ use kekule::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule, PropValue
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential, Potential};
 use kekule::small::SmallMolecule;
-use kekule::structure::{
-    AtomObservation, Configuration, Ensemble, EnsembleMember, Model, Positions,
-    StructureObservation, TopologyRemapError,
-};
+use kekule::structure::{AtomData, Ensemble, EnsembleMember, Model, Positions, TopologyRemapError};
 use kekule::topology::transform::{
     remove_instances, retain_instances, RemovedSelectionPolicy, SelectionRemapError,
     TopologyTransformError,
@@ -17,7 +14,7 @@ use kekule::topology::{
 };
 use kekule::units::{
     Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT,
-    PICOSECOND,
+    PICOSECOND, SQUARE_ANGSTROM,
 };
 use kekule_traj::{
     Forces, FrameBuffer, Trajectory, TrajectoryFrame, TrajectoryRemapError, Velocities,
@@ -354,35 +351,24 @@ fn point_values(topology: &Topology, offset: f64) -> Vec<Point3> {
         .collect()
 }
 
-fn observation(topology: &Arc<Topology>) -> StructureObservation {
-    let atoms = (0..topology.atom_count())
-        .map(|index| {
-            let mut atom = AtomObservation::default();
-            atom.set_group_pdb(Some(format!("GROUP-{index}")));
-            atom.set_source_atom_site_id(Some(format!("site-{index}")));
-            atom.set_alternate_location(Some(format!("alt-{index}")));
-            atom.set_occupancy(Some(0.5 + index as f64 / 100.0))
-                .expect("finite occupancy");
-            atom.set_occupancy_raw(Some(format!("raw-occ-{index}")));
-            atom.set_b_factor(Some(10.0 + index as f64))
-                .expect("finite B-factor");
-            atom.set_b_factor_raw(Some(format!("raw-b-{index}")));
-            atom.set_cartesian_raw([
-                Some(format!("x-{index}")),
-                Some(format!("y-{index}")),
-                Some(format!("z-{index}")),
-            ]);
-            atom
-        })
-        .collect();
-    let mut observation =
-        StructureObservation::new(topology, atoms).expect("complete test observation");
-    observation.set_source_model_id(Some("model-17".to_owned()));
-    observation.props_mut().insert(
-        "experiment".to_owned(),
-        PropValue::String("xray".to_owned()),
-    );
-    observation
+fn atom_data(topology: &Arc<Topology>) -> AtomData {
+    let mut atom_data = AtomData::new(topology);
+    atom_data
+        .set_occupancies(
+            (0..topology.atom_count())
+                .map(|index| Some(0.5 + index as f64 / 100.0))
+                .collect::<Vec<_>>(),
+        )
+        .expect("complete occupancy column");
+    atom_data
+        .set_b_factors(Quantity::new(
+            (0..topology.atom_count())
+                .map(|index| Some(10.0 + index as f64))
+                .collect::<Vec<_>>(),
+            SQUARE_ANGSTROM,
+        ))
+        .expect("complete B-factor column");
+    atom_data
 }
 
 fn model(fixture: &Fixture, offset: f64) -> Model {
@@ -396,16 +382,17 @@ fn model(fixture: &Fixture, offset: f64) -> Model {
         [true, true, false],
     )
     .expect("valid test cell");
-    Model::with_observation(
+    Model::with_atom_data(
         Arc::clone(&fixture.topology),
-        Configuration::with_cell(positions, cell),
-        Some(observation(&fixture.topology)),
+        positions,
+        Some(cell),
+        atom_data(&fixture.topology),
     )
     .expect("valid test model")
 }
 
 #[test]
-fn model_observation_and_selection_remapping_preserve_complete_state() {
+fn model_atom_data_and_selection_remapping_preserve_complete_state() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
     let target_topology = edit.shared_topology();
@@ -418,21 +405,20 @@ fn model_observation_and_selection_remapping_preserve_complete_state() {
     assert_eq!(source, source_clone);
     assert!(Arc::ptr_eq(&target.shared_topology(), &target_topology));
     assert_eq!(target.cell(), source.cell());
-    let source_observation = source.observation().expect("source observation");
-    let target_observation = target.observation().expect("target observation");
-    assert_eq!(
-        target_observation.source_model_id(),
-        source_observation.source_model_id()
-    );
-    assert_eq!(target_observation.props(), source_observation.props());
+    let source_atom_data = source.atom_data();
+    let target_atom_data = target.atom_data();
     for (source_index, target_index) in edit.mapping().atom_index_pairs() {
         assert_eq!(
             target.position_at(target_index).expect("target position"),
             source.position_at(source_index).expect("source position")
         );
         assert_eq!(
-            target_observation.atom_at(target_index),
-            source_observation.atom_at(source_index)
+            target_atom_data.occupancy_at(target_index),
+            source_atom_data.occupancy_at(source_index)
+        );
+        assert_eq!(
+            target_atom_data.b_factor_at(target_index),
+            source_atom_data.b_factor_at(source_index)
         );
     }
 
@@ -539,8 +525,9 @@ fn state_remapping_rejects_equal_layout_substitutes_and_unmapped_target_atoms() 
         &fixture.topology,
         &independent_source.topology
     ));
+    let source_positions = source.positions().clone();
     assert_eq!(
-        source.configuration().positions().remap_to(
+        source_positions.remap_to(
             &independent_source.topology,
             &target_topology,
             edit.mapping(),
@@ -549,18 +536,14 @@ fn state_remapping_rejects_equal_layout_substitutes_and_unmapped_target_atoms() 
     );
     assert!(target_topology.same_layout(&independent_target));
     assert_eq!(
-        source.configuration().positions().remap_to(
-            &fixture.topology,
-            &independent_target,
-            edit.mapping(),
-        ),
+        source_positions.remap_to(&fixture.topology, &independent_target, edit.mapping(),),
         Err(TopologyRemapError::MappingTargetMismatch)
     );
 
     let mut wrong_destination = Positions::zeros(&independent_target);
     assert_eq!(
         wrong_destination.copy_remapped_from(
-            source.configuration().positions(),
+            &source_positions,
             &fixture.topology,
             &target_topology,
             edit.mapping(),
@@ -571,7 +554,7 @@ fn state_remapping_rejects_equal_layout_substitutes_and_unmapped_target_atoms() 
     let allocation = destination.values().value().as_ptr();
     destination
         .copy_remapped_from(
-            source.configuration().positions(),
+            &source_positions,
             &fixture.topology,
             &target_topology,
             edit.mapping(),
@@ -600,19 +583,21 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
     let target_topology = edit.shared_topology();
     let first = model(&fixture, 3.0);
     let second = model(&fixture, 30.0);
-    let mut first_member = EnsembleMember::new(first.configuration().clone());
+    let mut first_member = EnsembleMember::new(first.positions().clone());
+    first_member.set_cell(first.cell().copied());
     first_member.set_weight(Some(0.25)).expect("valid weight");
     first_member
-        .set_observation(first.observation().cloned())
-        .expect("valid observation");
+        .set_atom_data(first.atom_data().clone())
+        .expect("valid atom data");
     first_member
         .props_mut()
         .insert("member".to_owned(), PropValue::Int(1));
-    let mut second_member = EnsembleMember::new(second.configuration().clone());
+    let mut second_member = EnsembleMember::new(second.positions().clone());
+    second_member.set_cell(second.cell().copied());
     second_member.set_weight(Some(0.75)).expect("valid weight");
     second_member
-        .set_observation(second.observation().cloned())
-        .expect("valid observation");
+        .set_atom_data(second.atom_data().clone())
+        .expect("valid atom data");
     second_member
         .props_mut()
         .insert("member".to_owned(), PropValue::Int(2));
@@ -646,26 +631,12 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
         source_props
     );
     assert_ne!(
-        remapped
-            .member(0)
-            .expect("first member")
-            .configuration()
-            .cell(),
-        remapped
-            .member(1)
-            .expect("second member")
-            .configuration()
-            .cell()
+        remapped.member(0).expect("first member").cell(),
+        remapped.member(1).expect("second member").cell()
     );
     for member in remapped.members() {
-        assert!(member
-            .configuration()
-            .positions()
-            .is_compatible(&target_topology));
-        assert!(member
-            .observation()
-            .expect("preserved observation")
-            .is_compatible(&target_topology));
+        assert!(member.positions().is_compatible(&target_topology));
+        assert!(member.atom_data().is_compatible(&target_topology));
     }
 
     let (added_source, added_target, added_mapping, added_atom) = mapping_with_added_atom();
@@ -674,11 +645,9 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
         Quantity::new(vec![Point3::new(1.0, 0.0, 0.0)], ANGSTROM),
     )
     .expect("added-map source positions");
-    let added_ensemble = Ensemble::from_members(
-        added_source,
-        [EnsembleMember::new(Configuration::new(added_positions))],
-    )
-    .expect("added-map source ensemble");
+    let added_ensemble =
+        Ensemble::from_members(added_source, [EnsembleMember::new(added_positions)])
+            .expect("added-map source ensemble");
     assert!(matches!(
         added_ensemble.remap_to(&added_target, &added_mapping),
         Err(TopologyRemapError::Member { member: 0, error })
@@ -693,7 +662,8 @@ fn frame(fixture: &Fixture, offset: f64, step: u64) -> TrajectoryFrame {
     let vectors = (0..fixture.topology.atom_count())
         .map(|index| Vector3::new(offset + index as f64, 2.0, 3.0))
         .collect::<Vec<_>>();
-    let mut frame = TrajectoryFrame::new(model.configuration().clone());
+    let mut frame = TrajectoryFrame::new(model.positions().clone());
+    frame.set_cell(model.cell().copied());
     frame
         .set_velocities(Some(
             Velocities::new(
@@ -714,8 +684,8 @@ fn frame(fixture: &Fixture, offset: f64, step: u64) -> TrajectoryFrame {
         .expect("finite time");
     frame.set_step(Some(step));
     frame
-        .set_observation(model.observation().cloned())
-        .expect("compatible observation");
+        .set_atom_data(model.atom_data().clone())
+        .expect("compatible atom data");
     frame
         .props_mut()
         .insert("frame".to_owned(), PropValue::Int(step as i64));
@@ -727,13 +697,13 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
     let fixture = fixture();
     let edit = retained_fixture(&fixture);
     let target_topology = edit.shared_topology();
-    let positions_only = TrajectoryFrame::new(Configuration::new(
+    let positions_only = TrajectoryFrame::new(
         Positions::new(
             &fixture.topology,
             Quantity::new(point_values(&fixture.topology, 6.0), ANGSTROM),
         )
         .expect("positions-only frame"),
-    ));
+    );
     let frames = [
         frame(&fixture, 4.0, 40),
         positions_only,
@@ -747,25 +717,18 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
     assert!(Arc::ptr_eq(&remapped.shared_topology(), &target_topology));
     assert_eq!(remapped.len(), 3);
     for (source_frame, target_frame) in trajectory.frames().zip(remapped.frames()) {
-        assert_eq!(
-            target_frame.configuration().cell(),
-            source_frame.configuration().cell()
-        );
+        assert_eq!(target_frame.cell(), source_frame.cell());
         assert_eq!(target_frame.time(), source_frame.time());
         assert_eq!(target_frame.step(), source_frame.step());
         assert_eq!(target_frame.props(), source_frame.props());
         assert_eq!(
-            target_frame
-                .observation()
-                .map(StructureObservation::source_model_id),
-            source_frame
-                .observation()
-                .map(StructureObservation::source_model_id)
+            target_frame.atom_data().is_empty(),
+            source_frame.atom_data().is_empty()
         );
         for (source_index, target_index) in edit.mapping().atom_index_pairs() {
             assert_eq!(
-                target_frame.configuration().positions().values().value()[target_index.index()],
-                source_frame.configuration().positions().values().value()[source_index.index()]
+                target_frame.positions().values().value()[target_index.index()],
+                source_frame.positions().values().value()[source_index.index()]
             );
             assert_eq!(
                 target_frame
@@ -838,12 +801,7 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
     let independent = self::fixture();
     let independent_edit = retained_fixture(&independent);
     let mut wrong_buffer = FrameBuffer::new(independent_edit.shared_topology());
-    let before_positions = wrong_buffer
-        .configuration()
-        .positions()
-        .values()
-        .value()
-        .to_vec();
+    let before_positions = wrong_buffer.positions().values().value().to_vec();
     assert_eq!(
         wrong_buffer.copy_remapped_from(
             frames[0]
@@ -854,7 +812,7 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
         Err(TrajectoryRemapError::IncompatibleDestinationBuffer)
     );
     assert_eq!(
-        *wrong_buffer.configuration().positions().values().value(),
+        *wrong_buffer.positions().values().value(),
         before_positions.as_slice()
     );
 
@@ -864,11 +822,9 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
         Quantity::new(vec![Point3::new(2.0, 0.0, 0.0)], ANGSTROM),
     )
     .expect("added-map source positions");
-    let added_trajectory = Trajectory::from_frames(
-        added_source,
-        [TrajectoryFrame::new(Configuration::new(added_positions))],
-    )
-    .expect("added-map source trajectory");
+    let added_trajectory =
+        Trajectory::from_frames(added_source, [TrajectoryFrame::new(added_positions)])
+            .expect("added-map source trajectory");
     assert!(matches!(
         added_trajectory.remap_to(&added_target, &added_mapping),
         Err(TrajectoryRemapError::Frame { frame: 0, error })
@@ -886,13 +842,13 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
     let edit = retained_fixture(&fixture);
     let target_topology = edit.shared_topology();
     let full = frame(&fixture, 4.0, 40);
-    let positions_only = TrajectoryFrame::new(Configuration::new(
+    let positions_only = TrajectoryFrame::new(
         Positions::new(
             &fixture.topology,
             Quantity::new(point_values(&fixture.topology, 6.0), ANGSTROM),
         )
         .expect("positions-only frame"),
-    ));
+    );
     let mut buffer = FrameBuffer::new(target_topology);
     buffer
         .copy_remapped_from(
@@ -900,12 +856,12 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
             edit.mapping(),
         )
         .expect("full buffer remap");
-    assert!(buffer.frame_view().configuration().cell().is_some());
+    assert!(buffer.frame_view().cell().is_some());
     assert!(buffer.frame_view().velocities().is_some());
     assert!(buffer.frame_view().forces().is_some());
     assert!(buffer.frame_view().time().is_some());
     assert!(buffer.frame_view().step().is_some());
-    assert!(buffer.frame_view().observation().is_some());
+    assert!(!buffer.frame_view().atom_data().is_empty());
     assert!(!buffer.frame_view().props().is_empty());
 
     buffer
@@ -917,28 +873,28 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
         )
         .expect("positions-only buffer remap");
     let cleared = buffer.frame_view();
-    assert_eq!(cleared.configuration().cell(), None);
+    assert_eq!(cleared.cell(), None);
     assert_eq!(cleared.velocities(), None);
     assert_eq!(cleared.forces(), None);
     assert_eq!(cleared.time(), None);
     assert_eq!(cleared.step(), None);
-    assert_eq!(cleared.observation(), None);
+    assert!(cleared.atom_data().is_empty());
     assert!(cleared.props().is_empty());
     for (source_index, target_index) in edit.mapping().atom_index_pairs() {
         assert_eq!(
-            cleared.configuration().positions().values().value()[target_index.index()],
-            positions_only.configuration().positions().values().value()[source_index.index()]
+            cleared.positions().values().value()[target_index.index()],
+            positions_only.positions().values().value()[source_index.index()]
         );
     }
 
     let (source, target, mapping, added_atom) = mapping_with_added_atom();
-    let source_frame = TrajectoryFrame::new(Configuration::new(
+    let source_frame = TrajectoryFrame::new(
         Positions::new(
             &source,
             Quantity::new(vec![Point3::new(1.0, 2.0, 3.0)], ANGSTROM),
         )
         .expect("source positions"),
-    ));
+    );
     let mut destination = FrameBuffer::new(Arc::clone(&target));
     destination
         .set_positions(Quantity::new(
@@ -974,15 +930,17 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
         .set_time(Some(Quantity::new(81.0, PICOSECOND)))
         .expect("destination time");
     destination.set_step(Some(91));
-    let mut destination_observation = StructureObservation::empty(&target);
-    destination_observation.set_source_model_id(Some("destination-model".to_owned()));
-    destination_observation.props_mut().insert(
-        "observation".to_owned(),
-        PropValue::String("destination".to_owned()),
-    );
+    let mut destination_atom_data = AtomData::new(&target);
+    destination_atom_data
+        .set_b_factor(
+            &target,
+            target.atom_ids()[0],
+            Some(Quantity::new(99.0, SQUARE_ANGSTROM)),
+        )
+        .expect("destination atom data");
     destination
-        .set_observation(Some(destination_observation))
-        .expect("destination observation");
+        .set_atom_data(destination_atom_data)
+        .expect("destination atom data");
     destination.props_mut().insert(
         "frame".to_owned(),
         PropValue::String("destination".to_owned()),
@@ -1007,16 +965,13 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
         &after.shared_topology(),
         &before.shared_topology()
     ));
-    assert_eq!(
-        after.configuration().positions(),
-        before.configuration().positions()
-    );
-    assert_eq!(after.configuration().cell(), before.configuration().cell());
+    assert_eq!(after.positions(), before.positions());
+    assert_eq!(after.cell(), before.cell());
     assert_eq!(after.velocities(), before.velocities());
     assert_eq!(after.forces(), before.forces());
     assert_eq!(after.time(), before.time());
     assert_eq!(after.step(), before.step());
-    assert_eq!(after.observation(), before.observation());
+    assert_eq!(after.atom_data(), before.atom_data());
     assert_eq!(after.props(), before.props());
 }
 

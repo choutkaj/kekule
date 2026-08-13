@@ -4,5 +4,5 @@ area = "bio"
 domains = ["macromolecule"]
 version = 7
 status = "supported"
-description = "Assign DSSP 4.6.1-compatible protein secondary structure over one borrowed topology-plus-configuration snapshot while reassembling logical chains split across connected instances."
+description = "Assign DSSP 4.6.1-compatible protein secondary structure over one borrowed topology-plus-model-state snapshot while reassembling logical chains split across connected instances."
 depends_on = ["bio.hierarchy.smcra", "model.topology", "model.system"]

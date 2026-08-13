@@ -328,18 +328,18 @@ fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
 fn position_updates_are_complete_finite_and_transactional() {
     let (small, conformer, a, _, _) = two_atom_small(1.0);
     let mut model = Model::from_small_molecule(&small, conformer).unwrap();
-    let original = model.positions().to_vec();
+    let original = model.positions().values().value().to_vec();
     assert!(matches!(
         model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
         Err(PositionError::PositionCountMismatch { .. })
     ));
-    assert_eq!(model.positions().into_value(), original.as_slice());
+    assert_eq!(model.positions().values().into_value(), original.as_slice());
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(
         matches!(model.set_positions(Quantity::new(&invalid, ANGSTROM)), Err(PositionError::NonFinitePosition { atom }) if atom.atom() == a)
     );
-    assert_eq!(model.positions().into_value(), original.as_slice());
+    assert_eq!(model.positions().values().into_value(), original.as_slice());
 }
 
 #[test]
@@ -360,7 +360,10 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     assert!((initial.energy().into_value() - 50.0).abs() < 1.0e-10);
     let result = minimize(&model, &mut potential, MinimizeOptions::default()).unwrap();
     assert!(result.final_energy < result.initial_energy);
-    assert_eq!(model.positions()[1], Point3::new(2.0, 0.0, 0.0));
+    assert_eq!(
+        model.positions().values().value()[1],
+        Point3::new(2.0, 0.0, 0.0)
+    );
 
     let rebuilt = Model::from_small_molecule(&small, conformer).unwrap();
     assert_eq!(
@@ -373,7 +376,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     coincident
         .set_position(
             InstanceAtomId::new(instance, AtomId::new(2)),
-            Quantity::new(coincident.positions()[0], ANGSTROM),
+            Quantity::new(coincident.positions().values().value()[0], ANGSTROM),
         )
         .unwrap();
     assert_eq!(
@@ -444,7 +447,7 @@ struct RecoverableGeometryPotential;
 
 impl Potential for RecoverableGeometryPotential {
     fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
-        let coordinate = model.positions()[1].x;
+        let coordinate = model.positions().values().value()[1].x;
         if coordinate <= 0.25 {
             return Err(PotentialError::invalid_geometry(
                 "test coordinate",
@@ -498,8 +501,8 @@ fn minimization_backtracks_invalid_geometry_but_propagates_backend_failures() {
     assert_eq!(result.status, MinimizationStatus::MaxIterations);
     assert_eq!(result.iterations, 1);
     assert_eq!(result.evaluations, 3);
-    assert_eq!(result.model.positions()[1].x, 0.5);
-    assert_eq!(model.positions()[1].x, 1.0);
+    assert_eq!(result.model.positions().values().value()[1].x, 0.5);
+    assert_eq!(model.positions().values().value()[1].x, 1.0);
 
     let error = minimize(&model, &mut BackendFailurePotential { calls: 0 }, options).unwrap_err();
     assert!(matches!(

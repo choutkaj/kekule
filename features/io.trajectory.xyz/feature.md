@@ -15,8 +15,8 @@ file-backed trajectory I/O.
 - Comments, ordinary whitespace, final-newline absence, and line endings are
   handled within configured text limits. Extended XYZ schemas are not inferred.
 - Writers require a positive topology and at least one frame, use deterministic
-  locale-independent precision, and reject cell, velocity, force, time, step,
-  observation, or properties they cannot preserve.
+  locale-independent precision, and reject cell, atom data, velocity, force,
+  time, step, or properties they cannot preserve.
 
 ## Implementation Notes
 
@@ -75,3 +75,5 @@ file-backed trajectory I/O.
   `kekule-traj` trajectory crate.
 - v7: Retain the caller's exact `Arc<Topology>` in bindings, readers, and
   writers after removing raw topology handle cloning.
+- v8: Reject non-empty flattened frame `AtomData` explicitly after removing
+  the obsolete observation wrapper.

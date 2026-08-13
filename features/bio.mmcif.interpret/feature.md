@@ -3,9 +3,9 @@
 ## Summary
 
 Interpret one explicitly selected coordinate model from a loss-preserving
-`MmcifDocument` into separated topology, configuration, observation state, and
-report whose molecule instances are connected, or use a separate path for a
-verified shared-topology ensemble.
+`MmcifDocument` into flattened topology-bound model state and a report whose
+molecule instances are connected, or use a separate path for a verified
+shared-topology ensemble.
 
 ## Behavior/API
 
@@ -37,8 +37,8 @@ verified shared-topology ensemble.
   polymer links, branch links, or `_struct_conn` rows are rejected as structured
   interpretation errors; no source takes precedence.
 - After connectivity completion, every remaining graph component is emitted as
-  a separate connected molecule instance. Topology, configuration,
-  observation, role, report, and provenance identities are remapped together so
+  a separate connected molecule instance. Topology, positions, atom data,
+  role, report, and provenance identities are remapped together so
   no public interpretation result contains a disconnected `Molecule`.
 - Resolved local covalent links can merge components before final partitioning;
   noncovalent and unresolved links never merge them.
@@ -68,13 +68,16 @@ verified shared-topology ensemble.
 - Ensemble correspondence compares stable source atom identity rather than
   derived molecule insertion order. Reordered rows with the same source atom
   set fail deterministically as dense-order mismatches; changed residue,
-  occurrence, insertion, asymmetry, atom, component, or selected-altloc
-  identity fails as an atom-set mismatch.
+  occurrence, insertion, asymmetry, atom, or component identity fails as an
+  atom-set mismatch. The selected alternate location remains report provenance
+  and does not distinguish topology atoms across coordinate models.
 - Never writes mmCIF-specific labels into generic atom, molecule, or conformer
   property maps.
-- Preserves source coordinate-model ID, selected alternate location, occupancy,
-  B-factor, source atom-site ID, and raw Cartesian fields in topology-bound
-  `StructureObservation` records rather than static hierarchy.
+- Preserves occupancy and explicitly square-angstrom B-factor quantities in
+  topology-bound `AtomData`. Source
+  coordinate-model ID, selected alternate location, source atom-site ID, and
+  raw document values remain in interpretation reports/provenance or the
+  loss-preserving document rather than static hierarchy or model atom data.
 - Distance heuristics report connectivity candidates but do not assert
   authoritative single bonds without evidence-backed bond order.
 - Connectivity diagnostics reject finite Cartesian coordinates whose spatial
@@ -119,11 +122,11 @@ verified shared-topology ensemble.
   conflicting authoritative bond-order rejection, and unchanged component-
   template, polymer-link, and branch-link reconstruction.
 - Multi-model tests cover shared-topology ensemble construction, distinct
-  per-member source IDs/occupancy/B-factors, repeated residue/atom names,
+  per-member report source IDs and occupancy/B-factors, repeated residue/atom names,
   insertion-code variants, repeated sequence-free non-polymer occurrences,
-  reordered coordinate-model rows, selected alternate locations, stable valid
-  identity, and structured true atom-set, empty-selection, and multi-data-block
-  rejection.
+  reordered coordinate-model rows, differing selected alternate locations over
+  one shared topology atom with per-report provenance, stable valid identity,
+  and structured true atom-set, empty-selection, and multi-data-block rejection.
 - Successful bounded fuzz parses traverse the loss-preserving document and then
   exercise explicit selected-model interpretation, empty ensemble selection,
   extreme finite coordinates, ambiguous and auth-only declared connections,
@@ -174,3 +177,8 @@ verified shared-topology ensemble.
 - v15: Reject conflicting authoritative mmCIF bond-order evidence while keeping
   agreeing duplicate component, polymer, branch, and `_struct_conn` evidence
   idempotent.
+- v16: Populate flattened model/ensemble positions, cells, and `AtomData` while
+  retaining format-specific source identity in reports and provenance.
+- v17: Treat selected altloc labels strictly as provenance during ensemble
+  correspondence and convert mmCIF B-factors explicitly as square-angstrom
+  quantities.

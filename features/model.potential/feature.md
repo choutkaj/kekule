@@ -3,7 +3,7 @@
 ## Summary
 
 Provide a minimal object-safe energy-and-gradient contract over borrowed
-topology-plus-configuration views and a transparent caller-parameterized
+topology-plus-model-state views and a transparent caller-parameterized
 harmonic bond potential.
 
 ## Behavior/API
@@ -20,7 +20,7 @@ harmonic bond potential.
   energy, gradient, and force-constant units.
 - Distinguishes incompatible topology allocations, coordinate singularities,
   unsupported periodic configurations, malformed outputs, and backend failures.
-- `ModelView` is a common transport for topology plus configuration state, not
+- `ModelView` is a common transport for topology plus direct model state, not
   a promise that every potential supports every field. Each implementation
   documents its periodic-cell capability.
 - `HarmonicBondPotential` is nonperiodic and returns
@@ -32,7 +32,7 @@ harmonic bond potential.
 - `Potential::evaluate(ModelView)` takes `&mut self` so implementations may
   retain caches while remaining object-safe.
 - Prepared potentials retain one `Arc<Topology>` and remain compatible
-  with supported model and ensemble-member configurations in `kekule`, plus
+  with supported model and ensemble-member views in `kekule`, plus
   `kekule-traj` frame and buffer views sharing that topology.
 - Harmonic terms use `0.5 * k * (r - r0)^2` and validate positive finite parameters, unique bond terms, and the topology observed at construction.
 - Coincident bonded atoms return a structured coordinate-geometry failure because a nonzero-rest-length harmonic gradient has no defined Cartesian direction there.

@@ -36,8 +36,8 @@ sidecar over one connected shared core molecule graph.
   mutating parent/lookup state and reports
   `SmcraHierarchyError::IdentifierCapacityExceeded` with the affected ID kind.
 - Atom-site metadata preserves static type, label/auth chain, and label/auth
-  atom identity. Coordinate-model-specific fields live in
-  `StructureObservation`.
+  atom identity. Occupancy and B-factor live in topology-bound `AtomData`;
+  format-specific coordinate-model identity remains interpretation provenance.
 - Checked targeted restoration sets distinct residue label/author component
   IDs and returns mutable chain, residue, or atom-site property maps without
   exposing parentage, child arrays, complete mutable records, or atom lookup.

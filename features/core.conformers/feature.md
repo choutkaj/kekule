@@ -57,6 +57,6 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 - v6: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v7: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v8: Move `Point3` to the shared `geometry` module and distinguish local
-  molecule conformers from topology-bound configurations and trajectories.
+  molecule conformers from topology-bound models and trajectories.
 - v9: Add structured conformer position-capacity errors and remove unchecked
   slot reconstruction from conformer coordinate iteration.

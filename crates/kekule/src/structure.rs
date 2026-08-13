@@ -1,4 +1,4 @@
-//! Topology-bound coordinate state, models, borrowed views, observations, and
+//! Topology-bound coordinate state, models, borrowed views, atom data, and
 //! finite non-temporal ensembles.
 
 use std::fmt;
@@ -6,13 +6,13 @@ use std::sync::Arc;
 
 use crate::bio::MacroMolecule;
 use crate::core::{AtomId, ConformerError, ConformerId, Molecule, PropMap};
-use crate::geometry::{PeriodicCell, PeriodicCellError, Point3};
+use crate::geometry::{PeriodicCell, Point3};
 use crate::small::SmallMolecule;
 use crate::topology::{
     InstanceAtomId, MoleculeDefinitionId, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
     TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyMapping,
 };
-use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
+use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
 
 /// One complete finite Cartesian array in one topology's dense atom order.
 #[derive(Debug, Clone)]
@@ -234,10 +234,6 @@ impl Positions {
         }
     }
 
-    pub(crate) fn values_raw(&self) -> &[Point3] {
-        &self.values
-    }
-
     fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), PositionError> {
         if !self.is_compatible(topology) {
             return Err(PositionError::TopologyMismatch);
@@ -301,245 +297,33 @@ impl From<UnitError> for PositionError {
     }
 }
 
-/// One complete geometric realization of one exact topology.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Configuration {
-    positions: Positions,
-    cell: Option<PeriodicCell>,
-}
-
-impl Configuration {
-    pub fn new(positions: Positions) -> Self {
-        Self {
-            positions,
-            cell: None,
-        }
-    }
-
-    pub fn with_cell(positions: Positions, cell: PeriodicCell) -> Self {
-        Self {
-            positions,
-            cell: Some(cell),
-        }
-    }
-
-    pub fn positions(&self) -> &Positions {
-        &self.positions
-    }
-
-    pub fn positions_mut(&mut self) -> &mut Positions {
-        &mut self.positions
-    }
-
-    pub const fn cell(&self) -> Option<&PeriodicCell> {
-        self.cell.as_ref()
-    }
-
-    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        self.cell = cell;
-    }
-
-    pub fn set_positions(&mut self, positions: Positions) -> Result<(), ConfigurationError> {
-        if !Arc::ptr_eq(self.positions.topology_arc(), positions.topology_arc()) {
-            return Err(ConfigurationError::TopologyMismatch);
-        }
-        self.positions = positions;
-        Ok(())
-    }
-
-    pub fn view(&self) -> ConfigurationView<'_> {
-        ConfigurationView {
-            positions: &self.positions,
-            cell: self.cell.as_ref(),
-        }
-    }
-
-    /// Remaps complete positions while preserving the periodic cell.
-    pub fn remap_to(
-        &self,
-        source: &Arc<Topology>,
-        target: &Arc<Topology>,
-        mapping: &TopologyMapping,
-    ) -> Result<Self, TopologyRemapError> {
-        Ok(Self {
-            positions: self.positions.remap_to(source, target, mapping)?,
-            cell: self.cell,
-        })
-    }
-}
-
-/// Borrowed configuration state without allocation.
-#[derive(Debug, Clone, Copy)]
-pub struct ConfigurationView<'a> {
-    positions: &'a Positions,
-    cell: Option<&'a PeriodicCell>,
-}
-
-impl<'a> ConfigurationView<'a> {
-    pub fn positions(self) -> &'a Positions {
-        self.positions
-    }
-
-    pub const fn cell(self) -> Option<&'a PeriodicCell> {
-        self.cell
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum ConfigurationError {
-    TopologyMismatch,
-    InvalidCell(PeriodicCellError),
-}
-
-impl fmt::Display for ConfigurationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TopologyMismatch => {
-                formatter.write_str("configuration belongs to a different topology")
-            }
-            Self::InvalidCell(error) => write!(formatter, "invalid configuration cell: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigurationError {}
-
-/// Coordinate-model-specific values for one atom observation.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct AtomObservation {
-    group_pdb: Option<String>,
-    source_atom_site_id: Option<String>,
-    alternate_location: Option<String>,
-    occupancy: Option<f64>,
-    occupancy_raw: Option<String>,
-    b_factor: Option<f64>,
-    b_factor_raw: Option<String>,
-    cartesian_raw: [Option<String>; 3],
-}
-
-impl AtomObservation {
-    pub fn group_pdb(&self) -> Option<&str> {
-        self.group_pdb.as_deref()
-    }
-
-    pub fn set_group_pdb(&mut self, value: Option<String>) {
-        self.group_pdb = value;
-    }
-
-    pub fn source_atom_site_id(&self) -> Option<&str> {
-        self.source_atom_site_id.as_deref()
-    }
-
-    pub fn set_source_atom_site_id(&mut self, value: Option<String>) {
-        self.source_atom_site_id = value;
-    }
-
-    pub fn alternate_location(&self) -> Option<&str> {
-        self.alternate_location.as_deref()
-    }
-
-    pub fn set_alternate_location(&mut self, value: Option<String>) {
-        self.alternate_location = value;
-    }
-
-    pub const fn occupancy(&self) -> Option<f64> {
-        self.occupancy
-    }
-
-    pub fn set_occupancy(&mut self, value: Option<f64>) -> Result<(), ObservationError> {
-        if value.is_some_and(|value| !value.is_finite()) {
-            return Err(ObservationError::NonFiniteOccupancy);
-        }
-        self.occupancy = value;
-        Ok(())
-    }
-
-    pub fn occupancy_raw(&self) -> Option<&str> {
-        self.occupancy_raw.as_deref()
-    }
-
-    pub fn set_occupancy_raw(&mut self, value: Option<String>) {
-        self.occupancy_raw = value;
-    }
-
-    pub const fn b_factor(&self) -> Option<f64> {
-        self.b_factor
-    }
-
-    pub fn set_b_factor(&mut self, value: Option<f64>) -> Result<(), ObservationError> {
-        if value.is_some_and(|value| !value.is_finite()) {
-            return Err(ObservationError::NonFiniteBFactor);
-        }
-        self.b_factor = value;
-        Ok(())
-    }
-
-    pub fn b_factor_raw(&self) -> Option<&str> {
-        self.b_factor_raw.as_deref()
-    }
-
-    pub fn set_b_factor_raw(&mut self, value: Option<String>) {
-        self.b_factor_raw = value;
-    }
-
-    pub fn cartesian_raw(&self) -> &[Option<String>; 3] {
-        &self.cartesian_raw
-    }
-
-    pub fn set_cartesian_raw(&mut self, value: [Option<String>; 3]) {
-        self.cartesian_raw = value;
-    }
-}
-
-/// Topology-bound observation and provenance state for one configuration.
+/// Topology-bound model-level per-atom data in dense atom order.
+///
+/// Each scientific field is an optional column. A field that is absent for all
+/// atoms therefore requires no per-atom allocation.
 #[derive(Debug, Clone)]
-pub struct StructureObservation {
+pub struct AtomData {
     topology: Arc<Topology>,
-    source_model_id: Option<String>,
-    atoms: Vec<AtomObservation>,
-    props: PropMap,
+    occupancies: Option<Vec<Option<f64>>>,
+    b_factors: Option<Vec<Option<f64>>>,
 }
 
-impl PartialEq for StructureObservation {
+impl PartialEq for AtomData {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.topology, &other.topology)
-            && self.source_model_id == other.source_model_id
-            && self.atoms == other.atoms
-            && self.props == other.props
+            && self.occupancies == other.occupancies
+            && self.b_factors == other.b_factors
     }
 }
 
-impl StructureObservation {
-    pub fn new(
-        topology: &Arc<Topology>,
-        atoms: Vec<AtomObservation>,
-    ) -> Result<Self, ObservationError> {
-        if atoms.len() != topology.atom_count() {
-            return Err(ObservationError::AtomCountMismatch {
-                expected: topology.atom_count(),
-                actual: atoms.len(),
-            });
-        }
-        Ok(Self {
-            topology: Arc::clone(topology),
-            source_model_id: None,
-            atoms,
-            props: PropMap::new(),
-        })
-    }
-
-    pub fn empty(topology: &Arc<Topology>) -> Self {
+impl AtomData {
+    /// Creates atom data with no allocated scientific columns.
+    pub fn new(topology: &Arc<Topology>) -> Self {
         Self {
             topology: Arc::clone(topology),
-            source_model_id: None,
-            atoms: vec![AtomObservation::default(); topology.atom_count()],
-            props: PropMap::new(),
+            occupancies: None,
+            b_factors: None,
         }
-    }
-
-    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
-        Arc::ptr_eq(&self.topology, topology)
     }
 
     pub fn topology(&self) -> &Topology {
@@ -550,58 +334,171 @@ impl StructureObservation {
         Arc::clone(&self.topology)
     }
 
+    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
+        Arc::ptr_eq(&self.topology, topology)
+    }
+
     pub(crate) fn topology_arc(&self) -> &Arc<Topology> {
         &self.topology
     }
 
-    pub fn source_model_id(&self) -> Option<&str> {
-        self.source_model_id.as_deref()
+    /// Returns the atom count of the bound topology.
+    pub fn atom_count(&self) -> usize {
+        self.topology.atom_count()
     }
 
-    pub fn set_source_model_id(&mut self, value: Option<String>) {
-        self.source_model_id = value;
+    /// Returns whether every supported scientific column is wholly absent.
+    pub fn is_empty(&self) -> bool {
+        self.occupancies.is_none() && self.b_factors.is_none()
     }
 
-    pub fn atom_at(&self, index: TopologyAtomIndex) -> Option<&AtomObservation> {
-        self.atoms.get(index.index())
+    pub fn occupancies(&self) -> Option<&[Option<f64>]> {
+        self.occupancies.as_deref()
     }
 
-    pub fn atom(
+    /// Returns the dense B-factor column in canonical square angstroms.
+    pub fn b_factors(&self) -> Option<Quantity<&[Option<f64>]>> {
+        self.b_factors
+            .as_deref()
+            .map(|values| Quantity::new(values, SQUARE_ANGSTROM))
+    }
+
+    pub fn occupancy(
         &self,
         topology: &Arc<Topology>,
         atom: InstanceAtomId,
-    ) -> Result<&AtomObservation, ObservationError> {
+    ) -> Result<Option<f64>, AtomDataError> {
         self.ensure_compatible(topology)?;
         let index = topology
             .atom_index(atom)
-            .ok_or(ObservationError::InvalidAtomId(atom))?;
-        Ok(&self.atoms[index.index()])
+            .ok_or(AtomDataError::InvalidAtomId(atom))?;
+        self.occupancy_at(index)
     }
 
-    pub fn set_atom(
+    pub fn occupancy_at(&self, index: TopologyAtomIndex) -> Result<Option<f64>, AtomDataError> {
+        value_at(&self.occupancies, self.atom_count(), index)
+    }
+
+    pub fn b_factor(
+        &self,
+        topology: &Arc<Topology>,
+        atom: InstanceAtomId,
+    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
+        self.ensure_compatible(topology)?;
+        let index = topology
+            .atom_index(atom)
+            .ok_or(AtomDataError::InvalidAtomId(atom))?;
+        self.b_factor_at(index)
+    }
+
+    pub fn b_factor_at(
+        &self,
+        index: TopologyAtomIndex,
+    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
+        value_at(&self.b_factors, self.atom_count(), index)
+            .map(|value| value.map(|value| Quantity::new(value, SQUARE_ANGSTROM)))
+    }
+
+    pub fn set_occupancy(
         &mut self,
         topology: &Arc<Topology>,
         atom: InstanceAtomId,
-        observation: AtomObservation,
-    ) -> Result<(), ObservationError> {
+        value: Option<f64>,
+    ) -> Result<(), AtomDataError> {
         self.ensure_compatible(topology)?;
         let index = topology
             .atom_index(atom)
-            .ok_or(ObservationError::InvalidAtomId(atom))?;
-        self.atoms[index.index()] = observation;
+            .ok_or(AtomDataError::InvalidAtomId(atom))?;
+        self.set_occupancy_at(index, value)
+    }
+
+    pub fn set_occupancy_at(
+        &mut self,
+        index: TopologyAtomIndex,
+        value: Option<f64>,
+    ) -> Result<(), AtomDataError> {
+        validate_index(self.atom_count(), index)?;
+        validate_value(value, index, AtomDataField::Occupancy)?;
+        let len = self.atom_count();
+        set_column_value(&mut self.occupancies, len, index, value);
         Ok(())
     }
 
-    pub fn props(&self) -> &PropMap {
-        &self.props
+    pub fn set_b_factor(
+        &mut self,
+        topology: &Arc<Topology>,
+        atom: InstanceAtomId,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), AtomDataError> {
+        self.ensure_compatible(topology)?;
+        let index = topology
+            .atom_index(atom)
+            .ok_or(AtomDataError::InvalidAtomId(atom))?;
+        self.set_b_factor_at(index, value)
     }
 
-    pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.props
+    pub fn set_b_factor_at(
+        &mut self,
+        index: TopologyAtomIndex,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), AtomDataError> {
+        validate_index(self.atom_count(), index)?;
+        let value = value
+            .map(|value| value.into_unit(SQUARE_ANGSTROM))
+            .transpose()?
+            .map(|value| value.into_value());
+        validate_value(value, index, AtomDataField::BFactor)?;
+        let len = self.atom_count();
+        set_column_value(&mut self.b_factors, len, index, value);
+        Ok(())
     }
 
-    /// Remaps per-atom observation state while preserving model provenance and
-    /// properties.
+    /// Replaces the complete occupancy column transactionally. An all-absent
+    /// column is normalized to no allocation.
+    pub fn set_occupancies<T>(&mut self, values: T) -> Result<(), AtomDataError>
+    where
+        T: AsRef<[Option<f64>]>,
+    {
+        let values = validate_column(
+            &self.topology,
+            values.as_ref().to_vec(),
+            AtomDataField::Occupancy,
+        )?;
+        self.occupancies = values;
+        Ok(())
+    }
+
+    /// Clears the complete occupancy column.
+    pub fn clear_occupancies(&mut self) {
+        self.occupancies = None;
+    }
+
+    /// Replaces the complete B-factor column transactionally. Values are
+    /// converted to canonical square angstroms, and an all-absent column is
+    /// normalized to no allocation.
+    pub fn set_b_factors<T>(&mut self, values: Quantity<T>) -> Result<(), AtomDataError>
+    where
+        T: AsRef<[Option<f64>]>,
+    {
+        let factor = values.unit().conversion_factor_to(SQUARE_ANGSTROM)?;
+        let values = values
+            .value()
+            .as_ref()
+            .iter()
+            .copied()
+            .map(|value| value.map(|value| value * factor))
+            .collect();
+        let values = validate_column(&self.topology, values, AtomDataField::BFactor)?;
+        self.b_factors = values;
+        Ok(())
+    }
+
+    /// Clears the complete B-factor column.
+    pub fn clear_b_factors(&mut self) {
+        self.b_factors = None;
+    }
+
+    /// Remaps every present scientific column through checked topology lineage.
     pub fn remap_to(
         &self,
         source: &Arc<Topology>,
@@ -611,87 +508,199 @@ impl StructureObservation {
         if !self.is_compatible(source) {
             return Err(TopologyRemapError::SourceTopologyMismatch);
         }
+        let occupancies = self
+            .occupancies
+            .as_ref()
+            .map(|values| remap::dense_atom_values(values, source, target, mapping))
+            .transpose()?;
+        let b_factors = self
+            .b_factors
+            .as_ref()
+            .map(|values| remap::dense_atom_values(values, source, target, mapping))
+            .transpose()?;
         Ok(Self {
             topology: Arc::clone(target),
-            source_model_id: self.source_model_id.clone(),
-            atoms: remap::dense_atom_values(&self.atoms, source, target, mapping)?,
-            props: self.props.clone(),
+            occupancies,
+            b_factors,
         })
     }
 
-    fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), ObservationError> {
+    fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), AtomDataError> {
         if !self.is_compatible(topology) {
-            return Err(ObservationError::TopologyMismatch);
+            return Err(AtomDataError::TopologyMismatch);
         }
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
+enum AtomDataField {
+    Occupancy,
+    BFactor,
+}
+
+fn validate_column(
+    topology: &Topology,
+    values: Vec<Option<f64>>,
+    field: AtomDataField,
+) -> Result<Option<Vec<Option<f64>>>, AtomDataError> {
+    if values.len() != topology.atom_count() {
+        return Err(AtomDataError::AtomCountMismatch {
+            expected: topology.atom_count(),
+            actual: values.len(),
+        });
+    }
+    for (raw_index, value) in values.iter().copied().enumerate() {
+        let index = TopologyAtomIndex::new(raw_index as u32);
+        validate_value(value, index, field)?;
+    }
+    if values.iter().all(Option::is_none) {
+        Ok(None)
+    } else {
+        Ok(Some(values))
+    }
+}
+
+fn validate_value(
+    value: Option<f64>,
+    index: TopologyAtomIndex,
+    field: AtomDataField,
+) -> Result<(), AtomDataError> {
+    if value.is_some_and(|value| !value.is_finite()) {
+        return Err(match field {
+            AtomDataField::Occupancy => AtomDataError::NonFiniteOccupancy { index },
+            AtomDataField::BFactor => AtomDataError::NonFiniteBFactor { index },
+        });
+    }
+    Ok(())
+}
+
+fn validate_index(len: usize, index: TopologyAtomIndex) -> Result<(), AtomDataError> {
+    if index.index() >= len {
+        return Err(AtomDataError::InvalidAtomIndex(index));
+    }
+    Ok(())
+}
+
+fn value_at(
+    column: &Option<Vec<Option<f64>>>,
+    len: usize,
+    index: TopologyAtomIndex,
+) -> Result<Option<f64>, AtomDataError> {
+    validate_index(len, index)?;
+    Ok(column.as_ref().and_then(|values| values[index.index()]))
+}
+
+fn set_column_value(
+    column: &mut Option<Vec<Option<f64>>>,
+    len: usize,
+    index: TopologyAtomIndex,
+    value: Option<f64>,
+) {
+    if value.is_some() && column.is_none() {
+        *column = Some(vec![None; len]);
+    }
+    let Some(values) = column else {
+        return;
+    };
+    values[index.index()] = value;
+    if values.iter().all(Option::is_none) {
+        *column = None;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum ObservationError {
+pub enum AtomDataError {
     TopologyMismatch,
     AtomCountMismatch { expected: usize, actual: usize },
     InvalidAtomId(InstanceAtomId),
-    NonFiniteOccupancy,
-    NonFiniteBFactor,
+    InvalidAtomIndex(TopologyAtomIndex),
+    NonFiniteOccupancy { index: TopologyAtomIndex },
+    NonFiniteBFactor { index: TopologyAtomIndex },
+    Unit(UnitError),
 }
 
-impl fmt::Display for ObservationError {
+impl fmt::Display for AtomDataError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TopologyMismatch => {
-                formatter.write_str("structure observation belongs to a different topology")
+                formatter.write_str("atom data belongs to a different topology")
             }
             Self::AtomCountMismatch { expected, actual } => write!(
                 formatter,
-                "structure observation requires {expected} atoms, but received {actual}"
+                "atom data requires {expected} values per present column, but received {actual}"
             ),
-            Self::InvalidAtomId(atom) => write!(formatter, "invalid observed atom: {atom}"),
-            Self::NonFiniteOccupancy => formatter.write_str("structure occupancy must be finite"),
-            Self::NonFiniteBFactor => formatter.write_str("structure B-factor must be finite"),
+            Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
+            Self::InvalidAtomIndex(index) => write!(formatter, "invalid {index}"),
+            Self::NonFiniteOccupancy { index } => {
+                write!(formatter, "occupancy at {index} must be finite")
+            }
+            Self::NonFiniteBFactor { index } => {
+                write!(formatter, "B-factor at {index} must be finite")
+            }
+            Self::Unit(error) => write!(formatter, "invalid B-factor unit: {error}"),
         }
     }
 }
 
-impl std::error::Error for ObservationError {}
+impl std::error::Error for AtomDataError {}
+
+impl From<UnitError> for AtomDataError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
+    }
+}
 
 /// One concrete realization of one immutable topology.
 #[derive(Debug, Clone)]
 pub struct Model {
     topology: Arc<Topology>,
-    configuration: Configuration,
-    observation: Option<StructureObservation>,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    atom_data: AtomData,
 }
 
 impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.topology, &other.topology)
-            && self.configuration == other.configuration
-            && self.observation == other.observation
+            && self.positions == other.positions
+            && self.cell == other.cell
+            && self.atom_data == other.atom_data
     }
 }
 
 impl Model {
-    pub fn new(topology: Arc<Topology>, configuration: Configuration) -> Result<Self, ModelError> {
-        if !configuration.positions.is_compatible(&topology) {
+    /// Creates a non-periodic model without per-atom scientific data.
+    pub fn new(topology: Arc<Topology>, positions: Positions) -> Result<Self, ModelError> {
+        if !positions.is_compatible(&topology) {
+            return Err(ModelError::TopologyMismatch);
+        }
+        let atom_data = AtomData::new(&topology);
+        Ok(Self {
+            topology,
+            positions,
+            cell: None,
+            atom_data,
+        })
+    }
+
+    /// Creates a model from complete topology-bound state.
+    pub fn with_atom_data(
+        topology: Arc<Topology>,
+        positions: Positions,
+        cell: Option<PeriodicCell>,
+        atom_data: AtomData,
+    ) -> Result<Self, ModelError> {
+        if !positions.is_compatible(&topology) || !atom_data.is_compatible(&topology) {
             return Err(ModelError::TopologyMismatch);
         }
         Ok(Self {
             topology,
-            configuration,
-            observation: None,
+            positions,
+            cell,
+            atom_data,
         })
-    }
-
-    pub fn with_observation(
-        topology: Arc<Topology>,
-        configuration: Configuration,
-        observation: Option<StructureObservation>,
-    ) -> Result<Self, ModelError> {
-        let mut model = Self::new(topology, configuration)?;
-        model.set_observation(observation)?;
-        Ok(model)
     }
 
     pub fn builder() -> ModelBuilder {
@@ -724,32 +733,16 @@ impl Model {
         Arc::clone(&self.topology)
     }
 
-    pub fn configuration(&self) -> &Configuration {
-        &self.configuration
-    }
-
-    pub fn configuration_mut(&mut self) -> &mut Configuration {
-        &mut self.configuration
-    }
-
-    pub fn set_configuration(&mut self, configuration: Configuration) -> Result<(), ModelError> {
-        if !configuration.positions.is_compatible(&self.topology) {
-            return Err(ModelError::TopologyMismatch);
-        }
-        self.configuration = configuration;
-        Ok(())
-    }
-
-    pub fn positions(&self) -> Quantity<&[Point3]> {
-        self.configuration.positions.values()
+    pub const fn positions(&self) -> &Positions {
+        &self.positions
     }
 
     pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, PositionError> {
-        self.configuration.positions.position(&self.topology, atom)
+        self.positions.position(&self.topology, atom)
     }
 
     pub fn position_at(&self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.configuration.positions.position_at(index)
+        self.positions.position_at(index)
     }
 
     pub fn set_position(
@@ -757,44 +750,46 @@ impl Model {
         atom: InstanceAtomId,
         position: Quantity<Point3>,
     ) -> Result<(), PositionError> {
-        self.configuration
-            .positions
-            .set_position(&self.topology, atom, position)
+        self.positions.set_position(&self.topology, atom, position)
     }
 
     pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), PositionError>
     where
         T: AsRef<[Point3]>,
     {
-        self.configuration
-            .positions
-            .set_all(&self.topology, positions)
+        self.positions.set_all(&self.topology, positions)
     }
 
     pub const fn cell(&self) -> Option<&PeriodicCell> {
-        self.configuration.cell()
+        self.cell.as_ref()
     }
 
     pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        self.configuration.set_cell(cell);
+        self.cell = cell;
     }
 
-    pub fn observation(&self) -> Option<&StructureObservation> {
-        self.observation.as_ref()
+    pub fn atom_data(&self) -> &AtomData {
+        &self.atom_data
     }
 
-    pub fn set_observation(
-        &mut self,
-        observation: Option<StructureObservation>,
-    ) -> Result<(), ModelError> {
-        if observation
-            .as_ref()
-            .is_some_and(|observation| !observation.is_compatible(&self.topology))
-        {
+    pub fn atom_data_mut(&mut self) -> &mut AtomData {
+        &mut self.atom_data
+    }
+
+    pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), ModelError> {
+        if !atom_data.is_compatible(&self.topology) {
             return Err(ModelError::TopologyMismatch);
         }
-        self.observation = observation;
+        self.atom_data = atom_data;
         Ok(())
+    }
+
+    pub fn occupancy(&self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
+        self.atom_data.occupancy(&self.topology, atom)
+    }
+
+    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, AtomDataError> {
+        self.atom_data.b_factor(&self.topology, atom)
     }
 
     pub fn atom_count(&self) -> usize {
@@ -804,14 +799,16 @@ impl Model {
     pub fn view(&self) -> ModelView<'_> {
         ModelView {
             topology: &self.topology,
-            configuration: self.configuration.view(),
+            positions: &self.positions,
+            cell: self.cell.as_ref(),
+            atom_data: &self.atom_data,
         }
     }
 
     /// Remaps this model to an explicitly related target topology.
     ///
-    /// The source model is unchanged. Positions, cell, observation values, and
-    /// observation metadata are staged before the target model is returned.
+    /// The source model is unchanged. Positions, cell, and atom data are staged
+    /// before the target model is returned.
     ///
     /// # Examples
     ///
@@ -819,7 +816,7 @@ impl Model {
     /// use kekule::core::{Atom, Element, Molecule};
     /// use kekule::geometry::Point3;
     /// use kekule::small::SmallMolecule;
-    /// use kekule::structure::{Configuration, Model, Positions};
+    /// use kekule::structure::{Model, Positions};
     /// use kekule::topology::{
     ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
     /// };
@@ -847,13 +844,13 @@ impl Model {
     ///         ANGSTROM,
     ///     ),
     /// )?;
-    /// let model = Model::new(Arc::clone(&topology), Configuration::new(positions))?;
+    /// let model = Model::new(Arc::clone(&topology), positions)?;
     ///
     /// let edit = transform::remove_instances(&topology, [water_instance])?;
     /// let target = edit.shared_topology();
     /// let stripped = model.remap_to(&target, edit.mapping())?;
     /// assert_eq!(stripped.atom_count(), 1);
-    /// assert_eq!(stripped.positions().value()[0].x, 0.0);
+    /// assert_eq!(stripped.positions().values().value()[0].x, 0.0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn remap_to(
@@ -861,18 +858,13 @@ impl Model {
         target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<Self, TopologyRemapError> {
-        let configuration = self
-            .configuration
-            .remap_to(&self.topology, target, mapping)?;
-        let observation = self
-            .observation
-            .as_ref()
-            .map(|observation| observation.remap_to(&self.topology, target, mapping))
-            .transpose()?;
+        let positions = self.positions.remap_to(&self.topology, target, mapping)?;
+        let atom_data = self.atom_data.remap_to(&self.topology, target, mapping)?;
         Ok(Self {
             topology: Arc::clone(target),
-            configuration,
-            observation,
+            positions,
+            cell: self.cell,
+            atom_data,
         })
     }
 
@@ -911,30 +903,32 @@ impl Model {
             .expect("validated conformer remains live") = updated;
         Ok(())
     }
-
-    pub(crate) fn positions_value(&self) -> &[Point3] {
-        self.configuration.positions.values_raw()
-    }
 }
 
-/// Borrowed topology-plus-configuration view for coordinate-dependent kernels.
+/// Borrowed topology, positions, cell, and atom data for structural kernels.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
-    configuration: ConfigurationView<'a>,
+    positions: &'a Positions,
+    cell: Option<&'a PeriodicCell>,
+    atom_data: &'a AtomData,
 }
 
 impl<'a> ModelView<'a> {
     pub fn new(
         topology: &'a Arc<Topology>,
-        configuration: ConfigurationView<'a>,
+        positions: &'a Positions,
+        cell: Option<&'a PeriodicCell>,
+        atom_data: &'a AtomData,
     ) -> Result<Self, ModelError> {
-        if !configuration.positions().is_compatible(topology) {
+        if !positions.is_compatible(topology) || !atom_data.is_compatible(topology) {
             return Err(ModelError::TopologyMismatch);
         }
         Ok(Self {
             topology,
-            configuration,
+            positions,
+            cell,
+            atom_data,
         })
     }
 
@@ -950,24 +944,32 @@ impl<'a> ModelView<'a> {
         Arc::clone(self.topology)
     }
 
-    pub const fn configuration(self) -> ConfigurationView<'a> {
-        self.configuration
-    }
-
-    pub fn positions(self) -> Quantity<&'a [Point3]> {
-        self.configuration.positions().values()
+    pub const fn positions(self) -> &'a Positions {
+        self.positions
     }
 
     pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, PositionError> {
-        self.configuration.positions().position(self.topology, atom)
+        self.positions.position(self.topology, atom)
     }
 
     pub fn position_at(self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.configuration.positions().position_at(index)
+        self.positions.position_at(index)
     }
 
     pub const fn cell(self) -> Option<&'a PeriodicCell> {
-        self.configuration.cell()
+        self.cell
+    }
+
+    pub const fn atom_data(self) -> &'a AtomData {
+        self.atom_data
+    }
+
+    pub fn occupancy(self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
+        self.atom_data.occupancy(self.topology, atom)
+    }
+
+    pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, AtomDataError> {
+        self.atom_data.b_factor(self.topology, atom)
     }
 
     pub fn atom_count(self) -> usize {
@@ -985,7 +987,7 @@ impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TopologyMismatch => {
-                formatter.write_str("model configuration belongs to a different topology")
+                formatter.write_str("model state belongs to a different topology")
             }
         }
     }
@@ -993,7 +995,7 @@ impl fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
-/// Convenience builder that assembles topology and one complete configuration.
+/// Convenience builder that assembles topology and one complete model.
 ///
 /// Macro-molecule insertion validates only the explicitly selected conformer
 /// while staging positions; topology insertion separately validates static
@@ -1180,8 +1182,7 @@ impl ModelBuilder {
         let topology = Arc::new(self.topology.build()?);
         let positions =
             Positions::new(&topology, Quantity::new(self.positions, MODEL_LENGTH_UNIT))?;
-        Ok(Model::new(topology, Configuration::new(positions))
-            .expect("builder creates exactly topology-bound configuration"))
+        Ok(Model::new(topology, positions).expect("builder creates exactly topology-bound state"))
     }
 }
 
@@ -1354,24 +1355,51 @@ impl From<UnitError> for InstanceToConformerError {
 /// One finite non-temporal ensemble member.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnsembleMember {
-    configuration: Configuration,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    atom_data: AtomData,
     weight: Option<f64>,
-    observation: Option<StructureObservation>,
     props: PropMap,
 }
 
 impl EnsembleMember {
-    pub fn new(configuration: Configuration) -> Self {
+    pub fn new(positions: Positions) -> Self {
+        let atom_data = AtomData::new(positions.topology_arc());
         Self {
-            configuration,
+            positions,
+            cell: None,
+            atom_data,
             weight: None,
-            observation: None,
             props: PropMap::new(),
         }
     }
 
-    pub fn configuration(&self) -> &Configuration {
-        &self.configuration
+    pub fn positions(&self) -> &Positions {
+        &self.positions
+    }
+
+    pub const fn cell(&self) -> Option<&PeriodicCell> {
+        self.cell.as_ref()
+    }
+
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        self.cell = cell;
+    }
+
+    pub fn atom_data(&self) -> &AtomData {
+        &self.atom_data
+    }
+
+    pub fn atom_data_mut(&mut self) -> &mut AtomData {
+        &mut self.atom_data
+    }
+
+    pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), EnsembleError> {
+        if !Arc::ptr_eq(atom_data.topology_arc(), self.positions.topology_arc()) {
+            return Err(EnsembleError::TopologyMismatch);
+        }
+        self.atom_data = atom_data;
+        Ok(())
     }
 
     pub const fn weight(&self) -> Option<f64> {
@@ -1386,26 +1414,6 @@ impl EnsembleMember {
         Ok(())
     }
 
-    pub fn observation(&self) -> Option<&StructureObservation> {
-        self.observation.as_ref()
-    }
-
-    pub fn set_observation(
-        &mut self,
-        observation: Option<StructureObservation>,
-    ) -> Result<(), EnsembleError> {
-        if observation.as_ref().is_some_and(|observation| {
-            !Arc::ptr_eq(
-                observation.topology_arc(),
-                self.configuration.positions.topology_arc(),
-            )
-        }) {
-            return Err(EnsembleError::TopologyMismatch);
-        }
-        self.observation = observation;
-        Ok(())
-    }
-
     pub fn props(&self) -> &PropMap {
         &self.props
     }
@@ -1415,12 +1423,17 @@ impl EnsembleMember {
     }
 
     pub fn view<'a>(&'a self, topology: &'a Arc<Topology>) -> Result<ModelView<'a>, EnsembleError> {
-        ModelView::new(topology, self.configuration.view())
-            .map_err(|_| EnsembleError::TopologyMismatch)
+        ModelView::new(
+            topology,
+            &self.positions,
+            self.cell.as_ref(),
+            &self.atom_data,
+        )
+        .map_err(|_| EnsembleError::TopologyMismatch)
     }
 }
 
-/// A finite stable-order collection of non-temporal configurations.
+/// A finite stable-order collection of non-temporal models.
 #[derive(Debug, Clone)]
 pub struct Ensemble {
     topology: Arc<Topology>,
@@ -1453,8 +1466,13 @@ impl Ensemble {
             if !Arc::ptr_eq(&first.topology, &model.topology) {
                 return Err(EnsembleError::TopologyMismatch);
             }
-            let mut member = EnsembleMember::new(model.configuration.clone());
-            member.observation = model.observation.clone();
+            let member = EnsembleMember {
+                positions: model.positions.clone(),
+                cell: model.cell,
+                atom_data: model.atom_data.clone(),
+                weight: None,
+                props: PropMap::new(),
+            };
             ensemble.members.push(member);
         }
         Ok(ensemble)
@@ -1473,7 +1491,7 @@ impl Ensemble {
             let positions = stage_conformer_positions(molecule.graph(), conformer)
                 .map_err(|error| EnsembleError::ModelBuild(Box::new(error)))?;
             let positions = Positions::new(&topology, Quantity::new(positions, MODEL_LENGTH_UNIT))?;
-            ensemble.push(EnsembleMember::new(Configuration::new(positions)))?;
+            ensemble.push(EnsembleMember::new(positions))?;
         }
         Ok(ensemble)
     }
@@ -1507,11 +1525,8 @@ impl Ensemble {
     }
 
     pub fn push(&mut self, member: EnsembleMember) -> Result<(), EnsembleError> {
-        if !member.configuration.positions.is_compatible(&self.topology)
-            || member
-                .observation
-                .as_ref()
-                .is_some_and(|observation| !observation.is_compatible(&self.topology))
+        if !member.positions.is_compatible(&self.topology)
+            || !member.atom_data.is_compatible(&self.topology)
         {
             return Err(EnsembleError::TopologyMismatch);
         }
@@ -1563,19 +1578,13 @@ impl Ensemble {
         let mut members = Vec::with_capacity(self.members.len());
         for (member_index, member) in self.members.iter().enumerate() {
             let remap_member = || -> Result<EnsembleMember, TopologyRemapError> {
-                let configuration =
-                    member
-                        .configuration
-                        .remap_to(&self.topology, target, mapping)?;
-                let observation = member
-                    .observation
-                    .as_ref()
-                    .map(|observation| observation.remap_to(&self.topology, target, mapping))
-                    .transpose()?;
+                let positions = member.positions.remap_to(&self.topology, target, mapping)?;
+                let atom_data = member.atom_data.remap_to(&self.topology, target, mapping)?;
                 Ok(EnsembleMember {
-                    configuration,
+                    positions,
+                    cell: member.cell,
+                    atom_data,
                     weight: member.weight,
-                    observation,
                     props: member.props.clone(),
                 })
             };
@@ -1788,7 +1797,7 @@ mod tests {
     use super::*;
     use crate::core::{Atom, Conformer, Element, Molecule};
     use crate::geometry::Vector3;
-    use crate::units::{ANGSTROM, NANOMETER};
+    use crate::units::{ANGSTROM, KELVIN, NANOMETER, SQUARE_ANGSTROM};
 
     fn one_atom_topology() -> Arc<Topology> {
         let mut graph = Molecule::new();
@@ -1804,14 +1813,12 @@ mod tests {
         Arc::new(builder.build().unwrap())
     }
 
-    fn configuration(topology: &Arc<Topology>, x: f64) -> Configuration {
-        Configuration::new(
-            Positions::new(
-                topology,
-                Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM),
-            )
-            .unwrap(),
+    fn positions(topology: &Arc<Topology>, x: f64) -> Positions {
+        Positions::new(
+            topology,
+            Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM),
         )
+        .unwrap()
     }
 
     #[test]
@@ -1850,17 +1857,18 @@ mod tests {
         assert!(topology.same_layout(&independent));
         assert!(!Arc::ptr_eq(&topology, &independent));
 
-        let wrong_configuration = configuration(&independent, 1.0);
+        let wrong_positions = positions(&independent, 1.0);
         assert_eq!(
-            Model::new(Arc::clone(&topology), wrong_configuration),
+            Model::new(Arc::clone(&topology), wrong_positions),
             Err(ModelError::TopologyMismatch)
         );
 
-        let mut model = Model::new(Arc::clone(&topology), configuration(&topology, 1.0)).unwrap();
+        let mut model = Model::new(Arc::clone(&topology), positions(&topology, 1.0)).unwrap();
+        assert!(model.atom_data().is_empty());
         let view = model.view();
         assert_eq!(
-            view.positions().value().as_ptr(),
-            model.positions().value().as_ptr()
+            view.positions().values().value().as_ptr(),
+            model.positions().values().value().as_ptr()
         );
         let clone = model.clone();
         assert!(Arc::ptr_eq(
@@ -1879,17 +1887,19 @@ mod tests {
     }
 
     #[test]
-    fn ensembles_validate_shared_topology_observations_order_and_weights() {
+    fn ensembles_validate_shared_topology_atom_data_order_and_weights() {
         let topology = one_atom_topology();
-        let mut first = EnsembleMember::new(configuration(&topology, 1.0));
+        let atom = topology.atom_ids()[0];
+        let mut first = EnsembleMember::new(positions(&topology, 1.0));
         first.set_weight(Some(1.0)).unwrap();
-        let mut first_observation = StructureObservation::empty(&topology);
-        first_observation.set_source_model_id(Some("first".to_owned()));
-        first.set_observation(Some(first_observation)).unwrap();
+        first
+            .atom_data_mut()
+            .set_occupancy(&topology, atom, Some(0.5))
+            .unwrap();
 
-        let mut second = EnsembleMember::new(configuration(&topology, 2.0));
+        let mut second = EnsembleMember::new(positions(&topology, 2.0));
         second.set_weight(Some(3.0)).unwrap();
-        let mut invalid_weight = EnsembleMember::new(configuration(&topology, 3.0));
+        let mut invalid_weight = EnsembleMember::new(positions(&topology, 3.0));
         assert_eq!(
             invalid_weight.set_weight(Some(-1.0)),
             Err(EnsembleError::InvalidWeight)
@@ -1901,7 +1911,7 @@ mod tests {
         assert_eq!(
             ensemble
                 .views()
-                .map(|view| view.positions().value()[0].x)
+                .map(|view| view.positions().values().value()[0].x)
                 .collect::<Vec<_>>(),
             vec![1.0, 2.0]
         );
@@ -1909,17 +1919,124 @@ mod tests {
             ensemble
                 .member(0)
                 .unwrap()
-                .observation()
-                .unwrap()
-                .source_model_id(),
-            Some("first")
+                .atom_data()
+                .occupancy(&topology, atom)
+                .unwrap(),
+            Some(0.5)
         );
 
         let independent = one_atom_topology();
         assert_eq!(
-            ensemble.push(EnsembleMember::new(configuration(&independent, 3.0))),
+            ensemble.push(EnsembleMember::new(positions(&independent, 3.0))),
             Err(EnsembleError::TopologyMismatch)
         );
+    }
+
+    #[test]
+    fn atom_data_validates_columns_supports_mutation_and_model_topology_binding() {
+        let topology = one_atom_topology();
+        let atom = topology.atom_ids()[0];
+        let index = topology.atom_index(atom).unwrap();
+        let mut data = AtomData::new(&topology);
+        assert!(data.is_empty());
+        assert_eq!(data.atom_count(), 1);
+        assert_eq!(data.occupancy(&topology, atom).unwrap(), None);
+        data.set_occupancy(&topology, atom, Some(0.75)).unwrap();
+        data.set_b_factor_at(index, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
+            .unwrap();
+        assert_eq!(data.occupancy_at(index).unwrap(), Some(0.75));
+        assert_eq!(
+            data.b_factor(&topology, atom).unwrap(),
+            Some(Quantity::new(12.5, SQUARE_ANGSTROM))
+        );
+        data.set_b_factor(
+            &topology,
+            atom,
+            Some(Quantity::new(0.125, NANOMETER.powi(2))),
+        )
+        .unwrap();
+        assert!(data
+            .b_factor(&topology, atom)
+            .unwrap()
+            .unwrap()
+            .is_close(&Quantity::new(12.5, SQUARE_ANGSTROM), 1.0e-12, 1.0e-12,)
+            .unwrap());
+        assert!(matches!(
+            data.set_b_factor(&topology, atom, Some(Quantity::new(1.0, KELVIN))),
+            Err(AtomDataError::Unit(UnitError::IncompatibleUnits { .. }))
+        ));
+        assert!(matches!(
+            data.set_b_factor(
+                &topology,
+                atom,
+                Some(Quantity::new(f64::INFINITY, SQUARE_ANGSTROM)),
+            ),
+            Err(AtomDataError::NonFiniteBFactor { .. })
+        ));
+        assert!(matches!(
+            data.set_occupancies(Vec::new()),
+            Err(AtomDataError::AtomCountMismatch { .. })
+        ));
+        data.clear_occupancies();
+        data.clear_b_factors();
+        assert!(data.is_empty());
+        data.set_occupancy(&topology, atom, Some(0.75)).unwrap();
+        data.set_b_factor_at(index, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
+            .unwrap();
+
+        let independent = one_atom_topology();
+        assert_eq!(
+            data.occupancy(&independent, atom),
+            Err(AtomDataError::TopologyMismatch)
+        );
+        let mut model = Model::new(Arc::clone(&topology), positions(&topology, 1.0)).unwrap();
+        assert_eq!(
+            model.set_atom_data(AtomData::new(&independent)),
+            Err(ModelError::TopologyMismatch)
+        );
+        model.set_atom_data(data).unwrap();
+        assert_eq!(model.occupancy(atom).unwrap(), Some(0.75));
+        assert_eq!(
+            model.b_factor(atom).unwrap(),
+            Some(Quantity::new(12.5, SQUARE_ANGSTROM))
+        );
+    }
+
+    #[test]
+    fn model_remaps_positions_atom_data_and_cell_together() {
+        let source = one_atom_topology();
+        let target = one_atom_topology();
+        let mapping = TopologyMapping::between_identical_layouts(&source, &target).unwrap();
+        let atom = source.atom_ids()[0];
+        let mut model = Model::new(Arc::clone(&source), positions(&source, 3.0)).unwrap();
+        model
+            .atom_data_mut()
+            .set_occupancy(&source, atom, Some(0.8))
+            .unwrap();
+        model
+            .atom_data_mut()
+            .set_b_factor(&source, atom, Some(Quantity::new(21.0, SQUARE_ANGSTROM)))
+            .unwrap();
+        let cell = PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(8.0, 9.0, 10.0), ANGSTROM),
+            [true; 3],
+        )
+        .unwrap();
+        model.set_cell(Some(cell));
+
+        let remapped = model.remap_to(&target, &mapping).unwrap();
+        let target_atom = target.atom_ids()[0];
+        assert_eq!(remapped.positions().values().value()[0].x, 3.0);
+        assert_eq!(remapped.occupancy(target_atom).unwrap(), Some(0.8));
+        assert_eq!(
+            remapped.b_factor(target_atom).unwrap(),
+            Some(Quantity::new(21.0, SQUARE_ANGSTROM))
+        );
+        assert_eq!(remapped.cell(), Some(&cell));
+        let view = remapped.view();
+        assert_eq!(view.position(target_atom).unwrap().value().x, 3.0);
+        assert_eq!(view.occupancy(target_atom).unwrap(), Some(0.8));
+        assert_eq!(view.atom_data(), remapped.atom_data());
     }
 
     #[test]
@@ -1945,7 +2062,7 @@ mod tests {
         assert_eq!(
             ensemble
                 .views()
-                .map(|view| view.positions().value()[0].x)
+                .map(|view| view.positions().values().value()[0].x)
                 .collect::<Vec<_>>(),
             vec![2.0, 1.0]
         );

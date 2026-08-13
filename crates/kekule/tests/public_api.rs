@@ -297,7 +297,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
 
     assert_eq!(result.status, MinimizationStatus::Converged);
     assert!(result.final_energy < result.initial_energy);
-    assert_eq!(model.positions()[1].x, 2.0);
+    assert_eq!(model.positions().values().value()[1].x, 2.0);
     assert!(
         molecule
             .graph()
@@ -313,11 +313,11 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::geometry::Point3;
-    use kekule::structure::{Configuration, Ensemble, EnsembleMember, Model, Positions};
+    use kekule::structure::{AtomData, Ensemble, EnsembleMember, Model, Positions};
     use kekule::topology::{
         AtomSelection, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
     };
-    use kekule::units::{Quantity, ANGSTROM};
+    use kekule::units::{Quantity, ANGSTROM, SQUARE_ANGSTROM};
 
     let water = SmallMolecule::from_smiles_sanitized("O")?;
     let mut topology_builder = TopologyBuilder::new();
@@ -342,26 +342,38 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
             ANGSTROM,
         ),
     )?;
-    let first = Model::new(
-        std::sync::Arc::clone(&topology),
-        Configuration::new(first_positions.clone()),
+    let first_atom = topology.atom_ids()[0];
+    let mut first_atom_data = AtomData::new(&topology);
+    first_atom_data.set_occupancy(&topology, first_atom, Some(0.75))?;
+    first_atom_data.set_b_factor(
+        &topology,
+        first_atom,
+        Some(Quantity::new(15.0, SQUARE_ANGSTROM)),
     )?;
-    let second = Model::new(
+    let first = Model::with_atom_data(
         std::sync::Arc::clone(&topology),
-        Configuration::new(second_positions.clone()),
+        first_positions.clone(),
+        None,
+        first_atom_data,
     )?;
+    let second = Model::new(std::sync::Arc::clone(&topology), second_positions.clone())?;
     assert!(std::sync::Arc::ptr_eq(
         &first.shared_topology(),
         &second.shared_topology()
     ));
+    assert_eq!(first.occupancy(first_atom)?, Some(0.75));
+    assert_eq!(
+        first.b_factor(first_atom)?,
+        Some(Quantity::new(15.0, SQUARE_ANGSTROM))
+    );
 
     let solvent = AtomSelection::for_roles(&topology, [MoleculeRole::Solvent])?;
     assert_eq!(solvent.indices().len(), 2);
     let ensemble = Ensemble::from_members(
         std::sync::Arc::clone(&topology),
         [
-            EnsembleMember::new(Configuration::new(first_positions)),
-            EnsembleMember::new(Configuration::new(second_positions.clone())),
+            EnsembleMember::new(first_positions),
+            EnsembleMember::new(second_positions.clone()),
         ],
     )?;
     assert_eq!(ensemble.views().count(), 2);

@@ -60,7 +60,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   exact perception construction plus whole-state installation, targeted SMCRA
   child enrichment, and exact stereo-group tombstone replay do not widen the
   crate root or prelude.
-- Immutable system topology and single-configuration containers live under
+- Immutable system topology and direct model-state containers live under
   `topology` and `structure`; potentials and minimization remain under
   `modeling`. These focused types are not added to the prelude.
 - The topology facade names complete static equality `Topology::same_layout`
@@ -111,7 +111,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 ## Tests
 
 - External integration tests compile public happy-path, namespaced, low-level
-  graph, macro-molecule, topology/configuration/model, mmCIF, and borrowed-view
+  graph, macro-molecule, topology/model, mmCIF, and borrowed-view
   examples as downstream user code.
 - Downstream reconstruction tests compile and exercise every new checked
   perception, hierarchy enrichment, stereo-slot, and topology-layout surface.
@@ -210,3 +210,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v32: Make raw `Topology` a directly owned non-cloneable value and move exact
   compatibility and cheap sharing to `Arc<Topology>` throughout the focused
   structure, selection, mapping, alignment, potential, and companion APIs.
+- v33: Replace the configuration and structure-observation exports with
+  topology-bound `AtomData` and the flattened `Model`/`ModelView` API.
+- v34: Reconcile the flattened API around directly borrowed `Positions`,
+  field-specific `AtomData` construction, and quantity-valued B-factors.

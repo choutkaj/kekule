@@ -9,7 +9,7 @@ use std::fmt;
 
 use kekule::alignment::{kabsch_with_options, AlignmentError, KabschOptions, RigidAlignment};
 use kekule::geometry::{PeriodicCell, PeriodicCellError, RigidTransform};
-use kekule::structure::{Configuration, Positions};
+use kekule::structure::Positions;
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, MODEL_LENGTH_UNIT};
 
@@ -17,8 +17,8 @@ use crate::{Forces, FrameError, Trajectory, TrajectoryError, TrajectoryFrame, Ve
 
 /// Options used to fit every trajectory frame onto one reference frame.
 ///
-/// This is the same fitting contract as Kekule's single-configuration Kabsch
-/// kernel. In particular, periodic configurations are rejected by default.
+/// This is the same fitting contract as Kekule's single-model Kabsch kernel.
+/// In particular, periodic frames are rejected by default.
 pub type SuperpositionOptions<'a> = KabschOptions<'a>;
 
 /// Per-selected-atom weighting for direct RMSD measurement.
@@ -31,7 +31,7 @@ pub enum RmsdWeighting<'a> {
     Explicit(&'a [f64]),
 }
 
-/// Handling of configurations that carry periodic cells during direct RMSD.
+/// Handling of frames that carry periodic cells during direct RMSD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PeriodicRmsdPolicy {
@@ -50,7 +50,7 @@ pub enum PeriodicRmsdPolicy {
 pub struct RmsdOptions<'a> {
     /// Per-selected-atom measurement weights.
     pub weighting: RmsdWeighting<'a>,
-    /// Handling of configurations carrying periodic cells.
+    /// Handling of frames carrying periodic cells.
     pub periodic_policy: PeriodicRmsdPolicy,
 }
 
@@ -102,7 +102,7 @@ impl Trajectory {
     ///
     /// The fit uses `fit_selection`, then applies the resulting proper rigid
     /// transform to every position in the frame. Velocities, forces, and cell
-    /// vectors are rotated without translation. Time, step, observations, and
+    /// vectors are rotated without translation. Atom data, time, step, and
     /// frame properties are preserved. The trajectory is unchanged if any fit
     /// or transformed-frame validation fails.
     pub fn superpose_to_frame(
@@ -198,10 +198,10 @@ impl Trajectory {
                 })?;
         validate_measurement_selection(self, selection)?;
         let weights = NormalizedRmsdWeights::new(options.weighting, selection.indices().len())?;
-        let reference_periodic = reference.configuration().cell().is_some();
+        let reference_periodic = reference.cell().is_some();
         let mut values = Vec::with_capacity(self.len());
         for (frame, moving) in self.frames().enumerate() {
-            let moving_periodic = moving.configuration().cell().is_some();
+            let moving_periodic = moving.cell().is_some();
             if options.periodic_policy == PeriodicRmsdPolicy::RejectPeriodic
                 && (moving_periodic || reference_periodic)
             {
@@ -300,8 +300,8 @@ fn measure_rmsd(
     transform: Option<RigidTransform>,
     frame: usize,
 ) -> Result<f64, RmsdError> {
-    let moving_positions = moving.configuration().positions().values();
-    let reference_positions = reference.configuration().positions().values();
+    let moving_positions = moving.positions().values();
+    let reference_positions = reference.positions().values();
     let moving_positions = moving_positions.value();
     let reference_positions = reference_positions.value();
     let mut squared_residual = CompensatedSum::default();
@@ -328,8 +328,7 @@ fn transform_frame(
     transform: RigidTransform,
 ) -> Result<TrajectoryFrame, TransformFrameError> {
     let topology = source.topology_arc();
-    let configuration = source.configuration();
-    let positions = configuration.positions().values();
+    let positions = source.positions().values();
     let positions = positions
         .value()
         .iter()
@@ -339,17 +338,17 @@ fn transform_frame(
     let positions = Positions::new(topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
         .map_err(FrameError::from)
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
-    let cell = configuration
+    let cell = source
         .cell()
         .copied()
         .map(|cell| transform_cell(cell, transform))
         .transpose()
         .map_err(|source| TransformFrameError::Cell(Box::new(source)))?;
-    let configuration = match cell {
-        Some(cell) => Configuration::with_cell(positions, cell),
-        None => Configuration::new(positions),
-    };
-    let mut transformed = TrajectoryFrame::new(configuration);
+    let mut transformed = TrajectoryFrame::new(positions);
+    transformed.set_cell(cell);
+    transformed
+        .set_atom_data(source.atom_data().clone())
+        .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     if let Some(values) = source.velocities() {
         let rotated = values
             .value()
@@ -380,9 +379,6 @@ fn transform_frame(
         .set_time(source.time())
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     transformed.set_step(source.step());
-    transformed
-        .set_observation(source.observation().cloned())
-        .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     transformed.props_mut().clone_from(source.props());
     Ok(transformed)
 }
@@ -620,7 +616,7 @@ mod tests {
     use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
     use kekule::geometry::{Matrix3, Point3, Vector3};
     use kekule::small::SmallMolecule;
-    use kekule::structure::StructureObservation;
+    use kekule::structure::AtomData;
     use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
 
@@ -661,9 +657,7 @@ mod tests {
     }
 
     fn frame(topology: &Arc<Topology>, points: &[Point3]) -> TrajectoryFrame {
-        TrajectoryFrame::new(Configuration::new(
-            Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap(),
-        ))
+        TrajectoryFrame::new(Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap())
     }
 
     fn transformed(points: &[Point3], transform: RigidTransform) -> Vec<Point3> {
@@ -807,10 +801,10 @@ mod tests {
         )
         .unwrap();
         let reference_cell = transform_cell(moving_cell, transform).unwrap();
-        let mut reference_frame = TrajectoryFrame::new(Configuration::with_cell(
+        let mut reference_frame = TrajectoryFrame::new(
             Positions::new(&topology, Quantity::new(&reference, ANGSTROM)).unwrap(),
-            reference_cell,
-        ));
+        );
+        reference_frame.set_cell(Some(reference_cell));
         reference_frame
             .set_velocities(Some(
                 Velocities::new(
@@ -830,10 +824,10 @@ mod tests {
             ))
             .unwrap();
 
-        let mut moving_frame = TrajectoryFrame::new(Configuration::with_cell(
+        let mut moving_frame = TrajectoryFrame::new(
             Positions::new(&topology, Quantity::new(&moving, ANGSTROM)).unwrap(),
-            moving_cell,
-        ));
+        );
+        moving_frame.set_cell(Some(moving_cell));
         moving_frame
             .set_velocities(Some(
                 Velocities::new(
@@ -856,10 +850,11 @@ mod tests {
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
             .unwrap();
         moving_frame.set_step(Some(25));
-        let observation = StructureObservation::empty(&topology);
-        moving_frame
-            .set_observation(Some(observation.clone()))
+        let mut atom_data = AtomData::new(&topology);
+        atom_data
+            .set_occupancy(&topology, topology.atom_ids()[0], Some(0.7))
             .unwrap();
+        moving_frame.set_atom_data(atom_data.clone()).unwrap();
         moving_frame
             .props_mut()
             .insert("label".to_owned(), PropValue::String("moving".to_owned()));
@@ -880,7 +875,6 @@ mod tests {
         assert_eq!(report.alignments().len(), 2);
         let transformed = trajectory.frame(1).unwrap();
         for (actual, expected) in transformed
-            .configuration()
             .positions()
             .values()
             .value()
@@ -890,7 +884,7 @@ mod tests {
         {
             assert_point_close(actual, expected, 3.0e-12);
         }
-        let transformed_cell = transformed.configuration().cell().copied().unwrap();
+        let transformed_cell = transformed.cell().copied().unwrap();
         assert_eq!(
             transformed_cell.periodic_axes(),
             reference_cell.periodic_axes()
@@ -911,7 +905,7 @@ mod tests {
         }
         assert_eq!(transformed.time(), Some(Quantity::new(2.5, PICOSECOND)));
         assert_eq!(transformed.step(), Some(25));
-        assert_eq!(transformed.observation(), Some(&observation));
+        assert_eq!(transformed.atom_data(), &atom_data);
         assert_eq!(
             transformed.props().get("label"),
             Some(&PropValue::String("moving".to_owned()))
@@ -983,10 +977,10 @@ mod tests {
             [true; 3],
         )
         .unwrap();
-        let periodic_frame = TrajectoryFrame::new(Configuration::with_cell(
+        let mut periodic_frame = TrajectoryFrame::new(
             Positions::new(&topology, Quantity::new(&points, ANGSTROM)).unwrap(),
-            cell,
-        ));
+        );
+        periodic_frame.set_cell(Some(cell));
         let trajectory = Trajectory::from_frames(Arc::clone(&topology), [periodic_frame]).unwrap();
 
         assert_eq!(
@@ -1082,7 +1076,6 @@ mod tests {
         let before = trajectory
             .frame(1)
             .unwrap()
-            .configuration()
             .positions()
             .values()
             .value()
@@ -1101,7 +1094,6 @@ mod tests {
             trajectory
                 .frame(1)
                 .unwrap()
-                .configuration()
                 .positions()
                 .values()
                 .into_value(),

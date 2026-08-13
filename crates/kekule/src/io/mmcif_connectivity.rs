@@ -1,10 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::core::{AtomId, BondOrder, Molecule};
-use crate::structure::{
-    Configuration, Ensemble, EnsembleMember, Model, ModelBuilder, Positions, StructureObservation,
-};
-use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
+use crate::structure::{AtomData, Ensemble, EnsembleMember, Model, ModelBuilder, Positions};
+use crate::topology::{InstanceAtomId, Topology};
 use crate::units::{Quantity, ANGSTROM};
 use std::sync::Arc;
 
@@ -76,10 +74,11 @@ pub fn interpret_mmcif_ensemble(
         .and_then(raw::MmcifInterpretationReport::selected_model)
         .unwrap_or("<unknown>")
         .to_owned();
-    let prototype = Model::with_observation(
+    let prototype = Model::with_atom_data(
         source.shared_topology(),
-        first.configuration().clone(),
-        first.observation().cloned(),
+        first.positions().clone(),
+        first.cell().copied(),
+        first.atom_data().clone(),
     )
     .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
         model_id: model_id.clone(),
@@ -97,26 +96,23 @@ pub fn interpret_mmcif_ensemble(
     let mut ensemble = Ensemble::new(Arc::clone(&topology));
 
     for member in source.members() {
-        let positions = Positions::new(&topology, member.configuration().positions().values())
+        let positions = Positions::new(&topology, member.positions().values())
             .map_err(raw::MmcifEnsembleInterpretError::Position)?;
-        let configuration = match member.configuration().cell().copied() {
-            Some(cell) => Configuration::with_cell(positions, cell),
-            None => Configuration::new(positions),
-        };
-        let mut rebuilt = EnsembleMember::new(configuration);
+        let mut rebuilt = EnsembleMember::new(positions);
+        rebuilt.set_cell(member.cell().copied());
         rebuilt
             .set_weight(member.weight())
             .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-        if let Some(observation) = member.observation() {
-            rebuilt
-                .set_observation(Some(rebound_observation(observation, &topology).map_err(
-                    |error| raw::MmcifEnsembleInterpretError::Model {
+        rebuilt
+            .set_atom_data(
+                rebound_atom_data(member.atom_data(), &topology).map_err(|error| {
+                    raw::MmcifEnsembleInterpretError::Model {
                         model_id: model_id.clone(),
                         error,
-                    },
-                )?))
-                .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-        }
+                    }
+                })?,
+            )
+            .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
         rebuilt.props_mut().clone_from(member.props());
         ensemble
             .push(rebuilt)
@@ -357,14 +353,12 @@ fn rebuild_model_with_connectivity(
 
     let mut model = builder.build().map_err(interpret_error)?;
     model.set_cell(source.cell().copied());
-    if let Some(observation) = source.observation() {
-        model
-            .set_observation(Some(rebound_observation(
-                observation,
-                &model.shared_topology(),
-            )?))
-            .map_err(interpret_error)?;
-    }
+    model
+        .set_atom_data(rebound_atom_data(
+            source.atom_data(),
+            &model.shared_topology(),
+        )?)
+        .map_err(interpret_error)?;
     Ok((model, pending))
 }
 
@@ -574,25 +568,22 @@ fn component_bond_order(
     }
 }
 
-fn rebound_observation(
-    source: &StructureObservation,
+fn rebound_atom_data(
+    source: &AtomData,
     target: &Arc<Topology>,
-) -> Result<StructureObservation, raw::MmcifInterpretError> {
-    let mut atoms = Vec::with_capacity(target.atom_count());
-    for index in 0..target.atom_count() {
-        let raw = u32::try_from(index)
-            .map_err(|_| interpret_error("mmCIF atom index capacity exceeded"))?;
-        atoms.push(
-            source
-                .atom_at(TopologyAtomIndex::new(raw))
-                .ok_or_else(|| interpret_error("mmCIF observation is incomplete"))?
-                .clone(),
-        );
+) -> Result<AtomData, raw::MmcifInterpretError> {
+    let mut atom_data = AtomData::new(target);
+    if let Some(occupancies) = source.occupancies() {
+        atom_data
+            .set_occupancies(occupancies)
+            .map_err(interpret_error)?;
     }
-    let mut observation = StructureObservation::new(target, atoms).map_err(interpret_error)?;
-    observation.set_source_model_id(source.source_model_id().map(str::to_owned));
-    observation.props_mut().clone_from(source.props());
-    Ok(observation)
+    if let Some(b_factors) = source.b_factors() {
+        atom_data
+            .set_b_factors(b_factors)
+            .map_err(interpret_error)?;
+    }
+    Ok(atom_data)
 }
 
 fn normalized(value: &str) -> String {

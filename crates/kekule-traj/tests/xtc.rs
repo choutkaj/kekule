@@ -91,7 +91,6 @@ fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer 
 
 fn x_values(buffer: &FrameBuffer) -> Vec<f64> {
     buffer
-        .configuration()
         .positions()
         .values()
         .value()
@@ -172,12 +171,7 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
         )
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
-        let pointer = destination
-            .configuration()
-            .positions()
-            .values()
-            .value()
-            .as_ptr();
+        let pointer = destination.positions().values().value().as_ptr();
         assert!(reader.read_next(&mut destination).unwrap());
         let expected = (0..atom_count)
             .map(|index| index as f64)
@@ -185,21 +179,13 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
         assert_x_close(&destination, &expected, 0.011);
         assert_eq!(destination.frame_view().step(), Some(4));
         assert_eq!(destination.frame_view().time().unwrap().value(), &1.0);
-        assert!(destination.configuration().cell().is_some());
+        assert!(destination.cell().is_some());
         assert!(reader.read_next(&mut destination).unwrap());
         let expected = (0..atom_count)
             .map(|index| index as f64 + 0.1)
             .collect::<Vec<_>>();
         assert_x_close(&destination, &expected, 0.011);
-        assert_eq!(
-            destination
-                .configuration()
-                .positions()
-                .values()
-                .value()
-                .as_ptr(),
-            pointer
-        );
+        assert_eq!(destination.positions().values().value().as_ptr(), pointer);
         assert!(!reader.read_next(&mut destination).unwrap());
 
         let mut indexed = XtcReader::new(
@@ -669,12 +655,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::InconsistentMetadata)
     );
-    frame.set_cell(
-        source_frame(&topology, 0.0, 0)
-            .configuration()
-            .cell()
-            .copied(),
-    );
+    frame.set_cell(source_frame(&topology, 0.0, 0).cell().copied());
     frame
         .props_mut()
         .insert("unsupported".into(), kekule::core::PropValue::Bool(true));
@@ -727,7 +708,7 @@ fn independently_generated_mdanalysis_xtc_matches_lossy_profile() {
     assert!(reader.read_next(&mut buffer).unwrap());
     let expected = (0..12).map(|index| index as f64 * 0.1).collect::<Vec<_>>();
     assert_x_close(&buffer, &expected, 0.011);
-    assert!(buffer.configuration().cell().is_some());
+    assert!(buffer.cell().is_some());
     assert_eq!(buffer.frame_view().step(), Some(0));
     assert!(reader.read_next(&mut buffer).unwrap());
     let expected = (0..12)
