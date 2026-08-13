@@ -50,7 +50,7 @@ source mmCIF entity 1 / asym A
            `- MacroMolecule fragment 2  (residues 70-100)
 ```
 
-Both fragments retain the same source `_entity` / asymmetry / coordinate-model provenance. No direct bond is invented across the unresolved gap. The partition stage carries an explicit source-atom to target-atom mapping so positions, observations, atom-site IDs, hierarchy metadata, and local identifiers are remapped deliberately rather than relying on dense-order coincidence.
+Both fragments retain the same source `_entity` / asymmetry / coordinate-model provenance. No direct bond is invented across the unresolved gap. The partition stage carries an explicit source-atom to target-atom mapping so positions, atom data, atom-site IDs, hierarchy metadata, and local identifiers are remapped deliberately rather than relying on dense-order coincidence.
 
 `MmcifInterpretationReport::instances()` therefore describes represented connected molecule instances, while repeated source `entity_ids()` / `asym_ids()` preserve the fact that several fragments came from one source biological entity or chain. After final partitioning, `template_bonds_pending()` is zero: unresolved connectivity is represented structurally as separate molecule instances rather than as a disconnected molecule waiting for guessed chemistry.
 
