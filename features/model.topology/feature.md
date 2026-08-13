@@ -13,11 +13,16 @@ reusable molecule definitions and explicitly identified instances.
 - `InstanceChainId`, `InstanceResidueId`, and `InstanceAtomSiteId` pair one
   `MoleculeInstanceId` with the corresponding definition-local SMCRA ID, so
   repeated uses of one macro definition remain distinct at system level.
-- `Topology` exposes deterministic qualified chain, residue, and atom-site
+- `InstanceChain`, `InstanceResidue`, and `InstanceAtomSite` are lightweight
+  borrowed views. Their IDs and parent/child navigation remain qualified while
+  labels, names, metadata, and properties borrow definition-owned data.
+  Definition-local nodes are reachable only through the explicit `local`
+  escape hatch.
+- `Topology` exposes deterministic qualified-view chain, residue, and atom-site
   iteration plus checked atom/site/residue/chain parent navigation. Valid
   small-molecule atoms return no SMCRA parent rather than an error.
 - `InstanceSmcraHierarchy` is a zero-copy scoped view whose public iterators
-  and lookups use qualified identities and reject IDs from another instance.
+  and lookups return qualified views and reject IDs from another instance.
 - `Topology` directly owns its private definition, instance, dense-order, and
   index-map collections and deliberately does not implement `Clone`.
   Topology-bound containers retain `Arc<Topology>` values; private
@@ -94,8 +99,10 @@ reusable molecule definitions and explicitly identified instances.
   tombstoned local identifiers, roles, properties, hierarchy, and complete
   lineage.
 - Reused-macro regressions verify distinct qualified chain/residue/site IDs,
-  every parent lookup, scoped mismatch errors, small-molecule absence, stable
-  iteration order, and instance-specific hierarchy selections.
+  qualified chained navigation through both reused instances, explicit shared
+  local-node borrows, every parent lookup, scoped mismatch errors,
+  small-molecule absence, stable iteration order, and instance-specific
+  hierarchy selections.
 
 ## Out Of Scope
 
@@ -135,3 +142,6 @@ reusable molecule definitions and explicitly identified instances.
 - v10: Qualify definition-local SMCRA identities by molecule instance, expose
   deterministic system-level hierarchy navigation, and make hierarchy-aware
   selections instance precise.
+- v11: Return lightweight borrowed qualified hierarchy views from system-level
+  navigation so natural parent/child traversal cannot silently lose molecule
+  instance identity.

@@ -255,20 +255,39 @@ fn qualified_model_hierarchy_public_api() -> Result<(), Box<dyn std::error::Erro
     let first_residue = InstanceResidueId::new(first, residue);
     let first_site = InstanceAtomSiteId::new(first, site);
     let first_atom = InstanceAtomId::new(first, atom);
-    assert_ne!(first_chain, InstanceChainId::new(second, chain));
-    assert_ne!(first_residue, InstanceResidueId::new(second, residue));
-    assert_ne!(first_site, InstanceAtomSiteId::new(second, site));
+    let second_chain = InstanceChainId::new(second, chain);
+    let second_residue = InstanceResidueId::new(second, residue);
+    let second_site = InstanceAtomSiteId::new(second, site);
+    let second_atom = InstanceAtomId::new(second, atom);
+    assert_ne!(first_chain, second_chain);
+    assert_ne!(first_residue, second_residue);
+    assert_ne!(first_site, second_site);
     assert_eq!(model.atom_for_site(first_site)?, first_atom);
-    assert_eq!(model.atom_site_for_atom(first_atom)?.unwrap().0, first_site);
     assert_eq!(
-        model.residue_for_atom(first_atom)?.unwrap().0,
+        model.atom_site_for_atom(first_atom)?.unwrap().id(),
+        first_site
+    );
+    assert_eq!(
+        model.residue_for_atom(first_atom)?.unwrap().id(),
         first_residue
     );
-    assert_eq!(model.chain_for_atom(first_atom)?.unwrap().0, first_chain);
+    assert_eq!(model.chain_for_atom(first_atom)?.unwrap().id(), first_chain);
     assert!(std::ptr::eq(
-        model.residue(first_residue)?,
-        view.residue(first_residue)?
+        model.residue(first_residue)?.local(),
+        view.residue(first_residue)?.local()
     ));
+    for (chain_id, residue_id, site_id, atom_id) in [
+        (first_chain, first_residue, first_site, first_atom),
+        (second_chain, second_residue, second_site, second_atom),
+    ] {
+        let residue_view = model.chain(chain_id)?.residues().next().unwrap();
+        assert_eq!(residue_view.id(), residue_id);
+        assert_eq!(residue_view.chain().id(), chain_id);
+        let site_view = residue_view.atom_sites().next().unwrap();
+        assert_eq!(site_view.id(), site_id);
+        assert_eq!(site_view.residue().id(), residue_id);
+        assert_eq!(site_view.atom(), atom_id);
+    }
     assert_eq!(
         model.positions().values().value().as_ptr(),
         view.positions().values().value().as_ptr()

@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 35
+version = 36
 status = "supported"
-description = "Expose the focused Kekule facade with sealed molecule staging, canonical instance-qualified hierarchy navigation, directly owned topology with Arc-based sharing, and direct model state."
+description = "Expose the focused Kekule facade with sealed molecule staging, borrowed instance-qualified hierarchy navigation, directly owned topology with Arc-based sharing, and direct model state."
 depends_on = [
   "core.units",
   "core.graph",
