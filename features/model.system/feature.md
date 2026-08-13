@@ -45,6 +45,10 @@ definition graph.
   means that no supported metadata column contains data.
 - `ModelView` directly borrows topology, positions, cell, and atom data without
   copying coordinates or recreating a configuration wrapper.
+- `Model` and `ModelView` provide the same common read-only atom, bond,
+  instance, and qualified SMCRA navigation as thin forwards to `Topology`.
+  Returned hierarchy nodes remain definition-owned borrows and coordinate
+  arrays are never reconstructed or copied.
 - `Positions`, `AtomData`, and `Model` remap explicitly through checked topology
   lineage. Exact shared source and target allocations are required, complete
   target atom state is mandatory, cells and atom data are preserved, and
@@ -81,6 +85,8 @@ definition graph.
 - Public transformation tests cover dense-index compaction, equal-layout
   allocation rejection, complete position and atom-data transfer, cells,
   missing target state, and source immutability.
+- Model/view hierarchy tests verify identical qualified identities, pointer-
+  identical hierarchy node borrows, and unchanged coordinate allocation.
 
 ## Out Of Scope
 
@@ -121,3 +127,5 @@ definition graph.
 - v14: Return borrowed `Positions` directly from model views, make B-factors
   explicitly unitful length-squared quantities, and clarify extensible
   field-specific `AtomData` construction and empty/count semantics.
+- v15: Add thin zero-copy model and model-view navigation over topology-owned
+  atoms, bonds, instances, and instance-qualified SMCRA hierarchy.

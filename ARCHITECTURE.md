@@ -268,6 +268,12 @@ identity:
 - mappings from structural atom sites to local `AtomId` values;
 - other static hierarchy annotations.
 
+The hierarchy and its `SmcraChainId`, `SmcraResidueId`, and
+`SmcraAtomSiteId` values are definition-local. A reusable `MacroMolecule`
+definition may occur more than once in a system, so `Topology` qualifies these
+local IDs with `MoleculeInstanceId`. `Model` borrows that authoritative
+topology navigation; it never copies hierarchy state.
+
 Coordinate-model membership is not topology. Source model identifiers,
 alternate-location choices, occupancy, B-factors, raw Cartesian text, and other
 coordinate-model-specific values belong to interpretation provenance or,
@@ -500,6 +506,8 @@ instance-qualified bonds
 neighbors and incident bonds
 instance and definition membership
 hierarchy views for macromolecular instances
+instance-qualified chains, residues, and atom sites
+atom/site/residue/chain parent navigation
 ```
 
 Connected-component queries may remain available as validation/algorithmic
@@ -530,6 +538,18 @@ InstanceBondId {
     molecule: MoleculeInstanceId,
     bond: BondId,
 }
+InstanceChainId {
+    molecule: MoleculeInstanceId,
+    chain: SmcraChainId,
+}
+InstanceResidueId {
+    molecule: MoleculeInstanceId,
+    residue: SmcraResidueId,
+}
+InstanceAtomSiteId {
+    molecule: MoleculeInstanceId,
+    atom_site: SmcraAtomSiteId,
+}
 ```
 
 Dense numerical identifiers are:
@@ -542,6 +562,13 @@ TopologyBondIndex(u32)
 `InstanceAtomId` answers which local atom of which molecule instance is being
 addressed. `TopologyAtomIndex` answers where that atom is stored in complete
 position, velocity, force, gradient, and per-atom result arrays.
+
+The SMCRA-qualified IDs solve the same ambiguity for reusable macromolecule
+definitions. System-wide chain, residue, and atom-site iteration yields these
+qualified IDs in molecule-instance then definition-hierarchy order. Parent
+navigation returns qualified identities alongside borrowed definition-owned
+nodes. A valid small-molecule atom has no SMCRA parent and therefore returns
+`None`; malformed or cross-instance identities return structured errors.
 
 The dense ordering is authoritative and immutable for the lifetime of one
 topology. It need not be identical between independently constructed
@@ -768,6 +795,12 @@ topology allocation.
 `Model::positions()` and `ModelView::positions()` return the existing borrowed
 `Positions`; callers obtain raw coordinate quantities through
 `positions().values()`.
+
+`Model` is also the ordinary application-facing navigation object. Common atom,
+bond, molecule-instance, and qualified SMCRA lookups are thin read-only
+forwards to its shared `Topology`. `ModelView` provides the corresponding
+zero-copy navigation surface, so algorithms can use identical static hierarchy
+access with a model, ensemble member, trajectory frame, or frame buffer.
 
 A model rejects incomplete, non-finite, dimensionally incompatible, or
 topology-incompatible coordinate state.
@@ -1030,6 +1063,12 @@ Selections may be constructed from:
 - connected components;
 - chemical substructure matches;
 - a future structural selection language.
+
+Chain and residue selection inputs use `InstanceChainId` and
+`InstanceResidueId`; selecting a local residue in one occurrence of a reused
+definition never includes atoms from another occurrence. Label-based helpers
+first resolve qualified hierarchy identities and then use the same compiled
+selection path.
 
 Selection syntax, selection meaning, and compiled topology-bound results remain
 separate layers. A selection is evaluated once against fixed topology and may

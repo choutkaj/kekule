@@ -223,6 +223,64 @@ fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
+fn qualified_model_hierarchy_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::bio::SmcraAtomSiteMetadata;
+    use kekule::structure::{Model, Positions};
+    use kekule::topology::{
+        AtomSelection, InstanceAtomId, InstanceAtomSiteId, InstanceChainId, InstanceResidueId,
+        MoleculeInstanceMetadata, TopologyBuilder,
+    };
+
+    let mut macro_builder = MacroMolecule::builder();
+    let atom = macro_builder.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+    let chain = macro_builder.hierarchy_mut().add_chain("A", None)?;
+    let residue = macro_builder
+        .hierarchy_mut()
+        .add_residue(chain, "GLY", Some(1), None, None)?;
+    let site = macro_builder.add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())?;
+    let macro_molecule = macro_builder.build()?;
+
+    let mut topology_builder = TopologyBuilder::new();
+    let definition = topology_builder.add_macro_molecule_definition(&macro_molecule)?;
+    let first = topology_builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+    let second = topology_builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+    let topology = std::sync::Arc::new(topology_builder.build()?);
+    let model = Model::new(
+        std::sync::Arc::clone(&topology),
+        Positions::zeros(&topology),
+    )?;
+    let view = model.view();
+
+    let first_chain = InstanceChainId::new(first, chain);
+    let first_residue = InstanceResidueId::new(first, residue);
+    let first_site = InstanceAtomSiteId::new(first, site);
+    let first_atom = InstanceAtomId::new(first, atom);
+    assert_ne!(first_chain, InstanceChainId::new(second, chain));
+    assert_ne!(first_residue, InstanceResidueId::new(second, residue));
+    assert_ne!(first_site, InstanceAtomSiteId::new(second, site));
+    assert_eq!(model.atom_for_site(first_site)?, first_atom);
+    assert_eq!(model.atom_site_for_atom(first_atom)?.unwrap().0, first_site);
+    assert_eq!(
+        model.residue_for_atom(first_atom)?.unwrap().0,
+        first_residue
+    );
+    assert_eq!(model.chain_for_atom(first_atom)?.unwrap().0, first_chain);
+    assert!(std::ptr::eq(
+        model.residue(first_residue)?,
+        view.residue(first_residue)?
+    ));
+    assert_eq!(
+        model.positions().values().value().as_ptr(),
+        view.positions().values().value().as_ptr()
+    );
+    assert_eq!(
+        AtomSelection::for_residues(&topology, [first_residue])?.semantic_ids(&topology)?,
+        vec![first_atom]
+    );
+    Ok(())
+}
+
+#[test]
 fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::geometry::{PeriodicCell, Vector3};
     use kekule::modeling::potential::{

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::bio::{SmcraChain, SmcraHierarchy, SmcraResidue, SmcraResidueId};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
-use crate::topology::{InstanceAtomId, MoleculeInstanceId};
+use crate::topology::{InstanceAtomId, InstanceResidueId, MoleculeInstanceId};
 
 use super::*;
 
@@ -115,7 +115,7 @@ struct BetaSlot {
 
 #[derive(Debug, Clone)]
 struct BackboneResidue {
-    key: DsspResidueKey,
+    key: InstanceResidueId,
     source: DsspResidueSource,
     chain: usize,
     n: Vec3,
@@ -421,7 +421,7 @@ fn extract_chain(
                     molecule: molecule_id,
                     message: error.to_string(),
                 })?;
-        let key = DsspResidueKey::new(molecule_id, residue_id);
+        let key = InstanceResidueId::new(molecule_id, residue_id);
         if residue.label_seq_id.is_none() {
             report.non_peptide_residues += 1;
             forced_break = true;
@@ -1308,7 +1308,7 @@ mod tests {
         let mut residues = (0..count)
             .zip(0..=u32::MAX)
             .map(|(index, raw)| BackboneResidue {
-                key: DsspResidueKey::new(
+                key: InstanceResidueId::new(
                     MoleculeInstanceId::new(0),
                     crate::bio::SmcraResidueId::new(raw),
                 ),
