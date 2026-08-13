@@ -4,7 +4,7 @@ use kekule::modeling::potential::{
     HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError,
 };
 use kekule::small::SmallMolecule;
-use kekule::structure::{Model, Positions};
+use kekule::structure::Model;
 use kekule::topology::{InstanceBondId, MoleculeInstanceId};
 use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
@@ -43,13 +43,13 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
     )
     .unwrap();
 
-    let frame = TrajectoryFrame::new(Positions::new(&topology, model.positions()).unwrap());
+    let frame = TrajectoryFrame::new(model.positions().clone());
     assert!(potential
         .evaluate(frame.view(&topology).unwrap().model_view())
         .is_ok());
 
     let mut buffer = FrameBuffer::new(topology);
-    buffer.set_positions(model.positions()).unwrap();
+    buffer.set_positions(model.positions().values()).unwrap();
     assert!(potential.evaluate(buffer.model_view()).is_ok());
 
     let cell = PeriodicCell::orthorhombic(

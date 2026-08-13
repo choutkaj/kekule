@@ -893,7 +893,10 @@ mod coordinate_independence_tests {
         let mut valid_builder = ModelBuilder::new();
         valid_builder.add_macro_molecule(&molecule, valid).unwrap();
         let model = valid_builder.build().unwrap();
-        assert_eq!(model.positions()[0], Point3::new(1.0, 2.0, 3.0));
+        assert_eq!(
+            model.positions().values().value()[0],
+            Point3::new(1.0, 2.0, 3.0)
+        );
 
         let mut invalid_builder = ModelBuilder::new();
         assert_eq!(

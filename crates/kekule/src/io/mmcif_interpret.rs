@@ -13,7 +13,7 @@ use crate::structure::{
 use crate::topology::{
     InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole, TopologyMapping,
 };
-use crate::units::{Quantity, ANGSTROM};
+use crate::units::{Quantity, ANGSTROM, SQUARE_ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
 
@@ -241,7 +241,9 @@ impl MmcifAtomProvenance {
         self.occurrence
     }
 
-    /// Returns the alternate-location identity selected for this source atom.
+    /// Returns the alternate-location label selected for this source atom.
+    ///
+    /// This is coordinate-row provenance and is not topology atom identity.
     pub fn selected_alternate_location(&self) -> Option<&str> {
         self.selected_alternate_location.as_deref()
     }
@@ -525,7 +527,12 @@ fn interpret_block(
         b_factors[index.index()] = b_factor;
     }
     let topology = model.shared_topology();
-    let atom_data = AtomData::from_columns(&topology, Some(occupancies), Some(b_factors))
+    let mut atom_data = AtomData::new(&topology);
+    atom_data
+        .set_occupancies(occupancies)
+        .map_err(graph_error)?;
+    atom_data
+        .set_b_factors(Quantity::new(b_factors, SQUARE_ANGSTROM))
         .map_err(graph_error)?;
     model.set_atom_data(atom_data).map_err(graph_error)?;
     report.macromolecules = model
@@ -1712,19 +1719,27 @@ pub fn interpret_mmcif_ensemble(
                 model_id: model_id.clone(),
             },
         )?;
-        let positions = Positions::new(&shared_topology, model.positions())
+        let positions = Positions::new(&shared_topology, model.positions().values())
             .map_err(MmcifEnsembleInterpretError::Position)?;
         let mut member = EnsembleMember::new(positions);
         member.set_cell(model.cell().copied());
-        let atom_data = AtomData::from_columns(
-            &shared_topology,
-            model.atom_data().occupancies().map(<[Option<f64>]>::to_vec),
-            model.atom_data().b_factors().map(<[Option<f64>]>::to_vec),
-        )
-        .map_err(|error| MmcifEnsembleInterpretError::Model {
-            model_id: model_id.clone(),
-            error: graph_error(error),
-        })?;
+        let mut atom_data = AtomData::new(&shared_topology);
+        if let Some(occupancies) = model.atom_data().occupancies() {
+            atom_data.set_occupancies(occupancies).map_err(|error| {
+                MmcifEnsembleInterpretError::Model {
+                    model_id: model_id.clone(),
+                    error: graph_error(error),
+                }
+            })?;
+        }
+        if let Some(b_factors) = model.atom_data().b_factors() {
+            atom_data.set_b_factors(b_factors).map_err(|error| {
+                MmcifEnsembleInterpretError::Model {
+                    model_id: model_id.clone(),
+                    error: graph_error(error),
+                }
+            })?;
+        }
         member
             .set_atom_data(atom_data)
             .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
@@ -1747,7 +1762,6 @@ struct ProvenanceAtomIdentity {
     author_sequence_id: Option<String>,
     insertion_code: Option<String>,
     occurrence: Option<usize>,
-    selected_alternate_location: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1781,7 +1795,6 @@ fn provenance_identity(report: &MmcifInterpretationReport) -> ProvenanceIdentity
                     author_sequence_id: atom.author_sequence_id.clone(),
                     insertion_code: atom.insertion_code.clone(),
                     occurrence: atom.occurrence,
-                    selected_alternate_location: atom.selected_alternate_location.clone(),
                 })
             })
             .collect(),

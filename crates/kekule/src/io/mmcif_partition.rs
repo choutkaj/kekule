@@ -60,7 +60,7 @@ pub fn interpret_mmcif(
     let source_topology = source.shared_topology();
     let partition = partition_topology(&source_topology)?;
     let positions = remap_positions(
-        source.positions_state(),
+        source.positions(),
         &source_topology,
         &partition.topology,
         &partition.source_atoms,
@@ -510,8 +510,20 @@ fn remap_atom_data(
                 .map_err(interpret_error)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    AtomData::from_columns(target_topology, Some(occupancies), Some(b_factors))
-        .map_err(interpret_error)
+    let mut atom_data = AtomData::new(target_topology);
+    atom_data
+        .set_occupancies(occupancies)
+        .map_err(interpret_error)?;
+    atom_data
+        .set_b_factors(Quantity::new(
+            b_factors
+                .into_iter()
+                .map(|value| value.map(Quantity::into_value))
+                .collect::<Vec<_>>(),
+            crate::units::SQUARE_ANGSTROM,
+        ))
+        .map_err(interpret_error)?;
+    Ok(atom_data)
 }
 
 fn interpret_error(error: impl std::fmt::Display) -> raw::MmcifInterpretError {

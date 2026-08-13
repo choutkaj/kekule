@@ -68,11 +68,13 @@ shared-topology ensemble.
 - Ensemble correspondence compares stable source atom identity rather than
   derived molecule insertion order. Reordered rows with the same source atom
   set fail deterministically as dense-order mismatches; changed residue,
-  occurrence, insertion, asymmetry, atom, component, or selected-altloc
-  identity fails as an atom-set mismatch.
+  occurrence, insertion, asymmetry, atom, or component identity fails as an
+  atom-set mismatch. The selected alternate location remains report provenance
+  and does not distinguish topology atoms across coordinate models.
 - Never writes mmCIF-specific labels into generic atom, molecule, or conformer
   property maps.
-- Preserves occupancy and B-factor in topology-bound `AtomData`. Source
+- Preserves occupancy and explicitly square-angstrom B-factor quantities in
+  topology-bound `AtomData`. Source
   coordinate-model ID, selected alternate location, source atom-site ID, and
   raw document values remain in interpretation reports/provenance or the
   loss-preserving document rather than static hierarchy or model atom data.
@@ -122,9 +124,9 @@ shared-topology ensemble.
 - Multi-model tests cover shared-topology ensemble construction, distinct
   per-member report source IDs and occupancy/B-factors, repeated residue/atom names,
   insertion-code variants, repeated sequence-free non-polymer occurrences,
-  reordered coordinate-model rows, selected alternate locations, stable valid
-  identity, and structured true atom-set, empty-selection, and multi-data-block
-  rejection.
+  reordered coordinate-model rows, differing selected alternate locations over
+  one shared topology atom with per-report provenance, stable valid identity,
+  and structured true atom-set, empty-selection, and multi-data-block rejection.
 - Successful bounded fuzz parses traverse the loss-preserving document and then
   exercise explicit selected-model interpretation, empty ensemble selection,
   extreme finite coordinates, ambiguous and auth-only declared connections,
@@ -177,3 +179,6 @@ shared-topology ensemble.
   idempotent.
 - v16: Populate flattened model/ensemble positions, cells, and `AtomData` while
   retaining format-specific source identity in reports and provenance.
+- v17: Treat selected altloc labels strictly as provenance during ensemble
+  correspondence and convert mmCIF B-factors explicitly as square-angstrom
+  quantities.

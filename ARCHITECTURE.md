@@ -730,9 +730,13 @@ authoritative dense atom order. It retains the exact `Arc<Topology>` allocation
 and initially provides only occupancy and isotropic B-factor columns.
 
 Each column is optional and contains one optional finite value per topology
-atom. A wholly absent field allocates no per-atom metadata. Construction,
-complete-column replacement, semantic-ID lookup, dense-index lookup, and
-topology remapping are checked.
+atom. Occupancy is dimensionless. Isotropic B-factors are length-squared
+quantities exposed with explicit units and stored canonically in square
+angstroms. A wholly absent field allocates no per-atom metadata. Construction
+starts without allocated columns; field-specific complete-column replacement,
+semantic-ID lookup, dense-index lookup, and topology remapping are checked.
+`atom_count()` reports topology cardinality, while `is_empty()` reports that no
+supported scientific column contains data.
 
 Alternate-location labels, source coordinate-model identifiers, source atom
 row identifiers, and raw source text remain format interpretation provenance;
@@ -760,6 +764,10 @@ The topology is immutable and cheaply shared with `Arc::clone`. Positions, the
 periodic cell, and atom data are accessed directly without an intermediate
 configuration wrapper. Topology-bound replacements require the exact shared
 topology allocation.
+
+`Model::positions()` and `ModelView::positions()` return the existing borrowed
+`Positions`; callers obtain raw coordinate quantities through
+`positions().values()`.
 
 A model rejects incomplete, non-finite, dimensionally incompatible, or
 topology-incompatible coordinate state.
@@ -1093,9 +1101,11 @@ member's `AtomData`. Inconsistent atom presence or topology produces a
 structured error unless an explicit reconciliation policy is requested.
 Source atom correspondence uses residue sequence and insertion identity,
 label/author asymmetry identity, component and atom labels, an explicit
-occurrence discriminator when sequence identifiers are absent, and the
-selected alternate location where relevant. It does not infer correspondence
-from derived molecule insertion order.
+occurrence discriminator when sequence identifiers are absent. A selected
+alternate-location label is provenance for the resolved coordinate row, not
+atom identity, so models selecting different conformers for the same source
+atom may share one topology. Correspondence does not infer identity from
+derived molecule insertion order.
 
 Only evidence-backed covalent links establish topology connectivity.
 Distance-based candidates, unresolved connections, model selection, altloc

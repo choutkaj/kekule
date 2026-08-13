@@ -594,6 +594,9 @@ fn collect_macro_rows(
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             b_factor: model
                 .b_factor(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
+                .transpose()
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: residue
@@ -651,6 +654,9 @@ fn collect_small_rows(
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             b_factor: model
                 .b_factor(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
+                .transpose()
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: None,

@@ -145,8 +145,8 @@ pub fn kabsch_with_options(
         });
     }
 
-    let moving_positions = moving.positions();
-    let reference_positions = reference.positions();
+    let moving_positions = moving.positions().values();
+    let reference_positions = reference.positions().values();
     let moving_positions = moving_positions.value();
     let reference_positions = reference_positions.value();
 
@@ -945,8 +945,8 @@ mod tests {
         let points = fixture_points();
         let (topology, moving, reference) = models(&points, &points);
         let selection = all(&topology);
-        let moving_before = moving.positions().value().to_vec();
-        let reference_before = reference.positions().value().to_vec();
+        let moving_before = moving.positions().values().value().to_vec();
+        let reference_before = reference.positions().values().value().to_vec();
         let selection_before = selection.clone();
 
         let result = kabsch(moving.view(), reference.view(), &selection).unwrap();
@@ -955,9 +955,12 @@ mod tests {
         assert_close(result.rmsd().into_value(), 0.0, 1.0e-14);
         assert_eq!(result.rmsd().unit(), MODEL_LENGTH_UNIT);
         assert_eq!(result.selected_atom_count(), points.len());
-        assert_eq!(moving.positions().into_value(), moving_before.as_slice());
         assert_eq!(
-            reference.positions().into_value(),
+            moving.positions().values().into_value(),
+            moving_before.as_slice()
+        );
+        assert_eq!(
+            reference.positions().values().into_value(),
             reference_before.as_slice()
         );
         assert_eq!(selection, selection_before);
@@ -1425,7 +1428,7 @@ mod tests {
         moving.set_cell(Some(cell));
         reference.set_cell(Some(cell));
         let selection = all(&topology);
-        let moving_before = moving.positions().value().to_vec();
+        let moving_before = moving.positions().values().value().to_vec();
 
         assert_eq!(
             kabsch(moving.view(), reference.view(), &selection),
@@ -1447,7 +1450,10 @@ mod tests {
         assert_transform_close(result.transform(), expected, 3.0e-12);
         assert_eq!(moving.cell(), Some(&cell));
         assert_eq!(reference.cell(), Some(&cell));
-        assert_eq!(moving.positions().into_value(), moving_before.as_slice());
+        assert_eq!(
+            moving.positions().values().into_value(),
+            moving_before.as_slice()
+        );
     }
 
     #[test]
@@ -1463,7 +1469,7 @@ mod tests {
         let result = kabsch(moving.view(), reference_model.view(), &all(&topology)).unwrap();
 
         assert_close(result.transform().rotation().determinant(), 1.0, 1.0e-12);
-        for (moving, reference) in moving.positions().value().iter().zip(reference) {
+        for (moving, reference) in moving.positions().values().value().iter().zip(reference) {
             assert_point_close(
                 result.transform().transform_point(*moving),
                 reference,

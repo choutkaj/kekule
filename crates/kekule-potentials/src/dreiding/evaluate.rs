@@ -24,7 +24,7 @@ impl Potential for DreidingPotential {
             return Err(PotentialError::UnsupportedPeriodicCell);
         }
 
-        let positions = model.positions().into_value();
+        let positions = model.positions().values().into_value();
         let mut energy = 0.0;
         let mut gradient = vec![Vector3::zero(); positions.len()];
 
