@@ -18,7 +18,8 @@ deterministic compatibility profile in either byte order.
   `DcdTimePolicy` establishes its units and conversion.
 - Writers emit positions and optional cells with explicit start step, save
   interval, and time convention; they require at least one frame and do not
-  emit fixed-atom optimization.
+  emit fixed-atom optimization. Non-empty atom data, bond data, and arbitrary
+  frame properties are rejected rather than silently dropped.
 - Unknown record or cell dialects return structured failures rather than being
   guessed or coerced.
 
@@ -85,3 +86,5 @@ deterministic compatibility profile in either byte order.
   `kekule-traj` trajectory crate.
 - v7: Retain the exact caller-supplied `Arc<Topology>` across DCD readers,
   writers, and reusable destination buffers.
+- v8: Reject non-empty topology-bound `BondData`; arbitrary bond-property
+  serialization remains outside the DCD profile.

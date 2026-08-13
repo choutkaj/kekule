@@ -334,6 +334,18 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
         codec_kind(&strict.write_frame(buffer.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
+    buffer.set_step(None);
+    buffer
+        .bond_data_mut()
+        .set_property(
+            "conformational_entropy",
+            Quantity::new(vec![Some(1.0)], ANGSTROM),
+        )
+        .unwrap();
+    assert_eq!(
+        codec_kind(&strict.write_frame(buffer.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
+    );
 }
 
 #[test]

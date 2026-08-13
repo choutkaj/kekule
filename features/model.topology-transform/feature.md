@@ -15,14 +15,14 @@ compatible topology-bound structure state through checked lineage.
 - Transform results retain one exact target `Arc<Topology>` and a complete checked
   `TopologyMapping` across definitions, instances, qualified atoms and bonds,
   and dense atom and bond indices.
-- Foundational topology-bound positions, atom data, models, atom selections,
+- Foundational topology-bound positions, atom and bond data, models, atom selections,
   and ensembles can be remapped explicitly. `kekule-traj`
   uses the same public mapping helpers for trajectory frames, in-memory
   trajectories, and reusable frame buffers.
 - Every remap validates the exact shared source, mapping-source, mapping-target,
   and target topology allocations.
 - Removed selected atoms require an explicit strict or drop policy.
-- Periodic cells, atom data, ensemble weights and properties, velocities,
+- Periodic cells, atom and bond data, ensemble weights and properties, velocities,
   forces, time, step, frame properties, and source order are preserved.
 - Target atoms lacking mapped source state are rejected. Prepared potentials
   remain bound to their original exact topology and are never remapped.
@@ -78,3 +78,6 @@ compatible topology-bound structure state through checked lineage.
   clones during transformation.
 - v5: Remap flattened model/frame positions and `AtomData` together after
   removing configuration and observation wrappers.
+- v6: Add complete dense-bond remapping and preserve named unit-aware custom
+  atom and bond properties through model, ensemble, frame, trajectory, and
+  reusable-buffer lineage operations.

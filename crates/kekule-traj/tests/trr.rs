@@ -544,6 +544,20 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
         Some(TrajectoryCodecErrorKind::InvalidFrame)
     );
     assert!(writer.writer().get_ref().is_empty());
+
+    let mut bond_annotated = populated_frame(&topology, 0.0, 0);
+    bond_annotated
+        .bond_data_mut()
+        .set_property(
+            "conformational_entropy",
+            Quantity::new(vec![Some(1.0); topology.bond_count()], NANOMETER),
+        )
+        .unwrap();
+    assert_eq!(
+        codec_kind(&writer.write_frame(bond_annotated.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
+    );
+    assert!(writer.writer().get_ref().is_empty());
 }
 
 #[test]

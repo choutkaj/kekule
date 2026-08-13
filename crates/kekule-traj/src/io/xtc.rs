@@ -1210,6 +1210,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             (frame.velocities().is_some(), "velocities"),
             (frame.forces().is_some(), "forces"),
             (!frame.atom_data().is_empty(), "atom data"),
+            (!frame.bond_data().is_empty(), "bond data"),
             (!frame.props().is_empty(), "properties"),
         ] {
             if present {

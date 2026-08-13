@@ -10,7 +10,7 @@
 //! Dynamic structure follows three explicit relationships:
 //!
 //! - [`structure::Model`] = one [`topology::Topology`] plus topology-bound
-//!   positions, an optional periodic cell, and per-atom data;
+//!   positions, an optional periodic cell, and per-atom and per-bond data;
 //! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
 //!
 //! Ordered multi-frame trajectories and their file codecs live in the

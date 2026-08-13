@@ -846,6 +846,13 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 "atom data",
             ));
         }
+        if !frame.bond_data().is_empty() {
+            return Err(writer_field_error(
+                &self.source_label,
+                self.frame_count,
+                "bond data",
+            ));
+        }
         if self.frame_count == u64::MAX {
             return Err(writer_limit(
                 &self.source_label,
