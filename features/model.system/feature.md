@@ -25,8 +25,10 @@ definition graph.
   staging and validates only the explicitly selected conformer while staging
   positions. Unselected conformers cannot make an otherwise valid selection
   fail.
-- Converts source coordinates once to `MODEL_LENGTH_UNIT`; model position
-  getters and setters expose explicit quantities and accept compatible length units.
+- Converts source coordinates once to `MODEL_LENGTH_UNIT`; `Model::positions`
+  and `ModelView::positions` borrow the topology-bound `Positions` directly,
+  while `Positions::values` and individual position getters expose explicit
+  quantities. Setters accept compatible length units.
 - `Positions` retain one `Arc<Topology>`, reject independently allocated,
   incomplete, or non-finite
   arrays, and reuse their allocation for validated full-coordinate updates.
@@ -35,6 +37,12 @@ definition graph.
 - `AtomData` stores optional dense occupancy and B-factor columns. Wholly
   absent columns allocate no per-atom objects; present columns validate exact
   atom count and finite values and support semantic-ID and dense-index access.
+  Occupancy is dimensionless; B-factor APIs use length-squared `Quantity`
+  values and normalize storage to square angstroms.
+- `AtomData::new` starts with no columns. Field-specific setters replace or
+  clear occupancy and B-factor columns without a positional all-future-fields
+  constructor. `atom_count()` reports topology cardinality and `is_empty()`
+  means that no supported metadata column contains data.
 - `ModelView` directly borrows topology, positions, cell, and atom data without
   copying coordinates or recreating a configuration wrapper.
 - `Positions`, `AtomData`, and `Model` remap explicitly through checked topology
@@ -62,9 +70,11 @@ definition graph.
 
 - Unit tests cover direct model construction without atom metadata, independent
   topology/position allocation rejection, occupancy and B-factor lookup and
-  mutation, dense-column validation, shared topology after cloning, unit
-  conversion, allocation reuse, periodic cells, source immutability, conformer
-  export, and transactional failures.
+  mutation, square-angstrom B-factor round trips, compatible length-squared
+  conversion, incompatible-unit and non-finite rejection, dense-column
+  validation, shared topology after cloning, coordinate unit conversion,
+  allocation reuse, periodic cells, source immutability, conformer export, and
+  transactional failures.
 - Macro construction tests cover one valid selected conformer alongside many
   unrelated invalid conformers, rejection when an invalid conformer is selected,
   and preservation of all source conformers.
@@ -108,3 +118,6 @@ definition graph.
 - v13: Flatten `Model` to direct topology, positions, optional cell, and
   column-oriented `AtomData`; remove configuration and structure-observation
   wrappers and remap positions and atom data together.
+- v14: Return borrowed `Positions` directly from model views, make B-factors
+  explicitly unitful length-squared quantities, and clarify extensible
+  field-specific `AtomData` construction and empty/count semantics.

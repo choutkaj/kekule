@@ -14,7 +14,7 @@ use kekule::topology::{
 };
 use kekule::units::{
     Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT,
-    PICOSECOND,
+    PICOSECOND, SQUARE_ANGSTROM,
 };
 use kekule_traj::{
     Forces, FrameBuffer, Trajectory, TrajectoryFrame, TrajectoryRemapError, Velocities,
@@ -352,20 +352,23 @@ fn point_values(topology: &Topology, offset: f64) -> Vec<Point3> {
 }
 
 fn atom_data(topology: &Arc<Topology>) -> AtomData {
-    AtomData::from_columns(
-        topology,
-        Some(
+    let mut atom_data = AtomData::new(topology);
+    atom_data
+        .set_occupancies(
             (0..topology.atom_count())
                 .map(|index| Some(0.5 + index as f64 / 100.0))
-                .collect(),
-        ),
-        Some(
+                .collect::<Vec<_>>(),
+        )
+        .expect("complete occupancy column");
+    atom_data
+        .set_b_factors(Quantity::new(
             (0..topology.atom_count())
                 .map(|index| Some(10.0 + index as f64))
-                .collect(),
-        ),
-    )
-    .expect("complete test atom data")
+                .collect::<Vec<_>>(),
+            SQUARE_ANGSTROM,
+        ))
+        .expect("complete B-factor column");
+    atom_data
 }
 
 fn model(fixture: &Fixture, offset: f64) -> Model {
@@ -522,8 +525,7 @@ fn state_remapping_rejects_equal_layout_substitutes_and_unmapped_target_atoms() 
         &fixture.topology,
         &independent_source.topology
     ));
-    let source_positions =
-        Positions::new(&fixture.topology, source.positions()).expect("source model positions");
+    let source_positions = source.positions().clone();
     assert_eq!(
         source_positions.remap_to(
             &independent_source.topology,
@@ -581,9 +583,7 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
     let target_topology = edit.shared_topology();
     let first = model(&fixture, 3.0);
     let second = model(&fixture, 30.0);
-    let mut first_member = EnsembleMember::new(
-        Positions::new(&fixture.topology, first.positions()).expect("first positions"),
-    );
+    let mut first_member = EnsembleMember::new(first.positions().clone());
     first_member.set_cell(first.cell().copied());
     first_member.set_weight(Some(0.25)).expect("valid weight");
     first_member
@@ -592,9 +592,7 @@ fn ensemble_remapping_preserves_member_state_and_reports_member_context() {
     first_member
         .props_mut()
         .insert("member".to_owned(), PropValue::Int(1));
-    let mut second_member = EnsembleMember::new(
-        Positions::new(&fixture.topology, second.positions()).expect("second positions"),
-    );
+    let mut second_member = EnsembleMember::new(second.positions().clone());
     second_member.set_cell(second.cell().copied());
     second_member.set_weight(Some(0.75)).expect("valid weight");
     second_member
@@ -664,9 +662,7 @@ fn frame(fixture: &Fixture, offset: f64, step: u64) -> TrajectoryFrame {
     let vectors = (0..fixture.topology.atom_count())
         .map(|index| Vector3::new(offset + index as f64, 2.0, 3.0))
         .collect::<Vec<_>>();
-    let mut frame = TrajectoryFrame::new(
-        Positions::new(&fixture.topology, model.positions()).expect("frame positions"),
-    );
+    let mut frame = TrajectoryFrame::new(model.positions().clone());
     frame.set_cell(model.cell().copied());
     frame
         .set_velocities(Some(
@@ -934,9 +930,13 @@ fn reusable_buffer_remapping_is_transactional_and_clears_stale_state() {
         .set_time(Some(Quantity::new(81.0, PICOSECOND)))
         .expect("destination time");
     destination.set_step(Some(91));
-    let mut destination_atom_data = AtomData::empty(&target);
+    let mut destination_atom_data = AtomData::new(&target);
     destination_atom_data
-        .set_b_factor(&target, target.atom_ids()[0], Some(99.0))
+        .set_b_factor(
+            &target,
+            target.atom_ids()[0],
+            Some(Quantity::new(99.0, SQUARE_ANGSTROM)),
+        )
         .expect("destination atom data");
     destination
         .set_atom_data(destination_atom_data)

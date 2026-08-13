@@ -850,7 +850,7 @@ mod tests {
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
             .unwrap();
         moving_frame.set_step(Some(25));
-        let mut atom_data = AtomData::empty(&topology);
+        let mut atom_data = AtomData::new(&topology);
         atom_data
             .set_occupancy(&topology, topology.atom_ids()[0], Some(0.7))
             .unwrap();

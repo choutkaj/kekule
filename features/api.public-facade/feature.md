@@ -212,3 +212,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   structure, selection, mapping, alignment, potential, and companion APIs.
 - v33: Replace the configuration and structure-observation exports with
   topology-bound `AtomData` and the flattened `Model`/`ModelView` API.
+- v34: Reconcile the flattened API around directly borrowed `Positions`,
+  field-specific `AtomData` construction, and quantity-valued B-factors.

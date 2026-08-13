@@ -17,7 +17,8 @@ block without hiding validation, perception, sanitization, or preparation.
 - Explicitly converts model length quantities to the mmCIF Cartesian angstrom
   convention before formatting.
 - Preserves supported static macro hierarchy labels and residue identifiers,
-  plus occupancy and B-factor from `AtomData`. Small-molecule instances receive
+  plus occupancy and B-factor from `AtomData`; B-factors are explicitly
+  converted to the mmCIF square-angstrom convention. Small-molecule instances receive
   deterministic structural labels required by mmCIF. Format-specific selected
   alternate-location and source-row identities are not model atom data and are
   emitted canonically until a later structural-I/O stage defines their write path.
@@ -84,3 +85,5 @@ block without hiding validation, perception, sanitization, or preparation.
 - v6: Read positions and cell directly from flattened `Model` state and
   occupancy/B-factor from `AtomData`; defer format-specific altloc/source-row
   reattachment to the later structural-I/O refactor.
+- v7: Read borrowed topology-bound `Positions` directly and serialize unitful
+  B-factors through an explicit square-angstrom conversion.

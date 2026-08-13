@@ -9,6 +9,7 @@ use crate::mmcif::{
 use crate::small::SmallMolecule;
 use crate::structure::{Model, ModelBuilder};
 use crate::topology::{MoleculeInstanceMetadata, MoleculeRole};
+use crate::units::{Quantity, NANOMETER, SQUARE_ANGSTROM};
 
 const MIXED: &str = r#"
 data_mixed
@@ -449,7 +450,12 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     assert_eq!(model.topology().instance_count(), 4);
     assert_eq!(model.atom_count(), 4);
     assert_eq!(model.positions().len(), 4);
-    assert!(model.positions().iter().all(|point| point.x.is_finite()));
+    assert!(model
+        .positions()
+        .values()
+        .value()
+        .iter()
+        .all(|point| point.x.is_finite()));
     let instances = model
         .topology()
         .instances()
@@ -583,7 +589,7 @@ fn multiple_coordinate_models_require_explicit_selection() {
     .unwrap();
     assert_eq!(selected.report().selected_model.as_deref(), Some("2"));
     assert_eq!(selected.model().atom_count(), 1);
-    assert_eq!(selected.model().positions()[0].x, 8.0);
+    assert_eq!(selected.model().positions().values().value()[0].x, 8.0);
     assert_eq!(selected.report().ignored_coordinate_models, vec!["1"]);
 
     let first = mmcif::interpret(
@@ -674,8 +680,13 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
         Some(0.4)
     );
     assert_eq!(
-        atom_data[1].b_factor(&topology, first_atom).unwrap(),
-        Some(20.0)
+        atom_data[1]
+            .b_factor(&topology, first_atom)
+            .unwrap()
+            .unwrap()
+            .value_in(SQUARE_ANGSTROM)
+            .unwrap(),
+        20.0
     );
 }
 
@@ -797,7 +808,7 @@ fn ensemble_identity_detects_true_repeated_atom_set_mismatch() {
 }
 
 #[test]
-fn ensemble_identity_includes_selected_alternate_location() {
+fn ensemble_identity_excludes_selected_alternate_location_but_reports_preserve_it() {
     let input = r#"
 data_altloc_models
 loop_
@@ -821,17 +832,58 @@ _atom_site.Cartn_z
 _atom_site.pdbx_PDB_model_num
 ATOM 1 C CA GLY A 1 1 A 0.8 0.0 0.0 0.0 1
 ATOM 2 C CA GLY A 1 1 B 0.2 1.0 0.0 0.0 1
-ATOM 3 C CA GLY A 1 1 A 0.2 10.0 0.0 0.0 2
-ATOM 4 C CA GLY A 1 1 B 0.8 11.0 0.0 0.0 2
+ATOM 3 C CA GLY A 1 1 A 0.1 10.0 0.0 0.0 2
+ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
 "#;
-    assert!(matches!(
-        mmcif::interpret_ensemble(
-            &parse(input),
-            mmcif::MmcifEnsembleInterpretOptions::default(),
-        ),
-        Err(mmcif::MmcifEnsembleInterpretError::InconsistentAtomSet { model_id })
-            if model_id == "2"
-    ));
+    let interpreted = mmcif::interpret_ensemble(
+        &parse(input),
+        mmcif::MmcifEnsembleInterpretOptions::default(),
+    )
+    .expect("selected altloc is provenance rather than atom identity");
+    let ensemble = interpreted.ensemble();
+    assert_eq!(ensemble.len(), 2);
+    assert_eq!(ensemble.topology().atom_count(), 1);
+    assert_eq!(
+        ensemble
+            .members()
+            .map(|member| member.positions().values().value()[0].x)
+            .collect::<Vec<_>>(),
+        [0.0, 11.0]
+    );
+    let topology = ensemble.shared_topology();
+    let atom = topology.atom_ids()[0];
+    assert_eq!(
+        interpreted.reports()[0].instances()[0].atoms()[0].atom(),
+        interpreted.reports()[1].instances()[0].atoms()[0].atom()
+    );
+    assert_eq!(
+        ensemble
+            .member(0)
+            .unwrap()
+            .atom_data()
+            .occupancy(&topology, atom)
+            .unwrap(),
+        Some(0.8)
+    );
+    assert_eq!(
+        ensemble
+            .member(1)
+            .unwrap()
+            .atom_data()
+            .occupancy(&topology, atom)
+            .unwrap(),
+        Some(0.9)
+    );
+    let selected_altlocs = interpreted
+        .reports()
+        .iter()
+        .map(|report| {
+            report.instances()[0].atoms()[0]
+                .selected_alternate_location()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(selected_altlocs, ["A", "B"]);
 }
 
 #[test]
@@ -850,7 +902,7 @@ fn alternate_location_policy_is_explicit_and_reported() {
         .replace(" 3.0 0.0 0.0 1", " . 1.0 3.0 0.0 0.0 1");
     let document = parse(&input);
     let result = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
-    assert_eq!(result.model().positions()[0].x, 5.0);
+    assert_eq!(result.model().positions().values().value()[0].x, 5.0);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
         mmcif::MmcifInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"
@@ -1301,13 +1353,24 @@ _struct_conn.ptnr2_label_seq_id
 _struct_conn.pdbx_value_order
 covale A N 1 A CA 1 doub
 "#;
-    let original = mmcif::interpret(
+    let (mut original, _) = mmcif::interpret(
         &parse(&format!("{MIXED}\n{connection}")),
         MmcifInterpretOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .into_parts();
+    let topology = original.shared_topology();
+    let first_atom = topology.atom_ids()[0];
+    original
+        .atom_data_mut()
+        .set_b_factor(
+            &topology,
+            first_atom,
+            Some(Quantity::new(0.125, NANOMETER.powi(2))),
+        )
+        .unwrap();
     let written = mmcif::write(
-        original.model(),
+        &original,
         MmcifWriteOptions {
             data_block_name: "round_trip".to_owned(),
             coordinate_precision: 4,
@@ -1325,7 +1388,18 @@ covale A N 1 A CA 1 doub
     assert_eq!(atom_sites.row_count(), 4);
     let round_trip = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
     assert_eq!(round_trip.model().topology().instance_count(), 3);
-    assert_eq!(round_trip.model().positions(), original.model().positions());
+    assert_eq!(
+        round_trip.model().positions().values(),
+        original.positions().values()
+    );
+    assert_eq!(
+        round_trip.model().atom_data().occupancies(),
+        original.atom_data().occupancies()
+    );
+    assert_eq!(
+        round_trip.model().atom_data().b_factors(),
+        original.atom_data().b_factors()
+    );
     let (first_id, first_instance) = round_trip.model().topology().instances().next().unwrap();
     let first = round_trip
         .model()

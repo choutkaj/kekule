@@ -120,7 +120,7 @@ pub fn minimize(
             .zip(&direction)
             .map(|(gradient, direction)| gradient.dot(*direction))
             .sum::<f64>();
-        let current_positions = working.positions_value().to_vec();
+        let current_positions = working.positions().values().value().to_vec();
         let current_energy = evaluation.energy().into_value();
         let mut step = validated.initial_step;
         let mut accepted = None;

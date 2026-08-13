@@ -223,7 +223,7 @@ pub struct TrajectoryFrame {
 
 impl TrajectoryFrame {
     pub fn new(positions: Positions) -> Self {
-        let atom_data = AtomData::empty(&positions.shared_topology());
+        let atom_data = AtomData::new(&positions.shared_topology());
         Self {
             positions,
             cell: None,
@@ -566,7 +566,7 @@ impl FrameBuffer {
         Self {
             positions: Positions::zeros(&topology),
             cell: None,
-            atom_data: AtomData::empty(&topology),
+            atom_data: AtomData::new(&topology),
             velocities: Velocities::zeros(&topology),
             has_velocities: false,
             forces: Forces::zeros(&topology),
@@ -676,7 +676,7 @@ impl FrameBuffer {
     /// array allocations and the bound topology.
     pub fn reset_dynamic_state(&mut self) {
         self.cell = None;
-        self.atom_data = AtomData::empty(&self.topology);
+        self.atom_data = AtomData::new(&self.topology);
         self.has_velocities = false;
         self.has_forces = false;
         self.time = None;
@@ -758,7 +758,7 @@ impl FrameBuffer {
         let atom_data = data
             .atom_data
             .cloned()
-            .unwrap_or_else(|| AtomData::empty(&self.topology));
+            .unwrap_or_else(|| AtomData::new(&self.topology));
         let props = data.props.cloned().unwrap_or_default();
 
         self.positions.set_all(&self.topology, data.positions)?;
@@ -1851,7 +1851,7 @@ mod tests {
             Err(FrameError::TopologyMismatch)
         );
         assert_eq!(
-            frame.set_atom_data(AtomData::empty(&independent)),
+            frame.set_atom_data(AtomData::new(&independent)),
             Err(FrameError::TopologyMismatch)
         );
         assert_eq!(
@@ -1897,12 +1897,12 @@ mod tests {
         assert!(!buffer.frame_view().atom_data().is_empty());
         assert!(reader.read_next(&mut buffer).unwrap());
         assert_eq!(buffer.positions().values().value().as_ptr(), pointer);
-        assert_eq!(buffer.model_view().positions().value()[0].x, 2.0);
+        assert_eq!(buffer.model_view().positions().values().value()[0].x, 2.0);
         assert_eq!(buffer.frame_view().cell(), Some(&cell));
         assert!(!reader.read_next(&mut buffer).unwrap());
 
         reader.read_frame(0, &mut buffer).unwrap();
-        assert_eq!(buffer.model_view().positions().value()[0].x, 0.0);
+        assert_eq!(buffer.model_view().positions().values().value()[0].x, 0.0);
         assert_eq!(reader.frame_count(), Some(2));
     }
 
@@ -1986,7 +1986,7 @@ mod tests {
         let before = buffer.clone();
 
         let source = positions(&topology, 10.0);
-        let atom_data = AtomData::empty(&topology);
+        let atom_data = AtomData::new(&topology);
         let props = PropMap::new();
         let invalid = TrajectoryFrameView {
             topology: &topology,
@@ -2080,6 +2080,7 @@ mod tests {
                 .unwrap()
                 .model_view()
                 .positions()
+                .values()
                 .value()[0]
                 .x,
             3.0
@@ -2119,7 +2120,7 @@ mod tests {
 
         let mut buffer = FrameBuffer::new(topology);
         assert!(reader.read_next(&mut buffer).unwrap());
-        assert_eq!(buffer.model_view().positions().value()[0].x, 5.0);
+        assert_eq!(buffer.model_view().positions().values().value()[0].x, 5.0);
         assert!(!reader.read_next(&mut buffer).unwrap());
     }
 
@@ -2156,9 +2157,13 @@ mod tests {
             .set_time(Some(Quantity::new(2.0, PICOSECOND)))
             .unwrap();
         buffer.set_step(Some(3));
-        let mut atom_data = AtomData::empty(&topology);
+        let mut atom_data = AtomData::new(&topology);
         atom_data
-            .set_b_factor(&topology, topology.atom_ids()[0], Some(2.0))
+            .set_b_factor(
+                &topology,
+                topology.atom_ids()[0],
+                Some(Quantity::new(2.0, kekule::units::SQUARE_ANGSTROM)),
+            )
             .unwrap();
         buffer.set_atom_data(atom_data).unwrap();
         buffer
@@ -2180,7 +2185,7 @@ mod tests {
             buffer.positions().values().value().as_ptr(),
             positions_pointer
         );
-        assert_eq!(buffer.model_view().positions().value()[0].x, 7.0);
+        assert_eq!(buffer.model_view().positions().values().value()[0].x, 7.0);
     }
 
     #[test]

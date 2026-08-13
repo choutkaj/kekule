@@ -297,7 +297,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
 
     assert_eq!(result.status, MinimizationStatus::Converged);
     assert!(result.final_energy < result.initial_energy);
-    assert_eq!(model.positions()[1].x, 2.0);
+    assert_eq!(model.positions().values().value()[1].x, 2.0);
     assert!(
         molecule
             .graph()
@@ -317,7 +317,7 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
     use kekule::topology::{
         AtomSelection, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
     };
-    use kekule::units::{Quantity, ANGSTROM};
+    use kekule::units::{Quantity, ANGSTROM, SQUARE_ANGSTROM};
 
     let water = SmallMolecule::from_smiles_sanitized("O")?;
     let mut topology_builder = TopologyBuilder::new();
@@ -343,8 +343,13 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
         ),
     )?;
     let first_atom = topology.atom_ids()[0];
-    let mut first_atom_data = AtomData::empty(&topology);
+    let mut first_atom_data = AtomData::new(&topology);
     first_atom_data.set_occupancy(&topology, first_atom, Some(0.75))?;
+    first_atom_data.set_b_factor(
+        &topology,
+        first_atom,
+        Some(Quantity::new(15.0, SQUARE_ANGSTROM)),
+    )?;
     let first = Model::with_atom_data(
         std::sync::Arc::clone(&topology),
         first_positions.clone(),
@@ -357,6 +362,10 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
         &second.shared_topology()
     ));
     assert_eq!(first.occupancy(first_atom)?, Some(0.75));
+    assert_eq!(
+        first.b_factor(first_atom)?,
+        Some(Quantity::new(15.0, SQUARE_ANGSTROM))
+    );
 
     let solvent = AtomSelection::for_roles(&topology, [MoleculeRole::Solvent])?;
     assert_eq!(solvent.indices().len(), 2);

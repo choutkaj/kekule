@@ -572,12 +572,18 @@ fn rebound_atom_data(
     source: &AtomData,
     target: &Arc<Topology>,
 ) -> Result<AtomData, raw::MmcifInterpretError> {
-    AtomData::from_columns(
-        target,
-        source.occupancies().map(<[Option<f64>]>::to_vec),
-        source.b_factors().map(<[Option<f64>]>::to_vec),
-    )
-    .map_err(interpret_error)
+    let mut atom_data = AtomData::new(target);
+    if let Some(occupancies) = source.occupancies() {
+        atom_data
+            .set_occupancies(occupancies)
+            .map_err(interpret_error)?;
+    }
+    if let Some(b_factors) = source.b_factors() {
+        atom_data
+            .set_b_factors(b_factors)
+            .map_err(interpret_error)?;
+    }
+    Ok(atom_data)
 }
 
 fn normalized(value: &str) -> String {

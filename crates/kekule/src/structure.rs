@@ -12,7 +12,7 @@ use crate::topology::{
     InstanceAtomId, MoleculeDefinitionId, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
     TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyMapping,
 };
-use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
+use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
 
 /// One complete finite Cartesian array in one topology's dense atom order.
 #[derive(Debug, Clone)]
@@ -234,10 +234,6 @@ impl Positions {
         }
     }
 
-    pub(crate) fn values_raw(&self) -> &[Point3] {
-        &self.values
-    }
-
     fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), PositionError> {
         if !self.is_compatible(topology) {
             return Err(PositionError::TopologyMismatch);
@@ -322,27 +318,12 @@ impl PartialEq for AtomData {
 
 impl AtomData {
     /// Creates atom data with no allocated scientific columns.
-    pub fn empty(topology: &Arc<Topology>) -> Self {
+    pub fn new(topology: &Arc<Topology>) -> Self {
         Self {
             topology: Arc::clone(topology),
             occupancies: None,
             b_factors: None,
         }
-    }
-
-    /// Creates atom data from complete optional dense columns.
-    pub fn from_columns(
-        topology: &Arc<Topology>,
-        occupancies: Option<Vec<Option<f64>>>,
-        b_factors: Option<Vec<Option<f64>>>,
-    ) -> Result<Self, AtomDataError> {
-        let occupancies = validate_column(topology, occupancies, AtomDataField::Occupancy)?;
-        let b_factors = validate_column(topology, b_factors, AtomDataField::BFactor)?;
-        Ok(Self {
-            topology: Arc::clone(topology),
-            occupancies,
-            b_factors,
-        })
     }
 
     pub fn topology(&self) -> &Topology {
@@ -361,10 +342,12 @@ impl AtomData {
         &self.topology
     }
 
-    pub fn len(&self) -> usize {
+    /// Returns the atom count of the bound topology.
+    pub fn atom_count(&self) -> usize {
         self.topology.atom_count()
     }
 
+    /// Returns whether every supported scientific column is wholly absent.
     pub fn is_empty(&self) -> bool {
         self.occupancies.is_none() && self.b_factors.is_none()
     }
@@ -373,8 +356,11 @@ impl AtomData {
         self.occupancies.as_deref()
     }
 
-    pub fn b_factors(&self) -> Option<&[Option<f64>]> {
-        self.b_factors.as_deref()
+    /// Returns the dense B-factor column in canonical square angstroms.
+    pub fn b_factors(&self) -> Option<Quantity<&[Option<f64>]>> {
+        self.b_factors
+            .as_deref()
+            .map(|values| Quantity::new(values, SQUARE_ANGSTROM))
     }
 
     pub fn occupancy(
@@ -390,14 +376,14 @@ impl AtomData {
     }
 
     pub fn occupancy_at(&self, index: TopologyAtomIndex) -> Result<Option<f64>, AtomDataError> {
-        value_at(&self.occupancies, self.len(), index)
+        value_at(&self.occupancies, self.atom_count(), index)
     }
 
     pub fn b_factor(
         &self,
         topology: &Arc<Topology>,
         atom: InstanceAtomId,
-    ) -> Result<Option<f64>, AtomDataError> {
+    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
         self.ensure_compatible(topology)?;
         let index = topology
             .atom_index(atom)
@@ -405,8 +391,12 @@ impl AtomData {
         self.b_factor_at(index)
     }
 
-    pub fn b_factor_at(&self, index: TopologyAtomIndex) -> Result<Option<f64>, AtomDataError> {
-        value_at(&self.b_factors, self.len(), index)
+    pub fn b_factor_at(
+        &self,
+        index: TopologyAtomIndex,
+    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
+        value_at(&self.b_factors, self.atom_count(), index)
+            .map(|value| value.map(|value| Quantity::new(value, SQUARE_ANGSTROM)))
     }
 
     pub fn set_occupancy(
@@ -427,9 +417,9 @@ impl AtomData {
         index: TopologyAtomIndex,
         value: Option<f64>,
     ) -> Result<(), AtomDataError> {
-        validate_index(self.len(), index)?;
+        validate_index(self.atom_count(), index)?;
         validate_value(value, index, AtomDataField::Occupancy)?;
-        let len = self.len();
+        let len = self.atom_count();
         set_column_value(&mut self.occupancies, len, index, value);
         Ok(())
     }
@@ -438,7 +428,7 @@ impl AtomData {
         &mut self,
         topology: &Arc<Topology>,
         atom: InstanceAtomId,
-        value: Option<f64>,
+        value: Option<Quantity<f64>>,
     ) -> Result<(), AtomDataError> {
         self.ensure_compatible(topology)?;
         let index = topology
@@ -450,32 +440,62 @@ impl AtomData {
     pub fn set_b_factor_at(
         &mut self,
         index: TopologyAtomIndex,
-        value: Option<f64>,
+        value: Option<Quantity<f64>>,
     ) -> Result<(), AtomDataError> {
-        validate_index(self.len(), index)?;
+        validate_index(self.atom_count(), index)?;
+        let value = value
+            .map(|value| value.into_unit(SQUARE_ANGSTROM))
+            .transpose()?
+            .map(|value| value.into_value());
         validate_value(value, index, AtomDataField::BFactor)?;
-        let len = self.len();
+        let len = self.atom_count();
         set_column_value(&mut self.b_factors, len, index, value);
         Ok(())
     }
 
-    /// Replaces the complete occupancy column transactionally. `None` clears
-    /// the column and an all-absent column is normalized to no allocation.
-    pub fn set_occupancies(
-        &mut self,
-        values: Option<Vec<Option<f64>>>,
-    ) -> Result<(), AtomDataError> {
-        let values = validate_column(&self.topology, values, AtomDataField::Occupancy)?;
+    /// Replaces the complete occupancy column transactionally. An all-absent
+    /// column is normalized to no allocation.
+    pub fn set_occupancies<T>(&mut self, values: T) -> Result<(), AtomDataError>
+    where
+        T: AsRef<[Option<f64>]>,
+    {
+        let values = validate_column(
+            &self.topology,
+            values.as_ref().to_vec(),
+            AtomDataField::Occupancy,
+        )?;
         self.occupancies = values;
         Ok(())
     }
 
-    /// Replaces the complete B-factor column transactionally. `None` clears
-    /// the column and an all-absent column is normalized to no allocation.
-    pub fn set_b_factors(&mut self, values: Option<Vec<Option<f64>>>) -> Result<(), AtomDataError> {
+    /// Clears the complete occupancy column.
+    pub fn clear_occupancies(&mut self) {
+        self.occupancies = None;
+    }
+
+    /// Replaces the complete B-factor column transactionally. Values are
+    /// converted to canonical square angstroms, and an all-absent column is
+    /// normalized to no allocation.
+    pub fn set_b_factors<T>(&mut self, values: Quantity<T>) -> Result<(), AtomDataError>
+    where
+        T: AsRef<[Option<f64>]>,
+    {
+        let factor = values.unit().conversion_factor_to(SQUARE_ANGSTROM)?;
+        let values = values
+            .value()
+            .as_ref()
+            .iter()
+            .copied()
+            .map(|value| value.map(|value| value * factor))
+            .collect();
         let values = validate_column(&self.topology, values, AtomDataField::BFactor)?;
         self.b_factors = values;
         Ok(())
+    }
+
+    /// Clears the complete B-factor column.
+    pub fn clear_b_factors(&mut self) {
+        self.b_factors = None;
     }
 
     /// Remaps every present scientific column through checked topology lineage.
@@ -521,12 +541,9 @@ enum AtomDataField {
 
 fn validate_column(
     topology: &Topology,
-    values: Option<Vec<Option<f64>>>,
+    values: Vec<Option<f64>>,
     field: AtomDataField,
 ) -> Result<Option<Vec<Option<f64>>>, AtomDataError> {
-    let Some(values) = values else {
-        return Ok(None);
-    };
     if values.len() != topology.atom_count() {
         return Err(AtomDataError::AtomCountMismatch {
             expected: topology.atom_count(),
@@ -592,7 +609,7 @@ fn set_column_value(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AtomDataError {
     TopologyMismatch,
@@ -601,6 +618,7 @@ pub enum AtomDataError {
     InvalidAtomIndex(TopologyAtomIndex),
     NonFiniteOccupancy { index: TopologyAtomIndex },
     NonFiniteBFactor { index: TopologyAtomIndex },
+    Unit(UnitError),
 }
 
 impl fmt::Display for AtomDataError {
@@ -621,11 +639,18 @@ impl fmt::Display for AtomDataError {
             Self::NonFiniteBFactor { index } => {
                 write!(formatter, "B-factor at {index} must be finite")
             }
+            Self::Unit(error) => write!(formatter, "invalid B-factor unit: {error}"),
         }
     }
 }
 
 impl std::error::Error for AtomDataError {}
+
+impl From<UnitError> for AtomDataError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(error)
+    }
+}
 
 /// One concrete realization of one immutable topology.
 #[derive(Debug, Clone)]
@@ -651,7 +676,7 @@ impl Model {
         if !positions.is_compatible(&topology) {
             return Err(ModelError::TopologyMismatch);
         }
-        let atom_data = AtomData::empty(&topology);
+        let atom_data = AtomData::new(&topology);
         Ok(Self {
             topology,
             positions,
@@ -708,8 +733,8 @@ impl Model {
         Arc::clone(&self.topology)
     }
 
-    pub fn positions(&self) -> Quantity<&[Point3]> {
-        self.positions.values()
+    pub const fn positions(&self) -> &Positions {
+        &self.positions
     }
 
     pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, PositionError> {
@@ -763,7 +788,7 @@ impl Model {
         self.atom_data.occupancy(&self.topology, atom)
     }
 
-    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
+    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, AtomDataError> {
         self.atom_data.b_factor(&self.topology, atom)
     }
 
@@ -825,7 +850,7 @@ impl Model {
     /// let target = edit.shared_topology();
     /// let stripped = model.remap_to(&target, edit.mapping())?;
     /// assert_eq!(stripped.atom_count(), 1);
-    /// assert_eq!(stripped.positions().value()[0].x, 0.0);
+    /// assert_eq!(stripped.positions().values().value()[0].x, 0.0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn remap_to(
@@ -878,14 +903,6 @@ impl Model {
             .expect("validated conformer remains live") = updated;
         Ok(())
     }
-
-    pub(crate) fn positions_value(&self) -> &[Point3] {
-        self.positions.values_raw()
-    }
-
-    pub(crate) fn positions_state(&self) -> &Positions {
-        &self.positions
-    }
 }
 
 /// Borrowed topology, positions, cell, and atom data for structural kernels.
@@ -927,8 +944,8 @@ impl<'a> ModelView<'a> {
         Arc::clone(self.topology)
     }
 
-    pub fn positions(self) -> Quantity<&'a [Point3]> {
-        self.positions.values()
+    pub const fn positions(self) -> &'a Positions {
+        self.positions
     }
 
     pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, PositionError> {
@@ -951,7 +968,7 @@ impl<'a> ModelView<'a> {
         self.atom_data.occupancy(self.topology, atom)
     }
 
-    pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
+    pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, AtomDataError> {
         self.atom_data.b_factor(self.topology, atom)
     }
 
@@ -1347,7 +1364,7 @@ pub struct EnsembleMember {
 
 impl EnsembleMember {
     pub fn new(positions: Positions) -> Self {
-        let atom_data = AtomData::empty(positions.topology_arc());
+        let atom_data = AtomData::new(positions.topology_arc());
         Self {
             positions,
             cell: None,
@@ -1780,7 +1797,7 @@ mod tests {
     use super::*;
     use crate::core::{Atom, Conformer, Element, Molecule};
     use crate::geometry::Vector3;
-    use crate::units::{ANGSTROM, NANOMETER};
+    use crate::units::{ANGSTROM, KELVIN, NANOMETER, SQUARE_ANGSTROM};
 
     fn one_atom_topology() -> Arc<Topology> {
         let mut graph = Molecule::new();
@@ -1850,8 +1867,8 @@ mod tests {
         assert!(model.atom_data().is_empty());
         let view = model.view();
         assert_eq!(
-            view.positions().value().as_ptr(),
-            model.positions().value().as_ptr()
+            view.positions().values().value().as_ptr(),
+            model.positions().values().value().as_ptr()
         );
         let clone = model.clone();
         assert!(Arc::ptr_eq(
@@ -1894,7 +1911,7 @@ mod tests {
         assert_eq!(
             ensemble
                 .views()
-                .map(|view| view.positions().value()[0].x)
+                .map(|view| view.positions().values().value()[0].x)
                 .collect::<Vec<_>>(),
             vec![1.0, 2.0]
         );
@@ -1920,22 +1937,52 @@ mod tests {
         let topology = one_atom_topology();
         let atom = topology.atom_ids()[0];
         let index = topology.atom_index(atom).unwrap();
-        let mut data = AtomData::empty(&topology);
+        let mut data = AtomData::new(&topology);
         assert!(data.is_empty());
+        assert_eq!(data.atom_count(), 1);
         assert_eq!(data.occupancy(&topology, atom).unwrap(), None);
         data.set_occupancy(&topology, atom, Some(0.75)).unwrap();
-        data.set_b_factor_at(index, Some(12.5)).unwrap();
+        data.set_b_factor_at(index, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
+            .unwrap();
         assert_eq!(data.occupancy_at(index).unwrap(), Some(0.75));
-        assert_eq!(data.b_factor(&topology, atom).unwrap(), Some(12.5));
+        assert_eq!(
+            data.b_factor(&topology, atom).unwrap(),
+            Some(Quantity::new(12.5, SQUARE_ANGSTROM))
+        );
+        data.set_b_factor(
+            &topology,
+            atom,
+            Some(Quantity::new(0.125, NANOMETER.powi(2))),
+        )
+        .unwrap();
+        assert!(data
+            .b_factor(&topology, atom)
+            .unwrap()
+            .unwrap()
+            .is_close(&Quantity::new(12.5, SQUARE_ANGSTROM), 1.0e-12, 1.0e-12,)
+            .unwrap());
         assert!(matches!(
-            data.set_b_factor(&topology, atom, Some(f64::INFINITY)),
+            data.set_b_factor(&topology, atom, Some(Quantity::new(1.0, KELVIN))),
+            Err(AtomDataError::Unit(UnitError::IncompatibleUnits { .. }))
+        ));
+        assert!(matches!(
+            data.set_b_factor(
+                &topology,
+                atom,
+                Some(Quantity::new(f64::INFINITY, SQUARE_ANGSTROM)),
+            ),
             Err(AtomDataError::NonFiniteBFactor { .. })
         ));
-        assert_eq!(data.b_factor(&topology, atom).unwrap(), Some(12.5));
         assert!(matches!(
-            AtomData::from_columns(&topology, Some(Vec::new()), None),
+            data.set_occupancies(Vec::new()),
             Err(AtomDataError::AtomCountMismatch { .. })
         ));
+        data.clear_occupancies();
+        data.clear_b_factors();
+        assert!(data.is_empty());
+        data.set_occupancy(&topology, atom, Some(0.75)).unwrap();
+        data.set_b_factor_at(index, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
+            .unwrap();
 
         let independent = one_atom_topology();
         assert_eq!(
@@ -1944,12 +1991,15 @@ mod tests {
         );
         let mut model = Model::new(Arc::clone(&topology), positions(&topology, 1.0)).unwrap();
         assert_eq!(
-            model.set_atom_data(AtomData::empty(&independent)),
+            model.set_atom_data(AtomData::new(&independent)),
             Err(ModelError::TopologyMismatch)
         );
         model.set_atom_data(data).unwrap();
         assert_eq!(model.occupancy(atom).unwrap(), Some(0.75));
-        assert_eq!(model.b_factor(atom).unwrap(), Some(12.5));
+        assert_eq!(
+            model.b_factor(atom).unwrap(),
+            Some(Quantity::new(12.5, SQUARE_ANGSTROM))
+        );
     }
 
     #[test]
@@ -1965,7 +2015,7 @@ mod tests {
             .unwrap();
         model
             .atom_data_mut()
-            .set_b_factor(&source, atom, Some(21.0))
+            .set_b_factor(&source, atom, Some(Quantity::new(21.0, SQUARE_ANGSTROM)))
             .unwrap();
         let cell = PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(8.0, 9.0, 10.0), ANGSTROM),
@@ -1976,9 +2026,12 @@ mod tests {
 
         let remapped = model.remap_to(&target, &mapping).unwrap();
         let target_atom = target.atom_ids()[0];
-        assert_eq!(remapped.positions().value()[0].x, 3.0);
+        assert_eq!(remapped.positions().values().value()[0].x, 3.0);
         assert_eq!(remapped.occupancy(target_atom).unwrap(), Some(0.8));
-        assert_eq!(remapped.b_factor(target_atom).unwrap(), Some(21.0));
+        assert_eq!(
+            remapped.b_factor(target_atom).unwrap(),
+            Some(Quantity::new(21.0, SQUARE_ANGSTROM))
+        );
         assert_eq!(remapped.cell(), Some(&cell));
         let view = remapped.view();
         assert_eq!(view.position(target_atom).unwrap().value().x, 3.0);
@@ -2009,7 +2062,7 @@ mod tests {
         assert_eq!(
             ensemble
                 .views()
-                .map(|view| view.positions().value()[0].x)
+                .map(|view| view.positions().values().value()[0].x)
                 .collect::<Vec<_>>(),
             vec![2.0, 1.0]
         );

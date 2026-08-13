@@ -3,7 +3,7 @@ use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
 use kekule::small::SmallMolecule;
-use kekule::structure::{Ensemble, Model, Positions};
+use kekule::structure::{Ensemble, Model};
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
 
@@ -122,9 +122,7 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
         )
         .unwrap();
     let ensemble = Ensemble::from_models(&[model.clone(), displaced.clone()]).unwrap();
-    let frame = TrajectoryFrame::new(
-        Positions::new(&displaced.shared_topology(), displaced.positions()).unwrap(),
-    );
+    let frame = TrajectoryFrame::new(displaced.positions().clone());
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
         model.view(),
@@ -180,7 +178,9 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
     .unwrap();
     assert!(potential.evaluate(model.view()).is_ok());
     let mut nonperiodic_buffer = FrameBuffer::new(model.shared_topology());
-    nonperiodic_buffer.set_positions(model.positions()).unwrap();
+    nonperiodic_buffer
+        .set_positions(model.positions().values())
+        .unwrap();
     assert!(potential.evaluate(nonperiodic_buffer.model_view()).is_ok());
     assert_eq!(
         potential.evaluate(periodic_model.view()),
@@ -192,13 +192,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
         potential.evaluate(periodic_ensemble.views().next().unwrap()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
-    let mut periodic_frame = TrajectoryFrame::new(
-        Positions::new(
-            &periodic_model.shared_topology(),
-            periodic_model.positions(),
-        )
-        .unwrap(),
-    );
+    let mut periodic_frame = TrajectoryFrame::new(periodic_model.positions().clone());
     periodic_frame.set_cell(periodic_model.cell().copied());
     assert_eq!(
         potential.evaluate(
@@ -210,7 +204,9 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
         Err(PotentialError::UnsupportedPeriodicCell)
     );
     let mut periodic_buffer = FrameBuffer::new(model.shared_topology());
-    periodic_buffer.set_positions(model.positions()).unwrap();
+    periodic_buffer
+        .set_positions(model.positions().values())
+        .unwrap();
     periodic_buffer.set_cell(Some(cell));
     assert_eq!(
         potential.evaluate(periodic_buffer.model_view()),
@@ -414,7 +410,10 @@ fn prepared_potential_uses_exact_shared_topology() {
     singular
         .set_position(
             InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(1)),
-            kekule::units::Quantity::new(singular.positions()[0], kekule::units::ANGSTROM),
+            kekule::units::Quantity::new(
+                singular.positions().values().value()[0],
+                kekule::units::ANGSTROM,
+            ),
         )
         .unwrap();
     assert!(matches!(
