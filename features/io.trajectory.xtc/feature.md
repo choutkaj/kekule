@@ -21,7 +21,8 @@ Kekule validation, limits, units, metadata, and errors.
   offsets only after fully decoding and validating each frame.
 - Writers require a positive finite inverse-nanometre precision and validate
   every coordinate against its declared quantization range. A completed
-  production file must contain at least one frame.
+  production file must contain at least one frame. Non-empty atom data, bond
+  data, and arbitrary frame properties are rejected rather than dropped.
 - Malformed small- and large-atom frames return structured corruption or
   truncation errors without panicking.
 
@@ -87,3 +88,5 @@ Kekule validation, limits, units, metadata, and errors.
   `kekule-traj` trajectory crate.
 - v7: Retain the exact caller-supplied `Arc<Topology>` across XTC readers,
   writers, and reusable destination buffers.
+- v8: Reject non-empty topology-bound `BondData`; arbitrary bond-property
+  serialization remains outside the XTC profile.

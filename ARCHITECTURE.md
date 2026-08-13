@@ -29,7 +29,7 @@ format text or binary data
          |- SmallMolecule
          `- MacroMolecule
        Topology
-         |- Model       = Topology + Positions + optional cell + AtomData
+         |- Model       = Topology + Positions + optional cell + AtomData + BondData
          |- Ensemble    = Topology + finite non-temporal members
          `- Trajectory  = Topology + ordered Frames
     -> explicit perception, validation, transformation, or analysis
@@ -64,6 +64,7 @@ Model
   complete mutable Positions
   optional mutable PeriodicCell
   topology-bound AtomData
+  topology-bound BondData
 
 Ensemble
   Topology
@@ -661,7 +662,7 @@ Complete molecule instances can be retained or removed through the focused
 `topology::transform` namespace. These immutable deletion-only edits preserve
 filtered source definition and instance order, explicit definition reuse, and
 local atom and bond identifiers while returning complete checked lineage.
-Positions, atom data, models, compiled atom selections, finite ensembles,
+Positions, atom and bond data, models, compiled atom selections, finite ensembles,
 owned frames, in-memory trajectories, and borrowed frame
 state in reusable target buffers provide explicit remapping operations. Every
 operation checks the exact source and target `Arc<Topology>` allocations;
@@ -754,11 +755,12 @@ unit. Public access returns quantities with explicit units.
 A `Positions` value must not be reused with a different topology merely because
 the atom counts match.
 
-### `AtomData`
+### `AtomData` and `BondData`
 
 `AtomData` stores model-level per-atom scientific values in the topology's
 authoritative dense atom order. It retains the exact `Arc<Topology>` allocation
-and initially provides only occupancy and isotropic B-factor columns.
+and provides canonical occupancy and isotropic B-factor columns plus
+conservative custom properties.
 
 Each column is optional and contains one optional finite value per topology
 atom. Occupancy is dimensionless. Isotropic B-factors are length-squared
@@ -768,6 +770,26 @@ starts without allocated columns; field-specific complete-column replacement,
 semantic-ID lookup, dense-index lookup, and topology remapping are checked.
 `atom_count()` reports topology cardinality, while `is_empty()` reports that no
 supported scientific column contains data.
+
+`BondData` is the topology-bound per-bond analogue in authoritative
+`TopologyBondIndex` order. It retains the exact shared topology allocation and
+initially has no canonical scientific fields.
+
+Both containers support user- or analysis-defined properties restricted to
+unit-aware scalar `f64` columns with one optional value per atom or bond.
+Property names are conservative ASCII identifiers, missing values use `None`,
+and wholly missing columns are normalized away. Complete replacements require
+the exact dense length, reject non-finite values, preserve an existing stored
+unit, and convert only from dimensionally compatible units. Individual access
+supports semantic IDs and dense indices. `AtomData` reserves names that would
+shadow canonical typed fields, including `occupancy` and `b_factor`.
+
+Canonical typed properties are stable scientific concepts with dedicated APIs;
+custom properties are user- or analysis-defined scalar annotations. Neither
+custom atom nor bond properties are authoritative topology, chemistry, or
+perception state. For example, an ensemble analysis may attach calculated
+`conformational_entropy` values to model bonds for visualization, but
+`BondData` does not own or define that calculation.
 
 Alternate-location labels, source coordinate-model identifiers, source atom
 row identifiers, and raw source text remain format interpretation provenance;
@@ -783,6 +805,7 @@ Model
   positions: Positions
   cell: Option<PeriodicCell>
   atom_data: AtomData
+  bond_data: BondData
 ```
 
 Conceptually, in the common non-periodic case:
@@ -792,7 +815,7 @@ Model = Topology + Positions
 ```
 
 The topology is immutable and cheaply shared with `Arc::clone`. Positions, the
-periodic cell, and atom data are accessed directly without an intermediate
+periodic cell, atom data, and bond data are accessed directly without an intermediate
 configuration wrapper. Topology-bound replacements require the exact shared
 topology allocation.
 
@@ -816,7 +839,8 @@ molecule conformer. Source objects remain unchanged. Explicit operations copy
 one model instance's current positions back to a compatible standalone
 molecule conformer.
 
-Cloning a model shares topology and copies only positions, cell, and atom data.
+Cloning a model shares topology and copies positions, cell, atom data, and bond
+data.
 
 ## `Ensemble`
 
@@ -833,6 +857,7 @@ pub struct EnsembleMember {
     positions: Positions,
     cell: Option<PeriodicCell>,
     atom_data: AtomData,
+    bond_data: BondData,
     weight: Option<f64>,
     props: PropMap,
 }
@@ -862,7 +887,7 @@ error; they are not represented by silently sparse dense arrays.
 
 Trajectory ownership belongs to the one-way `kekule-traj` companion rather
 than the foundational `kekule` crate. The companion reuses `kekule::Topology`,
-`Positions`, `AtomData`, `ModelView`, geometry, units, selections, and general
+`Positions`, `AtomData`, `BondData`, `ModelView`, geometry, units, selections, and general
 single-model kernels; it does not define a second molecular model.
 
 `Trajectory` represents an ordered sequence of frames sharing one exact,
@@ -885,6 +910,7 @@ pub struct TrajectoryFrame {
     positions: Positions,
     cell: Option<PeriodicCell>,
     atom_data: AtomData,
+    bond_data: BondData,
     velocities: Option<Velocities>,
     forces: Option<Forces>,
     time: Option<Quantity<f64>>,
@@ -908,7 +934,7 @@ rotates, translates, or mutates them. Rigid superposition is a separately named
 transactional transformation over a finite in-memory trajectory: one
 topology-bound selection determines each frame transform, which is then applied
 to every position. Velocities, forces, and retained cell basis vectors rotate
-with the frame; time, step, atom data, and properties remain
+with the frame; time, step, atom data, bond data, and properties remain
 unchanged.
 
 A fused aligned-RMSD convenience computes the same fit-and-measure pipeline
@@ -963,7 +989,7 @@ state without constructing or cloning an owned `Model`.
 
 File decoders publish only complete frames through one transactional borrowed-
 data operation. That operation validates the shared topology allocation,
-complete array lengths, units, finite values, cell, time, atom data, and properties
+complete array lengths, units, finite values, cell, time, atom data, bond data, and properties
 before destination-visible mutation; it reuses position, velocity, and force
 allocations and clears every absent optional field. Clean EOF and any failed
 decode leave the caller's buffer unchanged.
@@ -1019,6 +1045,7 @@ pub struct ModelView<'a> {
     positions: &'a Positions,
     cell: Option<&'a PeriodicCell>,
     atom_data: &'a AtomData,
+    bond_data: &'a BondData,
 }
 ```
 
@@ -1318,7 +1345,7 @@ kekule <- kekule-traj <- applications
 
 `kekule-traj` owns `TrajectoryFrame`, `FrameBuffer`, in-memory `Trajectory`,
 reader/writer traits, typed trajectory errors, and the `io` codec namespace.
-It uses Kekule's topology, positions, cells, atom data, borrowed view, geometry, unit,
+It uses Kekule's topology, positions, cells, atom and bond data, borrowed view, geometry, unit,
 selection, and topology-lineage contracts. General coordinate kernels remain
 in `kekule`; the companion provides transactional finite-trajectory
 superposition plus direct and fused aligned RMSD, and may add batch
@@ -1397,11 +1424,11 @@ The following statements summarize the design:
 5. Semantic identities and dense numerical indices are separate.
 6. One topology has one immutable authoritative dense ordering.
 7. `Model` directly owns one shared topology, complete positions, an optional
-   periodic cell, and topology-bound atom data.
+   periodic cell, and topology-bound atom and bond data.
 8. `Ensemble` is one topology plus finite non-temporal members.
 9. `kekule-traj::Trajectory` is one Kekule topology plus ordered frames and
    supports streaming I/O.
-10. Periodic cells, atom data, velocities, forces, and time are dynamic
+10. Periodic cells, atom data, bond data, velocities, forces, and time are dynamic
     state, not topology.
 11. Prepared systems and compiled selections retain one exact shared
     `Arc<Topology>` allocation.
