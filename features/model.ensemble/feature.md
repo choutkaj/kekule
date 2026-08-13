@@ -10,13 +10,13 @@ that share one `Arc<Topology>` allocation.
 - `Ensemble` owns one `Arc<Topology>` and stable-order
   `EnsembleMember` values.
 - Every member directly contains complete compatible positions, an optional
-  cell, topology-bound `AtomData`, an optional finite non-negative weight, and
-  member metadata.
+  cell, topology-bound `AtomData` and `BondData`, an optional finite
+  non-negative weight, and member metadata.
 - Weight normalization is explicit and rejects invalid or zero-total weights.
 - Members expose borrowed structural views suitable for analyses and prepared
   potentials without creating owned models or copying coordinates.
 - `Ensemble::remap_to` stages every member against one exact shared target topology,
-  preserves member order, cells, atom data, weights, and properties without
+  preserves member order, cells, atom and bond data, weights, and properties without
   renormalization, and reports the failing member index.
 
 ## Implementation Notes
@@ -29,7 +29,7 @@ that share one `Arc<Topology>` allocation.
 ## Tests
 
 - Tests cover topology mismatch, stable order, weight validation and
-  normalization, conformer conversion, atom data, and borrowed-view
+  normalization, conformer conversion, atom and bond data, and borrowed-view
   analysis.
 - Transformation regressions cover the exact shared target allocation, variable cells,
   value-preserved weights and properties, member error context, and source
@@ -51,3 +51,5 @@ that share one `Arc<Topology>` allocation.
   shared source and target allocations rather than a separate identity token.
 - v5: Replace member configuration and observation wrappers with direct
   positions, optional cells, and topology-bound `AtomData`.
+- v6: Carry topology-bound `BondData` through member construction, model
+  conversion, zero-copy views, cloning, and explicit topology remapping.

@@ -663,6 +663,18 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
+    frame.props_mut().clear();
+    frame
+        .bond_data_mut()
+        .set_property(
+            "conformational_entropy",
+            Quantity::new(vec![Some(1.0); topology.bond_count()], NANOMETER),
+        )
+        .unwrap();
+    assert_eq!(
+        codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
+    );
 }
 
 #[test]

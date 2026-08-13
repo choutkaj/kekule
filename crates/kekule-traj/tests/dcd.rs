@@ -549,7 +549,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         [true; 3],
     )
     .unwrap();
-    let mut frame = FrameBuffer::new(topology);
+    let mut frame = FrameBuffer::new(Arc::clone(&topology));
     set_frame(
         &mut frame,
         [[f64::MAX, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
@@ -560,6 +560,27 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     assert_eq!(
         codec_kind(&writer.write_frame(frame.frame_view()).unwrap_err()),
         Some(TrajectoryCodecErrorKind::InvalidFrame)
+    );
+    assert_eq!(writer.writer().get_ref().len(), header_bytes);
+
+    let mut bond_annotated = FrameBuffer::new(Arc::clone(&topology));
+    set_frame(
+        &mut bond_annotated,
+        [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
+        0,
+        None,
+        Some(cell),
+    );
+    bond_annotated
+        .bond_data_mut()
+        .set_property(
+            "conformational_entropy",
+            Quantity::new(vec![Some(1.0); topology.bond_count()], ANGSTROM),
+        )
+        .unwrap();
+    assert_eq!(
+        codec_kind(&writer.write_frame(bond_annotated.frame_view()).unwrap_err()),
+        Some(TrajectoryCodecErrorKind::UnsupportedField)
     );
     assert_eq!(writer.writer().get_ref().len(), header_bytes);
 }

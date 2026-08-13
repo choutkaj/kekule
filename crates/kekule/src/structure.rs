@@ -1,6 +1,7 @@
 //! Topology-bound coordinate state, models, borrowed views, atom data, and
 //! finite non-temporal ensembles.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -12,9 +13,10 @@ use crate::topology::{
     InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
     InstanceChainId, InstanceResidue, InstanceResidueId, InstanceSmcraHierarchy,
     MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
-    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyError, TopologyMapping,
+    TopologyAtomIndex, TopologyBondIndex, TopologyBuildError, TopologyBuilder, TopologyError,
+    TopologyMapping,
 };
-use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
+use crate::units::{Quantity, Unit, UnitError, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
 
 /// One complete finite Cartesian array in one topology's dense atom order.
 #[derive(Debug, Clone)]
@@ -299,6 +301,80 @@ impl From<UnitError> for PositionError {
     }
 }
 
+const MAX_PROPERTY_NAME_LEN: usize = 128;
+
+#[derive(Debug, Clone, PartialEq)]
+struct ScalarPropertyColumn {
+    unit: Unit,
+    values: Vec<Option<f64>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ScalarPropertyColumnError {
+    ValueCountMismatch { expected: usize, actual: usize },
+    NonFiniteValue { index: usize },
+    Unit(UnitError),
+}
+
+fn valid_property_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > MAX_PROPERTY_NAME_LEN {
+        return false;
+    }
+    let mut bytes = name.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
+fn stage_property_column<T>(
+    values: Quantity<T>,
+    expected: usize,
+    stored_unit: Option<Unit>,
+) -> Result<Option<ScalarPropertyColumn>, ScalarPropertyColumnError>
+where
+    T: AsRef<[Option<f64>]>,
+{
+    let source = values.value().as_ref();
+    if source.len() != expected {
+        return Err(ScalarPropertyColumnError::ValueCountMismatch {
+            expected,
+            actual: source.len(),
+        });
+    }
+    let unit = stored_unit.unwrap_or(values.unit());
+    let factor = values
+        .unit()
+        .conversion_factor_to(unit)
+        .map_err(ScalarPropertyColumnError::Unit)?;
+    let converted = source
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(index, value)| {
+            let value = value.map(|value| value * factor);
+            if value.is_some_and(|value| !value.is_finite()) {
+                return Err(ScalarPropertyColumnError::NonFiniteValue { index });
+            }
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if converted.iter().all(Option::is_none) {
+        Ok(None)
+    } else {
+        Ok(Some(ScalarPropertyColumn {
+            unit,
+            values: converted,
+        }))
+    }
+}
+
+fn converted_property_value(value: Quantity<f64>, stored_unit: Unit) -> Result<f64, UnitError> {
+    let value = value.into_unit(stored_unit)?.into_value();
+    Ok(value)
+}
+
 /// Topology-bound model-level per-atom data in dense atom order.
 ///
 /// Each scientific field is an optional column. A field that is absent for all
@@ -308,6 +384,7 @@ pub struct AtomData {
     topology: Arc<Topology>,
     occupancies: Option<Vec<Option<f64>>>,
     b_factors: Option<Vec<Option<f64>>>,
+    properties: BTreeMap<String, ScalarPropertyColumn>,
 }
 
 impl PartialEq for AtomData {
@@ -315,6 +392,7 @@ impl PartialEq for AtomData {
         Arc::ptr_eq(&self.topology, &other.topology)
             && self.occupancies == other.occupancies
             && self.b_factors == other.b_factors
+            && self.properties == other.properties
     }
 }
 
@@ -325,6 +403,7 @@ impl AtomData {
             topology: Arc::clone(topology),
             occupancies: None,
             b_factors: None,
+            properties: BTreeMap::new(),
         }
     }
 
@@ -351,7 +430,7 @@ impl AtomData {
 
     /// Returns whether every supported scientific column is wholly absent.
     pub fn is_empty(&self) -> bool {
-        self.occupancies.is_none() && self.b_factors.is_none()
+        self.occupancies.is_none() && self.b_factors.is_none() && self.properties.is_empty()
     }
 
     pub fn occupancies(&self) -> Option<&[Option<f64>]> {
@@ -363,6 +442,154 @@ impl AtomData {
         self.b_factors
             .as_deref()
             .map(|values| Quantity::new(values, SQUARE_ANGSTROM))
+    }
+
+    /// Iterates custom scalar properties in stable name order.
+    pub fn properties(&self) -> impl ExactSizeIterator<Item = (&str, Quantity<&[Option<f64>]>)> {
+        self.properties.iter().map(|(name, column)| {
+            (
+                name.as_str(),
+                Quantity::new(column.values.as_slice(), column.unit),
+            )
+        })
+    }
+
+    /// Returns a complete custom property column, or `None` when absent.
+    pub fn property(&self, name: &str) -> Result<Option<Quantity<&[Option<f64>]>>, AtomDataError> {
+        validate_atom_property_name(name)?;
+        Ok(self
+            .properties
+            .get(name)
+            .map(|column| Quantity::new(column.values.as_slice(), column.unit)))
+    }
+
+    /// Replaces a complete custom property transactionally.
+    ///
+    /// Existing properties retain their stored unit; compatible input values
+    /// are converted into it. An all-missing column removes the property.
+    pub fn set_property<T>(&mut self, name: &str, values: Quantity<T>) -> Result<(), AtomDataError>
+    where
+        T: AsRef<[Option<f64>]>,
+    {
+        validate_atom_property_name(name)?;
+        let stored_unit = self.properties.get(name).map(|column| column.unit);
+        let staged = stage_property_column(values, self.atom_count(), stored_unit)
+            .map_err(|error| atom_property_column_error(name, error))?;
+        match staged {
+            Some(column) => {
+                self.properties.insert(name.to_owned(), column);
+            }
+            None => {
+                self.properties.remove(name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes a custom property, returning whether it was present.
+    pub fn remove_property(&mut self, name: &str) -> Result<bool, AtomDataError> {
+        validate_atom_property_name(name)?;
+        Ok(self.properties.remove(name).is_some())
+    }
+
+    /// Returns one unit-aware custom property value by semantic atom ID.
+    pub fn property_value(
+        &self,
+        topology: &Arc<Topology>,
+        name: &str,
+        atom: InstanceAtomId,
+    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
+        self.ensure_compatible(topology)?;
+        let index = topology
+            .atom_index(atom)
+            .ok_or(AtomDataError::InvalidAtomId(atom))?;
+        self.property_value_at(name, index)
+    }
+
+    /// Returns one unit-aware custom property value by dense atom index.
+    pub fn property_value_at(
+        &self,
+        name: &str,
+        index: TopologyAtomIndex,
+    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
+        validate_atom_property_name(name)?;
+        validate_index(self.atom_count(), index)?;
+        Ok(self.properties.get(name).and_then(|column| {
+            column.values[index.index()].map(|value| Quantity::new(value, column.unit))
+        }))
+    }
+
+    /// Sets one custom property value by semantic atom ID.
+    pub fn set_property_value(
+        &mut self,
+        topology: &Arc<Topology>,
+        name: &str,
+        atom: InstanceAtomId,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), AtomDataError> {
+        self.ensure_compatible(topology)?;
+        let index = topology
+            .atom_index(atom)
+            .ok_or(AtomDataError::InvalidAtomId(atom))?;
+        self.set_property_value_at(name, index, value)
+    }
+
+    /// Sets one custom property value by dense atom index.
+    ///
+    /// A missing property is created from a present value's unit. Setting
+    /// `None` on an absent property is a no-op, and clearing the final present
+    /// value removes the property.
+    pub fn set_property_value_at(
+        &mut self,
+        name: &str,
+        index: TopologyAtomIndex,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), AtomDataError> {
+        validate_atom_property_name(name)?;
+        validate_index(self.atom_count(), index)?;
+        let Some(column) = self.properties.get(name) else {
+            let Some(value) = value else {
+                return Ok(());
+            };
+            let unit = value.unit();
+            let value = value.into_value();
+            if !value.is_finite() {
+                return Err(AtomDataError::NonFinitePropertyValue {
+                    property: name.to_owned(),
+                    index,
+                });
+            }
+            let mut values = vec![None; self.atom_count()];
+            values[index.index()] = Some(value);
+            self.properties
+                .insert(name.to_owned(), ScalarPropertyColumn { unit, values });
+            return Ok(());
+        };
+        let converted = value
+            .map(|value| converted_property_value(value, column.unit))
+            .transpose()
+            .map_err(|error| AtomDataError::PropertyUnit {
+                property: name.to_owned(),
+                error: Box::new(error),
+            })?;
+        if converted.is_some_and(|value| !value.is_finite()) {
+            return Err(AtomDataError::NonFinitePropertyValue {
+                property: name.to_owned(),
+                index,
+            });
+        }
+        let remove = {
+            let column = self
+                .properties
+                .get_mut(name)
+                .expect("validated property remains present");
+            column.values[index.index()] = converted;
+            column.values.iter().all(Option::is_none)
+        };
+        if remove {
+            self.properties.remove(name);
+        }
+        Ok(())
     }
 
     pub fn occupancy(
@@ -500,7 +727,8 @@ impl AtomData {
         self.b_factors = None;
     }
 
-    /// Remaps every present scientific column through checked topology lineage.
+    /// Remaps every canonical and custom property column through checked
+    /// topology lineage.
     pub fn remap_to(
         &self,
         source: &Arc<Topology>,
@@ -520,10 +748,24 @@ impl AtomData {
             .as_ref()
             .map(|values| remap::dense_atom_values(values, source, target, mapping))
             .transpose()?;
+        let mut properties = BTreeMap::new();
+        for (name, column) in &self.properties {
+            let values = remap::dense_atom_values(&column.values, source, target, mapping)?;
+            if values.iter().any(Option::is_some) {
+                properties.insert(
+                    name.clone(),
+                    ScalarPropertyColumn {
+                        unit: column.unit,
+                        values,
+                    },
+                );
+            }
+        }
         Ok(Self {
             topology: Arc::clone(target),
             occupancies,
             b_factors,
+            properties,
         })
     }
 
@@ -611,15 +853,77 @@ fn set_column_value(
     }
 }
 
+fn validate_atom_property_name(name: &str) -> Result<(), AtomDataError> {
+    if !valid_property_name(name) {
+        return Err(AtomDataError::InvalidPropertyName {
+            name: name.to_owned(),
+        });
+    }
+    if name.eq_ignore_ascii_case("occupancy") || name.eq_ignore_ascii_case("b_factor") {
+        return Err(AtomDataError::ReservedPropertyName {
+            name: name.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn atom_property_column_error(name: &str, error: ScalarPropertyColumnError) -> AtomDataError {
+    match error {
+        ScalarPropertyColumnError::ValueCountMismatch { expected, actual } => {
+            AtomDataError::PropertyValueCountMismatch {
+                property: name.to_owned(),
+                expected,
+                actual,
+            }
+        }
+        ScalarPropertyColumnError::NonFiniteValue { index } => {
+            AtomDataError::NonFinitePropertyValue {
+                property: name.to_owned(),
+                index: TopologyAtomIndex::new(index as u32),
+            }
+        }
+        ScalarPropertyColumnError::Unit(error) => AtomDataError::PropertyUnit {
+            property: name.to_owned(),
+            error: Box::new(error),
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AtomDataError {
     TopologyMismatch,
-    AtomCountMismatch { expected: usize, actual: usize },
+    AtomCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
     InvalidAtomId(InstanceAtomId),
     InvalidAtomIndex(TopologyAtomIndex),
-    NonFiniteOccupancy { index: TopologyAtomIndex },
-    NonFiniteBFactor { index: TopologyAtomIndex },
+    NonFiniteOccupancy {
+        index: TopologyAtomIndex,
+    },
+    NonFiniteBFactor {
+        index: TopologyAtomIndex,
+    },
+    InvalidPropertyName {
+        name: String,
+    },
+    ReservedPropertyName {
+        name: String,
+    },
+    PropertyValueCountMismatch {
+        property: String,
+        expected: usize,
+        actual: usize,
+    },
+    NonFinitePropertyValue {
+        property: String,
+        index: TopologyAtomIndex,
+    },
+    PropertyUnit {
+        property: String,
+        error: Box<UnitError>,
+    },
     Unit(UnitError),
 }
 
@@ -641,6 +945,28 @@ impl fmt::Display for AtomDataError {
             Self::NonFiniteBFactor { index } => {
                 write!(formatter, "B-factor at {index} must be finite")
             }
+            Self::InvalidPropertyName { name } => write!(
+                formatter,
+                "invalid atom property name {name:?}; use a 1-{MAX_PROPERTY_NAME_LEN} character ASCII identifier"
+            ),
+            Self::ReservedPropertyName { name } => {
+                write!(formatter, "atom property name {name:?} is reserved")
+            }
+            Self::PropertyValueCountMismatch {
+                property,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "atom property {property:?} requires {expected} values, but received {actual}"
+            ),
+            Self::NonFinitePropertyValue { property, index } => write!(
+                formatter,
+                "atom property {property:?} at {index} must be finite"
+            ),
+            Self::PropertyUnit { property, error } => {
+                write!(formatter, "invalid unit for atom property {property:?}: {error}")
+            }
             Self::Unit(error) => write!(formatter, "invalid B-factor unit: {error}"),
         }
     }
@@ -654,6 +980,337 @@ impl From<UnitError> for AtomDataError {
     }
 }
 
+/// Topology-bound model-level per-bond annotations in authoritative dense bond
+/// order.
+///
+/// Bond data has no canonical scientific fields. It stores only conservative,
+/// user- or analysis-defined unit-aware scalar properties.
+#[derive(Debug, Clone)]
+pub struct BondData {
+    topology: Arc<Topology>,
+    properties: BTreeMap<String, ScalarPropertyColumn>,
+}
+
+impl PartialEq for BondData {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.topology, &other.topology) && self.properties == other.properties
+    }
+}
+
+impl BondData {
+    /// Creates empty bond data bound to the exact shared topology allocation.
+    pub fn new(topology: &Arc<Topology>) -> Self {
+        Self {
+            topology: Arc::clone(topology),
+            properties: BTreeMap::new(),
+        }
+    }
+
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
+        Arc::ptr_eq(&self.topology, topology)
+    }
+
+    pub(crate) fn topology_arc(&self) -> &Arc<Topology> {
+        &self.topology
+    }
+
+    /// Returns the bond count of the bound topology.
+    pub fn bond_count(&self) -> usize {
+        self.topology.bond_count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.properties.is_empty()
+    }
+
+    /// Iterates custom scalar properties in stable name order.
+    pub fn properties(&self) -> impl ExactSizeIterator<Item = (&str, Quantity<&[Option<f64>]>)> {
+        self.properties.iter().map(|(name, column)| {
+            (
+                name.as_str(),
+                Quantity::new(column.values.as_slice(), column.unit),
+            )
+        })
+    }
+
+    /// Returns a complete custom property column, or `None` when absent.
+    pub fn property(&self, name: &str) -> Result<Option<Quantity<&[Option<f64>]>>, BondDataError> {
+        validate_bond_property_name(name)?;
+        Ok(self
+            .properties
+            .get(name)
+            .map(|column| Quantity::new(column.values.as_slice(), column.unit)))
+    }
+
+    /// Replaces a complete custom property transactionally.
+    ///
+    /// Existing properties retain their stored unit; compatible input values
+    /// are converted into it. An all-missing column removes the property.
+    pub fn set_property<T>(&mut self, name: &str, values: Quantity<T>) -> Result<(), BondDataError>
+    where
+        T: AsRef<[Option<f64>]>,
+    {
+        validate_bond_property_name(name)?;
+        let stored_unit = self.properties.get(name).map(|column| column.unit);
+        let staged = stage_property_column(values, self.bond_count(), stored_unit)
+            .map_err(|error| bond_property_column_error(name, error))?;
+        match staged {
+            Some(column) => {
+                self.properties.insert(name.to_owned(), column);
+            }
+            None => {
+                self.properties.remove(name);
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes a custom property, returning whether it was present.
+    pub fn remove_property(&mut self, name: &str) -> Result<bool, BondDataError> {
+        validate_bond_property_name(name)?;
+        Ok(self.properties.remove(name).is_some())
+    }
+
+    /// Returns one unit-aware custom property value by semantic bond ID.
+    pub fn property_value(
+        &self,
+        topology: &Arc<Topology>,
+        name: &str,
+        bond: InstanceBondId,
+    ) -> Result<Option<Quantity<f64>>, BondDataError> {
+        self.ensure_compatible(topology)?;
+        let index = topology
+            .bond_index(bond)
+            .ok_or(BondDataError::InvalidBondId(bond))?;
+        self.property_value_at(name, index)
+    }
+
+    /// Returns one unit-aware custom property value by dense bond index.
+    pub fn property_value_at(
+        &self,
+        name: &str,
+        index: TopologyBondIndex,
+    ) -> Result<Option<Quantity<f64>>, BondDataError> {
+        validate_bond_property_name(name)?;
+        validate_bond_index(self.bond_count(), index)?;
+        Ok(self.properties.get(name).and_then(|column| {
+            column.values[index.index()].map(|value| Quantity::new(value, column.unit))
+        }))
+    }
+
+    /// Sets one custom property value by semantic bond ID.
+    pub fn set_property_value(
+        &mut self,
+        topology: &Arc<Topology>,
+        name: &str,
+        bond: InstanceBondId,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), BondDataError> {
+        self.ensure_compatible(topology)?;
+        let index = topology
+            .bond_index(bond)
+            .ok_or(BondDataError::InvalidBondId(bond))?;
+        self.set_property_value_at(name, index, value)
+    }
+
+    /// Sets one custom property value by dense bond index.
+    ///
+    /// A missing property is created from a present value's unit. Setting
+    /// `None` on an absent property is a no-op, and clearing the final present
+    /// value removes the property.
+    pub fn set_property_value_at(
+        &mut self,
+        name: &str,
+        index: TopologyBondIndex,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), BondDataError> {
+        validate_bond_property_name(name)?;
+        validate_bond_index(self.bond_count(), index)?;
+        let Some(column) = self.properties.get(name) else {
+            let Some(value) = value else {
+                return Ok(());
+            };
+            let unit = value.unit();
+            let value = value.into_value();
+            if !value.is_finite() {
+                return Err(BondDataError::NonFinitePropertyValue {
+                    property: name.to_owned(),
+                    index,
+                });
+            }
+            let mut values = vec![None; self.bond_count()];
+            values[index.index()] = Some(value);
+            self.properties
+                .insert(name.to_owned(), ScalarPropertyColumn { unit, values });
+            return Ok(());
+        };
+        let converted = value
+            .map(|value| converted_property_value(value, column.unit))
+            .transpose()
+            .map_err(|error| BondDataError::PropertyUnit {
+                property: name.to_owned(),
+                error: Box::new(error),
+            })?;
+        if converted.is_some_and(|value| !value.is_finite()) {
+            return Err(BondDataError::NonFinitePropertyValue {
+                property: name.to_owned(),
+                index,
+            });
+        }
+        let remove = {
+            let column = self
+                .properties
+                .get_mut(name)
+                .expect("validated property remains present");
+            column.values[index.index()] = converted;
+            column.values.iter().all(Option::is_none)
+        };
+        if remove {
+            self.properties.remove(name);
+        }
+        Ok(())
+    }
+
+    /// Remaps every custom property through checked topology lineage.
+    pub fn remap_to(
+        &self,
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
+        mapping: &TopologyMapping,
+    ) -> Result<Self, TopologyRemapError> {
+        if !self.is_compatible(source) {
+            return Err(TopologyRemapError::SourceTopologyMismatch);
+        }
+        let mut properties = BTreeMap::new();
+        for (name, column) in &self.properties {
+            let values = remap::dense_bond_values(&column.values, source, target, mapping)?;
+            if values.iter().any(Option::is_some) {
+                properties.insert(
+                    name.clone(),
+                    ScalarPropertyColumn {
+                        unit: column.unit,
+                        values,
+                    },
+                );
+            }
+        }
+        Ok(Self {
+            topology: Arc::clone(target),
+            properties,
+        })
+    }
+
+    fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), BondDataError> {
+        if !self.is_compatible(topology) {
+            return Err(BondDataError::TopologyMismatch);
+        }
+        Ok(())
+    }
+}
+
+fn validate_bond_property_name(name: &str) -> Result<(), BondDataError> {
+    if !valid_property_name(name) {
+        return Err(BondDataError::InvalidPropertyName {
+            name: name.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_bond_index(len: usize, index: TopologyBondIndex) -> Result<(), BondDataError> {
+    if index.index() >= len {
+        return Err(BondDataError::InvalidBondIndex(index));
+    }
+    Ok(())
+}
+
+fn bond_property_column_error(name: &str, error: ScalarPropertyColumnError) -> BondDataError {
+    match error {
+        ScalarPropertyColumnError::ValueCountMismatch { expected, actual } => {
+            BondDataError::PropertyValueCountMismatch {
+                property: name.to_owned(),
+                expected,
+                actual,
+            }
+        }
+        ScalarPropertyColumnError::NonFiniteValue { index } => {
+            BondDataError::NonFinitePropertyValue {
+                property: name.to_owned(),
+                index: TopologyBondIndex::new(index as u32),
+            }
+        }
+        ScalarPropertyColumnError::Unit(error) => BondDataError::PropertyUnit {
+            property: name.to_owned(),
+            error: Box::new(error),
+        },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum BondDataError {
+    TopologyMismatch,
+    InvalidBondId(InstanceBondId),
+    InvalidBondIndex(TopologyBondIndex),
+    InvalidPropertyName {
+        name: String,
+    },
+    PropertyValueCountMismatch {
+        property: String,
+        expected: usize,
+        actual: usize,
+    },
+    NonFinitePropertyValue {
+        property: String,
+        index: TopologyBondIndex,
+    },
+    PropertyUnit {
+        property: String,
+        error: Box<UnitError>,
+    },
+}
+
+impl fmt::Display for BondDataError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TopologyMismatch => {
+                formatter.write_str("bond data belongs to a different topology")
+            }
+            Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
+            Self::InvalidBondIndex(index) => write!(formatter, "invalid {index}"),
+            Self::InvalidPropertyName { name } => write!(
+                formatter,
+                "invalid bond property name {name:?}; use a 1-{MAX_PROPERTY_NAME_LEN} character ASCII identifier"
+            ),
+            Self::PropertyValueCountMismatch {
+                property,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "bond property {property:?} requires {expected} values, but received {actual}"
+            ),
+            Self::NonFinitePropertyValue { property, index } => write!(
+                formatter,
+                "bond property {property:?} at {index} must be finite"
+            ),
+            Self::PropertyUnit { property, error } => {
+                write!(formatter, "invalid unit for bond property {property:?}: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BondDataError {}
+
 /// One concrete realization of one immutable topology.
 #[derive(Debug, Clone)]
 pub struct Model {
@@ -661,6 +1318,7 @@ pub struct Model {
     positions: Positions,
     cell: Option<PeriodicCell>,
     atom_data: AtomData,
+    bond_data: BondData,
 }
 
 impl PartialEq for Model {
@@ -669,6 +1327,7 @@ impl PartialEq for Model {
             && self.positions == other.positions
             && self.cell == other.cell
             && self.atom_data == other.atom_data
+            && self.bond_data == other.bond_data
     }
 }
 
@@ -679,11 +1338,13 @@ impl Model {
             return Err(ModelError::TopologyMismatch);
         }
         let atom_data = AtomData::new(&topology);
+        let bond_data = BondData::new(&topology);
         Ok(Self {
             topology,
             positions,
             cell: None,
             atom_data,
+            bond_data,
         })
     }
 
@@ -694,7 +1355,22 @@ impl Model {
         cell: Option<PeriodicCell>,
         atom_data: AtomData,
     ) -> Result<Self, ModelError> {
-        if !positions.is_compatible(&topology) || !atom_data.is_compatible(&topology) {
+        let bond_data = BondData::new(&topology);
+        Self::with_data(topology, positions, cell, atom_data, bond_data)
+    }
+
+    /// Creates a model from complete topology-bound atom and bond state.
+    pub fn with_data(
+        topology: Arc<Topology>,
+        positions: Positions,
+        cell: Option<PeriodicCell>,
+        atom_data: AtomData,
+        bond_data: BondData,
+    ) -> Result<Self, ModelError> {
+        if !positions.is_compatible(&topology)
+            || !atom_data.is_compatible(&topology)
+            || !bond_data.is_compatible(&topology)
+        {
             return Err(ModelError::TopologyMismatch);
         }
         Ok(Self {
@@ -702,6 +1378,7 @@ impl Model {
             positions,
             cell,
             atom_data,
+            bond_data,
         })
     }
 
@@ -887,6 +1564,22 @@ impl Model {
         Ok(())
     }
 
+    pub fn bond_data(&self) -> &BondData {
+        &self.bond_data
+    }
+
+    pub fn bond_data_mut(&mut self) -> &mut BondData {
+        &mut self.bond_data
+    }
+
+    pub fn set_bond_data(&mut self, bond_data: BondData) -> Result<(), ModelError> {
+        if !bond_data.is_compatible(&self.topology) {
+            return Err(ModelError::TopologyMismatch);
+        }
+        self.bond_data = bond_data;
+        Ok(())
+    }
+
     pub fn occupancy(&self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
         self.atom_data.occupancy(&self.topology, atom)
     }
@@ -905,6 +1598,7 @@ impl Model {
             positions: &self.positions,
             cell: self.cell.as_ref(),
             atom_data: &self.atom_data,
+            bond_data: &self.bond_data,
         }
     }
 
@@ -963,11 +1657,13 @@ impl Model {
     ) -> Result<Self, TopologyRemapError> {
         let positions = self.positions.remap_to(&self.topology, target, mapping)?;
         let atom_data = self.atom_data.remap_to(&self.topology, target, mapping)?;
+        let bond_data = self.bond_data.remap_to(&self.topology, target, mapping)?;
         Ok(Self {
             topology: Arc::clone(target),
             positions,
             cell: self.cell,
             atom_data,
+            bond_data,
         })
     }
 
@@ -1008,13 +1704,15 @@ impl Model {
     }
 }
 
-/// Borrowed topology, positions, cell, and atom data for structural kernels.
+/// Borrowed topology, positions, cell, atom data, and bond data for structural
+/// kernels.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
     positions: &'a Positions,
     cell: Option<&'a PeriodicCell>,
     atom_data: &'a AtomData,
+    bond_data: &'a BondData,
 }
 
 impl<'a> ModelView<'a> {
@@ -1023,8 +1721,12 @@ impl<'a> ModelView<'a> {
         positions: &'a Positions,
         cell: Option<&'a PeriodicCell>,
         atom_data: &'a AtomData,
+        bond_data: &'a BondData,
     ) -> Result<Self, ModelError> {
-        if !positions.is_compatible(topology) || !atom_data.is_compatible(topology) {
+        if !positions.is_compatible(topology)
+            || !atom_data.is_compatible(topology)
+            || !bond_data.is_compatible(topology)
+        {
             return Err(ModelError::TopologyMismatch);
         }
         Ok(Self {
@@ -1032,6 +1734,7 @@ impl<'a> ModelView<'a> {
             positions,
             cell,
             atom_data,
+            bond_data,
         })
     }
 
@@ -1163,6 +1866,10 @@ impl<'a> ModelView<'a> {
 
     pub const fn atom_data(self) -> &'a AtomData {
         self.atom_data
+    }
+
+    pub const fn bond_data(self) -> &'a BondData {
+        self.bond_data
     }
 
     pub fn occupancy(self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
@@ -1559,6 +2266,7 @@ pub struct EnsembleMember {
     positions: Positions,
     cell: Option<PeriodicCell>,
     atom_data: AtomData,
+    bond_data: BondData,
     weight: Option<f64>,
     props: PropMap,
 }
@@ -1566,10 +2274,12 @@ pub struct EnsembleMember {
 impl EnsembleMember {
     pub fn new(positions: Positions) -> Self {
         let atom_data = AtomData::new(positions.topology_arc());
+        let bond_data = BondData::new(positions.topology_arc());
         Self {
             positions,
             cell: None,
             atom_data,
+            bond_data,
             weight: None,
             props: PropMap::new(),
         }
@@ -1603,6 +2313,22 @@ impl EnsembleMember {
         Ok(())
     }
 
+    pub fn bond_data(&self) -> &BondData {
+        &self.bond_data
+    }
+
+    pub fn bond_data_mut(&mut self) -> &mut BondData {
+        &mut self.bond_data
+    }
+
+    pub fn set_bond_data(&mut self, bond_data: BondData) -> Result<(), EnsembleError> {
+        if !Arc::ptr_eq(bond_data.topology_arc(), self.positions.topology_arc()) {
+            return Err(EnsembleError::TopologyMismatch);
+        }
+        self.bond_data = bond_data;
+        Ok(())
+    }
+
     pub const fn weight(&self) -> Option<f64> {
         self.weight
     }
@@ -1629,6 +2355,7 @@ impl EnsembleMember {
             &self.positions,
             self.cell.as_ref(),
             &self.atom_data,
+            &self.bond_data,
         )
         .map_err(|_| EnsembleError::TopologyMismatch)
     }
@@ -1671,6 +2398,7 @@ impl Ensemble {
                 positions: model.positions.clone(),
                 cell: model.cell,
                 atom_data: model.atom_data.clone(),
+                bond_data: model.bond_data.clone(),
                 weight: None,
                 props: PropMap::new(),
             };
@@ -1728,6 +2456,7 @@ impl Ensemble {
     pub fn push(&mut self, member: EnsembleMember) -> Result<(), EnsembleError> {
         if !member.positions.is_compatible(&self.topology)
             || !member.atom_data.is_compatible(&self.topology)
+            || !member.bond_data.is_compatible(&self.topology)
         {
             return Err(EnsembleError::TopologyMismatch);
         }
@@ -1781,10 +2510,12 @@ impl Ensemble {
             let remap_member = || -> Result<EnsembleMember, TopologyRemapError> {
                 let positions = member.positions.remap_to(&self.topology, target, mapping)?;
                 let atom_data = member.atom_data.remap_to(&self.topology, target, mapping)?;
+                let bond_data = member.bond_data.remap_to(&self.topology, target, mapping)?;
                 Ok(EnsembleMember {
                     positions,
                     cell: member.cell,
                     atom_data,
+                    bond_data,
                     weight: member.weight,
                     props: member.props.clone(),
                 })
@@ -1881,6 +2612,75 @@ pub mod remap {
             })
             .collect()
     }
+
+    /// Validates that `mapping` transfers complete per-bond state from
+    /// `source` to `target`.
+    pub fn validate_complete_bond_mapping(
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
+        mapping: &TopologyMapping,
+    ) -> Result<(), TopologyRemapError> {
+        if !mapping.is_source(source) {
+            return Err(TopologyRemapError::MappingSourceMismatch);
+        }
+        if !mapping.is_target(target) {
+            return Err(TopologyRemapError::MappingTargetMismatch);
+        }
+        if let Some(target_bond) = mapping.added_bonds().first().copied() {
+            return Err(TopologyRemapError::AddedBondsRequireState { target_bond });
+        }
+        if mapping.bond_index_pairs().len() != target.bond_count() {
+            let mapped = mapping
+                .bond_pairs()
+                .map(|(_, target)| target)
+                .collect::<std::collections::BTreeSet<_>>();
+            let target_bond = target
+                .bond_ids()
+                .iter()
+                .copied()
+                .find(|bond| !mapped.contains(bond))
+                .expect("incomplete target mapping has an unmapped target bond");
+            return Err(TopologyRemapError::AddedBondsRequireState { target_bond });
+        }
+        Ok(())
+    }
+
+    /// Remaps one complete dense bond array into the target topology's
+    /// authoritative dense order.
+    pub fn dense_bond_values<T: Clone>(
+        source_values: &[T],
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
+        mapping: &TopologyMapping,
+    ) -> Result<Vec<T>, TopologyRemapError> {
+        if source_values.len() != source.bond_count() {
+            return Err(TopologyRemapError::SourceBondCountMismatch {
+                expected: source.bond_count(),
+                actual: source_values.len(),
+            });
+        }
+        validate_complete_bond_mapping(source, target, mapping)?;
+
+        let mut values = std::iter::repeat_with(|| None)
+            .take(target.bond_count())
+            .collect::<Vec<Option<T>>>();
+        for (source_index, target_index) in mapping.bond_index_pairs() {
+            let slot = &mut values[target_index.index()];
+            if slot.is_some() {
+                return Err(TopologyRemapError::DuplicateTargetBondAssignment { target_index });
+            }
+            *slot = Some(source_values[source_index.index()].clone());
+        }
+        values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                value.ok_or_else(|| TopologyRemapError::AddedBondsRequireState {
+                    target_bond: target.bond_ids()[index],
+                })
+            })
+            .collect()
+    }
 }
 
 /// Failure to remap complete topology-bound structure state.
@@ -1899,8 +2699,14 @@ pub enum TopologyRemapError {
     SourceAtomCountMismatch { expected: usize, actual: usize },
     /// A target atom has no source state under this mapping.
     AddedAtomsRequireState { target_atom: InstanceAtomId },
+    /// A complete source dense bond array has an invalid length.
+    SourceBondCountMismatch { expected: usize, actual: usize },
+    /// A target bond has no source state under this mapping.
+    AddedBondsRequireState { target_bond: InstanceBondId },
     /// More than one source value was assigned to one target dense index.
     DuplicateTargetAssignment { target_index: TopologyAtomIndex },
+    /// More than one source value was assigned to one target dense bond index.
+    DuplicateTargetBondAssignment { target_index: TopologyBondIndex },
     /// One ensemble member could not be remapped.
     Member {
         member: usize,
@@ -1931,7 +2737,18 @@ impl fmt::Display for TopologyRemapError {
                 formatter,
                 "target atom {target_atom} has no mapped source state"
             ),
+            Self::SourceBondCountMismatch { expected, actual } => write!(
+                formatter,
+                "source state requires {expected} bonds, but received {actual}"
+            ),
+            Self::AddedBondsRequireState { target_bond } => write!(
+                formatter,
+                "target bond {target_bond} has no mapped source state"
+            ),
             Self::DuplicateTargetAssignment { target_index } => {
+                write!(formatter, "target {target_index} received duplicate state")
+            }
+            Self::DuplicateTargetBondAssignment { target_index } => {
                 write!(formatter, "target {target_index} received duplicate state")
             }
             Self::Member { member, error } => {
@@ -1997,9 +2814,11 @@ impl From<PositionError> for EnsembleError {
 mod tests {
     use super::*;
     use crate::bio::SmcraAtomSiteMetadata;
-    use crate::core::{Atom, Conformer, Element, Molecule};
+    use crate::core::{Atom, BondOrder, Conformer, Element, Molecule};
     use crate::geometry::Vector3;
-    use crate::units::{ANGSTROM, KELVIN, NANOMETER, SQUARE_ANGSTROM};
+    use crate::units::{
+        ANGSTROM, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, SQUARE_ANGSTROM,
+    };
 
     fn one_atom_topology() -> Arc<Topology> {
         let mut graph = Molecule::new();
@@ -2013,6 +2832,27 @@ mod tests {
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
         Arc::new(builder.build().unwrap())
+    }
+
+    fn two_bond_instances_topology() -> (Arc<Topology>, MoleculeInstanceId, MoleculeInstanceId) {
+        let mut graph = Molecule::builder();
+        let carbon = graph
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .unwrap();
+        let oxygen = graph
+            .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+            .unwrap();
+        graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
+        let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+        let mut builder = TopologyBuilder::new();
+        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let first = builder
+            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        let second = builder
+            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        (Arc::new(builder.build().unwrap()), first, second)
     }
 
     fn positions(topology: &Arc<Topology>, x: f64) -> Positions {
@@ -2318,7 +3158,303 @@ mod tests {
     }
 
     #[test]
-    fn model_remaps_positions_atom_data_and_cell_together() {
+    fn atom_custom_properties_are_dense_unit_aware_and_transactional() {
+        let (topology, _, _) = two_bond_instances_topology();
+        let first_atom = topology.atom_ids()[0];
+        let first_index = topology.atom_index(first_atom).unwrap();
+        let mut data = AtomData::new(&topology);
+
+        data.set_property(
+            "partial_charge",
+            Quantity::new(vec![Some(-0.4), None, Some(0.2), Some(0.2)], DIMENSIONLESS),
+        )
+        .unwrap();
+        let charges = data.property("partial_charge").unwrap().unwrap();
+        assert_eq!(charges.unit(), DIMENSIONLESS);
+        assert_eq!(charges.value(), &[Some(-0.4), None, Some(0.2), Some(0.2)]);
+        assert_eq!(
+            data.property_value(&topology, "partial_charge", first_atom)
+                .unwrap(),
+            Some(Quantity::new(-0.4, DIMENSIONLESS))
+        );
+        assert_eq!(
+            data.property_value_at("missing", first_index).unwrap(),
+            None
+        );
+
+        data.set_property(
+            "display_radius",
+            Quantity::new(vec![Some(1.0), None, None, None], ANGSTROM),
+        )
+        .unwrap();
+        data.set_property_value_at(
+            "display_radius",
+            TopologyAtomIndex::new(1),
+            Some(Quantity::new(0.2, NANOMETER)),
+        )
+        .unwrap();
+        let radii = data.property("display_radius").unwrap().unwrap();
+        assert_eq!(radii.unit(), ANGSTROM);
+        assert_eq!(radii.value(), &[Some(1.0), Some(2.0), None, None]);
+
+        let before = data.clone();
+        assert!(matches!(
+            data.set_property(
+                "partial_charge",
+                Quantity::new(vec![Some(1.0)], DIMENSIONLESS)
+            ),
+            Err(AtomDataError::PropertyValueCountMismatch { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_property("partial_charge", Quantity::new(vec![Some(1.0); 4], KELVIN)),
+            Err(AtomDataError::PropertyUnit { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_property(
+                "partial_charge",
+                Quantity::new(vec![Some(f64::NAN), None, None, None], DIMENSIONLESS)
+            ),
+            Err(AtomDataError::NonFinitePropertyValue { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_property("", Quantity::new(vec![None; 4], DIMENSIONLESS)),
+            Err(AtomDataError::InvalidPropertyName { .. })
+        ));
+        assert!(matches!(
+            data.set_property("occupancy", Quantity::new(vec![None; 4], DIMENSIONLESS)),
+            Err(AtomDataError::ReservedPropertyName { .. })
+        ));
+        assert!(matches!(
+            data.set_property("b_factor", Quantity::new(vec![None; 4], DIMENSIONLESS)),
+            Err(AtomDataError::ReservedPropertyName { .. })
+        ));
+
+        data.set_property(
+            "partial_charge",
+            Quantity::new(vec![None; 4], DIMENSIONLESS),
+        )
+        .unwrap();
+        assert!(data.property("partial_charge").unwrap().is_none());
+        assert!(data.remove_property("display_radius").unwrap());
+        assert!(!data.remove_property("display_radius").unwrap());
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn bond_data_properties_bind_exact_topology_and_support_visualization_columns() {
+        let (topology, _, _) = two_bond_instances_topology();
+        let independent = two_bond_instances_topology().0;
+        let first_bond = topology.bond_ids()[0];
+        let first_index = topology.bond_index(first_bond).unwrap();
+        let entropy_unit = KILOJOULE_PER_MOLE / KELVIN;
+        let mut data = BondData::new(&topology);
+
+        assert!(data.is_empty());
+        assert_eq!(data.bond_count(), 2);
+        assert!(data.is_compatible(&topology));
+        assert!(!data.is_compatible(&independent));
+        assert!(Arc::ptr_eq(&data.shared_topology(), &topology));
+        data.set_property(
+            "conformational_entropy",
+            Quantity::new(vec![Some(0.012), None], entropy_unit),
+        )
+        .unwrap();
+
+        let (name, column) = data.properties().next().unwrap();
+        assert_eq!(name, "conformational_entropy");
+        assert_eq!(column.unit(), entropy_unit);
+        assert_eq!(column.value(), &[Some(0.012), None]);
+        assert_eq!(
+            data.property_value(&topology, "conformational_entropy", first_bond)
+                .unwrap(),
+            Some(Quantity::new(0.012, entropy_unit))
+        );
+        assert_eq!(
+            data.property_value_at("conformational_entropy", TopologyBondIndex::new(1))
+                .unwrap(),
+            None
+        );
+        data.set_property_value(
+            &topology,
+            "display_width",
+            first_bond,
+            Some(Quantity::new(0.2, NANOMETER)),
+        )
+        .unwrap();
+        data.set_property_value_at(
+            "display_width",
+            first_index,
+            Some(Quantity::new(3.0, ANGSTROM)),
+        )
+        .unwrap();
+        assert!(data
+            .property_value_at("display_width", first_index)
+            .unwrap()
+            .unwrap()
+            .is_close(&Quantity::new(0.3, NANOMETER), 1.0e-12, 1.0e-12)
+            .unwrap());
+        data.set_property_value_at("display_width", first_index, None)
+            .unwrap();
+        assert!(data.property("display_width").unwrap().is_none());
+
+        assert_eq!(
+            data.property_value(&independent, "conformational_entropy", first_bond),
+            Err(BondDataError::TopologyMismatch)
+        );
+        let invalid_bond =
+            InstanceBondId::new(MoleculeInstanceId::new(99), crate::core::BondId::new(0));
+        assert_eq!(
+            data.property_value(&topology, "conformational_entropy", invalid_bond),
+            Err(BondDataError::InvalidBondId(invalid_bond))
+        );
+        assert_eq!(
+            data.property_value_at("conformational_entropy", TopologyBondIndex::new(99)),
+            Err(BondDataError::InvalidBondIndex(TopologyBondIndex::new(99)))
+        );
+
+        let before = data.clone();
+        assert!(matches!(
+            data.set_property(
+                "conformational_entropy",
+                Quantity::new(vec![Some(f64::INFINITY), None], entropy_unit)
+            ),
+            Err(BondDataError::NonFinitePropertyValue { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_property(
+                "conformational_entropy",
+                Quantity::new(vec![Some(1.0), None], ANGSTROM)
+            ),
+            Err(BondDataError::PropertyUnit { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_property(
+                "conformational_entropy",
+                Quantity::new(vec![Some(1.0)], entropy_unit)
+            ),
+            Err(BondDataError::PropertyValueCountMismatch { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_property("bad name", Quantity::new(vec![None; 2], entropy_unit)),
+            Err(BondDataError::InvalidPropertyName { .. })
+        ));
+
+        data.set_property(
+            "conformational_entropy",
+            Quantity::new(vec![None; 2], entropy_unit),
+        )
+        .unwrap();
+        assert!(data.is_empty());
+        assert!(data.property("conformational_entropy").unwrap().is_none());
+        assert!(!data.remove_property("conformational_entropy").unwrap());
+        assert_eq!(first_index, TopologyBondIndex::new(0));
+    }
+
+    #[test]
+    fn model_and_ensemble_remap_atom_and_bond_properties_in_target_dense_order() {
+        let (source, first, second) = two_bond_instances_topology();
+        let edit = crate::topology::transform::retain_instances(&source, [second]).unwrap();
+        let target = edit.shared_topology();
+        let positions = Positions::new(
+            &source,
+            Quantity::new(
+                vec![
+                    Point3::new(0.0, 0.0, 0.0),
+                    Point3::new(1.0, 0.0, 0.0),
+                    Point3::new(2.0, 0.0, 0.0),
+                    Point3::new(3.0, 0.0, 0.0),
+                ],
+                ANGSTROM,
+            ),
+        )
+        .unwrap();
+        let mut model = Model::new(Arc::clone(&source), positions).unwrap();
+        model
+            .atom_data_mut()
+            .set_property(
+                "partial_charge",
+                Quantity::new(
+                    vec![Some(-0.1), Some(0.1), Some(-0.2), Some(0.2)],
+                    DIMENSIONLESS,
+                ),
+            )
+            .unwrap();
+        model
+            .bond_data_mut()
+            .set_property(
+                "conformational_entropy",
+                Quantity::new(vec![Some(1.0), Some(2.0)], KILOJOULE_PER_MOLE / KELVIN),
+            )
+            .unwrap();
+
+        let view = model.view();
+        assert!(std::ptr::eq(model.bond_data(), view.bond_data()));
+        let cloned = model.clone();
+        assert_eq!(cloned.atom_data(), model.atom_data());
+        assert_eq!(cloned.bond_data(), model.bond_data());
+
+        let remapped = model.remap_to(&target, edit.mapping()).unwrap();
+        assert_eq!(
+            remapped
+                .atom_data()
+                .property("partial_charge")
+                .unwrap()
+                .unwrap()
+                .value(),
+            &[Some(-0.2), Some(0.2)]
+        );
+        let entropy = remapped
+            .bond_data()
+            .property("conformational_entropy")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entropy.unit(), KILOJOULE_PER_MOLE / KELVIN);
+        assert_eq!(entropy.value(), &[Some(2.0)]);
+        assert_eq!(edit.mapping().removed_instances(), &[first]);
+        assert_eq!(edit.mapping().removed_bonds().len(), 1);
+        assert_eq!(
+            edit.mapping().bond_index_pairs().next().unwrap().0.index(),
+            1
+        );
+
+        let ensemble = Ensemble::from_models(&[model]).unwrap();
+        assert_eq!(
+            ensemble
+                .member(0)
+                .unwrap()
+                .bond_data()
+                .property("conformational_entropy")
+                .unwrap()
+                .unwrap()
+                .value(),
+            &[Some(1.0), Some(2.0)]
+        );
+        assert!(std::ptr::eq(
+            ensemble.member(0).unwrap().bond_data(),
+            ensemble.views().next().unwrap().bond_data()
+        ));
+        let remapped_ensemble = ensemble.remap_to(&target, edit.mapping()).unwrap();
+        assert_eq!(
+            remapped_ensemble
+                .member(0)
+                .unwrap()
+                .bond_data()
+                .property("conformational_entropy")
+                .unwrap()
+                .unwrap()
+                .value(),
+            &[Some(2.0)]
+        );
+    }
+
+    #[test]
+    fn model_remaps_positions_atom_data_bond_data_and_cell_together() {
         let source = one_atom_topology();
         let target = one_atom_topology();
         let mapping = TopologyMapping::between_identical_layouts(&source, &target).unwrap();

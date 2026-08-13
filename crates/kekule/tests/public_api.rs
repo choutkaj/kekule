@@ -459,6 +459,55 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
+fn atom_and_bond_custom_property_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::geometry::Point3;
+    use kekule::structure::{AtomData, BondData, Model, Positions};
+    use kekule::topology::{MoleculeInstanceMetadata, TopologyBuilder};
+    use kekule::units::{Quantity, ANGSTROM, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE};
+
+    let molecule = SmallMolecule::from_smiles_sanitized("CC")?;
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_small_molecule_definition(&molecule)?;
+    builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+    let topology = std::sync::Arc::new(builder.build()?);
+    let positions = Positions::new(
+        &topology,
+        Quantity::new(
+            vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.5, 0.0, 0.0)],
+            ANGSTROM,
+        ),
+    )?;
+    let mut atom_data = AtomData::new(&topology);
+    atom_data.set_property(
+        "partial_charge",
+        Quantity::new(vec![Some(-0.1), Some(0.1)], DIMENSIONLESS),
+    )?;
+    let entropy_unit = KILOJOULE_PER_MOLE / KELVIN;
+    let mut bond_data = BondData::new(&topology);
+    bond_data.set_property(
+        "conformational_entropy",
+        Quantity::new(vec![Some(0.025)], entropy_unit),
+    )?;
+    let model = Model::with_data(
+        std::sync::Arc::clone(&topology),
+        positions,
+        None,
+        atom_data,
+        bond_data,
+    )?;
+
+    let entropy = model
+        .view()
+        .bond_data()
+        .property("conformational_entropy")?
+        .expect("complete visualization property column");
+    assert_eq!(entropy.unit(), entropy_unit);
+    assert_eq!(entropy.value(), &[Some(0.025)]);
+    assert!(std::ptr::eq(model.bond_data(), model.view().bond_data()));
+    Ok(())
+}
+
+#[test]
 fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::topology::{
         MoleculeInstanceMetadata, TopologyBuilder, TopologyEditResult, TopologyMapping,
