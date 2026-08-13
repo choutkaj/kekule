@@ -7,7 +7,7 @@ file-backed trajectory I/O.
 
 ## Behavior/API
 
-- Every open requires an exact topology and explicit atom-order assertion.
+- Every open requires an exact shared `Arc<Topology>` and explicit atom-order assertion.
 - Each frame has a checked nonzero constant atom count and an element sequence
   matching authoritative topology order.
 - Coordinates are finite and use an explicit length-unit policy; the documented
@@ -73,3 +73,5 @@ file-backed trajectory I/O.
   and use bounded geometric offset reservation after successful frame parsing.
 - v6: Publish the codec under `kekule_traj::io::xyz` as part of the unified
   `kekule-traj` trajectory crate.
+- v7: Retain the caller's exact `Arc<Topology>` in bindings, readers, and
+  writers after removing raw topology handle cloning.

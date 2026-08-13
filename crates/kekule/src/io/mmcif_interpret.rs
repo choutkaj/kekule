@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
 use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
 use crate::core::{Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Molecule};
@@ -523,8 +524,9 @@ fn interpret_block(
             .expect("interpreted atom has a dense topology index");
         observations[index.index()] = observation;
     }
+    let topology = model.shared_topology();
     let mut observation =
-        StructureObservation::new(model.topology(), observations).map_err(graph_error)?;
+        StructureObservation::new(&topology, observations).map_err(graph_error)?;
     observation.set_source_model_id(report.selected_model.clone());
     model
         .set_observation(Some(observation))
@@ -1695,9 +1697,9 @@ pub fn interpret_mmcif_ensemble(
     let first = interpreted
         .first()
         .ok_or(MmcifEnsembleInterpretError::EmptyModelSelection)?;
-    let shared_topology = first.model.topology().clone();
+    let shared_topology = first.model.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
-    let mut ensemble = Ensemble::new(shared_topology.clone());
+    let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
     let mut reports = Vec::with_capacity(interpreted.len());
     for interpretation in interpreted {
         let (model, report) = interpretation.into_parts();
@@ -1719,7 +1721,8 @@ pub fn interpret_mmcif_ensemble(
         {
             return Err(MmcifEnsembleInterpretError::InconsistentDenseAtomOrder { model_id });
         }
-        TopologyMapping::between_identical_layouts(model.topology(), &shared_topology).map_err(
+        let model_topology = model.shared_topology();
+        TopologyMapping::between_identical_layouts(&model_topology, &shared_topology).map_err(
             |_| MmcifEnsembleInterpretError::InconsistentTopology {
                 model_id: model_id.clone(),
             },

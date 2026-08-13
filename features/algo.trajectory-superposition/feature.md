@@ -55,3 +55,5 @@ reference frame through Kekule's proper rigid-alignment kernel.
 
 - v1: Add transactional finite-trajectory superposition with complete dynamic
   geometric-state transformation and per-frame alignment reporting.
+- v2: Preserve and validate the trajectory's shared `Arc<Topology>` throughout
+  fitting and transactional frame replacement.

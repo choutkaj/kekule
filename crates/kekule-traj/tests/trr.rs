@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
@@ -25,7 +26,7 @@ use sha2::{Digest, Sha256};
 mod support;
 use support::{buffer_snapshot, GuardedCursor, RestoreSeekFailure};
 
-fn topology() -> Topology {
+fn topology() -> Arc<Topology> {
     let mut graph = Molecule::builder();
     let mut atoms = Vec::new();
     for symbol in ["C", "H", "O"] {
@@ -47,12 +48,12 @@ fn topology() -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
-fn binding(topology: &Topology) -> TrajectoryTopologyBinding {
+fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
     TrajectoryTopologyBinding::new(
-        topology.clone(),
+        Arc::clone(topology),
         AtomOrderAssertion::assert_file_uses_topology_order(topology),
     )
     .unwrap()
@@ -87,8 +88,8 @@ fn assert_xs_close(buffer: &FrameBuffer, expected: &[f64]) {
     }
 }
 
-fn populated_frame(topology: &Topology, shift: f64, step: u64) -> FrameBuffer {
-    let mut frame = FrameBuffer::new(topology.clone());
+fn populated_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
+    let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame
         .set_positions(Quantity::new(
             [
@@ -150,7 +151,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         let options = TrrWriteOptions::default().with_precision(precision);
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
-            topology.clone(),
+            Arc::clone(&topology),
             options,
             "memory.trr",
         )
@@ -180,7 +181,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
             "memory.trr",
         )
         .unwrap();
-        let mut destination = FrameBuffer::new(topology.clone());
+        let mut destination = FrameBuffer::new(Arc::clone(&topology));
         let pointer = destination
             .configuration()
             .positions()
@@ -267,7 +268,7 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     let topology = topology();
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         TrrWriteOptions::default(),
         "exact-limit.trr",
     )
@@ -293,7 +294,7 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
         "exact-limit.trr",
     )
     .unwrap();
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(!reader.read_next(&mut buffer).unwrap());
@@ -316,7 +317,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     let topology = topology();
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         TrrWriteOptions::default(),
         "restore-failure.trr",
     )
@@ -354,7 +355,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let topology = topology();
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         TrrWriteOptions::default(),
         "guarded.trr",
     )
@@ -380,7 +381,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         "guarded-sequential.trr",
     )
     .unwrap();
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
@@ -430,7 +431,7 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     let mut frame = populated_frame(&topology, 0.0, 0);
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
         "zero.trr",
     )
@@ -460,7 +461,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     let topology = topology();
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         TrrWriteOptions::default(),
         "memory.trr",
     )
@@ -497,7 +498,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
         "truncated.trr",
     )
     .unwrap();
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut destination).unwrap());
     let before = xs(&destination);
     let error = reader.read_next(&mut destination).unwrap_err();
@@ -536,7 +537,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
     let topology = topology();
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         TrrWriteOptions::default(),
         "late-invalid.trr",
     )
@@ -569,7 +570,7 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
     ] {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
-            topology.clone(),
+            Arc::clone(&topology),
             TrrWriteOptions::default().with_precision(precision),
             "mixed.trr",
         )
@@ -604,7 +605,7 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
     ] {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
-            topology.clone(),
+            Arc::clone(&topology),
             TrrWriteOptions::default().with_precision(precision),
             "mixed-metadata.trr",
         )
@@ -634,7 +635,7 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
             precision: ScalarPrecision::Float32
         }
     );
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(sequential.read_next(&mut destination).unwrap());
     assert_eq!(
         sequential.metadata().coordinate_encoding(),

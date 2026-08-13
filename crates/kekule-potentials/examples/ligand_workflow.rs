@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // periodic cell, so it is eligible for preparation and minimization.
     assert!(model.cell().is_none());
     let mut potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )?;

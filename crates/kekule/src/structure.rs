@@ -2,6 +2,7 @@
 //! finite non-temporal ensembles.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::bio::MacroMolecule;
 use crate::core::{AtomId, ConformerError, ConformerId, Molecule, PropMap};
@@ -9,19 +10,25 @@ use crate::geometry::{PeriodicCell, PeriodicCellError, Point3};
 use crate::small::SmallMolecule;
 use crate::topology::{
     InstanceAtomId, MoleculeDefinitionId, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
-    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyIdentity, TopologyMapping,
+    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyMapping,
 };
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
 
 /// One complete finite Cartesian array in one topology's dense atom order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Positions {
-    topology: TopologyIdentity,
+    topology: Arc<Topology>,
     values: Vec<Point3>,
 }
 
+impl PartialEq for Positions {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.topology, &other.topology) && self.values == other.values
+    }
+}
+
 impl Positions {
-    pub fn new<T>(topology: &Topology, positions: Quantity<T>) -> Result<Self, PositionError>
+    pub fn new<T>(topology: &Arc<Topology>, positions: Quantity<T>) -> Result<Self, PositionError>
     where
         T: AsRef<[Point3]>,
     {
@@ -43,24 +50,32 @@ impl Positions {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            topology: topology.identity(),
+            topology: Arc::clone(topology),
             values,
         })
     }
 
-    pub fn zeros(topology: &Topology) -> Self {
+    pub fn zeros(topology: &Arc<Topology>) -> Self {
         Self {
-            topology: topology.identity(),
+            topology: Arc::clone(topology),
             values: vec![Point3::origin(); topology.atom_count()],
         }
     }
 
-    pub fn topology_identity(&self) -> &TopologyIdentity {
+    pub fn topology(&self) -> &Topology {
         &self.topology
     }
 
-    pub fn is_compatible(&self, topology: &Topology) -> bool {
-        self.topology == topology.identity()
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
+        Arc::ptr_eq(&self.topology, topology)
+    }
+
+    pub(crate) fn topology_arc(&self) -> &Arc<Topology> {
+        &self.topology
     }
 
     pub fn len(&self) -> usize {
@@ -78,8 +93,8 @@ impl Positions {
     /// Copies complete positions through a checked topology lineage mapping.
     pub fn remap_to(
         &self,
-        source: &Topology,
-        target: &Topology,
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<Self, TopologyRemapError> {
         if !self.is_compatible(source) {
@@ -87,7 +102,7 @@ impl Positions {
         }
         let values = remap::dense_atom_values(&self.values, source, target, mapping)?;
         Ok(Self {
-            topology: target.identity(),
+            topology: Arc::clone(target),
             values,
         })
     }
@@ -99,8 +114,8 @@ impl Positions {
     pub fn copy_remapped_from(
         &mut self,
         source: &Self,
-        source_topology: &Topology,
-        target_topology: &Topology,
+        source_topology: &Arc<Topology>,
+        target_topology: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<(), TopologyRemapError> {
         if !source.is_compatible(source_topology) {
@@ -132,7 +147,7 @@ impl Positions {
 
     pub fn position(
         &self,
-        topology: &Topology,
+        topology: &Arc<Topology>,
         atom: InstanceAtomId,
     ) -> Result<Quantity<Point3>, PositionError> {
         self.ensure_compatible(topology)?;
@@ -144,7 +159,7 @@ impl Positions {
 
     pub fn set_position(
         &mut self,
-        topology: &Topology,
+        topology: &Arc<Topology>,
         atom: InstanceAtomId,
         position: Quantity<Point3>,
     ) -> Result<(), PositionError> {
@@ -164,7 +179,7 @@ impl Positions {
     /// allocation when the capacity permits.
     pub fn set_all<T>(
         &mut self,
-        topology: &Topology,
+        topology: &Arc<Topology>,
         positions: Quantity<T>,
     ) -> Result<(), PositionError>
     where
@@ -181,7 +196,7 @@ impl Positions {
     /// several coupled fields before publishing any of them transactionally.
     pub fn validate_all<T>(
         &self,
-        topology: &Topology,
+        topology: &Arc<Topology>,
         positions: &Quantity<T>,
     ) -> Result<(), PositionError>
     where
@@ -192,7 +207,7 @@ impl Positions {
 
     pub(crate) fn validate_replacement<T>(
         &self,
-        topology: &Topology,
+        topology: &Arc<Topology>,
         positions: &Quantity<T>,
     ) -> Result<f64, PositionError>
     where
@@ -223,9 +238,9 @@ impl Positions {
         &self.values
     }
 
-    fn ensure_compatible(&self, topology: &Topology) -> Result<(), PositionError> {
+    fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), PositionError> {
         if !self.is_compatible(topology) {
-            return Err(PositionError::TopologyIdentityMismatch);
+            return Err(PositionError::TopologyMismatch);
         }
         Ok(())
     }
@@ -246,7 +261,7 @@ fn validate_position_count(topology: &Topology, actual: usize) -> Result<(), Pos
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PositionError {
-    TopologyIdentityMismatch,
+    TopologyMismatch,
     InvalidAtomId(InstanceAtomId),
     InvalidAtomIndex(TopologyAtomIndex),
     PositionCountMismatch { expected: usize, actual: usize },
@@ -258,7 +273,7 @@ pub enum PositionError {
 impl fmt::Display for PositionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyIdentityMismatch => {
+            Self::TopologyMismatch => {
                 formatter.write_str("positions belong to a different topology")
             }
             Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
@@ -325,8 +340,8 @@ impl Configuration {
     }
 
     pub fn set_positions(&mut self, positions: Positions) -> Result<(), ConfigurationError> {
-        if self.positions.topology != positions.topology {
-            return Err(ConfigurationError::TopologyIdentityMismatch);
+        if !Arc::ptr_eq(self.positions.topology_arc(), positions.topology_arc()) {
+            return Err(ConfigurationError::TopologyMismatch);
         }
         self.positions = positions;
         Ok(())
@@ -342,8 +357,8 @@ impl Configuration {
     /// Remaps complete positions while preserving the periodic cell.
     pub fn remap_to(
         &self,
-        source: &Topology,
-        target: &Topology,
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<Self, TopologyRemapError> {
         Ok(Self {
@@ -373,14 +388,14 @@ impl<'a> ConfigurationView<'a> {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ConfigurationError {
-    TopologyIdentityMismatch,
+    TopologyMismatch,
     InvalidCell(PeriodicCellError),
 }
 
 impl fmt::Display for ConfigurationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyIdentityMismatch => {
+            Self::TopologyMismatch => {
                 formatter.write_str("configuration belongs to a different topology")
             }
             Self::InvalidCell(error) => write!(formatter, "invalid configuration cell: {error}"),
@@ -478,16 +493,28 @@ impl AtomObservation {
 }
 
 /// Topology-bound observation and provenance state for one configuration.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct StructureObservation {
-    topology: TopologyIdentity,
+    topology: Arc<Topology>,
     source_model_id: Option<String>,
     atoms: Vec<AtomObservation>,
     props: PropMap,
 }
 
+impl PartialEq for StructureObservation {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.topology, &other.topology)
+            && self.source_model_id == other.source_model_id
+            && self.atoms == other.atoms
+            && self.props == other.props
+    }
+}
+
 impl StructureObservation {
-    pub fn new(topology: &Topology, atoms: Vec<AtomObservation>) -> Result<Self, ObservationError> {
+    pub fn new(
+        topology: &Arc<Topology>,
+        atoms: Vec<AtomObservation>,
+    ) -> Result<Self, ObservationError> {
         if atoms.len() != topology.atom_count() {
             return Err(ObservationError::AtomCountMismatch {
                 expected: topology.atom_count(),
@@ -495,27 +522,35 @@ impl StructureObservation {
             });
         }
         Ok(Self {
-            topology: topology.identity(),
+            topology: Arc::clone(topology),
             source_model_id: None,
             atoms,
             props: PropMap::new(),
         })
     }
 
-    pub fn empty(topology: &Topology) -> Self {
+    pub fn empty(topology: &Arc<Topology>) -> Self {
         Self {
-            topology: topology.identity(),
+            topology: Arc::clone(topology),
             source_model_id: None,
             atoms: vec![AtomObservation::default(); topology.atom_count()],
             props: PropMap::new(),
         }
     }
 
-    pub fn is_compatible(&self, topology: &Topology) -> bool {
-        self.topology == topology.identity()
+    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
+        Arc::ptr_eq(&self.topology, topology)
     }
 
-    pub fn topology_identity(&self) -> &TopologyIdentity {
+    pub fn topology(&self) -> &Topology {
+        &self.topology
+    }
+
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
+    pub(crate) fn topology_arc(&self) -> &Arc<Topology> {
         &self.topology
     }
 
@@ -533,7 +568,7 @@ impl StructureObservation {
 
     pub fn atom(
         &self,
-        topology: &Topology,
+        topology: &Arc<Topology>,
         atom: InstanceAtomId,
     ) -> Result<&AtomObservation, ObservationError> {
         self.ensure_compatible(topology)?;
@@ -545,7 +580,7 @@ impl StructureObservation {
 
     pub fn set_atom(
         &mut self,
-        topology: &Topology,
+        topology: &Arc<Topology>,
         atom: InstanceAtomId,
         observation: AtomObservation,
     ) -> Result<(), ObservationError> {
@@ -569,24 +604,24 @@ impl StructureObservation {
     /// properties.
     pub fn remap_to(
         &self,
-        source: &Topology,
-        target: &Topology,
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<Self, TopologyRemapError> {
         if !self.is_compatible(source) {
             return Err(TopologyRemapError::SourceTopologyMismatch);
         }
         Ok(Self {
-            topology: target.identity(),
+            topology: Arc::clone(target),
             source_model_id: self.source_model_id.clone(),
             atoms: remap::dense_atom_values(&self.atoms, source, target, mapping)?,
             props: self.props.clone(),
         })
     }
 
-    fn ensure_compatible(&self, topology: &Topology) -> Result<(), ObservationError> {
+    fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), ObservationError> {
         if !self.is_compatible(topology) {
-            return Err(ObservationError::TopologyIdentityMismatch);
+            return Err(ObservationError::TopologyMismatch);
         }
         Ok(())
     }
@@ -595,7 +630,7 @@ impl StructureObservation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ObservationError {
-    TopologyIdentityMismatch,
+    TopologyMismatch,
     AtomCountMismatch { expected: usize, actual: usize },
     InvalidAtomId(InstanceAtomId),
     NonFiniteOccupancy,
@@ -605,7 +640,7 @@ pub enum ObservationError {
 impl fmt::Display for ObservationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyIdentityMismatch => {
+            Self::TopologyMismatch => {
                 formatter.write_str("structure observation belongs to a different topology")
             }
             Self::AtomCountMismatch { expected, actual } => write!(
@@ -624,23 +659,23 @@ impl std::error::Error for ObservationError {}
 /// One concrete realization of one immutable topology.
 #[derive(Debug, Clone)]
 pub struct Model {
-    topology: Topology,
+    topology: Arc<Topology>,
     configuration: Configuration,
     observation: Option<StructureObservation>,
 }
 
 impl PartialEq for Model {
     fn eq(&self, other: &Self) -> bool {
-        self.topology.same_identity(&other.topology)
+        Arc::ptr_eq(&self.topology, &other.topology)
             && self.configuration == other.configuration
             && self.observation == other.observation
     }
 }
 
 impl Model {
-    pub fn new(topology: Topology, configuration: Configuration) -> Result<Self, ModelError> {
+    pub fn new(topology: Arc<Topology>, configuration: Configuration) -> Result<Self, ModelError> {
         if !configuration.positions.is_compatible(&topology) {
-            return Err(ModelError::TopologyIdentityMismatch);
+            return Err(ModelError::TopologyMismatch);
         }
         Ok(Self {
             topology,
@@ -650,7 +685,7 @@ impl Model {
     }
 
     pub fn with_observation(
-        topology: Topology,
+        topology: Arc<Topology>,
         configuration: Configuration,
         observation: Option<StructureObservation>,
     ) -> Result<Self, ModelError> {
@@ -685,6 +720,10 @@ impl Model {
         &self.topology
     }
 
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     pub fn configuration(&self) -> &Configuration {
         &self.configuration
     }
@@ -695,7 +734,7 @@ impl Model {
 
     pub fn set_configuration(&mut self, configuration: Configuration) -> Result<(), ModelError> {
         if !configuration.positions.is_compatible(&self.topology) {
-            return Err(ModelError::TopologyIdentityMismatch);
+            return Err(ModelError::TopologyMismatch);
         }
         self.configuration = configuration;
         Ok(())
@@ -752,7 +791,7 @@ impl Model {
             .as_ref()
             .is_some_and(|observation| !observation.is_compatible(&self.topology))
         {
-            return Err(ModelError::TopologyIdentityMismatch);
+            return Err(ModelError::TopologyMismatch);
         }
         self.observation = observation;
         Ok(())
@@ -785,6 +824,7 @@ impl Model {
     ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
     /// };
     /// use kekule::units::{Quantity, ANGSTROM};
+    /// use std::sync::Arc;
     ///
     /// let mut ligand_builder = Molecule::builder();
     /// ligand_builder.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
@@ -799,7 +839,7 @@ impl Model {
     /// let mut solvent = MoleculeInstanceMetadata::default();
     /// solvent.insert_role(MoleculeRole::Solvent);
     /// let water_instance = builder.add_instance(water_definition, solvent)?;
-    /// let topology = builder.build()?;
+    /// let topology = Arc::new(builder.build()?);
     /// let positions = Positions::new(
     ///     &topology,
     ///     Quantity::new(
@@ -807,17 +847,18 @@ impl Model {
     ///         ANGSTROM,
     ///     ),
     /// )?;
-    /// let model = Model::new(topology.clone(), Configuration::new(positions))?;
+    /// let model = Model::new(Arc::clone(&topology), Configuration::new(positions))?;
     ///
     /// let edit = transform::remove_instances(&topology, [water_instance])?;
-    /// let stripped = model.remap_to(edit.topology(), edit.mapping())?;
+    /// let target = edit.shared_topology();
+    /// let stripped = model.remap_to(&target, edit.mapping())?;
     /// assert_eq!(stripped.atom_count(), 1);
     /// assert_eq!(stripped.positions().value()[0].x, 0.0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn remap_to(
         &self,
-        target: &Topology,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<Self, TopologyRemapError> {
         let configuration = self
@@ -829,7 +870,7 @@ impl Model {
             .map(|observation| observation.remap_to(&self.topology, target, mapping))
             .transpose()?;
         Ok(Self {
-            topology: target.clone(),
+            topology: Arc::clone(target),
             configuration,
             observation,
         })
@@ -879,17 +920,17 @@ impl Model {
 /// Borrowed topology-plus-configuration view for coordinate-dependent kernels.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelView<'a> {
-    topology: &'a Topology,
+    topology: &'a Arc<Topology>,
     configuration: ConfigurationView<'a>,
 }
 
 impl<'a> ModelView<'a> {
     pub fn new(
-        topology: &'a Topology,
+        topology: &'a Arc<Topology>,
         configuration: ConfigurationView<'a>,
     ) -> Result<Self, ModelError> {
         if !configuration.positions().is_compatible(topology) {
-            return Err(ModelError::TopologyIdentityMismatch);
+            return Err(ModelError::TopologyMismatch);
         }
         Ok(Self {
             topology,
@@ -897,8 +938,16 @@ impl<'a> ModelView<'a> {
         })
     }
 
-    pub const fn topology(self) -> &'a Topology {
+    pub fn topology(self) -> &'a Topology {
         self.topology
+    }
+
+    pub(crate) const fn topology_arc(self) -> &'a Arc<Topology> {
+        self.topology
+    }
+
+    pub fn shared_topology(self) -> Arc<Topology> {
+        Arc::clone(self.topology)
     }
 
     pub const fn configuration(self) -> ConfigurationView<'a> {
@@ -929,13 +978,13 @@ impl<'a> ModelView<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ModelError {
-    TopologyIdentityMismatch,
+    TopologyMismatch,
 }
 
 impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyIdentityMismatch => {
+            Self::TopologyMismatch => {
                 formatter.write_str("model configuration belongs to a different topology")
             }
         }
@@ -1128,7 +1177,7 @@ impl ModelBuilder {
     }
 
     pub fn build(self) -> Result<Model, ModelBuildError> {
-        let topology = self.topology.build()?;
+        let topology = Arc::new(self.topology.build()?);
         let positions =
             Positions::new(&topology, Quantity::new(self.positions, MODEL_LENGTH_UNIT))?;
         Ok(Model::new(topology, Configuration::new(positions))
@@ -1346,9 +1395,12 @@ impl EnsembleMember {
         observation: Option<StructureObservation>,
     ) -> Result<(), EnsembleError> {
         if observation.as_ref().is_some_and(|observation| {
-            observation.topology != self.configuration.positions.topology
+            !Arc::ptr_eq(
+                observation.topology_arc(),
+                self.configuration.positions.topology_arc(),
+            )
         }) {
-            return Err(EnsembleError::TopologyIdentityMismatch);
+            return Err(EnsembleError::TopologyMismatch);
         }
         self.observation = observation;
         Ok(())
@@ -1362,21 +1414,21 @@ impl EnsembleMember {
         &mut self.props
     }
 
-    pub fn view<'a>(&'a self, topology: &'a Topology) -> Result<ModelView<'a>, EnsembleError> {
+    pub fn view<'a>(&'a self, topology: &'a Arc<Topology>) -> Result<ModelView<'a>, EnsembleError> {
         ModelView::new(topology, self.configuration.view())
-            .map_err(|_| EnsembleError::TopologyIdentityMismatch)
+            .map_err(|_| EnsembleError::TopologyMismatch)
     }
 }
 
 /// A finite stable-order collection of non-temporal configurations.
 #[derive(Debug, Clone)]
 pub struct Ensemble {
-    topology: Topology,
+    topology: Arc<Topology>,
     members: Vec<EnsembleMember>,
 }
 
 impl Ensemble {
-    pub fn new(topology: Topology) -> Self {
+    pub fn new(topology: Arc<Topology>) -> Self {
         Self {
             topology,
             members: Vec::new(),
@@ -1384,7 +1436,7 @@ impl Ensemble {
     }
 
     pub fn from_members(
-        topology: Topology,
+        topology: Arc<Topology>,
         members: impl IntoIterator<Item = EnsembleMember>,
     ) -> Result<Self, EnsembleError> {
         let mut ensemble = Self::new(topology);
@@ -1396,10 +1448,10 @@ impl Ensemble {
 
     pub fn from_models(models: &[Model]) -> Result<Self, EnsembleError> {
         let first = models.first().ok_or(EnsembleError::EmptySource)?;
-        let mut ensemble = Self::new(first.topology.clone());
+        let mut ensemble = Self::new(Arc::clone(&first.topology));
         for model in models {
-            if !first.topology.same_identity(&model.topology) {
-                return Err(EnsembleError::TopologyIdentityMismatch);
+            if !Arc::ptr_eq(&first.topology, &model.topology) {
+                return Err(EnsembleError::TopologyMismatch);
             }
             let mut member = EnsembleMember::new(model.configuration.clone());
             member.observation = model.observation.clone();
@@ -1415,8 +1467,8 @@ impl Ensemble {
         let mut topology_builder = TopologyBuilder::new();
         let definition = topology_builder.add_small_molecule_definition(molecule)?;
         topology_builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
-        let topology = topology_builder.build()?;
-        let mut ensemble = Self::new(topology.clone());
+        let topology = Arc::new(topology_builder.build()?);
+        let mut ensemble = Self::new(Arc::clone(&topology));
         for conformer in conformers {
             let positions = stage_conformer_positions(molecule.graph(), conformer)
                 .map_err(|error| EnsembleError::ModelBuild(Box::new(error)))?;
@@ -1428,6 +1480,10 @@ impl Ensemble {
 
     pub fn topology(&self) -> &Topology {
         &self.topology
+    }
+
+    pub fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
     }
 
     pub fn members(&self) -> impl ExactSizeIterator<Item = &EnsembleMember> {
@@ -1457,7 +1513,7 @@ impl Ensemble {
                 .as_ref()
                 .is_some_and(|observation| !observation.is_compatible(&self.topology))
         {
-            return Err(EnsembleError::TopologyIdentityMismatch);
+            return Err(EnsembleError::TopologyMismatch);
         }
         self.members.push(member);
         Ok(())
@@ -1467,7 +1523,7 @@ impl Ensemble {
         self.members.iter().map(|member| {
             member
                 .view(&self.topology)
-                .expect("ensemble validates exact topology identity")
+                .expect("ensemble validates shared topology allocation")
         })
     }
 
@@ -1495,7 +1551,7 @@ impl Ensemble {
     /// weights or changing member order.
     pub fn remap_to(
         &self,
-        target: &Topology,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<Self, TopologyRemapError> {
         if !mapping.is_source(&self.topology) {
@@ -1529,7 +1585,7 @@ impl Ensemble {
             })?);
         }
         Ok(Self {
-            topology: target.clone(),
+            topology: Arc::clone(target),
             members,
         })
     }
@@ -1539,7 +1595,7 @@ impl Ensemble {
 ///
 /// These functions validate and apply complete dense atom mappings without
 /// exposing mutable topology, structure, or mapping internals. Companion
-/// crates such as `kekule-traj` use them to preserve the same exact-identity
+/// crates such as `kekule-traj` use them to preserve the same shared-allocation
 /// and complete-state rules as Kekule's built-in structure containers.
 pub mod remap {
     use super::*;
@@ -1550,8 +1606,8 @@ pub mod remap {
     /// Added or otherwise unmapped target atoms are rejected because complete
     /// dense state cannot invent values for them.
     pub fn validate_complete_atom_mapping(
-        source: &Topology,
-        target: &Topology,
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<(), TopologyRemapError> {
         if !mapping.is_source(source) {
@@ -1583,8 +1639,8 @@ pub mod remap {
     /// authoritative dense order.
     pub fn dense_atom_values<T: Clone>(
         source_values: &[T],
-        source: &Topology,
-        target: &Topology,
+        source: &Arc<Topology>,
+        target: &Arc<Topology>,
         mapping: &TopologyMapping,
     ) -> Result<Vec<T>, TopologyRemapError> {
         if source_values.len() != source.atom_count() {
@@ -1681,7 +1737,7 @@ impl std::error::Error for TopologyRemapError {}
 #[non_exhaustive]
 pub enum EnsembleError {
     EmptySource,
-    TopologyIdentityMismatch,
+    TopologyMismatch,
     InvalidWeight,
     MissingWeight { member: usize },
     ZeroTotalWeight,
@@ -1694,7 +1750,7 @@ impl fmt::Display for EnsembleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptySource => formatter.write_str("ensemble source is empty"),
-            Self::TopologyIdentityMismatch => {
+            Self::TopologyMismatch => {
                 formatter.write_str("ensemble member belongs to a different topology")
             }
             Self::InvalidWeight => {
@@ -1734,7 +1790,7 @@ mod tests {
     use crate::geometry::Vector3;
     use crate::units::{ANGSTROM, NANOMETER};
 
-    fn one_atom_topology() -> Topology {
+    fn one_atom_topology() -> Arc<Topology> {
         let mut graph = Molecule::new();
         graph
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
@@ -1745,10 +1801,10 @@ mod tests {
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        builder.build().unwrap()
+        Arc::new(builder.build().unwrap())
     }
 
-    fn configuration(topology: &Topology, x: f64) -> Configuration {
+    fn configuration(topology: &Arc<Topology>, x: f64) -> Configuration {
         Configuration::new(
             Positions::new(
                 topology,
@@ -1792,35 +1848,38 @@ mod tests {
         let topology = one_atom_topology();
         let independent = one_atom_topology();
         assert!(topology.same_layout(&independent));
-        assert!(!topology.same_identity(&independent));
+        assert!(!Arc::ptr_eq(&topology, &independent));
 
         let wrong_configuration = configuration(&independent, 1.0);
         assert_eq!(
-            Model::new(topology.clone(), wrong_configuration),
-            Err(ModelError::TopologyIdentityMismatch)
+            Model::new(Arc::clone(&topology), wrong_configuration),
+            Err(ModelError::TopologyMismatch)
         );
 
-        let mut model = Model::new(topology.clone(), configuration(&topology, 1.0)).unwrap();
+        let mut model = Model::new(Arc::clone(&topology), configuration(&topology, 1.0)).unwrap();
         let view = model.view();
         assert_eq!(
             view.positions().value().as_ptr(),
             model.positions().value().as_ptr()
         );
         let clone = model.clone();
-        assert!(model.topology().same_identity(clone.topology()));
-        let identity = model.topology().identity();
+        assert!(Arc::ptr_eq(
+            &model.shared_topology(),
+            &clone.shared_topology()
+        ));
+        let shared = model.shared_topology();
         let cell = PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 11.0, 12.0), ANGSTROM),
             [true; 3],
         )
         .unwrap();
         model.set_cell(Some(cell));
-        assert_eq!(model.topology().identity(), identity);
+        assert!(Arc::ptr_eq(&model.shared_topology(), &shared));
         assert_eq!(model.cell(), Some(&cell));
     }
 
     #[test]
-    fn ensembles_validate_identity_observations_order_and_weights() {
+    fn ensembles_validate_shared_topology_observations_order_and_weights() {
         let topology = one_atom_topology();
         let mut first = EnsembleMember::new(configuration(&topology, 1.0));
         first.set_weight(Some(1.0)).unwrap();
@@ -1835,7 +1894,7 @@ mod tests {
             invalid_weight.set_weight(Some(-1.0)),
             Err(EnsembleError::InvalidWeight)
         );
-        let mut ensemble = Ensemble::from_members(topology.clone(), [first, second]).unwrap();
+        let mut ensemble = Ensemble::from_members(Arc::clone(&topology), [first, second]).unwrap();
         ensemble.normalize_weights().unwrap();
         assert_eq!(ensemble.member(0).unwrap().weight(), Some(0.25));
         assert_eq!(ensemble.member(1).unwrap().weight(), Some(0.75));
@@ -1859,7 +1918,7 @@ mod tests {
         let independent = one_atom_topology();
         assert_eq!(
             ensemble.push(EnsembleMember::new(configuration(&independent, 3.0))),
-            Err(EnsembleError::TopologyIdentityMismatch)
+            Err(EnsembleError::TopologyMismatch)
         );
     }
 

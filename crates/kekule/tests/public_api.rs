@@ -267,10 +267,13 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
     let instance = builder.add_small_molecule(&molecule, conformer)?;
     let model = builder.build()?;
     let cloned = model.clone();
-    assert!(model.topology().same_identity(cloned.topology()));
+    assert!(std::sync::Arc::ptr_eq(
+        &model.shared_topology(),
+        &cloned.shared_topology()
+    ));
     let model_bond = InstanceBondId::new(instance, bond);
     let mut potential = HarmonicBondPotential::new(
-        model.topology(),
+        &model.shared_topology(),
         [HarmonicBondParameter::new(
             model_bond,
             kekule::units::Quantity::new(1.2, kekule::units::ANGSTROM),
@@ -323,7 +326,7 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
     metadata.insert_role(MoleculeRole::Solvent);
     topology_builder.add_instance(definition, metadata.clone())?;
     topology_builder.add_instance(definition, metadata)?;
-    let topology = topology_builder.build()?;
+    let topology = std::sync::Arc::new(topology_builder.build()?);
 
     let first_positions = Positions::new(
         &topology,
@@ -340,19 +343,22 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
         ),
     )?;
     let first = Model::new(
-        topology.clone(),
+        std::sync::Arc::clone(&topology),
         Configuration::new(first_positions.clone()),
     )?;
     let second = Model::new(
-        topology.clone(),
+        std::sync::Arc::clone(&topology),
         Configuration::new(second_positions.clone()),
     )?;
-    assert!(first.topology().same_identity(second.topology()));
+    assert!(std::sync::Arc::ptr_eq(
+        &first.shared_topology(),
+        &second.shared_topology()
+    ));
 
     let solvent = AtomSelection::for_roles(&topology, [MoleculeRole::Solvent])?;
     assert_eq!(solvent.indices().len(), 2);
     let ensemble = Ensemble::from_members(
-        topology.clone(),
+        std::sync::Arc::clone(&topology),
         [
             EnsembleMember::new(Configuration::new(first_positions)),
             EnsembleMember::new(Configuration::new(second_positions.clone())),
@@ -374,16 +380,19 @@ fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::e
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&water)?;
         builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
-        Ok(builder.build()?)
+        Ok(std::sync::Arc::new(builder.build()?))
     };
     let source = build()?;
     let target = build()?;
 
-    assert!(!source.same_identity(&target));
+    assert!(!std::sync::Arc::ptr_eq(&source, &target));
     assert!(source.same_layout(&target));
     let mapping = TopologyMapping::between_identical_layouts(&source, &target)?;
-    let result = TopologyEditResult::new(target.clone(), mapping)?;
-    assert!(result.topology().same_identity(&target));
+    let result = TopologyEditResult::new(std::sync::Arc::clone(&target), mapping)?;
+    assert!(std::sync::Arc::ptr_eq(
+        &result.mapping().target_arc(),
+        &target
+    ));
     Ok(())
 }
 

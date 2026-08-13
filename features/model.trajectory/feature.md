@@ -18,7 +18,8 @@ I/O, and focused trajectory-oriented analysis workflows.
   `Vec<Model>`.
 - `TrajectoryReader` fills a caller-owned `FrameBuffer`;
   `SeekableTrajectoryReader` adds explicit random access; `TrajectoryWriter`
-  validates topology and supported state.
+  validates topology and supported state. Reader and writer traits expose
+  `shared_topology` so implementations retain and propagate the exact Arc.
 - `FrameBuffer::replace_from_data` transactionally publishes complete borrowed
   decoder state after validating every field, converts units once, reuses all
   dense-array allocations, clears absent optional state, and leaves the
@@ -36,7 +37,7 @@ I/O, and focused trajectory-oriented analysis workflows.
   and reuses position, velocity, and force allocations.
 - `AtomOrderAssertion` distinguishes an explicit semantic-order proof from the
   caller's explicit assertion that a topology-free file uses authoritative
-  topology order, and remains bound to exact topology identity.
+  topology order, and retains the exact `Arc<Topology>` used by the reader.
 - Non-exhaustive `TrajectoryFormat`, `TrajectoryIoOperation`, and
   `TrajectoryCodecErrorKind` values plus cloneable I/O/codec contexts report
   typed format, operation, source, frame, byte offset, count, and underlying
@@ -50,7 +51,7 @@ I/O, and focused trajectory-oriented analysis workflows.
 
 ## Implementation Notes
 
-- Ordinary trajectories retain one fixed exact topology. Reactive trajectories
+- Ordinary trajectories retain one fixed `Arc<Topology>`. Reactive trajectories
   remain a future segmented-topology concept.
 - A minimal in-memory/reference reader and writer validate the streaming
   contracts. Production codecs are part of the same `kekule-traj` crate and
@@ -65,7 +66,7 @@ I/O, and focused trajectory-oriented analysis workflows.
   state clearing by coordinate-only readers while preserving the positions
   allocation.
 - Transformation regressions cover complete owned and borrowed frame transfer,
-  frame-index error context, target-buffer identity rejection, unchanged
+  frame-index error context, target-buffer allocation rejection, unchanged
   positions, cell, vectors, time, step, observation, and properties after a
   later validation failure, stale optional-state clearing after positions-only
   remaps, and stable dense-array pointers and capacities over repeated remaps.
@@ -75,8 +76,8 @@ I/O, and focused trajectory-oriented analysis workflows.
   `kekule_potentials::dreiding` adapter consume `kekule-traj` frame and buffer
   views without copying coordinates.
 - Publication regressions cover late validation failure, complete destination
-  transactionality, stale property/optional-field clearing, exact order-token
-  identity, typed error context, and stable position/vector pointers and
+  transactionality, stale property/optional-field clearing, exact shared
+  atom-order binding, typed error context, and stable position/vector pointers and
   capacities after warm-up.
 
 ## Out Of Scope
@@ -110,3 +111,6 @@ I/O, and focused trajectory-oriented analysis workflows.
   trajectory superposition and RMSD behavior to focused feature contracts.
 - v10: Set the publishable `kekule-traj` package and its foundational Kekule
   dependency to the shared initial `0.1.0` release line.
+- v11: Retain `Arc<Topology>` throughout frames, buffers, trajectories,
+  streaming implementations, and atom-order assertions; add shared-topology
+  trait accessors and remove identity-token errors and APIs.

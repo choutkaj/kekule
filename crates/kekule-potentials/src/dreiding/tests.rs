@@ -63,7 +63,7 @@ fn preparation_and_evaluation_are_finite() {
     let (water, conformer) = water(0.0);
     let model = Model::from_small_molecule(&water, conformer).unwrap();
     let mut potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )
@@ -85,7 +85,7 @@ fn qeq_is_prepared_per_molecule_instance() {
     let second_id = builder.add_small_molecule(&second, second_conf).unwrap();
     let model = builder.build().unwrap();
     let potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )
@@ -124,7 +124,7 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
     let ensemble = Ensemble::from_models(&[model.clone(), displaced.clone()]).unwrap();
     let frame = TrajectoryFrame::new(displaced.configuration().clone());
     let mut potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )
@@ -136,7 +136,8 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
         .collect::<Vec<_>>();
     assert_eq!(energies.len(), 2);
     assert!(energies.iter().all(|energy| energy.is_finite()));
-    let frame_view = frame.view(model.topology()).unwrap();
+    let topology = model.shared_topology();
+    let frame_view = frame.view(&topology).unwrap();
     assert!(potential
         .evaluate(frame_view.model_view())
         .unwrap()
@@ -162,7 +163,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
 
     assert!(matches!(
         DreidingPotential::prepare(
-            periodic_model.topology(),
+            &periodic_model.shared_topology(),
             periodic_model.view(),
             DreidingPrepareOptions::default(),
         ),
@@ -170,13 +171,13 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
     ));
 
     let mut potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )
     .unwrap();
     assert!(potential.evaluate(model.view()).is_ok());
-    let mut nonperiodic_buffer = FrameBuffer::new(model.topology().clone());
+    let mut nonperiodic_buffer = FrameBuffer::new(model.shared_topology());
     nonperiodic_buffer.set_positions(model.positions()).unwrap();
     assert!(potential.evaluate(nonperiodic_buffer.model_view()).is_ok());
     assert_eq!(
@@ -191,10 +192,15 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
     );
     let periodic_frame = TrajectoryFrame::new(periodic_model.configuration().clone());
     assert_eq!(
-        potential.evaluate(periodic_frame.view(model.topology()).unwrap().model_view()),
+        potential.evaluate(
+            periodic_frame
+                .view(&model.shared_topology())
+                .unwrap()
+                .model_view(),
+        ),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
-    let mut periodic_buffer = FrameBuffer::new(model.topology().clone());
+    let mut periodic_buffer = FrameBuffer::new(model.shared_topology());
     periodic_buffer.set_positions(model.positions()).unwrap();
     periodic_buffer.set_cell(Some(cell));
     assert_eq!(
@@ -220,7 +226,7 @@ fn qeq_grouping_policy_is_explicit() {
         QeqGrouping::ConnectedComponents,
     ] {
         let potential = DreidingPotential::prepare(
-            model.topology(),
+            &model.shared_topology(),
             model.view(),
             DreidingPrepareOptions {
                 qeq_grouping: grouping,
@@ -281,7 +287,7 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
 
     let potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )
@@ -305,7 +311,7 @@ fn eligible_macro_molecules_are_supported() {
     let macromolecule = MacroMolecule::try_from_parts(small.graph().clone(), hierarchy).unwrap();
     let model = Model::from_macro_molecule(&macromolecule, conformer).unwrap();
     let mut potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )
@@ -337,7 +343,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
-            model.topology(),
+            &model.shared_topology(),
             model.view(),
             DreidingPrepareOptions::default(),
         ),
@@ -362,7 +368,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
-            model.topology(),
+            &model.shared_topology(),
             model.view(),
             DreidingPrepareOptions::default(),
         ),
@@ -371,7 +377,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
 }
 
 #[test]
-fn prepared_potential_uses_exact_topology_identity() {
+fn prepared_potential_uses_exact_shared_topology() {
     let (combined, combined_conf) = molecule(
         &["C", "C"],
         &[(0, 1, BondOrder::Single)],
@@ -379,7 +385,7 @@ fn prepared_potential_uses_exact_topology_identity() {
     );
     let combined_model = Model::from_small_molecule(&combined, combined_conf).unwrap();
     let mut potential = DreidingPotential::prepare(
-        combined_model.topology(),
+        &combined_model.shared_topology(),
         combined_model.view(),
         DreidingPrepareOptions::default(),
     )

@@ -670,14 +670,14 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_observations()
     let first_atom = ensemble.topology().atom_ids()[0];
     assert_eq!(
         observations[0]
-            .atom(ensemble.topology(), first_atom)
+            .atom(&ensemble.shared_topology(), first_atom)
             .unwrap()
             .occupancy(),
         Some(0.4)
     );
     assert_eq!(
         observations[1]
-            .atom(ensemble.topology(), first_atom)
+            .atom(&ensemble.shared_topology(), first_atom)
             .unwrap()
             .b_factor(),
         Some(20.0)

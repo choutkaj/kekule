@@ -8,10 +8,9 @@ use dreid_forge::{
 };
 use kekule::core::BondOrder;
 use kekule::structure::ModelView;
-use kekule::topology::{
-    InstanceAtomId, InstanceBondId, MoleculeInstanceId, Topology, TopologyIdentity,
-};
+use kekule::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId, Topology};
 use kekule::units::{Quantity, ELEMENTARY_CHARGE};
+use std::sync::Arc;
 
 use super::DreidingPrepareError;
 
@@ -49,7 +48,7 @@ impl Default for DreidingPrepareOptions {
 /// topology. Periodic cells are unsupported during preparation and evaluation.
 #[derive(Debug, Clone)]
 pub struct DreidingPotential {
-    pub(crate) topology: TopologyIdentity,
+    pub(crate) topology: Arc<Topology>,
     pub(crate) qeq_grouping: QeqGrouping,
     pub(crate) atom_ids: Vec<InstanceAtomId>,
     pub(crate) atom_indexes: BTreeMap<InstanceAtomId, usize>,
@@ -69,12 +68,12 @@ impl DreidingPotential {
     /// The reference view must be nonperiodic because the present adapter has
     /// no complete minimum-image or unwrapped-coordinate preparation policy.
     pub fn prepare(
-        topology: &Topology,
+        topology: &Arc<Topology>,
         reference: ModelView<'_>,
         options: DreidingPrepareOptions,
     ) -> Result<Self, DreidingPrepareError> {
-        if !topology.same_identity(reference.topology()) {
-            return Err(DreidingPrepareError::TopologyIdentityMismatch);
+        if !std::ptr::eq(topology.as_ref(), reference.topology()) {
+            return Err(DreidingPrepareError::TopologyMismatch);
         }
         if reference.cell().is_some() {
             return Err(DreidingPrepareError::UnsupportedPeriodicCell);
@@ -118,7 +117,7 @@ impl DreidingPotential {
         let hydrogen_bonds = prepare_hydrogen_bonds(&whole, &adjacency, &exclusions)?;
 
         Ok(Self {
-            topology: topology.identity(),
+            topology: Arc::clone(topology),
             qeq_grouping: options.qeq_grouping,
             atom_ids: topology.atom_ids().to_vec(),
             atom_indexes: topology

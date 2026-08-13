@@ -64,14 +64,14 @@ fn downstream_preparation_and_evaluation() {
     ));
     assert!(matches!(
         DreidingPotential::prepare(
-            periodic.topology(),
+            &periodic.shared_topology(),
             periodic.view(),
             DreidingPrepareOptions::default(),
         ),
         Err(DreidingPrepareError::UnsupportedPeriodicCell)
     ));
     let mut potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )

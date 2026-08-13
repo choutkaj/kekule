@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -18,7 +19,7 @@ use sha2::{Digest, Sha256};
 mod support;
 use support::{buffer_snapshot, GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure};
 
-fn topology() -> Topology {
+fn topology() -> Arc<Topology> {
     let mut graph = Molecule::builder();
     let mut atoms = Vec::new();
     for symbol in ["C", "H", "O"] {
@@ -40,12 +41,12 @@ fn topology() -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
-fn binding(topology: &Topology) -> TrajectoryTopologyBinding {
+fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
     TrajectoryTopologyBinding::new(
-        topology.clone(),
+        Arc::clone(topology),
         AtomOrderAssertion::assert_file_uses_topology_order(topology),
     )
     .unwrap()
@@ -100,7 +101,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             .with_header_delta(0.5, DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
         let mut writer = DcdWriter::new(
             Cursor::new(Vec::new()),
-            topology.clone(),
+            Arc::clone(&topology),
             options,
             "memory.dcd",
         )
@@ -117,7 +118,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             [true; 3],
         )
         .unwrap();
-        let mut source = FrameBuffer::new(topology.clone());
+        let mut source = FrameBuffer::new(Arc::clone(&topology));
         set_frame(
             &mut source,
             [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]],
@@ -146,7 +147,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             "memory.dcd",
         )
         .unwrap();
-        let mut destination = FrameBuffer::new(topology.clone());
+        let mut destination = FrameBuffer::new(Arc::clone(&topology));
         assert!(reader.read_next(&mut destination).unwrap());
         assert_eq!(xs(&destination), vec![0.0, 3.0, 6.0]);
         assert_eq!(destination.frame_view().step(), Some(10));
@@ -214,7 +215,7 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
         "exact-limit.dcd",
     )
     .unwrap();
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(!reader.read_next(&mut buffer).unwrap());
@@ -248,7 +249,7 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
             "declared-sequential.dcd",
         )
         .unwrap();
-        let mut destination = FrameBuffer::new(topology.clone());
+        let mut destination = FrameBuffer::new(Arc::clone(&topology));
         for _ in 0..frames_before_error {
             assert!(sequential.read_next(&mut destination).unwrap());
         }
@@ -313,12 +314,12 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let options = DcdWriteOptions::default().with_step_sequence(0, 1);
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         options,
         "guarded.dcd",
     )
     .unwrap();
-    let mut frame = FrameBuffer::new(topology.clone());
+    let mut frame = FrameBuffer::new(Arc::clone(&topology));
     set_frame(
         &mut frame,
         [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
@@ -351,7 +352,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         "guarded-sequential.dcd",
     )
     .unwrap();
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
@@ -400,12 +401,12 @@ fn dcd_ordinary_frames_do_not_require_backward_eof_probe_seeks() {
     let topology = topology();
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         DcdWriteOptions::default(),
         "no-probe.dcd",
     )
     .unwrap();
-    let mut frame = FrameBuffer::new(topology.clone());
+    let mut frame = FrameBuffer::new(Arc::clone(&topology));
     set_frame(&mut frame, [[0.0; 3], [1.0; 3], [2.0; 3]], 0, None, None);
     writer.write_frame(frame.frame_view()).unwrap();
     set_frame(&mut frame, [[3.0; 3], [4.0; 3], [5.0; 3]], 1, None, None);
@@ -478,7 +479,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
         "marker.dcd",
     )
     .unwrap();
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut buffer).unwrap());
     let before = xs(&buffer);
     let error = reader.read_next(&mut buffer).unwrap_err();
@@ -538,7 +539,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         .with_step_sequence(0, 1);
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         options,
         "late-invalid.dcd",
     )

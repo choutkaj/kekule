@@ -85,3 +85,5 @@ Kekule validation, limits, units, metadata, and errors.
   empty concrete and atomic writer finishes.
 - v6: Publish the codec under `kekule_traj::io::xtc` as part of the unified
   `kekule-traj` trajectory crate.
+- v7: Retain the exact caller-supplied `Arc<Topology>` across XTC readers,
+  writers, and reusable destination buffers.
