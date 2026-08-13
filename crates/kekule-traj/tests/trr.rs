@@ -68,7 +68,6 @@ fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
 
 fn xs(buffer: &FrameBuffer) -> Vec<f64> {
     buffer
-        .configuration()
         .positions()
         .values()
         .value()
@@ -182,17 +181,12 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         )
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
-        let pointer = destination
-            .configuration()
-            .positions()
-            .values()
-            .value()
-            .as_ptr();
+        let pointer = destination.positions().values().value().as_ptr();
         assert!(reader.read_next(&mut destination).unwrap());
         assert_xs_close(&destination, &[0.0, 30.0, 60.0]);
         assert_eq!(destination.frame_view().step(), Some(4));
         assert_eq!(destination.frame_view().time().unwrap().value(), &1.0);
-        assert!(destination.configuration().cell().is_some());
+        assert!(destination.cell().is_some());
         assert!(destination.frame_view().velocities().is_some());
         assert!(destination.frame_view().forces().is_some());
         let velocity_pointer = destination
@@ -208,22 +202,14 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         );
         assert!(reader.read_next(&mut destination).unwrap());
         assert_xs_close(&destination, &[10.0, 40.0, 70.0]);
-        assert!(destination.configuration().cell().is_none());
+        assert!(destination.cell().is_none());
         assert!(destination.frame_view().velocities().is_none());
         assert!(destination.frame_view().forces().is_none());
         assert_eq!(
             destination.props().get(TRR_LAMBDA_PROPERTY),
             Some(&PropValue::Float(0.25))
         );
-        assert_eq!(
-            destination
-                .configuration()
-                .positions()
-                .values()
-                .value()
-                .as_ptr(),
-            pointer
-        );
+        assert_eq!(destination.positions().values().value().as_ptr(), pointer);
         assert!(reader.read_next(&mut destination).unwrap());
         assert_xs_close(&destination, &[20.0, 50.0, 80.0]);
         assert_eq!(
@@ -703,7 +689,7 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     let mut buffer = FrameBuffer::new(topology);
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_xs_close(&buffer, &[0.0, 3.0, 6.0]);
-    assert!(buffer.configuration().cell().is_some());
+    assert!(buffer.cell().is_some());
     assert!(buffer.frame_view().velocities().is_some());
     assert!(buffer.frame_view().forces().is_some());
     assert_eq!(buffer.frame_view().step(), Some(0));

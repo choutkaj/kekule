@@ -61,7 +61,6 @@ fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
 
 fn xs(buffer: &FrameBuffer) -> Vec<f64> {
     buffer
-        .configuration()
         .positions()
         .values()
         .value()
@@ -152,7 +151,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         assert_eq!(xs(&destination), vec![0.0, 3.0, 6.0]);
         assert_eq!(destination.frame_view().step(), Some(10));
         assert_eq!(destination.frame_view().time().unwrap().value(), &5.0);
-        assert!(destination.configuration().cell().is_some());
+        assert!(destination.cell().is_some());
         assert!(reader.read_next(&mut destination).unwrap());
         assert_eq!(xs(&destination), vec![1.0, 4.0, 7.0]);
         assert_eq!(destination.frame_view().step(), Some(12));
@@ -589,7 +588,7 @@ fn independently_generated_mdanalysis_fixture_is_interoperable() {
     let mut buffer = FrameBuffer::new(topology);
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_eq!(xs(&buffer), vec![0.0, 3.0, 6.0]);
-    assert!(buffer.configuration().cell().is_some());
+    assert!(buffer.cell().is_some());
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_eq!(xs(&buffer), vec![1.0, 4.0, 7.0]);
     assert!(!reader.read_next(&mut buffer).unwrap());

@@ -9,8 +9,8 @@
 //! System structure is coordinate-free and immutable in [`topology`].
 //! Dynamic structure follows three explicit relationships:
 //!
-//! - [`structure::Model`] = one [`topology::Topology`] plus one
-//!   [`structure::Configuration`];
+//! - [`structure::Model`] = one [`topology::Topology`] plus topology-bound
+//!   positions, an optional periodic cell, and per-atom data;
 //! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
 //!
 //! Ordered multi-frame trajectories and their file codecs live in the

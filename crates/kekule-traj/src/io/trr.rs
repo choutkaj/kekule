@@ -839,11 +839,11 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         if !std::ptr::eq(frame.topology(), self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        if frame.observation().is_some() {
+        if !frame.atom_data().is_empty() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "observation",
+                "atom data",
             ));
         }
         if self.frame_count == u64::MAX {
@@ -904,7 +904,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         let vector_bytes = atom_scalars
             .checked_mul(scalar_bytes)
             .ok_or_else(|| writer_limit(&self.source_label, "TRR vector byte size overflows"))?;
-        let box_size = if frame.configuration().cell().is_some() {
+        let box_size = if frame.cell().is_some() {
             9 * scalar_bytes
         } else {
             0
@@ -919,7 +919,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         } else {
             0
         };
-        let cell = frame.configuration().cell().copied();
+        let cell = frame.cell().copied();
         let cell_data = if let Some(cell) = cell {
             if cell.periodic_axes() != [true; 3] {
                 return Err(codec_context(
@@ -937,7 +937,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         } else {
             None
         };
-        let positions = frame.configuration().positions().values();
+        let positions = frame.positions().values();
         let position_factor = MODEL_LENGTH_UNIT
             .conversion_factor_to(NANOMETER)
             .map_err(|error| writer_unit(&self.source_label, "positions", error))?;

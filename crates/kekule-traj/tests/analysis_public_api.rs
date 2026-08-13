@@ -2,7 +2,7 @@ use kekule::alignment::PeriodicAlignmentPolicy;
 use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::Point3;
 use kekule::small::SmallMolecule;
-use kekule::structure::{Configuration, Positions};
+use kekule::structure::Positions;
 use kekule::topology::{AtomSelection, MoleculeInstanceMetadata, Topology, TopologyBuilder};
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::analysis::{
@@ -32,9 +32,7 @@ fn topology() -> Arc<Topology> {
 }
 
 fn frame(topology: &Arc<Topology>, points: [Point3; 3]) -> TrajectoryFrame {
-    TrajectoryFrame::new(Configuration::new(
-        Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap(),
-    ))
+    TrajectoryFrame::new(Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap())
 }
 
 #[test]

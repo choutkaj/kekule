@@ -2,20 +2,21 @@
 
 ## Summary
 
-Represent one concrete molecular structure as an immutable `Topology` plus one
-complete mutable `Configuration` and optional observation state, with each
-molecule instance backed by a connected definition graph.
+Represent one concrete molecular structure as an immutable `Topology` plus
+complete mutable positions, an optional periodic cell, and topology-bound
+per-atom scientific data, with each molecule instance backed by a connected
+definition graph.
 
 ## Behavior/API
 
-- Exposes `Positions`, `Configuration`, `ConfigurationView`, `Model`,
-  `ModelView`, and `ModelBuilder` from `structure`; topology IDs and system
+- Exposes `Positions`, `AtomData`, `Model`, `ModelView`, and `ModelBuilder`
+  from `structure`; topology IDs and system
   structure live in the separate `topology` module.
 - Builder insertion uses `add_small_molecule[_with_metadata]` and
   `add_macro_molecule[_with_metadata]` and returns a stable instance ID.
 - Model staging delegates molecule-definition validation to `TopologyBuilder`;
   disconnected input is rejected transactionally through the structured
-  topology build error before positions or observations are committed.
+  topology build error before positions or atom data are committed.
 - Preserves molecule-local atom and bond IDs, including tombstones; qualification
   adds instance ownership and topology dense indices round-trip to qualified IDs.
 - Copies one complete finite source conformer into authoritative model positions
@@ -29,14 +30,17 @@ molecule instance backed by a connected definition graph.
 - `Positions` retain one `Arc<Topology>`, reject independently allocated,
   incomplete, or non-finite
   arrays, and reuse their allocation for validated full-coordinate updates.
-- `Configuration` owns positions and an optional validated periodic cell.
-- `ModelView` borrows topology plus configuration without copying coordinates.
-- `StructureObservation` stores topology-bound coordinate-model-specific atom
-  values outside topology.
-- `Positions`, `Configuration`, `StructureObservation`, and `Model` remap
-  explicitly through checked topology lineage. Exact shared source and target
-  allocations are required, complete target atom state is mandatory, cells and observation
-  metadata are preserved, and failures leave sources unchanged.
+- `Model` directly owns `Arc<Topology>`, `Positions`, `Option<PeriodicCell>`,
+  and `AtomData`; there is no intermediate configuration object.
+- `AtomData` stores optional dense occupancy and B-factor columns. Wholly
+  absent columns allocate no per-atom objects; present columns validate exact
+  atom count and finite values and support semantic-ID and dense-index access.
+- `ModelView` directly borrows topology, positions, cell, and atom data without
+  copying coordinates or recreating a configuration wrapper.
+- `Positions`, `AtomData`, and `Model` remap explicitly through checked topology
+  lineage. Exact shared source and target allocations are required, complete
+  target atom state is mandatory, cells and atom data are preserved, and
+  failures leave sources unchanged.
 - `Model::instance_to_conformer` maps current instance positions back through
   preserved local atom IDs, converts them to the target conformer unit, and
   commits only after the target live-atom set and all conversions validate.
@@ -47,8 +51,8 @@ molecule instance backed by a connected definition graph.
 
 ## Implementation Notes
 
-- `Model = Arc<Topology> + Configuration`; cloning a model shares the topology allocation
-  while copying dynamic configuration and observation state.
+- `Model = Arc<Topology> + Positions + Option<PeriodicCell> + AtomData`;
+  cloning a model shares the topology allocation while copying mutable state.
 - Complete positions and cells may change without changing the shared topology.
 - Conformer export belongs to the modeling layer, validates exact live local
   atom-ID compatibility, and does not mutate topology or chemistry.
@@ -56,16 +60,17 @@ molecule instance backed by a connected definition graph.
 
 ## Tests
 
-- Unit tests cover independent topology/configuration construction, equal-layout
-  allocation rejection, connected-definition enforcement, shared topology after
-  cloning, unit conversion, allocation reuse, periodic cells, source
-  immutability, conformer export, and transactional failures.
+- Unit tests cover direct model construction without atom metadata, independent
+  topology/position allocation rejection, occupancy and B-factor lookup and
+  mutation, dense-column validation, shared topology after cloning, unit
+  conversion, allocation reuse, periodic cells, source immutability, conformer
+  export, and transactional failures.
 - Macro construction tests cover one valid selected conformer alongside many
   unrelated invalid conformers, rejection when an invalid conformer is selected,
   and preservation of all source conformers.
 - Public transformation tests cover dense-index compaction, equal-layout
-  allocation rejection, complete coordinate transfer, cells, every observation
-  field and property, missing target state, and source immutability.
+  allocation rejection, complete position and atom-data transfer, cells,
+  missing target state, and source immutability.
 
 ## Out Of Scope
 
@@ -100,3 +105,6 @@ molecule instance backed by a connected definition graph.
 - v12: Store `Arc<Topology>` in topology-bound structure state, remove
   identity-specific errors, and use pointer-compatible sharing while preserving
   explicit `same_layout` as a separate comparison.
+- v13: Flatten `Model` to direct topology, positions, optional cell, and
+  column-oriented `AtomData`; remove configuration and structure-observation
+  wrappers and remap positions and atom data together.

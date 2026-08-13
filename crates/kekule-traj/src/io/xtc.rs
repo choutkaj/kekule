@@ -1209,7 +1209,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         for (present, field) in [
             (frame.velocities().is_some(), "velocities"),
             (frame.forces().is_some(), "forces"),
-            (frame.observation().is_some(), "observation"),
+            (!frame.atom_data().is_empty(), "atom data"),
             (!frame.props().is_empty(), "properties"),
         ] {
             if present {
@@ -1258,7 +1258,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             )
         })?;
         self.adapter.frame.time = finite_f32(time, &self.source_label, "time")?;
-        let cell = frame.configuration().cell().copied().ok_or_else(|| {
+        let cell = frame.cell().copied().ok_or_else(|| {
             codec_context(
                 TrajectoryCodecErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
@@ -1292,7 +1292,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         ) {
             *target = finite_f32(value, &self.source_label, "box")?;
         }
-        let positions = frame.configuration().positions().values();
+        let positions = frame.positions().values();
         let factor = positions
             .unit()
             .conversion_factor_to(NANOMETER)

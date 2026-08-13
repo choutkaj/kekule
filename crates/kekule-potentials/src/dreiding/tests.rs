@@ -3,7 +3,7 @@ use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
 use kekule::small::SmallMolecule;
-use kekule::structure::{Ensemble, Model};
+use kekule::structure::{Ensemble, Model, Positions};
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
 
@@ -122,7 +122,9 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
         )
         .unwrap();
     let ensemble = Ensemble::from_models(&[model.clone(), displaced.clone()]).unwrap();
-    let frame = TrajectoryFrame::new(displaced.configuration().clone());
+    let frame = TrajectoryFrame::new(
+        Positions::new(&displaced.shared_topology(), displaced.positions()).unwrap(),
+    );
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
         model.view(),
@@ -190,7 +192,14 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
         potential.evaluate(periodic_ensemble.views().next().unwrap()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
-    let periodic_frame = TrajectoryFrame::new(periodic_model.configuration().clone());
+    let mut periodic_frame = TrajectoryFrame::new(
+        Positions::new(
+            &periodic_model.shared_topology(),
+            periodic_model.positions(),
+        )
+        .unwrap(),
+    );
+    periodic_frame.set_cell(periodic_model.cell().copied());
     assert_eq!(
         potential.evaluate(
             periodic_frame

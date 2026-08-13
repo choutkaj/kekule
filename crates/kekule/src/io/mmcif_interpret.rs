@@ -8,12 +8,10 @@ use crate::core::{Atom, AtomId, BondOrder, Conformer, ConformerId, Element, Mole
 use crate::geometry::Point3;
 use crate::small::model::SmallMolecule;
 use crate::structure::{
-    AtomObservation, Configuration, Ensemble, EnsembleError, EnsembleMember, Model, ModelBuilder,
-    Positions, StructureObservation,
+    AtomData, Ensemble, EnsembleError, EnsembleMember, Model, ModelBuilder, Positions,
 };
 use crate::topology::{
-    InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole, TopologyAtomIndex,
-    TopologyMapping,
+    InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole, TopologyMapping,
 };
 use crate::units::{Quantity, ANGSTROM};
 
@@ -479,7 +477,7 @@ fn interpret_block(
     let polymer_asym_order = polymer_asym_order(block);
     let groups = group_rows(selected, &mut union, &polymer_asym_order);
     let mut builder = ModelBuilder::new();
-    let mut atom_observations = Vec::new();
+    let mut qualified_atom_data = Vec::new();
     for group in groups {
         let built = build_molecule(group, &connections, &mut report)?;
         match built {
@@ -494,9 +492,9 @@ fn interpret_block(
                         &molecule, conformer, metadata,
                     )
                     .map_err(graph_error)?;
-                let (provenance, observations) = provenance.qualify(id);
+                let (provenance, atom_data) = provenance.qualify(id);
                 report.instances.push(provenance);
-                atom_observations.extend(observations);
+                qualified_atom_data.extend(atom_data);
             }
             BuiltMolecule::Small {
                 molecule,
@@ -509,28 +507,27 @@ fn interpret_block(
                         &molecule, conformer, metadata,
                     )
                     .map_err(graph_error)?;
-                let (provenance, observations) = provenance.qualify(id);
+                let (provenance, atom_data) = provenance.qualify(id);
                 report.instances.push(provenance);
-                atom_observations.extend(observations);
+                qualified_atom_data.extend(atom_data);
             }
         }
     }
     let mut model = builder.build().map_err(graph_error)?;
-    let mut observations = vec![AtomObservation::default(); model.topology().atom_count()];
-    for (atom, observation) in atom_observations {
+    let mut occupancies = vec![None; model.topology().atom_count()];
+    let mut b_factors = vec![None; model.topology().atom_count()];
+    for (atom, occupancy, b_factor) in qualified_atom_data {
         let index = model
             .topology()
             .atom_index(atom)
             .expect("interpreted atom has a dense topology index");
-        observations[index.index()] = observation;
+        occupancies[index.index()] = occupancy;
+        b_factors[index.index()] = b_factor;
     }
     let topology = model.shared_topology();
-    let mut observation =
-        StructureObservation::new(&topology, observations).map_err(graph_error)?;
-    observation.set_source_model_id(report.selected_model.clone());
-    model
-        .set_observation(Some(observation))
+    let atom_data = AtomData::from_columns(&topology, Some(occupancies), Some(b_factors))
         .map_err(graph_error)?;
+    model.set_atom_data(atom_data).map_err(graph_error)?;
     report.macromolecules = model
         .topology()
         .instances()
@@ -654,14 +651,10 @@ struct AtomRow {
     atom_name: String,
     auth_atom_name: Option<String>,
     atom_site_id: Option<String>,
-    group_pdb: Option<String>,
     alt_id: Option<String>,
     occupancy: Option<f64>,
-    occupancy_raw: Option<String>,
     b_factor: Option<f64>,
-    b_factor_raw: Option<String>,
     point: Option<Point3>,
-    point_raw: [Option<String>; 3],
     element: Element,
     formal_charge: i8,
 }
@@ -800,11 +793,6 @@ fn read_atom_rows(
         };
         let formal_charge =
             optional_i8(table, row, "_atom_site.pdbx_formal_charge")?.unwrap_or_default();
-        let occupancy_raw = optional(table, row, "_atom_site.occupancy").map(str::to_owned);
-        let b_factor_raw = optional(table, row, "_atom_site.B_iso_or_equiv").map(str::to_owned);
-        let x_raw = optional(table, row, "_atom_site.Cartn_x").map(str::to_owned);
-        let y_raw = optional(table, row, "_atom_site.Cartn_y").map(str::to_owned);
-        let z_raw = optional(table, row, "_atom_site.Cartn_z").map(str::to_owned);
         let point = optional_point(table, row)?;
         rows.push(AtomRow {
             line: type_value.line(),
@@ -828,14 +816,10 @@ fn read_atom_rows(
             atom_name,
             auth_atom_name: optional(table, row, "_atom_site.auth_atom_id").map(str::to_owned),
             atom_site_id: optional(table, row, "_atom_site.id").map(str::to_owned),
-            group_pdb,
             alt_id,
             occupancy: optional_f64(table, row, "_atom_site.occupancy")?,
-            occupancy_raw,
             b_factor: optional_f64(table, row, "_atom_site.B_iso_or_equiv")?,
-            b_factor_raw,
             point,
-            point_raw: [x_raw, y_raw, z_raw],
             element,
             formal_charge,
         });
@@ -1532,7 +1516,8 @@ struct BuiltAtomProvenance {
     insertion_code: Option<String>,
     occurrence: Option<usize>,
     selected_alternate_location: Option<String>,
-    observation: AtomObservation,
+    occupancy: Option<f64>,
+    b_factor: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1729,34 +1714,20 @@ pub fn interpret_mmcif_ensemble(
         )?;
         let positions = Positions::new(&shared_topology, model.positions())
             .map_err(MmcifEnsembleInterpretError::Position)?;
-        let configuration = match model.cell().copied() {
-            Some(cell) => Configuration::with_cell(positions, cell),
-            None => Configuration::new(positions),
-        };
-        let mut member = EnsembleMember::new(configuration);
-        if let Some(observation) = model.observation() {
-            let atoms = (0..=u32::MAX)
-                .take(shared_topology.atom_count())
-                .map(|raw| {
-                    observation
-                        .atom_at(TopologyAtomIndex::new(raw))
-                        .expect("observation is complete")
-                        .clone()
-                })
-                .collect();
-            let mut rebound =
-                StructureObservation::new(&shared_topology, atoms).map_err(|error| {
-                    MmcifEnsembleInterpretError::Model {
-                        model_id: model_id.clone(),
-                        error: graph_error(error),
-                    }
-                })?;
-            rebound.set_source_model_id(observation.source_model_id().map(str::to_owned));
-            rebound.props_mut().clone_from(observation.props());
-            member
-                .set_observation(Some(rebound))
-                .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-        }
+        let mut member = EnsembleMember::new(positions);
+        member.set_cell(model.cell().copied());
+        let atom_data = AtomData::from_columns(
+            &shared_topology,
+            model.atom_data().occupancies().map(<[Option<f64>]>::to_vec),
+            model.atom_data().b_factors().map(<[Option<f64>]>::to_vec),
+        )
+        .map_err(|error| MmcifEnsembleInterpretError::Model {
+            model_id: model_id.clone(),
+            error: graph_error(error),
+        })?;
+        member
+            .set_atom_data(atom_data)
+            .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
         ensemble
             .push(member)
             .map_err(|error| MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
@@ -1792,6 +1763,8 @@ impl ProvenanceIdentity {
     }
 }
 
+type QualifiedAtomData = Vec<(InstanceAtomId, Option<f64>, Option<f64>)>;
+
 fn provenance_identity(report: &MmcifInterpretationReport) -> ProvenanceIdentity {
     ProvenanceIdentity {
         atoms: report
@@ -1816,14 +1789,8 @@ fn provenance_identity(report: &MmcifInterpretationReport) -> ProvenanceIdentity
 }
 
 impl BuiltMoleculeProvenance {
-    fn qualify(
-        self,
-        molecule: MoleculeInstanceId,
-    ) -> (
-        MmcifInstanceProvenance,
-        Vec<(InstanceAtomId, AtomObservation)>,
-    ) {
-        let mut observations = Vec::with_capacity(self.atoms.len());
+    fn qualify(self, molecule: MoleculeInstanceId) -> (MmcifInstanceProvenance, QualifiedAtomData) {
+        let mut atom_data = Vec::with_capacity(self.atoms.len());
         let provenance = MmcifInstanceProvenance {
             molecule,
             coordinate_model_id: self.coordinate_model_id,
@@ -1835,7 +1802,7 @@ impl BuiltMoleculeProvenance {
                 .into_iter()
                 .map(|atom| {
                     let qualified = InstanceAtomId::new(molecule, atom.atom);
-                    observations.push((qualified, atom.observation));
+                    atom_data.push((qualified, atom.occupancy, atom.b_factor));
                     MmcifAtomProvenance {
                         atom: qualified,
                         source_line: atom.source_line,
@@ -1854,7 +1821,7 @@ impl BuiltMoleculeProvenance {
                 })
                 .collect(),
         };
-        (provenance, observations)
+        (provenance, atom_data)
     }
 }
 
@@ -1970,36 +1937,22 @@ fn build_molecule(
     let entity_kinds = group.kinds.iter().cloned().collect::<Vec<_>>();
     let atom_provenance = representative
         .iter()
-        .map(|(key, row)| {
-            let mut observation = AtomObservation::default();
-            observation.set_group_pdb(row.group_pdb.clone());
-            observation.set_source_atom_site_id(row.atom_site_id.clone());
-            observation.set_alternate_location(row.alt_id.clone());
-            observation
-                .set_occupancy(row.occupancy)
-                .expect("parsed occupancy is finite");
-            observation.set_occupancy_raw(row.occupancy_raw.clone());
-            observation
-                .set_b_factor(row.b_factor)
-                .expect("parsed B-factor is finite");
-            observation.set_b_factor_raw(row.b_factor_raw.clone());
-            observation.set_cartesian_raw(row.point_raw.clone());
-            BuiltAtomProvenance {
-                atom: atoms[key],
-                source_line: row.line,
-                atom_site_id: row.atom_site_id.clone(),
-                atom_name: row.atom_name.clone(),
-                component_id: row.comp_id.clone(),
-                asym_id: row.asym_id.clone(),
-                auth_asym_id: row.auth_asym_id.clone(),
-                entity_id: row.entity_id.clone(),
-                label_sequence_id: row.label_seq_id,
-                author_sequence_id: row.auth_seq_id.clone(),
-                insertion_code: row.insertion_code.clone(),
-                occurrence: row.occurrence,
-                selected_alternate_location: row.alt_id.clone(),
-                observation,
-            }
+        .map(|(key, row)| BuiltAtomProvenance {
+            atom: atoms[key],
+            source_line: row.line,
+            atom_site_id: row.atom_site_id.clone(),
+            atom_name: row.atom_name.clone(),
+            component_id: row.comp_id.clone(),
+            asym_id: row.asym_id.clone(),
+            auth_asym_id: row.auth_asym_id.clone(),
+            entity_id: row.entity_id.clone(),
+            label_sequence_id: row.label_seq_id,
+            author_sequence_id: row.auth_seq_id.clone(),
+            insertion_code: row.insertion_code.clone(),
+            occurrence: row.occurrence,
+            selected_alternate_location: row.alt_id.clone(),
+            occupancy: row.occupancy,
+            b_factor: row.b_factor,
         })
         .collect();
     let provenance = BuiltMoleculeProvenance {

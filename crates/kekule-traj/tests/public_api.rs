@@ -77,10 +77,7 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
         RandomAccessCapability::Indexed
     );
     indexed.read_frame(0, &mut destination).unwrap();
-    assert_eq!(
-        destination.configuration().positions().values().value()[0].x,
-        1.0
-    );
+    assert_eq!(destination.positions().values().value()[0].x, 1.0);
 
     fs::remove_file(path).unwrap();
 }
