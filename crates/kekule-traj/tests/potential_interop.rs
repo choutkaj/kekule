@@ -4,7 +4,7 @@ use kekule::modeling::potential::{
     HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError,
 };
 use kekule::small::SmallMolecule;
-use kekule::structure::Model;
+use kekule::structure::{Model, Positions};
 use kekule::topology::{InstanceBondId, MoleculeInstanceId};
 use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
@@ -43,7 +43,7 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
     )
     .unwrap();
 
-    let frame = TrajectoryFrame::new(model.configuration().clone());
+    let frame = TrajectoryFrame::new(Positions::new(&topology, model.positions()).unwrap());
     assert!(potential
         .evaluate(frame.view(&topology).unwrap().model_view())
         .is_ok());

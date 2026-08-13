@@ -80,7 +80,6 @@ fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
 
 fn point_xs(buffer: &FrameBuffer) -> Vec<f64> {
     buffer
-        .configuration()
         .positions()
         .values()
         .value()
@@ -140,7 +139,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
-    let pointer = buffer.configuration().positions().values().value().as_ptr();
+    let pointer = buffer.positions().values().value().as_ptr();
     buffer.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
@@ -164,11 +163,8 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
 
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_eq!(point_xs(&buffer), vec![0.0, 3.0]);
-    assert_eq!(
-        buffer.configuration().positions().values().value().as_ptr(),
-        pointer
-    );
-    assert!(buffer.configuration().cell().is_none());
+    assert_eq!(buffer.positions().values().value().as_ptr(), pointer);
+    assert!(buffer.cell().is_none());
     assert!(buffer.frame_view().velocities().is_none());
     assert!(buffer.frame_view().time().is_none());
     assert!(buffer.frame_view().step().is_none());
@@ -322,10 +318,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     .unwrap();
     let mut decoded = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut decoded).unwrap());
-    assert_eq!(
-        decoded.configuration().positions().values().value(),
-        &points
-    );
+    assert_eq!(decoded.positions().values().value(), &points);
     assert!(reader.read_next(&mut decoded).unwrap());
     assert!(!reader.read_next(&mut decoded).unwrap());
 

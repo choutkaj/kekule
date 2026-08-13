@@ -17,9 +17,10 @@ block without hiding validation, perception, sanitization, or preparation.
 - Explicitly converts model length quantities to the mmCIF Cartesian angstrom
   convention before formatting.
 - Preserves supported static macro hierarchy labels and residue identifiers,
-  plus selected alternate-location metadata, occupancy, B-factor, and source
-  atom-site identity from `StructureObservation`. Small-molecule instances
-  receive deterministic structural labels required by mmCIF.
+  plus occupancy and B-factor from `AtomData`. Small-molecule instances receive
+  deterministic structural labels required by mmCIF. Format-specific selected
+  alternate-location and source-row identities are not model atom data and are
+  emitted canonically until a later structural-I/O stage defines their write path.
 - Emits explicit single, double, triple, and quadruple bonds through
   `_struct_conn.pdbx_value_order`.
 - Preserves `Polymer`, `Branched`, `NonPolymer`, and `Solvent` as mmCIF entity
@@ -38,7 +39,7 @@ block without hiding validation, perception, sanitization, or preparation.
   multiple Small and Macro molecule instances.
 - Macro atom sites remain a coordinate-independent `SmcraHierarchy` sidecar
   over local `AtomId`s; writer rows qualify them only while resolving topology,
-  positions, observation state, and connectivity.
+  positions, atom data, and connectivity.
 - Values are emitted as single CIF tokens. Source formatting, comments,
   unknown categories, and original atom-site row IDs belong to `MmcifDocument`
   rather than canonical-model writing.
@@ -80,3 +81,6 @@ block without hiding validation, perception, sanitization, or preparation.
   from `StructureObservation`.
 - v5: Widen generated one-based serials before arithmetic so maximum public IDs
   cannot wrap during mmCIF formatting.
+- v6: Read positions and cell directly from flattened `Model` state and
+  occupancy/B-factor from `AtomData`; defer format-specific altloc/source-row
+  reattachment to the later structural-I/O refactor.

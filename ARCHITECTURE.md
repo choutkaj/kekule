@@ -29,7 +29,7 @@ format text or binary data
          |- SmallMolecule
          `- MacroMolecule
        Topology
-         |- Model       = Topology + one Configuration
+         |- Model       = Topology + Positions + optional cell + AtomData
          |- Ensemble    = Topology + finite non-temporal members
          `- Trajectory  = Topology + ordered Frames
     -> explicit perception, validation, transformation, or analysis
@@ -60,8 +60,10 @@ Topology
   authoritative dense atom and bond orderings
 
 Model
-  Topology
-  one mutable Configuration
+  one shared immutable Topology
+  complete mutable Positions
+  optional mutable PeriodicCell
+  topology-bound AtomData
 
 Ensemble
   Topology
@@ -268,9 +270,10 @@ identity:
 
 Coordinate-model membership is not topology. Source model identifiers,
 alternate-location choices, occupancy, B-factors, raw Cartesian text, and other
-observation-specific values belong to interpretation provenance or
-configuration-associated observation data. The hierarchy must not require a
-coordinate-model node as the parent of a chain in the final architecture.
+coordinate-model-specific values belong to interpretation provenance or,
+for occupancy and B-factors, model-level `AtomData`. The hierarchy must not
+require a coordinate-model node as the parent of a chain in the final
+architecture.
 
 Every public `MacroMolecule` is valid: its graph is connected, every live graph
 atom has exactly one atom site, every atom site references a live graph atom,
@@ -381,7 +384,7 @@ A `Topology` does not own:
 - forces or gradients;
 - time or simulation step;
 - coordinate-derived contacts or secondary structure;
-- occupancy, B-factors, or raw coordinate text tied to one observation;
+- occupancy, B-factors, or raw coordinate text tied to one model;
 - force-field parameters or atom types;
 - constraints, virtual sites, Drude particles, or backend particles;
 - execution-engine state.
@@ -442,7 +445,7 @@ topology.
 Definition reuse is explicit. For example, one water definition may be
 referenced by many water instances. Each instance still has a unique
 `MoleculeInstanceId`, unique instance-qualified atom identities, roles,
-annotations, coordinates in associated configurations, and source provenance.
+annotations, coordinates in associated models, and source provenance.
 
 The library must not automatically merge definitions merely because their
 graphs compare equal. Equal-looking molecules may differ in isotopes,
@@ -627,8 +630,8 @@ Complete molecule instances can be retained or removed through the focused
 `topology::transform` namespace. These immutable deletion-only edits preserve
 filtered source definition and instance order, explicit definition reuse, and
 local atom and bond identifiers while returning complete checked lineage.
-Positions, configurations, observations, models, compiled atom selections,
-finite ensembles, owned frames, in-memory trajectories, and borrowed frame
+Positions, atom data, models, compiled atom selections, finite ensembles,
+owned frames, in-memory trajectories, and borrowed frame
 state in reusable target buffers provide explicit remapping operations. Every
 operation checks the exact source and target `Arc<Topology>` allocations;
 complete dense arrays reject unmapped target atoms, and selection loss requires
@@ -720,33 +723,20 @@ unit. Public access returns quantities with explicit units.
 A `Positions` value must not be reused with a different topology merely because
 the atom counts match.
 
-### `Configuration`
+### `AtomData`
 
-`Configuration` is one complete geometric realization of a topology:
+`AtomData` stores model-level per-atom scientific values in the topology's
+authoritative dense atom order. It retains the exact `Arc<Topology>` allocation
+and initially provides only occupancy and isotropic B-factor columns.
 
-```rust
-pub struct Configuration {
-    positions: Positions,
-    cell: Option<PeriodicCell>,
-}
-```
+Each column is optional and contains one optional finite value per topology
+atom. A wholly absent field allocates no per-atom metadata. Construction,
+complete-column replacement, semantic-ID lookup, dense-index lookup, and
+topology remapping are checked.
 
-The periodic cell is optional and dynamic. Additional coordinate-state fields
-are introduced only when they are semantically part of every configuration.
-
-A borrowed `ConfigurationView` exposes topology-compatible arrays without
-allocation.
-
-### Observation data
-
-Experimental structure observations may attach coordinate-specific data such
-as occupancy, B-factor, alternate-location label, source coordinate-model ID,
-or raw source text.
-
-Such data is stored beside a model or ensemble member in a typed
-`StructureObservation` or dedicated provenance object. Per-atom observation
-arrays use `TopologyAtomIndex` order and validate their lengths. They are not
-part of static topology data.
+Alternate-location labels, source coordinate-model identifiers, source atom
+row identifiers, and raw source text remain format interpretation provenance;
+they are not generalized into model atom data.
 
 ## `Model`
 
@@ -754,9 +744,10 @@ part of static topology data.
 
 ```text
 Model
-  Topology
-  one Configuration
-  optional structure-observation metadata
+  topology: Arc<Topology>
+  positions: Positions
+  cell: Option<PeriodicCell>
+  atom_data: AtomData
 ```
 
 Conceptually, in the common non-periodic case:
@@ -765,8 +756,9 @@ Conceptually, in the common non-periodic case:
 Model = Topology + Positions
 ```
 
-The topology is immutable and cheaply shared with `Arc::clone`. Positions and
-the periodic cell may be replaced transactionally while preserving the shared
+The topology is immutable and cheaply shared with `Arc::clone`. Positions, the
+periodic cell, and atom data are accessed directly without an intermediate
+configuration wrapper. Topology-bound replacements require the exact shared
 topology allocation.
 
 A model rejects incomplete, non-finite, dimensionally incompatible, or
@@ -777,8 +769,7 @@ molecule conformer. Source objects remain unchanged. Explicit operations copy
 one model instance's current positions back to a compatible standalone
 molecule conformer.
 
-Cloning a model shares topology and copies only mutable coordinate and
-observation state.
+Cloning a model shares topology and copies only positions, cell, and atom data.
 
 ## `Ensemble`
 
@@ -792,9 +783,10 @@ pub struct Ensemble {
 }
 
 pub struct EnsembleMember {
-    configuration: Configuration,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    atom_data: AtomData,
     weight: Option<f64>,
-    observation: Option<StructureObservation>,
     props: PropMap,
 }
 ```
@@ -823,8 +815,8 @@ error; they are not represented by silently sparse dense arrays.
 
 Trajectory ownership belongs to the one-way `kekule-traj` companion rather
 than the foundational `kekule` crate. The companion reuses `kekule::Topology`,
-`Configuration`, `ModelView`, geometry, units, selections, and general
-single-configuration kernels; it does not define a second molecular model.
+`Positions`, `AtomData`, `ModelView`, geometry, units, selections, and general
+single-model kernels; it does not define a second molecular model.
 
 `Trajectory` represents an ordered sequence of frames sharing one exact,
 immutable topology:
@@ -843,12 +835,13 @@ A frame contains:
 
 ```rust
 pub struct TrajectoryFrame {
-    configuration: Configuration,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    atom_data: AtomData,
     velocities: Option<Velocities>,
     forces: Option<Forces>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    observation: Option<StructureObservation>,
     props: FrameMetadata,
 }
 ```
@@ -868,7 +861,7 @@ rotates, translates, or mutates them. Rigid superposition is a separately named
 transactional transformation over a finite in-memory trajectory: one
 topology-bound selection determines each frame transform, which is then applied
 to every position. Velocities, forces, and retained cell basis vectors rotate
-with the frame; time, step, observation provenance, and properties remain
+with the frame; time, step, atom data, and properties remain
 unchanged.
 
 A fused aligned-RMSD convenience computes the same fit-and-measure pipeline
@@ -923,7 +916,7 @@ state without constructing or cloning an owned `Model`.
 
 File decoders publish only complete frames through one transactional borrowed-
 data operation. That operation validates the shared topology allocation,
-complete array lengths, units, finite values, cell, time, observations, and properties
+complete array lengths, units, finite values, cell, time, atom data, and properties
 before destination-visible mutation; it reuses position, velocity, and force
 allocations and clears every absent optional field. Clean EOF and any failed
 decode leave the caller's buffer unchanged.
@@ -976,7 +969,9 @@ Coordinate-dependent algorithms consume a common borrowed view:
 ```rust
 pub struct ModelView<'a> {
     topology: &'a Arc<Topology>,
-    configuration: ConfigurationView<'a>,
+    positions: &'a Positions,
+    cell: Option<&'a PeriodicCell>,
+    atom_data: &'a AtomData,
 }
 ```
 
@@ -994,7 +989,7 @@ milestone fits two `ModelView` values sharing one topology allocation through on
 topology-bound `AtomSelection`. The returned proper `RigidTransform` maps
 moving coordinates into reference coordinates, while post-fit weighted RMSD is
 reported in the model length unit. Uniform or explicit positive finite
-selection-order weights are supported. Periodic configurations are rejected by
+selection-order weights are supported. Periodic models are rejected by
 default; an explicit stored-coordinate policy ignores cells without imaging or
 unwrapping. The analysis is read-only and never materializes replacement
 canonical coordinates.
@@ -1072,7 +1067,7 @@ become asserted bonds merely to force one component.
 
 After authoritative connectivity completion, mmCIF interpretation partitions
 every residual graph component into its own connected `SmallMolecule` or
-`MacroMolecule` instance. Positions, observations, SMCRA hierarchy, source atom
+`MacroMolecule` instance. Positions, atom data, SMCRA hierarchy, source atom
 identity, and interpretation provenance are remapped explicitly. Several final
 molecule instances may therefore retain the same source entity/asymmetry
 identity when an experimental chain contains a genuine unresolved gap.
@@ -1081,8 +1076,9 @@ Single-model mmCIF interpretation produces:
 
 ```text
 Topology
-Configuration
-optional StructureObservation
+Positions
+optional PeriodicCell
+AtomData
 MmcifInterpretationReport
 ```
 
@@ -1091,8 +1087,9 @@ and exposes a convenience `Model`.
 Multi-model mmCIF interpretation is a separate ensemble operation. It may
 produce one `Ensemble` only after proving a consistent final connected-fragment
 topology, atom identity mapping, and dense ordering across members.
-Coordinate-model identifiers and per-model observation values belong to
-ensemble-member metadata. Inconsistent atom presence or topology produces a
+Coordinate-model identifiers and format-specific per-model values belong to
+interpretation reports and provenance; occupancy and B-factors belong to each
+member's `AtomData`. Inconsistent atom presence or topology produces a
 structured error unless an explicit reconciliation policy is requested.
 Source atom correspondence uses residue sequence and insertion identity,
 label/author asymmetry identity, component and atom labels, an explicit
@@ -1130,7 +1127,7 @@ atoms do not receive invented coordinates.
 
 Coordinate-derived analyses return snapshot results. Updating positions or
 advancing a trajectory does not mutate an earlier analysis result. Callers
-explicitly rerun analyses for another configuration.
+explicitly rerun analyses for another model state or frame.
 
 ## Downstream prepared systems and potentials
 
@@ -1149,11 +1146,11 @@ A prepared system:
 - does not mutate topology or coordinate containers;
 - may evaluate supported model views sharing the bound topology.
 
-Potential evaluation consumes `ModelView` or an equivalent borrowed
-topology-plus-configuration view. Preparation is performed once and reused
+Potential evaluation consumes `ModelView` or an equivalent borrowed direct
+model-state view. Preparation is performed once and reused
 across models, ensemble members, and trajectory frames with the same topology.
 Accepting the common view does not imply support for every dynamic
-configuration field. Each potential documents capabilities such as
+model field. Each potential documents capabilities such as
 periodic-cell handling and returns a structured error when a compatible view
 contains unsupported state.
 
@@ -1198,8 +1195,7 @@ topology
     instance-qualified IDs, dense topology indices, topology mappings
 
 structure
-    Positions, Configuration, Model, Ensemble, borrowed structural views,
-    structure-observation state
+    Positions, AtomData, Model, Ensemble, borrowed structural views
 
 smiles / molfile / sdf / mmcif
     format-specific documents, component-aware interpretation where required,
@@ -1266,7 +1262,7 @@ kekule <- kekule-traj <- applications
 
 `kekule-traj` owns `TrajectoryFrame`, `FrameBuffer`, in-memory `Trajectory`,
 reader/writer traits, typed trajectory errors, and the `io` codec namespace.
-It uses Kekule's topology, configuration, borrowed view, geometry, unit,
+It uses Kekule's topology, positions, cells, atom data, borrowed view, geometry, unit,
 selection, and topology-lineage contracts. General coordinate kernels remain
 in `kekule`; the companion provides transactional finite-trajectory
 superposition plus direct and fused aligned RMSD, and may add batch
@@ -1344,11 +1340,12 @@ The following statements summarize the design:
 4. Topology preserves molecule definitions and molecule-instance boundaries.
 5. Semantic identities and dense numerical indices are separate.
 6. One topology has one immutable authoritative dense ordering.
-7. `Model` is one topology plus one complete configuration.
+7. `Model` directly owns one shared topology, complete positions, an optional
+   periodic cell, and topology-bound atom data.
 8. `Ensemble` is one topology plus finite non-temporal members.
 9. `kekule-traj::Trajectory` is one Kekule topology plus ordered frames and
    supports streaming I/O.
-10. Periodic cells, velocities, forces, time, and observation data are dynamic
+10. Periodic cells, atom data, velocities, forces, and time are dynamic
     state, not topology.
 11. Prepared systems and compiled selections retain one exact shared
     `Arc<Topology>` allocation.

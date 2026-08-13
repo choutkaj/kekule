@@ -3,7 +3,7 @@
 ## Summary
 
 Assign protein secondary structure from one borrowed three-dimensional
-topology-plus-configuration snapshot using the DSSP hydrogen-bond and geometric
+topology-plus-model-state snapshot using the DSSP hydrogen-bond and geometric
 definitions. The feature is structural analysis, not sequence-based
 secondary-structure prediction.
 

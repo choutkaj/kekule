@@ -13,13 +13,13 @@ reference frame through Kekule's proper rigid-alignment kernel.
 - The fit selection is topology-bound and determines one proper rigid transform
   per frame. The transform is applied to every atom, not only selected atoms.
 - Positions are rotated and translated. Velocities, forces, and periodic-cell
-  basis vectors are rotated without translation. Topology, time, step,
-  observation provenance, and frame properties are preserved.
+  basis vectors are rotated without translation. Topology, atom data, time,
+  step, and frame properties are preserved.
 - The operation is transactional across the complete trajectory: all fits and
   replacement frames validate before the original trajectory changes.
 - `SuperpositionReport` retains the reference index and one applied
   `RigidAlignment`, including transform and fit RMSD, per frame.
-- Periodic configurations are rejected by default. Explicit stored-coordinate
+- Periodic frames are rejected by default. Explicit stored-coordinate
   handling performs no imaging, wrapping, unwrapping, minimum-image correction,
   or molecule reconstruction; retained cells rotate with their frames.
 - Reference bounds and per-frame fit/transformation failures retain structured
@@ -33,8 +33,8 @@ reference frame through Kekule's proper rigid-alignment kernel.
   a complete replacement trajectory before one final publication. Runtime is
   O(frames × (fit atoms + all atoms)); transactional replacement temporarily
   owns one additional complete set of frame state.
-- Source raw-coordinate observation strings remain preserved provenance rather
-  than being rewritten as generated text.
+- Format-specific source provenance remains outside trajectory frame state and
+  is not rewritten after geometric transformation.
 
 ## Tests
 
@@ -57,3 +57,5 @@ reference frame through Kekule's proper rigid-alignment kernel.
   geometric-state transformation and per-frame alignment reporting.
 - v2: Preserve and validate the trajectory's shared `Arc<Topology>` throughout
   fitting and transactional frame replacement.
+- v3: Preserve flattened frame `AtomData` while removing the obsolete
+  configuration and observation wrappers from trajectory state.

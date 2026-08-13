@@ -738,14 +738,13 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
         if !std::ptr::eq(self.topology(), frame.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        let configuration = frame.configuration();
         let unsupported = [
-            (configuration.cell().is_some(), "periodic cell"),
+            (frame.cell().is_some(), "periodic cell"),
             (frame.velocities().is_some(), "velocities"),
             (frame.forces().is_some(), "forces"),
             (frame.time().is_some(), "time"),
             (frame.step().is_some(), "step"),
-            (frame.observation().is_some(), "structure observation"),
+            (!frame.atom_data().is_empty(), "atom data"),
             (!frame.props().is_empty(), "frame properties"),
         ];
         if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {
@@ -766,7 +765,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                     format!("XYZ output unit is incompatible: {error}"),
                 )
             })?;
-        let positions = configuration.positions().values();
+        let positions = frame.positions().values();
         for point in positions.value().iter() {
             if !Point3::new(point.x * factor, point.y * factor, point.z * factor).is_finite() {
                 return Err(codec_context(

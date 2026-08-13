@@ -644,7 +644,7 @@ HETATM 1 C C1 LIG B 0.0 0.0 0.0
 }
 
 #[test]
-fn multimodel_interpretation_builds_shared_topology_with_distinct_observations() {
+fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
     let interpreted = mmcif::interpret_ensemble(
         &parse(MULTI_MODEL),
         mmcif::MmcifEnsembleInterpretOptions::default(),
@@ -656,30 +656,25 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_observations()
     assert_eq!(
         ensemble
             .members()
-            .map(|member| member.configuration().positions().values().value()[0].x)
+            .map(|member| member.positions().values().value()[0].x)
             .collect::<Vec<_>>(),
         vec![0.0, 5.0]
     );
 
-    let observations = ensemble
+    assert_eq!(interpreted.reports()[0].selected_model(), Some("1"));
+    assert_eq!(interpreted.reports()[1].selected_model(), Some("2"));
+    let atom_data = ensemble
         .members()
-        .map(|member| member.observation().expect("mmCIF observation"))
+        .map(|member| member.atom_data())
         .collect::<Vec<_>>();
-    assert_eq!(observations[0].source_model_id(), Some("1"));
-    assert_eq!(observations[1].source_model_id(), Some("2"));
     let first_atom = ensemble.topology().atom_ids()[0];
+    let topology = ensemble.shared_topology();
     assert_eq!(
-        observations[0]
-            .atom(&ensemble.shared_topology(), first_atom)
-            .unwrap()
-            .occupancy(),
+        atom_data[0].occupancy(&topology, first_atom).unwrap(),
         Some(0.4)
     );
     assert_eq!(
-        observations[1]
-            .atom(&ensemble.shared_topology(), first_atom)
-            .unwrap()
-            .b_factor(),
+        atom_data[1].b_factor(&topology, first_atom).unwrap(),
         Some(20.0)
     );
 }

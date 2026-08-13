@@ -7,8 +7,7 @@ use kekule::core::PropMap;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{
     remap::{dense_atom_values, validate_complete_atom_mapping},
-    Configuration, ConfigurationView, ModelError, ModelView, ObservationError, PositionError,
-    Positions, StructureObservation, TopologyRemapError,
+    AtomData, AtomDataError, ModelError, ModelView, PositionError, Positions, TopologyRemapError,
 };
 use kekule::topology::{InstanceAtomId, Topology, TopologyMapping};
 use kekule::units::{
@@ -212,30 +211,53 @@ vector_array!(Forces, MODEL_FORCE_UNIT);
 /// One owned frame over one exact topology.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrajectoryFrame {
-    configuration: Configuration,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    atom_data: AtomData,
     velocities: Option<Velocities>,
     forces: Option<Forces>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    observation: Option<StructureObservation>,
     props: PropMap,
 }
 
 impl TrajectoryFrame {
-    pub fn new(configuration: Configuration) -> Self {
+    pub fn new(positions: Positions) -> Self {
+        let atom_data = AtomData::empty(&positions.shared_topology());
         Self {
-            configuration,
+            positions,
+            cell: None,
+            atom_data,
             velocities: None,
             forces: None,
             time: None,
             step: None,
-            observation: None,
             props: PropMap::new(),
         }
     }
 
-    pub fn configuration(&self) -> &Configuration {
-        &self.configuration
+    pub fn positions(&self) -> &Positions {
+        &self.positions
+    }
+
+    pub const fn cell(&self) -> Option<&PeriodicCell> {
+        self.cell.as_ref()
+    }
+
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        self.cell = cell;
+    }
+
+    pub fn atom_data(&self) -> &AtomData {
+        &self.atom_data
+    }
+
+    pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), FrameError> {
+        if !std::ptr::eq(self.positions.topology(), atom_data.topology()) {
+            return Err(FrameError::TopologyMismatch);
+        }
+        self.atom_data = atom_data;
+        Ok(())
     }
 
     pub fn velocities(&self) -> Option<&Velocities> {
@@ -254,10 +276,6 @@ impl TrajectoryFrame {
         self.step
     }
 
-    pub fn observation(&self) -> Option<&StructureObservation> {
-        self.observation.as_ref()
-    }
-
     pub fn props(&self) -> &PropMap {
         &self.props
     }
@@ -267,9 +285,10 @@ impl TrajectoryFrame {
     }
 
     pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), FrameError> {
-        if velocities.as_ref().is_some_and(|values| {
-            !std::ptr::eq(self.configuration.positions().topology(), values.topology())
-        }) {
+        if velocities
+            .as_ref()
+            .is_some_and(|values| !std::ptr::eq(self.positions.topology(), values.topology()))
+        {
             return Err(FrameError::TopologyMismatch);
         }
         self.velocities = velocities;
@@ -277,9 +296,10 @@ impl TrajectoryFrame {
     }
 
     pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), FrameError> {
-        if forces.as_ref().is_some_and(|values| {
-            !std::ptr::eq(self.configuration.positions().topology(), values.topology())
-        }) {
+        if forces
+            .as_ref()
+            .is_some_and(|values| !std::ptr::eq(self.positions.topology(), values.topology()))
+        {
             return Err(FrameError::TopologyMismatch);
         }
         self.forces = forces;
@@ -304,24 +324,9 @@ impl TrajectoryFrame {
         self.step = step;
     }
 
-    pub fn set_observation(
-        &mut self,
-        observation: Option<StructureObservation>,
-    ) -> Result<(), FrameError> {
-        if observation.as_ref().is_some_and(|observation| {
-            !std::ptr::eq(
-                self.configuration.positions().topology(),
-                observation.topology(),
-            )
-        }) {
-            return Err(FrameError::TopologyMismatch);
-        }
-        self.observation = observation;
-        Ok(())
-    }
-
     pub fn validate(&self, topology: &Arc<Topology>) -> Result<(), FrameError> {
-        if !self.configuration.positions().is_compatible(topology)
+        if !self.positions.is_compatible(topology)
+            || !self.atom_data.is_compatible(topology)
             || self
                 .velocities
                 .as_ref()
@@ -330,10 +335,6 @@ impl TrajectoryFrame {
                 .forces
                 .as_ref()
                 .is_some_and(|values| !values.is_compatible(topology))
-            || self
-                .observation
-                .as_ref()
-                .is_some_and(|observation| !observation.is_compatible(topology))
         {
             return Err(FrameError::TopologyMismatch);
         }
@@ -347,12 +348,13 @@ impl TrajectoryFrame {
         self.validate(topology)?;
         Ok(TrajectoryFrameView {
             topology,
-            configuration: self.configuration.view(),
+            positions: &self.positions,
+            cell: self.cell.as_ref(),
+            atom_data: &self.atom_data,
             velocities: self.velocities.as_ref().map(Velocities::values),
             forces: self.forces.as_ref().map(Forces::values),
             time: self.time,
             step: self.step,
-            observation: self.observation.as_ref(),
             props: &self.props,
         })
     }
@@ -367,7 +369,8 @@ impl TrajectoryFrame {
         if self.validate(source).is_err() {
             return Err(TrajectoryRemapError::SourceFrameTopologyMismatch);
         }
-        let configuration = self.configuration.remap_to(source, target, mapping)?;
+        let positions = self.positions.remap_to(source, target, mapping)?;
+        let atom_data = self.atom_data.remap_to(source, target, mapping)?;
         let velocities = self
             .velocities
             .as_ref()
@@ -378,18 +381,14 @@ impl TrajectoryFrame {
             .as_ref()
             .map(|values| values.0.remap_to(source, target, mapping).map(Forces))
             .transpose()?;
-        let observation = self
-            .observation
-            .as_ref()
-            .map(|observation| observation.remap_to(source, target, mapping))
-            .transpose()?;
         Ok(Self {
-            configuration,
+            positions,
+            cell: self.cell,
+            atom_data,
             velocities,
             forces,
             time: self.time,
             step: self.step,
-            observation,
             props: self.props.clone(),
         })
     }
@@ -399,12 +398,13 @@ impl TrajectoryFrame {
 #[derive(Debug, Clone, Copy)]
 pub struct TrajectoryFrameView<'a> {
     topology: &'a Arc<Topology>,
-    configuration: ConfigurationView<'a>,
+    positions: &'a Positions,
+    cell: Option<&'a PeriodicCell>,
+    atom_data: &'a AtomData,
     velocities: Option<Quantity<&'a [Vector3]>>,
     forces: Option<Quantity<&'a [Vector3]>>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    observation: Option<&'a StructureObservation>,
     props: &'a PropMap,
 }
 
@@ -421,8 +421,16 @@ impl<'a> TrajectoryFrameView<'a> {
         self.topology
     }
 
-    pub const fn configuration(self) -> ConfigurationView<'a> {
-        self.configuration
+    pub const fn positions(self) -> &'a Positions {
+        self.positions
+    }
+
+    pub const fn cell(self) -> Option<&'a PeriodicCell> {
+        self.cell
+    }
+
+    pub const fn atom_data(self) -> &'a AtomData {
+        self.atom_data
     }
 
     pub const fn velocities(self) -> Option<Quantity<&'a [Vector3]>> {
@@ -441,16 +449,12 @@ impl<'a> TrajectoryFrameView<'a> {
         self.step
     }
 
-    pub const fn observation(self) -> Option<&'a StructureObservation> {
-        self.observation
-    }
-
     pub const fn props(self) -> &'a PropMap {
         self.props
     }
 
     pub fn model_view(self) -> ModelView<'a> {
-        ModelView::new(self.topology, self.configuration)
+        ModelView::new(self.topology, self.positions, self.cell, self.atom_data)
             .expect("trajectory frame view has validated topology")
     }
 }
@@ -470,7 +474,7 @@ pub struct FrameBufferData<'a> {
     forces: Option<Quantity<&'a [Vector3]>>,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    observation: Option<&'a StructureObservation>,
+    atom_data: Option<&'a AtomData>,
     props: Option<&'a PropMap>,
 }
 
@@ -485,7 +489,7 @@ impl<'a> FrameBufferData<'a> {
             forces: None,
             time: None,
             step: None,
-            observation: None,
+            atom_data: None,
             props: None,
         }
     }
@@ -494,13 +498,13 @@ impl<'a> FrameBufferData<'a> {
     pub fn from_frame_view(frame: TrajectoryFrameView<'a>) -> Self {
         Self {
             topology: frame.topology,
-            positions: frame.configuration.positions().values(),
-            cell: frame.configuration.cell().copied(),
+            positions: frame.positions.values(),
+            cell: frame.cell.copied(),
             velocities: frame.velocities,
             forces: frame.forces,
             time: frame.time,
             step: frame.step,
-            observation: frame.observation,
+            atom_data: Some(frame.atom_data),
             props: Some(frame.props),
         }
     }
@@ -530,8 +534,8 @@ impl<'a> FrameBufferData<'a> {
         self
     }
 
-    pub const fn with_observation(mut self, observation: &'a StructureObservation) -> Self {
-        self.observation = Some(observation);
+    pub const fn with_atom_data(mut self, atom_data: &'a AtomData) -> Self {
+        self.atom_data = Some(atom_data);
         self
     }
 
@@ -545,28 +549,30 @@ impl<'a> FrameBufferData<'a> {
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
     topology: Arc<Topology>,
-    configuration: Configuration,
+    positions: Positions,
+    cell: Option<PeriodicCell>,
+    atom_data: AtomData,
     velocities: Velocities,
     has_velocities: bool,
     forces: Forces,
     has_forces: bool,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
-    observation: Option<StructureObservation>,
     props: PropMap,
 }
 
 impl FrameBuffer {
     pub fn new(topology: Arc<Topology>) -> Self {
         Self {
-            configuration: Configuration::new(Positions::zeros(&topology)),
+            positions: Positions::zeros(&topology),
+            cell: None,
+            atom_data: AtomData::empty(&topology),
             velocities: Velocities::zeros(&topology),
             has_velocities: false,
             forces: Forces::zeros(&topology),
             has_forces: false,
             time: None,
             step: None,
-            observation: None,
             props: PropMap::new(),
             topology,
         }
@@ -580,22 +586,28 @@ impl FrameBuffer {
         Arc::clone(&self.topology)
     }
 
-    pub fn configuration(&self) -> &Configuration {
-        &self.configuration
+    pub fn positions(&self) -> &Positions {
+        &self.positions
+    }
+
+    pub const fn cell(&self) -> Option<&PeriodicCell> {
+        self.cell.as_ref()
+    }
+
+    pub fn atom_data(&self) -> &AtomData {
+        &self.atom_data
     }
 
     pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), FrameError>
     where
         T: AsRef<[Point3]>,
     {
-        self.configuration
-            .positions_mut()
-            .set_all(&self.topology, positions)?;
+        self.positions.set_all(&self.topology, positions)?;
         Ok(())
     }
 
-    pub fn set_cell(&mut self, cell: Option<kekule::geometry::PeriodicCell>) {
-        self.configuration.set_cell(cell);
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        self.cell = cell;
     }
 
     pub fn set_velocities<T>(&mut self, velocities: Option<Quantity<T>>) -> Result<(), FrameError>
@@ -644,17 +656,11 @@ impl FrameBuffer {
         self.step = step;
     }
 
-    pub fn set_observation(
-        &mut self,
-        observation: Option<StructureObservation>,
-    ) -> Result<(), FrameError> {
-        if observation
-            .as_ref()
-            .is_some_and(|observation| !observation.is_compatible(&self.topology))
-        {
+    pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), FrameError> {
+        if !atom_data.is_compatible(&self.topology) {
             return Err(FrameError::TopologyMismatch);
         }
-        self.observation = observation;
+        self.atom_data = atom_data;
         Ok(())
     }
 
@@ -669,36 +675,42 @@ impl FrameBuffer {
     /// Clears all per-frame state except positions while retaining reusable
     /// array allocations and the bound topology.
     pub fn reset_dynamic_state(&mut self) {
-        self.configuration.set_cell(None);
+        self.cell = None;
+        self.atom_data = AtomData::empty(&self.topology);
         self.has_velocities = false;
         self.has_forces = false;
         self.time = None;
         self.step = None;
-        self.observation = None;
         self.props.clear();
     }
 
     pub fn model_view(&self) -> ModelView<'_> {
-        ModelView::new(&self.topology, self.configuration.view())
-            .expect("frame buffer configuration is bound to its topology")
+        ModelView::new(
+            &self.topology,
+            &self.positions,
+            self.cell.as_ref(),
+            &self.atom_data,
+        )
+        .expect("frame buffer state is bound to its topology")
     }
 
     pub fn frame_view(&self) -> TrajectoryFrameView<'_> {
         TrajectoryFrameView {
             topology: &self.topology,
-            configuration: self.configuration.view(),
+            positions: &self.positions,
+            cell: self.cell.as_ref(),
+            atom_data: &self.atom_data,
             velocities: self.has_velocities.then(|| self.velocities.values()),
             forces: self.has_forces.then(|| self.forces.values()),
             time: self.time,
             step: self.step,
-            observation: self.observation.as_ref(),
             props: &self.props,
         }
     }
 
     /// Replaces the complete visible frame transactionally.
     ///
-    /// All topology, count, unit, finite-value, observation, and optional-array
+    /// All topology, count, unit, finite-value, atom-data, and optional-array
     /// validation completes before any destination field changes. Existing
     /// position, velocity, and force allocations are reused. Optional fields
     /// absent from `data`, including properties, are cleared.
@@ -707,8 +719,7 @@ impl FrameBuffer {
             return Err(FrameError::TopologyMismatch);
         }
 
-        self.configuration
-            .positions()
+        self.positions
             .validate_all(&self.topology, &data.positions)?;
         let velocities = data
             .velocities
@@ -739,18 +750,19 @@ impl FrameBuffer {
             })
             .transpose()?;
         if data
-            .observation
-            .is_some_and(|observation| !observation.is_compatible(&self.topology))
+            .atom_data
+            .is_some_and(|atom_data| !atom_data.is_compatible(&self.topology))
         {
             return Err(FrameError::TopologyMismatch);
         }
-        let observation = data.observation.cloned();
+        let atom_data = data
+            .atom_data
+            .cloned()
+            .unwrap_or_else(|| AtomData::empty(&self.topology));
         let props = data.props.cloned().unwrap_or_default();
 
-        self.configuration
-            .positions_mut()
-            .set_all(&self.topology, data.positions)?;
-        self.configuration.set_cell(data.cell);
+        self.positions.set_all(&self.topology, data.positions)?;
+        self.cell = data.cell;
         match velocities {
             Some((values, factor)) => {
                 self.velocities
@@ -769,7 +781,7 @@ impl FrameBuffer {
         }
         self.time = time;
         self.step = data.step;
-        self.observation = observation;
+        self.atom_data = atom_data;
         self.props = props;
         Ok(())
     }
@@ -791,13 +803,8 @@ impl FrameBuffer {
         if !mapping.is_target(&self.topology) {
             return Err(TrajectoryRemapError::IncompatibleDestinationBuffer);
         }
-        if !frame
-            .configuration
-            .positions()
-            .is_compatible(frame.topology)
-            || frame
-                .observation
-                .is_some_and(|observation| !observation.is_compatible(frame.topology))
+        if !frame.positions.is_compatible(frame.topology)
+            || !frame.atom_data.is_compatible(frame.topology)
         {
             return Err(TrajectoryRemapError::SourceFrameTopologyMismatch);
         }
@@ -813,20 +820,18 @@ impl FrameBuffer {
             .forces
             .map(|values| values.unit().conversion_factor_to(MODEL_FORCE_UNIT))
             .transpose()?;
-        let observation = frame
-            .observation
-            .map(|observation| observation.remap_to(frame.topology, &self.topology, mapping))
-            .transpose()?;
+        let atom_data = frame
+            .atom_data
+            .remap_to(frame.topology, &self.topology, mapping)?;
         let props = frame.props.clone();
 
-        self.configuration.positions_mut().copy_remapped_from(
-            frame.configuration.positions(),
+        self.positions.copy_remapped_from(
+            frame.positions,
             frame.topology,
             &self.topology,
             mapping,
         )?;
-        self.configuration
-            .set_cell(frame.configuration.cell().copied());
+        self.cell = frame.cell.copied();
         match (frame.velocities, velocity_factor) {
             (Some(values), Some(factor)) => {
                 self.velocities
@@ -849,7 +854,7 @@ impl FrameBuffer {
         }
         self.time = frame.time;
         self.step = frame.step;
-        self.observation = observation;
+        self.atom_data = atom_data;
         self.props = props;
         Ok(())
     }
@@ -1094,15 +1099,10 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
         if !Arc::ptr_eq(&self.trajectory.topology, frame.topology) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        let positions = Positions::new(
-            &self.trajectory.topology,
-            frame.configuration.positions().values(),
-        )?;
-        let configuration = match frame.configuration.cell().copied() {
-            Some(cell) => Configuration::with_cell(positions, cell),
-            None => Configuration::new(positions),
-        };
-        let mut owned = TrajectoryFrame::new(configuration);
+        let positions = Positions::new(&self.trajectory.topology, frame.positions.values())?;
+        let mut owned = TrajectoryFrame::new(positions);
+        owned.cell = frame.cell.copied();
+        owned.atom_data = frame.atom_data.clone();
         owned.velocities = frame
             .velocities
             .map(|values| Velocities::new(&self.trajectory.topology, values))
@@ -1113,7 +1113,6 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
             .transpose()?;
         owned.time = frame.time;
         owned.step = frame.step;
-        owned.observation = frame.observation.cloned();
         owned.props = frame.props.clone();
         self.trajectory.push(owned)
     }
@@ -1310,7 +1309,7 @@ pub enum FrameError {
     NonFiniteVector { atom: InstanceAtomId },
     NonFiniteTime,
     Position(PositionError),
-    Observation(ObservationError),
+    AtomData(AtomDataError),
     Unit(UnitError),
 }
 
@@ -1329,8 +1328,8 @@ impl fmt::Display for FrameError {
             }
             Self::NonFiniteTime => formatter.write_str("trajectory time must be finite"),
             Self::Position(error) => write!(formatter, "invalid frame positions: {error}"),
-            Self::Observation(error) => {
-                write!(formatter, "invalid frame observation: {error}")
+            Self::AtomData(error) => {
+                write!(formatter, "invalid frame atom data: {error}")
             }
             Self::Unit(error) => write!(formatter, "invalid frame quantity unit: {error}"),
         }
@@ -1345,9 +1344,9 @@ impl From<PositionError> for FrameError {
     }
 }
 
-impl From<ObservationError> for FrameError {
-    fn from(error: ObservationError) -> Self {
-        Self::Observation(error)
+impl From<AtomDataError> for FrameError {
+    fn from(error: AtomDataError) -> Self {
+        Self::AtomData(error)
     }
 }
 
@@ -1784,18 +1783,16 @@ mod tests {
         Arc::new(builder.build().unwrap())
     }
 
-    fn configuration(topology: &Arc<Topology>, x: f64) -> Configuration {
-        Configuration::new(
-            Positions::new(
-                topology,
-                Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM),
-            )
-            .unwrap(),
+    fn positions(topology: &Arc<Topology>, x: f64) -> Positions {
+        Positions::new(
+            topology,
+            Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM),
         )
+        .unwrap()
     }
 
     fn frame(topology: &Arc<Topology>, x: f64, time: f64) -> TrajectoryFrame {
-        let mut frame = TrajectoryFrame::new(configuration(topology, x));
+        let mut frame = TrajectoryFrame::new(positions(topology, x));
         frame
             .set_velocities(Some(
                 Velocities::new(
@@ -1814,14 +1811,15 @@ mod tests {
 
     fn assert_same_buffer_state(actual: &FrameBuffer, expected: &FrameBuffer) {
         assert!(Arc::ptr_eq(&actual.topology, &expected.topology));
-        assert_eq!(actual.configuration, expected.configuration);
+        assert_eq!(actual.positions, expected.positions);
+        assert_eq!(actual.cell, expected.cell);
+        assert_eq!(actual.atom_data, expected.atom_data);
         assert_eq!(actual.velocities, expected.velocities);
         assert_eq!(actual.has_velocities, expected.has_velocities);
         assert_eq!(actual.forces, expected.forces);
         assert_eq!(actual.has_forces, expected.has_forces);
         assert_eq!(actual.time, expected.time);
         assert_eq!(actual.step, expected.step);
-        assert_eq!(actual.observation, expected.observation);
         assert_eq!(actual.props, expected.props);
     }
 
@@ -1847,13 +1845,13 @@ mod tests {
         ));
 
         let independent = one_atom_topology();
-        let mut frame = TrajectoryFrame::new(configuration(&topology, 0.0));
+        let mut frame = TrajectoryFrame::new(positions(&topology, 0.0));
         assert_eq!(
             frame.set_velocities(Some(Velocities::zeros(&independent))),
             Err(FrameError::TopologyMismatch)
         );
         assert_eq!(
-            frame.set_observation(Some(StructureObservation::empty(&independent))),
+            frame.set_atom_data(AtomData::empty(&independent)),
             Err(FrameError::TopologyMismatch)
         );
         assert_eq!(
@@ -1866,8 +1864,10 @@ mod tests {
     fn reusable_buffer_streams_and_seeks_without_reallocating_positions() {
         let topology = one_atom_topology();
         let mut first = frame(&topology, 0.0, 0.0);
-        let observation = StructureObservation::empty(&topology);
-        first.set_observation(Some(observation)).unwrap();
+        first
+            .atom_data
+            .set_occupancy(&topology, topology.atom_ids()[0], Some(0.5))
+            .unwrap();
         let cell = kekule::geometry::PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), ANGSTROM),
             [true; 3],
@@ -1878,7 +1878,8 @@ mod tests {
             Quantity::new(vec![Point3::new(2.0, 0.0, 0.0)], ANGSTROM),
         )
         .unwrap();
-        let mut second = TrajectoryFrame::new(Configuration::with_cell(second_positions, cell));
+        let mut second = TrajectoryFrame::new(second_positions);
+        second.set_cell(Some(cell));
         second
             .set_time(Some(Quantity::new(1.0, PICOSECOND)))
             .unwrap();
@@ -1889,21 +1890,15 @@ mod tests {
 
         let mut reader = MemoryTrajectoryReader::new(&trajectory);
         let mut buffer = FrameBuffer::new(Arc::clone(&topology));
-        let pointer = buffer.configuration().positions().values().value().as_ptr();
+        let pointer = buffer.positions().values().value().as_ptr();
         assert!(reader.read_next(&mut buffer).unwrap());
-        assert_eq!(
-            buffer.configuration().positions().values().value().as_ptr(),
-            pointer
-        );
+        assert_eq!(buffer.positions().values().value().as_ptr(), pointer);
         assert!(buffer.frame_view().velocities().is_some());
-        assert!(buffer.frame_view().observation().is_some());
+        assert!(!buffer.frame_view().atom_data().is_empty());
         assert!(reader.read_next(&mut buffer).unwrap());
-        assert_eq!(
-            buffer.configuration().positions().values().value().as_ptr(),
-            pointer
-        );
+        assert_eq!(buffer.positions().values().value().as_ptr(), pointer);
         assert_eq!(buffer.model_view().positions().value()[0].x, 2.0);
-        assert_eq!(buffer.frame_view().configuration().cell(), Some(&cell));
+        assert_eq!(buffer.frame_view().cell(), Some(&cell));
         assert!(!reader.read_next(&mut buffer).unwrap());
 
         reader.read_frame(0, &mut buffer).unwrap();
@@ -1938,7 +1933,7 @@ mod tests {
             )
             .unwrap();
 
-        let position_pointer = buffer.configuration.positions().values().value().as_ptr();
+        let position_pointer = buffer.positions.values().value().as_ptr();
         let velocity_pointer = buffer.velocities.0.values.as_ptr();
         let velocity_capacity = buffer.velocities.0.values.capacity();
         let force_pointer = buffer.forces.0.values.as_ptr();
@@ -1964,19 +1959,13 @@ mod tests {
                 Quantity::new(&replacement_positions, ANGSTROM),
             ))
             .unwrap();
-        assert_eq!(
-            buffer.configuration.positions().values().value().as_ptr(),
-            position_pointer
-        );
+        assert_eq!(buffer.positions.values().value().as_ptr(), position_pointer);
         assert_eq!(buffer.velocities.0.values.as_ptr(), velocity_pointer);
         assert_eq!(buffer.velocities.0.values.capacity(), velocity_capacity);
         assert_eq!(buffer.forces.0.values.as_ptr(), force_pointer);
         assert_eq!(buffer.forces.0.values.capacity(), force_capacity);
-        assert_eq!(
-            buffer.configuration.positions().values().value(),
-            &replacement_positions
-        );
-        assert!(buffer.configuration.cell().is_none());
+        assert_eq!(buffer.positions.values().value(), &replacement_positions);
+        assert!(buffer.cell.is_none());
         assert!(buffer.frame_view().velocities().is_none());
         assert!(buffer.frame_view().forces().is_none());
         assert!(buffer.frame_view().time().is_none());
@@ -1989,23 +1978,25 @@ mod tests {
         let topology = one_atom_topology();
         let mut buffer = FrameBuffer::new(Arc::clone(&topology));
         buffer
-            .set_positions(configuration(&topology, 5.0).positions().values())
+            .set_positions(positions(&topology, 5.0).values())
             .unwrap();
         buffer
             .props_mut()
             .insert("old".into(), PropValue::Bool(true));
         let before = buffer.clone();
 
-        let source = configuration(&topology, 10.0);
+        let source = positions(&topology, 10.0);
+        let atom_data = AtomData::empty(&topology);
         let props = PropMap::new();
         let invalid = TrajectoryFrameView {
             topology: &topology,
-            configuration: source.view(),
+            positions: &source,
+            cell: None,
+            atom_data: &atom_data,
             velocities: None,
             forces: None,
             time: Some(Quantity::new(f64::INFINITY, PICOSECOND)),
             step: Some(9),
-            observation: None,
             props: &props,
         };
         assert_eq!(buffer.copy_from(invalid), Err(FrameError::NonFiniteTime));
@@ -2165,26 +2156,28 @@ mod tests {
             .set_time(Some(Quantity::new(2.0, PICOSECOND)))
             .unwrap();
         buffer.set_step(Some(3));
-        buffer
-            .set_observation(Some(StructureObservation::empty(&topology)))
+        let mut atom_data = AtomData::empty(&topology);
+        atom_data
+            .set_b_factor(&topology, topology.atom_ids()[0], Some(2.0))
             .unwrap();
+        buffer.set_atom_data(atom_data).unwrap();
         buffer
             .props_mut()
             .insert("source".to_owned(), PropValue::String("stale".to_owned()));
-        let positions_pointer = buffer.configuration().positions().values().value().as_ptr();
+        let positions_pointer = buffer.positions().values().value().as_ptr();
 
         assert!(reader.read_next(&mut buffer).unwrap());
 
         let frame = buffer.frame_view();
-        assert_eq!(frame.configuration().cell(), None);
+        assert_eq!(frame.cell(), None);
         assert_eq!(frame.velocities(), None);
         assert_eq!(frame.forces(), None);
         assert_eq!(frame.time(), None);
         assert_eq!(frame.step(), None);
-        assert_eq!(frame.observation(), None);
+        assert!(frame.atom_data().is_empty());
         assert!(frame.props().is_empty());
         assert_eq!(
-            buffer.configuration().positions().values().value().as_ptr(),
+            buffer.positions().values().value().as_ptr(),
             positions_pointer
         );
         assert_eq!(buffer.model_view().positions().value()[0].x, 7.0);
@@ -2215,7 +2208,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut frame = TrajectoryFrame::new(Configuration::new(positions));
+        let mut frame = TrajectoryFrame::new(positions);
         frame
             .set_velocities(Some(
                 Velocities::new(
@@ -2246,7 +2239,7 @@ mod tests {
         buffer
             .copy_remapped_from(view, edit.mapping())
             .expect("warm-up remap");
-        let position_pointer = buffer.configuration.positions().values().value().as_ptr();
+        let position_pointer = buffer.positions.values().value().as_ptr();
         let velocity_pointer = buffer.velocities.0.values.as_ptr();
         let force_pointer = buffer.forces.0.values.as_ptr();
         let velocity_capacity = buffer.velocities.0.values.capacity();
@@ -2256,10 +2249,7 @@ mod tests {
             buffer
                 .copy_remapped_from(view, edit.mapping())
                 .expect("repeated remap");
-            assert_eq!(
-                buffer.configuration.positions().values().value().as_ptr(),
-                position_pointer
-            );
+            assert_eq!(buffer.positions.values().value().as_ptr(), position_pointer);
             assert_eq!(buffer.velocities.0.values.as_ptr(), velocity_pointer);
             assert_eq!(buffer.forces.0.values.as_ptr(), force_pointer);
             assert_eq!(buffer.velocities.0.values.capacity(), velocity_capacity);

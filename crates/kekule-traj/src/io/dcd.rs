@@ -1285,11 +1285,11 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "forces",
             ));
         }
-        if frame.observation().is_some() {
+        if !frame.atom_data().is_empty() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                "observation",
+                "atom data",
             ));
         }
         if !frame.props().is_empty() {
@@ -1361,7 +1361,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 ))
             }
         }
-        let cell = frame.configuration().cell().copied();
+        let cell = frame.cell().copied();
         if self.options.write_cell != cell.is_some() {
             return Err(codec_context(
                 TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -1382,7 +1382,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     format!("DCD position unit is incompatible: {error}"),
                 )
             })?;
-        let positions = frame.configuration().positions().values();
+        let positions = frame.positions().values();
         for point in *positions.value() {
             for value in [point.x * factor, point.y * factor, point.z * factor] {
                 if !value.is_finite() || !(value as f32).is_finite() {

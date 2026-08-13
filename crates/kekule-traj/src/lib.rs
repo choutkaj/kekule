@@ -3,9 +3,9 @@
 //!
 //! `kekule-traj` owns ordered frame state and trajectory-specific operations.
 //! It reuses Kekule's immutable [`kekule::topology::Topology`], structural
-//! [`kekule::structure::Configuration`] values, units, geometry, selections,
-//! and borrowed [`kekule::structure::ModelView`] contract rather than defining
-//! a second molecular model.
+//! topology-bound positions, cells, atom data, units, geometry, selections,
+//! and the borrowed [`kekule::structure::ModelView`] contract rather than
+//! defining a second molecular model.
 //!
 //! The crate provides owned [`TrajectoryFrame`] values, reusable
 //! [`FrameBuffer`] storage, finite in-memory [`Trajectory`] collections, and
