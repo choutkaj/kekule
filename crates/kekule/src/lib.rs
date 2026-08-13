@@ -19,8 +19,9 @@
 //! Coordinate-dependent kernels consume borrowed [`structure::ModelView`]
 //! values, allowing the same analysis or prepared potential to operate over a
 //! model, ensemble member, trajectory frame, or reusable frame buffer without
-//! copying coordinates. Exact topology identity is required by positions,
-//! selections, buffers, and prepared systems. [`topology::Topology::same_layout`]
+//! copying coordinates. Positions, selections, buffers, and prepared systems
+//! require the same shared `Arc<Topology>` allocation.
+//! [`topology::Topology::same_layout`]
 //! compares complete static layout, including semantic IDs and dense order;
 //! general order-independent structural equivalence and isomorphism mapping
 //! remain future capabilities.

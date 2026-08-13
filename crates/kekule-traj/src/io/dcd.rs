@@ -1,6 +1,7 @@
 //! Strict common-profile CHARMM/NAMD/OpenMM DCD trajectory I/O.
 
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
@@ -794,8 +795,11 @@ impl<R: Read + Seek> DcdReader<R> {
         decoded: DcdDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(self.topology(), Quantity::new(positions, ANGSTROM))
-            .with_step(decoded.step);
+        let mut data = FrameBufferData::new(
+            self.binding.topology_arc(),
+            Quantity::new(positions, ANGSTROM),
+        )
+        .with_step(decoded.step);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
@@ -925,9 +929,13 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
         self.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.binding.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !std::ptr::eq(self.topology(), destination.topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self.reader.stream_position().map_err(|error| {
             io_context(
@@ -971,6 +979,10 @@ impl<R: Read + Seek> TrajectoryReader for IndexedDcdReader<R> {
         self.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.inner.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
         self.inner.read_next(destination)
     }
@@ -986,8 +998,8 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !std::ptr::eq(self.topology(), destination.topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
             .offsets
@@ -1057,7 +1069,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedDcdReader<R> {
 /// Canonical DCD writer over one seekable stream.
 pub struct DcdWriter<W> {
     writer: W,
-    topology: Topology,
+    topology: Arc<Topology>,
     options: DcdWriteOptions,
     source_label: String,
     header_start: u64,
@@ -1069,7 +1081,7 @@ pub struct DcdWriter<W> {
 impl<W: Write + Seek> DcdWriter<W> {
     pub fn new(
         mut writer: W,
-        topology: Topology,
+        topology: Arc<Topology>,
         options: DcdWriteOptions,
         source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryError> {
@@ -1242,6 +1254,10 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         &self.topology
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
         if self.finalized {
             return Err(codec_context(
@@ -1252,8 +1268,8 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "cannot write a DCD frame after finalization",
             ));
         }
-        if frame.topology().identity() != self.topology.identity() {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !std::ptr::eq(frame.topology(), self.topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         if frame.velocities().is_some() {
             return Err(writer_field_error(

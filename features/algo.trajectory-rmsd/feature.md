@@ -24,7 +24,7 @@ measurement and rigidly aligned measurement.
   rigid-alignment point-count, rank, weighting, topology, and periodic policies.
 - Direct periodic measurement is rejected by default. Explicit
   `UseStoredCoordinates` ignores cells without imaging or unwrapping.
-- Bounds, selection identity, weight validation, periodic rejection, alignment
+- Bounds, selection topology-allocation compatibility, weight validation, periodic rejection, alignment
   failure, and numerical failure are structured and retain frame context where
   applicable.
 
@@ -56,3 +56,5 @@ measurement and rigidly aligned measurement.
 
 - v1: Add explicit direct RMSD plus fused zero-copy aligned RMSD with separate
   fit and measurement selections.
+- v2: Validate trajectory selections through their retained shared
+  `Arc<Topology>` rather than a separate identity value.

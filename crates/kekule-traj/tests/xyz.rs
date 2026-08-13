@@ -1,5 +1,6 @@
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
@@ -26,7 +27,7 @@ use support::GuardedCursor;
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
 2\nsecond\nC 1.0 2.0 3.0\nH 4.0 5.0 6.0";
 
-fn topology() -> Topology {
+fn topology() -> Arc<Topology> {
     let mut graph = Molecule::builder();
     let carbon = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
@@ -41,10 +42,10 @@ fn topology() -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
-fn water_topology() -> Topology {
+fn water_topology() -> Arc<Topology> {
     let mut graph = Molecule::builder();
     let mut atoms = Vec::new();
     for symbol in ["O", "H", "H"] {
@@ -66,12 +67,12 @@ fn water_topology() -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
-fn binding(topology: &Topology) -> TrajectoryTopologyBinding {
+fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
     TrajectoryTopologyBinding::new(
-        topology.clone(),
+        Arc::clone(topology),
         AtomOrderAssertion::assert_file_uses_topology_order(topology),
     )
     .unwrap()
@@ -138,7 +139,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         "memory.xyz",
     )
     .unwrap();
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let pointer = buffer.configuration().positions().values().value().as_ptr();
     buffer.set_cell(Some(
         PeriodicCell::orthorhombic(
@@ -192,7 +193,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
         "nanometers.xyz",
     )
     .unwrap();
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     reader.read_next(&mut buffer).unwrap();
     assert_eq!(point_xs(&buffer), vec![1.0, 4.0]);
 
@@ -222,7 +223,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
             "bad.xyz",
         )
         .unwrap();
-        let mut destination = FrameBuffer::new(topology.clone());
+        let mut destination = FrameBuffer::new(Arc::clone(&topology));
         destination
             .replace_from_data(FrameBufferData::new(
                 &topology,
@@ -290,7 +291,7 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
 fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     let topology = topology();
     let points = [Point3::new(1.25, 2.5, 3.75), Point3::new(4.0, 5.0, 6.0)];
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
         .replace_from_data(FrameBufferData::new(
             &topology,
@@ -300,7 +301,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
 
     let mut writer = XyzWriter::new(
         Vec::new(),
-        topology.clone(),
+        Arc::clone(&topology),
         XyzWriteOptions::default()
             .with_decimal_places(4)
             .with_comment("round trip"),
@@ -319,7 +320,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
         "round-trip.xyz",
     )
     .unwrap();
-    let mut decoded = FrameBuffer::new(topology.clone());
+    let mut decoded = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut decoded).unwrap());
     assert_eq!(
         decoded.configuration().positions().values().value(),
@@ -363,7 +364,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         RandomAccessCapability::SequentialOnly
     );
     assert!(sequential
-        .read_next(&mut FrameBuffer::new(topology.clone()))
+        .read_next(&mut FrameBuffer::new(Arc::clone(&topology)))
         .unwrap());
 
     let (indexed, _) =
@@ -400,7 +401,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
 
     let output = temporary_path(Some("xyz"));
     let points = [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)];
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
         .replace_from_data(FrameBufferData::new(
             &topology,
@@ -409,7 +410,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
         .unwrap();
     let mut writer = create_trajectory_writer(
         &output,
-        topology.clone(),
+        Arc::clone(&topology),
         TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
     )
     .unwrap();
@@ -483,7 +484,7 @@ fn detection_restores_position_on_read_failure_and_honors_a_zero_byte_limit() {
 fn path_writer_failure_poisoning_prevents_partial_publication() {
     let topology = topology();
     let output = temporary_path(Some("xyz"));
-    let mut frame = FrameBuffer::new(topology.clone());
+    let mut frame = FrameBuffer::new(Arc::clone(&topology));
     frame
         .set_positions(Quantity::new(
             [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)],
@@ -516,7 +517,7 @@ fn empty_concrete_and_atomic_writers_are_rejected_without_publication() {
         codec_kind(
             &XyzWriter::new(
                 Vec::new(),
-                topology.clone(),
+                Arc::clone(&topology),
                 XyzWriteOptions::default(),
                 "empty.xyz",
             )
@@ -538,7 +539,7 @@ fn empty_concrete_and_atomic_writers_are_rejected_without_publication() {
         let output = directory.join(format!("empty.{extension}"));
         let writer = create_trajectory_writer(
             &output,
-            topology.clone(),
+            Arc::clone(&topology),
             TrajectoryWriteOptions::new(format),
         )
         .unwrap();
@@ -569,7 +570,7 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
         "exact-limit.xyz",
     )
     .unwrap();
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(!reader.read_next(&mut buffer).unwrap());
@@ -607,7 +608,7 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
         "guarded-sequential.xyz",
     )
     .unwrap();
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),

@@ -10,7 +10,7 @@ use kekule_traj::analysis::{
 };
 use kekule_traj::{Trajectory, TrajectoryFrame};
 
-fn topology() -> Topology {
+fn topology() -> Arc<Topology> {
     let mut graph = Molecule::builder();
     let mut previous = None;
     for _ in 0..3 {
@@ -28,10 +28,10 @@ fn topology() -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
-fn frame(topology: &Topology, points: [Point3; 3]) -> TrajectoryFrame {
+fn frame(topology: &Arc<Topology>, points: [Point3; 3]) -> TrajectoryFrame {
     TrajectoryFrame::new(Configuration::new(
         Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap(),
     ))
@@ -47,7 +47,7 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
     ];
     let moving = reference.map(|point| Point3::new(point.x + 4.0, point.y - 2.0, point.z + 1.0));
     let trajectory = Trajectory::from_frames(
-        topology.clone(),
+        Arc::clone(&topology),
         [frame(&topology, reference), frame(&topology, moving)],
     )
     .unwrap();
@@ -88,3 +88,4 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
     let measured = split.rmsd_to_frame(0, &selection).unwrap();
     assert!(measured.value()[1] < 1.0e-12);
 }
+use std::sync::Arc;

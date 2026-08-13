@@ -74,3 +74,5 @@ pure-Rust XDR layer.
   empty concrete and atomic writer finishes.
 - v6: Publish the codec under `kekule_traj::io::trr` as part of the unified
   `kekule-traj` trajectory crate.
+- v7: Retain the exact caller-supplied `Arc<Topology>` across TRR readers,
+  writers, and reusable destination buffers.

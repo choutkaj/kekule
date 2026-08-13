@@ -189,7 +189,7 @@ fn instance_to_conformer_maps_local_ids_converts_units_and_is_transactional() {
 }
 
 #[test]
-fn topology_identity_is_shared_only_by_clones() {
+fn topology_allocation_is_shared_only_by_model_clones() {
     let (small, conformer, _, b, _) = two_atom_small(1.5);
     let model = Model::from_small_molecule(&small, conformer).unwrap();
     let mut cloned = model.clone();
@@ -201,8 +201,14 @@ fn topology_identity_is_shared_only_by_clones() {
         .unwrap();
     let rebuilt = Model::from_small_molecule(&small, conformer).unwrap();
 
-    assert!(model.topology().same_identity(cloned.topology()));
-    assert!(!model.topology().same_identity(rebuilt.topology()));
+    assert!(std::sync::Arc::ptr_eq(
+        &model.shared_topology(),
+        &cloned.shared_topology()
+    ));
+    assert!(!std::sync::Arc::ptr_eq(
+        &model.shared_topology(),
+        &rebuilt.shared_topology()
+    ));
     assert!(model.topology().same_layout(rebuilt.topology()));
     assert_ne!(model, cloned);
     assert_ne!(model, rebuilt);
@@ -342,7 +348,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     let model = Model::from_small_molecule(&small, conformer).unwrap();
     let qualified = InstanceBondId::new(MoleculeInstanceId::new(0), bond);
     let mut potential = HarmonicBondPotential::new(
-        model.topology(),
+        &model.shared_topology(),
         [HarmonicBondParameter::new(
             qualified,
             Quantity::new(1.0, ANGSTROM),
@@ -395,7 +401,7 @@ fn harmonic_potential_rejects_periodic_model_and_ensemble_state() {
         .unwrap();
     let qualified = InstanceBondId::new(MoleculeInstanceId::new(0), bond);
     let mut potential = HarmonicBondPotential::new(
-        model.topology(),
+        &model.shared_topology(),
         [HarmonicBondParameter::new(
             qualified,
             Quantity::new(1.0, ANGSTROM),

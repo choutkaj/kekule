@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
 
 use crate::{
     FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorContext,
@@ -447,10 +448,13 @@ impl<R: Read + Seek> TrrReader<R> {
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(self.topology(), Quantity::new(positions, NANOMETER))
-            .with_time(Quantity::new(decoded.header.time, PICOSECOND))
-            .with_step(decoded.header.step)
-            .with_props(props);
+        let mut data = FrameBufferData::new(
+            self.binding.topology_arc(),
+            Quantity::new(positions, NANOMETER),
+        )
+        .with_time(Quantity::new(decoded.header.time, PICOSECOND))
+        .with_step(decoded.header.step)
+        .with_props(props);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
@@ -589,9 +593,13 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
         self.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.binding.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !std::ptr::eq(self.topology(), destination.topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = if self.pending_header.is_some() {
             self.current_header_offset
@@ -653,6 +661,10 @@ impl<R: Read + Seek> TrajectoryReader for IndexedTrrReader<R> {
         self.topology()
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        self.inner.shared_topology()
+    }
+
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryError> {
         self.inner.read_next(destination)
     }
@@ -668,8 +680,8 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
         index: u64,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        if !self.topology().same_identity(destination.topology()) {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !std::ptr::eq(self.topology(), destination.topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         let offset = self
             .offsets
@@ -749,7 +761,7 @@ impl<R: Read + Seek> SeekableTrajectoryReader for IndexedTrrReader<R> {
 /// Pure-Rust TRR writer.
 pub struct TrrWriter<W> {
     writer: W,
-    topology: Topology,
+    topology: Arc<Topology>,
     options: TrrWriteOptions,
     source_label: String,
     frame_count: u64,
@@ -759,7 +771,7 @@ pub struct TrrWriter<W> {
 impl<W: Write> TrrWriter<W> {
     pub fn new(
         writer: W,
-        topology: Topology,
+        topology: Arc<Topology>,
         options: TrrWriteOptions,
         source_label: impl Into<String>,
     ) -> Result<Self, TrajectoryError> {
@@ -819,9 +831,13 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         &self.topology
     }
 
+    fn shared_topology(&self) -> Arc<Topology> {
+        Arc::clone(&self.topology)
+    }
+
     fn write_frame(&mut self, frame: TrajectoryFrameView<'_>) -> Result<(), TrajectoryError> {
-        if frame.topology().identity() != self.topology.identity() {
-            return Err(TrajectoryError::TopologyIdentityMismatch);
+        if !std::ptr::eq(frame.topology(), self.topology()) {
+            return Err(TrajectoryError::TopologyMismatch);
         }
         if frame.observation().is_some() {
             return Err(writer_field_error(

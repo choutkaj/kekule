@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
@@ -16,7 +17,7 @@ use sha2::{Digest, Sha256};
 mod support;
 use support::{buffer_snapshot, GuardedCursor, RestoreSeekFailure};
 
-fn topology(atom_count: usize) -> Topology {
+fn topology(atom_count: usize) -> Arc<Topology> {
     let mut graph = Molecule::builder();
     let mut previous = None;
     for _ in 0..atom_count {
@@ -34,12 +35,12 @@ fn topology(atom_count: usize) -> Topology {
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
-    builder.build().unwrap()
+    Arc::new(builder.build().unwrap())
 }
 
-fn binding(topology: &Topology) -> TrajectoryTopologyBinding {
+fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
     TrajectoryTopologyBinding::new(
-        topology.clone(),
+        Arc::clone(topology),
         AtomOrderAssertion::assert_file_uses_topology_order(topology),
     )
     .unwrap()
@@ -52,8 +53,8 @@ fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
     }
 }
 
-fn source_frame(topology: &Topology, shift: f64, step: u64) -> FrameBuffer {
-    let mut frame = FrameBuffer::new(topology.clone());
+fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
+    let mut frame = FrameBuffer::new(Arc::clone(topology));
     let positions = (0..topology.atom_count())
         .map(|index| {
             let index = index as f64;
@@ -110,7 +111,7 @@ fn assert_x_close(buffer: &FrameBuffer, expected: &[f64], tolerance: f64) {
     }
 }
 
-fn encoded(atom_count: usize, magic: XtcMagic) -> (Topology, Vec<u8>) {
+fn encoded(atom_count: usize, magic: XtcMagic) -> (Arc<Topology>, Vec<u8>) {
     let topology = topology(atom_count);
     let options = XtcWriteOptions::default()
         .with_magic(magic)
@@ -118,7 +119,7 @@ fn encoded(atom_count: usize, magic: XtcMagic) -> (Topology, Vec<u8>) {
         .unwrap();
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         options,
         "memory.xtc",
     )
@@ -131,7 +132,7 @@ fn encoded(atom_count: usize, magic: XtcMagic) -> (Topology, Vec<u8>) {
 }
 
 fn encoded_frame(
-    topology: &Topology,
+    topology: &Arc<Topology>,
     magic: XtcMagic,
     precision: f32,
     shift: f64,
@@ -143,7 +144,7 @@ fn encoded_frame(
         .unwrap();
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(topology),
         options,
         "one-frame.xtc",
     )
@@ -170,7 +171,7 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
             "memory.xtc",
         )
         .unwrap();
-        let mut destination = FrameBuffer::new(topology.clone());
+        let mut destination = FrameBuffer::new(Arc::clone(&topology));
         let pointer = destination
             .configuration()
             .positions()
@@ -239,7 +240,7 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
         "exact-limit.xtc",
     )
     .unwrap();
-    let mut buffer = FrameBuffer::new(topology.clone());
+    let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(reader.read_next(&mut buffer).unwrap());
     assert!(!reader.read_next(&mut buffer).unwrap());
@@ -319,7 +320,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         "maximum-step.xtc",
     )
     .unwrap();
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(destination.frame_view().step(), Some(i32::MAX as u64));
 
@@ -345,7 +346,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
 
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         XtcWriteOptions::default(),
         "signed-writer.xtc",
     )
@@ -360,7 +361,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
 
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         XtcWriteOptions::default(),
         "overflow-writer.xtc",
     )
@@ -404,7 +405,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let options = XtcWriteOptions::default().with_precision(1000.0).unwrap();
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         options,
         "guarded.xtc",
     )
@@ -430,7 +431,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         "guarded-sequential.xtc",
     )
     .unwrap();
-    let mut destination = FrameBuffer::new(topology.clone());
+    let mut destination = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut destination).unwrap());
     assert_eq!(
         codec_kind(&reader.read_next(&mut destination).unwrap_err()),
@@ -639,7 +640,7 @@ fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
             "mixed-profile.xtc",
         )
         .unwrap();
-        let mut destination = FrameBuffer::new(topology.clone());
+        let mut destination = FrameBuffer::new(Arc::clone(&topology));
         assert!(reader.read_next(&mut destination).unwrap());
         let before = x_values(&destination);
         let error = reader.read_next(&mut destination).unwrap_err();
@@ -657,7 +658,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     assert!(XtcWriteOptions::default().with_precision(0.0).is_err());
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
-        topology.clone(),
+        Arc::clone(&topology),
         XtcWriteOptions::default(),
         "strict.xtc",
     )

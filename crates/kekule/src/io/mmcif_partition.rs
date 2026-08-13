@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::bio::{MacroMolecule, SmcraHierarchy};
 use crate::core::{AtomId, Molecule};
@@ -66,10 +67,11 @@ pub fn interpret_mmcif(
 ) -> Result<MmcifInterpretation, raw::MmcifInterpretError> {
     let interpretation = connectivity::interpret_mmcif(document, options)?;
     let (source, report) = interpretation.into_parts();
-    let partition = partition_topology(source.topology())?;
+    let source_topology = source.shared_topology();
+    let partition = partition_topology(&source_topology)?;
     let configuration = remap_configuration(
         source.configuration(),
-        source.topology(),
+        &source_topology,
         &partition.topology,
         &partition.source_atoms,
     )?;
@@ -78,14 +80,15 @@ pub fn interpret_mmcif(
         .map(|observation| {
             remap_observation(
                 observation,
-                source.topology(),
+                &source_topology,
                 &partition.topology,
                 &partition.source_atoms,
             )
         })
         .transpose()?;
-    let model = Model::with_observation(partition.topology.clone(), configuration, observation)
-        .map_err(interpret_error)?;
+    let model =
+        Model::with_observation(Arc::clone(&partition.topology), configuration, observation)
+            .map_err(interpret_error)?;
     let report = remap_report(report, &partition)?;
     Ok(MmcifInterpretation { model, report })
 }
@@ -117,7 +120,8 @@ pub fn interpret_mmcif_ensemble(
 ) -> Result<MmcifEnsembleInterpretation, raw::MmcifEnsembleInterpretError> {
     let interpretation = connectivity::interpret_mmcif_ensemble(document, options)?;
     let (source, reports) = interpretation.into_parts();
-    let partition = partition_topology(source.topology()).map_err(|error| {
+    let source_topology = source.shared_topology();
+    let partition = partition_topology(&source_topology).map_err(|error| {
         raw::MmcifEnsembleInterpretError::Model {
             model_id: reports
                 .first()
@@ -128,12 +132,12 @@ pub fn interpret_mmcif_ensemble(
         }
     })?;
 
-    let topology = partition.topology.clone();
-    let mut ensemble = Ensemble::new(topology.clone());
+    let topology = Arc::clone(&partition.topology);
+    let mut ensemble = Ensemble::new(Arc::clone(&topology));
     for member in source.members() {
         let configuration = remap_configuration(
             member.configuration(),
-            source.topology(),
+            &source_topology,
             &topology,
             &partition.source_atoms,
         )
@@ -152,7 +156,7 @@ pub fn interpret_mmcif_ensemble(
         if let Some(observation) = member.observation() {
             let observation = remap_observation(
                 observation,
-                source.topology(),
+                &source_topology,
                 &topology,
                 &partition.source_atoms,
             )
@@ -185,7 +189,7 @@ pub fn interpret_mmcif_ensemble(
 }
 
 struct PartitionedTopology {
-    topology: Topology,
+    topology: Arc<Topology>,
     /// Source atom corresponding to each dense atom of `topology`.
     source_atoms: Vec<InstanceAtomId>,
     /// Complete source-to-partitioned semantic atom mapping.
@@ -272,7 +276,7 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
         }
     }
 
-    let topology = builder.build().map_err(interpret_error)?;
+    let topology = Arc::new(builder.build().map_err(interpret_error)?);
     if topology.atom_count() != source_atoms.len() || atom_map.len() != source.atom_count() {
         return Err(interpret_error(
             "mmCIF fragment partition changed the represented atom count",
@@ -485,8 +489,8 @@ fn remap_report(
 
 fn remap_configuration(
     source: &Configuration,
-    source_topology: &Topology,
-    target_topology: &Topology,
+    source_topology: &Arc<Topology>,
+    target_topology: &Arc<Topology>,
     source_atoms: &[InstanceAtomId],
 ) -> Result<Configuration, raw::MmcifInterpretError> {
     let positions = source_atoms
@@ -510,8 +514,8 @@ fn remap_configuration(
 
 fn remap_observation(
     source: &StructureObservation,
-    source_topology: &Topology,
-    target_topology: &Topology,
+    source_topology: &Arc<Topology>,
+    target_topology: &Arc<Topology>,
     source_atoms: &[InstanceAtomId],
 ) -> Result<StructureObservation, raw::MmcifInterpretError> {
     let atoms = source_atoms

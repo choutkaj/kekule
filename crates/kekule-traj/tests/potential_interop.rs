@@ -32,8 +32,9 @@ fn bonded_model() -> (Model, InstanceBondId) {
 #[test]
 fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
     let (model, bond) = bonded_model();
+    let topology = model.shared_topology();
     let mut potential = HarmonicBondPotential::new(
-        model.topology(),
+        &topology,
         [HarmonicBondParameter::new(
             bond,
             Quantity::new(1.0, ANGSTROM),
@@ -44,10 +45,10 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
 
     let frame = TrajectoryFrame::new(model.configuration().clone());
     assert!(potential
-        .evaluate(frame.view(model.topology()).unwrap().model_view())
+        .evaluate(frame.view(&topology).unwrap().model_view())
         .is_ok());
 
-    let mut buffer = FrameBuffer::new(model.topology().clone());
+    let mut buffer = FrameBuffer::new(topology);
     buffer.set_positions(model.positions()).unwrap();
     assert!(potential.evaluate(buffer.model_view()).is_ok());
 

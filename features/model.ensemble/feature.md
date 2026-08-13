@@ -3,18 +3,18 @@
 ## Summary
 
 Represent a finite ordered collection of non-temporal structural realizations
-that share one exact topology.
+that share one `Arc<Topology>` allocation.
 
 ## Behavior/API
 
-- `Ensemble` owns one topology and stable-order
+- `Ensemble` owns one `Arc<Topology>` and stable-order
   `EnsembleMember` values.
 - Every member contains one complete compatible configuration, optional typed
   observation state, optional finite non-negative weight, and member metadata.
 - Weight normalization is explicit and rejects invalid or zero-total weights.
 - Members expose borrowed structural views suitable for analyses and prepared
   potentials without creating owned models or copying coordinates.
-- `Ensemble::remap_to` stages every member against one exact target topology,
+- `Ensemble::remap_to` stages every member against one exact shared target topology,
   preserves member order, cells, observations, weights, and properties without
   renormalization, and reports the failing member index.
 
@@ -30,7 +30,7 @@ that share one exact topology.
 - Tests cover topology mismatch, stable order, weight validation and
   normalization, conformer conversion, observation state, and borrowed-view
   analysis.
-- Transformation regressions cover shared target identity, variable cells,
+- Transformation regressions cover the exact shared target allocation, variable cells,
   value-preserved weights and properties, member error context, and source
   immutability.
 
@@ -46,3 +46,5 @@ that share one exact topology.
   explicit weight normalization, conformer conversion, and borrowed views.
 - v3: Add transactional finite-ensemble remapping through exact topology
   lineage with member-index failure context.
+- v4: Retain `Arc<Topology>` directly and validate compatibility through the
+  shared source and target allocations rather than a separate identity token.
