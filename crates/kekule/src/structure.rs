@@ -5,12 +5,14 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::bio::MacroMolecule;
-use crate::core::{AtomId, ConformerError, ConformerId, Molecule, PropMap};
+use crate::core::{Atom, AtomId, Bond, ConformerError, ConformerId, Molecule, PropMap};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::small::SmallMolecule;
 use crate::topology::{
-    InstanceAtomId, MoleculeDefinitionId, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
-    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyMapping,
+    InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
+    InstanceChainId, InstanceResidue, InstanceResidueId, InstanceSmcraHierarchy,
+    MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
+    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyError, TopologyMapping,
 };
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
 
@@ -733,6 +735,107 @@ impl Model {
         Arc::clone(&self.topology)
     }
 
+    pub fn atom(&self, atom: InstanceAtomId) -> Result<&Atom, TopologyError> {
+        self.topology.atom(atom)
+    }
+
+    pub fn bond(&self, bond: InstanceBondId) -> Result<&Bond, TopologyError> {
+        self.topology.bond(bond)
+    }
+
+    pub fn atoms(&self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &Atom)> {
+        self.topology.atoms()
+    }
+
+    pub fn bonds(&self) -> impl ExactSizeIterator<Item = (InstanceBondId, &Bond)> {
+        self.topology.bonds()
+    }
+
+    pub fn instances(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MoleculeInstance)> {
+        self.topology.instances()
+    }
+
+    pub fn hierarchy(
+        &self,
+        instance: MoleculeInstanceId,
+    ) -> Result<Option<InstanceSmcraHierarchy<'_>>, TopologyError> {
+        self.topology.hierarchy(instance)
+    }
+
+    pub fn chains(&self) -> impl Iterator<Item = InstanceChain<'_>> {
+        self.topology.chains()
+    }
+
+    pub fn residues(&self) -> impl Iterator<Item = InstanceResidue<'_>> {
+        self.topology.residues()
+    }
+
+    pub fn atom_sites(&self) -> impl Iterator<Item = InstanceAtomSite<'_>> {
+        self.topology.atom_sites()
+    }
+
+    pub fn chain(&self, chain: InstanceChainId) -> Result<InstanceChain<'_>, TopologyError> {
+        self.topology.chain(chain)
+    }
+
+    pub fn residue(
+        &self,
+        residue: InstanceResidueId,
+    ) -> Result<InstanceResidue<'_>, TopologyError> {
+        self.topology.residue(residue)
+    }
+
+    pub fn atom_site(
+        &self,
+        atom_site: InstanceAtomSiteId,
+    ) -> Result<InstanceAtomSite<'_>, TopologyError> {
+        self.topology.atom_site(atom_site)
+    }
+
+    pub fn atom_for_site(
+        &self,
+        atom_site: InstanceAtomSiteId,
+    ) -> Result<InstanceAtomId, TopologyError> {
+        self.topology.atom_for_site(atom_site)
+    }
+
+    pub fn atom_site_for_atom(
+        &self,
+        atom: InstanceAtomId,
+    ) -> Result<Option<InstanceAtomSite<'_>>, TopologyError> {
+        self.topology.atom_site_for_atom(atom)
+    }
+
+    pub fn residue_for_atom(
+        &self,
+        atom: InstanceAtomId,
+    ) -> Result<Option<InstanceResidue<'_>>, TopologyError> {
+        self.topology.residue_for_atom(atom)
+    }
+
+    pub fn chain_for_atom(
+        &self,
+        atom: InstanceAtomId,
+    ) -> Result<Option<InstanceChain<'_>>, TopologyError> {
+        self.topology.chain_for_atom(atom)
+    }
+
+    pub fn residue_for_site(
+        &self,
+        atom_site: InstanceAtomSiteId,
+    ) -> Result<InstanceResidue<'_>, TopologyError> {
+        self.topology.residue_for_site(atom_site)
+    }
+
+    pub fn chain_for_residue(
+        &self,
+        residue: InstanceResidueId,
+    ) -> Result<InstanceChain<'_>, TopologyError> {
+        self.topology.chain_for_residue(residue)
+    }
+
     pub const fn positions(&self) -> &Positions {
         &self.positions
     }
@@ -942,6 +1045,104 @@ impl<'a> ModelView<'a> {
 
     pub fn shared_topology(self) -> Arc<Topology> {
         Arc::clone(self.topology)
+    }
+
+    pub fn atom(self, atom: InstanceAtomId) -> Result<&'a Atom, TopologyError> {
+        self.topology.atom(atom)
+    }
+
+    pub fn bond(self, bond: InstanceBondId) -> Result<&'a Bond, TopologyError> {
+        self.topology.bond(bond)
+    }
+
+    pub fn atoms(self) -> impl ExactSizeIterator<Item = (InstanceAtomId, &'a Atom)> + 'a {
+        self.topology.atoms()
+    }
+
+    pub fn bonds(self) -> impl ExactSizeIterator<Item = (InstanceBondId, &'a Bond)> + 'a {
+        self.topology.bonds()
+    }
+
+    pub fn instances(
+        self,
+    ) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &'a MoleculeInstance)> + 'a {
+        self.topology.instances()
+    }
+
+    pub fn hierarchy(
+        self,
+        instance: MoleculeInstanceId,
+    ) -> Result<Option<InstanceSmcraHierarchy<'a>>, TopologyError> {
+        self.topology.hierarchy(instance)
+    }
+
+    pub fn chains(self) -> impl Iterator<Item = InstanceChain<'a>> + 'a {
+        self.topology.chains()
+    }
+
+    pub fn residues(self) -> impl Iterator<Item = InstanceResidue<'a>> + 'a {
+        self.topology.residues()
+    }
+
+    pub fn atom_sites(self) -> impl Iterator<Item = InstanceAtomSite<'a>> + 'a {
+        self.topology.atom_sites()
+    }
+
+    pub fn chain(self, chain: InstanceChainId) -> Result<InstanceChain<'a>, TopologyError> {
+        self.topology.chain(chain)
+    }
+
+    pub fn residue(self, residue: InstanceResidueId) -> Result<InstanceResidue<'a>, TopologyError> {
+        self.topology.residue(residue)
+    }
+
+    pub fn atom_site(
+        self,
+        atom_site: InstanceAtomSiteId,
+    ) -> Result<InstanceAtomSite<'a>, TopologyError> {
+        self.topology.atom_site(atom_site)
+    }
+
+    pub fn atom_for_site(
+        self,
+        atom_site: InstanceAtomSiteId,
+    ) -> Result<InstanceAtomId, TopologyError> {
+        self.topology.atom_for_site(atom_site)
+    }
+
+    pub fn atom_site_for_atom(
+        self,
+        atom: InstanceAtomId,
+    ) -> Result<Option<InstanceAtomSite<'a>>, TopologyError> {
+        self.topology.atom_site_for_atom(atom)
+    }
+
+    pub fn residue_for_atom(
+        self,
+        atom: InstanceAtomId,
+    ) -> Result<Option<InstanceResidue<'a>>, TopologyError> {
+        self.topology.residue_for_atom(atom)
+    }
+
+    pub fn chain_for_atom(
+        self,
+        atom: InstanceAtomId,
+    ) -> Result<Option<InstanceChain<'a>>, TopologyError> {
+        self.topology.chain_for_atom(atom)
+    }
+
+    pub fn residue_for_site(
+        self,
+        atom_site: InstanceAtomSiteId,
+    ) -> Result<InstanceResidue<'a>, TopologyError> {
+        self.topology.residue_for_site(atom_site)
+    }
+
+    pub fn chain_for_residue(
+        self,
+        residue: InstanceResidueId,
+    ) -> Result<InstanceChain<'a>, TopologyError> {
+        self.topology.chain_for_residue(residue)
     }
 
     pub const fn positions(self) -> &'a Positions {
@@ -1795,6 +1996,7 @@ impl From<PositionError> for EnsembleError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bio::SmcraAtomSiteMetadata;
     use crate::core::{Atom, Conformer, Element, Molecule};
     use crate::geometry::Vector3;
     use crate::units::{ANGSTROM, KELVIN, NANOMETER, SQUARE_ANGSTROM};
@@ -1884,6 +2086,119 @@ mod tests {
         model.set_cell(Some(cell));
         assert!(Arc::ptr_eq(&model.shared_topology(), &shared));
         assert_eq!(model.cell(), Some(&cell));
+    }
+
+    #[test]
+    fn model_and_view_share_qualified_hierarchy_navigation_without_copying() {
+        let mut macro_builder = MacroMolecule::builder();
+        let atom = macro_builder
+            .graph_mut()
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .unwrap();
+        let chain = macro_builder.hierarchy_mut().add_chain("A", None).unwrap();
+        let residue = macro_builder
+            .hierarchy_mut()
+            .add_residue(chain, "GLY", Some(1), None, None)
+            .unwrap();
+        let site = macro_builder
+            .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
+            .unwrap();
+        let macro_molecule = macro_builder.build().unwrap();
+
+        let mut topology_builder = TopologyBuilder::new();
+        let definition = topology_builder
+            .add_macro_molecule_definition(&macro_molecule)
+            .unwrap();
+        let first = topology_builder
+            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        let second = topology_builder
+            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .unwrap();
+        let topology = Arc::new(topology_builder.build().unwrap());
+        let positions = Positions::new(
+            &topology,
+            Quantity::new(
+                vec![Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)],
+                ANGSTROM,
+            ),
+        )
+        .unwrap();
+        let model = Model::new(Arc::clone(&topology), positions).unwrap();
+        let view = model.view();
+        let first_chain = InstanceChainId::new(first, chain);
+        let second_residue = InstanceResidueId::new(second, residue);
+        let first_site = InstanceAtomSiteId::new(first, site);
+        let first_atom = InstanceAtomId::new(first, atom);
+
+        assert_eq!(
+            model.chains().map(InstanceChain::id).collect::<Vec<_>>(),
+            view.chains().map(InstanceChain::id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            model
+                .residues()
+                .map(InstanceResidue::id)
+                .collect::<Vec<_>>(),
+            view.residues().map(InstanceResidue::id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            model
+                .atom_sites()
+                .map(InstanceAtomSite::id)
+                .collect::<Vec<_>>(),
+            view.atom_sites()
+                .map(InstanceAtomSite::id)
+                .collect::<Vec<_>>()
+        );
+        assert!(std::ptr::eq(
+            model.chain(first_chain).unwrap().local(),
+            view.chain(first_chain).unwrap().local()
+        ));
+        assert!(std::ptr::eq(
+            model.residue(second_residue).unwrap().local(),
+            view.residue(second_residue).unwrap().local()
+        ));
+        assert!(std::ptr::eq(
+            model.atom_site(first_site).unwrap().local(),
+            view.atom_site(first_site).unwrap().local()
+        ));
+        assert_eq!(
+            model.atom_site_for_atom(first_atom).unwrap().unwrap().id(),
+            view.atom_site_for_atom(first_atom).unwrap().unwrap().id()
+        );
+        let model_site = model
+            .chain(first_chain)
+            .unwrap()
+            .residues()
+            .next()
+            .unwrap()
+            .atom_sites()
+            .next()
+            .unwrap();
+        let view_site = view
+            .chain(first_chain)
+            .unwrap()
+            .residues()
+            .next()
+            .unwrap()
+            .atom_sites()
+            .next()
+            .unwrap();
+        assert_eq!(model_site.id(), first_site);
+        assert_eq!(view_site.id(), first_site);
+        assert_eq!(model_site.atom(), first_atom);
+        assert_eq!(view_site.atom(), first_atom);
+        assert_eq!(
+            model.hierarchy(first).unwrap().unwrap().molecule(),
+            view.hierarchy(first).unwrap().unwrap().molecule()
+        );
+        assert_eq!(model.atoms().count(), view.atoms().count());
+        assert_eq!(model.instances().count(), view.instances().count());
+        assert_eq!(
+            model.positions().values().value().as_ptr(),
+            view.positions().values().value().as_ptr()
+        );
     }
 
     #[test]

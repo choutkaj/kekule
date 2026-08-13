@@ -12,6 +12,10 @@ sidecar over one connected shared core molecule graph.
 - Stores biomolecular labels and atom-site metadata in `SmcraHierarchy`, not core `Atom`.
 - `MacroMolecule` owns one connected core `Molecule` plus one
   `SmcraHierarchy`.
+- `SmcraChainId`, `SmcraResidueId`, and `SmcraAtomSiteId` are local to that
+  reusable definition. System-level identity belongs to topology-qualified
+  `InstanceChainId`, `InstanceResidueId`, and `InstanceAtomSiteId`; hierarchy
+  data remains owned only by `MacroMolecule`.
 - `MacroMolecule` exposes chain, residue, and atom-site iterators plus
   `atom_site_for_atom`.
 - `MacroMolecule::validate` checks graph/hierarchy consistency and all retained
@@ -98,3 +102,6 @@ sidecar over one connected shared core molecule graph.
 - v13: Require a connected graph at every completed `MacroMolecule` boundary,
   expose structured disconnected validation, and preserve the original value
   when a staged edit would disconnect it.
+- v14: State the definition-local scope of SMCRA IDs and delegate
+  instance-qualified system navigation to `Topology` without moving hierarchy
+  ownership.

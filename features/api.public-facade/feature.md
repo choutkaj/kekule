@@ -63,6 +63,11 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Immutable system topology and direct model-state containers live under
   `topology` and `structure`; potentials and minimization remain under
   `modeling`. These focused types are not added to the prelude.
+- Definition-local SMCRA IDs remain under `bio`; `topology` supplies canonical
+  instance-qualified chain, residue, and atom-site IDs plus lightweight
+  borrowed hierarchy views. `Model` and `ModelView` forward the common
+  read-only surface without duplicated hierarchy state; raw local nodes require
+  an explicit `local` call.
 - The topology facade names complete static equality `Topology::same_layout`
   and restricts `TopologyMapping::between_identical_layouts` to identity maps
   over that exact layout. Checked explicit mappings and topology-edit results
@@ -118,6 +123,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Public topology tests compile the shared-Arc, same-layout, checked
   identical-layout mapping, and checked edit-result surface, while compile-fail
   coverage keeps the removed raw-clone and identity APIs unavailable.
+- Public and unit hierarchy tests cover reused macro definitions, qualified
+  chained parent/child navigation, small-molecule absence, zero-copy model
+  views, and instance-specific chain/residue selections.
 - Downstream transformation tests compile instance retain/remove, stable
   mapping traversal, model and selection remapping, and ensemble remapping;
   `kekule-traj` separately covers owned trajectory and reusable-buffer remaps.
@@ -214,3 +222,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   topology-bound `AtomData` and the flattened `Model`/`ModelView` API.
 - v34: Reconcile the flattened API around directly borrowed `Positions`,
   field-specific `AtomData` construction, and quantity-valued B-factors.
+- v35: Add canonical instance-qualified SMCRA identities and expose coherent
+  zero-copy hierarchy navigation through `Topology`, `Model`, and `ModelView`.
+- v36: Replace raw system-level SMCRA node returns with lightweight borrowed
+  qualified views while keeping definition-local access explicit and
+  zero-copy.

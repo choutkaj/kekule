@@ -11,8 +11,8 @@ use crate::structure::{
     Ensemble, InstanceToConformerError, Model, ModelBuildError, ModelView, PositionError,
 };
 use crate::topology::{
-    InstanceAtomId, InstanceBondId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole,
-    TopologyBuildError,
+    InstanceAtomId, InstanceAtomSiteId, InstanceBondId, MoleculeInstanceId,
+    MoleculeInstanceMetadata, MoleculeRole, TopologyBuildError,
 };
 use crate::units::{
     Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
@@ -236,7 +236,9 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
         .has_role(MoleculeRole::Ligand));
     let hierarchy = model.topology().hierarchy(macro_id).unwrap().unwrap();
     assert_eq!(
-        hierarchy.atom_for_site(site).unwrap(),
+        hierarchy
+            .atom_for_site(InstanceAtomSiteId::new(macro_id, site))
+            .unwrap(),
         InstanceAtomId::new(macro_id, atom)
     );
 }
