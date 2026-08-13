@@ -7,9 +7,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::bio::SmcraResidueId;
 use crate::structure::{Model, ModelView};
-use crate::topology::MoleculeInstanceId;
+use crate::topology::{InstanceResidueId, MoleculeInstanceId};
 
 mod kernel;
 
@@ -108,33 +107,6 @@ impl fmt::Display for DsspCodeError {
 
 impl std::error::Error for DsspCodeError {}
 
-/// A canonical residue identity qualified by its model molecule instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DsspResidueKey {
-    molecule: MoleculeInstanceId,
-    residue: SmcraResidueId,
-}
-
-impl DsspResidueKey {
-    pub const fn new(molecule: MoleculeInstanceId, residue: SmcraResidueId) -> Self {
-        Self { molecule, residue }
-    }
-
-    pub const fn molecule(self) -> MoleculeInstanceId {
-        self.molecule
-    }
-
-    pub const fn residue(self) -> SmcraResidueId {
-        self.residue
-    }
-}
-
-impl fmt::Display for DsspResidueKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:residue{}", self.molecule, self.residue.raw())
-    }
-}
-
 /// Source hierarchy labels retained as metadata, not result identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsspResidueSource {
@@ -173,7 +145,7 @@ pub enum DsspHelixPosition {
 /// cutoff.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DsspHydrogenBond {
-    pub partner: DsspResidueKey,
+    pub partner: InstanceResidueId,
     /// DSSP electrostatic energy in kcal/mol.
     pub energy_kcal_per_mol: f64,
 }
@@ -181,7 +153,7 @@ pub struct DsspHydrogenBond {
 /// One beta partner produced by DSSP bridge/ladder construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DsspBetaPartner {
-    pub partner: DsspResidueKey,
+    pub partner: InstanceResidueId,
     /// Zero-based deterministic ladder identifier.
     pub ladder: usize,
     pub parallel: bool,
@@ -190,7 +162,7 @@ pub struct DsspBetaPartner {
 /// DSSP values for one analyzed residue.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DsspResidue {
-    key: DsspResidueKey,
+    key: InstanceResidueId,
     source: DsspResidueSource,
     secondary_structure: DsspSecondaryStructure,
     chain_break: DsspChainBreak,
@@ -209,7 +181,7 @@ pub struct DsspResidue {
 }
 
 impl DsspResidue {
-    pub const fn key(&self) -> DsspResidueKey {
+    pub const fn key(&self) -> InstanceResidueId {
         self.key
     }
 
@@ -338,7 +310,7 @@ pub enum DsspSkipReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DsspSkippedResidue {
-    pub key: DsspResidueKey,
+    pub key: InstanceResidueId,
     pub source: DsspResidueSource,
     pub reason: DsspSkipReason,
 }
@@ -437,19 +409,19 @@ pub enum DsspError {
         value: usize,
     },
     AmbiguousBackboneAtom {
-        residue: DsspResidueKey,
+        residue: InstanceResidueId,
         atom_name: &'static str,
     },
     DegenerateBackboneGeometry {
-        residue: DsspResidueKey,
+        residue: InstanceResidueId,
         quantity: &'static str,
     },
     NonFiniteGeometry {
-        residue: DsspResidueKey,
+        residue: InstanceResidueId,
         quantity: &'static str,
     },
     CoordinateOutOfRange {
-        residue: DsspResidueKey,
+        residue: InstanceResidueId,
         quantity: &'static str,
     },
     InvalidHierarchy {
@@ -500,7 +472,7 @@ impl std::error::Error for DsspError {}
 #[derive(Debug, Clone, PartialEq)]
 pub struct DsspResult {
     residues: Vec<DsspResidue>,
-    lookup: BTreeMap<DsspResidueKey, usize>,
+    lookup: BTreeMap<InstanceResidueId, usize>,
     statistics: DsspStatistics,
     report: DsspReport,
 }
@@ -510,7 +482,7 @@ impl DsspResult {
         self.residues.iter()
     }
 
-    pub fn get(&self, key: DsspResidueKey) -> Option<&DsspResidue> {
+    pub fn get(&self, key: InstanceResidueId) -> Option<&DsspResidue> {
         self.lookup
             .get(&key)
             .and_then(|index| self.residues.get(*index))

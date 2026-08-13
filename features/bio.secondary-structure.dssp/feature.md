@@ -31,15 +31,15 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   label/author chain identity only when their canonical residue identities are
   disjoint; overlapping residue identities remain separate logical chains so
   repeated molecular copies are never collapsed.
-- `DsspResidueKey` qualifies each local `SmcraResidueId` with its
-  `MoleculeInstanceId`. Results never flatten or renumber topology.
+- DSSP uses the canonical topology `InstanceResidueId` for result identity.
+  Results never flatten or renumber topology.
 - `DsspSecondaryStructure` represents the complete DSSP 4 summary alphabet:
   loop (` `), alpha helix (`H`), isolated beta bridge (`B`), extended beta
   strand (`E`), 3-10 helix (`G`), pi helix (`I`), polyproline-II/kappa helix
   (`P`), hydrogen-bonded turn (`T`), and bend (`S`). Conversion to the canonical
   one-character DSSP code is explicit.
 - `DsspResult` provides deterministic hierarchy-order iteration and lookup by
-  `DsspResidueKey`. Each analyzed residue exposes its summary assignment,
+  `InstanceResidueId`. Each analyzed residue exposes its summary assignment,
   chain-break status, optional backbone/geometric values (`phi`, `psi`,
   `omega`, `alpha`, `kappa`, and `TCO`), up to two strongest donor and acceptor
   hydrogen-bond partners with energies, and beta bridge/ladder/sheet
@@ -176,3 +176,5 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 - v7: Reassemble disjoint fragments of one logical hierarchy chain across
   connected molecule instances while keeping overlapping repeated copies
   separate and preserving instance-qualified public residue identities.
+- v8: Replace the duplicate DSSP-specific qualified residue key with the
+  canonical topology `InstanceResidueId`.
