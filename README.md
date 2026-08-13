@@ -34,7 +34,7 @@ Higher, modeling-based objects are built around `Topology`: an immutable topolog
 
 ```text
 Topology = reusable definitions + explicit instances + dense ordering
-┣ Model      = Topology + Positions + optional cell + AtomData
+┣ Model      = Topology + Positions + optional cell + gi 
 ┣ Ensemble   = Topology + finite non-temporal members
 ┗ Trajectory = Topology + ordered frames / reusable streaming buffers
 ```
