@@ -4,8 +4,12 @@ permissions:
   contents: read
 
 on:
-  # Automatic GitHub-hosted CI is paused while repository Actions compute is
-  # unavailable. Run the repository checks locally before integration.
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
@@ -43,6 +47,7 @@ jobs:
 
   fuzz-smoke:
     name: Fuzz smoke
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
