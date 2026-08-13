@@ -4,7 +4,7 @@ use std::fmt;
 use crate::bio::{MacroValidateOptions, SmcraAtomSite, SmcraHierarchy};
 use crate::core::{AtomId, BondOrder};
 use crate::geometry::Point3;
-use crate::structure::{AtomObservation, Model};
+use crate::structure::Model;
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
     MoleculeRole,
@@ -561,12 +561,7 @@ fn collect_macro_rows(
                 field: "type_symbol",
             });
         }
-        let observation = atom_observation(model, qualified);
-        let group_pdb = normalized_group_pdb(
-            qualified,
-            observation.and_then(AtomObservation::group_pdb),
-            kind.default_group_pdb(),
-        )?;
+        let group_pdb = normalized_group_pdb(qualified, None, kind.default_group_pdb())?;
         let label_atom_id = site
             .metadata
             .label_atom_id
@@ -585,9 +580,7 @@ fn collect_macro_rows(
             group_pdb,
             type_symbol: atom.element.symbol().to_owned(),
             label_atom_id: label_atom_id.clone(),
-            label_alt_id: observation
-                .and_then(AtomObservation::alternate_location)
-                .map(str::to_owned),
+            label_alt_id: None,
             label_comp_id: label_comp_id.clone(),
             label_seq_id: residue.label_seq_id,
             insertion_code: residue.insertion_code.clone(),
@@ -596,8 +589,15 @@ fn collect_macro_rows(
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
                 .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
-            occupancy: observation.and_then(AtomObservation::occupancy),
-            b_factor: observation.and_then(AtomObservation::b_factor),
+            occupancy: model
+                .occupancy(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+            b_factor: model
+                .b_factor(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
+                .transpose()
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: residue
                 .author_seq_id
@@ -633,21 +633,14 @@ fn collect_small_rows(
     for (atom_id, atom) in definition.graph().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let atom_name = generated_atom_name(atom.element.symbol(), atom_id);
-        let observation = atom_observation(model, qualified);
         rows.push(AtomRow {
             atom: qualified,
             entity_id: entity_id.to_owned(),
             asym_id: asym_id.to_owned(),
-            group_pdb: normalized_group_pdb(
-                qualified,
-                observation.and_then(AtomObservation::group_pdb),
-                kind.default_group_pdb(),
-            )?,
+            group_pdb: normalized_group_pdb(qualified, None, kind.default_group_pdb())?,
             type_symbol: atom.element.symbol().to_owned(),
             label_atom_id: atom_name.clone(),
-            label_alt_id: observation
-                .and_then(AtomObservation::alternate_location)
-                .map(str::to_owned),
+            label_alt_id: None,
             label_comp_id: component_id.to_owned(),
             label_seq_id: None,
             insertion_code: None,
@@ -656,8 +649,15 @@ fn collect_small_rows(
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
                 .value_in(ANGSTROM)
                 .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
-            occupancy: observation.and_then(AtomObservation::occupancy),
-            b_factor: observation.and_then(AtomObservation::b_factor),
+            occupancy: model
+                .occupancy(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
+            b_factor: model
+                .b_factor(qualified)
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
+                .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
+                .transpose()
+                .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?,
             formal_charge: atom.formal_charge,
             auth_seq_id: None,
             auth_comp_id: component_id.to_owned(),
@@ -666,12 +666,6 @@ fn collect_small_rows(
         });
     }
     Ok(())
-}
-
-fn atom_observation(model: &Model, atom: InstanceAtomId) -> Option<&AtomObservation> {
-    let observation = model.observation()?;
-    let index = model.topology().atom_index(atom)?;
-    observation.atom_at(index)
 }
 
 fn normalized_group_pdb(

@@ -2,9 +2,9 @@ id = "bio.mmcif.interpret"
 title = "mmCIF molecular interpretation"
 area = "bio"
 domains = ["macromolecule"]
-version = 15
+version = 17
 status = "supported"
-description = "Interpret explicit mmCIF coordinate models into connected molecular instances, separated topology and configuration, occurrence-aware provenance, conflict-checked declared connectivity, and source-identity-verified ensembles."
+description = "Interpret explicit mmCIF coordinate models into connected molecular instances, flattened Model state with AtomData, occurrence-aware provenance, conflict-checked declared connectivity, and source-identity-verified ensembles."
 depends_on = [
   "bio.hierarchy.smcra",
   "model.topology",

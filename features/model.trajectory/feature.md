@@ -11,9 +11,8 @@ I/O, and focused trajectory-oriented analysis workflows.
 - The `kekule-traj` package and `kekule_traj` Rust import root depend one-way
   on the foundational `kekule` package. Trajectory types are exported from the
   `kekule_traj` root; codecs and path factories live under `kekule_traj::io`.
-- The crate provides topology-bound frames with required
-  positions and optional cell, velocities, forces, time, step, observation
-  state, and frame metadata.
+- The crate provides topology-bound frames with required positions and direct
+  optional cell, `AtomData`, velocities, forces, time, step, and frame metadata.
 - In-memory `Trajectory` stores ordered frames directly rather than as
   `Vec<Model>`.
 - `TrajectoryReader` fills a caller-owned `FrameBuffer`;
@@ -22,16 +21,16 @@ I/O, and focused trajectory-oriented analysis workflows.
   `shared_topology` so implementations retain and propagate the exact Arc.
 - `FrameBuffer::replace_from_data` transactionally publishes complete borrowed
   decoder state after validating every field, converts units once, reuses all
-  dense-array allocations, clears absent optional state, and leaves the
+  coordinate/vector-array allocations, clears absent optional state, and leaves the
   destination unchanged on failure.
-- `FrameBuffer::reset_dynamic_state` clears cell, velocities, forces, time,
-  step, observation, and properties without replacing its positions allocation;
+- `FrameBuffer::reset_dynamic_state` clears cell, atom data, velocities, forces,
+  time, step, and properties without replacing its positions allocation;
   coordinate-only readers use this reset after filling positions.
 - Frame and buffer views can be consumed by structural analyses and prepared
   potentials without owned-model construction or coordinate copying.
 - Owned frames and finite in-memory trajectories remap through exact checked
   topology lineage while preserving order, positions, cells, velocities,
-  forces, time, step, observations, and properties.
+  forces, time, step, atom data, and properties.
 - `FrameBuffer::copy_remapped_from` transactionally copies borrowed source
   frame state into an exact target-bound buffer without constructing a model
   and reuses position, velocity, and force allocations.
@@ -42,7 +41,7 @@ I/O, and focused trajectory-oriented analysis workflows.
   `TrajectoryCodecErrorKind` values plus cloneable I/O/codec contexts report
   typed format, operation, source, frame, byte offset, count, and underlying
   I/O information.
-- General single-configuration geometry, selections, alignment, and potential
+- General single-model geometry, selections, alignment, and potential
   kernels remain in `kekule`. `kekule-traj` supplies zero-copy frame views and
   owns trajectory-scale orchestration. Initial superposition and direct/fused
   RMSD workflows are tracked by `algo.trajectory-superposition` and
@@ -67,7 +66,7 @@ I/O, and focused trajectory-oriented analysis workflows.
   allocation.
 - Transformation regressions cover complete owned and borrowed frame transfer,
   frame-index error context, target-buffer allocation rejection, unchanged
-  positions, cell, vectors, time, step, observation, and properties after a
+  positions, cell, vectors, time, step, atom data, and properties after a
   later validation failure, stale optional-state clearing after positions-only
   remaps, and stable dense-array pointers and capacities over repeated remaps.
 - Downstream tests prove external applications can implement sequential,
@@ -114,3 +113,5 @@ I/O, and focused trajectory-oriented analysis workflows.
 - v11: Retain `Arc<Topology>` throughout frames, buffers, trajectories,
   streaming implementations, and atom-order assertions; add shared-topology
   trait accessors and remove identity-token errors and APIs.
+- v12: Flatten frame and reusable-buffer model state to direct positions, cell,
+  and topology-bound `AtomData`, removing configuration and observation wrappers.

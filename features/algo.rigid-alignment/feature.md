@@ -16,14 +16,14 @@ transform over an exact-topology atom selection.
   in `MODEL_LENGTH_UNIT`, and the selected atom count.
 - Uses uniform weights by default. Explicit weights correspond to selection
   order, must match its length, and must be finite and strictly positive.
-- Rejects periodic configurations by default.
+- Rejects periodic models by default.
   `PeriodicAlignmentPolicy::UseStoredCoordinates` ignores cells and performs no
   imaging, wrapping, unwrapping, or minimum-image correction.
 - Requires at least three selected atoms and rank-two geometry on both sides.
   Planar non-collinear selections are valid; coincident, collinear, and
   scale-relatively near-collinear selections are rejected structurally.
-- Leaves every input topology, coordinate container, cell, observation,
-  property, and selection unchanged.
+- Leaves every input topology, coordinate container, cell, atom data, property,
+  and selection unchanged.
 
 ## Implementation Notes
 

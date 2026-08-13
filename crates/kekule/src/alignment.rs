@@ -17,7 +17,7 @@
 //! use kekule::core::{Atom, BondOrder, Element, Molecule};
 //! use kekule::geometry::Point3;
 //! use kekule::small::SmallMolecule;
-//! use kekule::structure::{Configuration, Model, Positions};
+//! use kekule::structure::{Model, Positions};
 //! use kekule::topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use std::sync::Arc;
@@ -48,17 +48,17 @@
 //! ));
 //! let moving = Model::new(
 //!     Arc::clone(&topology),
-//!     Configuration::new(Positions::new(
+//!     Positions::new(
 //!         &topology,
 //!         Quantity::new(moving_points, ANGSTROM),
-//!     )?),
+//!     )?,
 //! )?;
 //! let reference = Model::new(
 //!     Arc::clone(&topology),
-//!     Configuration::new(Positions::new(
+//!     Positions::new(
 //!         &topology,
 //!         Quantity::new(reference_points, ANGSTROM),
-//!     )?),
+//!     )?,
 //! )?;
 //! let selection = AtomSelection::from_atoms(
 //!     &topology,
@@ -145,8 +145,8 @@ pub fn kabsch_with_options(
         });
     }
 
-    let moving_positions = moving.positions();
-    let reference_positions = reference.positions();
+    let moving_positions = moving.positions().values();
+    let reference_positions = reference.positions().values();
     let moving_positions = moving_positions.value();
     let reference_positions = reference_positions.value();
 
@@ -197,7 +197,7 @@ pub fn kabsch_with_options(
 pub struct KabschOptions<'a> {
     /// Per-selected-atom weighting policy.
     pub weighting: AlignmentWeighting<'a>,
-    /// Handling of configurations carrying periodic cells.
+    /// Handling of models carrying periodic cells.
     pub periodic_policy: PeriodicAlignmentPolicy,
 }
 
@@ -211,7 +211,7 @@ pub enum AlignmentWeighting<'a> {
     Explicit(&'a [f64]),
 }
 
-/// Policy for configurations carrying periodic cells.
+/// Policy for models carrying periodic cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PeriodicAlignmentPolicy {
@@ -303,9 +303,9 @@ pub enum AlignmentError {
     },
     /// Periodic coordinates were rejected by policy.
     PeriodicCoordinates {
-        /// Whether the moving configuration has a cell.
+        /// Whether the moving model has a cell.
         moving: bool,
-        /// Whether the reference configuration has a cell.
+        /// Whether the reference model has a cell.
         reference: bool,
     },
     /// Fixed-size numerical accumulation or decomposition did not produce a
@@ -822,7 +822,7 @@ mod tests {
     use crate::core::{Atom, BondOrder, Element, Molecule};
     use crate::geometry::PeriodicCell;
     use crate::small::SmallMolecule;
-    use crate::structure::{Configuration, Model, Positions};
+    use crate::structure::{Model, Positions};
     use crate::topology::{AtomSelection, MoleculeInstanceMetadata, Topology, TopologyBuilder};
     use crate::units::{Quantity, ANGSTROM, NANOMETER};
 
@@ -849,7 +849,7 @@ mod tests {
 
     fn model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
         let positions = Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap();
-        Model::new(Arc::clone(topology), Configuration::new(positions)).unwrap()
+        Model::new(Arc::clone(topology), positions).unwrap()
     }
 
     fn models(moving: &[Point3], reference: &[Point3]) -> (Arc<Topology>, Model, Model) {
@@ -945,8 +945,8 @@ mod tests {
         let points = fixture_points();
         let (topology, moving, reference) = models(&points, &points);
         let selection = all(&topology);
-        let moving_before = moving.positions().value().to_vec();
-        let reference_before = reference.positions().value().to_vec();
+        let moving_before = moving.positions().values().value().to_vec();
+        let reference_before = reference.positions().values().value().to_vec();
         let selection_before = selection.clone();
 
         let result = kabsch(moving.view(), reference.view(), &selection).unwrap();
@@ -955,9 +955,12 @@ mod tests {
         assert_close(result.rmsd().into_value(), 0.0, 1.0e-14);
         assert_eq!(result.rmsd().unit(), MODEL_LENGTH_UNIT);
         assert_eq!(result.selected_atom_count(), points.len());
-        assert_eq!(moving.positions().into_value(), moving_before.as_slice());
         assert_eq!(
-            reference.positions().into_value(),
+            moving.positions().values().into_value(),
+            moving_before.as_slice()
+        );
+        assert_eq!(
+            reference.positions().values().into_value(),
             reference_before.as_slice()
         );
         assert_eq!(selection, selection_before);
@@ -1425,7 +1428,7 @@ mod tests {
         moving.set_cell(Some(cell));
         reference.set_cell(Some(cell));
         let selection = all(&topology);
-        let moving_before = moving.positions().value().to_vec();
+        let moving_before = moving.positions().values().value().to_vec();
 
         assert_eq!(
             kabsch(moving.view(), reference.view(), &selection),
@@ -1447,7 +1450,10 @@ mod tests {
         assert_transform_close(result.transform(), expected, 3.0e-12);
         assert_eq!(moving.cell(), Some(&cell));
         assert_eq!(reference.cell(), Some(&cell));
-        assert_eq!(moving.positions().into_value(), moving_before.as_slice());
+        assert_eq!(
+            moving.positions().values().into_value(),
+            moving_before.as_slice()
+        );
     }
 
     #[test]
@@ -1463,7 +1469,7 @@ mod tests {
         let result = kabsch(moving.view(), reference_model.view(), &all(&topology)).unwrap();
 
         assert_close(result.transform().rotation().determinant(), 1.0, 1.0e-12);
-        for (moving, reference) in moving.positions().value().iter().zip(reference) {
+        for (moving, reference) in moving.positions().values().value().iter().zip(reference) {
             assert_point_close(
                 result.transform().transform_point(*moving),
                 reference,

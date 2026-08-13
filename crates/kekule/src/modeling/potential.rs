@@ -90,7 +90,7 @@ impl PotentialEvaluation {
 /// Implementations may retain mutable caches between calls. Every returned
 /// evaluation must contain one finite gradient vector per topology atom.
 /// Prepared implementations bind to one shared `Arc<Topology>` allocation. Accepting a
-/// [`ModelView`] does not imply support for every configuration field;
+/// [`ModelView`] does not imply support for every model-state field;
 /// implementations must document capabilities such as periodic-cell support
 /// and return a structured error for unsupported state.
 pub trait Potential {
@@ -127,7 +127,7 @@ impl HarmonicBondParameter {
 ///
 /// Each term contributes `0.5 * k * (r - r0)^2`. No parameters are inferred,
 /// and angle, torsion, and nonbonded interactions are intentionally absent.
-/// This potential is nonperiodic and rejects any evaluated configuration with
+/// This potential is nonperiodic and rejects any evaluated model with
 /// a periodic cell.
 pub struct HarmonicBondPotential {
     topology: Arc<Topology>,

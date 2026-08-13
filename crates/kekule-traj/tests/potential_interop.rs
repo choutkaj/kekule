@@ -43,13 +43,13 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
     )
     .unwrap();
 
-    let frame = TrajectoryFrame::new(model.configuration().clone());
+    let frame = TrajectoryFrame::new(model.positions().clone());
     assert!(potential
         .evaluate(frame.view(&topology).unwrap().model_view())
         .is_ok());
 
     let mut buffer = FrameBuffer::new(topology);
-    buffer.set_positions(model.positions()).unwrap();
+    buffer.set_positions(model.positions().values()).unwrap();
     assert!(potential.evaluate(buffer.model_view()).is_ok());
 
     let cell = PeriodicCell::orthorhombic(

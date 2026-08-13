@@ -6,7 +6,7 @@ use kekule::{
     core::{Atom, BondOrder, Element, Molecule},
     geometry::Point3,
     small::SmallMolecule,
-    structure::{Configuration, Model, Positions},
+    structure::{Model, Positions},
     topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder},
     units::{Quantity, ANGSTROM, MODEL_LENGTH_UNIT},
 };
@@ -38,17 +38,11 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
         moving_points.map(|point| Point3::new(-point.y + 4.0, point.x - 2.0, point.z + 0.5));
     let moving = Model::new(
         Arc::clone(&topology),
-        Configuration::new(Positions::new(
-            &topology,
-            Quantity::new(moving_points, ANGSTROM),
-        )?),
+        Positions::new(&topology, Quantity::new(moving_points, ANGSTROM))?,
     )?;
     let reference = Model::new(
         Arc::clone(&topology),
-        Configuration::new(Positions::new(
-            &topology,
-            Quantity::new(reference_points, ANGSTROM),
-        )?),
+        Positions::new(&topology, Quantity::new(reference_points, ANGSTROM))?,
     )?;
     let selection = AtomSelection::from_atoms(&topology, topology.atom_ids().iter().copied())?;
 

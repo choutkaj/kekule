@@ -4,9 +4,7 @@ use std::sync::Arc;
 use crate::bio::{MacroMolecule, SmcraHierarchy};
 use crate::core::{AtomId, Molecule};
 use crate::small::SmallMolecule;
-use crate::structure::{
-    Configuration, Ensemble, EnsembleMember, Model, Positions, StructureObservation,
-};
+use crate::structure::{AtomData, Ensemble, EnsembleMember, Model, Positions};
 use crate::topology::{
     InstanceAtomId, MoleculeInstanceId, MoleculeRole, Topology, TopologyBuilder,
 };
@@ -38,14 +36,6 @@ impl MmcifInterpretation {
         self.model.topology()
     }
 
-    pub fn configuration(&self) -> &Configuration {
-        self.model.configuration()
-    }
-
-    pub fn observation(&self) -> Option<&StructureObservation> {
-        self.model.observation()
-    }
-
     pub fn into_model(self) -> Model {
         self.model
     }
@@ -69,26 +59,25 @@ pub fn interpret_mmcif(
     let (source, report) = interpretation.into_parts();
     let source_topology = source.shared_topology();
     let partition = partition_topology(&source_topology)?;
-    let configuration = remap_configuration(
-        source.configuration(),
+    let positions = remap_positions(
+        source.positions(),
         &source_topology,
         &partition.topology,
         &partition.source_atoms,
     )?;
-    let observation = source
-        .observation()
-        .map(|observation| {
-            remap_observation(
-                observation,
-                &source_topology,
-                &partition.topology,
-                &partition.source_atoms,
-            )
-        })
-        .transpose()?;
-    let model =
-        Model::with_observation(Arc::clone(&partition.topology), configuration, observation)
-            .map_err(interpret_error)?;
+    let atom_data = remap_atom_data(
+        source.atom_data(),
+        &source_topology,
+        &partition.topology,
+        &partition.source_atoms,
+    )?;
+    let model = Model::with_atom_data(
+        Arc::clone(&partition.topology),
+        positions,
+        source.cell().copied(),
+        atom_data,
+    )
+    .map_err(interpret_error)?;
     let report = remap_report(report, &partition)?;
     Ok(MmcifInterpretation { model, report })
 }
@@ -134,43 +123,33 @@ pub fn interpret_mmcif_ensemble(
 
     let topology = Arc::clone(&partition.topology);
     let mut ensemble = Ensemble::new(Arc::clone(&topology));
-    for member in source.members() {
-        let configuration = remap_configuration(
-            member.configuration(),
+    for (member, report) in source.members().zip(&reports) {
+        let model_id = report.selected_model().unwrap_or("<unknown>").to_owned();
+        let positions = remap_positions(
+            member.positions(),
             &source_topology,
             &topology,
             &partition.source_atoms,
         )
         .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
-            model_id: member
-                .observation()
-                .and_then(StructureObservation::source_model_id)
-                .unwrap_or("<unknown>")
-                .to_owned(),
+            model_id: model_id.clone(),
             error,
         })?;
-        let mut rebuilt = EnsembleMember::new(configuration);
+        let mut rebuilt = EnsembleMember::new(positions);
+        rebuilt.set_cell(member.cell().copied());
         rebuilt
             .set_weight(member.weight())
             .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-        if let Some(observation) = member.observation() {
-            let observation = remap_observation(
-                observation,
-                &source_topology,
-                &topology,
-                &partition.source_atoms,
-            )
-            .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
-                model_id: observation
-                    .source_model_id()
-                    .unwrap_or("<unknown>")
-                    .to_owned(),
-                error,
-            })?;
-            rebuilt
-                .set_observation(Some(observation))
-                .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-        }
+        let atom_data = remap_atom_data(
+            member.atom_data(),
+            &source_topology,
+            &topology,
+            &partition.source_atoms,
+        )
+        .map_err(|error| raw::MmcifEnsembleInterpretError::Model { model_id, error })?;
+        rebuilt
+            .set_atom_data(atom_data)
+            .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
         rebuilt.props_mut().clone_from(member.props());
         ensemble
             .push(rebuilt)
@@ -487,52 +466,64 @@ fn remap_report(
     Ok(report)
 }
 
-fn remap_configuration(
-    source: &Configuration,
+fn remap_positions(
+    source: &Positions,
     source_topology: &Arc<Topology>,
     target_topology: &Arc<Topology>,
     source_atoms: &[InstanceAtomId],
-) -> Result<Configuration, raw::MmcifInterpretError> {
+) -> Result<Positions, raw::MmcifInterpretError> {
     let positions = source_atoms
         .iter()
         .copied()
         .map(|atom| {
             source
-                .positions()
                 .position(source_topology, atom)
                 .map(|position| position.into_value())
                 .map_err(interpret_error)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let positions = Positions::new(target_topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
-        .map_err(interpret_error)?;
-    Ok(match source.cell().copied() {
-        Some(cell) => Configuration::with_cell(positions, cell),
-        None => Configuration::new(positions),
-    })
+    Positions::new(target_topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
+        .map_err(interpret_error)
 }
 
-fn remap_observation(
-    source: &StructureObservation,
+fn remap_atom_data(
+    source: &AtomData,
     source_topology: &Arc<Topology>,
     target_topology: &Arc<Topology>,
     source_atoms: &[InstanceAtomId],
-) -> Result<StructureObservation, raw::MmcifInterpretError> {
-    let atoms = source_atoms
+) -> Result<AtomData, raw::MmcifInterpretError> {
+    let occupancies = source_atoms
         .iter()
         .copied()
         .map(|atom| {
             source
-                .atom(source_topology, atom)
-                .cloned()
+                .occupancy(source_topology, atom)
                 .map_err(interpret_error)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut observation =
-        StructureObservation::new(target_topology, atoms).map_err(interpret_error)?;
-    observation.set_source_model_id(source.source_model_id().map(str::to_owned));
-    observation.props_mut().clone_from(source.props());
-    Ok(observation)
+    let b_factors = source_atoms
+        .iter()
+        .copied()
+        .map(|atom| {
+            source
+                .b_factor(source_topology, atom)
+                .map_err(interpret_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut atom_data = AtomData::new(target_topology);
+    atom_data
+        .set_occupancies(occupancies)
+        .map_err(interpret_error)?;
+    atom_data
+        .set_b_factors(Quantity::new(
+            b_factors
+                .into_iter()
+                .map(|value| value.map(Quantity::into_value))
+                .collect::<Vec<_>>(),
+            crate::units::SQUARE_ANGSTROM,
+        ))
+        .map_err(interpret_error)?;
+    Ok(atom_data)
 }
 
 fn interpret_error(error: impl std::fmt::Display) -> raw::MmcifInterpretError {
