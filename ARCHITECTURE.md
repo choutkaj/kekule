@@ -771,6 +771,11 @@ semantic-ID lookup, dense-index lookup, and topology remapping are checked.
 `atom_count()` reports topology cardinality, while `is_empty()` reports that no
 supported scientific column contains data.
 
+Canonical and custom scalar columns reuse one private dense unit-aware column
+implementation. Occupancy and B-factor remain explicit canonical fields rather
+than entries in the custom-property map, retaining their dedicated APIs, fixed
+units, scientific semantics, and format-specific interpretation.
+
 `BondData` is the topology-bound per-bond analogue in authoritative
 `TopologyBondIndex` order. It retains the exact shared topology allocation and
 initially has no canonical scientific fields.

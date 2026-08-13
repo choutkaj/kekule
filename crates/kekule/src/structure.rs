@@ -16,7 +16,7 @@ use crate::topology::{
     TopologyAtomIndex, TopologyBondIndex, TopologyBuildError, TopologyBuilder, TopologyError,
     TopologyMapping,
 };
-use crate::units::{Quantity, Unit, UnitError, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
+use crate::units::{Quantity, Unit, UnitError, DIMENSIONLESS, MODEL_LENGTH_UNIT, SQUARE_ANGSTROM};
 
 /// One complete finite Cartesian array in one topology's dense atom order.
 #[derive(Debug, Clone)]
@@ -309,6 +309,44 @@ struct ScalarPropertyColumn {
     values: Vec<Option<f64>>,
 }
 
+impl ScalarPropertyColumn {
+    fn quantity(&self) -> Quantity<&[Option<f64>]> {
+        Quantity::new(self.values.as_slice(), self.unit)
+    }
+
+    fn value(&self, index: usize) -> Option<f64> {
+        self.values[index]
+    }
+
+    fn stage_value(
+        &self,
+        index: usize,
+        value: Option<Quantity<f64>>,
+    ) -> Result<Option<f64>, ScalarPropertyColumnError> {
+        stage_property_value(value, self.unit, index)
+    }
+
+    /// Replaces one already-validated dense value and reports whether the
+    /// column became wholly absent.
+    fn replace_value(&mut self, index: usize, value: Option<f64>) -> bool {
+        self.values[index] = value;
+        self.values.iter().all(Option::is_none)
+    }
+
+    fn with_value(unit: Unit, len: usize, index: usize, value: f64) -> Self {
+        let mut values = vec![None; len];
+        values[index] = Some(value);
+        Self { unit, values }
+    }
+
+    fn from_values(unit: Unit, values: Vec<Option<f64>>) -> Option<Self> {
+        values
+            .iter()
+            .any(Option::is_some)
+            .then_some(Self { unit, values })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum ScalarPropertyColumnError {
     ValueCountMismatch { expected: usize, actual: usize },
@@ -360,14 +398,7 @@ where
             Ok(value)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if converted.iter().all(Option::is_none) {
-        Ok(None)
-    } else {
-        Ok(Some(ScalarPropertyColumn {
-            unit,
-            values: converted,
-        }))
-    }
+    Ok(ScalarPropertyColumn::from_values(unit, converted))
 }
 
 fn converted_property_value(value: Quantity<f64>, stored_unit: Unit) -> Result<f64, UnitError> {
@@ -375,15 +406,130 @@ fn converted_property_value(value: Quantity<f64>, stored_unit: Unit) -> Result<f
     Ok(value)
 }
 
+fn stage_property_value(
+    value: Option<Quantity<f64>>,
+    stored_unit: Unit,
+    index: usize,
+) -> Result<Option<f64>, ScalarPropertyColumnError> {
+    let converted = value
+        .map(|value| converted_property_value(value, stored_unit))
+        .transpose()
+        .map_err(ScalarPropertyColumnError::Unit)?;
+    if converted.is_some_and(|value| !value.is_finite()) {
+        return Err(ScalarPropertyColumnError::NonFiniteValue { index });
+    }
+    Ok(converted)
+}
+
+fn replace_named_property_column<T>(
+    properties: &mut BTreeMap<String, ScalarPropertyColumn>,
+    name: &str,
+    expected: usize,
+    values: Quantity<T>,
+) -> Result<(), ScalarPropertyColumnError>
+where
+    T: AsRef<[Option<f64>]>,
+{
+    let stored_unit = properties.get(name).map(|column| column.unit);
+    let staged = stage_property_column(values, expected, stored_unit)?;
+    match staged {
+        Some(column) => {
+            properties.insert(name.to_owned(), column);
+        }
+        None => {
+            properties.remove(name);
+        }
+    }
+    Ok(())
+}
+
+fn set_named_property_column_value(
+    properties: &mut BTreeMap<String, ScalarPropertyColumn>,
+    name: &str,
+    len: usize,
+    index: usize,
+    value: Option<Quantity<f64>>,
+) -> Result<(), ScalarPropertyColumnError> {
+    let remove = if let Some(column) = properties.get_mut(name) {
+        let value = column.stage_value(index, value)?;
+        column.replace_value(index, value)
+    } else {
+        let Some(value) = value else {
+            return Ok(());
+        };
+        let unit = value.unit();
+        let value = stage_property_value(Some(value), unit, index)?
+            .expect("present property value remains present after conversion");
+        properties.insert(
+            name.to_owned(),
+            ScalarPropertyColumn::with_value(unit, len, index, value),
+        );
+        false
+    };
+    if remove {
+        properties.remove(name);
+    }
+    Ok(())
+}
+
+fn set_optional_property_column_value(
+    column: &mut Option<ScalarPropertyColumn>,
+    len: usize,
+    index: usize,
+    value: Option<Quantity<f64>>,
+    canonical_unit: Unit,
+) -> Result<(), ScalarPropertyColumnError> {
+    let staged = match column.as_ref() {
+        Some(column) => column.stage_value(index, value)?,
+        None => stage_property_value(value, canonical_unit, index)?,
+    };
+    if let Some(existing) = column.as_mut() {
+        let remove = existing.replace_value(index, staged);
+        if remove {
+            *column = None;
+        }
+    } else if let Some(value) = staged {
+        *column = Some(ScalarPropertyColumn::with_value(
+            canonical_unit,
+            len,
+            index,
+            value,
+        ));
+    }
+    Ok(())
+}
+
+fn remap_atom_property_column(
+    column: &ScalarPropertyColumn,
+    source: &Arc<Topology>,
+    target: &Arc<Topology>,
+    mapping: &TopologyMapping,
+) -> Result<Option<ScalarPropertyColumn>, TopologyRemapError> {
+    let values = remap::dense_atom_values(&column.values, source, target, mapping)?;
+    Ok(ScalarPropertyColumn::from_values(column.unit, values))
+}
+
+fn remap_bond_property_column(
+    column: &ScalarPropertyColumn,
+    source: &Arc<Topology>,
+    target: &Arc<Topology>,
+    mapping: &TopologyMapping,
+) -> Result<Option<ScalarPropertyColumn>, TopologyRemapError> {
+    let values = remap::dense_bond_values(&column.values, source, target, mapping)?;
+    Ok(ScalarPropertyColumn::from_values(column.unit, values))
+}
+
 /// Topology-bound model-level per-atom data in dense atom order.
 ///
-/// Each scientific field is an optional column. A field that is absent for all
-/// atoms therefore requires no per-atom allocation.
+/// Canonical occupancy and B-factor columns retain dedicated APIs and fixed
+/// semantic units. Custom scalar properties occupy a separate namespace. Every
+/// column is dense and optional, so a field absent for all atoms requires no
+/// per-atom allocation.
 #[derive(Debug, Clone)]
 pub struct AtomData {
     topology: Arc<Topology>,
-    occupancies: Option<Vec<Option<f64>>>,
-    b_factors: Option<Vec<Option<f64>>>,
+    occupancies: Option<ScalarPropertyColumn>,
+    b_factors: Option<ScalarPropertyColumn>,
     properties: BTreeMap<String, ScalarPropertyColumn>,
 }
 
@@ -434,24 +580,21 @@ impl AtomData {
     }
 
     pub fn occupancies(&self) -> Option<&[Option<f64>]> {
-        self.occupancies.as_deref()
+        self.occupancies
+            .as_ref()
+            .map(|column| column.values.as_slice())
     }
 
     /// Returns the dense B-factor column in canonical square angstroms.
     pub fn b_factors(&self) -> Option<Quantity<&[Option<f64>]>> {
-        self.b_factors
-            .as_deref()
-            .map(|values| Quantity::new(values, SQUARE_ANGSTROM))
+        self.b_factors.as_ref().map(ScalarPropertyColumn::quantity)
     }
 
     /// Iterates custom scalar properties in stable name order.
     pub fn properties(&self) -> impl ExactSizeIterator<Item = (&str, Quantity<&[Option<f64>]>)> {
-        self.properties.iter().map(|(name, column)| {
-            (
-                name.as_str(),
-                Quantity::new(column.values.as_slice(), column.unit),
-            )
-        })
+        self.properties
+            .iter()
+            .map(|(name, column)| (name.as_str(), column.quantity()))
     }
 
     /// Returns a complete custom property column, or `None` when absent.
@@ -460,7 +603,7 @@ impl AtomData {
         Ok(self
             .properties
             .get(name)
-            .map(|column| Quantity::new(column.values.as_slice(), column.unit)))
+            .map(ScalarPropertyColumn::quantity))
     }
 
     /// Replaces a complete custom property transactionally.
@@ -472,18 +615,9 @@ impl AtomData {
         T: AsRef<[Option<f64>]>,
     {
         validate_atom_property_name(name)?;
-        let stored_unit = self.properties.get(name).map(|column| column.unit);
-        let staged = stage_property_column(values, self.atom_count(), stored_unit)
-            .map_err(|error| atom_property_column_error(name, error))?;
-        match staged {
-            Some(column) => {
-                self.properties.insert(name.to_owned(), column);
-            }
-            None => {
-                self.properties.remove(name);
-            }
-        }
-        Ok(())
+        let atom_count = self.atom_count();
+        replace_named_property_column(&mut self.properties, name, atom_count, values)
+            .map_err(|error| atom_property_column_error(name, error))
     }
 
     /// Removes a custom property, returning whether it was present.
@@ -515,7 +649,9 @@ impl AtomData {
         validate_atom_property_name(name)?;
         validate_index(self.atom_count(), index)?;
         Ok(self.properties.get(name).and_then(|column| {
-            column.values[index.index()].map(|value| Quantity::new(value, column.unit))
+            column
+                .value(index.index())
+                .map(|value| Quantity::new(value, column.unit))
         }))
     }
 
@@ -547,49 +683,15 @@ impl AtomData {
     ) -> Result<(), AtomDataError> {
         validate_atom_property_name(name)?;
         validate_index(self.atom_count(), index)?;
-        let Some(column) = self.properties.get(name) else {
-            let Some(value) = value else {
-                return Ok(());
-            };
-            let unit = value.unit();
-            let value = value.into_value();
-            if !value.is_finite() {
-                return Err(AtomDataError::NonFinitePropertyValue {
-                    property: name.to_owned(),
-                    index,
-                });
-            }
-            let mut values = vec![None; self.atom_count()];
-            values[index.index()] = Some(value);
-            self.properties
-                .insert(name.to_owned(), ScalarPropertyColumn { unit, values });
-            return Ok(());
-        };
-        let converted = value
-            .map(|value| converted_property_value(value, column.unit))
-            .transpose()
-            .map_err(|error| AtomDataError::PropertyUnit {
-                property: name.to_owned(),
-                error: Box::new(error),
-            })?;
-        if converted.is_some_and(|value| !value.is_finite()) {
-            return Err(AtomDataError::NonFinitePropertyValue {
-                property: name.to_owned(),
-                index,
-            });
-        }
-        let remove = {
-            let column = self
-                .properties
-                .get_mut(name)
-                .expect("validated property remains present");
-            column.values[index.index()] = converted;
-            column.values.iter().all(Option::is_none)
-        };
-        if remove {
-            self.properties.remove(name);
-        }
-        Ok(())
+        let atom_count = self.atom_count();
+        set_named_property_column_value(
+            &mut self.properties,
+            name,
+            atom_count,
+            index.index(),
+            value,
+        )
+        .map_err(|error| atom_property_column_error(name, error))
     }
 
     pub fn occupancy(
@@ -605,7 +707,11 @@ impl AtomData {
     }
 
     pub fn occupancy_at(&self, index: TopologyAtomIndex) -> Result<Option<f64>, AtomDataError> {
-        value_at(&self.occupancies, self.atom_count(), index)
+        validate_index(self.atom_count(), index)?;
+        Ok(self
+            .occupancies
+            .as_ref()
+            .and_then(|column| column.value(index.index())))
     }
 
     pub fn b_factor(
@@ -624,8 +730,12 @@ impl AtomData {
         &self,
         index: TopologyAtomIndex,
     ) -> Result<Option<Quantity<f64>>, AtomDataError> {
-        value_at(&self.b_factors, self.atom_count(), index)
-            .map(|value| value.map(|value| Quantity::new(value, SQUARE_ANGSTROM)))
+        validate_index(self.atom_count(), index)?;
+        Ok(self.b_factors.as_ref().and_then(|column| {
+            column
+                .value(index.index())
+                .map(|value| Quantity::new(value, column.unit))
+        }))
     }
 
     pub fn set_occupancy(
@@ -647,10 +757,15 @@ impl AtomData {
         value: Option<f64>,
     ) -> Result<(), AtomDataError> {
         validate_index(self.atom_count(), index)?;
-        validate_value(value, index, AtomDataField::Occupancy)?;
         let len = self.atom_count();
-        set_column_value(&mut self.occupancies, len, index, value);
-        Ok(())
+        set_optional_property_column_value(
+            &mut self.occupancies,
+            len,
+            index.index(),
+            value.map(|value| Quantity::new(value, DIMENSIONLESS)),
+            DIMENSIONLESS,
+        )
+        .map_err(|error| atom_data_column_error(AtomDataField::Occupancy, error))
     }
 
     pub fn set_b_factor(
@@ -672,14 +787,15 @@ impl AtomData {
         value: Option<Quantity<f64>>,
     ) -> Result<(), AtomDataError> {
         validate_index(self.atom_count(), index)?;
-        let value = value
-            .map(|value| value.into_unit(SQUARE_ANGSTROM))
-            .transpose()?
-            .map(|value| value.into_value());
-        validate_value(value, index, AtomDataField::BFactor)?;
         let len = self.atom_count();
-        set_column_value(&mut self.b_factors, len, index, value);
-        Ok(())
+        set_optional_property_column_value(
+            &mut self.b_factors,
+            len,
+            index.index(),
+            value,
+            SQUARE_ANGSTROM,
+        )
+        .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))
     }
 
     /// Replaces the complete occupancy column transactionally. An all-absent
@@ -688,12 +804,13 @@ impl AtomData {
     where
         T: AsRef<[Option<f64>]>,
     {
-        let values = validate_column(
-            &self.topology,
-            values.as_ref().to_vec(),
-            AtomDataField::Occupancy,
-        )?;
-        self.occupancies = values;
+        let staged = stage_property_column(
+            Quantity::new(values, DIMENSIONLESS),
+            self.atom_count(),
+            Some(DIMENSIONLESS),
+        )
+        .map_err(|error| atom_data_column_error(AtomDataField::Occupancy, error))?;
+        self.occupancies = staged;
         Ok(())
     }
 
@@ -709,16 +826,9 @@ impl AtomData {
     where
         T: AsRef<[Option<f64>]>,
     {
-        let factor = values.unit().conversion_factor_to(SQUARE_ANGSTROM)?;
-        let values = values
-            .value()
-            .as_ref()
-            .iter()
-            .copied()
-            .map(|value| value.map(|value| value * factor))
-            .collect();
-        let values = validate_column(&self.topology, values, AtomDataField::BFactor)?;
-        self.b_factors = values;
+        let staged = stage_property_column(values, self.atom_count(), Some(SQUARE_ANGSTROM))
+            .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))?;
+        self.b_factors = staged;
         Ok(())
     }
 
@@ -741,24 +851,19 @@ impl AtomData {
         let occupancies = self
             .occupancies
             .as_ref()
-            .map(|values| remap::dense_atom_values(values, source, target, mapping))
-            .transpose()?;
+            .map(|column| remap_atom_property_column(column, source, target, mapping))
+            .transpose()?
+            .flatten();
         let b_factors = self
             .b_factors
             .as_ref()
-            .map(|values| remap::dense_atom_values(values, source, target, mapping))
-            .transpose()?;
+            .map(|column| remap_atom_property_column(column, source, target, mapping))
+            .transpose()?
+            .flatten();
         let mut properties = BTreeMap::new();
         for (name, column) in &self.properties {
-            let values = remap::dense_atom_values(&column.values, source, target, mapping)?;
-            if values.iter().any(Option::is_some) {
-                properties.insert(
-                    name.clone(),
-                    ScalarPropertyColumn {
-                        unit: column.unit,
-                        values,
-                    },
-                );
+            if let Some(column) = remap_atom_property_column(column, source, target, mapping)? {
+                properties.insert(name.clone(), column);
             }
         }
         Ok(Self {
@@ -783,40 +888,21 @@ enum AtomDataField {
     BFactor,
 }
 
-fn validate_column(
-    topology: &Topology,
-    values: Vec<Option<f64>>,
-    field: AtomDataField,
-) -> Result<Option<Vec<Option<f64>>>, AtomDataError> {
-    if values.len() != topology.atom_count() {
-        return Err(AtomDataError::AtomCountMismatch {
-            expected: topology.atom_count(),
-            actual: values.len(),
-        });
+fn atom_data_column_error(field: AtomDataField, error: ScalarPropertyColumnError) -> AtomDataError {
+    match error {
+        ScalarPropertyColumnError::ValueCountMismatch { expected, actual } => {
+            AtomDataError::AtomCountMismatch { expected, actual }
+        }
+        ScalarPropertyColumnError::NonFiniteValue { index } => match field {
+            AtomDataField::Occupancy => AtomDataError::NonFiniteOccupancy {
+                index: TopologyAtomIndex::new(index as u32),
+            },
+            AtomDataField::BFactor => AtomDataError::NonFiniteBFactor {
+                index: TopologyAtomIndex::new(index as u32),
+            },
+        },
+        ScalarPropertyColumnError::Unit(error) => AtomDataError::Unit(error),
     }
-    for (raw_index, value) in values.iter().copied().enumerate() {
-        let index = TopologyAtomIndex::new(raw_index as u32);
-        validate_value(value, index, field)?;
-    }
-    if values.iter().all(Option::is_none) {
-        Ok(None)
-    } else {
-        Ok(Some(values))
-    }
-}
-
-fn validate_value(
-    value: Option<f64>,
-    index: TopologyAtomIndex,
-    field: AtomDataField,
-) -> Result<(), AtomDataError> {
-    if value.is_some_and(|value| !value.is_finite()) {
-        return Err(match field {
-            AtomDataField::Occupancy => AtomDataError::NonFiniteOccupancy { index },
-            AtomDataField::BFactor => AtomDataError::NonFiniteBFactor { index },
-        });
-    }
-    Ok(())
 }
 
 fn validate_index(len: usize, index: TopologyAtomIndex) -> Result<(), AtomDataError> {
@@ -824,33 +910,6 @@ fn validate_index(len: usize, index: TopologyAtomIndex) -> Result<(), AtomDataEr
         return Err(AtomDataError::InvalidAtomIndex(index));
     }
     Ok(())
-}
-
-fn value_at(
-    column: &Option<Vec<Option<f64>>>,
-    len: usize,
-    index: TopologyAtomIndex,
-) -> Result<Option<f64>, AtomDataError> {
-    validate_index(len, index)?;
-    Ok(column.as_ref().and_then(|values| values[index.index()]))
-}
-
-fn set_column_value(
-    column: &mut Option<Vec<Option<f64>>>,
-    len: usize,
-    index: TopologyAtomIndex,
-    value: Option<f64>,
-) {
-    if value.is_some() && column.is_none() {
-        *column = Some(vec![None; len]);
-    }
-    let Some(values) = column else {
-        return;
-    };
-    values[index.index()] = value;
-    if values.iter().all(Option::is_none) {
-        *column = None;
-    }
 }
 
 fn validate_atom_property_name(name: &str) -> Result<(), AtomDataError> {
@@ -1033,12 +1092,9 @@ impl BondData {
 
     /// Iterates custom scalar properties in stable name order.
     pub fn properties(&self) -> impl ExactSizeIterator<Item = (&str, Quantity<&[Option<f64>]>)> {
-        self.properties.iter().map(|(name, column)| {
-            (
-                name.as_str(),
-                Quantity::new(column.values.as_slice(), column.unit),
-            )
-        })
+        self.properties
+            .iter()
+            .map(|(name, column)| (name.as_str(), column.quantity()))
     }
 
     /// Returns a complete custom property column, or `None` when absent.
@@ -1047,7 +1103,7 @@ impl BondData {
         Ok(self
             .properties
             .get(name)
-            .map(|column| Quantity::new(column.values.as_slice(), column.unit)))
+            .map(ScalarPropertyColumn::quantity))
     }
 
     /// Replaces a complete custom property transactionally.
@@ -1059,18 +1115,9 @@ impl BondData {
         T: AsRef<[Option<f64>]>,
     {
         validate_bond_property_name(name)?;
-        let stored_unit = self.properties.get(name).map(|column| column.unit);
-        let staged = stage_property_column(values, self.bond_count(), stored_unit)
-            .map_err(|error| bond_property_column_error(name, error))?;
-        match staged {
-            Some(column) => {
-                self.properties.insert(name.to_owned(), column);
-            }
-            None => {
-                self.properties.remove(name);
-            }
-        }
-        Ok(())
+        let bond_count = self.bond_count();
+        replace_named_property_column(&mut self.properties, name, bond_count, values)
+            .map_err(|error| bond_property_column_error(name, error))
     }
 
     /// Removes a custom property, returning whether it was present.
@@ -1102,7 +1149,9 @@ impl BondData {
         validate_bond_property_name(name)?;
         validate_bond_index(self.bond_count(), index)?;
         Ok(self.properties.get(name).and_then(|column| {
-            column.values[index.index()].map(|value| Quantity::new(value, column.unit))
+            column
+                .value(index.index())
+                .map(|value| Quantity::new(value, column.unit))
         }))
     }
 
@@ -1134,49 +1183,15 @@ impl BondData {
     ) -> Result<(), BondDataError> {
         validate_bond_property_name(name)?;
         validate_bond_index(self.bond_count(), index)?;
-        let Some(column) = self.properties.get(name) else {
-            let Some(value) = value else {
-                return Ok(());
-            };
-            let unit = value.unit();
-            let value = value.into_value();
-            if !value.is_finite() {
-                return Err(BondDataError::NonFinitePropertyValue {
-                    property: name.to_owned(),
-                    index,
-                });
-            }
-            let mut values = vec![None; self.bond_count()];
-            values[index.index()] = Some(value);
-            self.properties
-                .insert(name.to_owned(), ScalarPropertyColumn { unit, values });
-            return Ok(());
-        };
-        let converted = value
-            .map(|value| converted_property_value(value, column.unit))
-            .transpose()
-            .map_err(|error| BondDataError::PropertyUnit {
-                property: name.to_owned(),
-                error: Box::new(error),
-            })?;
-        if converted.is_some_and(|value| !value.is_finite()) {
-            return Err(BondDataError::NonFinitePropertyValue {
-                property: name.to_owned(),
-                index,
-            });
-        }
-        let remove = {
-            let column = self
-                .properties
-                .get_mut(name)
-                .expect("validated property remains present");
-            column.values[index.index()] = converted;
-            column.values.iter().all(Option::is_none)
-        };
-        if remove {
-            self.properties.remove(name);
-        }
-        Ok(())
+        let bond_count = self.bond_count();
+        set_named_property_column_value(
+            &mut self.properties,
+            name,
+            bond_count,
+            index.index(),
+            value,
+        )
+        .map_err(|error| bond_property_column_error(name, error))
     }
 
     /// Remaps every custom property through checked topology lineage.
@@ -1191,15 +1206,8 @@ impl BondData {
         }
         let mut properties = BTreeMap::new();
         for (name, column) in &self.properties {
-            let values = remap::dense_bond_values(&column.values, source, target, mapping)?;
-            if values.iter().any(Option::is_some) {
-                properties.insert(
-                    name.clone(),
-                    ScalarPropertyColumn {
-                        unit: column.unit,
-                        values,
-                    },
-                );
+            if let Some(column) = remap_bond_property_column(column, source, target, mapping)? {
+                properties.insert(name.clone(), column);
             }
         }
         Ok(Self {
@@ -3158,6 +3166,94 @@ mod tests {
     }
 
     #[test]
+    fn atom_data_canonical_and_custom_columns_share_dense_semantics_without_namespace_overlap() {
+        let (topology, _, _) = two_bond_instances_topology();
+        let mut data = AtomData::new(&topology);
+
+        assert!(data.is_empty());
+        data.set_occupancies(vec![None; 4]).unwrap();
+        data.set_b_factors(Quantity::new(vec![None; 4], NANOMETER.powi(2)))
+            .unwrap();
+        assert!(data.is_empty());
+
+        data.set_occupancies(vec![Some(0.25), None, None, None])
+            .unwrap();
+        data.set_b_factors(Quantity::new(
+            vec![None, Some(0.01), None, None],
+            NANOMETER.powi(2),
+        ))
+        .unwrap();
+        data.set_property(
+            "analysis_score",
+            Quantity::new(vec![None, None, Some(3.0), None], DIMENSIONLESS),
+        )
+        .unwrap();
+
+        assert_eq!(
+            data.occupancies.as_ref().map(|column| column.unit),
+            Some(DIMENSIONLESS)
+        );
+        assert_eq!(
+            data.b_factors.as_ref().map(|column| column.unit),
+            Some(SQUARE_ANGSTROM)
+        );
+        assert_eq!(
+            data.properties().map(|(name, _)| name).collect::<Vec<_>>(),
+            vec!["analysis_score"]
+        );
+        assert_eq!(
+            data.occupancies(),
+            Some([Some(0.25), None, None, None].as_slice())
+        );
+        let b_factors = data.b_factors().unwrap();
+        assert_eq!(b_factors.unit(), SQUARE_ANGSTROM);
+        assert!((b_factors.value()[1].unwrap() - 1.0).abs() < 1.0e-12);
+        assert!(matches!(
+            data.property("Occupancy"),
+            Err(AtomDataError::ReservedPropertyName { .. })
+        ));
+        assert!(matches!(
+            data.property("B_FACTOR"),
+            Err(AtomDataError::ReservedPropertyName { .. })
+        ));
+
+        let before = data.clone();
+        assert!(matches!(
+            data.set_occupancies(vec![Some(f64::NAN), None, None, None]),
+            Err(AtomDataError::NonFiniteOccupancy { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_occupancies(vec![Some(1.0)]),
+            Err(AtomDataError::AtomCountMismatch { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_b_factors(Quantity::new(
+                vec![Some(f64::INFINITY), None, None, None],
+                SQUARE_ANGSTROM,
+            )),
+            Err(AtomDataError::NonFiniteBFactor { .. })
+        ));
+        assert_eq!(data, before);
+        assert!(matches!(
+            data.set_b_factors(Quantity::new(vec![Some(1.0); 4], KELVIN)),
+            Err(AtomDataError::Unit(UnitError::IncompatibleUnits { .. }))
+        ));
+        assert_eq!(data, before);
+
+        data.set_occupancy_at(TopologyAtomIndex::new(0), None)
+            .unwrap();
+        data.set_b_factor_at(TopologyAtomIndex::new(1), None)
+            .unwrap();
+        assert!(data.occupancies().is_none());
+        assert!(data.b_factors().is_none());
+        assert!(!data.is_empty());
+        assert!(data.remove_property("analysis_score").unwrap());
+        assert!(data.is_empty());
+    }
+
+    #[test]
     fn atom_custom_properties_are_dense_unit_aware_and_transactional() {
         let (topology, _, _) = two_bond_instances_topology();
         let first_atom = topology.atom_ids()[0];
@@ -3377,6 +3473,17 @@ mod tests {
         let mut model = Model::new(Arc::clone(&source), positions).unwrap();
         model
             .atom_data_mut()
+            .set_occupancies(vec![None, None, Some(0.8), None])
+            .unwrap();
+        model
+            .atom_data_mut()
+            .set_b_factors(Quantity::new(
+                vec![None, None, None, Some(4.0)],
+                SQUARE_ANGSTROM,
+            ))
+            .unwrap();
+        model
+            .atom_data_mut()
             .set_property(
                 "partial_charge",
                 Quantity::new(
@@ -3400,6 +3507,14 @@ mod tests {
         assert_eq!(cloned.bond_data(), model.bond_data());
 
         let remapped = model.remap_to(&target, edit.mapping()).unwrap();
+        assert_eq!(
+            remapped.atom_data().occupancies(),
+            Some([Some(0.8), None].as_slice())
+        );
+        assert_eq!(
+            remapped.atom_data().b_factors(),
+            Some(Quantity::new([None, Some(4.0)].as_slice(), SQUARE_ANGSTROM,))
+        );
         assert_eq!(
             remapped
                 .atom_data()
