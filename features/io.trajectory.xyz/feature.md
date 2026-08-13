@@ -15,7 +15,7 @@ file-backed trajectory I/O.
 - Comments, ordinary whitespace, final-newline absence, and line endings are
   handled within configured text limits. Extended XYZ schemas are not inferred.
 - Writers require a positive topology and at least one frame, use deterministic
-  locale-independent precision, and reject cell, atom data, velocity, force,
+  locale-independent precision, and reject cell, atom data, bond data, velocity, force,
   time, step, or properties they cannot preserve.
 
 ## Implementation Notes
@@ -77,3 +77,5 @@ file-backed trajectory I/O.
   writers after removing raw topology handle cloning.
 - v8: Reject non-empty flattened frame `AtomData` explicitly after removing
   the obsolete observation wrapper.
+- v9: Reject non-empty topology-bound `BondData`; arbitrary bond-property
+  serialization remains outside the strict XYZ profile.

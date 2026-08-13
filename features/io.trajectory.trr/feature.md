@@ -14,7 +14,7 @@ pure-Rust XDR layer.
 - Convert native GROMACS units once to Kekule `f64` model units.
 - Writers use an explicit scalar precision, preserve each frame's optional
   field presence, require at least one frame, and reject every unsupported
-  block or field instead of dropping it.
+  block or field, including non-empty atom or bond data, instead of dropping it.
 - Indexed access verifies every checked XDR block through reusable scratch
   without materializing owned frames or a trajectory.
 - Indexed metadata reports the precision mix verified across the complete
@@ -76,3 +76,5 @@ pure-Rust XDR layer.
   `kekule-traj` trajectory crate.
 - v7: Retain the exact caller-supplied `Arc<Topology>` across TRR readers,
   writers, and reusable destination buffers.
+- v8: Reject non-empty topology-bound `BondData`; arbitrary bond-property
+  serialization remains outside the TRR profile.

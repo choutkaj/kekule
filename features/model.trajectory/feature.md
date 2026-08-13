@@ -12,7 +12,8 @@ I/O, and focused trajectory-oriented analysis workflows.
   on the foundational `kekule` package. Trajectory types are exported from the
   `kekule_traj` root; codecs and path factories live under `kekule_traj::io`.
 - The crate provides topology-bound frames with required positions and direct
-  optional cell, `AtomData`, velocities, forces, time, step, and frame metadata.
+  optional cell, `AtomData`, `BondData`, velocities, forces, time, step, and
+  frame metadata.
 - In-memory `Trajectory` stores ordered frames directly rather than as
   `Vec<Model>`.
 - `TrajectoryReader` fills a caller-owned `FrameBuffer`;
@@ -23,14 +24,14 @@ I/O, and focused trajectory-oriented analysis workflows.
   decoder state after validating every field, converts units once, reuses all
   coordinate/vector-array allocations, clears absent optional state, and leaves the
   destination unchanged on failure.
-- `FrameBuffer::reset_dynamic_state` clears cell, atom data, velocities, forces,
+- `FrameBuffer::reset_dynamic_state` clears cell, atom data, bond data, velocities, forces,
   time, step, and properties without replacing its positions allocation;
   coordinate-only readers use this reset after filling positions.
 - Frame and buffer views can be consumed by structural analyses and prepared
   potentials without owned-model construction or coordinate copying.
 - Owned frames and finite in-memory trajectories remap through exact checked
   topology lineage while preserving order, positions, cells, velocities,
-  forces, time, step, atom data, and properties.
+  forces, time, step, atom data, bond data, and properties.
 - `FrameBuffer::copy_remapped_from` transactionally copies borrowed source
   frame state into an exact target-bound buffer without constructing a model
   and reuses position, velocity, and force allocations.
@@ -66,7 +67,7 @@ I/O, and focused trajectory-oriented analysis workflows.
   allocation.
 - Transformation regressions cover complete owned and borrowed frame transfer,
   frame-index error context, target-buffer allocation rejection, unchanged
-  positions, cell, vectors, time, step, atom data, and properties after a
+  positions, cell, vectors, time, step, atom data, bond data, and properties after a
   later validation failure, stale optional-state clearing after positions-only
   remaps, and stable dense-array pointers and capacities over repeated remaps.
 - Downstream tests prove external applications can implement sequential,
@@ -115,3 +116,7 @@ I/O, and focused trajectory-oriented analysis workflows.
   trait accessors and remove identity-token errors and APIs.
 - v12: Flatten frame and reusable-buffer model state to direct positions, cell,
   and topology-bound `AtomData`, removing configuration and observation wrappers.
+- v13: Carry topology-bound `BondData` through frames, borrowed views, in-memory
+  streaming, remapping, transactional buffer publication and reset; file
+  codecs reject non-empty bond data because arbitrary-property serialization
+  remains out of scope.

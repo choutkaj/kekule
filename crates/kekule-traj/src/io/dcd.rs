@@ -1292,6 +1292,13 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "atom data",
             ));
         }
+        if !frame.bond_data().is_empty() {
+            return Err(writer_field_error(
+                &self.source_label,
+                self.frame_count,
+                "bond data",
+            ));
+        }
         if !frame.props().is_empty() {
             return Err(writer_field_error(
                 &self.source_label,
