@@ -8,8 +8,21 @@ reusable molecule definitions and explicitly identified instances.
 ## Behavior/API
 
 - The public `topology` module owns molecule definitions, molecule
-  instances, instance-qualified atom and bond identities, and authoritative
-  dense atom and bond orderings.
+  instances, instance-qualified atom, bond, chain, residue, and atom-site
+  identities, and authoritative dense atom and bond orderings.
+- `InstanceChainId`, `InstanceResidueId`, and `InstanceAtomSiteId` pair one
+  `MoleculeInstanceId` with the corresponding definition-local SMCRA ID, so
+  repeated uses of one macro definition remain distinct at system level.
+- `InstanceChain`, `InstanceResidue`, and `InstanceAtomSite` are lightweight
+  borrowed views. Their IDs and parent/child navigation remain qualified while
+  labels, names, metadata, and properties borrow definition-owned data.
+  Definition-local nodes are reachable only through the explicit `local`
+  escape hatch.
+- `Topology` exposes deterministic qualified-view chain, residue, and atom-site
+  iteration plus checked atom/site/residue/chain parent navigation. Valid
+  small-molecule atoms return no SMCRA parent rather than an error.
+- `InstanceSmcraHierarchy` is a zero-copy scoped view whose public iterators
+  and lookups return qualified views and reject IDs from another instance.
 - `Topology` directly owns its private definition, instance, dense-order, and
   index-map collections and deliberately does not implement `Clone`.
   Topology-bound containers retain `Arc<Topology>` values; private
@@ -47,7 +60,9 @@ reusable molecule definitions and explicitly identified instances.
   deterministic immutable subsets of complete molecule instances while
   preserving reused definitions and the original source `Arc` for no-op edits.
 - Compiled atom selections retain an `Arc<Topology>` and reusable dense
-  indices while chemical query syntax remains a separate concern.
+  indices while chemical query syntax remains a separate concern. Chain,
+  residue, and atom-site helpers require qualified IDs; chain-label selection
+  resolves through that same system-level hierarchy path.
 
 ## Implementation Notes
 
@@ -83,6 +98,11 @@ reusable molecule definitions and explicitly identified instances.
   requests, empty and no-op results, reused definitions, filtered source order,
   tombstoned local identifiers, roles, properties, hierarchy, and complete
   lineage.
+- Reused-macro regressions verify distinct qualified chain/residue/site IDs,
+  qualified chained navigation through both reused instances, explicit shared
+  local-node borrows, every parent lookup, scoped mismatch errors,
+  small-molecule absence, stable iteration order, and instance-specific
+  hierarchy selections.
 
 ## Out Of Scope
 
@@ -119,3 +139,9 @@ reusable molecule definitions and explicitly identified instances.
 - v9: Make `Topology` directly own its data, remove raw cloning and public
   identity machinery, and use retained `Arc<Topology>` values for exact
   compatibility, mappings, selections, and no-op edits.
+- v10: Qualify definition-local SMCRA identities by molecule instance, expose
+  deterministic system-level hierarchy navigation, and make hierarchy-aware
+  selections instance precise.
+- v11: Return lightweight borrowed qualified hierarchy views from system-level
+  navigation so natural parent/child traversal cannot silently lose molecule
+  instance identity.
