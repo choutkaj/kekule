@@ -9,7 +9,7 @@ use crate::mmcif::{
 use crate::small::SmallMolecule;
 use crate::structure::{Model, ModelBuilder};
 use crate::topology::{MoleculeInstanceMetadata, MoleculeRole};
-use crate::units::{Quantity, NANOMETER, SQUARE_ANGSTROM};
+use crate::units::{Quantity, NANOMETER};
 
 const MIXED: &str = r#"
 data_mixed
@@ -673,21 +673,18 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
         .members()
         .map(|member| member.atom_data())
         .collect::<Vec<_>>();
-    let first_atom = ensemble.topology().atom_ids()[0];
-    let topology = ensemble.shared_topology();
     assert_eq!(
-        atom_data[0].occupancy(&topology, first_atom).unwrap(),
-        Some(0.4)
+        atom_data[0].occupancies(),
+        Some(&[Some(0.4), Some(0.5)][..])
     );
     assert_eq!(
-        atom_data[1]
-            .b_factor(&topology, first_atom)
-            .unwrap()
-            .unwrap()
-            .value_in(SQUARE_ANGSTROM)
-            .unwrap(),
-        20.0
+        atom_data[1].occupancies(),
+        Some(&[Some(0.8), Some(0.9)][..])
     );
+    let first_b_factors = atom_data[0].b_factors().unwrap();
+    assert_eq!(*first_b_factors.value(), [Some(10.0), Some(11.0)]);
+    let second_b_factors = atom_data[1].b_factors().unwrap();
+    assert_eq!(*second_b_factors.value(), [Some(20.0), Some(21.0)]);
 }
 
 #[test]
@@ -1361,6 +1358,10 @@ covale A N 1 A CA 1 doub
     .into_parts();
     let topology = original.shared_topology();
     let first_atom = topology.atom_ids()[0];
+    original
+        .atom_data_mut()
+        .set_occupancy(&topology, first_atom, Some(0.625))
+        .unwrap();
     original
         .atom_data_mut()
         .set_b_factor(
