@@ -11,31 +11,26 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 - Reuses an installed `RingSet` when present and otherwise computes a ring
   basis before assigning aromaticity; membership alone is not treated as a
   basis.
-- Replaces existing imported/perceived aromatic membership transactionally and
-  records `AromaticityModel::RdkitLike` provenance.
+- Replaces existing semantic aromatic membership transactionally and records
+  `AromaticityModel::RdkitLike` as the perception model.
 - Can be run directly or through the explicit sanitization pipeline.
 - Treats unsupported ring elements as non-candidates, allowing a supported
   aromatic subring to remain aromatic when fused or attached to a nonaromatic
   unsupported-element ring.
-- Converts an imported aromatic-order component that has no valid aromatic
-  atoms to deterministic localized single/double bonds when a bounded
-  valence-demand matching exists; otherwise returns
-  `InvalidAromaticRepresentation` transactionally.
-- Reports imported-aromatic matching budget exhaustion separately as
-  `ImportedAromaticKekulizationLimit`; it is never presented as invalid
-  chemistry.
+- Requires normalized localized bond orders and returns
+  `AromaticityError::UnsupportedBondOrder` when a live aromatic source bond
+  remains. It never localizes or otherwise rewrites primary bond orders.
 - Propagates bounded ring-perception failures as `AromaticityError::RingPerception`.
-- Exact installed aromatic atom/bond sets and `Imported` versus
-  `Perceived(model)` provenance are publicly inspectable and reconstructible
-  without requiring a perceived ring basis.
+- Exact installed aromatic atom/bond sets and their named perception model are
+  publicly inspectable and reconstructible without requiring a perceived ring
+  basis.
 
 ## Implementation Notes
 
 - Operates on the shared core `Molecule` graph and uses installed ring data or
   computes it through the `algo.rings.sssr` stack when absent.
-- Localizes imported aromatic-order components through one general
-  valence-demand matching step, then sends imported and already-localized input
-  through the same donor/candidate/Huckel engine.
+- Reads normalized ordinary bond orders through the donor/candidate/Huckel
+  engine and writes only semantic aromatic atom/bond membership.
 - Uses one RDKit-style donor classifier for aromatic candidate checks and
   simple- and fused-component electron counting.
 - Supports common RDKit organic aromatic elements: C, N, O, P, S, Se, and Te.
@@ -50,15 +45,16 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   valence, donor, candidate, and graph-topology rules.
 - Keeps parsing separate from aromaticity perception. Canonical SMILES normalization issues exposed by these flags belong to `io.smiles.canonical`, not hidden aromaticity cleanup.
 - Treats unsupported or ambiguous systems conservatively rather than claiming full RDKit parity.
-- The direct public API stages the complete operation, including ring
-  perception and imported-order localization, and commits only on success.
+- The direct public API stages the complete operation, including any required
+  ring perception, and commits only on success. Atom/bond payloads, bond
+  orders, local stereo, source marks, properties, and conformers are preserved.
 
 ## Tests
 
 - Unit tests cover installed ring-basis reuse, missing and membership-only ring
   state, localized donor analysis, candidate gates, radical and valence
-  eligibility, imported aromatic-order handling, fused-subsystem search, and
-  SMILES sanitize/reparse smoke cases.
+  eligibility, normalized-input enforcement, represented-state preservation,
+  fused-subsystem search, and SMILES sanitize/reparse smoke cases.
 
 ## Benchmarks
 
@@ -101,3 +97,6 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   canonical reconstruction without adding new section dependencies.
 - v98: Reuse a current installed ring basis during aromaticity perception and
   compute one only when no `RingSet` is installed.
+- v99: Move imported aromatic localization and its failures into
+  `chem.normalization`, require localized input, remove imported aromaticity
+  provenance, and make the aromaticity pass representation-pure.

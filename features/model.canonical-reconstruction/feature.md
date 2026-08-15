@@ -12,8 +12,8 @@ dummy chemistry, or stable-ID renumbering.
   valence, ring, and aromaticity sections plus complete CIP assignments.
 - Public immutable section views preserve absent valence versus model-neutral
   valence, named `ValenceModel`, complete implicit-H assignments, membership
-  with or without `RingSet`, imported or model-perceived aromaticity, aromatic
-  atom/bond sets, and CIP descriptor assignments.
+  with or without `RingSet`, model-perceived aromatic atom/bond sets and named
+  `AromaticityModel`, and CIP descriptor assignments.
 - `RingMembership::from_slot_flags` and `RingSet::from_rings` reconstruct the
   core ring values consumed by the detached state.
 - `Molecule::install_perception_state` validates the entire detached state
@@ -36,10 +36,10 @@ Perception construction rejects duplicate map/set entries and fixed-width
 component overflow. Whole-state installation validates exact ring membership
 slot lengths, live atom/bond/stereo references, simple-cycle ring coherence,
 basis coverage, and all optional sections before mutation. Algorithm
-diagnostics are not reconstructed because they are not semantic perception
-state. Installation does not add dependencies between otherwise independent
-current sections, so imported aromaticity does not require a perceived ring
-basis.
+diagnostics and imported representation are not reconstructed because they are
+not semantic perception state. Installation does not add dependencies between
+otherwise independent current sections, so aromatic membership does not
+require a perceived ring basis.
 
 Persistence adapters reconstruct in this order:
 
@@ -59,7 +59,7 @@ coordinate/property-only mutation remains perception-neutral.
 
 - Downstream-style tests publicly export and reinstall empty and fully populated
   perception, including model-neutral valence, both ring modes,
-  imported/perceived aromaticity, and CIP.
+  model-perceived aromaticity, and CIP.
 - Malformed/tombstoned references, duplicate entries, slot mismatches,
   malformed cycles, and inconsistent basis membership fail without changing
   prior perception.
@@ -96,3 +96,6 @@ coordinate/property-only mutation remains perception-neutral.
   `add_stereo_group`.
 - v3: Reconstruct semantic ring membership and basis only, excluding algorithm
   diagnostics from canonical molecule state.
+- v4: Reconstruct aromatic membership with its named perception model only;
+  imported aromatic representation is normalized primary chemistry rather than
+  installable perception state.

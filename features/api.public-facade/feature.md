@@ -59,7 +59,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Meaning-preserving representation cleanup lives under
   `normalization::normalize` with a thin `SmallMolecule::normalize()`
   convenience. The facade exposes its focused error without adding
-  normalization items to the crate root or prelude.
+  normalization items to the crate root or prelude. Successful normalization
+  publishes deterministic localized ordinary bond orders for imported
+  aromatic source representation.
 - `perception::valence` exposes standard `Result<(), ValenceError>` operations
   and structured `ValenceIssue` diagnostics without an empty-success report.
 - `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
@@ -77,7 +79,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Focused canonical reconstruction remains under `core` and `bio`: detached
   exact perception construction plus whole-state installation, targeted SMCRA
   child enrichment, and exact stereo-group tombstone replay do not widen the
-  crate root or prelude.
+  crate root or prelude. Installed aromaticity exposes exact semantic
+  membership and `AromaticityModel`; imported aromatic provenance is absent.
 - Immutable system topology and direct model-state containers live under
   `topology` and `structure`; potentials and minimization remain under
   `modeling`. These focused types are not added to the prelude.
@@ -261,3 +264,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   results remain inspectable as installed molecule perception state.
 - v42: Add the focused transactional normalization facade and thin
   `SmallMolecule` convenience without expanding the prelude.
+- v43: Localize imported aromatic source bonds through normalization, expose
+  only model-perceived aromaticity in reconstruction APIs, and keep
+  aromaticity perception representation-pure.

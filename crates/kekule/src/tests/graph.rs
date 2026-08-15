@@ -403,7 +403,7 @@ fn property_and_coordinate_edits_preserve_computed_state() {
     );
     rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
     let _ = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
-    mol.begin_aromaticity(AromaticityProvenance::Imported);
+    mol.begin_aromaticity(AromaticityModel::RdkitLike);
     let before = mol.perception().clone();
 
     mol.atom_mut(atoms[0])
