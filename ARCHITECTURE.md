@@ -948,8 +948,10 @@ topology allocation.
 `Model` is also the ordinary application-facing navigation object. Common atom,
 bond, molecule-instance, and qualified SMCRA lookups are thin read-only
 forwards to its shared `Topology`. Qualified SMCRA lookups return borrowed
-instance views rather than raw definition-local nodes. `Model` borrows that authoritative topology
-navigation and never copies hierarchy state.
+instance views rather than raw definition-local nodes. `ModelView` provides the
+corresponding zero-copy navigation surface, so algorithms can use identical
+static hierarchy access with a model, ensemble member, trajectory frame, or
+frame buffer.
 
 A model rejects incomplete, non-finite, dimensionally incompatible, or
 topology-incompatible coordinate state.
