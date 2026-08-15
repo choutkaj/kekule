@@ -14,6 +14,9 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - Commits changes only after every requested pass succeeds; any error leaves the input exactly unchanged.
 - Propagates valence, ring, aromaticity, and stereo failures through
   `SanitizeError` without committing staged mutations.
+- `SanitizeError::Valence` carries `ValenceError`. Successful
+  `SanitizeReport` values retain ring count and stereo output only; valence
+  success has no redundant report payload.
 - Marks requested successful passes fresh and ensures skipped passes are not
   fresh. Aromaticity may compute rings internally, but an unrequested ring
   result is not retained or exposed.
@@ -23,7 +26,8 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 ## Implementation Notes
 
 - The pipeline stages work on a clone and atomically replaces the caller's molecule after success.
-- The pipeline is conservative and returns reports for caller inspection.
+- The pipeline is conservative and returns only useful successful ring/stereo
+  output for caller inspection.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
 - The public facade is `perception`; lower-level sanitizer internals are not root-level API.
 - Applies sanitization-only charge cleanup for hypervalent oxyhalogen patterns
@@ -89,3 +93,5 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   aromaticity engine, including structured imported-aromatic matching limits.
 - v15: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v16: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v17: Propagate transactional `ValenceError` failures and remove the redundant
+  empty-success valence field from `SanitizeReport`.
