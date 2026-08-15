@@ -206,16 +206,21 @@ read-only queries. One installed perception profile exists at a time.
 Alternative-model calculations remain standalone results until explicitly
 installed.
 
+`PerceptionState` is semantic installed chemical perception. Algorithm
+diagnostics, work counters, and search statistics are sidecar or ephemeral
+operational details; they do not define molecule identity, equality, or
+reconstruction.
+
 External persistence adapters may inspect every installed section exactly,
 construct one detached `PerceptionState`, and install it through a checked
 whole-state transaction. This surface preserves absent versus model-neutral
 valence, complete implicit-H assignments, membership with or without an
-installed ring basis and work record, imported versus model-perceived
-aromaticity, aromatic membership, and complete CIP assignments. Incremental
-perception installation/mutation remains crate-private. Whole-state
-installation validates stable-slot dimensions, live graph/stereo references,
-duplicate input, and installed-ring coherence before replacing prior state; it
-does not invent dependencies between otherwise independent current sections.
+installed ring basis, imported versus model-perceived aromaticity, aromatic
+membership, and complete CIP assignments. Incremental perception
+installation/mutation remains crate-private. Whole-state installation
+validates stable-slot dimensions, live graph/stereo references, duplicate
+input, and installed-ring coherence before replacing prior state; it does not
+invent dependencies between otherwise independent current sections.
 
 Chemistry- or connectivity-relevant mutation invalidates affected perception
 state immediately. Coordinate and generic annotation edits are

@@ -203,7 +203,7 @@ struct RingTopologySignature {
 }
 
 fn should_refine_ring_topology(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) -> bool {
-    let (membership, _) = compute_ring_membership(mol);
+    let membership = compute_ring_membership(mol);
     let ring_atoms = atoms
         .iter()
         .copied()
@@ -247,7 +247,7 @@ fn should_refine_ring_topology(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) 
 }
 
 fn ring_topology_signatures(mol: &Molecule, atoms: &[AtomId]) -> Vec<RingTopologySignature> {
-    let (membership, _) = compute_ring_membership(mol);
+    let membership = compute_ring_membership(mol);
     let mut signatures = vec![RingTopologySignature::default(); mol.atoms.len()];
     for &root in atoms {
         if membership.atom_in_ring(root) {

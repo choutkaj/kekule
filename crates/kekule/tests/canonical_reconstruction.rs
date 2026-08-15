@@ -4,9 +4,9 @@ use kekule::bio::{
 use kekule::core::{
     AromaticityModel, AromaticityProvenance, Atom, AtomId, BondOrder, Element, Molecule,
     PerceptionState, PerceptionStateBuildError, PerceptionStateInstallError, PropValue, Ring,
-    RingMembership, RingSet, RingWork, StereoCarrier, StereoDescriptor, StereoElement,
-    StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind, StereoSource,
-    TetrahedralOrientation, TetrahedralStereo, ValenceModel,
+    RingMembership, RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
+    StereoElementKind, StereoGroup, StereoGroupKind, StereoSource, TetrahedralOrientation,
+    TetrahedralStereo, ValenceModel,
 };
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
@@ -29,7 +29,7 @@ fn export_perception(
         );
         let ring_set = rings
             .ring_set()
-            .map(|set| RingSet::from_parts(set.rings().to_vec(), set.work()));
+            .map(|set| RingSet::from_rings(set.rings().to_vec()));
         builder = builder.with_rings(membership, ring_set);
     }
     if let Some(aromaticity) = source.aromaticity_state() {
@@ -209,23 +209,13 @@ fn ring_membership_round_trips_with_and_without_ring_set() {
         membership_only
     );
 
-    let work = RingWork {
-        atom_count: 3,
-        bond_count: 3,
-        candidate_cycles: 1,
-        total_work: 7,
-        ..RingWork::default()
-    };
     let with_basis = PerceptionState::builder()
         .with_rings(
             membership(),
-            Some(RingSet::from_parts(
-                vec![Ring {
-                    atoms: atoms.to_vec(),
-                    bonds: bonds.to_vec(),
-                }],
-                work,
-            )),
+            Some(RingSet::from_rings(vec![Ring {
+                atoms: atoms.to_vec(),
+                bonds: bonds.to_vec(),
+            }])),
         )
         .build();
     molecule
@@ -239,13 +229,10 @@ fn ring_membership_round_trips_with_and_without_ring_set() {
     let inconsistent = PerceptionState::builder()
         .with_rings(
             RingMembership::from_slot_flags(vec![false, true, true], vec![true; 3]),
-            Some(RingSet::from_parts(
-                vec![Ring {
-                    atoms: atoms.to_vec(),
-                    bonds: bonds.to_vec(),
-                }],
-                work,
-            )),
+            Some(RingSet::from_rings(vec![Ring {
+                atoms: atoms.to_vec(),
+                bonds: bonds.to_vec(),
+            }])),
         )
         .build();
     assert_eq!(
@@ -349,17 +336,10 @@ fn malformed_ring_and_stereo_references_are_rejected() {
     let malformed = PerceptionState::builder()
         .with_rings(
             membership,
-            Some(RingSet::from_parts(
-                vec![Ring {
-                    atoms: vec![AtomId::new(0), AtomId::new(1)],
-                    bonds: Vec::new(),
-                }],
-                RingWork {
-                    atom_count: molecule.atom_count(),
-                    bond_count: molecule.bond_count(),
-                    ..RingWork::default()
-                },
-            )),
+            Some(RingSet::from_rings(vec![Ring {
+                atoms: vec![AtomId::new(0), AtomId::new(1)],
+                bonds: Vec::new(),
+            }])),
         )
         .build();
     let error = molecule
