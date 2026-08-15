@@ -5,10 +5,9 @@ fn valence_and_sanitization_are_explicit() {
     let mut small = read_smiles("CCO").expect("smiles should parse");
     assert!(!small.graph().perception().has_valence());
 
-    let report = perception_api::sanitize_with_options(&mut small, SanitizeOptions::default())
+    perception_api::sanitize_with_options(&mut small, SanitizeOptions::default())
         .expect("ethanol should sanitize");
 
-    assert!(report.valence.expect("valence report").is_ok());
     assert!(small.graph().perception().has_valence());
     assert!(small.graph().perception().has_rings());
     assert_eq!(
@@ -256,7 +255,11 @@ fn failed_valence_sanitization_is_transactional() {
     let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect_err("pentavalent carbon should fail valence");
 
-    assert!(matches!(error, SanitizeError::Valence(_)));
+    assert!(matches!(
+        error,
+        SanitizeError::Valence(ValenceError { issues })
+            if matches!(issues.as_slice(), [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon)
+    ));
     assert_eq!(molecule, before);
 }
 
@@ -367,18 +370,87 @@ fn valence_reports_excess_common_valence() {
         mol.add_bond(c, h, BondOrder::Single).expect("bond");
     }
 
-    let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+    let error = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike)
+        .expect_err("pentavalent carbon should fail strict perception");
 
-    assert_eq!(report.issues.len(), 1);
-    assert!(!report.is_ok());
+    assert_eq!(error.issues.len(), 1);
 
-    let report = valence_api::perceive_valence_with_options(
+    valence_api::perceive_valence_with_options(
         &mut mol,
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
-    );
-    assert!(report.is_ok());
+    )
+    .expect("permissive valence inspection should succeed");
     assert_eq!(mol.atom(c).expect("carbon").implicit_hydrogens, Some(0));
+}
+
+#[test]
+fn failed_strict_valence_perception_preserves_complete_previous_perception_state() {
+    let mut mol = Molecule::new();
+    let carbon = mol
+        .add_atom(element_atom("C"))
+        .expect("atom identifier capacity");
+    for _ in 0..5 {
+        let hydrogen = mol
+            .add_atom(element_atom("H"))
+            .expect("atom identifier capacity");
+        mol.add_bond(carbon, hydrogen, BondOrder::Single)
+            .expect("bond");
+    }
+    let previous = PerceptionState::builder()
+        .with_valence(
+            Some(ValenceModel::RdkitLike),
+            mol.atom_ids()
+                .map(|atom| (atom, if atom == carbon { 2 } else { 0 }))
+                .collect(),
+        )
+        .expect("previous valence")
+        .with_rings(
+            RingMembership::from_slot_flags(
+                vec![false; mol.atom_count()],
+                vec![false; mol.bond_count()],
+            ),
+            None,
+        )
+        .with_aromaticity(AromaticityProvenance::Imported, Vec::new(), Vec::new())
+        .expect("previous aromaticity")
+        .build();
+    mol.install_perception_state(previous.clone())
+        .expect("previous perception");
+
+    let error = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike)
+        .expect_err("pentavalent carbon should fail strict perception");
+
+    assert!(matches!(
+        error.issues.as_slice(),
+        [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon
+    ));
+    assert_eq!(mol.perception(), &previous);
+    assert_eq!(mol.atom(carbon).unwrap().implicit_hydrogens, Some(2));
+}
+
+#[test]
+fn unsupported_valence_target_remains_strictly_diagnostic_and_permissively_installable() {
+    let mut strict = Molecule::new();
+    let carbon = strict
+        .add_atom(charged_atom("C", 7))
+        .expect("atom identifier capacity");
+
+    let error = valence_api::perceive_valence(&mut strict, ValenceModel::RdkitLike)
+        .expect_err("out-of-range charge adjustment should be unsupported");
+
+    assert_eq!(error.issues, vec![ValenceIssue::UnsupportedElement(carbon)]);
+    assert_eq!(strict.perception(), &PerceptionState::default());
+    assert_eq!(strict.atom(carbon).unwrap().implicit_hydrogens, None);
+
+    valence_api::perceive_valence_with_options(
+        &mut strict,
+        ValenceModel::RdkitLike,
+        ValenceOptions { strict: false },
+    )
+    .expect("permissive unsupported-element inspection should install");
+    assert!(strict.perception().has_valence());
+    assert_eq!(strict.atom(carbon).unwrap().implicit_hydrogens, Some(0));
 }
 
 #[test]
@@ -395,20 +467,18 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
             .expect("bond");
     }
 
-    let report = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike);
+    let error = valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike)
+        .expect_err("high-degree carbon should fail strict perception");
 
     assert_eq!(
-        report.issues,
+        error.issues,
         vec![ValenceIssue::ValenceExceeded {
             atom: carbon,
             explicit_valence: 300,
             max_allowed: 4,
         }]
     );
-    assert_eq!(
-        mol.atom(carbon).expect("carbon").implicit_hydrogens,
-        Some(0)
-    );
+    assert_eq!(mol.atom(carbon).expect("carbon").implicit_hydrogens, None);
 }
 
 #[test]
@@ -482,11 +552,12 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
                 .add_bond(rejected_center, hydrogen, BondOrder::Single)
                 .expect("bond");
         }
-        let rejected_report =
-            valence_api::perceive_valence(&mut rejected_mol, ValenceModel::RdkitLike);
+        let rejected_error =
+            valence_api::perceive_valence(&mut rejected_mol, ValenceModel::RdkitLike)
+                .expect_err("excess hypervalent anion valence should fail");
         assert!(
             matches!(
-                rejected_report.issues.as_slice(),
+                rejected_error.issues.as_slice(),
                 [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == rejected_center
             ),
             "{symbol}{charge:+} valence {rejected}"

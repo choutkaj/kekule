@@ -1,5 +1,6 @@
 use crate::core::*;
 use std::collections::BTreeMap;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ValenceOptions {
@@ -22,18 +23,27 @@ pub enum ValenceIssue {
     },
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ValenceReport {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValenceError {
     pub issues: Vec<ValenceIssue>,
 }
 
-impl ValenceReport {
-    pub fn is_ok(&self) -> bool {
-        self.issues.is_empty()
+impl fmt::Display for ValenceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "valence perception reported {} issue(s)",
+            self.issues.len()
+        )
     }
 }
 
-pub fn perceive_valence(mol: &mut Molecule, model: ValenceModel) -> ValenceReport {
+impl std::error::Error for ValenceError {}
+
+pub fn perceive_valence(
+    mol: &mut Molecule,
+    model: ValenceModel,
+) -> std::result::Result<(), ValenceError> {
     perceive_valence_with_options(mol, model, ValenceOptions::default())
 }
 
@@ -41,13 +51,16 @@ pub fn perceive_valence_with_options(
     mol: &mut Molecule,
     model: ValenceModel,
     options: ValenceOptions,
-) -> ValenceReport {
+) -> std::result::Result<(), ValenceError> {
     match model {
         ValenceModel::RdkitLike => perceive_rdkit_like_valence(mol, options),
     }
 }
 
-fn perceive_rdkit_like_valence(mol: &mut Molecule, options: ValenceOptions) -> ValenceReport {
+fn perceive_rdkit_like_valence(
+    mol: &mut Molecule,
+    options: ValenceOptions,
+) -> std::result::Result<(), ValenceError> {
     let mut assignments = Vec::<(AtomId, u8)>::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
@@ -149,15 +162,14 @@ fn perceive_rdkit_like_valence(mol: &mut Molecule, options: ValenceOptions) -> V
             u8::try_from(implicit).expect("RDKit implicit valences fit in u8"),
         ));
     }
+    if !issues.is_empty() {
+        return Err(ValenceError { issues });
+    }
     mol.install_valence(
-        model_from_options(),
+        ValenceModel::RdkitLike,
         assignments.into_iter().collect::<BTreeMap<_, _>>(),
     );
-    ValenceReport { issues }
-}
-
-fn model_from_options() -> ValenceModel {
-    ValenceModel::RdkitLike
+    Ok(())
 }
 
 fn record_unsupported(issues: &mut Vec<ValenceIssue>, atom: AtomId, options: ValenceOptions) {

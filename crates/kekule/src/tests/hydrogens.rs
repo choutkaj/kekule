@@ -308,7 +308,12 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
     graph
         .add_bond(parent, hydrogen, BondOrder::Single)
         .expect("hydrogen bond");
-    let _ = valence_api::perceive_valence(&mut graph, ValenceModel::RdkitLike);
+    valence_api::perceive_valence_with_options(
+        &mut graph,
+        ValenceModel::RdkitLike,
+        ValenceOptions { strict: false },
+    )
+    .expect("permissive valence perception");
     let mut molecule = SmallMolecule::from_graph(graph);
     let original = molecule.clone();
 
