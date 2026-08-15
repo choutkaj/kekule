@@ -286,7 +286,7 @@ declarations, atom maps, bond endpoints, `BondOrder`, local stereo, and source
 stereo marks.
 
 Implicit hydrogens, ring membership, ring sets, aromatic membership,
-aromaticity provenance, and derived CIP descriptors are computed state. The
+the aromaticity perception model, and derived CIP descriptors are computed state. The
 initial discrete view lives in private optional sections of `PerceptionState`
 and is exposed through read-only queries. This current discrete state is not a
 claim that one molecule can have only one kind of derived chemical view;

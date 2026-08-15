@@ -31,7 +31,7 @@ single-atom values are valid connected boundary cases.
 - Preserves stable `AtomId` and `BondId` values after deletion.
 - Returns scoped `AtomMut` and `BondMut` guards from mutable graph access.
 - Owns one internally consistent `PerceptionState` with read-only valence,
-  implicit-H, ring, aromaticity/provenance, and CIP queries.
+  implicit-H, ring, model-perceived aromaticity, and CIP queries.
 - Exposes immutable exact perception-section views, detached checked
   construction, and one whole-state validated atomic installation operation;
   incremental perception mutators remain crate-private.
@@ -122,3 +122,6 @@ single-atom values are valid connected boundary cases.
   finalization, and add downstream compile-fail extraction regressions.
 - v14: Restrict installed ring perception to semantic membership and basis
   state, excluding algorithm diagnostics from molecule identity and restore.
+- v15: Restrict installed aromaticity to semantic model-perceived membership,
+  remove imported representation provenance, and expose the installed
+  `AromaticityModel` directly.

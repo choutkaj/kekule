@@ -2,11 +2,11 @@ use kekule::bio::{
     MacroMolecule, SmcraAtomSiteMetadata, SmcraChainId, SmcraHierarchy, SmcraResidueId,
 };
 use kekule::core::{
-    AromaticityModel, AromaticityProvenance, Atom, AtomId, BondOrder, Element, Molecule,
-    PerceptionState, PerceptionStateBuildError, PerceptionStateInstallError, PropValue, Ring,
-    RingMembership, RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
-    StereoElementKind, StereoGroup, StereoGroupKind, StereoSource, TetrahedralOrientation,
-    TetrahedralStereo, ValenceModel,
+    AromaticityModel, Atom, AtomId, BondOrder, Element, Molecule, PerceptionState,
+    PerceptionStateBuildError, PerceptionStateInstallError, PropValue, Ring, RingMembership,
+    RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId, StereoElementKind,
+    StereoGroup, StereoGroupKind, StereoSource, TetrahedralOrientation, TetrahedralStereo,
+    ValenceModel,
 };
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
@@ -34,7 +34,7 @@ fn export_perception(
     }
     if let Some(aromaticity) = source.aromaticity_state() {
         builder = builder.with_aromaticity(
-            aromaticity.provenance(),
+            aromaticity.model(),
             aromaticity.atoms().collect(),
             aromaticity.bonds().collect(),
         )?;
@@ -105,12 +105,8 @@ fn full_installed_perception_round_trips_through_public_api() {
         .ring_state()
         .is_some_and(|state| state.ring_set().is_some()));
     assert_eq!(
-        perception
-            .aromaticity_state()
-            .map(|state| state.provenance()),
-        Some(AromaticityProvenance::Perceived(
-            AromaticityModel::RdkitLike
-        ))
+        perception.aromaticity_state().map(|state| state.model()),
+        Some(AromaticityModel::RdkitLike)
     );
     assert!(perception.cip_descriptors().next().is_some());
 
@@ -132,7 +128,7 @@ fn full_installed_perception_round_trips_through_public_api() {
 }
 
 #[test]
-fn exact_section_presence_and_provenance_round_trip() {
+fn exact_section_presence_and_model_round_trip() {
     let mut builder = Molecule::builder();
     let atom = builder.add_atom(carbon()).expect("atom");
     let mut molecule = builder.build().expect("single atom molecule");
@@ -158,19 +154,14 @@ fn exact_section_presence_and_provenance_round_trip() {
         model_neutral
     );
 
-    for provenance in [
-        AromaticityProvenance::Imported,
-        AromaticityProvenance::Perceived(AromaticityModel::RdkitLike),
-    ] {
-        let state = PerceptionState::builder()
-            .with_aromaticity(provenance, vec![atom], Vec::new())
-            .expect("aromaticity")
-            .build();
-        molecule
-            .install_perception_state(state.clone())
-            .expect("install");
-        assert_eq!(export_perception(molecule.perception()).unwrap(), state);
-    }
+    let state = PerceptionState::builder()
+        .with_aromaticity(AromaticityModel::RdkitLike, vec![atom], Vec::new())
+        .expect("aromaticity")
+        .build();
+    molecule
+        .install_perception_state(state.clone())
+        .expect("install");
+    assert_eq!(export_perception(molecule.perception()).unwrap(), state);
 }
 
 #[test]
@@ -284,7 +275,7 @@ fn malformed_perception_is_rejected_transactionally() {
 
     assert!(matches!(
         PerceptionState::builder().with_aromaticity(
-            AromaticityProvenance::Imported,
+            AromaticityModel::RdkitLike,
             vec![live, live],
             Vec::new()
         ),
@@ -306,11 +297,7 @@ fn malformed_ring_and_stereo_references_are_rejected() {
     let previous = molecule.perception().clone();
 
     let invalid_bond = PerceptionState::builder()
-        .with_aromaticity(
-            AromaticityProvenance::Imported,
-            Vec::new(),
-            vec![deleted_bond],
-        )
+        .with_aromaticity(AromaticityModel::RdkitLike, Vec::new(), vec![deleted_bond])
         .unwrap()
         .build();
     assert_eq!(

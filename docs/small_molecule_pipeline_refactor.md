@@ -261,14 +261,14 @@ Goal: make aromatic bond localization representation normalization and make arom
 
 Implement:
 
-- extract/rewrite imported-aromatic localization into normalization;
-- normalization must convert accepted `BondOrder::Aromatic` source representation into deterministic localized ordinary bond orders;
-- the localization kernel must not require installed perception state or a selectable chemical perception model;
-- move invalid imported-aromatic representation and normalization resource-limit errors into `NormalizationError` or a focused normalization sub-error;
-- aromaticity perception must assume normalized localized representation and must never rewrite primary bond orders;
-- remove `AromaticityProvenance::Imported`; installed aromaticity is model-perceived semantic state only;
-- update SMILES interpretation so source aromatic syntax is represented without installing semantic aromaticity;
-- add regressions for aromatic SMILES interpretation -> normalize -> perceive and for normalization idempotence.
+- [x] extract/rewrite imported-aromatic localization into normalization;
+- [x] normalization converts accepted `BondOrder::Aromatic` source representation into deterministic localized ordinary bond orders;
+- [x] keep the localization kernel independent of installed perception state and selectable chemical perception models;
+- [x] move invalid imported-aromatic representation and normalization resource-limit errors into `NormalizationError`;
+- [x] make aromaticity perception assume normalized localized representation and never rewrite primary bond orders;
+- [x] remove `AromaticityProvenance::Imported`; installed aromaticity is model-perceived semantic state only;
+- [x] update SMILES interpretation so source aromatic syntax is represented without installing semantic aromaticity;
+- [x] add regressions for aromatic SMILES interpretation -> normalize -> perceive and for normalization idempotence.
 
 Temporary compatibility is allowed only inside this branch while moving callers; do not leave a permanent dual path where aromaticity silently normalizes input.
 

@@ -26,8 +26,11 @@ component-qualified source mappings.
   `molecule()`, `report()`, `into_molecule()`, and `into_parts()` require
   exactly one component and return `SmilesComponentCountError` otherwise; they
   never panic on valid multi-component input.
-- Interpretation may install imported aromatic annotations with input
-  provenance. It never sanitizes or runs full perception.
+- Interpretation preserves aromatic source syntax as represented
+  `BondOrder::Aromatic` bonds but installs no semantic aromaticity. Bracket
+  radical inference uses private source-token membership rather than
+  `PerceptionState`. Interpretation never normalizes, sanitizes, or runs
+  chemical perception.
 - `SmilesParseOptions` bounds input bytes plus parsed atom and bond counts.
   Defaults permit large molecules while preventing unbounded parser allocation;
   callers handling intentionally larger records can opt into higher limits.
@@ -69,3 +72,6 @@ component-qualified source mappings.
 - v19: Interpret each dot component as a separate connected molecule, expose
   ordered component results, and replace panicking single-molecule access with
   structured component-count errors.
+- v20: Preserve aromatic source bond representation without installing
+  semantic aromaticity; normalization now localizes that source form before
+  perception.

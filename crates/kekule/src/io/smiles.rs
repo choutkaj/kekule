@@ -729,18 +729,12 @@ fn interpret_smiles_program_inner(
         });
     }
 
-    mol.begin_aromaticity(AromaticityProvenance::Imported);
-    for atom_id in &program.imported_aromatic_atoms {
-        mol.set_atom_aromatic(*atom_id, true);
-    }
-    let imported_aromatic_bonds = mol
-        .bonds()
-        .filter_map(|(bond_id, bond)| (bond.order == BondOrder::Aromatic).then_some(bond_id))
-        .collect::<Vec<_>>();
-    for bond_id in imported_aromatic_bonds {
-        mol.set_bond_aromatic(bond_id, true);
-    }
-    infer_smiles_bracket_radicals(&mut mol, &program.bracket_atoms, end_offset)?;
+    infer_smiles_bracket_radicals(
+        &mut mol,
+        &program.bracket_atoms,
+        &program.imported_aromatic_atoms,
+        end_offset,
+    )?;
     add_smiles_tetrahedral_elements(
         &mut mol,
         program.tetrahedral.clone(),
@@ -759,11 +753,16 @@ fn interpret_smiles_program_inner(
 fn infer_smiles_bracket_radicals(
     mol: &mut Molecule,
     bracket_atoms: &[AtomId],
+    imported_aromatic_atoms: &BTreeSet<AtomId>,
     offset: usize,
 ) -> std::result::Result<(), SmilesParseError> {
     for atom_id in bracket_atoms {
-        let radical = inferred_smiles_bracket_radical(mol, *atom_id)
-            .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+        let radical = inferred_smiles_bracket_radical(
+            mol,
+            *atom_id,
+            imported_aromatic_atoms.contains(atom_id),
+        )
+        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
         let atom = mol
             .atoms
             .get_mut(atom_id.index())
@@ -777,12 +776,13 @@ fn infer_smiles_bracket_radicals(
 fn inferred_smiles_bracket_radical(
     mol: &Molecule,
     atom_id: AtomId,
+    imported_aromatic: bool,
 ) -> std::result::Result<Option<AtomRadical>, MoleculeError> {
     let atom = mol.atom(atom_id)?;
     let Some(target_valence) = rdkit_charge_adjusted_default_valence(atom) else {
         return Ok(None);
     };
-    let occupied_valence = smiles_bracket_occupied_valence(mol, atom_id, atom);
+    let occupied_valence = smiles_bracket_occupied_valence(mol, atom_id, atom, imported_aromatic);
     Ok(
         match usize::from(target_valence).saturating_sub(occupied_valence) {
             0 => None,
@@ -795,8 +795,13 @@ fn inferred_smiles_bracket_radical(
     )
 }
 
-fn smiles_bracket_occupied_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> usize {
-    if mol.atom_is_aromatic(atom_id).ok().flatten() != Some(true) {
+fn smiles_bracket_occupied_valence(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+    imported_aromatic: bool,
+) -> usize {
+    if !imported_aromatic {
         return explicit_valence(mol, atom_id) + usize::from(atom.explicit_hydrogens);
     }
     let bond_valence_twice = mol
@@ -1760,8 +1765,12 @@ fn validate_smiles_writeable(
     }
     for (atom_id, atom) in mol.atoms() {
         if atom.radical.is_some()
-            && inferred_smiles_bracket_radical(mol, atom_id)
-                .map_err(|error| MolWriteError::new(error.to_string()))?
+            && inferred_smiles_bracket_radical(
+                mol,
+                atom_id,
+                mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true),
+            )
+            .map_err(|error| MolWriteError::new(error.to_string()))?
                 != atom.radical
         {
             return Err(MolWriteError::new(
