@@ -2,7 +2,7 @@
 
 ## Summary
 
-Provide conservative valence perception for common organic molecules.
+Provide conservative valence perception for normalized small-molecule graphs.
 
 ## Behavior/API
 
@@ -10,9 +10,13 @@ Provide conservative valence perception for common organic molecules.
   ValenceIssue, perceive_valence, perceive_valence_with_options}`.
 - `perceive_valence` and `perceive_valence_with_options` return
   `Result<(), ValenceError>`; successful execution has no separate report.
-- Computes explicit valence from bond order and explicit hydrogens.
+- Requires normalized represented chemistry with localized ordinary bond
+  orders and computes explicit valence from those orders plus represented
+  explicit hydrogens.
 - Assigns implicit hydrogens when a common allowed valence can be selected.
-- Handles imported aromatic atoms without counting each aromatic bond as a localized double bond.
+- Does not read installed ring or semantic aromaticity state. Valence can run
+  first, and aromatic systems derive their implicit hydrogens directly from
+  the normalized localized representation.
 - Returns unsupported elements or valence excesses as structured
   `ValenceIssue` values in `ValenceError` instead of silently accepting them.
 - Defaults to strict behavior. When strict issues are present, perception
@@ -36,6 +40,10 @@ Provide conservative valence perception for common organic molecules.
 - Radical electrons participate in target-valence selection, and explicit
   valence/count arithmetic uses `usize` so large malformed graphs return
   structured issues instead of truncating or panicking.
+- Benzene, heteroaromatics, charged aromatic atoms, and aromatic radicals use
+  the same localized bond-order and charge-adjusted periodic-table path as
+  other represented chemistry; there is no aromaticity-specific valence
+  target.
 - Its allowed-valence table is also the single source of truth for preserving
   valence-implied tetrahedral hydrogen carriers during Molfile parsing.
 - The pass stages every implicit-hydrogen assignment and all strict issues
@@ -47,6 +55,11 @@ Provide conservative valence perception for common organic molecules.
 - Unit tests cover neutral organics, charged species, unsupported targets,
   exceeded valence, strict/permissive behavior, and exact preservation of the
   complete prior perception state on strict failure.
+- Focused normalized-input regressions cover benzene, pyridine, represented
+  pyrrolic `[nH]`, furan, thiophene, cationic and anionic aromatics, an aromatic
+  carbon radical, fused naphthalene, and an unusual dye fixture. They run
+  valence before rings/aromaticity and then verify the expected downstream
+  semantic aromatic state.
 
 ## Benchmarks
 
@@ -56,8 +69,9 @@ Provide conservative valence perception for common organic molecules.
 
 ## Out Of Scope
 
-- Query atoms, bond-order-dependent organometallic interpretation, valence
-  tautomer handling, and sanitization orchestration.
+- Imported-aromatic localization, query atoms, bond-order-dependent
+  organometallic interpretation, valence tautomer handling, and sanitization
+  orchestration.
 
 ## Revision Notes
 
@@ -88,3 +102,7 @@ Provide conservative valence perception for common organic molecules.
 - v18: Replace the empty-success report with `Result<(), ValenceError>` and
   install semantic valence state transactionally only after strict validation
   succeeds.
+- v19: Require normalized localized represented chemistry, remove implicit-H
+  dependence on installed semantic aromaticity, and verify valence-first
+  aromatic workflows across carbon, heteroatom, charged, radical, fused, and
+  unusual fixtures.

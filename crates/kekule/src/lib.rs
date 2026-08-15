@@ -240,6 +240,11 @@ pub mod perception {
 
     use crate::small::SmallMolecule;
 
+    /// Expert valence perception for normalized represented chemistry.
+    ///
+    /// The RDKit-like model derives complete implicit-hydrogen assignments
+    /// from ordinary localized bond orders and represented atom state. It does
+    /// not require installed ring or aromaticity perception.
     pub mod valence {
         pub use crate::algorithms::{
             perceive_valence, perceive_valence_with_options, ValenceError, ValenceIssue,
