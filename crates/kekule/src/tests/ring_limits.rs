@@ -296,3 +296,54 @@ fn ring_resource_errors_propagate_transactionally() {
     .expect_err("aromaticity should propagate ring limit");
     assert!(matches!(error, AromaticityError::RingPerception(_)));
 }
+
+#[test]
+fn standalone_aromaticity_reuses_an_installed_ring_set() {
+    let mut molecule = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
+    valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
+        .expect("valence perception");
+    let installed =
+        rings_api::perceive_ring_set(molecule.graph_mut()).expect("ring perception should succeed");
+
+    aromaticity_api::perceive_aromaticity_with_ring_options(
+        molecule.graph_mut(),
+        AromaticityModel::RdkitLike,
+        RingPerceptionOptions {
+            max_atoms: 0,
+            ..RingPerceptionOptions::default()
+        },
+    )
+    .expect("installed rings should bypass the impossible ring limit");
+
+    assert_eq!(molecule.graph().ring_set(), Some(&installed));
+    assert!(molecule.graph().perception().has_aromaticity());
+}
+
+#[test]
+fn standalone_aromaticity_computes_a_missing_ring_set() {
+    let mut baseline = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
+    valence_api::perceive_valence(baseline.graph_mut(), ValenceModel::RdkitLike)
+        .expect("valence perception");
+
+    for membership_only in [false, true] {
+        let mut molecule = baseline.clone();
+        if membership_only {
+            rings_api::perceive_ring_membership(molecule.graph_mut());
+            assert!(molecule.graph().ring_membership().is_some());
+            assert!(molecule.graph().ring_set().is_none());
+        }
+
+        aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+            .expect("aromaticity should compute a missing ring basis");
+
+        assert_eq!(
+            molecule
+                .graph()
+                .ring_set()
+                .expect("computed ring basis")
+                .len(),
+            1
+        );
+        assert!(molecule.graph().perception().has_aromaticity());
+    }
+}

@@ -61,6 +61,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
   values plus bounded ring options and errors; algorithm work instrumentation
   is not part of the public facade.
+- `perception::SanitizeReport` exposes useful successful stereo output without
+  duplicating installed valence or ring state.
 - `perception::stereo` separately exposes stored-element validation,
   read-only candidate detection, and transactional mutating perception with
   focused validation errors, perception errors, and successful warnings.
@@ -248,3 +250,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   wrappers.
 - v40: Separate CIP assignment success output from structured failures and
   expose transactional complete descriptor-map replacement.
+- v41: Remove redundant ring-count sidecar output from `SanitizeReport`; ring
+  results remain inspectable as installed molecule perception state.

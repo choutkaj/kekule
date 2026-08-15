@@ -25,7 +25,6 @@ impl Default for SanitizeOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SanitizeReport {
-    pub ring_count: Option<usize>,
     pub stereo: Option<StereoPerceptionReport>,
 }
 
@@ -70,15 +69,10 @@ pub fn sanitize_small_molecule_with_ring_options(
         perceive_valence(staged.graph_mut_raw(), ValenceModel::RdkitLike)
             .map_err(SanitizeError::Valence)?;
     }
-    let ring_count = if options.perceive_rings {
-        Some(
-            perceive_ring_set_with_options(staged.graph_mut_raw(), ring_options)
-                .map_err(SanitizeError::Rings)?
-                .len(),
-        )
-    } else {
-        None
-    };
+    if options.perceive_rings {
+        perceive_ring_set_with_options(staged.graph_mut_raw(), ring_options)
+            .map_err(SanitizeError::Rings)?;
+    }
     if options.perceive_aromaticity {
         perceive_aromaticity_with_ring_options(
             staged.graph_mut_raw(),
@@ -108,7 +102,7 @@ pub fn sanitize_small_molecule_with_ring_options(
         None
     };
     *molecule = staged;
-    Ok(SanitizeReport { ring_count, stereo })
+    Ok(SanitizeReport { stereo })
 }
 
 fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {

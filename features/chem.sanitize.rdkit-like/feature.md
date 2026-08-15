@@ -2,12 +2,15 @@
 
 ## Summary
 
-Provide an explicit opt-in sanitization pipeline for common small molecules.
+Provide an explicit opt-in transactional normalization + perception workflow
+for common small molecules.
 
 ## Behavior/API
 
 - Exposes `perception::{SanitizeOptions, SanitizeReport, SanitizeError, sanitize, sanitize_with_options, sanitize_with_ring_options}`.
-- Runs valence, ring set, aromaticity, and stereo perception according to options.
+- Normalizes represented chemistry, then runs valence, ring set, aromaticity,
+  aromatic-N hydrogen normalization, and stereo perception according to
+  options.
 - The stereo stage validates existing local stereo and assembles explicit source
   marks; coordinate-only stereo assignment remains an explicit
   `stereo.perception` operation.
@@ -18,19 +21,22 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   `Result` propagation. Successful stereo reports retain created element IDs
   and nonfatal warnings.
 - `SanitizeError::Valence` carries `ValenceError`. Successful
-  `SanitizeReport` values retain ring count and stereo output only; valence
-  success has no redundant report payload.
-- Marks requested successful passes fresh and ensures skipped passes are not
-  fresh. Aromaticity may compute rings internally, but an unrequested ring
-  result is not retained or exposed.
+  `SanitizeReport` values retain useful stereo output only; installed valence
+  and ring state are inspected through the molecule rather than duplicated in
+  the report.
+- Installs requested successful perception state and clears skipped state.
+  Aromaticity reuses an already-installed ring basis. It may compute rings
+  internally when no basis is installed, but an unrequested ring result is not
+  retained or exposed.
 - Normalizes neutral aromatic nitrogen with one perceived donor hydrogen to RDKit-style `nH` atom state: one explicit atom hydrogen, zero implicit hydrogens, and no implicit-hydrogen suppression.
 - Does not run automatically from file parsers.
 
 ## Implementation Notes
 
-- The pipeline stages work on a clone and atomically replaces the caller's molecule after success.
-- The pipeline is conservative and returns only useful successful ring/stereo
-  output for caller inspection.
+- The workflow stages work on a clone and atomically replace the caller's
+  molecule after success.
+- The workflow returns successful stereo sidecar information because created
+  elements and nonfatal warnings remain useful to callers.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
 - The public facade is `perception`; lower-level sanitizer internals are not root-level API.
 - Applies sanitization-only charge cleanup for hypervalent oxyhalogen patterns
@@ -55,7 +61,8 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 ## Tests
 
 - Unit tests cover parse-without-sanitize behavior, every option combination,
-  cleanup invalidation, idempotence, default and skipped stereo perception,
+  installed ring-basis reuse, transient aromaticity ring computation, cleanup
+  invalidation, idempotence, default and skipped stereo perception,
   coordinate-only stereo staying outside sanitization, and exact rollback after
   valence, aromaticity, or stereo failure.
 
@@ -67,9 +74,8 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 
 ## Out Of Scope
 
-- Full RDKit sanitization parity, kekulization, exact CIP assignment,
-  coordinate-derived stereo assignment, cleanup transforms, and organometallic
-  handling.
+- Full RDKit sanitization parity, exact CIP assignment, coordinate-derived
+  stereo assignment, cleanup transforms, and organometallic handling.
 
 ## Revision Notes
 
@@ -101,3 +107,6 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v18: Propagate structured transactional stereo perception errors directly,
   retain successful created-element IDs and warnings, and remove fatal-issue
   inspection of successful reports.
+- v19: Define sanitization as transactional normalization plus perception,
+  reuse its installed ring basis during aromaticity, and remove redundant ring
+  count output from `SanitizeReport`.
