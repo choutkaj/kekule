@@ -39,6 +39,18 @@ Topology = reusable definitions + explicit instances + dense ordering
 ┗ Trajectory = Topology + ordered frames / reusable streaming buffers
 ```
 
+### Small-molecule pipeline
+
+Kekule separates the basic chemistry pipeline into clear stages:
+
+- **Parse** reads source syntax into a format-specific `*Document`.
+- **Interpret** translates only source-asserted chemistry into a format-independent `Molecule`.
+- **Normalize** deterministically rewrites the same chemistry into Kekule's canonical internal representation.
+- **Perceive** derives model-dependent chemical interpretation such as valence, rings, and aromaticity.
+- **CIP** optionally derives stereochemical descriptors such as `R`/`S` and `E`/`Z`.
+
+Normalization changes representation, not chemical meaning. Chemistry-changing standardization such as tautomer or protonation-state selection is a separate future concern. High-level APIs may compose these stages while lower-level APIs keep them individually accessible.
+
 
 ## Basic Usage
 
@@ -54,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut molecule = SmallMolecule::from_smiles_sanitized("C[C@@H](C(=O)O)N")?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
-    let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut());
+    let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut())?;
 
     // Inspect basic graph properties and the asserted molecular charge.
     println!("atoms: {}", molecule.atom_count());
