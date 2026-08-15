@@ -217,6 +217,12 @@ successful validation. Strict valence perception returns collected
 previous `PerceptionState` unchanged; successful valence perception installs
 the model and complete implicit-hydrogen assignments together.
 
+CIP assignment likewise validates stored stereo before mutation and returns
+structured `CipAssignmentIssue` values through `CipAssignmentError`. A failed
+attempt restores the exact previously installed CIP descriptor map. A
+successful attempt atomically replaces that complete semantic map; assigned and
+skipped elements remain useful sidecar success information.
+
 External persistence adapters may inspect every installed section exactly,
 construct one detached `PerceptionState`, and install it through a checked
 whole-state transaction. This surface preserves absent versus model-neutral

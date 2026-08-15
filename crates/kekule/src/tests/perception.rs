@@ -1510,8 +1510,8 @@ fn failed_direct_stereo_perception_preserves_complete_original_state() {
             source: StereoSource::Smiles,
         })
         .expect("directional source mark");
-    let cip = stereo_api::assign_cip_descriptors(molecule.graph_mut());
-    assert!(cip.is_ok(), "{:?}", cip.issues);
+    let cip = stereo_api::assign_cip_descriptors(molecule.graph_mut())
+        .expect("CIP assignment should succeed");
     assert_eq!(cip.assigned.len(), 1);
     stereo_api::validate_stereo(molecule.graph())
         .expect("stored-state validation must ignore source marks");

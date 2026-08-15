@@ -3562,16 +3562,16 @@ fn isomeric_smiles_preserves_pubchem_fused_quaternary_center() {
     let mut molecule = read_smiles("C[C@]12CCCC(C1CCC3=CC(=C(C=C23)C(=O)OC)C(=O)OC)(C)C")
         .expect("fused quaternary center should parse");
     perception_api::sanitize(&mut molecule).expect("fused quaternary center should sanitize");
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
-    assert!(report.is_ok(), "{:?}", report.issues);
+    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut())
+        .expect("CIP assignment should succeed");
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
 
     let written =
         smiles_api::write_isomeric(&molecule).expect("fused quaternary center should write");
     let mut reparsed = read_smiles(&written).expect("isomeric fused center output should parse");
     perception_api::sanitize(&mut reparsed).expect("isomeric fused center output should sanitize");
-    let report = stereo_api::assign_cip_descriptors(reparsed.graph_mut());
-    assert!(report.is_ok(), "{:?}", report.issues);
+    let report = stereo_api::assign_cip_descriptors(reparsed.graph_mut())
+        .expect("CIP reassignment should succeed");
 
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
 }
