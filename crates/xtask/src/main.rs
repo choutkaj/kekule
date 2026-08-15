@@ -23,7 +23,10 @@ use kekule::{
         self,
         aromaticity::{self, AromaticityModel},
         rings,
-        stereo::{self, StereoCandidate, StereoPerceptionIssue, StereoPerceptionReport},
+        stereo::{
+            self, StereoCandidate, StereoPerceptionError, StereoPerceptionIssue,
+            StereoPerceptionReport, StereoPerceptionWarning, StereoValidationIssue,
+        },
         valence::{self, ValenceModel, ValenceOptions},
         SanitizeError, SanitizeOptions,
     },

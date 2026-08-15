@@ -14,6 +14,9 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - Commits changes only after every requested pass succeeds; any error leaves the input exactly unchanged.
 - Propagates valence, ring, aromaticity, and stereo failures through
   `SanitizeError` without committing staged mutations.
+- `SanitizeError::Stereo` carries `StereoPerceptionError` through normal
+  `Result` propagation. Successful stereo reports retain created element IDs
+  and nonfatal warnings.
 - `SanitizeError::Valence` carries `ValenceError`. Successful
   `SanitizeReport` values retain ring count and stereo output only; valence
   success has no redundant report payload.
@@ -39,7 +42,7 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
   source-mark assembly can use sanitized valence and hydrogen semantics.
 - Preserves representable Molfile double-bond either marks as explicit unknown
   stereo elements instead of rejecting the whole molecule.
-- Retains conflicting multi-wedge input as a stereo ambiguity diagnostic while
+- Retains conflicting multi-wedge input as a stereo perception warning while
   allowing otherwise valid chemistry to sanitize; lone unassemblable marks and
   structural stereo errors remain fatal and transactional.
 - Retains valence-implied explicit hydrogen carriers established by Molfile
@@ -95,3 +98,6 @@ Provide an explicit opt-in sanitization pipeline for common small molecules.
 - v16: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v17: Propagate transactional `ValenceError` failures and remove the redundant
   empty-success valence field from `SanitizeReport`.
+- v18: Propagate structured transactional stereo perception errors directly,
+  retain successful created-element IDs and warnings, and remove fatal-issue
+  inspection of successful reports.

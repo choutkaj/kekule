@@ -67,7 +67,10 @@ fn sanitization_perceives_stereo_by_default_and_can_skip_it() {
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("directional molecule should sanitize");
 
-    assert!(report.stereo.expect("stereo report").is_ok());
+    assert_eq!(
+        report.stereo.expect("stereo report").created_elements.len(),
+        1
+    );
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
 
     let mut skipped = read_smiles("C/C=C\\F").expect("directional smiles should parse");
@@ -104,7 +107,10 @@ fn sanitization_preserves_unknown_double_bond_stereo() {
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("unknown double-bond stereo should sanitize");
 
-    assert!(report.stereo.expect("stereo report").is_ok());
+    assert_eq!(
+        report.stereo.expect("stereo report").created_elements.len(),
+        1
+    );
     let (_, element) = molecule
         .graph()
         .stereo_elements()
@@ -164,11 +170,15 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("coordinate-only molecule should sanitize");
 
-    assert!(report.stereo.expect("stereo report").is_ok());
+    assert!(report
+        .stereo
+        .expect("stereo report")
+        .created_elements
+        .is_empty());
     assert_eq!(molecule.graph().stereo_elements().count(), 0);
 
-    let direct_report = stereo_api::perceive_stereo(molecule.graph_mut());
-    assert!(direct_report.is_ok(), "{:?}", direct_report.issues);
+    let direct_report = stereo_api::perceive_stereo(molecule.graph_mut())
+        .expect("direct coordinate perception should succeed");
     assert_eq!(direct_report.created_elements.len(), 1);
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
 }
@@ -191,7 +201,14 @@ fn failed_stereo_sanitization_is_transactional() {
     let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect_err("unassembled stereo mark should fail sanitization");
 
-    assert!(matches!(error, SanitizeError::Stereo(_)));
+    assert!(matches!(
+        error,
+        SanitizeError::Stereo(StereoPerceptionError { issues })
+            if issues.contains(&StereoPerceptionIssue::UnassembledTetrahedralBondMark {
+                bond,
+                kind: StereoBondMarkKind::WedgeEither,
+            })
+    ));
     assert_eq!(molecule, before);
 }
 
@@ -228,12 +245,12 @@ fn sanitization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
     let stereo = report.stereo.expect("stereo report");
 
     assert!(stereo
-        .issues
-        .contains(&StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks {
+        .warnings
+        .contains(&StereoPerceptionWarning::AmbiguousTetrahedralWedgeMarks {
             center,
             mark_count: 4,
         }));
-    assert_eq!(stereo.issues.len(), 1);
+    assert_eq!(stereo.warnings.len(), 1);
     assert!(molecule.graph().stereo_elements().next().is_none());
 }
 
@@ -763,10 +780,14 @@ $$$$
         .expect("tetracoordinate phosphorus should sanitize");
     let stereo = report.stereo.expect("stereo report");
 
-    assert!(stereo.issues.is_empty());
-    assert_eq!(stereo.assembled_elements.len(), 1);
+    assert!(stereo.warnings.is_empty());
+    assert_eq!(stereo.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(stereo.created_elements[0])
+        .expect("created tetrahedral element");
     assert!(matches!(
-        &stereo.assembled_elements[0].kind,
+        &element.kind,
         StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(0)
     ));
 }
@@ -797,10 +818,14 @@ $$$$
         .expect("pyramidal sulfur should sanitize");
     let stereo = report.stereo.expect("stereo report");
 
-    assert!(stereo.issues.is_empty());
-    assert_eq!(stereo.assembled_elements.len(), 1);
+    assert!(stereo.warnings.is_empty());
+    assert_eq!(stereo.created_elements.len(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(stereo.created_elements[0])
+        .expect("created tetrahedral element");
     assert!(matches!(
-        &stereo.assembled_elements[0].kind,
+        &element.kind,
         StereoElementKind::Tetrahedral(stereo)
             if stereo.center == AtomId::new(0)
                 && stereo.carriers.contains(&StereoCarrier::ImplicitLonePair)

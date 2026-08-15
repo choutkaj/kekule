@@ -1,13 +1,11 @@
 use crate::core::*;
 use crate::geometry::Point3;
+use std::fmt;
 
 use super::RingMembership;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StereoPerceptionOptions {
-    pub validate_existing: bool,
-    pub detect_candidates: bool,
-    pub assemble_source_marks: bool,
     pub assign_coordinates: bool,
     pub assign_coordinate_axes: bool,
 }
@@ -15,9 +13,6 @@ pub struct StereoPerceptionOptions {
 impl Default for StereoPerceptionOptions {
     fn default() -> Self {
         Self {
-            validate_existing: true,
-            detect_candidates: true,
-            assemble_source_marks: true,
             assign_coordinates: true,
             assign_coordinate_axes: false,
         }
@@ -26,16 +21,13 @@ impl Default for StereoPerceptionOptions {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StereoPerceptionReport {
-    pub candidates: Vec<StereoCandidate>,
-    pub issues: Vec<StereoPerceptionIssue>,
-    pub assembled_elements: Vec<StereoElement>,
     pub created_elements: Vec<StereoElementId>,
+    pub warnings: Vec<StereoPerceptionWarning>,
 }
 
-impl StereoPerceptionReport {
-    pub fn is_ok(&self) -> bool {
-        self.issues.is_empty()
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StereoPerceptionWarning {
+    AmbiguousTetrahedralWedgeMarks { center: AtomId, mark_count: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +46,7 @@ pub enum StereoCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StereoPerceptionIssue {
+pub enum StereoValidationIssue {
     MissingStereoAtom {
         element: StereoElementId,
         atom: AtomId,
@@ -78,9 +70,10 @@ pub enum StereoPerceptionIssue {
         center: AtomId,
         carrier: StereoCarrier,
     },
-    TetrahedralHydrogenCarrierUnavailable {
+    TetrahedralCarrierUnavailable {
         element: StereoElementId,
         center: AtomId,
+        carrier: StereoCarrier,
     },
     InvalidDoubleBondOrder {
         element: StereoElementId,
@@ -103,9 +96,10 @@ pub enum StereoPerceptionIssue {
         endpoint: AtomId,
         carrier: StereoCarrier,
     },
-    DoubleBondHydrogenCarrierUnavailable {
+    DoubleBondCarrierUnavailable {
         element: StereoElementId,
         endpoint: AtomId,
+        carrier: StereoCarrier,
     },
     InvalidAxisCarrierCount {
         element: StereoElementId,
@@ -122,10 +116,32 @@ pub enum StereoPerceptionIssue {
         axis: BondId,
         carrier: StereoCarrier,
     },
-    AmbiguousTetrahedralWedgeMarks {
-        center: AtomId,
-        mark_count: usize,
+    UnsupportedAxisCarrier {
+        element: StereoElementId,
+        axis: BondId,
+        carrier: StereoCarrier,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StereoValidationError {
+    pub issues: Vec<StereoValidationIssue>,
+}
+
+impl fmt::Display for StereoValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "stereo validation reported {} issue(s)",
+            self.issues.len()
+        )
+    }
+}
+
+impl std::error::Error for StereoValidationError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StereoPerceptionIssue {
     UnassembledTetrahedralBondMark {
         bond: BondId,
         kind: StereoBondMarkKind,
@@ -142,87 +158,112 @@ pub enum StereoPerceptionIssue {
         bond: BondId,
         kind: StereoBondMarkKind,
     },
-    CouldNotCreateElement {
-        message: String,
-    },
+    InvalidStereo(StereoValidationIssue),
+    CouldNotCreateElement(MoleculeError),
 }
 
-pub fn validate_stereo(mol: &Molecule) -> StereoPerceptionReport {
-    validate_stereo_with_options(mol, StereoPerceptionOptions::default())
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StereoPerceptionError {
+    pub issues: Vec<StereoPerceptionIssue>,
 }
 
-pub fn validate_stereo_with_options(
-    mol: &Molecule,
-    options: StereoPerceptionOptions,
-) -> StereoPerceptionReport {
-    stereo_report(mol, options)
+impl fmt::Display for StereoPerceptionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "stereo perception reported {} issue(s)",
+            self.issues.len()
+        )
+    }
 }
 
-pub fn perceive_stereo(mol: &mut Molecule) -> StereoPerceptionReport {
+impl std::error::Error for StereoPerceptionError {}
+
+impl From<StereoValidationError> for StereoPerceptionError {
+    fn from(error: StereoValidationError) -> Self {
+        Self {
+            issues: error
+                .issues
+                .into_iter()
+                .map(StereoPerceptionIssue::InvalidStereo)
+                .collect(),
+        }
+    }
+}
+
+pub fn validate_stereo(mol: &Molecule) -> std::result::Result<(), StereoValidationError> {
+    let mut issues = Vec::new();
+    validate_existing_elements(mol, &mut issues);
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(StereoValidationError { issues })
+    }
+}
+
+pub fn detect_stereo_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
+    let mut candidates = tetrahedral_candidates(mol);
+    candidates.extend(double_bond_candidates(mol));
+    candidates
+}
+
+pub fn perceive_stereo(
+    mol: &mut Molecule,
+) -> std::result::Result<StereoPerceptionReport, StereoPerceptionError> {
     perceive_stereo_with_options(mol, StereoPerceptionOptions::default())
 }
 
 pub fn perceive_stereo_with_options(
     mol: &mut Molecule,
     options: StereoPerceptionOptions,
-) -> StereoPerceptionReport {
-    let mut report = stereo_report(mol, options);
-    for element in report.assembled_elements.clone() {
-        match mol.add_stereo_element(element) {
-            Ok(id) => report.created_elements.push(id),
-            Err(error) => report
-                .issues
-                .push(StereoPerceptionIssue::CouldNotCreateElement {
-                    message: error.to_string(),
-                }),
-        }
-    }
-    report
-}
+) -> std::result::Result<StereoPerceptionReport, StereoPerceptionError> {
+    validate_stereo(mol)?;
 
-fn stereo_report(mol: &Molecule, options: StereoPerceptionOptions) -> StereoPerceptionReport {
-    let mut report = StereoPerceptionReport::default();
-    if options.validate_existing {
-        validate_existing_elements(mol, &mut report.issues);
-    }
-    if options.detect_candidates {
-        report.candidates.extend(tetrahedral_candidates(mol));
-        report.candidates.extend(double_bond_candidates(mol));
-    }
-    if options.assemble_source_marks {
-        let mut used_marks = Vec::<BondId>::new();
-        let axis_elements = assemble_atropisomeric_axes(mol, &mut used_marks);
-        report
-            .assembled_elements
-            .extend(assemble_tetrahedral_wedges(
-                mol,
-                &mut report.issues,
-                &mut used_marks,
-            ));
-        report.assembled_elements.extend(axis_elements);
-        report
-            .assembled_elements
-            .extend(assemble_unknown_double_bonds(mol, &mut used_marks));
-        report
-            .assembled_elements
-            .extend(assemble_directional_double_bonds(
-                mol,
-                &mut report.issues,
-                &mut used_marks,
-            ));
-        report_unassembled_source_marks(mol, &used_marks, &mut report.issues);
+    let mut warnings = Vec::new();
+    let mut issues = Vec::new();
+    let mut used_marks = Vec::<BondId>::new();
+    let axis_elements = assemble_atropisomeric_axes(mol, &mut used_marks);
+    let mut planned_elements = assemble_tetrahedral_wedges(mol, &mut warnings, &mut used_marks);
+    planned_elements.extend(axis_elements);
+    planned_elements.extend(assemble_unknown_double_bonds(mol, &mut used_marks));
+    planned_elements.extend(assemble_directional_double_bonds(
+        mol,
+        &mut issues,
+        &mut used_marks,
+    ));
+    report_unassembled_source_marks(mol, &used_marks, &mut issues);
+    if !issues.is_empty() {
+        return Err(StereoPerceptionError { issues });
     }
     if options.assign_coordinates {
-        report.assembled_elements.extend(assign_coordinate_stereo(
+        planned_elements.extend(assign_coordinate_stereo(
             mol,
-            &report.assembled_elements,
+            &planned_elements,
             options.assign_coordinate_axes,
         ));
     }
-    report
+
+    let mut staged = mol.clone();
+    let mut created_elements = Vec::with_capacity(planned_elements.len());
+    for element in planned_elements {
+        match staged.add_stereo_element(element) {
+            Ok(id) => created_elements.push(id),
+            Err(error) => {
+                return Err(StereoPerceptionError {
+                    issues: vec![StereoPerceptionIssue::CouldNotCreateElement(error)],
+                });
+            }
+        }
+    }
+    validate_stereo(&staged)?;
+    *mol = staged;
+    Ok(StereoPerceptionReport {
+        created_elements,
+        warnings,
+    })
 }
 
-fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoPerceptionIssue>) {
+fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoValidationIssue>) {
     for (id, element) in mol.stereo_elements() {
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => validate_tetrahedral(mol, id, stereo, issues),
@@ -236,17 +277,17 @@ fn validate_tetrahedral(
     mol: &Molecule,
     element: StereoElementId,
     stereo: &TetrahedralStereo,
-    issues: &mut Vec<StereoPerceptionIssue>,
+    issues: &mut Vec<StereoValidationIssue>,
 ) {
     if mol.atom(stereo.center).is_err() {
-        issues.push(StereoPerceptionIssue::MissingStereoAtom {
+        issues.push(StereoValidationIssue::MissingStereoAtom {
             element,
             atom: stereo.center,
         });
         return;
     }
     if stereo.carriers.len() != 4 {
-        issues.push(StereoPerceptionIssue::InvalidTetrahedralCarrierCount {
+        issues.push(StereoValidationIssue::InvalidTetrahedralCarrierCount {
             element,
             center: stereo.center,
             carrier_count: stereo.carriers.len(),
@@ -255,7 +296,7 @@ fn validate_tetrahedral(
     let mut seen = Vec::<StereoCarrier>::new();
     for carrier in &stereo.carriers {
         if seen.contains(carrier) {
-            issues.push(StereoPerceptionIssue::DuplicateTetrahedralCarrier {
+            issues.push(StereoValidationIssue::DuplicateTetrahedralCarrier {
                 element,
                 center: stereo.center,
                 carrier: *carrier,
@@ -266,7 +307,7 @@ fn validate_tetrahedral(
         match carrier {
             StereoCarrier::Atom(atom) => {
                 if mol.atom(*atom).is_err() {
-                    issues.push(StereoPerceptionIssue::MissingStereoAtom {
+                    issues.push(StereoValidationIssue::MissingStereoAtom {
                         element,
                         atom: *atom,
                     });
@@ -276,7 +317,7 @@ fn validate_tetrahedral(
                     .flatten()
                     .is_none()
                 {
-                    issues.push(StereoPerceptionIssue::TetrahedralCarrierNotAdjacent {
+                    issues.push(StereoValidationIssue::TetrahedralCarrierNotAdjacent {
                         element,
                         center: stereo.center,
                         carrier: *carrier,
@@ -285,22 +326,20 @@ fn validate_tetrahedral(
             }
             StereoCarrier::ImplicitHydrogen => {
                 if atom_hydrogen_count(mol, stereo.center) == 0 {
-                    issues.push(
-                        StereoPerceptionIssue::TetrahedralHydrogenCarrierUnavailable {
-                            element,
-                            center: stereo.center,
-                        },
-                    );
+                    issues.push(StereoValidationIssue::TetrahedralCarrierUnavailable {
+                        element,
+                        center: stereo.center,
+                        carrier: *carrier,
+                    });
                 }
             }
             StereoCarrier::ImplicitLonePair => {
                 if !implicit_lone_pair_available(mol, stereo.center) {
-                    issues.push(
-                        StereoPerceptionIssue::TetrahedralHydrogenCarrierUnavailable {
-                            element,
-                            center: stereo.center,
-                        },
-                    );
+                    issues.push(StereoValidationIssue::TetrahedralCarrierUnavailable {
+                        element,
+                        center: stereo.center,
+                        carrier: *carrier,
+                    });
                 }
             }
         }
@@ -311,24 +350,24 @@ fn validate_double_bond(
     mol: &Molecule,
     element: StereoElementId,
     stereo: &DoubleBondStereo,
-    issues: &mut Vec<StereoPerceptionIssue>,
+    issues: &mut Vec<StereoValidationIssue>,
 ) {
     let Ok(bond) = mol.bond(stereo.bond) else {
-        issues.push(StereoPerceptionIssue::MissingStereoBond {
+        issues.push(StereoValidationIssue::MissingStereoBond {
             element,
             bond: stereo.bond,
         });
         return;
     };
     if bond.order != BondOrder::Double {
-        issues.push(StereoPerceptionIssue::InvalidDoubleBondOrder {
+        issues.push(StereoValidationIssue::InvalidDoubleBondOrder {
             element,
             bond: stereo.bond,
             order: bond.order,
         });
     }
     if !bond_connects(bond, stereo.left, stereo.right) {
-        issues.push(StereoPerceptionIssue::DoubleBondFocusMismatch {
+        issues.push(StereoValidationIssue::DoubleBondFocusMismatch {
             element,
             bond: stereo.bond,
             left: stereo.left,
@@ -359,20 +398,20 @@ fn validate_double_bond_carrier(
     endpoint: AtomId,
     other_endpoint: AtomId,
     carrier: StereoCarrier,
-    issues: &mut Vec<StereoPerceptionIssue>,
+    issues: &mut Vec<StereoValidationIssue>,
 ) {
     match carrier {
         StereoCarrier::Atom(atom) => {
             if atom == endpoint || atom == other_endpoint {
-                issues.push(StereoPerceptionIssue::DoubleBondCarrierIsFocusAtom {
+                issues.push(StereoValidationIssue::DoubleBondCarrierIsFocusAtom {
                     element,
                     endpoint,
                     carrier: atom,
                 });
             } else if mol.atom(atom).is_err() {
-                issues.push(StereoPerceptionIssue::MissingStereoAtom { element, atom });
+                issues.push(StereoValidationIssue::MissingStereoAtom { element, atom });
             } else if mol.bond_between(endpoint, atom).ok().flatten().is_none() {
-                issues.push(StereoPerceptionIssue::DoubleBondCarrierNotAdjacent {
+                issues.push(StereoValidationIssue::DoubleBondCarrierNotAdjacent {
                     element,
                     endpoint,
                     carrier,
@@ -381,18 +420,19 @@ fn validate_double_bond_carrier(
         }
         StereoCarrier::ImplicitHydrogen => {
             if atom_hydrogen_count(mol, endpoint) == 0 {
-                issues.push(
-                    StereoPerceptionIssue::DoubleBondHydrogenCarrierUnavailable {
-                        element,
-                        endpoint,
-                    },
-                );
+                issues.push(StereoValidationIssue::DoubleBondCarrierUnavailable {
+                    element,
+                    endpoint,
+                    carrier,
+                });
             }
         }
         StereoCarrier::ImplicitLonePair => {
-            issues.push(
-                StereoPerceptionIssue::DoubleBondHydrogenCarrierUnavailable { element, endpoint },
-            );
+            issues.push(StereoValidationIssue::DoubleBondCarrierUnavailable {
+                element,
+                endpoint,
+                carrier,
+            });
         }
     }
 }
@@ -401,17 +441,17 @@ fn validate_axis(
     mol: &Molecule,
     element: StereoElementId,
     stereo: &AxisStereo,
-    issues: &mut Vec<StereoPerceptionIssue>,
+    issues: &mut Vec<StereoValidationIssue>,
 ) {
     let Ok(bond) = mol.bond(stereo.axis) else {
-        issues.push(StereoPerceptionIssue::MissingStereoBond {
+        issues.push(StereoValidationIssue::MissingStereoBond {
             element,
             bond: stereo.axis,
         });
         return;
     };
     if stereo.carriers.len() != 2 {
-        issues.push(StereoPerceptionIssue::InvalidAxisCarrierCount {
+        issues.push(StereoValidationIssue::InvalidAxisCarrierCount {
             element,
             axis: stereo.axis,
             carrier_count: stereo.carriers.len(),
@@ -430,23 +470,23 @@ fn validate_axis_carrier(
     left: AtomId,
     right: AtomId,
     carrier: StereoCarrier,
-    issues: &mut Vec<StereoPerceptionIssue>,
+    issues: &mut Vec<StereoValidationIssue>,
 ) {
     match carrier {
         StereoCarrier::Atom(atom) => {
             if atom == left || atom == right {
-                issues.push(StereoPerceptionIssue::AxisCarrierIsFocusAtom {
+                issues.push(StereoValidationIssue::AxisCarrierIsFocusAtom {
                     element,
                     axis,
                     carrier: atom,
                 });
             } else if mol.atom(atom).is_err() {
-                issues.push(StereoPerceptionIssue::MissingStereoAtom { element, atom });
+                issues.push(StereoValidationIssue::MissingStereoAtom { element, atom });
             } else {
                 let adjacent_left = mol.bond_between(left, atom).ok().flatten().is_some();
                 let adjacent_right = mol.bond_between(right, atom).ok().flatten().is_some();
                 if adjacent_left == adjacent_right {
-                    issues.push(StereoPerceptionIssue::AxisCarrierNotAdjacent {
+                    issues.push(StereoValidationIssue::AxisCarrierNotAdjacent {
                         element,
                         axis,
                         carrier,
@@ -455,7 +495,7 @@ fn validate_axis_carrier(
             }
         }
         StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
-            issues.push(StereoPerceptionIssue::AxisCarrierNotAdjacent {
+            issues.push(StereoValidationIssue::UnsupportedAxisCarrier {
                 element,
                 axis,
                 carrier,
@@ -608,7 +648,7 @@ pub(crate) fn double_bond_endpoint_carriers(
 
 fn assemble_tetrahedral_wedges(
     mol: &Molecule,
-    issues: &mut Vec<StereoPerceptionIssue>,
+    warnings: &mut Vec<StereoPerceptionWarning>,
     used_marks: &mut Vec<BondId>,
 ) -> Vec<StereoElement> {
     let mut marks = Vec::<TetrahedralWedgeMark<'_>>::new();
@@ -654,7 +694,7 @@ fn assemble_tetrahedral_wedges(
         }
         if center_marks.len() > 1 {
             used_marks.extend(center_marks.iter().map(|mark| mark.mark.bond));
-            issues.push(StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks {
+            warnings.push(StereoPerceptionWarning::AmbiguousTetrahedralWedgeMarks {
                 center,
                 mark_count: center_marks.len(),
             });
