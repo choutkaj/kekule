@@ -67,6 +67,156 @@ fn normalization_is_idempotent() {
 }
 
 #[test]
+fn aromatic_smiles_normalizes_then_perceives_semantic_aromaticity() {
+    let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
+    assert!(!molecule.graph().perception().has_aromaticity());
+    assert!(molecule
+        .graph()
+        .bonds()
+        .all(|(_, bond)| bond.order == BondOrder::Aromatic));
+
+    molecule.normalize().expect("benzene should normalize");
+
+    assert_eq!(molecule.graph().perception(), &PerceptionState::default());
+    assert!(molecule
+        .graph()
+        .bonds()
+        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+    assert_eq!(
+        molecule
+            .graph()
+            .bonds()
+            .filter(|(_, bond)| bond.order == BondOrder::Double)
+            .count(),
+        3
+    );
+
+    valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
+        .expect("localized valence should be perceived");
+    aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        .expect("localized aromaticity should be perceived");
+
+    assert_eq!(
+        molecule.graph().perception().aromaticity_model(),
+        Some(AromaticityModel::RdkitLike)
+    );
+    assert!(molecule.graph().atom_ids().all(|atom| molecule
+        .graph()
+        .atom_is_aromatic(atom)
+        .unwrap()
+        == Some(true)));
+    assert!(molecule.graph().bond_ids().all(|bond| molecule
+        .graph()
+        .bond_is_aromatic(bond)
+        .unwrap()
+        == Some(true)));
+}
+
+#[test]
+fn aromatic_localization_is_idempotent() {
+    let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene should parse");
+
+    molecule
+        .normalize()
+        .expect("first aromatic localization should succeed");
+    let once = molecule.clone();
+    molecule
+        .normalize()
+        .expect("second aromatic localization should succeed");
+
+    assert_eq!(molecule, once);
+    assert!(molecule
+        .graph()
+        .bonds()
+        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+}
+
+#[test]
+fn invalid_aromatic_localization_is_transactional() {
+    let mut molecule = read_smiles("c1cccc1").expect("source syntax should parse");
+    mark_all_fresh(molecule.graph_mut());
+    let before = molecule.clone();
+
+    let error = molecule
+        .normalize()
+        .expect_err("odd aromatic demand should fail localization");
+
+    assert!(matches!(
+        error,
+        crate::normalization::NormalizationError::InvalidAromaticRepresentation(_)
+    ));
+    assert_eq!(molecule, before);
+}
+
+#[test]
+fn aromaticity_perception_preserves_complete_primary_representation() {
+    let mut molecule =
+        read_smiles("C1=CC=CC=C1[C@H](F)C/C=C/Cl").expect("localized stereo fixture should parse");
+    molecule
+        .graph_mut()
+        .props_mut()
+        .insert("source".to_owned(), PropValue::String("fixture".to_owned()));
+    molecule
+        .graph_mut()
+        .atom_mut(AtomId::new(0))
+        .expect("first atom")
+        .props
+        .insert("label".to_owned(), PropValue::Int(7));
+    let first_bond = molecule.graph().bond_ids().next().expect("first bond");
+    molecule
+        .graph_mut()
+        .bond_mut(first_bond)
+        .expect("first bond")
+        .props
+        .insert("source".to_owned(), PropValue::Bool(true));
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).expect("length unit");
+    for atom_id in molecule.graph().atom_ids() {
+        conformer
+            .set_position(
+                atom_id,
+                crate::units::Quantity::new(
+                    Point3::new(atom_id.index() as f64, 0.0, 0.0),
+                    crate::units::ANGSTROM,
+                ),
+            )
+            .expect("valid position");
+    }
+    molecule
+        .graph_mut()
+        .add_conformer(conformer)
+        .expect("valid conformer");
+    assert!(molecule.graph().stereo_elements().next().is_some());
+    assert!(molecule.graph().stereo_bond_marks().next().is_some());
+    assert!(molecule.graph().conformers().next().is_some());
+    valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
+        .expect("valence perception");
+
+    let mut represented_before = molecule.graph().clone();
+    clear_test_derived_state(&mut represented_before);
+    aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        .expect("aromaticity perception");
+    let mut represented_after = molecule.graph().clone();
+    clear_test_derived_state(&mut represented_after);
+
+    assert_eq!(represented_after, represented_before);
+    assert!(molecule.graph().perception().has_aromaticity());
+}
+
+fn clear_test_derived_state(molecule: &mut Molecule) {
+    molecule.perception = PerceptionState::default();
+    for atom in molecule.atoms.iter_mut().flatten() {
+        atom.implicit_hydrogens = None;
+        atom.aromatic = false;
+    }
+    for bond in molecule.bonds.iter_mut().flatten() {
+        bond.aromatic = false;
+    }
+    for element in molecule.stereo_elements.iter_mut().flatten() {
+        element.descriptor = None;
+    }
+}
+
+#[test]
 fn successful_normalization_clears_installed_perception() {
     let mut molecule = read_smiles("CCO").expect("ethanol should parse");
     mark_all_fresh(molecule.graph_mut());

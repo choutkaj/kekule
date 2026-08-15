@@ -233,11 +233,18 @@ fn aromatic_chalcogen_bracket_atoms_parse_without_sanitizing() {
         .collect::<Vec<_>>();
     assert_eq!(
         chalcogens,
-        vec![("Se".to_owned(), true, true), ("Te".to_owned(), true, true)]
+        vec![
+            ("Se".to_owned(), false, true),
+            ("Te".to_owned(), false, true)
+        ]
     );
     assert!(components
         .iter()
-        .all(|molecule| molecule.graph().perception().has_aromaticity()));
+        .all(|molecule| !molecule.graph().perception().has_aromaticity()));
+    assert!(components.iter().all(|molecule| molecule
+        .graph()
+        .bonds()
+        .all(|(_, bond)| bond.order == BondOrder::Aromatic)));
 }
 
 #[test]
@@ -580,7 +587,9 @@ fn invalid_lowercase_aromatic_ring_returns_structured_error() {
         assert_eq!(errors.len(), 1);
         assert!(matches!(
             errors[0],
-            SanitizeError::Aromaticity(AromaticityError::InvalidAromaticRepresentation(_))
+            SanitizeError::Normalization(
+                crate::normalization::NormalizationError::InvalidAromaticRepresentation(_)
+            )
         ));
     }
 }

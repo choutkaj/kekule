@@ -7,18 +7,12 @@ use crate::core::*;
 const MAX_FUSED_AROMATIC_COMBINATION_RINGS: usize = 6;
 const MAX_FUSED_AROMATIC_RING_SIZE: usize = 24;
 const LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT: usize = 300;
-const MAX_IMPORTED_AROMATIC_MATCHING_STATES: usize = 100_000;
 
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AromaticityError {
     UnsupportedElement(AtomId),
-    InvalidAromaticRepresentation(AtomId),
-    ImportedAromaticKekulizationLimit {
-        atom: AtomId,
-        examined_states: usize,
-        limit: usize,
-    },
+    UnsupportedBondOrder(BondId),
     RingPerception(RingPerceptionError),
 }
 
@@ -57,16 +51,9 @@ impl fmt::Display for AromaticityError {
             Self::UnsupportedElement(id) => {
                 write!(f, "unsupported aromaticity element at atom {id}")
             }
-            Self::InvalidAromaticRepresentation(id) => {
-                write!(f, "invalid aromatic representation at atom {id}")
-            }
-            Self::ImportedAromaticKekulizationLimit {
-                atom,
-                examined_states,
-                limit,
-            } => write!(
+            Self::UnsupportedBondOrder(id) => write!(
                 f,
-                "imported aromatic kekulization limit exceeded at atom {atom}: examined {examined_states} matching states, limit {limit}"
+                "unsupported represented bond order for aromaticity perception at bond {id}"
             ),
             Self::RingPerception(error) => write!(f, "{error}"),
         }
@@ -99,180 +86,25 @@ fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
+    if let Some((bond_id, _)) = mol
+        .bonds()
+        .find(|(_, bond)| bond.order == BondOrder::Aromatic)
+    {
+        return Err(AromaticityError::UnsupportedBondOrder(bond_id));
+    }
     let ring_set = match mol.ring_set() {
         Some(ring_set) => ring_set.clone(),
         None => perceive_ring_set_with_options(mol, ring_options)
             .map_err(AromaticityError::RingPerception)?,
     };
-    let imported_aromatic_components = imported_aromatic_bond_components(mol);
-    for component in imported_aromatic_components {
-        if !try_kekulize_imported_component(mol, &component)? {
-            return Err(AromaticityError::InvalidAromaticRepresentation(
-                component[0],
-            ));
-        }
-    }
     assign_rdkit_like_localized_aromaticity(mol, &ring_set)
-}
-
-fn try_kekulize_imported_component(
-    mol: &mut Molecule,
-    component: &[AtomId],
-) -> std::result::Result<bool, AromaticityError> {
-    try_kekulize_imported_component_with_limit(
-        mol,
-        component,
-        MAX_IMPORTED_AROMATIC_MATCHING_STATES,
-    )
-}
-
-fn try_kekulize_imported_component_with_limit(
-    mol: &mut Molecule,
-    component: &[AtomId],
-    max_matching_states: usize,
-) -> std::result::Result<bool, AromaticityError> {
-    let component_atoms = component.iter().copied().collect::<BTreeSet<_>>();
-    let mut demand = BTreeSet::new();
-    for atom_id in component {
-        let Ok(atom) = mol.atom(*atom_id) else {
-            return Ok(false);
-        };
-        let Some(default_valence) = rdkit_charge_adjusted_default_valence(atom) else {
-            return Ok(false);
-        };
-        let target_valence = default_valence
-            .saturating_sub(atom.radical.map_or(0, AtomRadical::unpaired_electron_count));
-        let bond_valence = mol
-            .incident_bonds(*atom_id)
-            .ok()
-            .into_iter()
-            .flatten()
-            .map(|(_, bond)| match bond.order {
-                BondOrder::Zero | BondOrder::Dative => 0,
-                BondOrder::Single | BondOrder::Aromatic => 1,
-                BondOrder::Double => 2,
-                BondOrder::Triple => 3,
-                BondOrder::Quadruple => 4,
-            })
-            .sum::<usize>();
-        let occupied_valence = bond_valence
-            .saturating_add(usize::from(atom.explicit_hydrogens))
-            .saturating_add(usize::from(
-                mol.implicit_hydrogens(*atom_id).ok().flatten().unwrap_or(0),
-            ));
-        let required_double_bonds = usize::from(target_valence).checked_sub(occupied_valence);
-        match required_double_bonds {
-            Some(0) => {}
-            Some(1) => {
-                demand.insert(*atom_id);
-            }
-            _ => return Ok(false),
-        }
-    }
-    if demand.len() % 2 != 0 {
-        return Ok(false);
-    }
-
-    let mut adjacency = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
-    for (bond_id, bond) in mol.bonds().filter(|(_, bond)| {
-        bond.order == BondOrder::Aromatic
-            && component_atoms.contains(&bond.a())
-            && component_atoms.contains(&bond.b())
-    }) {
-        if demand.contains(&bond.a()) && demand.contains(&bond.b()) {
-            adjacency
-                .entry(bond.a())
-                .or_default()
-                .push((bond.b(), bond_id));
-            adjacency
-                .entry(bond.b())
-                .or_default()
-                .push((bond.a(), bond_id));
-        }
-    }
-    for neighbors in adjacency.values_mut() {
-        neighbors.sort();
-    }
-
-    let mut stack = vec![(demand, Vec::<BondId>::new())];
-    let mut examined_states = 0usize;
-    let selected_double_bonds = loop {
-        let Some((unmatched, selected)) = stack.pop() else {
-            return Ok(false);
-        };
-        examined_states += 1;
-        if examined_states > max_matching_states {
-            return Err(AromaticityError::ImportedAromaticKekulizationLimit {
-                atom: component[0],
-                examined_states,
-                limit: max_matching_states,
-            });
-        }
-        if unmatched.is_empty() {
-            break selected;
-        }
-        let Some(atom_id) = unmatched.iter().copied().min_by_key(|atom_id| {
-            adjacency
-                .get(atom_id)
-                .map(|neighbors| {
-                    neighbors
-                        .iter()
-                        .filter(|(neighbor, _)| unmatched.contains(neighbor))
-                        .count()
-                })
-                .unwrap_or(0)
-        }) else {
-            return Ok(false);
-        };
-        let candidates = adjacency
-            .get(&atom_id)
-            .into_iter()
-            .flatten()
-            .filter(|(neighbor, _)| unmatched.contains(neighbor))
-            .copied()
-            .collect::<Vec<_>>();
-        if candidates.is_empty() {
-            continue;
-        }
-        for (neighbor, bond_id) in candidates.into_iter().rev() {
-            let mut next_unmatched = unmatched.clone();
-            next_unmatched.remove(&atom_id);
-            next_unmatched.remove(&neighbor);
-            let mut next_selected = selected.clone();
-            next_selected.push(bond_id);
-            stack.push((next_unmatched, next_selected));
-        }
-    };
-
-    let selected_double_bonds = selected_double_bonds.into_iter().collect::<BTreeSet<_>>();
-    for atom_id in component {
-        mol.set_atom_aromatic(*atom_id, false);
-    }
-    for (bond_id, bond) in (0..=u32::MAX)
-        .zip(mol.bonds.iter_mut())
-        .filter_map(|(raw, bond)| bond.as_mut().map(|bond| (BondId::new(raw), bond)))
-    {
-        if bond.order == BondOrder::Aromatic
-            && component_atoms.contains(&bond.a())
-            && component_atoms.contains(&bond.b())
-        {
-            bond.order = if selected_double_bonds.contains(&bond_id) {
-                BondOrder::Double
-            } else {
-                BondOrder::Single
-            };
-        }
-    }
-    Ok(true)
 }
 
 fn assign_rdkit_like_localized_aromaticity(
     mol: &mut Molecule,
     ring_set: &RingSet,
 ) -> std::result::Result<(), AromaticityError> {
-    mol.begin_aromaticity(AromaticityProvenance::Perceived(
-        AromaticityModel::RdkitLike,
-    ));
+    mol.begin_aromaticity(AromaticityModel::RdkitLike);
 
     let mut donors = vec![AromaticElectronDonorType::None; mol.atoms.len()];
     let mut atom_candidates = vec![false; mol.atoms.len()];
@@ -503,40 +335,6 @@ fn mark_rdkit_aromatic_subset(
             mol.set_atom_aromatic(right, true);
         }
     }
-}
-
-fn imported_aromatic_bond_components(mol: &Molecule) -> Vec<Vec<AtomId>> {
-    let mut adjacency = BTreeMap::<AtomId, Vec<AtomId>>::new();
-    for (_, bond) in mol
-        .bonds()
-        .filter(|(_, bond)| matches!(bond.order, BondOrder::Aromatic))
-    {
-        adjacency.entry(bond.a()).or_default().push(bond.b());
-        adjacency.entry(bond.b()).or_default().push(bond.a());
-    }
-
-    let mut components = Vec::new();
-    let mut visited = BTreeSet::new();
-    for start in adjacency.keys().copied() {
-        if !visited.insert(start) {
-            continue;
-        }
-        let mut component = Vec::new();
-        let mut stack = vec![start];
-        while let Some(atom_id) = stack.pop() {
-            component.push(atom_id);
-            if let Some(neighbors) = adjacency.get(&atom_id) {
-                for neighbor in neighbors.iter().rev().copied() {
-                    if visited.insert(neighbor) {
-                        stack.push(neighbor);
-                    }
-                }
-            }
-        }
-        component.sort();
-        components.push(component);
-    }
-    components
 }
 
 fn connected_ring_subsets(
@@ -842,9 +640,6 @@ mod tests {
     fn fused_ten_electron_perimeter_preserves_explicit_aromatic_fusion_single() {
         let mut molecule =
             crate::small::SmallMolecule::from_smiles("On2c1-c(ccc2)ccn1").expect("parses");
-        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
-        assert!(valence.is_ok(), "{valence:#?}");
-        perceive_ring_set(molecule.graph_mut()).expect("rings");
         let protected_single = molecule
             .graph()
             .bonds()
@@ -852,15 +647,23 @@ mod tests {
                 (bond.order == BondOrder::Single
                     && molecule
                         .graph()
-                        .atom(bond.a())
-                        .is_ok_and(|atom| atom.aromatic)
+                        .incident_bonds(bond.a())
+                        .is_ok_and(|mut bonds| {
+                            bonds.any(|(_, bond)| bond.order == BondOrder::Aromatic)
+                        })
                     && molecule
                         .graph()
-                        .atom(bond.b())
-                        .is_ok_and(|atom| atom.aromatic))
+                        .incident_bonds(bond.b())
+                        .is_ok_and(|mut bonds| {
+                            bonds.any(|(_, bond)| bond.order == BondOrder::Aromatic)
+                        }))
                 .then_some(bond_id)
             })
             .expect("explicit aromatic fusion single");
+        molecule.normalize().expect("source aromaticity normalizes");
+        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
+        assert!(valence.is_ok(), "{valence:#?}");
+        perceive_ring_set(molecule.graph_mut()).expect("rings");
 
         perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
             .expect("fused aromaticity");
@@ -885,6 +688,7 @@ mod tests {
     fn imported_aromatic_bonds_keep_implicit_hydrogen_nitrogen_pyrrole_like() {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::small::SmallMolecule::from_smiles(input).expect("dye parses");
+        molecule.normalize().expect("source aromaticity normalizes");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
         perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
@@ -897,32 +701,6 @@ mod tests {
             .map(|(_, atom)| (atom.aromatic, atom.implicit_hydrogens))
             .collect::<Vec<_>>();
         assert_eq!(nitrogens, vec![(false, Some(1)), (false, Some(1))]);
-    }
-
-    #[test]
-    fn imported_aromatic_matching_limit_is_structured_and_transactional() {
-        let mut molecule =
-            crate::small::SmallMolecule::from_smiles("c1ccccc1").expect("aromatic benzene parses");
-        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
-        assert!(valence.is_ok(), "{valence:#?}");
-        let component = imported_aromatic_bond_components(molecule.graph())
-            .into_iter()
-            .next()
-            .expect("imported aromatic component");
-        let before = molecule.graph().clone();
-
-        let error = try_kekulize_imported_component_with_limit(molecule.graph_mut(), &component, 0)
-            .expect_err("zero matching budget should fail structurally");
-
-        assert!(matches!(
-            error,
-            AromaticityError::ImportedAromaticKekulizationLimit {
-                examined_states: 1,
-                limit: 0,
-                ..
-            }
-        ));
-        assert_eq!(molecule.graph(), &before);
     }
 
     #[test]

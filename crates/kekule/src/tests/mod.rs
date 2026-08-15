@@ -135,7 +135,7 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondI
         .expect("right reference");
     mol.add_bond(right, right_other, BondOrder::Single)
         .expect("right other");
-    mol.begin_aromaticity(AromaticityProvenance::Imported);
+    mol.begin_aromaticity(AromaticityModel::RdkitLike);
     mol.set_atom_aromatic(left, true);
     mol.set_atom_aromatic(right, true);
 
@@ -257,7 +257,7 @@ pub(super) fn deterministic_text_mutations(seed: &str) -> Vec<String> {
 pub(super) fn mark_all_fresh(mol: &mut Molecule) {
     let _ = valence_api::perceive_valence(mol, ValenceModel::RdkitLike);
     let _ = rings_api::perceive_ring_membership(mol);
-    mol.begin_aromaticity(AromaticityProvenance::Imported);
+    mol.begin_aromaticity(AromaticityModel::RdkitLike);
 }
 
 pub(super) fn assert_all_stale(mol: &Molecule) {

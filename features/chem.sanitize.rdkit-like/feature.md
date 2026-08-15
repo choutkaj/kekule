@@ -42,13 +42,9 @@ for common small molecules.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
 - The public facade is `perception`; lower-level sanitizer internals are not root-level API.
 - Delegates canonical representation cleanup to the focused normalization
-  layer before valence perception. The sanitizer no longer owns the
-  hypervalent oxyhalogen rewrite.
-- During Stage 1, the outer sanitizer transaction restores its staged prior
-  perception after normalization so the unchanged imported-aromatic valence
-  and localization path retains compatibility. Direct normalization still
-  publishes empty perception; this narrow handoff is retired with the later
-  aromaticity/valence separation.
+  layer before valence perception. The sanitizer owns neither the hypervalent
+  oxyhalogen rewrite nor imported aromatic localization, and it does not
+  restore perception cleared by normalization.
 - Performs the aromatic nitrogen hydrogen normalization after both valence and aromaticity perception succeed, preserving total hydrogen count while exposing RDKit-like sanitized atom fields.
 - Runs stereo perception after aromaticity so local stereo validation and
   source-mark assembly can use sanitized valence and hydrogen semantics.
@@ -61,8 +57,9 @@ for common small molecules.
   wedge parsing so tetrahedral local stereo survives the full pipeline.
 - Its valence, ring, aromaticity, and stereo passes are compared together against each required corpus.
 - Inherits the current valence and aromaticity improvements, including radical implicit-hydrogen handling, imported aromatic SMILES handling, and conservative unsupported-ring behavior.
-- Propagates imported-aromatic matching-budget exhaustion distinctly from an
-  invalid aromatic representation while retaining whole-pipeline rollback.
+- Propagates invalid imported-aromatic representation and localization-budget
+  failures through `SanitizeError::Normalization` while retaining
+  whole-pipeline rollback.
 
 ## Tests
 
@@ -118,3 +115,6 @@ for common small molecules.
   count output from `SanitizeReport`.
 - v20: Delegate representation cleanup to the first-class normalization layer
   and propagate focused normalization failures transactionally.
+- v21: Delegate imported aromatic localization to normalization, remove the
+  transitional perception restore, and call purely perceptual aromaticity on
+  localized ordinary bond orders.
