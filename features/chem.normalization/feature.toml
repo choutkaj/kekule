@@ -1,0 +1,8 @@
+id = "chem.normalization"
+title = "Small-molecule representation normalization"
+area = "chemistry"
+domains = ["small-molecule"]
+version = 1
+status = "supported"
+description = "Deterministically and transactionally rewrite asserted small-molecule chemistry into Kekule's canonical represented form while clearing derived perception."
+depends_on = ["core.graph", "core.atom-bond"]

@@ -72,6 +72,34 @@ fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::core::{Atom, BondOrder, Element, Molecule};
+
+    let mut builder = Molecule::builder();
+    let chlorine = builder.add_atom(Atom::new(Element::from_symbol("Cl").unwrap()))?;
+    let oxo = builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+    let hydroxyl = builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+    builder.add_bond(chlorine, oxo, BondOrder::Double)?;
+    builder.add_bond(chlorine, hydroxyl, BondOrder::Single)?;
+    let mut molecule = SmallMolecule::from_graph(builder.build()?);
+
+    kekule::normalization::normalize(molecule.graph_mut())?;
+    molecule.normalize()?;
+
+    assert_eq!(molecule.graph().atom(chlorine)?.formal_charge, 1);
+    assert_eq!(molecule.graph().atom(oxo)?.formal_charge, -1);
+
+    let mut perceived = SmallMolecule::from_smiles_sanitized("CCO")?;
+    assert!(perceived.graph().perception().has_valence());
+    perceived.normalize()?;
+    assert_eq!(
+        perceived.graph().perception(),
+        &kekule::core::PerceptionState::default()
+    );
+    Ok(())
+}
+
+#[test]
 fn valence_result_and_error_are_public() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::core::{Atom, BondOrder, Element, Molecule};
     use kekule::perception::valence::{perceive_valence, ValenceError, ValenceIssue, ValenceModel};

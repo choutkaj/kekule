@@ -9,7 +9,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - The foundation package and Rust import root are both named `kekule`; there is
   no compatibility package or alias under a previous project name.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
-  `molfile`, `sdf`, `mmcif`, `perception`, `hydrogens`, `query`,
+  `molfile`, `sdf`, `mmcif`, `normalization`, `perception`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
   `alignment`, and `modeling`. Ordered trajectory state, codecs, and focused
   trajectory workflows live in the one-way `kekule-traj` companion, whose
@@ -56,6 +56,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MmcifInterpretation::into_model` consumes an interpretation when callers do
   not need to retain its report.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
+- Meaning-preserving representation cleanup lives under
+  `normalization::normalize` with a thin `SmallMolecule::normalize()`
+  convenience. The facade exposes its focused error without adding
+  normalization items to the crate root or prelude.
 - `perception::valence` exposes standard `Result<(), ValenceError>` operations
   and structured `ValenceIssue` diagnostics without an empty-success report.
 - `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
@@ -149,6 +153,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   transactional superposition, and fused aligned RMSD without adding companion
   analysis types to the foundational Kekule facade or prelude.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
+- A downstream normalization test compiles the focused facade and
+  `SmallMolecule` convenience and verifies the canonical oxo-halide rewrite
+  plus perception clearing.
 - Downstream tests verify connected builder/editor behavior, structured
   multi-component SMILES handling, disconnected Molfile/SDF rejection, and
   connected mmCIF topology instances.
@@ -252,3 +259,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   expose transactional complete descriptor-map replacement.
 - v41: Remove redundant ring-count sidecar output from `SanitizeReport`; ring
   results remain inspectable as installed molecule perception state.
+- v42: Add the focused transactional normalization facade and thin
+  `SmallMolecule` convenience without expanding the prelude.
