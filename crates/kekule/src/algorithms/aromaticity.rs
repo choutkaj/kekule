@@ -99,8 +99,11 @@ fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
-    let ring_set = perceive_ring_set_with_options(mol, ring_options)
-        .map_err(AromaticityError::RingPerception)?;
+    let ring_set = match mol.ring_set() {
+        Some(ring_set) => ring_set.clone(),
+        None => perceive_ring_set_with_options(mol, ring_options)
+            .map_err(AromaticityError::RingPerception)?,
+    };
     let imported_aromatic_components = imported_aromatic_bond_components(mol);
     for component in imported_aromatic_components {
         if !try_kekulize_imported_component(mol, &component)? {
