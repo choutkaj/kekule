@@ -785,7 +785,7 @@ fn atom_has_non_ring_multiple_bond(mol: &Molecule, atom_id: AtomId) -> bool {
     let membership = if let Some(membership) = mol.ring_membership() {
         membership
     } else {
-        computed_membership = super::rings::compute_ring_membership(mol).0;
+        computed_membership = super::rings::compute_ring_membership(mol);
         &computed_membership
     };
     mol.incident_bonds(atom_id)

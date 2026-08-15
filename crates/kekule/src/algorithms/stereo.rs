@@ -828,7 +828,7 @@ fn assemble_atropisomeric_axes(mol: &Molecule, used_marks: &mut Vec<BondId>) -> 
     let ring_membership = mol
         .ring_membership()
         .cloned()
-        .unwrap_or_else(|| super::rings::compute_ring_membership(mol).0);
+        .unwrap_or_else(|| super::rings::compute_ring_membership(mol));
     let mut assembled = Vec::new();
     let mut assembled_axes = Vec::<BondId>::new();
     for mark in mol.stereo_bond_marks() {
@@ -1439,7 +1439,7 @@ fn assign_coordinate_axes(
     let ring_membership = mol
         .ring_membership()
         .cloned()
-        .unwrap_or_else(|| super::rings::compute_ring_membership(mol).0);
+        .unwrap_or_else(|| super::rings::compute_ring_membership(mol));
     let mut assigned = Vec::new();
     for (axis, bond) in mol.bonds() {
         if bond.order != BondOrder::Single

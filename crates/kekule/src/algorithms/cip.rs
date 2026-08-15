@@ -2361,7 +2361,7 @@ fn cip_atomic_number_fractions(
     let ring_membership = mol
         .ring_membership()
         .cloned()
-        .unwrap_or_else(|| compute_ring_membership(mol).0);
+        .unwrap_or_else(|| compute_ring_membership(mol));
     let mut types = seed_mancude_atom_types(mol, &ring_membership, cip_bond_orders);
     if !types.iter().any(|atom_type| {
         matches!(

@@ -49,8 +49,6 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
     let ring_set = rings_api::perceive_ring_set(molecule.graph_mut())
         .expect("long chain should perceive rings");
     assert!(ring_set.is_empty());
-    assert_eq!(ring_set.work().atom_count, 20_000);
-    assert!(ring_set.work().stack_peak >= 20_000);
 
     let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
         .expect("long chain should write");
@@ -58,34 +56,62 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
 }
 
 #[test]
-fn ladder_ring_work_is_instrumented() {
-    let mut mol = Molecule::new();
-    let top = (0..12)
-        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
-        .collect::<Vec<_>>();
-    let bottom = (0..12)
-        .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
-        .collect::<Vec<_>>();
-    for index in 0..11 {
-        mol.add_bond(top[index], top[index + 1], BondOrder::Single)
-            .expect("top rail");
-        mol.add_bond(bottom[index], bottom[index + 1], BondOrder::Single)
-            .expect("bottom rail");
-    }
-    for index in 0..12 {
-        mol.add_bond(top[index], bottom[index], BondOrder::Single)
-            .expect("rung");
-    }
+fn ring_input_and_work_limits_return_actionable_errors() {
+    let options_and_error = [
+        (
+            RingPerceptionOptions {
+                max_atoms: 2,
+                ..RingPerceptionOptions::default()
+            },
+            ("atoms", 3, 2),
+        ),
+        (
+            RingPerceptionOptions {
+                max_bonds: 2,
+                ..RingPerceptionOptions::default()
+            },
+            ("bonds", 3, 2),
+        ),
+        (
+            RingPerceptionOptions {
+                max_total_work: 5,
+                ..RingPerceptionOptions::default()
+            },
+            ("total work", 6, 5),
+        ),
+        (
+            RingPerceptionOptions {
+                max_path_expansions: 0,
+                ..RingPerceptionOptions::default()
+            },
+            ("path expansions", 1, 0),
+        ),
+        (
+            RingPerceptionOptions {
+                max_equivalent_shortest_paths: 0,
+                ..RingPerceptionOptions::default()
+            },
+            ("equivalent shortest paths", 1, 0),
+        ),
+    ];
 
-    let ring_set = rings_api::perceive_ring_set(&mut mol).expect("ladder should perceive rings");
-    let work = ring_set.work();
-    assert_eq!(ring_set.len(), 11);
-    assert!(work.candidate_cycles >= ring_set.len());
-    assert!(work.equivalent_shortest_paths >= work.candidate_cycles);
-    assert!(work.path_expansions > 0);
-    assert!(work.queue_peak > 0);
-    assert!(work.stack_peak > 0);
-    assert!(work.total_work >= work.atom_count + work.bond_count);
+    for (options, expected) in options_and_error {
+        let (mut molecule, _, _) = ring_molecule(
+            &["C", "C", "C"],
+            &[BondOrder::Single, BondOrder::Single, BondOrder::Single],
+        );
+        let error = rings_api::perceive_ring_set_with_options(&mut molecule, options)
+            .expect_err("configured ring resource limit should fail");
+        assert_eq!(
+            error,
+            RingPerceptionError::ResourceLimit {
+                resource: expected.0,
+                observed: expected.1,
+                limit: expected.2,
+            }
+        );
+        assert!(molecule.ring_set().is_none());
+    }
 }
 
 #[test]
