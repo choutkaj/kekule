@@ -348,3 +348,4 @@ mod ring_limits;
 mod smiles;
 mod v2000;
 mod v3000;
+mod valence;

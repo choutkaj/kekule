@@ -140,10 +140,6 @@ fn perceive_rdkit_like_valence(
 
         let implicit = if atom.no_implicit_hydrogens {
             0
-        } else if let Some(target) =
-            aromatic_valence_target(atom, mol.atom_is_aromatic(atom_id).ok().flatten(), explicit)
-        {
-            target.saturating_sub(explicit)
         } else if let Some(target) = target_rule
             .fixed
             .iter()
@@ -221,25 +217,6 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
         33 | 34 => effective_atomic_number > 34,
         _ => false,
     }
-}
-
-fn aromatic_valence_target(atom: &Atom, aromatic: Option<bool>, explicit: usize) -> Option<usize> {
-    if aromatic != Some(true) {
-        return None;
-    }
-    let target = match atom.element.symbol() {
-        "B" | "C" => 3,
-        "N" | "O" | "S" | "Se" | "Te" => {
-            if atom.explicit_hydrogens > 0 || atom.formal_charge > 0 {
-                3
-            } else {
-                2
-            }
-        }
-        "P" => explicit,
-        _ => return None,
-    };
-    Some(target.max(explicit))
 }
 
 pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> usize {

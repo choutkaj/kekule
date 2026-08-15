@@ -304,10 +304,12 @@ when only membership or no ring state is installed, it computes the required
 ring basis normally.
 
 Perception operations that can fail publish new semantic state only after
-successful validation. Strict valence perception returns collected
-`ValenceIssue` values through `ValenceError` and leaves the molecule's complete
-previous `PerceptionState` unchanged; successful valence perception installs
-the model and complete implicit-hydrogen assignments together.
+successful validation. Strict valence perception assumes normalized ordinary
+bond orders and derives assignments from represented atom state without
+requiring installed rings or aromaticity. It returns collected `ValenceIssue`
+values through `ValenceError` and leaves the molecule's complete previous
+`PerceptionState` unchanged; successful valence perception installs the model
+and complete implicit-hydrogen assignments together.
 
 CIP assignment likewise validates stored stereo before mutation and returns
 structured `CipAssignmentIssue` values through `CipAssignmentError`. A failed
@@ -319,8 +321,8 @@ External persistence adapters may inspect every installed section exactly,
 construct one detached `PerceptionState`, and install it through a checked
 whole-state transaction. This surface preserves absent versus model-neutral
 valence, complete implicit-H assignments, membership with or without an
-installed ring basis, imported versus model-perceived aromaticity, aromatic
-membership, and complete CIP assignments. Incremental perception
+installed ring basis, the aromaticity perception model and membership, and
+complete CIP assignments. Incremental perception
 installation/mutation remains crate-private. Whole-state installation
 validates stable-slot dimensions, live graph/stereo references, duplicate
 input, and installed-ring coherence before replacing prior state; it does not

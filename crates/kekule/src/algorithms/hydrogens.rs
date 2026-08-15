@@ -297,7 +297,14 @@ pub(crate) fn remove_hydrogens_from_molecule(
         );
     }
 
-    let stereo_count_parents = stereo_hydrogen_parents(molecule, &removable);
+    let mut explicit_count_parents = stereo_hydrogen_parents(molecule, &removable);
+    explicit_count_parents.extend(by_parent.keys().copied().filter(|parent| {
+        molecule.atom(*parent).is_ok_and(|atom| {
+            atom.element.symbol() == "N"
+                && atom.formal_charge == 0
+                && molecule.atom_is_aromatic(*parent).ok().flatten() == Some(true)
+        })
+    }));
     let mut staged = molecule.clone();
     collapse_stereo_hydrogen_carriers(&mut staged, &removable)?;
     for (parent, hydrogens) in &by_parent {
@@ -314,7 +321,7 @@ pub(crate) fn remove_hydrogens_from_molecule(
         &mut staged,
         &expected_totals,
         &by_parent,
-        &stereo_count_parents,
+        &explicit_count_parents,
     )?;
     report.adjustments = verify_collapsed_hydrogen_counts(&staged, &expected_totals, &by_parent)?;
     report.removed.sort_by_key(|entry| entry.hydrogen);
@@ -638,7 +645,7 @@ fn adjust_collapsed_hydrogen_counts(
     molecule: &mut Molecule,
     expected_totals: &BTreeMap<AtomId, usize>,
     by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
-    stereo_count_parents: &BTreeSet<AtomId>,
+    explicit_count_parents: &BTreeSet<AtomId>,
 ) -> Result<(), HydrogenNormalizationError> {
     let mut probe = molecule.clone();
     let _ = perceive_valence_with_options(
@@ -647,7 +654,7 @@ fn adjust_collapsed_hydrogen_counts(
         ValenceOptions { strict: false },
     );
     for (parent, expected) in expected_totals {
-        if stereo_count_parents.contains(parent) {
+        if explicit_count_parents.contains(parent) {
             let adjusted = u8::try_from(*expected).map_err(|_| {
                 HydrogenNormalizationError::HydrogenCountOverflow {
                     atom: *parent,
