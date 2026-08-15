@@ -61,6 +61,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
   values plus bounded ring options and errors; algorithm work instrumentation
   is not part of the public facade.
+- `perception::stereo` separately exposes stored-element validation,
+  read-only candidate detection, and transactional mutating perception with
+  focused validation errors, perception errors, and successful warnings.
 - Focused canonical reconstruction remains under `core` and `bio`: detached
   exact perception construction plus whole-state installation, targeted SMCRA
   child enrichment, and exact stereo-group tombstone replay do not widen the
@@ -236,3 +239,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   perception exposes only semantic ring membership and basis state.
 - v38: Replace `ValenceReport` with transactional `ValenceError` result
   semantics and remove redundant valence output from `SanitizeReport`.
+- v39: Split the public stereo surface into focused validation, candidate
+  detection, and transactional perception operations without compatibility
+  wrappers.

@@ -185,8 +185,9 @@ fn cip_assigns_axis_descriptor_from_coordinate_perception() {
             assign_coordinate_axes: true,
             ..StereoPerceptionOptions::default()
         },
-    );
-    assert!(perception_report.is_ok(), "{:?}", perception_report.issues);
+    )
+    .expect("coordinate axis perception");
+    assert_eq!(perception_report.created_elements.len(), 1);
 
     let report = stereo_api::assign_cip_descriptors(&mut mol);
 
@@ -547,12 +548,13 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
         },
     )
     .expect("marked cyclohexene sanitizes without stereo perception");
-    let stereo_report = stereo_api::perceive_stereo(cyclohexene.graph_mut());
+    let stereo_error = stereo_api::perceive_stereo(cyclohexene.graph_mut())
+        .expect_err("excluded small-ring directional marks should remain unpaired");
     assert!(cyclohexene
         .graph()
         .stereo_elements()
         .all(|(_, element)| !matches!(element.kind, StereoElementKind::DoubleBond(_))));
-    assert!(stereo_report.issues.iter().any(|issue| matches!(
+    assert!(stereo_error.issues.iter().any(|issue| matches!(
         issue,
         StereoPerceptionIssue::UnpairedDirectionalBondMark { .. }
     )));
