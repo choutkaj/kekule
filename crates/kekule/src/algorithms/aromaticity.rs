@@ -840,7 +840,7 @@ mod tests {
         let mut molecule =
             crate::small::SmallMolecule::from_smiles("On2c1-c(ccc2)ccn1").expect("parses");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
-        assert!(valence.is_ok(), "{:#?}", valence.issues);
+        assert!(valence.is_ok(), "{valence:#?}");
         perceive_ring_set(molecule.graph_mut()).expect("rings");
         let protected_single = molecule
             .graph()
@@ -883,7 +883,7 @@ mod tests {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::small::SmallMolecule::from_smiles(input).expect("dye parses");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
-        assert!(valence.is_ok(), "{:#?}", valence.issues);
+        assert!(valence.is_ok(), "{valence:#?}");
         perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
             .expect("aromaticity");
 
@@ -901,7 +901,7 @@ mod tests {
         let mut molecule =
             crate::small::SmallMolecule::from_smiles("c1ccccc1").expect("aromatic benzene parses");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
-        assert!(valence.is_ok(), "{:#?}", valence.issues);
+        assert!(valence.is_ok(), "{valence:#?}");
         let component = imported_aromatic_bond_components(molecule.graph())
             .into_iter()
             .next()
@@ -927,7 +927,7 @@ mod tests {
         let mut molecule = crate::small::SmallMolecule::from_smiles("C1=CC(=CC=[C]1)N")
             .expect("aminophenyl radical parses");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
-        assert!(valence.is_ok(), "{:#?}", valence.issues);
+        assert!(valence.is_ok(), "{valence:#?}");
         perceive_ring_set(molecule.graph_mut()).expect("ring perception");
         let radical = molecule
             .graph()

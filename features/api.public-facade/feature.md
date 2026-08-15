@@ -56,6 +56,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MmcifInterpretation::into_model` consumes an interpretation when callers do
   not need to retain its report.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
+- `perception::valence` exposes standard `Result<(), ValenceError>` operations
+  and structured `ValenceIssue` diagnostics without an empty-success report.
 - `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
   values plus bounded ring options and errors; algorithm work instrumentation
   is not part of the public facade.
@@ -232,3 +234,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   zero-copy.
 - v37: Remove ring work instrumentation from the facade so public installed
   perception exposes only semantic ring membership and basis state.
+- v38: Replace `ValenceReport` with transactional `ValenceError` result
+  semantics and remove redundant valence output from `SanitizeReport`.

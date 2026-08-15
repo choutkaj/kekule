@@ -211,6 +211,12 @@ diagnostics, work counters, and search statistics are sidecar or ephemeral
 operational details; they do not define molecule identity, equality, or
 reconstruction.
 
+Perception operations that can fail publish new semantic state only after
+successful validation. Strict valence perception returns collected
+`ValenceIssue` values through `ValenceError` and leaves the molecule's complete
+previous `PerceptionState` unchanged; successful valence perception installs
+the model and complete implicit-hydrogen assignments together.
+
 External persistence adapters may inspect every installed section exactly,
 construct one detached `PerceptionState`, and install it through a checked
 whole-state transaction. This surface preserves absent versus model-neutral

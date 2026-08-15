@@ -72,6 +72,30 @@ fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn valence_result_and_error_are_public() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::core::{Atom, BondOrder, Element, Molecule};
+    use kekule::perception::valence::{perceive_valence, ValenceError, ValenceIssue, ValenceModel};
+
+    let mut builder = Molecule::builder();
+    let carbon = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
+    for _ in 0..5 {
+        let hydrogen = builder.add_atom(Atom::new(Element::from_symbol("H").unwrap()))?;
+        builder.add_bond(carbon, hydrogen, BondOrder::Single)?;
+    }
+    let mut molecule = builder.build()?;
+    let previous = molecule.perception().clone();
+
+    let error: ValenceError = perceive_valence(&mut molecule, ValenceModel::RdkitLike).unwrap_err();
+
+    assert!(matches!(
+        error.issues.as_slice(),
+        [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon
+    ));
+    assert_eq!(molecule.perception(), &previous);
+    Ok(())
+}
+
+#[test]
 fn molfile_and_sdf_interpretation_reports_are_public() -> Result<(), Box<dyn std::error::Error>> {
     let molfile = "\
 Report
