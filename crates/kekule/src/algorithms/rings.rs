@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::core::*;
 
-pub(super) fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize) {
+pub(super) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.atoms.len()];
     let mut live_bonds = Vec::new();
     for (bond_id, bond) in mol.bonds() {
@@ -19,18 +19,16 @@ pub(super) fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize)
     let mut low = vec![0usize; mol.atoms.len()];
     let mut bridge = vec![false; mol.bonds.len()];
     let mut time = 0usize;
-    let mut stack_peak = 0usize;
-
     for atom_id in mol.atom_ids() {
         if discovery[atom_id.index()].is_none() {
-            stack_peak = stack_peak.max(ring_dfs_iterative(
+            ring_dfs_iterative(
                 atom_id,
                 &graph,
                 &mut discovery,
                 &mut low,
                 &mut bridge,
                 &mut time,
-            ));
+            );
         }
     }
 
@@ -46,7 +44,7 @@ pub(super) fn compute_ring_membership(mol: &Molecule) -> (RingMembership, usize)
             membership.atom_flags[bond.b.index()] = true;
         }
     }
-    (membership, stack_peak)
+    membership
 }
 
 pub(super) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
@@ -90,7 +88,7 @@ fn ring_dfs_iterative(
     low: &mut [usize],
     bridge: &mut [bool],
     time: &mut usize,
-) -> usize {
+) {
     struct Frame {
         atom: AtomId,
         parent_bond: Option<BondId>,
@@ -105,8 +103,6 @@ fn ring_dfs_iterative(
         parent_bond: None,
         next_edge: 0,
     }];
-    let mut stack_peak = stack.len();
-
     while let Some(frame) = stack.last_mut() {
         if frame.next_edge >= graph[frame.atom.index()].len() {
             let finished = stack.pop().expect("bridge DFS frame should exist");
@@ -137,13 +133,11 @@ fn ring_dfs_iterative(
                 parent_bond: Some(bond_id),
                 next_edge: 0,
             });
-            stack_peak = stack_peak.max(stack.len());
         } else {
             low[atom.index()] =
                 low[atom.index()].min(discovery[neighbor.index()].expect("neighbor discovered"));
         }
     }
-    stack_peak
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,24 +168,20 @@ impl Default for RingPerceptionOptions {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RingPerceptionError {
+    /// A configured resource bound was exceeded.
     ResourceLimit {
+        /// The bounded resource.
         resource: &'static str,
+        /// The first observed value beyond the bound.
         observed: usize,
+        /// The configured bound.
         limit: usize,
-        work: RingWork,
     },
+    /// The candidate basis did not cover every bond known to be cyclic.
     IncompleteRingCoverage {
+        /// Cyclic bonds not covered by the candidate basis.
         uncovered_bonds: Vec<BondId>,
-        work: RingWork,
     },
-}
-
-impl RingPerceptionError {
-    pub fn work(&self) -> RingWork {
-        match self {
-            Self::ResourceLimit { work, .. } | Self::IncompleteRingCoverage { work, .. } => *work,
-        }
-    }
 }
 
 impl fmt::Display for RingPerceptionError {
@@ -228,8 +218,7 @@ pub fn perceive_ring_set_with_options(
     options: RingPerceptionOptions,
 ) -> std::result::Result<RingSet, RingPerceptionError> {
     let mut tracker = RingWorkTracker::new(options, mol.atom_count(), mol.bond_count())?;
-    let (membership, bridge_stack_peak) = compute_ring_membership(mol);
-    tracker.observe_stack(bridge_stack_peak);
+    let membership = compute_ring_membership(mol);
     let (mut rings, extras) = figueras_sssr_candidates(mol, &membership, &mut tracker)?;
     if !uncovered_ring_bonds(mol, &membership, &rings).is_empty() {
         rings = complete_ring_coverage(mol, &membership, rings, &mut tracker)?;
@@ -248,10 +237,7 @@ pub fn perceive_ring_set_with_options(
             }
         }
     }
-    let ring_set = RingSet {
-        rings,
-        work: tracker.work,
-    };
+    let ring_set = RingSet::from_rings(rings);
     mol.install_rings(membership, ring_set.clone());
     Ok(ring_set)
 }
@@ -619,8 +605,6 @@ fn smallest_rings_bfs(
     let mut queue = VecDeque::from([root]);
     let mut rings = Vec::new();
     let mut current_size = usize::MAX;
-    tracker.observe_queue(queue.len());
-
     while let Some(current) = queue.pop_front() {
         colors[current.index()] = BLACK;
         let depth = depths[current.index()].saturating_add(1);
@@ -637,7 +621,6 @@ fn smallest_rings_bfs(
                 colors[neighbor.index()] = GRAY;
                 depths[neighbor.index()] = depth;
                 queue.push_back(neighbor);
-                tracker.observe_queue(queue.len());
                 continue;
             }
 
@@ -844,7 +827,6 @@ fn complete_ring_coverage(
     }
     Err(RingPerceptionError::IncompleteRingCoverage {
         uncovered_bonds: uncovered_ring_bonds(mol, membership, &rings),
-        work: tracker.work,
     })
 }
 
@@ -881,7 +863,6 @@ fn fundamental_cycle_candidates(
         let mut tree_bonds = BTreeSet::<BondId>::new();
         let mut queue = VecDeque::from([root]);
         depth[root.index()] = Some(0);
-        tracker.observe_queue(queue.len());
 
         while let Some(atom) = queue.pop_front() {
             let atom_depth = depth[atom.index()].expect("queued atom has a depth");
@@ -895,7 +876,6 @@ fn fundamental_cycle_candidates(
                 parent_bond[neighbor.index()] = Some(bond);
                 tree_bonds.insert(bond);
                 queue.push_back(neighbor);
-                tracker.observe_queue(queue.len());
             }
         }
 
@@ -953,7 +933,10 @@ fn fundamental_cycle_candidates(
 
 struct RingWorkTracker {
     options: RingPerceptionOptions,
-    work: RingWork,
+    candidate_cycles: usize,
+    equivalent_shortest_paths: usize,
+    path_expansions: usize,
+    total_work: usize,
 }
 
 impl RingWorkTracker {
@@ -962,16 +945,17 @@ impl RingWorkTracker {
         atom_count: usize,
         bond_count: usize,
     ) -> std::result::Result<Self, RingPerceptionError> {
-        let work = RingWork {
-            atom_count,
-            bond_count,
-            total_work: atom_count.saturating_add(bond_count),
-            ..RingWork::default()
+        let total_work = atom_count.saturating_add(bond_count);
+        let tracker = Self {
+            options,
+            candidate_cycles: 0,
+            equivalent_shortest_paths: 0,
+            path_expansions: 0,
+            total_work,
         };
-        let tracker = Self { options, work };
         tracker.check("atoms", atom_count, options.max_atoms)?;
         tracker.check("bonds", bond_count, options.max_bonds)?;
-        tracker.check("total work", work.total_work, options.max_total_work)?;
+        tracker.check("total work", total_work, options.max_total_work)?;
         Ok(tracker)
     }
 
@@ -986,7 +970,6 @@ impl RingWorkTracker {
                 resource,
                 observed,
                 limit,
-                work: self.work,
             })
         } else {
             Ok(())
@@ -994,50 +977,38 @@ impl RingWorkTracker {
     }
 
     fn add_work(&mut self, amount: usize) -> std::result::Result<(), RingPerceptionError> {
-        self.work.total_work = self.work.total_work.saturating_add(amount);
-        self.check(
-            "total work",
-            self.work.total_work,
-            self.options.max_total_work,
-        )
+        self.total_work = self.total_work.saturating_add(amount);
+        self.check("total work", self.total_work, self.options.max_total_work)
     }
 
     fn record_path_expansion(&mut self) -> std::result::Result<(), RingPerceptionError> {
-        self.work.path_expansions = self.work.path_expansions.saturating_add(1);
+        self.path_expansions = self.path_expansions.saturating_add(1);
         self.check(
             "path expansions",
-            self.work.path_expansions,
+            self.path_expansions,
             self.options.max_path_expansions,
         )?;
         self.add_work(1)
     }
 
     fn record_shortest_path(&mut self) -> std::result::Result<(), RingPerceptionError> {
-        self.work.equivalent_shortest_paths = self.work.equivalent_shortest_paths.saturating_add(1);
+        self.equivalent_shortest_paths = self.equivalent_shortest_paths.saturating_add(1);
         self.check(
             "equivalent shortest paths",
-            self.work.equivalent_shortest_paths,
+            self.equivalent_shortest_paths,
             self.options.max_equivalent_shortest_paths,
         )?;
         self.add_work(1)
     }
 
     fn record_candidate(&mut self) -> std::result::Result<(), RingPerceptionError> {
-        self.work.candidate_cycles = self.work.candidate_cycles.saturating_add(1);
+        self.candidate_cycles = self.candidate_cycles.saturating_add(1);
         self.check(
             "candidate cycles",
-            self.work.candidate_cycles,
+            self.candidate_cycles,
             self.options.max_candidates,
         )?;
         self.add_work(1)
-    }
-
-    fn observe_queue(&mut self, size: usize) {
-        self.work.queue_peak = self.work.queue_peak.max(size);
-    }
-
-    fn observe_stack(&mut self, size: usize) {
-        self.work.stack_peak = self.work.stack_peak.max(size);
     }
 }
 
@@ -1104,7 +1075,6 @@ fn shortest_cycles_excluding(
     let mut distances = BTreeMap::<AtomId, usize>::new();
     distances.insert(start, 0);
     queue.push_back(start);
-    tracker.observe_queue(queue.len());
 
     while let Some(atom) = queue.pop_front() {
         let distance = distances[&atom];
@@ -1115,7 +1085,6 @@ fn shortest_cycles_excluding(
             }
             distances.insert(neighbor, distance + 1);
             queue.push_back(neighbor);
-            tracker.observe_queue(queue.len());
         }
     }
 
@@ -1138,7 +1107,6 @@ fn shortest_cycles_excluding(
         atoms: vec![goal],
         bonds: Vec::new(),
     }];
-    tracker.observe_stack(stack.len());
     while let Some(state) = stack.pop() {
         if state.current == start {
             tracker.record_shortest_path()?;
@@ -1173,7 +1141,6 @@ fn shortest_cycles_excluding(
             next.atoms.push(neighbor);
             next.bonds.push(bond_id);
             stack.push(next);
-            tracker.observe_stack(stack.len());
         }
     }
     Ok(rings)
@@ -1236,7 +1203,7 @@ mod tests {
         let bond = mol
             .add_bond(atoms[0], atoms[1], BondOrder::Single)
             .expect("chain bond");
-        let (mut membership, _) = compute_ring_membership(&mol);
+        let mut membership = compute_ring_membership(&mol);
         membership.atom_flags[atoms[0].index()] = true;
         membership.atom_flags[atoms[1].index()] = true;
         membership.bond_flags[bond.index()] = true;
