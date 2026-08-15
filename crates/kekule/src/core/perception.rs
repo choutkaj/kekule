@@ -69,33 +69,19 @@ pub struct Ring {
     pub bonds: Vec<BondId>,
 }
 
-/// Resource accounting for an installed ring-basis calculation.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RingWork {
-    pub atom_count: usize,
-    pub bond_count: usize,
-    pub candidate_cycles: usize,
-    pub equivalent_shortest_paths: usize,
-    pub path_expansions: usize,
-    pub queue_peak: usize,
-    pub stack_peak: usize,
-    pub total_work: usize,
-}
-
 /// A deterministic ring basis installed in molecule perception state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RingSet {
     pub(crate) rings: Vec<Ring>,
-    pub(crate) work: RingWork,
 }
 
 impl RingSet {
-    /// Constructs a detached deterministic ring basis and its complete work record.
+    /// Constructs a detached deterministic ring basis.
     ///
     /// Ring references and graph coherence are checked when the containing
     /// [`super::PerceptionState`] is installed on a molecule.
-    pub fn from_parts(rings: Vec<Ring>, work: RingWork) -> Self {
-        Self { rings, work }
+    pub fn from_rings(rings: Vec<Ring>) -> Self {
+        Self { rings }
     }
 
     pub fn rings(&self) -> &[Ring] {
@@ -108,9 +94,5 @@ impl RingSet {
 
     pub fn is_empty(&self) -> bool {
         self.rings.is_empty()
-    }
-
-    pub fn work(&self) -> RingWork {
-        self.work
     }
 }

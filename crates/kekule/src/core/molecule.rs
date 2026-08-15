@@ -421,20 +421,6 @@ pub enum PerceptionStateInstallError {
     RingAtomMissingFromBasis(AtomId),
     /// Membership marks a bond not covered by the installed basis.
     RingBondMissingFromBasis(BondId),
-    /// Ring work was produced for a different live atom count.
-    RingWorkAtomCountMismatch {
-        /// Current molecule atom count.
-        expected: usize,
-        /// Stored work atom count.
-        actual: usize,
-    },
-    /// Ring work was produced for a different live bond count.
-    RingWorkBondCountMismatch {
-        /// Current molecule bond count.
-        expected: usize,
-        /// Stored work bond count.
-        actual: usize,
-    },
 }
 
 impl fmt::Display for PerceptionStateInstallError {
@@ -483,14 +469,6 @@ impl fmt::Display for PerceptionStateInstallError {
                     "ring membership bond {bond} is absent from the ring basis"
                 )
             }
-            Self::RingWorkAtomCountMismatch { expected, actual } => write!(
-                formatter,
-                "ring work atom count mismatch: expected {expected}, got {actual}"
-            ),
-            Self::RingWorkBondCountMismatch { expected, actual } => write!(
-                formatter,
-                "ring work bond count mismatch: expected {expected}, got {actual}"
-            ),
         }
     }
 }
@@ -1461,19 +1439,6 @@ impl Molecule {
             return Ok(());
         };
         check_install_component_capacity(ring_set.rings().len(), PerceptionStateComponent::Rings)?;
-        let work = ring_set.work();
-        if work.atom_count != self.atom_count() {
-            return Err(PerceptionStateInstallError::RingWorkAtomCountMismatch {
-                expected: self.atom_count(),
-                actual: work.atom_count,
-            });
-        }
-        if work.bond_count != self.bond_count() {
-            return Err(PerceptionStateInstallError::RingWorkBondCountMismatch {
-                expected: self.bond_count(),
-                actual: work.bond_count,
-            });
-        }
 
         let mut covered_atoms = BTreeSet::new();
         let mut covered_bonds = BTreeSet::new();

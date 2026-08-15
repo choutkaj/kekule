@@ -56,6 +56,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `MmcifInterpretation::into_model` consumes an interpretation when callers do
   not need to retain its report.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
+- `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
+  values plus bounded ring options and errors; algorithm work instrumentation
+  is not part of the public facade.
 - Focused canonical reconstruction remains under `core` and `bio`: detached
   exact perception construction plus whole-state installation, targeted SMCRA
   child enrichment, and exact stereo-group tombstone replay do not widen the
@@ -227,3 +230,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v36: Replace raw system-level SMCRA node returns with lightweight borrowed
   qualified views while keeping definition-local access explicit and
   zero-copy.
+- v37: Remove ring work instrumentation from the facade so public installed
+  perception exposes only semantic ring membership and basis state.

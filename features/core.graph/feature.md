@@ -36,8 +36,11 @@ single-atom values are valid connected boundary cases.
   construction, and one whole-state validated atomic installation operation;
   incremental perception mutators remain crate-private.
 - Owns the stored perception-result vocabulary (`ValenceModel`,
-  `AromaticityModel`, `RingMembership`, `Ring`, `RingSet`, and `RingWork`);
+  `AromaticityModel`, `RingMembership`, `Ring`, and `RingSet`);
   algorithm implementations depend on core, never the reverse.
+- Keeps `PerceptionState` limited to semantic installed chemical perception;
+  algorithm diagnostics and work counters are ephemeral or sidecar state and
+  do not participate in molecule identity, equality, or reconstruction.
 
 ## Implementation Notes
 
@@ -65,7 +68,8 @@ single-atom values are valid connected boundary cases.
 - Local stereo state is graph-adjacent storage on `Molecule`, separate from atom and bond payloads and from derived CIP descriptors.
 - Whole-state perception installation validates stable-slot dimensions, live
   atom/bond/stereo references, duplicate assignments, and ring coherence before
-  replacing prior state. Failed installation is state-preserving.
+  replacing prior state. It does not validate or retain algorithm work
+  diagnostics. Failed installation is state-preserving.
 
 ## Tests
 
@@ -116,3 +120,5 @@ single-atom values are valid connected boundary cases.
 - v13: Remove public builder/editor staging-graph access, make `build` and
   `commit` the only publication routes, migrate ordinary mutation after
   finalization, and add downstream compile-fail extraction regressions.
+- v14: Restrict installed ring perception to semantic membership and basis
+  state, excluding algorithm diagnostics from molecule identity and restore.
