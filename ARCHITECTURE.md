@@ -304,10 +304,11 @@ when only membership or no ring state is installed, it computes the required
 ring basis normally.
 
 Perception operations that can fail publish new semantic state only after
-successful validation. Strict valence perception assumes normalized ordinary
-bond orders and derives assignments from represented atom state without
-requiring installed rings or aromaticity. It returns collected `ValenceIssue`
-values through `ValenceError` and leaves the molecule's complete previous
+successful validation. Valence perception requires normalized ordinary bond
+orders and rejects every remaining aromatic source bond before calculating
+atom assignments. It derives assignments from represented atom state without
+requiring installed rings or aromaticity. Strict valence issues are returned
+through `ValenceError` and leave the molecule's complete previous
 `PerceptionState` unchanged; successful valence perception installs the model
 and complete implicit-hydrogen assignments together.
 
