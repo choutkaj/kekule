@@ -14,6 +14,9 @@ and assign local stereo elements from supported source marks and coordinates.
   only already-stored `StereoElement` values and collects structural
   `StereoValidationIssue` diagnostics. It does not detect candidates, inspect
   source marks or coordinates for new stereo, or mutate the molecule.
+  Unavailable implicit carriers retain the precise `StereoCarrier` in
+  tetrahedral and double-bond issues, while implicit axis carriers are reported
+  as unsupported rather than non-adjacent.
 - `detect_stereo_candidates(&Molecule) -> Vec<StereoCandidate>` returns the
   existing conservative tetrahedral and double-bond candidate set as read-only
   exploratory output.
@@ -244,4 +247,5 @@ stereo transfer.
 - v25: Split stored stereo validation, candidate detection, and mutating
   perception into focused operations; make direct perception transactional;
   separate successful warnings from fatal structured errors; and narrow
-  perception options and successful report output.
+  perception options and successful report output. Use carrier-accurate public
+  validation issues for unavailable implicit and unsupported axis carriers.
