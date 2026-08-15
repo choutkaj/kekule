@@ -98,8 +98,8 @@ These boundaries are requirements rather than naming conventions:
   structure, residual connected components remain separate represented
   molecules and their common source identity is retained as provenance.
 - Perception derives chemical state from asserted molecular topology.
-- Sanitization is an explicit transactional workflow over canonical chemical
-  objects.
+- Sanitization is an explicit transactional normalization + perception workflow
+  over canonical chemical objects.
 - Topology construction assembles already asserted connected molecular entities
   into one coordinate-free system. It does not invent coordinates or
   force-field state.
@@ -210,6 +210,11 @@ installed.
 diagnostics, work counters, and search statistics are sidecar or ephemeral
 operational details; they do not define molecule identity, equality, or
 reconstruction.
+
+Installed ring membership and ring bases are semantic perception state.
+Downstream aromaticity perception reuses an installed `RingSet` when present;
+when only membership or no ring state is installed, it computes the required
+ring basis normally.
 
 Perception operations that can fail publish new semantic state only after
 successful validation. Strict valence perception returns collected
