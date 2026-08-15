@@ -243,6 +243,14 @@ it detached from its former group.
 Every live stereo group is nonempty; removing or pruning its final member
 tombstones the group while partial pruning preserves the group and stable ID.
 
+Stored `StereoElement` values are represented chemical identity. Stereo
+validation reads only that stored state, while candidate detection is a
+separate exploratory query. Source-mark and coordinate perception stages a
+complete proposed element set and publishes it atomically only after source
+interpretation, insertion, and structural validation succeed. Validation
+issues, perception errors, candidate lists, and nonfatal warnings remain
+sidecar outputs and do not become molecule identity.
+
 ### `SmallMolecule`
 
 `SmallMolecule` is the ordinary cheminformatics wrapper around one connected

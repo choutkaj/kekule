@@ -7,17 +7,29 @@ and assign local stereo elements from supported source marks and coordinates.
 
 ## Behavior/API
 
-- Exposes `perception::stereo::{StereoPerceptionOptions,
-  StereoPerceptionReport, StereoCandidate, StereoPerceptionIssue,
-  validate_stereo, validate_stereo_with_options, perceive_stereo,
-  perceive_stereo_with_options}`.
-- `validate_stereo` is read-only. It reports invalid local stereo elements,
-  potential tetrahedral atom candidates, potential double-bond candidates, and
-  source-mark assembly diagnostics without mutating the graph.
-- `perceive_stereo` is mutating. It runs the same checks, assembles supported
-  source marks and supported coordinate geometry into first-class stereo
-  elements, records created stereo element IDs, and marks stereo perception
-  fresh.
+- Exposes three focused operations under `perception::stereo`:
+  `validate_stereo`, `detect_stereo_candidates`, and
+  `perceive_stereo`/`perceive_stereo_with_options`.
+- `validate_stereo(&Molecule) -> Result<(), StereoValidationError>` validates
+  only already-stored `StereoElement` values and collects structural
+  `StereoValidationIssue` diagnostics. It does not detect candidates, inspect
+  source marks or coordinates for new stereo, or mutate the molecule.
+  Unavailable implicit carriers retain the precise `StereoCarrier` in
+  tetrahedral and double-bond issues, while implicit axis carriers are reported
+  as unsupported rather than non-adjacent.
+- `detect_stereo_candidates(&Molecule) -> Vec<StereoCandidate>` returns the
+  existing conservative tetrahedral and double-bond candidate set as read-only
+  exploratory output.
+- Stereo perception returns `Result<StereoPerceptionReport,
+  StereoPerceptionError>`, always assembles supported source marks, optionally
+  assigns coordinate-derived elements, and publishes every created element
+  together only after the complete proposed state validates.
+- `StereoPerceptionReport` contains created element IDs and nonfatal
+  `StereoPerceptionWarning` values. Fatal validation, source-mark, or insertion
+  diagnostics are returned through structured perception errors and issues.
+- `StereoPerceptionOptions` controls only coordinate assignment and the
+  default-off coordinate-axis subset. Direct perception retains default
+  coordinate assignment; sanitization disables coordinate-only assignment.
 - Candidate detection uses current graph and hydrogen state. Sanitization or
   valence perception should run first when implicit hydrogens matter.
 - Validation accepts stored implicit lone-pair tetrahedral carriers for
@@ -54,7 +66,7 @@ and assign local stereo elements from supported source marks and coordinates.
   (but not aromatic, zero, or dative bonds); supported three-coordinate
   P/As/Sb/S/Se/Te centers receive an implicit-lone-pair carrier. This is
   deliberately broader than conservative unmarked candidate detection.
-  Conflicting multi-wedge input is consumed as an ambiguity diagnostic without
+  Conflicting multi-wedge input is consumed as a nonfatal warning without
   inventing a stereo element; sanitization treats that diagnostic as non-fatal,
   matching RDKit's warning-and-ignore behavior.
 - Molfile double-bond either marks create explicit unknown double-bond stereo
@@ -116,7 +128,7 @@ boundary. Opt-in coordinate-derived axes use the same lowest-ID endpoint
 reference carrier convention as supported Molfile atropisomeric axes, leaving
 priority flips and `M`/`P` descriptor assignment to the CIP layer.
 
-Small-molecule perception should run as an explicit staged workflow and may be
+Small-molecule perception runs as an explicit staged-clone transaction and may be
 run from the small-molecule sanitizer when `SanitizeOptions::perceive_stereo`
 is enabled. The sanitizer uses the source-mark assembly subset and leaves
 coordinate-derived assignment to explicit stereo perception calls. It should not
@@ -124,7 +136,10 @@ run over whole `MacroMolecule` structures by default.
 
 ## Tests
 
-- Focused unit and regression tests cover the behavior, error, and resource-limit contracts described above.
+- Focused unit and regression tests cover stored-state-only validation,
+  standalone candidate detection, successful warnings, structured fatal
+  errors, exact direct-perception rollback, and the chemistry contracts
+  described above.
 
 ## Benchmarks
 
@@ -229,3 +244,8 @@ stereo transfer.
   instead of repository-wide required evidence.
 - v23: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v24: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v25: Split stored stereo validation, candidate detection, and mutating
+  perception into focused operations; make direct perception transactional;
+  separate successful warnings from fatal structured errors; and narrow
+  perception options and successful report output. Use carrier-accurate public
+  validation issues for unavailable implicit and unsupported axis carriers.
