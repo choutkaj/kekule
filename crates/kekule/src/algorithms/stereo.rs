@@ -70,9 +70,10 @@ pub enum StereoValidationIssue {
         center: AtomId,
         carrier: StereoCarrier,
     },
-    TetrahedralHydrogenCarrierUnavailable {
+    TetrahedralCarrierUnavailable {
         element: StereoElementId,
         center: AtomId,
+        carrier: StereoCarrier,
     },
     InvalidDoubleBondOrder {
         element: StereoElementId,
@@ -95,9 +96,10 @@ pub enum StereoValidationIssue {
         endpoint: AtomId,
         carrier: StereoCarrier,
     },
-    DoubleBondHydrogenCarrierUnavailable {
+    DoubleBondCarrierUnavailable {
         element: StereoElementId,
         endpoint: AtomId,
+        carrier: StereoCarrier,
     },
     InvalidAxisCarrierCount {
         element: StereoElementId,
@@ -110,6 +112,11 @@ pub enum StereoValidationIssue {
         carrier: AtomId,
     },
     AxisCarrierNotAdjacent {
+        element: StereoElementId,
+        axis: BondId,
+        carrier: StereoCarrier,
+    },
+    UnsupportedAxisCarrier {
         element: StereoElementId,
         axis: BondId,
         carrier: StereoCarrier,
@@ -319,22 +326,20 @@ fn validate_tetrahedral(
             }
             StereoCarrier::ImplicitHydrogen => {
                 if atom_hydrogen_count(mol, stereo.center) == 0 {
-                    issues.push(
-                        StereoValidationIssue::TetrahedralHydrogenCarrierUnavailable {
-                            element,
-                            center: stereo.center,
-                        },
-                    );
+                    issues.push(StereoValidationIssue::TetrahedralCarrierUnavailable {
+                        element,
+                        center: stereo.center,
+                        carrier: *carrier,
+                    });
                 }
             }
             StereoCarrier::ImplicitLonePair => {
                 if !implicit_lone_pair_available(mol, stereo.center) {
-                    issues.push(
-                        StereoValidationIssue::TetrahedralHydrogenCarrierUnavailable {
-                            element,
-                            center: stereo.center,
-                        },
-                    );
+                    issues.push(StereoValidationIssue::TetrahedralCarrierUnavailable {
+                        element,
+                        center: stereo.center,
+                        carrier: *carrier,
+                    });
                 }
             }
         }
@@ -415,18 +420,19 @@ fn validate_double_bond_carrier(
         }
         StereoCarrier::ImplicitHydrogen => {
             if atom_hydrogen_count(mol, endpoint) == 0 {
-                issues.push(
-                    StereoValidationIssue::DoubleBondHydrogenCarrierUnavailable {
-                        element,
-                        endpoint,
-                    },
-                );
+                issues.push(StereoValidationIssue::DoubleBondCarrierUnavailable {
+                    element,
+                    endpoint,
+                    carrier,
+                });
             }
         }
         StereoCarrier::ImplicitLonePair => {
-            issues.push(
-                StereoValidationIssue::DoubleBondHydrogenCarrierUnavailable { element, endpoint },
-            );
+            issues.push(StereoValidationIssue::DoubleBondCarrierUnavailable {
+                element,
+                endpoint,
+                carrier,
+            });
         }
     }
 }
@@ -489,7 +495,7 @@ fn validate_axis_carrier(
             }
         }
         StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
-            issues.push(StereoValidationIssue::AxisCarrierNotAdjacent {
+            issues.push(StereoValidationIssue::UnsupportedAxisCarrier {
                 element,
                 axis,
                 carrier,

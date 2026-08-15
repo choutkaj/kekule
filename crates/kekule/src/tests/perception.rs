@@ -830,6 +830,153 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
 }
 
 #[test]
+fn stereo_validation_identifies_the_unavailable_carrier() {
+    let mut tetrahedral = Molecule::new();
+    let center = tetrahedral
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let mut atom_carriers = Vec::new();
+    for symbol in ["F", "Cl", "Br"] {
+        let carrier = tetrahedral
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
+        tetrahedral
+            .add_bond(center, carrier, BondOrder::Single)
+            .expect("carrier bond");
+        atom_carriers.push(StereoCarrier::Atom(carrier));
+    }
+    let mut carriers = atom_carriers.clone();
+    carriers.push(StereoCarrier::ImplicitHydrogen);
+    let hydrogen_element = tetrahedral
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers,
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("tetrahedral stereo element");
+
+    let error = stereo_api::validate_stereo(&tetrahedral)
+        .expect_err("unavailable implicit hydrogen should be reported");
+    assert_eq!(
+        error.issues,
+        vec![StereoValidationIssue::TetrahedralCarrierUnavailable {
+            element: hydrogen_element,
+            center,
+            carrier: StereoCarrier::ImplicitHydrogen,
+        }]
+    );
+
+    tetrahedral
+        .remove_stereo_element(hydrogen_element)
+        .expect("remove hydrogen-carrier element");
+    atom_carriers.push(StereoCarrier::ImplicitLonePair);
+    let lone_pair_element = tetrahedral
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: atom_carriers,
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("tetrahedral stereo element");
+
+    let error = stereo_api::validate_stereo(&tetrahedral)
+        .expect_err("unavailable implicit lone pair should be reported");
+    assert_eq!(
+        error.issues,
+        vec![StereoValidationIssue::TetrahedralCarrierUnavailable {
+            element: lone_pair_element,
+            center,
+            carrier: StereoCarrier::ImplicitLonePair,
+        }]
+    );
+
+    let mut double_bond = Molecule::new();
+    let left = double_bond
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let right = double_bond
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let bond = double_bond
+        .add_bond(left, right, BondOrder::Double)
+        .expect("double bond");
+    let double_element = double_bond
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::DoubleBond(DoubleBondStereo {
+                bond,
+                left,
+                right,
+                left_carrier: StereoCarrier::ImplicitHydrogen,
+                right_carrier: StereoCarrier::ImplicitLonePair,
+                orientation: DoubleBondOrientation::Together,
+            }),
+            StereoSource::User,
+        ))
+        .expect("double-bond stereo element");
+
+    let error = stereo_api::validate_stereo(&double_bond)
+        .expect_err("unavailable double-bond carriers should be reported");
+    assert_eq!(
+        error.issues,
+        vec![
+            StereoValidationIssue::DoubleBondCarrierUnavailable {
+                element: double_element,
+                endpoint: left,
+                carrier: StereoCarrier::ImplicitHydrogen,
+            },
+            StereoValidationIssue::DoubleBondCarrierUnavailable {
+                element: double_element,
+                endpoint: right,
+                carrier: StereoCarrier::ImplicitLonePair,
+            },
+        ]
+    );
+
+    let mut axis = Molecule::new();
+    let axis_left = axis.add_atom(carbon()).expect("atom identifier capacity");
+    let axis_right = axis.add_atom(carbon()).expect("atom identifier capacity");
+    let axis_bond = axis
+        .add_bond(axis_left, axis_right, BondOrder::Single)
+        .expect("axis bond");
+    let axis_element = axis
+        .add_stereo_element(StereoElement::specified(
+            StereoElementKind::Axis(AxisStereo {
+                axis: axis_bond,
+                carriers: vec![
+                    StereoCarrier::ImplicitHydrogen,
+                    StereoCarrier::ImplicitLonePair,
+                ],
+                orientation: AxisOrientation::Clockwise,
+            }),
+            StereoSource::User,
+        ))
+        .expect("axis stereo element");
+
+    let error = stereo_api::validate_stereo(&axis)
+        .expect_err("implicit axis carriers should be unsupported");
+    assert_eq!(
+        error.issues,
+        vec![
+            StereoValidationIssue::UnsupportedAxisCarrier {
+                element: axis_element,
+                axis: axis_bond,
+                carrier: StereoCarrier::ImplicitHydrogen,
+            },
+            StereoValidationIssue::UnsupportedAxisCarrier {
+                element: axis_element,
+                axis: axis_bond,
+                carrier: StereoCarrier::ImplicitLonePair,
+            },
+        ]
+    );
+}
+
+#[test]
 fn stereo_candidates_use_sanitized_hydrogen_state_without_cip_assignment() {
     let mut molecule = read_smiles("CC(F)(Cl)Br").expect("smiles should parse");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())

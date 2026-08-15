@@ -2109,10 +2109,15 @@ pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Val
             "center_atom_index": center.raw(),
             "carrier": stereo_carrier_json(carrier),
         }),
-        StereoValidationIssue::TetrahedralHydrogenCarrierUnavailable { element, center } => json!({
-            "type": "tetrahedral_hydrogen_carrier_unavailable",
+        StereoValidationIssue::TetrahedralCarrierUnavailable {
+            element,
+            center,
+            carrier,
+        } => json!({
+            "type": "tetrahedral_carrier_unavailable",
             "element_index": element.raw(),
             "center_atom_index": center.raw(),
+            "carrier": stereo_carrier_json(carrier),
         }),
         StereoValidationIssue::InvalidDoubleBondOrder {
             element,
@@ -2156,13 +2161,16 @@ pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Val
             "endpoint_atom_index": endpoint.raw(),
             "carrier": stereo_carrier_json(carrier),
         }),
-        StereoValidationIssue::DoubleBondHydrogenCarrierUnavailable { element, endpoint } => {
-            json!({
-                "type": "double_bond_hydrogen_carrier_unavailable",
-                "element_index": element.raw(),
-                "endpoint_atom_index": endpoint.raw(),
-            })
-        }
+        StereoValidationIssue::DoubleBondCarrierUnavailable {
+            element,
+            endpoint,
+            carrier,
+        } => json!({
+            "type": "double_bond_carrier_unavailable",
+            "element_index": element.raw(),
+            "endpoint_atom_index": endpoint.raw(),
+            "carrier": stereo_carrier_json(carrier),
+        }),
         StereoValidationIssue::InvalidAxisCarrierCount {
             element,
             axis,
@@ -2189,6 +2197,16 @@ pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Val
             carrier,
         } => json!({
             "type": "axis_carrier_not_adjacent",
+            "element_index": element.raw(),
+            "axis_bond_index": axis.raw(),
+            "carrier": stereo_carrier_json(carrier),
+        }),
+        StereoValidationIssue::UnsupportedAxisCarrier {
+            element,
+            axis,
+            carrier,
+        } => json!({
+            "type": "unsupported_axis_carrier",
             "element_index": element.raw(),
             "axis_bond_index": axis.raw(),
             "carrier": stereo_carrier_json(carrier),
