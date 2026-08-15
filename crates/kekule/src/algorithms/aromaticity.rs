@@ -685,12 +685,21 @@ mod tests {
     }
 
     #[test]
-    fn imported_aromatic_bonds_keep_implicit_hydrogen_nitrogen_pyrrole_like() {
+    fn normalized_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::small::SmallMolecule::from_smiles(input).expect("dye parses");
         molecule.normalize().expect("source aromaticity normalizes");
+        assert!(!molecule.graph().perception().has_aromaticity());
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
+        let valence_nitrogens = molecule
+            .graph()
+            .atoms()
+            .filter(|(_, atom)| atom.element.symbol() == "N")
+            .map(|(atom_id, _)| molecule.graph().implicit_hydrogens(atom_id))
+            .collect::<Vec<_>>();
+        assert_eq!(valence_nitrogens, vec![Ok(Some(1)), Ok(Some(1))]);
+        assert!(!molecule.graph().perception().has_aromaticity());
         perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
             .expect("aromaticity");
 
