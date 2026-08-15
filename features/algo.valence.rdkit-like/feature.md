@@ -6,15 +6,20 @@ Provide conservative valence perception for common organic molecules.
 
 ## Behavior/API
 
-- Exposes `perception::valence::{ValenceModel, ValenceOptions, ValenceReport,
+- Exposes `perception::valence::{ValenceModel, ValenceOptions, ValenceError,
   ValenceIssue, perceive_valence, perceive_valence_with_options}`.
+- `perceive_valence` and `perceive_valence_with_options` return
+  `Result<(), ValenceError>`; successful execution has no separate report.
 - Computes explicit valence from bond order and explicit hydrogens.
 - Assigns implicit hydrogens when a common allowed valence can be selected.
 - Handles imported aromatic atoms without counting each aromatic bond as a localized double bond.
-- Reports unsupported elements or valence excesses instead of silently accepting them.
-- Defaults to strict reporting. `ValenceOptions { strict: false }` still
-  computes assignments but suppresses unsupported-element and valence-excess
-  issues for inspection workflows; sanitization continues to use strict mode.
+- Returns unsupported elements or valence excesses as structured
+  `ValenceIssue` values in `ValenceError` instead of silently accepting them.
+- Defaults to strict behavior. When strict issues are present, perception
+  leaves the molecule's complete previous `PerceptionState` unchanged.
+  `ValenceOptions { strict: false }` still computes and installs assignments
+  while suppressing unsupported-element and valence-excess issues for
+  inspection workflows; sanitization continues to use strict mode.
 - Exact installed state is publicly distinguishable as absent, model-neutral,
   or `ValenceModel::RdkitLike` and can be detached and transactionally restored
   with every atom-wise implicit-H assignment.
@@ -33,11 +38,15 @@ Provide conservative valence perception for common organic molecules.
   structured issues instead of truncating or panicking.
 - Its allowed-valence table is also the single source of truth for preserving
   valence-implied tetrahedral hydrogen carriers during Molfile parsing.
-- Perception state is marked fresh only after the pass completes.
+- The pass stages every implicit-hydrogen assignment and all strict issues
+  before mutation. It installs semantic valence state only on success; failure
+  diagnostics remain sidecar error information.
 
 ## Tests
 
-- Unit tests cover neutral organics, charged species, and valence error reporting.
+- Unit tests cover neutral organics, charged species, unsupported targets,
+  exceeded valence, strict/permissive behavior, and exact preservation of the
+  complete prior perception state on strict failure.
 
 ## Benchmarks
 
@@ -76,3 +85,6 @@ Provide conservative valence perception for common organic molecules.
 - v16: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v17: Expose lossless installed-valence section inspection and canonical
   reconstruction, including the distinct model-neutral state.
+- v18: Replace the empty-success report with `Result<(), ValenceError>` and
+  install semantic valence state transactionally only after strict validation
+  succeeds.

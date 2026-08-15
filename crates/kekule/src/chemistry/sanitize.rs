@@ -25,7 +25,6 @@ impl Default for SanitizeOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SanitizeReport {
-    pub valence: Option<ValenceReport>,
     pub ring_count: Option<usize>,
     pub stereo: Option<StereoPerceptionReport>,
 }
@@ -33,7 +32,7 @@ pub struct SanitizeReport {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SanitizeError {
-    Valence(ValenceReport),
+    Valence(ValenceError),
     Rings(RingPerceptionError),
     Aromaticity(AromaticityError),
     Stereo(StereoPerceptionReport),
@@ -42,11 +41,7 @@ pub enum SanitizeError {
 impl fmt::Display for SanitizeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Valence(report) => write!(
-                f,
-                "valence perception reported {} issue(s)",
-                report.issues.len()
-            ),
+            Self::Valence(error) => write!(f, "{error}"),
             Self::Rings(error) => write!(f, "{error}"),
             Self::Aromaticity(error) => write!(f, "{error}"),
             Self::Stereo(report) => write!(
@@ -75,15 +70,10 @@ pub fn sanitize_small_molecule_with_ring_options(
     let mut staged = molecule.clone();
     normalize_sanitize_charges(staged.graph_mut_raw());
     prepare_sanitize_states(staged.graph_mut_raw(), options);
-    let valence = if options.perceive_valence {
-        let report = perceive_valence(staged.graph_mut_raw(), ValenceModel::RdkitLike);
-        if !report.is_ok() {
-            return Err(SanitizeError::Valence(report));
-        }
-        Some(report)
-    } else {
-        None
-    };
+    if options.perceive_valence {
+        perceive_valence(staged.graph_mut_raw(), ValenceModel::RdkitLike)
+            .map_err(SanitizeError::Valence)?;
+    }
     let ring_count = if options.perceive_rings {
         Some(
             perceive_ring_set_with_options(staged.graph_mut_raw(), ring_options)
@@ -123,11 +113,7 @@ pub fn sanitize_small_molecule_with_ring_options(
         None
     };
     *molecule = staged;
-    Ok(SanitizeReport {
-        valence,
-        ring_count,
-        stereo,
-    })
+    Ok(SanitizeReport { ring_count, stereo })
 }
 
 fn stereo_report_has_fatal_issues(report: &StereoPerceptionReport) -> bool {
