@@ -2,9 +2,9 @@
 //! modelling foundations.
 //!
 //! The supported public surface is organized into focused facade modules.
-//! Parsing produces format documents, interpretation produces canonical domain
-//! objects plus reports, and perception or modelling preparation remains
-//! explicit.
+//! Parsing produces format documents, interpretation produces represented
+//! domain objects plus reports, normalization publishes canonical
+//! representation, and perception or modelling preparation remains explicit.
 //!
 //! System structure is coordinate-free and immutable in [`topology`].
 //! Dynamic structure follows three explicit relationships:
@@ -216,6 +216,22 @@ pub mod mmcif {
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
         crate::io::write_mmcif_model(model, options)
+    }
+}
+
+/// Deterministic small-molecule representation normalization.
+///
+/// Normalization changes only how already-asserted chemistry is represented.
+/// It is transactional, model-independent, and idempotent, and successful
+/// normalization clears installed derived perception state.
+pub mod normalization {
+    pub use crate::chemistry::NormalizationError;
+
+    use crate::core::Molecule;
+
+    /// Normalize one represented molecule into Kekule's canonical form.
+    pub fn normalize(molecule: &mut Molecule) -> Result<(), NormalizationError> {
+        crate::chemistry::normalize_molecule(molecule)
     }
 }
 

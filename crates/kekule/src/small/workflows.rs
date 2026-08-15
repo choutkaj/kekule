@@ -5,8 +5,8 @@ use crate::algorithms::{
     AddHydrogensReport, HydrogenNormalizationError, RemoveHydrogensReport,
 };
 use crate::chemistry::{
-    sanitize_small_molecule, sanitize_small_molecule_with_ring_options, SanitizeError,
-    SanitizeOptions, SanitizeReport,
+    normalize_molecule, sanitize_small_molecule, sanitize_small_molecule_with_ring_options,
+    NormalizationError, SanitizeError, SanitizeOptions, SanitizeReport,
 };
 use crate::io::{
     interpret_smiles_document, parse_smiles_document, write_canonical_smiles,
@@ -34,6 +34,11 @@ impl SmallMolecule {
 
     pub fn sanitize(&mut self) -> Result<SanitizeReport, SanitizeError> {
         sanitize_small_molecule(self, SanitizeOptions::default())
+    }
+
+    /// Normalize represented chemistry into Kekule's canonical form.
+    pub fn normalize(&mut self) -> Result<(), NormalizationError> {
+        normalize_molecule(self.graph_mut_raw())
     }
 
     pub fn sanitize_with_options(
