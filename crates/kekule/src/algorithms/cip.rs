@@ -3,9 +3,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
-use crate::algorithms::{
-    validate_stereo_with_options, RingMembership, StereoPerceptionIssue, StereoPerceptionOptions,
-};
+use crate::algorithms::{validate_stereo, RingMembership, StereoValidationIssue};
 use crate::core::*;
 
 use super::rings::{bond_in_ring_smaller_than, compute_ring_membership};
@@ -67,7 +65,7 @@ pub enum CipSkippedReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CipAssignmentIssue {
     InvalidStereo {
-        issue: StereoPerceptionIssue,
+        issue: StereoValidationIssue,
     },
     UnresolvedPriority {
         element: StereoElementId,
@@ -89,23 +87,13 @@ pub fn assign_cip_descriptors_with_options(
     clear_stereo_descriptors(mol);
     let mut report = CipAssignmentReport::default();
     if options.validate_existing {
-        let validation = validate_stereo_with_options(
-            mol,
-            StereoPerceptionOptions {
-                validate_existing: true,
-                detect_candidates: false,
-                assemble_source_marks: false,
-                assign_coordinates: false,
-                assign_coordinate_axes: false,
-            },
-        );
-        report.issues.extend(
-            validation
-                .issues
-                .into_iter()
-                .map(|issue| CipAssignmentIssue::InvalidStereo { issue }),
-        );
-        if !report.issues.is_empty() {
+        if let Err(error) = validate_stereo(mol) {
+            report.issues.extend(
+                error
+                    .issues
+                    .into_iter()
+                    .map(|issue| CipAssignmentIssue::InvalidStereo { issue }),
+            );
             return report;
         }
     }

@@ -160,7 +160,9 @@ double-bond descriptor assignment, where existing mancude and source-order
 regressions remain the controlling behavior until a full RDKit-style canonical
 kekulizer is implemented.
 
-The layer validates existing stereo by default and returns structured issues
+The layer uses the focused stored-element `validate_stereo` operation by
+default and maps `StereoValidationIssue` values into its existing assignment
+report. It returns structured issues
 instead of guessing when the current graph cannot support the stored local
 stereo or when the implemented ranking rules cannot distinguish carriers.
 
@@ -350,3 +352,5 @@ benchmark corpora, isomeric SMILES emission, and stereo enumeration.
 - v42: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v43: Add lossless public CIP assignment inspection and checked whole-state
   restoration while preserving normal stereo invalidation.
+- v44: Consume the focused stored-element stereo validation API and validation
+  issue type without changing CIP report or assignment transactionality.

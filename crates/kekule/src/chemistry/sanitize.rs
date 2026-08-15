@@ -35,7 +35,7 @@ pub enum SanitizeError {
     Valence(ValenceError),
     Rings(RingPerceptionError),
     Aromaticity(AromaticityError),
-    Stereo(StereoPerceptionReport),
+    Stereo(StereoPerceptionError),
 }
 
 impl fmt::Display for SanitizeError {
@@ -44,11 +44,7 @@ impl fmt::Display for SanitizeError {
             Self::Valence(error) => write!(f, "{error}"),
             Self::Rings(error) => write!(f, "{error}"),
             Self::Aromaticity(error) => write!(f, "{error}"),
-            Self::Stereo(report) => write!(
-                f,
-                "stereo perception reported {} issue(s)",
-                report.issues.len()
-            ),
+            Self::Stereo(error) => write!(f, "{error}"),
         }
     }
 }
@@ -98,31 +94,21 @@ pub fn sanitize_small_molecule_with_ring_options(
         }
     }
     let stereo = if options.perceive_stereo {
-        let report = perceive_stereo_with_options(
-            staged.graph_mut_raw(),
-            StereoPerceptionOptions {
-                assign_coordinates: false,
-                ..StereoPerceptionOptions::default()
-            },
-        );
-        if stereo_report_has_fatal_issues(&report) {
-            return Err(SanitizeError::Stereo(report));
-        }
-        Some(report)
+        Some(
+            perceive_stereo_with_options(
+                staged.graph_mut_raw(),
+                StereoPerceptionOptions {
+                    assign_coordinates: false,
+                    ..StereoPerceptionOptions::default()
+                },
+            )
+            .map_err(SanitizeError::Stereo)?,
+        )
     } else {
         None
     };
     *molecule = staged;
     Ok(SanitizeReport { ring_count, stereo })
-}
-
-fn stereo_report_has_fatal_issues(report: &StereoPerceptionReport) -> bool {
-    report.issues.iter().any(|issue| {
-        !matches!(
-            issue,
-            StereoPerceptionIssue::AmbiguousTetrahedralWedgeMarks { .. }
-        )
-    })
 }
 
 fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {

@@ -561,6 +561,9 @@ fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::e
 #[test]
 fn production_smiles_stereo_uses_installed_perception_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::perception::stereo::{
+        StereoCandidate, StereoPerceptionError, StereoPerceptionReport, StereoValidationError,
+    };
     use kekule::perception::{self, stereo, SanitizeOptions};
 
     let document = kekule::smiles::parse_str(r"C(=C\F)\F")?;
@@ -577,10 +580,11 @@ fn production_smiles_stereo_uses_installed_perception_state(
     assert_eq!(graph.implicit_hydrogens(AtomId::new(0))?, Some(1));
     assert_eq!(graph.implicit_hydrogens(AtomId::new(1))?, Some(1));
 
-    let report = stereo::perceive_stereo(molecule.graph_mut());
-    assert!(report.is_ok(), "{:?}", report.issues);
+    let validation: Result<(), StereoValidationError> = stereo::validate_stereo(molecule.graph());
+    validation?;
+    let candidates: Vec<StereoCandidate> = stereo::detect_stereo_candidates(molecule.graph());
     assert!(
-        report.candidates.iter().any(|candidate| matches!(
+        candidates.iter().any(|candidate| matches!(
             candidate,
             kekule::perception::stereo::StereoCandidate::DoubleBond {
                 left_carriers,
@@ -589,8 +593,13 @@ fn production_smiles_stereo_uses_installed_perception_state(
             } if left_carriers.len() == 2 && right_carriers.len() == 2
         )),
         "{:?}",
-        report.candidates
+        candidates
     );
+    let perception: Result<StereoPerceptionReport, StereoPerceptionError> =
+        stereo::perceive_stereo(molecule.graph_mut());
+    let report = perception?;
+    assert_eq!(report.created_elements.len(), 1);
+    assert!(report.warnings.is_empty());
     Ok(())
 }
 
