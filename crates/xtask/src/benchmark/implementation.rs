@@ -1123,12 +1123,12 @@ pub(crate) fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Val
 }
 
 pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let report = valence::perceive_valence_with_options(
+    let result = valence::perceive_valence_with_options(
         record.molecule.graph_mut(),
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
     );
-    if !report.is_ok() {
+    if result.is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "valence_error",
@@ -1173,7 +1173,7 @@ pub(crate) fn hydrogen_normalization_record_json(record: &mut IndexedSmallRecord
         *added_by_parent.entry(entry.parent.index()).or_default() += 1;
     }
 
-    if !valence::perceive_valence(record.molecule.graph_mut(), ValenceModel::RdkitLike).is_ok() {
+    if valence::perceive_valence(record.molecule.graph_mut(), ValenceModel::RdkitLike).is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "add_error",
