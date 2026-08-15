@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::fmt;
 use std::rc::Rc;
 
 use crate::algorithms::{validate_stereo, RingMembership, StereoValidationIssue};
@@ -16,7 +17,6 @@ type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipAssignmentOptions {
-    pub validate_existing: bool,
     pub max_depth: usize,
     pub max_nodes: usize,
 }
@@ -24,7 +24,6 @@ pub struct CipAssignmentOptions {
 impl Default for CipAssignmentOptions {
     fn default() -> Self {
         Self {
-            validate_existing: true,
             max_depth: 32,
             max_nodes: 100_000,
         }
@@ -35,14 +34,24 @@ impl Default for CipAssignmentOptions {
 pub struct CipAssignmentReport {
     pub assigned: Vec<CipAssignment>,
     pub skipped: Vec<CipSkipped>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CipAssignmentError {
     pub issues: Vec<CipAssignmentIssue>,
 }
 
-impl CipAssignmentReport {
-    pub fn is_ok(&self) -> bool {
-        self.issues.is_empty()
+impl fmt::Display for CipAssignmentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "CIP assignment reported {} issue(s)",
+            self.issues.len()
+        )
     }
 }
+
+impl std::error::Error for CipAssignmentError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CipAssignment {
@@ -76,27 +85,29 @@ pub enum CipAssignmentIssue {
     },
 }
 
-pub fn assign_cip_descriptors(mol: &mut Molecule) -> CipAssignmentReport {
+pub fn assign_cip_descriptors(
+    mol: &mut Molecule,
+) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
     assign_cip_descriptors_with_options(mol, CipAssignmentOptions::default())
 }
 
 pub fn assign_cip_descriptors_with_options(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
-) -> CipAssignmentReport {
-    clear_stereo_descriptors(mol);
-    let mut report = CipAssignmentReport::default();
-    if options.validate_existing {
-        if let Err(error) = validate_stereo(mol) {
-            report.issues.extend(
-                error
-                    .issues
-                    .into_iter()
-                    .map(|issue| CipAssignmentIssue::InvalidStereo { issue }),
-            );
-            return report;
-        }
+) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
+    if let Err(error) = validate_stereo(mol) {
+        return Err(CipAssignmentError {
+            issues: error
+                .issues
+                .into_iter()
+                .map(|issue| CipAssignmentIssue::InvalidStereo { issue })
+                .collect(),
+        });
     }
+
+    let previous_descriptors = mol.replace_cip_descriptors(BTreeMap::new());
+    let mut report = CipAssignmentReport::default();
+    let mut issues = Vec::new();
 
     let mut pending = mol
         .stereo_elements()
@@ -121,7 +132,7 @@ pub fn assign_cip_descriptors_with_options(
                     });
                 }
                 CipElementAssignment::Deferred => next_pending.push((id, element)),
-                CipElementAssignment::Issue(issue) => report.issues.push(issue),
+                CipElementAssignment::Issue(issue) => issues.push(issue),
             }
         }
         for (id, descriptor) in round_assignments {
@@ -163,7 +174,7 @@ pub fn assign_cip_descriptors_with_options(
                 }
                 Ok(_) => {}
                 Err(issue) => {
-                    report.issues.push(issue);
+                    issues.push(issue);
                     break;
                 }
             }
@@ -173,17 +184,22 @@ pub fn assign_cip_descriptors_with_options(
                         element: id,
                         reason: CipSkippedReason::NotStereogenic,
                     }),
-                    Ok(false) => report
-                        .issues
-                        .push(CipAssignmentIssue::UnresolvedPriority { element: id }),
-                    Err(issue) => report.issues.push(issue),
+                    Ok(false) => {
+                        issues.push(CipAssignmentIssue::UnresolvedPriority { element: id })
+                    }
+                    Err(issue) => issues.push(issue),
                 }
             }
             break;
         }
         pending = next_pending;
     }
-    report
+    if issues.is_empty() {
+        Ok(report)
+    } else {
+        drop(mol.replace_cip_descriptors(previous_descriptors));
+        Err(CipAssignmentError { issues })
+    }
 }
 
 fn descriptor_is_absolute_tetrahedral(descriptor: StereoDescriptor) -> bool {
@@ -240,10 +256,6 @@ fn double_bond_cip_stereogenic(mol: &Molecule, stereo: &DoubleBondStereo) -> Opt
         return Some(false);
     }
     Some(true)
-}
-
-fn clear_stereo_descriptors(mol: &mut Molecule) {
-    mol.clear_cip_descriptors();
 }
 
 fn set_stereo_descriptor(mol: &mut Molecule, id: StereoElementId, descriptor: StereoDescriptor) {

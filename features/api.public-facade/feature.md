@@ -64,6 +64,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `perception::stereo` separately exposes stored-element validation,
   read-only candidate detection, and transactional mutating perception with
   focused validation errors, perception errors, and successful warnings.
+- The same stereo facade exposes CIP assignment as
+  `Result<CipAssignmentReport, CipAssignmentError>`: successful assignments and
+  skips are sidecar output, while failed assignment preserves the exact prior
+  descriptor map.
 - Focused canonical reconstruction remains under `core` and `bio`: detached
   exact perception construction plus whole-state installation, targeted SMCRA
   child enrichment, and exact stereo-group tombstone replay do not widen the
@@ -242,3 +246,5 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v39: Split the public stereo surface into focused validation, candidate
   detection, and transactional perception operations without compatibility
   wrappers.
+- v40: Separate CIP assignment success output from structured failures and
+  expose transactional complete descriptor-map replacement.

@@ -1327,11 +1327,25 @@ impl Molecule {
     }
 
     pub(crate) fn clear_cip_descriptors(&mut self) {
-        self.perception.cip_descriptors.clear();
+        drop(self.replace_cip_descriptors(BTreeMap::new()));
+    }
+
+    pub(crate) fn replace_cip_descriptors(
+        &mut self,
+        descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
+    ) -> BTreeMap<StereoElementId, StereoDescriptor> {
+        let previous = std::mem::replace(&mut self.perception.cip_descriptors, descriptors);
         #[cfg(test)]
-        for element in self.stereo_elements.iter_mut().flatten() {
-            element.descriptor = None;
+        for (raw, element) in (0..=u32::MAX).zip(self.stereo_elements.iter_mut()) {
+            if let Some(element) = element {
+                element.descriptor = self
+                    .perception
+                    .cip_descriptors
+                    .get(&StereoElementId::new(raw))
+                    .copied();
+            }
         }
+        previous
     }
 
     fn validate_perception_state(

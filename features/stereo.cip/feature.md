@@ -2,8 +2,8 @@
 
 ## Summary
 
-Assign bounded CIP descriptors as a derived cache over validated local stereo
-elements.
+Transactionally assign bounded CIP descriptors as installed semantic perception
+over validated local stereo elements.
 
 ## Behavior/API
 
@@ -13,16 +13,26 @@ elements.
 - `assign_cip_descriptors_with_options`
 - `CipAssignmentOptions`
 - `CipAssignmentReport`
+- `CipAssignmentError`
 - `CipAssignment`
 - `CipSkipped`
 - `CipSkippedReason`
 - `CipAssignmentIssue`
 
-Assignment installs descriptors in the underlying molecule's
-`PerceptionState`. Descriptors are derived cache, not graph truth: assignment
-clears existing descriptors first, and topology or stereo-invalidating
-mutations clear them again. Exact assignments are publicly iterable and can be
-included in checked atomic whole-state reconstruction.
+Assignment returns `Result<CipAssignmentReport, CipAssignmentError>` and
+installs descriptors in the underlying molecule's `PerceptionState`.
+Descriptors are semantic computed state, not raw graph truth. Every attempt
+validates stored stereo and computes from a clean descriptor map while allowing
+descriptors assigned during that attempt to resolve later centers. Success
+atomically replaces the complete prior descriptor set. Any validation, ranking,
+or resource failure restores the exact prior set and returns all collected
+issues through `CipAssignmentError`. Exact assignments remain publicly iterable
+and can be included in checked atomic whole-state reconstruction.
+
+`CipAssignmentReport` contains only successful sidecar information: assigned
+descriptors and successful `NotSpecified` or `NotStereogenic` skips.
+`CipAssignmentOptions` contains only the ranking depth and node budgets; stored
+stereo validation is unconditional.
 
 The implemented contract assigns `R`/`S`/`r`/`s` for specified tetrahedral
 elements, `E`/`Z` and `seqCis`/`seqTrans` for specified double-bond elements,
@@ -41,7 +51,8 @@ still contains equivalent ligand ties. Double-bond and axis elements are also
 skipped when a final complete endpoint comparison cannot identify a unique
 highest-priority carrier. Invalid local stereo,
 unresolved priorities, and resource-limit
-exhaustion are reported without assigning lossy descriptors. Double-bond
+exhaustion fail the complete transactional attempt without publishing partial
+descriptors. Double-bond
 elements in rings smaller than eight atoms do not receive E/Z descriptors,
 matching the RDKit-style stereogenic-bond boundary.
 
@@ -160,11 +171,11 @@ double-bond descriptor assignment, where existing mancude and source-order
 regressions remain the controlling behavior until a full RDKit-style canonical
 kekulizer is implemented.
 
-The layer uses the focused stored-element `validate_stereo` operation by
-default and maps `StereoValidationIssue` values into its existing assignment
-report. It returns structured issues
-instead of guessing when the current graph cannot support the stored local
-stereo or when the implemented ranking rules cannot distinguish carriers.
+The layer always uses the focused stored-element `validate_stereo` operation
+before changing installed descriptors and maps `StereoValidationIssue` values
+into `CipAssignmentError`. It returns structured issues instead of guessing
+when the current graph cannot support the stored local stereo or when the
+implemented ranking rules cannot distinguish carriers.
 
 ## Tests
 
@@ -195,6 +206,10 @@ bicyclic centers from the Enamine diversity corpus. Rule 2 regressions cover
 natural atoms versus indicated isotopes and duplicate-node zero mass.
 Equivalent-ring regressions cover isolated unsubstituted ring bridges that
 must not become stereogenic through atom-id tie breaking.
+Transactional regressions cover exact prior-state restoration after resource
+and validation failures, rollback after an earlier center is assigned before a
+later center exceeds its node budget, and complete-map replacement on
+successful reassignment.
 
 Smoke, PubChem 100, PubChem 1k, PubChem 100k, and Enamine diversity benchmarks
 use externally supplied isomeric SMILES fixtures. The smoke benchmark also includes
@@ -354,3 +369,6 @@ benchmark corpora, isomeric SMILES emission, and stereo enumeration.
   restoration while preserving normal stereo invalidation.
 - v44: Consume the focused stored-element stereo validation API and validation
   issue type without changing CIP report or assignment transactionality.
+- v45: Return structured assignment failures separately from successful
+  assignment/skip output and make complete CIP descriptor replacement
+  transactional across validation, ranking, and resource-limit failures.

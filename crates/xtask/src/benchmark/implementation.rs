@@ -907,7 +907,7 @@ pub(crate) fn stereo_cip_record_json(
     if perception_result.is_err() {
         return None;
     }
-    stereo::assign_cip_descriptors(record.molecule.graph_mut());
+    stereo::assign_cip_descriptors(record.molecule.graph_mut()).ok()?;
     let mol = record.molecule.graph();
     let atom_index = rdkit_default_atom_index(mol, remove_plain_hydrogens);
     let atom_descriptors = cip_atom_descriptors_json(mol, &atom_index);
@@ -1512,7 +1512,9 @@ pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) 
     if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
         return json!({ "status": "sanitize_error" });
     }
-    stereo::assign_cip_descriptors(molecule.graph_mut());
+    if stereo::assign_cip_descriptors(molecule.graph_mut()).is_err() {
+        return json!({ "status": "cip_error" });
+    }
     let mol = molecule.graph();
     json!({
         "status": "ok",
