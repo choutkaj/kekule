@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 41
+version = 42
 status = "supported"
-description = "Expose the focused Kekule facade with sealed molecule staging, borrowed instance-qualified hierarchy navigation, directly owned topology with Arc-based sharing, and direct model state."
+description = "Expose the focused Kekule facade with explicit representation normalization, sealed molecule staging, qualified hierarchy navigation, shared topology, and direct model state."
 depends_on = [
   "core.units",
   "core.graph",
@@ -14,6 +14,7 @@ depends_on = [
   "bio.mmcif.interpret",
   "io.mmcif.parse",
   "io.mmcif.write",
+  "chem.normalization",
   "chem.sanitize.rdkit-like",
   "chem.hydrogen-normalization",
   "query.graph",

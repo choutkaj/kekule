@@ -224,14 +224,14 @@ Goal: establish the new architectural seam without yet rewriting imported aromat
 
 Implement:
 
-- add a focused `normalization` module/facade for small-molecule representation normalization;
-- define `NormalizationError` and, only if genuinely useful, a minimal success report for representation warnings;
-- move the current representation-only hypervalent oxo-halide cleanup out of `sanitize.rs` into normalization;
-- make normalization transactional and idempotent;
-- successful normalization clears installed `PerceptionState` before publishing the normalized representation;
-- add `SmallMolecule::normalize()` convenience if this remains a thin forward to the canonical operation;
-- add focused tests for meaning-preserving rewrite, idempotence, transactional failure where applicable, and perception clearing;
-- update public facade/docs/features to name normalization explicitly.
+- [x] add a focused `normalization` module/facade for small-molecule representation normalization;
+- [x] define `NormalizationError` and, only if genuinely useful, a minimal success report for representation warnings;
+- [x] move the current representation-only hypervalent oxo-halide cleanup out of `sanitize.rs` into normalization;
+- [x] make normalization transactional and idempotent;
+- [x] successful normalization clears installed `PerceptionState` before publishing the normalized representation;
+- [x] add `SmallMolecule::normalize()` convenience if this remains a thin forward to the canonical operation;
+- [x] add focused tests for meaning-preserving rewrite, idempotence, transactional failure where applicable, and perception clearing;
+- [x] update public facade/docs/features to name normalization explicitly.
 
 Temporary state after Stage 1:
 

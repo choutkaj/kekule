@@ -17,6 +17,8 @@ for common small molecules.
 - Commits changes only after every requested pass succeeds; any error leaves the input exactly unchanged.
 - Propagates valence, ring, aromaticity, and stereo failures through
   `SanitizeError` without committing staged mutations.
+- Propagates canonical representation failures through
+  `SanitizeError::Normalization` without committing staged mutations.
 - `SanitizeError::Stereo` carries `StereoPerceptionError` through normal
   `Result` propagation. Successful stereo reports retain created element IDs
   and nonfatal warnings.
@@ -39,10 +41,14 @@ for common small molecules.
   elements and nonfatal warnings remain useful to callers.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
 - The public facade is `perception`; lower-level sanitizer internals are not root-level API.
-- Applies sanitization-only charge cleanup for hypervalent oxyhalogen patterns
-  before valence perception only when a terminal single-bond oxygen establishes
-  the charge-separated representation; it does not rewrite arbitrary neutral
-  halogen oxides by motif alone.
+- Delegates canonical representation cleanup to the focused normalization
+  layer before valence perception. The sanitizer no longer owns the
+  hypervalent oxyhalogen rewrite.
+- During Stage 1, the outer sanitizer transaction restores its staged prior
+  perception after normalization so the unchanged imported-aromatic valence
+  and localization path retains compatibility. Direct normalization still
+  publishes empty perception; this narrow handoff is retired with the later
+  aromaticity/valence separation.
 - Performs the aromatic nitrogen hydrogen normalization after both valence and aromaticity perception succeed, preserving total hydrogen count while exposing RDKit-like sanitized atom fields.
 - Runs stereo perception after aromaticity so local stereo validation and
   source-mark assembly can use sanitized valence and hydrogen semantics.
@@ -61,10 +67,10 @@ for common small molecules.
 ## Tests
 
 - Unit tests cover parse-without-sanitize behavior, every option combination,
-  installed ring-basis reuse, transient aromaticity ring computation, cleanup
-  invalidation, idempotence, default and skipped stereo perception,
+  installed ring-basis reuse, transient aromaticity ring computation,
+  normalization delegation, idempotence, default and skipped stereo perception,
   coordinate-only stereo staying outside sanitization, and exact rollback after
-  valence, aromaticity, or stereo failure.
+  normalization, valence, aromaticity, or stereo failure.
 
 ## Benchmarks
 
@@ -110,3 +116,5 @@ for common small molecules.
 - v19: Define sanitization as transactional normalization plus perception,
   reuse its installed ring basis during aromaticity, and remove redundant ring
   count output from `SanitizeReport`.
+- v20: Delegate representation cleanup to the first-class normalization layer
+  and propagate focused normalization failures transactionally.
