@@ -606,7 +606,10 @@ fn production_smiles_stereo_uses_installed_perception_state(
 #[test]
 fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::core::{StereoDescriptor, StereoElementId};
-    use kekule::perception::{self, stereo};
+    use kekule::perception::{
+        self,
+        stereo::{self, CipAssignmentError, CipAssignmentReport},
+    };
 
     let input = include_str!(
         "../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
@@ -614,9 +617,11 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
     let document = kekule::molfile::parse_str(input)?;
     let mut molecule = kekule::molfile::interpret(&document)?.into_molecule();
     perception::sanitize(&mut molecule)?;
-    let report = stereo::assign_cip_descriptors(molecule.graph_mut());
+    let assignment: Result<CipAssignmentReport, CipAssignmentError> =
+        stereo::assign_cip_descriptors(molecule.graph_mut());
+    let report = assignment?;
 
-    assert!(report.is_ok(), "{:?}", report.issues);
+    assert_eq!(report.assigned.len(), 1);
     assert_eq!(
         molecule.graph().cip_descriptor(StereoElementId::new(0))?,
         Some(StereoDescriptor::P)

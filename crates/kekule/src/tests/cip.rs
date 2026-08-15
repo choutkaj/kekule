@@ -1,13 +1,20 @@
 use super::*;
 
+fn assign_cip(mol: &mut Molecule) -> CipAssignmentReport {
+    stereo_api::assign_cip_descriptors(mol).expect("CIP assignment should succeed")
+}
+
+fn installed_cip_descriptors(mol: &Molecule) -> Vec<(StereoElementId, StereoDescriptor)> {
+    mol.perception().cip_descriptors().collect()
+}
+
 #[test]
 fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
     let mut s_alanine = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
     perception_api::sanitize(&mut s_alanine).expect("alanine sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(s_alanine.graph_mut());
+    let report = assign_cip(s_alanine.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -27,9 +34,8 @@ fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
     let mut r_alanine = read_smiles("C[C@H](C(=O)O)N").expect("alanine parses");
     perception_api::sanitize(&mut r_alanine).expect("alanine sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(r_alanine.graph_mut());
+    let report = assign_cip(r_alanine.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::R);
 }
 
@@ -56,9 +62,8 @@ M  END
         let mut molecule = read_molfile(&input).expect("wedge molfile parses");
         perception_api::sanitize(&mut molecule).expect("wedge molfile sanitizes");
 
-        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+        let report = assign_cip(molecule.graph_mut());
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(
             report.assigned,
             vec![CipAssignment {
@@ -75,9 +80,8 @@ fn cip_matches_rdkit_for_molfile_implicit_h_wedge_geometry() {
         .expect("implicit-H wedge molfile parses");
     perception_api::sanitize(&mut molecule).expect("implicit-H wedge molfile sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -111,9 +115,8 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
     ] {
         let (mut mol, stereo) = axis_stereo_graph(left_reference, right_reference, orientation);
 
-        let report = stereo_api::assign_cip_descriptors(&mut mol);
+        let report = assign_cip(&mut mol);
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(
             report.assigned,
             vec![CipAssignment {
@@ -159,9 +162,8 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         ))
         .expect("axis stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -189,9 +191,8 @@ fn cip_assigns_axis_descriptor_from_coordinate_perception() {
     .expect("coordinate axis perception");
     assert_eq!(perception_report.created_elements.len(), 1);
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -215,9 +216,8 @@ fn cip_assigns_pseudo_axis_descriptors_for_pseudoasymmetric_endpoint_ordering() 
     ] {
         let (mut mol, axis_element) = pseudoasymmetric_axis_graph(orientation);
 
-        let report = stereo_api::assign_cip_descriptors(&mut mol);
+        assign_cip(&mut mol);
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(
             mol.stereo_element(axis_element)
                 .expect("axis stereo")
@@ -233,9 +233,8 @@ fn cip_matches_rdkit_for_molfile_atropisomeric_axis() {
         read_molfile(rdkit_rp6306_atrop_molblock()).expect("RDKit atropisomer fixture parses");
     perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -259,9 +258,8 @@ fn cip_matches_rdkit_for_alternate_molfile_atropisomeric_wedge() {
         .expect("RDKit alternate atropisomer fixture parses");
     perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -283,9 +281,8 @@ fn cip_axis_ranking_is_stable_across_all_carbon_aromatic_source_kekule_variants(
         let mut molecule = read_molfile(fixture).expect("RDKit atropisomer fixture parses");
         perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
 
-        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+        let report = assign_cip(molecule.graph_mut());
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(
             report
                 .assigned
@@ -303,9 +300,8 @@ fn cip_axis_ranking_preserves_heteromancude_source_kekule_guardrail() {
         .expect("RDKit JDQ443 atropisomer fixture parses");
     perception_api::sanitize(&mut molecule).expect("JDQ443 atropisomer fixture sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -334,9 +330,8 @@ fn cip_matches_rdkit_for_broader_molfile_atropisomeric_axis_perception() {
         let mut molecule = read_molfile(fixture).expect("RDKit atropisomer fixture parses");
         perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
 
-        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+        let report = assign_cip(molecule.graph_mut());
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(
             report
                 .assigned
@@ -361,9 +356,8 @@ fn cip_matches_rdkit_for_ring_internal_molfile_atropisomeric_axis() {
             read_molfile(fixture).expect("RDKit macrocycle atropisomer fixture parses");
         perception_api::sanitize(&mut molecule).expect("macrocycle atropisomer fixture sanitizes");
 
-        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+        let report = assign_cip(molecule.graph_mut());
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(report.assigned.len(), 1);
         assert_eq!(report.assigned[0].descriptor, expected);
     }
@@ -374,9 +368,8 @@ fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule = read_smiles("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");
     perception_api::sanitize(&mut molecule).expect("tartrate sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -449,9 +442,8 @@ fn cip_matches_rdkit_for_smiles_ring_digit_tetrahedral_order() {
         .expect("ring chiral molecule parses");
     perception_api::sanitize(&mut molecule).expect("ring chiral molecule sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -468,9 +460,8 @@ fn cip_matches_rdkit_for_branch_preserving_sugar_ligand_ranking() {
             .expect("nucleotide sugar parses");
     perception_api::sanitize(&mut molecule).expect("nucleotide sugar sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -493,9 +484,8 @@ fn cip_matches_rdkit_for_fused_ring_paired_breadth_first_ranking() {
             .expect("polycycle parses");
     perception_api::sanitize(&mut molecule).expect("polycycle sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -520,9 +510,8 @@ fn cip_matches_rdkit_for_polyene_directional_double_bonds() {
         read_smiles("CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)C=C)/C").expect("polyene parses");
     perception_api::sanitize(&mut molecule).expect("polyene sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -559,14 +548,13 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
         StereoPerceptionIssue::UnpairedDirectionalBondMark { .. }
     )));
 
-    let cip_report = stereo_api::assign_cip_descriptors(cyclohexene.graph_mut());
+    let cip_report = assign_cip(cyclohexene.graph_mut());
     assert!(cip_report.assigned.is_empty());
 
     let mut cyclooctene = read_smiles(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
     perception_api::sanitize(&mut cyclooctene).expect("marked cyclooctene sanitizes");
-    let cip_report = stereo_api::assign_cip_descriptors(cyclooctene.graph_mut());
+    let cip_report = assign_cip(cyclooctene.graph_mut());
 
-    assert!(cip_report.is_ok(), "{:?}", cip_report.issues);
     assert_eq!(
         cip_report
             .assigned
@@ -610,9 +598,8 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
         ))
         .expect("double-bond stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -665,9 +652,8 @@ fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         ))
         .expect("double-bond stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -689,9 +675,8 @@ fn cip_skips_endocyclic_kekule_bond_stereo_after_ring_perception() {
             .expect("CID 445170 parses");
     perception_api::sanitize(&mut molecule).expect("CID 445170 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let bond_descriptors = molecule
         .graph()
         .stereo_elements()
@@ -720,9 +705,8 @@ fn cip_matches_rdkit_for_large_fused_ring_with_many_centers() {
             .expect("fused ring parses");
     perception_api::sanitize(&mut molecule).expect("fused ring sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -744,9 +728,8 @@ fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
     let mut together = read_smiles("C(=C\\F)\\F").expect("alkene parses");
     perception_api::sanitize(&mut together).expect("alkene sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(together.graph_mut());
+    let report = assign_cip(together.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -758,9 +741,8 @@ fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
     let mut opposite = read_smiles("C(=C/F)\\F").expect("alkene parses");
     perception_api::sanitize(&mut opposite).expect("alkene sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(opposite.graph_mut());
+    let report = assign_cip(opposite.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::E);
 }
 
@@ -772,9 +754,8 @@ fn cip_assigns_sequence_descriptors_for_pseudoasymmetric_double_bond_endpoints()
     ] {
         let (mut mol, double_bond_element) = pseudoasymmetric_double_bond_graph(orientation);
 
-        let report = stereo_api::assign_cip_descriptors(&mut mol);
+        assign_cip(&mut mol);
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(
             mol.stereo_element(double_bond_element)
                 .expect("double-bond stereo")
@@ -789,9 +770,8 @@ fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
     let mut molecule = read_smiles("Br[C@H](/C=C/F)/C=C\\F").expect("Rule 3 alkene pair parses");
     perception_api::sanitize(&mut molecule).expect("Rule 3 alkene pair sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let atom_descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1051,9 +1031,8 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
         ))
         .expect("parent pseudoasymmetric stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         mol.stereo_element(child_r_element)
             .expect("R child stereo")
@@ -1080,9 +1059,8 @@ fn cip_bootstraps_coupled_pseudoasymmetric_tetrahedral_centers() {
         .expect("para-stereo scaffold parses");
     perception_api::sanitize(&mut molecule).expect("para-stereo scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(report.assigned.len(), 2);
     let descriptors = molecule
         .graph()
@@ -1124,9 +1102,8 @@ fn cip_matches_rdkit_for_para_stereochemistry_with_directional_double_bonds() {
         perception_api::sanitize(&mut molecule)
             .expect("RDKit para-stereochemistry scaffold sanitizes");
 
-        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+        assign_cip(molecule.graph_mut());
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(tetrahedral_descriptor_map(molecule.graph()), expected);
     }
 }
@@ -1138,9 +1115,8 @@ fn cip_matches_rdkit_for_auxiliary_stereochemistry_beyond_initial_expansion() {
     perception_api::sanitize(&mut molecule)
         .expect("RDKit auxiliary para-stereochemistry scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         tetrahedral_descriptor_map(molecule.graph()),
         vec![
@@ -1170,9 +1146,8 @@ fn cip_matches_rdkit_for_cyclohexane_pseudo_symmetry_examples() {
         let mut molecule = read_smiles(smiles).expect("RDKit pseudo-symmetry scaffold parses");
         perception_api::sanitize(&mut molecule).expect("RDKit pseudo-symmetry scaffold sanitizes");
 
-        let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+        assign_cip(molecule.graph_mut());
 
-        assert!(report.is_ok(), "{:?}", report.issues);
         assert_eq!(tetrahedral_descriptor_map(molecule.graph()), expected);
     }
 }
@@ -1183,9 +1158,8 @@ fn cip_preserves_absolute_centers_next_to_pseudoasymmetric_ring_center() {
         .expect("mixed absolute and pseudoasymmetric scaffold parses");
     perception_api::sanitize(&mut molecule).expect("mixed scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1212,9 +1186,8 @@ fn cip_bootstraps_coupled_pseudoasymmetric_fused_ring_centers() {
         .expect("fused para-stereo scaffold parses");
     perception_api::sanitize(&mut molecule).expect("fused para-stereo scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1238,9 +1211,8 @@ fn cip_bootstraps_coupled_pseudoasymmetric_cyclopentane_centers() {
             .expect("cyclopentane para-stereo scaffold parses");
     perception_api::sanitize(&mut molecule).expect("cyclopentane para-stereo scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1267,9 +1239,8 @@ fn cip_marks_middle_center_pseudoasymmetric_in_fused_three_center_system() {
             .expect("three-center fused scaffold parses");
     perception_api::sanitize(&mut molecule).expect("three-center fused scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1297,9 +1268,8 @@ fn cip_bootstraps_enamine_coupled_cyclobutane_pseudoasymmetric_centers() {
             .expect("Enamine coupled pseudoasymmetric scaffold parses");
     perception_api::sanitize(&mut molecule).expect("Enamine coupled scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1326,9 +1296,8 @@ fn cip_matches_rdkit_for_enamine_quaternary_ring_center() {
             .expect("Enamine quaternary ring-center scaffold parses");
     perception_api::sanitize(&mut molecule).expect("Enamine quaternary scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1357,9 +1326,8 @@ fn cip_matches_rdkit_for_enamine_fused_three_center_pseudoasymmetry() {
         .expect("Enamine fused three-center scaffold parses");
     perception_api::sanitize(&mut molecule).expect("Enamine fused three-center scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1388,9 +1356,8 @@ fn cip_matches_rdkit_for_enamine_fused_ring_dual_pseudoasymmetry() {
     perception_api::sanitize(&mut molecule)
         .expect("Enamine fused-ring dual pseudoasymmetric scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1419,9 +1386,8 @@ fn cip_matches_rdkit_for_enamine_spiro_fused_pseudoasymmetry() {
     perception_api::sanitize(&mut molecule)
         .expect("Enamine spiro-fused pseudoasymmetric scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1447,9 +1413,8 @@ fn cip_matches_rdkit_for_enamine_absolute_center_in_coupled_bicycle() {
         .expect("Enamine coupled bicyclic scaffold parses");
     perception_api::sanitize(&mut molecule).expect("Enamine coupled bicyclic scaffold sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1510,9 +1475,8 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
         ))
         .expect("stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report.assigned,
         vec![CipAssignment {
@@ -1529,9 +1493,8 @@ fn cip_matches_rdkit_for_pubchem_73056_recursive_rule_ordering() {
             .expect("CID 73056 parses");
     perception_api::sanitize(&mut molecule).expect("CID 73056 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -1560,9 +1523,8 @@ fn cip_matches_rdkit_for_pubchem_134556_recursive_rule_ordering() {
         .expect("CID 134556 parses");
     perception_api::sanitize(&mut molecule).expect("CID 134556 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -1584,9 +1546,8 @@ fn cip_matches_rdkit_for_pubchem_246236_phosphorus_centers() {
             .expect("CID 246236 parses");
     perception_api::sanitize(&mut molecule).expect("CID 246236 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -1603,9 +1564,8 @@ fn cip_matches_rdkit_for_pubchem_359164_sulfur_lone_pair() {
         read_smiles("C1=CC=C(C=C1)N=NC2=CC3=C(C=C2)S[S@@](=O)N3").expect("CID 359164 parses");
     perception_api::sanitize(&mut molecule).expect("CID 359164 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -1623,9 +1583,8 @@ fn cip_matches_rdkit_for_pubchem_444295_with_spectators_interpreted_separately()
             .expect("CID 444295 parses");
     perception_api::sanitize(&mut molecule).expect("CID 444295 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -1648,9 +1607,8 @@ fn cip_matches_rdkit_for_pubchem_446291_with_unsupported_spectator_interpreted_s
             .expect("CID 446291 parses");
     perception_api::sanitize(&mut molecule).expect("CID 446291 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    let report = assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert_eq!(
         report
             .assigned
@@ -1674,9 +1632,8 @@ fn cip_skips_endocyclic_hetero_double_bond_stereo() {
             .expect("CID 446180 parses");
     perception_api::sanitize(&mut molecule).expect("CID 446180 sanitizes");
 
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
+    assign_cip(molecule.graph_mut());
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     let bond_descriptors = molecule
         .graph()
         .stereo_elements()
@@ -1729,9 +1686,8 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
         ))
         .expect("stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -1789,9 +1745,8 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
         ))
         .expect("stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -1849,9 +1804,8 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
         ))
         .expect("double-bond stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -1904,9 +1858,8 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
         ))
         .expect("axis stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -1973,9 +1926,8 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
         ))
         .expect("stereo element");
 
-    let report = stereo_api::assign_cip_descriptors(&mut mol);
+    let report = assign_cip(&mut mol);
 
-    assert!(report.is_ok(), "{:?}", report.issues);
     assert!(report.assigned.is_empty());
     assert_eq!(
         report.skipped,
@@ -1991,31 +1943,181 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
 }
 
 #[test]
-fn cip_respects_resource_limits_without_assigning_partial_descriptors() {
+fn failed_cip_resource_limit_restores_previous_descriptors() {
     let mut molecule = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
     perception_api::sanitize(&mut molecule).expect("alanine sanitizes");
+    let report = assign_cip(molecule.graph_mut());
+    assert_eq!(report.assigned.len(), 1);
+    let before = installed_cip_descriptors(molecule.graph());
 
-    let report = stereo_api::assign_cip_descriptors_with_options(
+    let error = stereo_api::assign_cip_descriptors_with_options(
         molecule.graph_mut(),
         CipAssignmentOptions {
             max_nodes: 1,
             ..CipAssignmentOptions::default()
         },
-    );
+    )
+    .expect_err("the constrained reassignment should fail");
 
     assert_eq!(
-        report.issues,
+        error.issues,
         vec![CipAssignmentIssue::ResourceLimitExceeded {
             element: StereoElementId::new(0),
             max_nodes: 1,
         }]
     );
-    assert!(report.assigned.is_empty());
+    assert_eq!(installed_cip_descriptors(molecule.graph()), before);
     assert_eq!(
         molecule
             .graph()
             .stereo_element(StereoElementId::new(0))
             .expect("stereo element")
+            .descriptor,
+        Some(StereoDescriptor::S)
+    );
+}
+
+#[test]
+fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
+    const FIXTURE: &str = "N[C@@H](C(=O)O)C[C@](F)(Cl)Br";
+    let options = CipAssignmentOptions {
+        max_nodes: 7,
+        ..CipAssignmentOptions::default()
+    };
+
+    let mut first_only = read_smiles(FIXTURE).expect("fixture parses");
+    perception_api::sanitize(&mut first_only).expect("fixture sanitizes");
+    first_only
+        .graph_mut()
+        .remove_stereo_element(StereoElementId::new(1))
+        .expect("second stereo element exists");
+    let report = stereo_api::assign_cip_descriptors_with_options(first_only.graph_mut(), options)
+        .expect("the first center is assignable within the resource limit");
+    assert_eq!(
+        report.assigned,
+        vec![CipAssignment {
+            element: StereoElementId::new(0),
+            descriptor: StereoDescriptor::R,
+        }]
+    );
+
+    let mut molecule = read_smiles(FIXTURE).expect("fixture parses");
+    perception_api::sanitize(&mut molecule).expect("fixture sanitizes");
+    let error = stereo_api::assign_cip_descriptors_with_options(molecule.graph_mut(), options)
+        .expect_err("the later center should exceed the resource limit");
+    assert_eq!(
+        error.issues,
+        vec![CipAssignmentIssue::ResourceLimitExceeded {
+            element: StereoElementId::new(1),
+            max_nodes: 7,
+        }]
+    );
+    assert!(installed_cip_descriptors(molecule.graph()).is_empty());
+    assert!(molecule
+        .graph()
+        .stereo_elements()
+        .all(|(_, element)| element.descriptor.is_none()));
+}
+
+#[test]
+fn failed_cip_validation_preserves_previous_descriptors() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let adjacent = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let nonadjacent = mol.add_atom(carbon()).expect("atom identifier capacity");
+    mol.add_bond(center, adjacent, BondOrder::Single)
+        .expect("center bond");
+    mol.add_bond(adjacent, nonadjacent, BondOrder::Single)
+        .expect("connecting bond");
+    let element = mol
+        .add_stereo_element(StereoElement {
+            kind: StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(adjacent),
+                    StereoCarrier::Atom(adjacent),
+                    StereoCarrier::Atom(nonadjacent),
+                ],
+                orientation: TetrahedralOrientation::Clockwise,
+            }),
+            specifiedness: StereoSpecifiedness::Unknown,
+            source: StereoSource::User,
+            group: None,
+            descriptor: None,
+        })
+        .expect("stored malformed stereo element");
+    mol.install_cip_descriptor(element, StereoDescriptor::R);
+    let before = installed_cip_descriptors(&mol);
+
+    let error = stereo_api::assign_cip_descriptors(&mut mol)
+        .expect_err("invalid stored stereo should reject CIP assignment");
+
+    assert!(error
+        .issues
+        .iter()
+        .all(|issue| matches!(issue, CipAssignmentIssue::InvalidStereo { .. })));
+    assert_eq!(installed_cip_descriptors(&mol), before);
+    assert_eq!(
+        mol.stereo_element(element)
+            .expect("stereo element")
+            .descriptor,
+        Some(StereoDescriptor::R)
+    );
+}
+
+#[test]
+fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let carriers = ["F", "Cl", "Br", "I"]
+        .into_iter()
+        .map(element_atom)
+        .map(|atom| mol.add_atom(atom).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
+    for carrier in &carriers {
+        mol.add_bond(center, *carrier, BondOrder::Single)
+            .expect("carrier bond");
+    }
+    let kind = || {
+        StereoElementKind::Tetrahedral(TetrahedralStereo {
+            center,
+            carriers: carriers.iter().copied().map(StereoCarrier::Atom).collect(),
+            orientation: TetrahedralOrientation::Clockwise,
+        })
+    };
+    let specified = mol
+        .add_stereo_element(StereoElement::specified(kind(), StereoSource::User))
+        .expect("specified stereo element");
+    let unknown = mol
+        .add_stereo_element(StereoElement {
+            kind: kind(),
+            specifiedness: StereoSpecifiedness::Unknown,
+            source: StereoSource::User,
+            group: None,
+            descriptor: None,
+        })
+        .expect("unknown stereo element");
+    mol.install_cip_descriptor(specified, StereoDescriptor::S);
+    mol.install_cip_descriptor(unknown, StereoDescriptor::R);
+
+    let report = assign_cip(&mut mol);
+
+    assert_eq!(report.assigned.len(), 1);
+    assert_eq!(report.assigned[0].element, specified);
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element: unknown,
+            reason: CipSkippedReason::NotSpecified,
+        }]
+    );
+    assert_eq!(
+        installed_cip_descriptors(&mol),
+        vec![(specified, report.assigned[0].descriptor)]
+    );
+    assert_eq!(
+        mol.stereo_element(unknown)
+            .expect("unknown element")
             .descriptor,
         None
     );
@@ -2025,8 +2127,7 @@ fn cip_respects_resource_limits_without_assigning_partial_descriptors() {
 fn cip_descriptors_are_cleared_by_stereo_invalidating_mutations() {
     let mut molecule = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
     perception_api::sanitize(&mut molecule).expect("alanine sanitizes");
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut());
-    assert!(report.is_ok(), "{:?}", report.issues);
+    assign_cip(molecule.graph_mut());
     assert_eq!(
         molecule
             .graph()
