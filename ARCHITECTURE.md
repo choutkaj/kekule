@@ -24,7 +24,7 @@ molecule instances.
 format text or binary data
     -> format-specific Document or streaming decoder
     -> explicit interpretation + report
-    -> one or more canonical connected molecular objects
+    -> one or more connected represented molecular objects
        Molecule
          |- SmallMolecule
          `- MacroMolecule
@@ -32,7 +32,7 @@ format text or binary data
          |- Model       = Topology + Positions + optional cell + AtomData + BondData
          |- Ensemble    = Topology + finite non-temporal members
          `- Trajectory  = Topology + ordered Frames
-    -> explicit perception, validation, transformation, or analysis
+    -> explicit normalization, perception, validation, transformation, or analysis
     -> downstream prepared System, Potential, or backend object
 ```
 
@@ -40,7 +40,7 @@ The central ownership relationships are:
 
 ```text
 Molecule
-  one connected local asserted chemical graph
+  one connected local represented chemical graph
   local AtomId and BondId
   optional source conformers
 
@@ -83,25 +83,40 @@ Coordinate updates never modify it.
 
 These boundaries are requirements rather than naming conventions:
 
-- Parsing recognizes and preserves format syntax. It does not sanitize
-  chemistry, run perception, parameterize a force field, or silently choose
-  ambiguous structural records.
+- Parsing recognizes and preserves format syntax. It reads source text or bytes
+  into a format-specific representation and does not infer chemistry.
 - A format `Document` may represent zero, one, or several disconnected source
   components without weakening the canonical molecule invariant.
-- Interpretation applies format semantics and documented policies. It creates
-  canonical connected molecular objects, source-to-canonical mappings,
-  imported annotations, and a structured report. When a source describes
-  several disconnected represented entities, interpretation returns or builds
-  several molecule objects rather than one disconnected `Molecule`.
+- Interpretation applies only the chemistry and semantics asserted by the
+  source representation. It translates a format-specific `Document` into
+  format-independent represented chemistry, source-to-object mappings,
+  annotations, and provenance without running general chemical perception.
+  When a source describes several disconnected represented entities,
+  interpretation returns or builds several molecule objects rather than one
+  disconnected `Molecule`.
 - Interpretation never invents a covalent bond merely to force connectedness.
   When authoritative chemistry is insufficient to connect an observed
   structure, residual connected components remain separate represented
   molecules and their common source identity is retained as provenance.
-- Perception derives chemical state from asserted molecular topology.
-- Sanitization is an explicit transactional normalization + perception workflow
-  over canonical chemical objects.
-- Topology construction assembles already asserted connected molecular entities
-  into one coordinate-free system. It does not invent coordinates or
+- Normalization deterministically rewrites equivalent represented chemistry
+  into the canonical internal representation required by Kekule algorithms.
+  It may change representation but not represented chemical meaning. It is
+  idempotent, model-independent, and separate from chemical standardization.
+- Perception derives chemical meaning from normalized represented chemistry.
+  Perception may be model-dependent, ambiguous, or deliberately opinionated,
+  and it installs derived perception state without rewriting the primary
+  molecular representation.
+- CIP assignment is a specialized optional derivation over represented stereo
+  and the selected chemical perception state. It is not part of parsing,
+  interpretation, or normalization.
+- Future standardization operations that choose among chemically distinct but
+  related states, such as tautomers or protonation states, remain explicit and
+  separate from normalization.
+- High-level workflow conveniences may compose parsing, interpretation,
+  normalization, default perception, and optional specialized derivations.
+  Composition does not blur the responsibilities of the individual stages.
+- Topology construction assembles already represented connected molecular
+  entities into one coordinate-free system. It does not invent coordinates or
   force-field state.
 - Coordinate construction validates complete state against one shared topology allocation.
 - Analysis is read-only unless the operation is explicitly named as a
@@ -111,6 +126,76 @@ These boundaries are requirements rather than naming conventions:
   state.
 - Writers reject unsupported semantics rather than silently dropping or
   coercing them.
+
+## Small-molecule chemistry pipeline
+
+The small-molecule pipeline separates source handling, canonical molecular
+representation, and derived chemical interpretation:
+
+```text
+source text / bytes
+    -> parse
+    -> format-specific *Document
+    -> interpret
+    -> represented Molecule
+    -> normalize
+    -> normalized Molecule
+    -> perceive(model)
+    -> Molecule + derived perception state
+    -> optional CIP assignment or other specialized derivation
+```
+
+The stages have strict meanings:
+
+- **Parse** reads syntax. A parser should preserve syntactically valid source
+  information even when later chemistry stages reject or cannot interpret it.
+- **Interpret** answers "what chemistry did the source assert?" It maps source
+  atoms, bonds, charges, isotopes, radicals, hydrogen declarations,
+  coordinates, stereo syntax, properties, and other format semantics into
+  Kekule's format-independent vocabulary. It does not infer missing chemistry.
+- **Normalize** answers "how does Kekule represent this already-asserted
+  chemistry?" It performs deterministic, meaning-preserving representation
+  rewrites needed to reach the minimal canonical form understood by subsequent
+  algorithms. Normalization must be idempotent and must not choose a tautomer,
+  protonation state, aromaticity model, or other chemical interpretation.
+- **Perceive** answers "what chemical interpretation do we assign to this
+  normalized molecule?" It derives semantic state such as valence and implicit
+  hydrogens, ring information, aromaticity, and other model-dependent views.
+  Perception may legitimately differ between models. It updates derived
+  perception state, not the primary represented chemistry.
+- **CIP** derives stereochemical descriptors such as `R`/`S`, `E`/`Z`, and
+  axial descriptors from represented local stereo together with the relevant
+  molecular and perception state. It remains an explicit specialized step.
+
+These are semantic stages, not a requirement that ordinary users call five
+functions manually. Low-level APIs keep them individually accessible for
+control, debugging, and alternative workflows. High-level APIs may fast-forward
+through the standard sequence transactionally.
+
+The initial discrete derived view is `PerceptionState`. The architecture does
+not assume that there can only ever be one kind of chemical perception. Future
+state types, for example a continuous learned `PerceptionStateContinuous`, may
+coexist as distinct views of the same represented `Molecule`; they must not be
+collapsed into primary graph truth merely because one view is commonly used.
+No generic perception-state registry is required before such additional state
+types exist.
+
+The foundational invariants are:
+
+```text
+interpretation does not infer chemistry
+normalization may change representation but not represented chemical meaning
+perception may derive chemical meaning but does not change primary representation
+CIP derives descriptors but does not redefine represented chemistry
+standardization, if added, may change chemical state and is therefore separate
+```
+
+Normalization is not standardization. Fragment-parent selection, salt removal,
+reionization, protonation-state selection, tautomer choice, and similar
+chemistry-changing policies belong to an explicit future standardization layer.
+Because such operations change represented chemistry, they invalidate derived
+perception and normally require normalization and perception of the resulting
+molecule again.
 
 Physical values cross boundaries as `Quantity<T>` with composable runtime
 `Unit` values. Compatible conversion is explicit. Numeric units, source
@@ -159,7 +244,7 @@ connected represented chemical entity. It owns:
   source stereo marks;
 - optional local source conformers, each with one explicit length unit;
 - arbitrary scalar annotations;
-- one internally consistent `PerceptionState`.
+- installed derived perception state, initially the discrete `PerceptionState`.
 
 Every non-empty canonical `Molecule` is one connected atom/bond graph. A
 singleton atom is therefore a valid molecule. `Molecule::new()` may represent
@@ -195,16 +280,18 @@ if it is not represented as a bond, the participating graph components remain
 separate molecules. Noncovalent association never becomes a graph bond merely
 to satisfy this invariant.
 
-Topology facts stored directly on atoms, bonds, and stereo elements include
-element, isotope, formal charge, radical state, explicit-hydrogen declarations,
-atom maps, bond endpoints, `BondOrder`, local stereo, and source stereo marks.
+Represented chemistry stored directly on atoms, bonds, and stereo elements
+includes element, isotope, formal charge, radical state, explicit-hydrogen
+declarations, atom maps, bond endpoints, `BondOrder`, local stereo, and source
+stereo marks.
 
 Implicit hydrogens, ring membership, ring sets, aromatic membership,
-aromaticity provenance, and derived CIP descriptors are computed state. They
-live in private optional sections of `PerceptionState` and are exposed through
-read-only queries. One installed perception profile exists at a time.
-Alternative-model calculations remain standalone results until explicitly
-installed.
+aromaticity provenance, and derived CIP descriptors are computed state. The
+initial discrete view lives in private optional sections of `PerceptionState`
+and is exposed through read-only queries. This current discrete state is not a
+claim that one molecule can have only one kind of derived chemical view;
+future perception-state types may coexist when they represent genuinely
+different chemical perceptions.
 
 `PerceptionState` is semantic installed chemical perception. Algorithm
 diagnostics, work counters, and search statistics are sidecar or ephemeral
@@ -254,13 +341,14 @@ it detached from its former group.
 Every live stereo group is nonempty; removing or pruning its final member
 tombstones the group while partial pruning preserves the group and stable ID.
 
-Stored `StereoElement` values are represented chemical identity. Stereo
-validation reads only that stored state, while candidate detection is a
-separate exploratory query. Source-mark and coordinate perception stages a
-complete proposed element set and publishes it atomically only after source
-interpretation, insertion, and structural validation succeed. Validation
-issues, perception errors, candidate lists, and nonfatal warnings remain
-sidecar outputs and do not become molecule identity.
+Stored `StereoElement` values are represented chemical identity. Source-declared
+stereo syntax is interpreted from its format and, where the source encoding is
+not already Kekule's canonical local representation, normalization converts it
+into first-class `StereoElement` state without inventing unasserted
+stereochemistry. Geometry-derived stereo is perception. CIP descriptors are a
+separate specialized derivation. Validation issues, candidate lists, errors,
+and nonfatal warnings remain sidecar outputs and do not become molecule
+identity.
 
 ### `SmallMolecule`
 
@@ -272,17 +360,15 @@ A `SmallMolecule` never represents several disconnected salt/mixture
 components. Format interpretation may return several `SmallMolecule` values
 when the source record contains several disconnected represented entities.
 
-`SmallMolecule::from_smiles` is an intentional parse-then-interpret convenience
-for exactly one connected SMILES component and does not sanitize. Dot-separated
-input is rejected by this single-molecule convenience rather than silently
-choosing or merging a component. Component-aware SMILES interpretation operates
-on `SmilesDocument` and returns one `SmallMolecule` per disconnected SMILES
-component with component-local IDs and source mappings.
+Low-level format APIs keep parsing and interpretation explicit. A small-molecule
+workflow convenience may compose parsing, interpretation, normalization, and a
+default perception profile when that is the useful ordinary path, while expert
+APIs keep every stage separately callable. Convenience naming must document the
+resulting state clearly but need not collapse the conceptual stages into one
+"sanitization" concept.
 
-Any convenience that also sanitizes must state that operation in its name.
-
-The physical wrapper type remains dependency-light. I/O, perception,
-sanitization, modelling, and workflow facades may depend on it; lower layers do
+The physical wrapper type remains dependency-light. I/O, normalization,
+perception, modelling, and workflow facades may depend on it; lower layers do
 not depend back on workflow conveniences.
 
 ### `MacroMolecule` and `SmcraHierarchy`
@@ -339,8 +425,9 @@ component IDs and replace or mutate chain, residue, and atom-site property maps
 after validating the typed child ID. It does not expose mutable parentage,
 child arrays, complete node records, or atom lookup internals.
 
-Macromolecule validation is separate from small-molecule sanitization.
-Chemically general algorithms operate on `Molecule` where practical.
+Macromolecule validation is separate from the small-molecule normalization and
+perception pipeline. Chemically general algorithms operate on `Molecule` where
+practical.
 
 ### Canonical molecular reconstruction
 
@@ -366,7 +453,7 @@ components must be explicitly partitioned or rejected before publication as a
 canonical `Molecule`; reconstruction never weakens the connectedness invariant.
 
 Perception is installed last because normal graph and stereo construction must
-continue to invalidate computed state. Loading never sanitizes, re-perceives,
+continue to invalidate computed state. Loading never normalizes, re-perceives,
 renumbers, reparses source data, or silently coerces malformed historical
 state. Process-local `Arc<Topology>` sharing relationships are not persisted;
 independently rebuilt topologies may prove complete static equality through
@@ -861,10 +948,8 @@ topology allocation.
 `Model` is also the ordinary application-facing navigation object. Common atom,
 bond, molecule-instance, and qualified SMCRA lookups are thin read-only
 forwards to its shared `Topology`. Qualified SMCRA lookups return borrowed
-instance views rather than raw definition-local nodes. `ModelView` provides the
-corresponding zero-copy navigation surface, so algorithms can use identical
-static hierarchy access with a model, ensemble member, trajectory frame, or
-frame buffer.
+instance views rather than raw definition-local nodes. `Model` borrows that authoritative topology
+navigation and never copies hierarchy state.
 
 A model rejects incomplete, non-finite, dimensionally incompatible, or
 topology-incompatible coordinate state.
@@ -1156,9 +1241,10 @@ loss-preserving type appropriate to its grammar.
   disconnected CTAB is rejected instead of becoming one disconnected
   `SmallMolecule`.
 - `SdfDocument` owns ordered records with raw data fields and interprets to
-  canonical records. Because each current SDF record wraps the single-molecule
-  Molfile interpretation contract, a disconnected CTAB in a record is likewise
-  rejected. Record metadata is not injected into molecule properties.
+  format-independent records. Because each current SDF record wraps the
+  single-molecule Molfile interpretation contract, a disconnected CTAB in a
+  record is likewise rejected. Record metadata is not injected into molecule
+  properties.
 - `MmcifDocument` preserves blocks, items, loops, missing-value markers,
   unknown categories, and source locations.
 
@@ -1228,12 +1314,14 @@ forcing a loss-preserving whole-file document abstraction for binary data.
 
 ## Perception, transformations, and derived state
 
-Perception algorithms operate primarily on local connected `Molecule`
-definitions. Topology may expose convenient iteration over definitions and
-instances, but it does not duplicate perception algorithms.
+Chemical perception operates on normalized represented `Molecule` state and
+installs or returns derived chemical views without rewriting the primary
+representation. Perception algorithms operate primarily on local connected
+`Molecule` definitions. Topology may expose convenient iteration over
+definitions and instances, but it does not duplicate perception algorithms.
 
 Topology construction preserves the installed coordinate-independent
-perception state of each inserted definition. It does not sanitize or perceive
+perception state of each inserted definition. It does not normalize or perceive
 implicitly.
 
 Hydrogen addition and removal remain explicit topology-changing chemical
@@ -1319,8 +1407,13 @@ smiles / molfile / sdf / mmcif
     format-specific documents, component-aware interpretation where required,
     reports, provenance, and writers
 
+normalization
+    deterministic, idempotent, meaning-preserving canonical representation
+    normalization for molecules
+
 perception
-    explicit valence, ring, aromaticity, stereo, and sanitization workflows
+    model-dependent derived valence, ring, aromaticity, and geometry-derived
+    chemical views; explicit specialized stereo/CIP derivations
 
 hydrogens
     explicit hydrogen topology transformations
@@ -1433,9 +1526,10 @@ payloads.
 
 Extensible public error enums are `#[non_exhaustive]`.
 
-Parsing, interpretation, sanitization, perception, topology construction,
-coordinate construction, preparation, analysis, and writing remain visibly
-separate in names and documentation.
+Parsing, interpretation, normalization, perception, CIP assignment, topology
+construction, coordinate construction, preparation, analysis, and writing
+remain visibly separate in names and documentation, even when high-level
+conveniences compose several stages.
 
 Compatibility shims may exist during the staged refactor, but the final public
 surface must use connected `Molecule`, `Topology`, `TopologyAtomIndex`,
@@ -1471,7 +1565,13 @@ The following statements summarize the design:
     and never publish a disconnected molecule definition.
 13. Reactive trajectories are segmented by topology rather than weakening
     fixed-topology containers.
-14. Parsing, interpretation, perception, sanitization, topology construction,
-    coordinate construction, and preparation are explicit distinct operations.
-15. Canonical chemistry and structure containers never silently absorb
+14. Parsing, interpretation, normalization, perception, CIP assignment,
+    topology construction, coordinate construction, and preparation are
+    explicit distinct operations even when convenience APIs compose them.
+15. Interpretation does not infer chemistry; normalization changes
+    representation without changing represented chemical meaning; perception
+    derives chemical meaning without rewriting primary representation.
+16. Standardization that changes represented chemical state is explicit and
+    separate from normalization and perception.
+17. Canonical chemistry and structure containers never silently absorb
     backend-specific mechanical state.
