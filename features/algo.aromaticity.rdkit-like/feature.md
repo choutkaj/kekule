@@ -8,7 +8,9 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 ## Behavior/API
 
 - Exposes `perception::aromaticity::{AromaticityModel::RdkitLike, perceive_aromaticity, perceive_aromaticity_with_ring_options}`.
-- Requires or computes ring perception before assigning aromaticity.
+- Reuses an installed `RingSet` when present and otherwise computes a ring
+  basis before assigning aromaticity; membership alone is not treated as a
+  basis.
 - Replaces existing imported/perceived aromatic membership transactionally and
   records `AromaticityModel::RdkitLike` provenance.
 - Can be run directly or through the explicit sanitization pipeline.
@@ -29,7 +31,8 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 
 ## Implementation Notes
 
-- Operates on the shared core `Molecule` graph and uses ring data from the `algo.rings.sssr` stack.
+- Operates on the shared core `Molecule` graph and uses installed ring data or
+  computes it through the `algo.rings.sssr` stack when absent.
 - Localizes imported aromatic-order components through one general
   valence-demand matching step, then sends imported and already-localized input
   through the same donor/candidate/Huckel engine.
@@ -52,7 +55,10 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 
 ## Tests
 
-- Unit tests cover localized donor analysis, candidate gates, radical and valence eligibility, imported aromatic-order handling, fused-subsystem search, and SMILES sanitize/reparse smoke cases.
+- Unit tests cover installed ring-basis reuse, missing and membership-only ring
+  state, localized donor analysis, candidate gates, radical and valence
+  eligibility, imported aromatic-order handling, fused-subsystem search, and
+  SMILES sanitize/reparse smoke cases.
 
 ## Benchmarks
 
@@ -93,3 +99,5 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 - v96: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v97: Expose lossless installed aromaticity membership/provenance for checked
   canonical reconstruction without adding new section dependencies.
+- v98: Reuse a current installed ring basis during aromaticity perception and
+  compute one only when no `RingSet` is installed.

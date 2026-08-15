@@ -5,7 +5,16 @@ fn happy_path_small_molecule_api_matches_architecture() {
     let mut molecule = SmallMolecule::from_smiles("c1ccccc1O").expect("phenol parses");
 
     let report = molecule.sanitize().expect("phenol sanitizes");
-    assert_eq!(report.ring_count, Some(1));
+    let crate::perception::SanitizeReport { stereo } = report;
+    assert!(stereo.is_some());
+    assert_eq!(
+        molecule
+            .graph()
+            .ring_set()
+            .expect("installed ring basis")
+            .len(),
+        1
+    );
     assert_eq!(molecule.atom_count(), molecule.graph().atom_count());
     assert_eq!(molecule.bond_count(), molecule.graph().bond_count());
 

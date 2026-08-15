@@ -21,6 +21,44 @@ fn valence_and_sanitization_are_explicit() {
 }
 
 #[test]
+fn normal_sanitization_installs_one_ring_basis_for_aromaticity() {
+    let mut molecule = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
+
+    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+        .expect("benzene should sanitize");
+
+    let ring_set = molecule.graph().ring_set().expect("installed ring basis");
+    assert_eq!(ring_set.len(), 1);
+    assert!(molecule.graph().perception().has_aromaticity());
+    assert_eq!(
+        molecule
+            .graph()
+            .atoms()
+            .filter(|(atom, _)| molecule.graph().atom_is_aromatic(*atom) == Ok(Some(true)))
+            .count(),
+        6
+    );
+}
+
+#[test]
+fn aromaticity_without_requested_rings_leaves_no_ring_state() {
+    let mut molecule = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
+
+    perception_api::sanitize_with_options(
+        &mut molecule,
+        SanitizeOptions {
+            perceive_rings: false,
+            ..SanitizeOptions::default()
+        },
+    )
+    .expect("benzene should sanitize with transient ring perception");
+
+    assert!(molecule.graph().ring_membership().is_none());
+    assert!(molecule.graph().ring_set().is_none());
+    assert!(molecule.graph().perception().has_aromaticity());
+}
+
+#[test]
 fn sanitize_options_do_not_leave_skipped_passes_fresh() {
     let mut baseline = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
     perception_api::sanitize_with_options(&mut baseline, SanitizeOptions::default())
