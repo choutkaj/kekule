@@ -2,6 +2,7 @@ use crate::bio::*;
 use crate::chemistry::{SanitizeError, SanitizeOptions};
 use crate::core::*;
 use crate::geometry::Point3;
+use crate::normalization as normalization_api;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
     stereo as stereo_api, stereo::*, valence as valence_api, valence::*,
@@ -339,6 +340,7 @@ mod core_payload;
 mod graph;
 mod hydrogens;
 mod mmcif_contents;
+mod normalization;
 mod perception;
 mod public_api;
 mod query;
