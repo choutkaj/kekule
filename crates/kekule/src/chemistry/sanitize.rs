@@ -67,13 +67,7 @@ pub fn sanitize_small_molecule_with_ring_options(
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
     let mut staged = molecule.clone();
-    let perception_before_normalization = staged.graph().perception().clone();
     normalize_molecule(staged.graph_mut_raw()).map_err(SanitizeError::Normalization)?;
-    // Stage 1 compatibility: the current valence/aromatic-localization path
-    // still consumes imported aromatic perception. Direct normalization clears
-    // it as required; the outer sanitizer transaction restores its own staged
-    // input until those algorithms are separated in later pipeline stages.
-    staged.graph_mut_raw().perception = perception_before_normalization;
     prepare_sanitize_states(staged.graph_mut_raw(), options);
     if options.perceive_valence {
         perceive_valence(staged.graph_mut_raw(), ValenceModel::RdkitLike)

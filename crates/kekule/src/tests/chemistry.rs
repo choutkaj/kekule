@@ -326,23 +326,20 @@ fn failed_aromaticity_sanitization_is_transactional() {
     let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect_err("unmatchable aromatic representation should fail");
 
-    assert!(matches!(error, SanitizeError::Aromaticity(_)));
+    assert!(matches!(error, SanitizeError::Normalization(_)));
     assert_eq!(molecule, before);
 }
 
 #[test]
 fn failed_direct_aromaticity_perception_is_transactional() {
-    let mut molecule = read_smiles("c1cccc1").expect("raw invalid aromatic representation parses");
+    let mut molecule = read_smiles("c1ccccc1").expect("raw aromatic representation parses");
     let before = molecule.graph().clone();
 
     let error =
         aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
-            .expect_err("unmatchable aromatic representation should fail");
+            .expect_err("unnormalized aromatic representation should fail");
 
-    assert!(matches!(
-        error,
-        AromaticityError::InvalidAromaticRepresentation(_)
-    ));
+    assert!(matches!(error, AromaticityError::UnsupportedBondOrder(_)));
     assert_eq!(molecule.graph(), &before);
 }
 
@@ -467,7 +464,7 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
             ),
             None,
         )
-        .with_aromaticity(AromaticityProvenance::Imported, Vec::new(), Vec::new())
+        .with_aromaticity(AromaticityModel::RdkitLike, Vec::new(), Vec::new())
         .expect("previous aromaticity")
         .build();
     mol.install_perception_state(previous.clone())

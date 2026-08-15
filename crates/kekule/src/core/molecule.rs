@@ -4,12 +4,6 @@ use std::ops::{Deref, DerefMut};
 
 use super::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AromaticityProvenance {
-    Imported,
-    Perceived(AromaticityModel),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValencePerceptionState {
     model: Option<ValenceModel>,
@@ -24,7 +18,7 @@ pub struct RingPerceptionState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AromaticityPerceptionState {
-    provenance: AromaticityProvenance,
+    model: AromaticityModel,
     atoms: BTreeSet<AtomId>,
     bonds: BTreeSet<BondId>,
 }
@@ -66,9 +60,9 @@ impl RingPerceptionState {
 }
 
 impl AromaticityPerceptionState {
-    /// Returns whether aromaticity was imported or perceived with a named model.
-    pub const fn provenance(&self) -> AromaticityProvenance {
-        self.provenance
+    /// Returns the model that perceived this semantic aromaticity membership.
+    pub const fn model(&self) -> AromaticityModel {
+        self.model
     }
 
     /// Iterates every installed aromatic atom.
@@ -149,8 +143,8 @@ impl PerceptionState {
         self.rings.as_ref().and_then(|state| state.rings.as_ref())
     }
 
-    pub fn aromaticity_provenance(&self) -> Option<AromaticityProvenance> {
-        self.aromaticity.as_ref().map(|state| state.provenance)
+    pub fn aromaticity_model(&self) -> Option<AromaticityModel> {
+        self.aromaticity.as_ref().map(|state| state.model)
     }
 
     pub fn atom_is_aromatic(&self, atom: AtomId) -> Option<bool> {
@@ -206,10 +200,10 @@ impl PerceptionStateBuilder {
         self
     }
 
-    /// Installs exact aromaticity membership and provenance.
+    /// Installs exact model-perceived aromaticity membership.
     pub fn with_aromaticity(
         mut self,
-        provenance: AromaticityProvenance,
+        model: AromaticityModel,
         atoms: Vec<AtomId>,
         bonds: Vec<BondId>,
     ) -> std::result::Result<Self, PerceptionStateBuildError> {
@@ -228,7 +222,7 @@ impl PerceptionStateBuilder {
             }
         }
         self.state.aromaticity = Some(AromaticityPerceptionState {
-            provenance,
+            model,
             atoms: atom_set,
             bonds: bond_set,
         });
@@ -1248,9 +1242,9 @@ impl Molecule {
         self.perception.rings = None;
     }
 
-    pub(crate) fn begin_aromaticity(&mut self, provenance: AromaticityProvenance) {
+    pub(crate) fn begin_aromaticity(&mut self, model: AromaticityModel) {
         self.perception.aromaticity = Some(AromaticityPerceptionState {
-            provenance,
+            model,
             atoms: BTreeSet::new(),
             bonds: BTreeSet::new(),
         });

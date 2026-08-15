@@ -285,6 +285,7 @@ fn ring_resource_errors_propagate_transactionally() {
     assert_eq!(molecule, original);
 
     let mut aromatic = read_smiles("c1ccccc1").expect("benzene should parse");
+    aromatic.normalize().expect("benzene should normalize");
     let error = aromaticity_api::perceive_aromaticity_with_ring_options(
         aromatic.graph_mut(),
         AromaticityModel::RdkitLike,

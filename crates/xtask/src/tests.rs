@@ -2098,6 +2098,13 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
     assert!(smiles_sanitized_bonds_json(aromatic.graph())
         .iter()
+        .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == false));
+    assert!(sanitized_aromatic
+        .graph()
+        .bonds()
+        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+    assert!(smiles_sanitized_bonds_json(sanitized_aromatic.graph())
+        .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
 
     let labeled = SmallMolecule::from_smiles("[13CH3:7]C").expect("labeled carbon should parse");
