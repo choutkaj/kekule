@@ -170,6 +170,13 @@ fn perceive_rdkit_like_valence(
         assignments.into_iter().collect::<BTreeMap<_, _>>(),
     );
     Ok(())
+<<<<<<< HEAD
+=======
+}
+
+fn model_from_options() -> ValenceModel {
+    ValenceModel::RdkitLike
+>>>>>>> ee40808b41ad5f4c870419b1554aea9093c69e83
 }
 
 fn record_unsupported(issues: &mut Vec<ValenceIssue>, atom: AtomId, options: ValenceOptions) {
