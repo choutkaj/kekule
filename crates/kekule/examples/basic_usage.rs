@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut molecule = SmallMolecule::from_smiles_sanitized("C[C@@H](C(=O)O)N")?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
-    let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut());
+    let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut())?;
 
     // Inspect basic graph properties and the asserted molecular charge.
     println!("atoms: {}", molecule.atom_count());

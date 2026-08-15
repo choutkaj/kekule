@@ -251,10 +251,10 @@ pub mod perception {
         pub use crate::algorithms::{
             assign_cip_descriptors, assign_cip_descriptors_with_options, detect_stereo_candidates,
             perceive_stereo, perceive_stereo_with_options, validate_stereo, CipAssignment,
-            CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport, CipSkipped,
-            CipSkippedReason, StereoCandidate, StereoPerceptionError, StereoPerceptionIssue,
-            StereoPerceptionOptions, StereoPerceptionReport, StereoPerceptionWarning,
-            StereoValidationError, StereoValidationIssue,
+            CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
+            CipSkipped, CipSkippedReason, StereoCandidate, StereoPerceptionError,
+            StereoPerceptionIssue, StereoPerceptionOptions, StereoPerceptionReport,
+            StereoPerceptionWarning, StereoValidationError, StereoValidationIssue,
         };
     }
 
