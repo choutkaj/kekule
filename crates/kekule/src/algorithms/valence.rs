@@ -16,6 +16,7 @@ impl Default for ValenceOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValenceIssue {
     UnsupportedElement(AtomId),
+    UnsupportedBondOrder(BondId),
     ValenceExceeded {
         atom: AtomId,
         explicit_valence: usize,
@@ -52,6 +53,16 @@ pub fn perceive_valence_with_options(
     model: ValenceModel,
     options: ValenceOptions,
 ) -> std::result::Result<(), ValenceError> {
+    let issues = mol
+        .bonds()
+        .filter_map(|(bond_id, bond)| {
+            (bond.order == BondOrder::Aromatic)
+                .then_some(ValenceIssue::UnsupportedBondOrder(bond_id))
+        })
+        .collect::<Vec<_>>();
+    if !issues.is_empty() {
+        return Err(ValenceError { issues });
+    }
     match model {
         ValenceModel::RdkitLike => perceive_rdkit_like_valence(mol, options),
     }

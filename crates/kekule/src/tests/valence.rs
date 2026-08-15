@@ -1,5 +1,74 @@
 use super::*;
 
+#[test]
+fn valence_rejects_all_unnormalized_aromatic_bonds_before_assigning_hydrogens() {
+    let mut molecule = read_smiles("c1ccccc1").expect("benzene should interpret");
+    let expected_issues = molecule
+        .graph()
+        .bond_ids()
+        .map(ValenceIssue::UnsupportedBondOrder)
+        .collect::<Vec<_>>();
+
+    let error = valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
+        .expect_err("unnormalized aromatic bonds must be rejected");
+
+    assert_eq!(error.issues, expected_issues);
+    assert_eq!(molecule.graph().perception(), &PerceptionState::default());
+    assert!(molecule
+        .graph()
+        .atom_ids()
+        .all(|atom| molecule.graph().implicit_hydrogens(atom) == Ok(None)));
+
+    molecule.normalize().expect("benzene should normalize");
+    valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
+        .expect("normalized benzene valence should succeed");
+    assert!(molecule
+        .graph()
+        .atom_ids()
+        .all(|atom| molecule.graph().implicit_hydrogens(atom) == Ok(Some(1))));
+}
+
+#[test]
+fn unnormalized_aromatic_valence_failure_preserves_complete_previous_perception() {
+    let mut molecule = read_smiles("c1ccccc1").expect("benzene should interpret");
+    let atom_ids = molecule.graph().atom_ids().collect::<Vec<_>>();
+    let bond_ids = molecule.graph().bond_ids().collect::<Vec<_>>();
+    let expected_issues = bond_ids
+        .iter()
+        .copied()
+        .map(ValenceIssue::UnsupportedBondOrder)
+        .collect::<Vec<_>>();
+    let previous = PerceptionState::builder()
+        .with_valence(
+            Some(ValenceModel::RdkitLike),
+            atom_ids.iter().copied().map(|atom| (atom, 2)).collect(),
+        )
+        .expect("valid previous valence")
+        .with_rings(
+            RingMembership::from_slot_flags(vec![true; atom_ids.len()], vec![true; bond_ids.len()]),
+            None,
+        )
+        .with_aromaticity(AromaticityModel::RdkitLike, atom_ids.clone(), bond_ids)
+        .expect("valid previous aromaticity")
+        .build();
+    molecule
+        .graph_mut()
+        .install_perception_state(previous.clone())
+        .expect("valid previous perception");
+    let before = molecule.clone();
+
+    let error = valence_api::perceive_valence_with_options(
+        molecule.graph_mut(),
+        ValenceModel::RdkitLike,
+        ValenceOptions { strict: false },
+    )
+    .expect_err("normalization preflight cannot be made permissive");
+
+    assert_eq!(error.issues, expected_issues);
+    assert_eq!(molecule.graph().perception(), &previous);
+    assert_eq!(molecule, before);
+}
+
 fn assert_aromatic_valence_pipeline(
     smiles: &str,
     expected_implicit_hydrogens: &[u8],

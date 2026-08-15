@@ -13,6 +13,9 @@ Provide conservative valence perception for normalized small-molecule graphs.
 - Requires normalized represented chemistry with localized ordinary bond
   orders and computes explicit valence from those orders plus represented
   explicit hydrogens.
+- Reports every remaining `BondOrder::Aromatic` as
+  `ValenceIssue::UnsupportedBondOrder` and returns before calculating or
+  installing any atom assignment.
 - Assigns implicit hydrogens when a common allowed valence can be selected.
 - Does not read installed ring or semantic aromaticity state. Valence can run
   first, and aromatic systems derive their implicit hydrogens directly from
@@ -23,7 +26,8 @@ Provide conservative valence perception for normalized small-molecule graphs.
   leaves the molecule's complete previous `PerceptionState` unchanged.
   `ValenceOptions { strict: false }` still computes and installs assignments
   while suppressing unsupported-element and valence-excess issues for
-  inspection workflows; sanitization continues to use strict mode.
+  inspection workflows; the normalized-input preflight remains mandatory.
+  Sanitization continues to use strict mode.
 - Exact installed state is publicly distinguishable as absent, model-neutral,
   or `ValenceModel::RdkitLike` and can be detached and transactionally restored
   with every atom-wise implicit-H assignment.
@@ -49,6 +53,9 @@ Provide conservative valence perception for normalized small-molecule graphs.
 - The pass stages every implicit-hydrogen assignment and all strict issues
   before mutation. It installs semantic valence state only on success; failure
   diagnostics remain sidecar error information.
+- A representation preflight collects aromatic source bond IDs in stable order
+  and returns before the normal atom-valence loop, preserving the complete
+  prior perception state even in permissive mode.
 
 ## Tests
 
@@ -60,6 +67,10 @@ Provide conservative valence perception for normalized small-molecule graphs.
   carbon radical, fused naphthalene, and an unusual dye fixture. They run
   valence before rings/aromaticity and then verify the expected downstream
   semantic aromatic state.
+- Raw interpreted benzene verifies that every aromatic source bond is rejected
+  without implicit-H publication, that a nonempty previous `PerceptionState`
+  is preserved exactly, and that normalized benzene still receives one
+  implicit hydrogen per carbon.
 
 ## Benchmarks
 
@@ -106,3 +117,6 @@ Provide conservative valence perception for normalized small-molecule graphs.
   dependence on installed semantic aromaticity, and verify valence-first
   aromatic workflows across carbon, heteroatom, charged, radical, fused, and
   unusual fixtures.
+- v20: Enforce the normalized-input precondition by collecting every remaining
+  aromatic source bond as a structured valence issue before atom assignments,
+  with exact transactional rollback in strict and permissive modes.
