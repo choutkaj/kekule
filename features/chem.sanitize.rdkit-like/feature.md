@@ -74,9 +74,8 @@ for common small molecules.
 
 ## Out Of Scope
 
-- Full RDKit sanitization parity, kekulization, exact CIP assignment,
-  coordinate-derived stereo assignment, cleanup transforms, and organometallic
-  handling.
+- Full RDKit sanitization parity, exact CIP assignment, coordinate-derived
+  stereo assignment, cleanup transforms, and organometallic handling.
 
 ## Revision Notes
 
