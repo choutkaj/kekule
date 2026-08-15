@@ -38,6 +38,10 @@ implicit hydrogens.
   bonded, and unsupported stereo-role hydrogens are retained. Source-marked
   hydrogen bonds are removed only when an installed semantic stereo element
   supplies a lossless explicit-to-implicit carrier conversion.
+- Before topology invalidation, removal records neutral aromatic nitrogen
+  parents whose graph hydrogen must remain a represented explicit count. This
+  preserves bracket-hydrogen form without coupling valence perception back to
+  installed aromaticity.
 - Retained topology uses stable IDs. Removed IDs become tombstones through the
   ordinary graph deletion path, which also clears their conformer positions.
 - Topology changes invalidate installed perception; callers may explicitly
@@ -74,3 +78,5 @@ implicit hydrogens.
   collapse with mappings, stereo preservation, and explicit coordinate policy.
 - v2: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v3: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v4: Preserve aromatic nitrogen bracket-hydrogen counts explicitly after the
+  normalized valence model stopped consulting installed aromaticity.

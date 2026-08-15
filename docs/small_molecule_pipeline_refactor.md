@@ -284,11 +284,11 @@ Goal: remove historical coupling needed only because valence could receive impor
 
 Implement:
 
-- audit and simplify RDKit-like valence logic assuming normalized ordinary bond orders;
-- remove any valence dependence on pre-installed semantic aromaticity that is no longer chemically necessary;
-- preserve correct implicit-H behavior for aromatic systems through localized valence structure;
-- retain transactional valence error semantics;
-- expand focused regressions for benzene, pyridine, pyrrole-like explicit-H cases, charged aromatics, radicals, and relevant existing corpus fixtures.
+- [x] audit and simplify RDKit-like valence logic assuming normalized ordinary bond orders;
+- [x] remove any valence dependence on pre-installed semantic aromaticity that is no longer chemically necessary;
+- [x] preserve correct implicit-H behavior for aromatic systems through localized valence structure;
+- [x] retain transactional valence error semantics;
+- [x] expand focused regressions for benzene, pyridine, pyrrole-like explicit-H cases, charged aromatics, radicals, and relevant existing corpus fixtures.
 
 Do not redesign `PerceptionState` broadly.
 
