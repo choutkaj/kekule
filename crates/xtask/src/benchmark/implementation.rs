@@ -1695,6 +1695,8 @@ pub(crate) fn smiles_semantic_bond_type(mol: &Molecule, id: BondId, bond: &Bond)
 
 pub(crate) fn smiles_effective_hydrogens(mol: &Molecule, id: AtomId, atom: &Atom) -> (u8, u8) {
     let implicit = mol.implicit_hydrogens(id).ok().flatten().unwrap_or(0);
+    // Normalize only the reference-facing benchmark record. The molecule
+    // retains the represented explicit/perceived implicit split.
     if atom.element.symbol() == "N"
         && mol.atom_is_aromatic(id).ok().flatten() == Some(true)
         && atom.explicit_hydrogens == 0
@@ -1800,6 +1802,16 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
         .iter()
         .filter(|(id, _)| mol.bond_is_aromatic(*id).ok().flatten() == Some(true))
         .count();
+    // The RDKit semantic record treats a pyrrolic donor H as explicit after
+    // sanitization. Kekule keeps an inferred H in PerceptionState, so derive
+    // the comparable bond-valence contribution without rewriting the atom.
+    let has_aromatic_nitrogen_hydrogen = atom_record.is_some_and(|atom_record| {
+        atom_record.element.symbol() == "N"
+            && atom_record.formal_charge == 0
+            && mol.atom_is_aromatic(atom).ok().flatten() == Some(true)
+            && (atom_record.explicit_hydrogens > 0
+                || mol.implicit_hydrogens(atom).ok().flatten() == Some(1))
+    });
     let doubled: u8 = bonds
         .into_iter()
         .map(|(id, bond)| {
@@ -1817,6 +1829,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
                     has_non_aromatic_bond,
                     has_non_aromatic_multiple_bond,
                     aromatic_bond_count,
+                    has_aromatic_nitrogen_hydrogen,
                 );
             }
             match bond.order {
@@ -1837,6 +1850,7 @@ fn aromatic_bond_valence_twice(
     has_non_aromatic_bond: bool,
     has_non_aromatic_multiple_bond: bool,
     aromatic_bond_count: usize,
+    has_aromatic_nitrogen_hydrogen: bool,
 ) -> u8 {
     let Some(atom) = atom else {
         return 2;
@@ -1861,7 +1875,7 @@ fn aromatic_bond_valence_twice(
         }
         "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
         "N" if atom.formal_charge < 0 => 2,
-        "N" if atom.formal_charge == 0 && atom.explicit_hydrogens > 0 => 2,
+        "N" if atom.formal_charge == 0 && has_aromatic_nitrogen_hydrogen => 2,
         "N" if atom.formal_charge == 0 && has_non_aromatic_bond => 2,
         "N" if atom.formal_charge == 0 && aromatic_bond_count >= 3 => 2,
         _ => 3,

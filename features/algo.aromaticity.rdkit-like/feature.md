@@ -55,6 +55,9 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   state, localized donor analysis, candidate gates, radical and valence
   eligibility, normalized-input enforcement, represented-state preservation,
   fused-subsystem search, and SMILES sanitize/reparse smoke cases.
+- A cross-pass regression snapshots the complete primary representation of a
+  normalized heteroaromatic stereo fixture and proves valence, ring-set, and
+  aromaticity perception change only `PerceptionState`.
 
 ## Benchmarks
 
@@ -100,3 +103,6 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 - v99: Move imported aromatic localization and its failures into
   `chem.normalization`, require localized input, remove imported aromaticity
   provenance, and make the aromaticity pass representation-pure.
+- v100: Enforce complete primary-representation purity across the ordinary
+  valence -> rings -> aromaticity sequence and remove the sanitizer's remaining
+  aromatic-nitrogen representation feedback.

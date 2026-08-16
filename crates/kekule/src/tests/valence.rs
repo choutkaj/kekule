@@ -147,6 +147,7 @@ fn normalized_aromatic_systems_perceive_valence_before_rings_and_aromaticity() {
 fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
     let mut molecule = read_smiles("[nH]1cccc1").expect("pyrrole should parse");
     molecule.normalize().expect("pyrrole should normalize");
+    let represented = represented_molecule_snapshot(molecule.graph());
     let represented_nitrogen = molecule
         .graph()
         .atom(AtomId::new(0))
@@ -177,6 +178,40 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
         Some(0)
     );
     assert!(!molecule.graph().perception().has_aromaticity());
+    assert_eq!(represented_molecule_snapshot(molecule.graph()), represented);
+
+    rings_api::perceive_ring_set(molecule.graph_mut()).expect("pyrrole ring perception");
+    aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        .expect("pyrrole aromaticity perception");
+
+    assert_eq!(represented_molecule_snapshot(molecule.graph()), represented);
+    assert_eq!(
+        molecule
+            .graph()
+            .atom_ids()
+            .filter(|atom| molecule.graph().atom_is_aromatic(*atom) == Ok(Some(true)))
+            .count(),
+        5
+    );
+    let total_hydrogens = molecule
+        .graph()
+        .atoms()
+        .map(|(atom_id, atom)| {
+            usize::from(atom.explicit_hydrogens)
+                + usize::from(
+                    molecule
+                        .graph()
+                        .implicit_hydrogens(atom_id)
+                        .expect("live atom")
+                        .expect("complete valence assignment"),
+                )
+        })
+        .sum::<usize>();
+    assert_eq!(total_hydrogens, 5);
+
+    let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
+        .expect("perceived pyrrole should write");
+    assert!(written.contains("[nH]"), "{written}");
 }
 
 #[test]

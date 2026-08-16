@@ -234,6 +234,100 @@ pub(super) fn sorted_bond_ids(ids: impl IntoIterator<Item = BondId>) -> Vec<Bond
     ids
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct RepresentedAtomSnapshot {
+    element: Element,
+    isotope: Option<u16>,
+    formal_charge: i8,
+    radical: Option<AtomRadical>,
+    explicit_hydrogens: u8,
+    no_implicit_hydrogens: bool,
+    atom_map: Option<u32>,
+    props: PropMap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RepresentedBondSnapshot {
+    a: AtomId,
+    b: AtomId,
+    order: BondOrder,
+    props: PropMap,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepresentedStereoElementSnapshot {
+    kind: StereoElementKind,
+    specifiedness: StereoSpecifiedness,
+    source: StereoSource,
+    group: Option<StereoGroupId>,
+}
+
+/// Complete primary molecule state, excluding only `PerceptionState` and the
+/// atom/bond/stereo test mirrors that shadow its installed sections.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct RepresentedMoleculeSnapshot {
+    atoms: Vec<Option<RepresentedAtomSnapshot>>,
+    bonds: Vec<Option<RepresentedBondSnapshot>>,
+    adjacency: Vec<Vec<BondId>>,
+    conformers: Vec<Option<Conformer>>,
+    stereo_elements: Vec<Option<RepresentedStereoElementSnapshot>>,
+    stereo_groups: Vec<Option<StereoGroup>>,
+    stereo_bond_marks: Vec<StereoBondMark>,
+    props: PropMap,
+}
+
+pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedMoleculeSnapshot {
+    RepresentedMoleculeSnapshot {
+        atoms: molecule
+            .atoms
+            .iter()
+            .map(|atom| {
+                atom.as_ref().map(|atom| RepresentedAtomSnapshot {
+                    element: atom.element,
+                    isotope: atom.isotope,
+                    formal_charge: atom.formal_charge,
+                    radical: atom.radical,
+                    explicit_hydrogens: atom.explicit_hydrogens,
+                    no_implicit_hydrogens: atom.no_implicit_hydrogens,
+                    atom_map: atom.atom_map,
+                    props: atom.props.clone(),
+                })
+            })
+            .collect(),
+        bonds: molecule
+            .bonds
+            .iter()
+            .map(|bond| {
+                bond.as_ref().map(|bond| RepresentedBondSnapshot {
+                    a: bond.a,
+                    b: bond.b,
+                    order: bond.order,
+                    props: bond.props.clone(),
+                })
+            })
+            .collect(),
+        adjacency: molecule.adjacency.clone(),
+        conformers: molecule.conformers.clone(),
+        stereo_elements: molecule
+            .stereo_elements
+            .iter()
+            .map(|element| {
+                element
+                    .as_ref()
+                    .map(|element| RepresentedStereoElementSnapshot {
+                        kind: element.kind.clone(),
+                        specifiedness: element.specifiedness,
+                        source: element.source,
+                        group: element.group,
+                    })
+            })
+            .collect(),
+        stereo_groups: molecule.stereo_groups.clone(),
+        stereo_bond_marks: molecule.stereo_bond_marks.clone(),
+        props: molecule.props.clone(),
+    }
+}
+
 pub(super) fn deterministic_text_mutations(seed: &str) -> Vec<String> {
     let mut mutations = vec![String::new(), seed.to_owned()];
     for index in 0..=seed.len().min(128) {

@@ -9,8 +9,7 @@ for common small molecules.
 
 - Exposes `perception::{SanitizeOptions, SanitizeReport, SanitizeError, sanitize, sanitize_with_options, sanitize_with_ring_options}`.
 - Normalizes represented chemistry, then runs valence, ring set, aromaticity,
-  aromatic-N hydrogen normalization, and stereo perception according to
-  options.
+  and stereo perception according to options.
 - Normalization assembles supported source marks into canonical local stereo
   and consumes them before valence perception. The stereo-perception stage no
   longer decodes source marks; coordinate-only stereo assignment remains an
@@ -31,7 +30,9 @@ for common small molecules.
   Aromaticity reuses an already-installed ring basis. It may compute rings
   internally when no basis is installed, but an unrequested ring result is not
   retained or exposed.
-- Normalizes neutral aromatic nitrogen with one perceived donor hydrogen to RDKit-style `nH` atom state: one explicit atom hydrogen, zero implicit hydrogens, and no implicit-hydrogen suppression.
+- Performs no representation cleanup after perception. Represented explicit
+  hydrogens remain primary state, while valence-derived implicit hydrogens stay
+  in `PerceptionState`.
 - Does not run automatically from file parsers.
 
 ## Implementation Notes
@@ -46,7 +47,9 @@ for common small molecules.
   layer before valence perception. The sanitizer owns neither the hypervalent
   oxyhalogen rewrite nor imported aromatic localization, and it does not
   restore perception cleared by normalization.
-- Performs the aromatic nitrogen hydrogen normalization after both valence and aromaticity perception succeed, preserving total hydrogen count while exposing RDKit-like sanitized atom fields.
+- Does not translate perceived aromatic-nitrogen hydrogens into represented
+  explicit-H declarations. Source `[nH]` remains represented from
+  interpretation/normalization; other inferred donor hydrogens remain derived.
 - Runs stereo perception after aromaticity for compatibility, but source-mark
   assembly has already completed without installed perception during
   normalization.
@@ -71,6 +74,10 @@ for common small molecules.
   source-stereo normalization regardless of the stereo-perception option,
   idempotence, coordinate-only stereo staying outside sanitization, and exact
   rollback after normalization, valence, aromaticity, or stereo failure.
+- A complete represented-state snapshot regression covers atoms, bonds,
+  stable topology layout, stereo and source history, properties, and
+  conformers across valence -> rings -> aromaticity, excluding only installed
+  perception and its test-only mirrors.
 
 ## Benchmarks
 
@@ -124,3 +131,6 @@ for common small molecules.
 - v22: Delegate source-declared stereo assembly and diagnostics to
   normalization, expose normalization sidecar output, and leave the sanitizer's
   stereo step responsible only for true perception/validation work.
+- v23: Remove post-aromaticity nitrogen/H representation feedback and enforce
+  the one-way represented-molecule-to-perception-state boundary across the
+  default discrete chemical passes.
