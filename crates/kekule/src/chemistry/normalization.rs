@@ -1,7 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::core::{Atom, AtomId, BondId, BondOrder, Molecule};
+use crate::algorithms::StereoValidationIssue;
+use crate::core::{
+    Atom, AtomId, BondId, BondOrder, Molecule, MoleculeError, StereoBondMarkKind, StereoElementId,
+};
+
+use super::source_stereo::normalize_source_stereo;
 
 const MAX_AROMATIC_LOCALIZATION_MATCHING_STATES: usize = 100_000;
 
@@ -19,7 +24,66 @@ pub enum NormalizationError {
         examined_states: usize,
         limit: usize,
     },
+    /// Source-declared stereo could not be represented canonically.
+    SourceStereo(SourceStereoNormalizationError),
 }
+
+/// Successful sidecar output from representation normalization.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NormalizationReport {
+    /// Canonical stereo elements created from source bond marks.
+    pub created_stereo_elements: Vec<StereoElementId>,
+    /// Nonfatal source-representation diagnostics.
+    pub warnings: Vec<NormalizationWarning>,
+}
+
+/// Nonfatal source-representation diagnostic emitted during normalization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NormalizationWarning {
+    AmbiguousTetrahedralWedgeMarks { center: AtomId, mark_count: usize },
+}
+
+/// One concrete source-stereo normalization issue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceStereoNormalizationIssue {
+    UnassembledTetrahedralBondMark {
+        bond: BondId,
+        kind: StereoBondMarkKind,
+    },
+    AmbiguousDirectionalBondMarks {
+        double_bond: BondId,
+        endpoint: AtomId,
+        mark_count: usize,
+    },
+    UnpairedDirectionalBondMark {
+        bond: BondId,
+    },
+    UnsupportedSourceBondMark {
+        bond: BondId,
+        kind: StereoBondMarkKind,
+    },
+    InvalidStereo(StereoValidationIssue),
+    CouldNotCreateStereoElement(MoleculeError),
+    CouldNotConsumeSourceBondMark(MoleculeError),
+}
+
+/// Collected failure to canonicalize source-declared stereochemistry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceStereoNormalizationError {
+    pub issues: Vec<SourceStereoNormalizationIssue>,
+}
+
+impl fmt::Display for SourceStereoNormalizationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "source-stereo normalization reported {} issue(s)",
+            self.issues.len()
+        )
+    }
+}
+
+impl std::error::Error for SourceStereoNormalizationError {}
 
 impl fmt::Display for NormalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -39,6 +103,7 @@ impl fmt::Display for NormalizationError {
                 f,
                 "imported aromatic localization limit exceeded at atom {atom}: examined {examined_states} matching states, limit {limit}"
             ),
+            Self::SourceStereo(error) => write!(f, "{error}"),
         }
     }
 }
@@ -50,13 +115,22 @@ impl std::error::Error for NormalizationError {}
 /// Normalization is transactional and idempotent. A successful call clears the
 /// complete installed perception state, including when the primary
 /// representation was already normalized.
-pub fn normalize_molecule(molecule: &mut Molecule) -> Result<(), NormalizationError> {
+pub fn normalize_molecule(
+    molecule: &mut Molecule,
+) -> Result<NormalizationReport, NormalizationError> {
     let mut staged = molecule.clone();
     normalize_hypervalent_oxo_halides(&mut staged)?;
     localize_imported_aromatic_bonds(&mut staged)?;
+    // Source-stereo normalization must not observe arbitrary installed
+    // perception. Representation rewrites above already invalidate it
+    // conceptually, so clear it before decoding any source marks.
+    staged.invalidate_topology();
+    let report = normalize_source_stereo(&mut staged).map_err(NormalizationError::SourceStereo)?;
+    // Adding represented stereo invalidates only stereo-derived state. The
+    // normalization publication contract clears the complete perception state.
     staged.invalidate_topology();
     *molecule = staged;
-    Ok(())
+    Ok(report)
 }
 
 fn localize_imported_aromatic_bonds(molecule: &mut Molecule) -> Result<(), NormalizationError> {

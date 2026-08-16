@@ -6,7 +6,7 @@ use crate::algorithms::{
 };
 use crate::chemistry::{
     normalize_molecule, sanitize_small_molecule, sanitize_small_molecule_with_ring_options,
-    NormalizationError, SanitizeError, SanitizeOptions, SanitizeReport,
+    NormalizationError, NormalizationReport, SanitizeError, SanitizeOptions, SanitizeReport,
 };
 use crate::io::{
     interpret_smiles_document, parse_smiles_document, write_canonical_smiles,
@@ -36,8 +36,8 @@ impl SmallMolecule {
         sanitize_small_molecule(self, SanitizeOptions::default())
     }
 
-    /// Normalize represented chemistry into Kekule's canonical form.
-    pub fn normalize(&mut self) -> Result<(), NormalizationError> {
+    /// Normalize represented chemistry and source stereo into canonical form.
+    pub fn normalize(&mut self) -> Result<NormalizationReport, NormalizationError> {
         normalize_molecule(self.graph_mut_raw())
     }
 

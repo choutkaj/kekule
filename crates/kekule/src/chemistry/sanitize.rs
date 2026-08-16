@@ -4,7 +4,7 @@ use crate::algorithms::*;
 use crate::core::*;
 use crate::small::model::SmallMolecule;
 
-use super::normalization::{normalize_molecule, NormalizationError};
+use super::normalization::{normalize_molecule, NormalizationError, NormalizationReport};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SanitizeOptions {
@@ -27,6 +27,7 @@ impl Default for SanitizeOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SanitizeReport {
+    pub normalization: NormalizationReport,
     pub stereo: Option<StereoPerceptionReport>,
 }
 
@@ -67,7 +68,8 @@ pub fn sanitize_small_molecule_with_ring_options(
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<SanitizeReport, SanitizeError> {
     let mut staged = molecule.clone();
-    normalize_molecule(staged.graph_mut_raw()).map_err(SanitizeError::Normalization)?;
+    let normalization =
+        normalize_molecule(staged.graph_mut_raw()).map_err(SanitizeError::Normalization)?;
     prepare_sanitize_states(staged.graph_mut_raw(), options);
     if options.perceive_valence {
         perceive_valence(staged.graph_mut_raw(), ValenceModel::RdkitLike)
@@ -106,7 +108,10 @@ pub fn sanitize_small_molecule_with_ring_options(
         None
     };
     *molecule = staged;
-    Ok(SanitizeReport { stereo })
+    Ok(SanitizeReport {
+        normalization,
+        stereo,
+    })
 }
 
 fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {

@@ -67,6 +67,127 @@ fn normalization_is_idempotent() {
 }
 
 #[test]
+fn source_stereo_normalization_is_idempotent_and_consumes_marks() {
+    let mut molecule = read_smiles("C/C=C\\F").expect("directional SMILES should parse");
+
+    let first = molecule
+        .normalize()
+        .expect("first source-stereo normalization should succeed");
+    assert_eq!(first.created_stereo_elements.len(), 1);
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
+    let once = molecule.clone();
+
+    let second = molecule
+        .normalize()
+        .expect("second source-stereo normalization should succeed");
+    assert!(second.created_stereo_elements.is_empty());
+    assert!(second.warnings.is_empty());
+    assert_eq!(molecule, once);
+}
+
+#[test]
+fn direct_smiles_tetrahedral_stereo_is_preserved_without_duplication() {
+    for smiles in ["F[C@](Cl)(Br)I", "F[C@@](Cl)(Br)I"] {
+        let mut molecule = read_smiles(smiles).expect("tetrahedral SMILES should parse");
+        assert_eq!(molecule.graph().stereo_elements().count(), 1);
+
+        let report = molecule
+            .normalize()
+            .expect("direct stereo should normalize");
+
+        assert!(report.created_stereo_elements.is_empty());
+        assert_eq!(molecule.graph().stereo_elements().count(), 1);
+        assert!(molecule.graph().stereo_bond_marks().next().is_none());
+    }
+}
+
+#[test]
+fn installed_perception_does_not_affect_source_stereo_normalization() {
+    let mut empty_state = read_smiles("C/C=C\\F").expect("directional SMILES should parse");
+    let mut installed_state = empty_state.clone();
+    mark_all_fresh(installed_state.graph_mut());
+    assert_ne!(
+        installed_state.graph().perception(),
+        &PerceptionState::default()
+    );
+
+    let empty_report = empty_state
+        .normalize()
+        .expect("empty-state normalization should succeed");
+    let installed_report = installed_state
+        .normalize()
+        .expect("installed-state normalization should succeed");
+
+    assert_eq!(installed_report, empty_report);
+    assert_eq!(
+        installed_state
+            .graph()
+            .stereo_elements()
+            .map(|(_, element)| element.clone())
+            .collect::<Vec<_>>(),
+        empty_state
+            .graph()
+            .stereo_elements()
+            .map(|(_, element)| element.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(installed_state.graph().stereo_bond_marks().next().is_none());
+    assert_eq!(
+        installed_state.graph().perception(),
+        &PerceptionState::default()
+    );
+}
+
+#[test]
+fn ambiguous_directional_source_marks_roll_back_complete_state() {
+    let mut graph = Molecule::new();
+    let left = graph.add_atom(carbon()).expect("left endpoint");
+    let right = graph.add_atom(carbon()).expect("right endpoint");
+    let left_a = graph.add_atom(carbon()).expect("left carrier");
+    let left_b = graph.add_atom(element_atom("F")).expect("left carrier");
+    let right_a = graph.add_atom(element_atom("Cl")).expect("right carrier");
+    let double_bond = graph
+        .add_bond(left, right, BondOrder::Double)
+        .expect("double bond");
+    let left_mark_a = graph
+        .add_bond(left, left_a, BondOrder::Single)
+        .expect("left carrier bond");
+    let left_mark_b = graph
+        .add_bond(left, left_b, BondOrder::Single)
+        .expect("left carrier bond");
+    let right_mark = graph
+        .add_bond(right, right_a, BondOrder::Single)
+        .expect("right carrier bond");
+    for bond in [left_mark_a, left_mark_b, right_mark] {
+        graph
+            .set_stereo_bond_mark(StereoBondMark {
+                bond,
+                kind: StereoBondMarkKind::DirectionalUp,
+                source: StereoSource::Smiles,
+            })
+            .expect("directional mark");
+    }
+    mark_all_fresh(&mut graph);
+    let mut molecule = SmallMolecule::from_graph(graph);
+    let before = molecule.clone();
+
+    let error = molecule
+        .normalize()
+        .expect_err("same-direction marks on both left carriers are ambiguous");
+
+    assert!(matches!(
+        error,
+        NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
+            if issues.contains(&SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks {
+                double_bond,
+                endpoint: left,
+                mark_count: 2,
+            })
+    ));
+    assert_eq!(molecule, before);
+}
+
+#[test]
 fn aromatic_smiles_normalizes_then_perceives_semantic_aromaticity() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
     assert!(!molecule.graph().perception().has_aromaticity());
