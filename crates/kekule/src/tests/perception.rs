@@ -1754,6 +1754,9 @@ fn normalization_prefers_exocyclic_molfile_atropisomeric_axis() {
 fn normalization_consumes_redundant_molfile_atrop_wedges_before_tetrahedral_marks() {
     let mut molecule = read_molfile(rdkit_bms986142_atrop5_molblock())
         .expect("RDKit redundant atropisomer wedge fixture parses");
+    // The external fixture omits this tetrahedral carrier declaration. Keep
+    // normalization model-free by supplying the represented H explicitly.
+    declare_explicit_fixture_hydrogen(&mut molecule, AtomId::new(10));
     let report = molecule
         .normalize()
         .expect("redundant Molfile atrop wedges should assemble");
@@ -1775,6 +1778,7 @@ fn normalization_assembles_molfile_atrop_axis_with_one_exocyclic_sp2_endpoint() 
     ] {
         let mut molecule =
             read_molfile(fixture).expect("RDKit one-ring-endpoint atropisomer fixture parses");
+        declare_explicit_fixture_hydrogen(&mut molecule, AtomId::new(3));
         let report = molecule
             .normalize()
             .expect("one-ring-endpoint Molfile atrop axis should assemble");

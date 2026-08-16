@@ -58,6 +58,16 @@ pub(super) fn normalize_and_perceive(
     Ok(())
 }
 
+pub(super) fn declare_explicit_fixture_hydrogen(molecule: &mut SmallMolecule, atom_id: AtomId) {
+    let mut atom = molecule
+        .graph_mut()
+        .atom_mut(atom_id)
+        .expect("fixture atom should be live");
+    assert_eq!(atom.explicit_hydrogens, 0);
+    atom.explicit_hydrogens = 1;
+    atom.no_implicit_hydrogens = true;
+}
+
 pub(super) fn read_molfile(
     input: &str,
 ) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
@@ -375,7 +385,7 @@ implicit H geometry wedge
 kekule
 
   4  3  0  0  0  0            999 V2000
-    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  4  0  0  0  0  0  0
     1.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
    -1.0000   -1.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
     0.0000   -1.0000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0

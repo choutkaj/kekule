@@ -16,10 +16,10 @@ round-trip workflows.
   rewrite the atom payload.
 - Preserves bracket-only no-implicit-hydrogen semantics.
 - Rejects zero, dative, quadruple, stored stereo elements, source bond stereo
-  marks, and graphs requiring more than 99 ring labels instead of silently
-  coercing them. Radical atoms are writeable only when reparsing the emitted
-  bracket atom will infer the same multiplicity from its valence; arbitrary
-  stored radical/valence combinations are rejected.
+  marks, radical atoms, and graphs requiring more than 99 ring labels instead
+  of silently coercing them. The supported SMILES grammar has no explicit
+  radical token, so no emitted bracket spelling can promise a lossless radical
+  round trip.
 - Does not canonicalize, normalize, or perceive before writing.
 
 ## Implementation Notes
@@ -31,9 +31,8 @@ round-trip workflows.
 - Tree collection, subtree sizing, and molecule emission use explicit stacks so
   graph depth does not consume the Rust call stack.
 - Unsupported stereo/query details are read from the first-class stereo representation and return structured write errors until isomeric SMILES support can encode them faithfully.
-- Representable radicals need no nonstandard token: bracket atom syntax carries
-  the valence state and the parser reconstructs doublet through quintet
-  multiplicity deterministically.
+- Radical output remains unsupported until the parser and writer share an
+  explicit source-semantic radical representation.
 
 ## Tests
 
@@ -78,3 +77,5 @@ round-trip workflows.
 - v14: Preserve aromatic donor `[nH]` output from the explicit represented-H
   plus perceived implicit-H split after removing sanitizer representation
   feedback.
+- v15: Reject radical atoms explicitly after removing model-driven bracket
+  radical inference from SMILES interpretation.

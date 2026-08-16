@@ -384,8 +384,7 @@ $$$$
     let molecules = read_sdf_molecules(input).expect("record should parse");
     let mol = &molecules[0].graph();
 
-    assert!(!mol.perception().has_rings());
-    assert!(!mol.perception().has_aromaticity());
+    assert_all_stale(mol);
     assert_eq!(
         mol.bond(BondId::new(0)).expect("bond exists").order,
         BondOrder::Aromatic
@@ -565,13 +564,13 @@ fn v2000_supported_bond_stereo_codes_round_trip_exactly() {
 }
 
 #[test]
-fn v2000_preserves_valence_implied_tetrahedral_hydrogen_carriers() {
-    for (symbol, expected_hydrogens) in [("C", 1), ("N", 0), ("S", 1)] {
+fn v2000_does_not_infer_tetrahedral_hydrogens_without_a_source_declaration() {
+    for symbol in ["C", "N", "S"] {
         let input = format!(
             "stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  0  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
         );
 
-        let parsed = read_molfile(&input).expect("stereo record should parse");
+        let mut parsed = read_molfile(&input).expect("stereo record should parse");
 
         assert_eq!(
             parsed
@@ -579,10 +578,71 @@ fn v2000_preserves_valence_implied_tetrahedral_hydrogen_carriers() {
                 .atom(AtomId::new(0))
                 .expect("stereo center")
                 .explicit_hydrogens,
-            expected_hydrogens,
+            0,
             "{symbol}"
         );
+        assert!(
+            !parsed
+                .graph()
+                .atom(AtomId::new(0))
+                .expect("stereo center")
+                .no_implicit_hydrogens
+        );
+        if symbol == "C" {
+            let before = parsed.graph().clone();
+            assert!(matches!(
+                parsed.normalize(),
+                Err(NormalizationError::SourceStereo(_))
+            ));
+            assert_eq!(parsed.graph(), &before);
+        }
     }
+}
+
+#[test]
+fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
+    for (declaration_fields, expected_hydrogens) in
+        [("0  0  0  2  0  0", 1), ("0  0  0  0  0  4", 1)]
+    {
+        let input = format!(
+            "declared stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   {declaration_fields}\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
+        );
+
+        let document = molfile::parse_str(&input).expect("source syntax parses");
+        let interpreted = molfile::interpret(&document).expect("source declaration interprets");
+        let mut molecule = interpreted.into_molecule();
+        let center = molecule
+            .graph()
+            .atom(AtomId::new(0))
+            .expect("stereo center");
+        assert_eq!(center.explicit_hydrogens, expected_hydrogens);
+        assert!(center.no_implicit_hydrogens);
+        assert!(!molecule.graph().perception().has_valence());
+        assert!(molecule.graph().stereo_bond_marks().next().is_some());
+
+        molecule.normalize().expect("declared carrier normalizes");
+        assert!(molecule.graph().stereo_bond_marks().next().is_none());
+        assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    }
+}
+
+#[test]
+fn molfile_and_sdf_parse_supported_syntax_before_chemistry_interpretation() {
+    let molfile_source = "unknown element\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 Xx  0  0  0  0  0  0\nM  END\n";
+    let document = molfile::parse_str(molfile_source)
+        .expect("a syntactically valid atom record should parse independently");
+    assert!(molfile::interpret(&document)
+        .expect_err("unsupported core elements belong to interpretation")
+        .message()
+        .contains("unsupported element"));
+
+    let sdf_source = format!("{molfile_source}$$$$\n");
+    let document = sdf::parse_str(&sdf_source, SdfParseOptions::default())
+        .expect("SDF record structure should parse independently");
+    let error =
+        sdf::interpret(&document).expect_err("SDF delegates chemistry interpretation to Molfile");
+    assert_eq!(error.record(), 1);
+    assert!(error.message().contains("unsupported element"));
 }
 
 #[test]

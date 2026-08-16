@@ -30,9 +30,8 @@ Write noncanonical isomeric SMILES from the first-class stereo representation.
   writer support.
 - Does not normalize, run default perception, perceive stereo, or assign CIP
   descriptors before writing.
-- Inherits valence-implied singlet-through-quintet bracket-radical output from
-  the underlying noncanonical writer and rejects non-representable stored
-  radical/valence combinations.
+- Inherits explicit radical rejection from the underlying noncanonical writer;
+  the supported SMILES syntax has no source-semantic radical token.
 
 ## Implementation Notes
 
@@ -113,3 +112,5 @@ parity benchmarking.
   instead of repository-wide required evidence.
 - v9: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v10: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v11: Inherit explicit radical rejection after removing model-driven bracket
+  radical inference from SMILES interpretation.

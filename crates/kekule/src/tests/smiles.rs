@@ -83,9 +83,9 @@ fn smiles_parses_branches_rings_brackets_and_fragments_without_normalizing_or_pe
             .sum::<usize>(),
         10
     );
-    assert!(components
-        .iter()
-        .all(|molecule| !molecule.graph().perception().has_valence()));
+    for molecule in &components {
+        assert_all_stale(molecule.graph());
+    }
     let bracket_atom = components[2]
         .graph()
         .atom(AtomId::new(0))
@@ -518,14 +518,15 @@ fn aromatic_smiles_omitted_bonds_normalize_and_perceive_with_expected_hydrogens(
         assert_eq!(atom.implicit_hydrogens, Some(1));
     }
 
-    let mut pyridinium = read_smiles("[n+]1ccccc1").expect("pyridinium should parse");
+    let mut pyridinium = read_smiles("[nH+]1ccccc1").expect("pyridinium should parse");
     normalize_and_perceive(&mut pyridinium).expect("pyridinium should normalize_and_perceive");
     let nitrogen = pyridinium.graph().atom(AtomId::new(0)).expect("nitrogen");
-    assert!(!nitrogen.aromatic);
+    assert!(nitrogen.aromatic);
     assert_eq!(nitrogen.formal_charge, 1);
-    assert_eq!(nitrogen.radical, Some(AtomRadical::Doublet));
+    assert_eq!(nitrogen.radical, None);
+    assert_eq!(nitrogen.explicit_hydrogens, 1);
     assert_eq!(nitrogen.implicit_hydrogens, Some(0));
-    assert!(pyridinium.graph().bonds().all(|(_, bond)| !bond.aromatic));
+    assert!(pyridinium.graph().bonds().all(|(_, bond)| bond.aromatic));
     assert_eq!(
         pyridinium
             .graph()
@@ -839,7 +840,7 @@ fn fused_sdf_five_electron_neighbor_shares_aromatic_internal_bond() {
 
  27 29  0  0  0  0  0  0  0  0999 V2000
     4.5000   -5.1962    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
-    3.7500   -3.8971    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    3.7500   -3.8971    0.0000 C   0  0  0  0  0  4  0  0  0  0  0  0
     4.5000   -2.5981    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
     6.0000   -2.5981    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
     6.7500   -1.2990    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
@@ -3334,15 +3335,12 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         atom.explicit_hydrogens = 2;
         atom.no_implicit_hydrogens = true;
     }
-    let radical_smiles = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-        .expect("valence-consistent radical should write");
-    assert!(radical_smiles.contains("[CH2]"));
-    let radical_reparsed =
-        read_smiles(&radical_smiles).expect("radical writer output should parse");
-    assert!(radical_reparsed
-        .graph()
-        .atoms()
-        .any(|(_, atom)| atom.radical == Some(AtomRadical::Doublet)));
+    assert!(
+        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
+            .expect_err("the supported SMILES grammar has no explicit radical token")
+            .message
+            .contains("explicit radical token")
+    );
 
     {
         let mut atom = molecule.graph_mut().atom_mut(a).expect("atom");
@@ -3361,46 +3359,33 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
 }
 
 #[test]
-fn bracket_atoms_infer_rdkit_radical_multiplicity_from_valence_deficit() {
-    for (smiles, atom_index, expected) in [
-        ("[C]", 0, AtomRadical::Quintet),
-        ("[C]C", 0, AtomRadical::Quartet),
-        ("C=[C]", 1, AtomRadical::Triplet),
-        ("C#[C]", 1, AtomRadical::Doublet),
-        ("[N]", 0, AtomRadical::Quartet),
-        ("[O]", 0, AtomRadical::Triplet),
+fn bracket_atoms_do_not_infer_radicals_from_a_valence_model() {
+    for (smiles, atom_index) in [
+        ("[C]", 0),
+        ("[C]C", 0),
+        ("C=[C]", 1),
+        ("C#[C]", 1),
+        ("[N]", 0),
+        ("[O]", 0),
+        ("[c]1ccccc1", 0),
     ] {
-        let molecule = read_smiles(smiles).expect("radical SMILES should parse");
+        let molecule = read_smiles(smiles).expect("bracket SMILES should interpret");
         assert_eq!(
             molecule
                 .graph()
                 .atom(AtomId::new(atom_index))
                 .expect("bracket atom")
                 .radical,
-            Some(expected),
+            None,
             "{smiles}"
         );
     }
 
-    let aromatic_radical = read_smiles("[c]1ccccc1").expect("aromatic carbon radical parses");
-    assert_eq!(
-        aromatic_radical
-            .graph()
-            .atom(AtomId::new(0))
-            .expect("aromatic radical")
-            .radical,
-        Some(AtomRadical::Doublet)
-    );
-    let substituted_pyridinium =
-        read_smiles("C[n+]1ccccc1").expect("substituted pyridinium parses");
-    assert_eq!(
-        substituted_pyridinium
-            .graph()
-            .atom(AtomId::new(1))
-            .expect("pyridinium nitrogen")
-            .radical,
-        None
-    );
+    let document = smiles_api::parse_str("[Xx]").expect("element spelling is valid syntax");
+    assert!(smiles_api::interpret(&document)
+        .expect_err("unsupported core element belongs to interpretation")
+        .message()
+        .contains("unsupported element"));
 }
 
 #[test]
