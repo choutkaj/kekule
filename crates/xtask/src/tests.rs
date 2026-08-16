@@ -1851,6 +1851,54 @@ fn stereo_perception_benchmark_records_reference_preparation_errors_per_record()
 }
 
 #[test]
+fn smiles_component_benchmarks_preserve_source_record_cardinality() {
+    let root = temp_feature_root("smiles-component-benchmark-cardinality");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "CC.Cl.Cl multi\nC=C connected\n").expect("fixture should write");
+
+    let parsed = implementation_expected("io.smiles.parse", "pubchem-1k", &fixture)
+        .expect("parse benchmark should serialize");
+    assert_eq!(parsed["records"].as_array().map(Vec::len), Some(2));
+    assert_eq!(parsed["records"][0]["status"], "ok");
+    assert_eq!(parsed["records"][0]["raw"]["atom_count"], 4);
+    assert_eq!(parsed["records"][0]["raw"]["bond_count"], 1);
+    assert!(parsed["records"][0].get("normalized_perceived").is_some());
+    assert!(parsed["records"][0].get("write_round_trip").is_some());
+
+    let stereo = implementation_expected("stereo.perception", "pubchem-1k", &fixture)
+        .expect("stereo benchmark should serialize");
+    assert_eq!(stereo["records"].as_array().map(Vec::len), Some(2));
+    assert_eq!(stereo["records"][0]["status"], "ok");
+    assert_eq!(stereo["records"][0]["atom_count"], 4);
+    assert_eq!(stereo["records"][0]["bond_count"], 1);
+    assert!(stereo["records"][0]["report"].get("candidates").is_some());
+    assert!(stereo["records"][0].get("normalization_report").is_none());
+
+    let stereo_fixture = root.join("stereo.smi");
+    fs::write(&stereo_fixture, "F/C=C/F.F/C=C/F directional\n")
+        .expect("stereo fixture should write");
+    let stereo = implementation_expected("stereo.perception", "pubchem-1k", &stereo_fixture)
+        .expect("component stereo benchmark should serialize");
+    assert_eq!(stereo["records"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        stereo["records"][0]["report"]["assembled_elements"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        stereo["records"][0]["report"]["assembled_elements"][0]["index"],
+        0
+    );
+    assert_eq!(
+        stereo["records"][0]["report"]["assembled_elements"][1]["index"],
+        1
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn dssp_comparison_matches_residues_by_source_identity_not_container_order() {
     let mut expected = json!({
         "status": "ok",
