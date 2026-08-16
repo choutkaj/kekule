@@ -119,17 +119,24 @@ pub fn normalize_molecule(
     molecule: &mut Molecule,
 ) -> Result<NormalizationReport, NormalizationError> {
     let mut staged = molecule.clone();
-    normalize_hypervalent_oxo_halides(&mut staged)?;
-    localize_imported_aromatic_bonds(&mut staged)?;
+    let report = normalize_molecule_in_place(&mut staged)?;
+    *molecule = staged;
+    Ok(report)
+}
+
+pub(crate) fn normalize_molecule_in_place(
+    molecule: &mut Molecule,
+) -> Result<NormalizationReport, NormalizationError> {
+    normalize_hypervalent_oxo_halides(molecule)?;
+    localize_imported_aromatic_bonds(molecule)?;
     // Source-stereo normalization must not observe arbitrary installed
     // perception. Representation rewrites above already invalidate it
     // conceptually, so clear it before decoding any source marks.
-    staged.invalidate_topology();
-    let report = normalize_source_stereo(&mut staged).map_err(NormalizationError::SourceStereo)?;
+    molecule.invalidate_topology();
+    let report = normalize_source_stereo(molecule).map_err(NormalizationError::SourceStereo)?;
     // Adding represented stereo invalidates only stereo-derived state. The
     // normalization publication contract clears the complete perception state.
-    staged.invalidate_topology();
-    *molecule = staged;
+    molecule.invalidate_topology();
     Ok(report)
 }
 
@@ -464,9 +471,8 @@ mod tests {
             .expect("imported aromatic component");
         let before = molecule.graph().clone();
 
-        let error =
-            try_localize_aromatic_component_with_limit(molecule.graph_mut_raw(), &component, 0)
-                .expect_err("zero matching budget should fail structurally");
+        let error = try_localize_aromatic_component_with_limit(molecule.graph_mut(), &component, 0)
+            .expect_err("zero matching budget should fail structurally");
 
         assert!(matches!(
             error,

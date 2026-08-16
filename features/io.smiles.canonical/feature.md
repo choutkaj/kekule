@@ -7,7 +7,9 @@ small-molecule graph.
 
 ## Behavior/API
 
-- Exposes `smiles::{CanonicalSmilesWriteOptions, write_canonical, write_canonical_with_options}`.
+- Exposes `smiles::write_canonical` and
+  `SmallMolecule::to_canonical_smiles()`; there is no empty options type or
+  redundant options overload.
 - Reuses the noncanonical writer's supported chemistry subset and structured write errors.
 - Chooses a deterministic representation by ranking atoms, trying every atom in
   the connected molecule as a root, rendering rank-ordered branches and ring
@@ -106,3 +108,4 @@ canonicalization parity for every symmetry edge case.
   move document-level component ordering explicitly to the caller.
 - v34: Inherit explicit radical rejection from the shared SMILES writer after
   interpretation stopped guessing radicals from bracket valence.
+- v35: Remove the empty writer-options type and redundant options overload.

@@ -324,17 +324,9 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
 }
 
 fn clear_test_derived_state(molecule: &mut Molecule) {
-    molecule.perception = PerceptionState::default();
-    for atom in molecule.atoms.iter_mut().flatten() {
-        atom.implicit_hydrogens = None;
-        atom.aromatic = false;
-    }
-    for bond in molecule.bonds.iter_mut().flatten() {
-        bond.aromatic = false;
-    }
-    for element in molecule.stereo_elements.iter_mut().flatten() {
-        element.descriptor = None;
-    }
+    molecule
+        .install_perception_state(PerceptionState::default())
+        .expect("empty perception state should install");
 }
 
 #[test]

@@ -77,9 +77,7 @@ fn atom_new_sets_chemically_general_defaults() {
     assert_eq!(atom.formal_charge, 0);
     assert_eq!(atom.radical, None);
     assert_eq!(atom.explicit_hydrogens, 0);
-    assert_eq!(atom.implicit_hydrogens, None);
     assert!(!atom.no_implicit_hydrogens);
-    assert!(!atom.aromatic);
     assert_eq!(atom.atom_map, None);
     assert!(atom.props.is_empty());
 }
@@ -91,9 +89,7 @@ fn atom_payload_fields_can_be_set_and_read() {
     atom.formal_charge = -1;
     atom.radical = Some(AtomRadical::Doublet);
     atom.explicit_hydrogens = 3;
-    atom.implicit_hydrogens = Some(1);
     atom.no_implicit_hydrogens = true;
-    atom.aromatic = true;
     atom.atom_map = Some(7);
     atom.props
         .insert("label".to_owned(), PropValue::String("alpha".to_owned()));
@@ -102,9 +98,7 @@ fn atom_payload_fields_can_be_set_and_read() {
     assert_eq!(atom.formal_charge, -1);
     assert_eq!(atom.radical, Some(AtomRadical::Doublet));
     assert_eq!(atom.explicit_hydrogens, 3);
-    assert_eq!(atom.implicit_hydrogens, Some(1));
     assert!(atom.no_implicit_hydrogens);
-    assert!(atom.aromatic);
     assert_eq!(atom.atom_map, Some(7));
     assert_eq!(
         atom.props.get("label"),
@@ -122,7 +116,7 @@ fn radical_multiplicity_reports_unpaired_electrons() {
 }
 
 #[test]
-fn bond_new_sets_endpoints_order_and_aromatic_default() {
+fn bond_new_sets_endpoints_and_order() {
     let a = AtomId::new(3);
     let b = AtomId::new(4);
     let single = Bond::new(a, b, BondOrder::Single);
@@ -132,9 +126,8 @@ fn bond_new_sets_endpoints_order_and_aromatic_default() {
     assert_eq!(single.b(), b);
     assert_eq!(single.endpoints(), (a, b));
     assert_eq!(single.order, BondOrder::Single);
-    assert!(!single.aromatic);
     assert!(single.props.is_empty());
-    assert!(aromatic.aromatic);
+    assert_eq!(aromatic.order, BondOrder::Aromatic);
 }
 
 #[test]

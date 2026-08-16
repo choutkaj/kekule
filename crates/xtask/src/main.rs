@@ -27,7 +27,7 @@ use kekule::{
     query,
     sdf::{self, SdfDataField, SdfParseOptions, SdfRecord},
     small::SmallMolecule,
-    smiles::{self, CanonicalSmilesWriteOptions, SmilesWriteOptions},
+    smiles::{self},
     stereo::{
         self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,
         StereoValidationIssue,
@@ -94,7 +94,6 @@ mod cli;
 mod corpus;
 mod dashboard;
 mod features;
-mod skills;
 mod support;
 
 pub(crate) use benchmark::*;
@@ -102,7 +101,6 @@ pub(crate) use cli::*;
 pub(crate) use corpus::*;
 pub(crate) use dashboard::*;
 pub(crate) use features::*;
-pub(crate) use skills::*;
 pub(crate) use support::*;
 
 fn main() {

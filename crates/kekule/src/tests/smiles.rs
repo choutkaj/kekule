@@ -1,5 +1,44 @@
 use super::*;
 
+fn aromatic_atom(molecule: &SmallMolecule, atom: AtomId) -> bool {
+    molecule
+        .graph()
+        .atom_is_aromatic(atom)
+        .expect("atom exists")
+        == Some(true)
+}
+
+fn aromatic_bond(molecule: &SmallMolecule, bond: BondId) -> bool {
+    molecule
+        .graph()
+        .bond_is_aromatic(bond)
+        .expect("bond exists")
+        == Some(true)
+}
+
+fn implicit_hydrogens(molecule: &SmallMolecule, atom: AtomId) -> Option<u8> {
+    molecule
+        .graph()
+        .implicit_hydrogens(atom)
+        .expect("atom exists")
+}
+
+fn aromatic_atom_count(molecule: &SmallMolecule) -> usize {
+    molecule
+        .graph()
+        .atom_ids()
+        .filter(|atom| aromatic_atom(molecule, *atom))
+        .count()
+}
+
+fn aromatic_bond_count(molecule: &SmallMolecule) -> usize {
+    molecule
+        .graph()
+        .bond_ids()
+        .filter(|bond| aromatic_bond(molecule, *bond))
+        .count()
+}
+
 #[test]
 fn smiles_parse_options_bound_input_atoms_and_bonds() {
     let input_error = smiles_api::parse_str_with_options(
@@ -143,7 +182,7 @@ fn smiles_parses_directional_bond_markers_without_normalizing_stereo() {
             .kind,
         StereoBondMarkKind::DirectionalDown
     );
-    let canonical = smiles_api::write_canonical_with_options(&small, CanonicalSmilesWriteOptions)
+    let canonical = smiles_api::write_canonical(&small)
         .expect("non-isomeric canonical SMILES should ignore directional bond markers");
     let mut reparsed = read_smiles(&canonical).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).expect("canonical output should normalize_and_perceive");
@@ -158,10 +197,10 @@ fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
         .graph()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "Br")
-        .map(|(_, atom)| {
+        .map(|(atom_id, atom)| {
             (
                 atom.no_implicit_hydrogens,
-                atom.implicit_hydrogens.unwrap_or(0),
+                implicit_hydrogens(&small, atom_id).unwrap_or(0),
             )
         })
         .collect::<Vec<_>>();
@@ -194,20 +233,23 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
                             .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
                     })
                 }))
-            .then_some(atom)
+            .then_some((id, atom))
         })
         .expect("aryl carbon bound to mercury");
-    assert!(!aryl_mercury_carbon.no_implicit_hydrogens);
-    assert_eq!(aryl_mercury_carbon.implicit_hydrogens, Some(0));
+    assert!(!aryl_mercury_carbon.1.no_implicit_hydrogens);
+    assert_eq!(
+        implicit_hydrogens(&aryl_mercury, aryl_mercury_carbon.0),
+        Some(0)
+    );
 
     let methyl_sodium = read_smiles("C[Na]").expect("methyl sodium should parse");
     let carbon = methyl_sodium
         .graph()
         .atoms()
-        .find_map(|(_, atom)| (atom.element.symbol() == "C").then_some(atom))
+        .find_map(|(id, atom)| (atom.element.symbol() == "C").then_some((id, atom)))
         .expect("carbon atom");
-    assert!(!carbon.no_implicit_hydrogens);
-    assert_eq!(carbon.implicit_hydrogens, None);
+    assert!(!carbon.1.no_implicit_hydrogens);
+    assert_eq!(implicit_hydrogens(&methyl_sodium, carbon.0), None);
 }
 
 #[test]
@@ -219,20 +261,11 @@ fn aromatic_chalcogen_bracket_atoms_parse_without_normalizing_or_perceiving() {
         .iter()
         .flat_map(|molecule| molecule.graph().atoms())
         .filter(|(_, atom)| matches!(atom.element.symbol(), "Se" | "Te"))
-        .map(|(_, atom)| {
-            (
-                atom.element.symbol().to_owned(),
-                atom.aromatic,
-                atom.no_implicit_hydrogens,
-            )
-        })
+        .map(|(_, atom)| (atom.element.symbol().to_owned(), atom.no_implicit_hydrogens))
         .collect::<Vec<_>>();
     assert_eq!(
         chalcogens,
-        vec![
-            ("Se".to_owned(), false, true),
-            ("Te".to_owned(), false, true)
-        ]
+        vec![("Se".to_owned(), true), ("Te".to_owned(), true)]
     );
     assert!(components
         .iter()
@@ -288,8 +321,7 @@ fn smiles_document_parser_rejects_incomplete_grammar_before_interpretation() {
 #[test]
 fn smiles_writer_round_trips_graph_shape() {
     let small = read_smiles("CC(=O)O").expect("smiles should parse");
-    let text =
-        smiles_api::write_with_options(&small, SmilesWriteOptions).expect("smiles should write");
+    let text = smiles_api::write(&small).expect("smiles should write");
     let reparsed = read_smiles(&text).expect("written smiles should parse");
 
     assert_eq!(reparsed.graph().atom_count(), small.graph().atom_count());
@@ -344,12 +376,9 @@ fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
         .expect("bond should be valid");
     normalize_and_perceive(&mut second).expect("propane normalizes_and_perceives");
 
-    let first_written =
-        smiles_api::write_canonical_with_options(&first, CanonicalSmilesWriteOptions)
-            .expect("canonical SMILES should write");
+    let first_written = smiles_api::write_canonical(&first).expect("canonical SMILES should write");
     let second_written =
-        smiles_api::write_canonical_with_options(&second, CanonicalSmilesWriteOptions)
-            .expect("canonical SMILES should write");
+        smiles_api::write_canonical(&second).expect("canonical SMILES should write");
 
     assert_eq!(first_written, second_written);
     assert_eq!(first_written, "CCC");
@@ -366,7 +395,7 @@ fn canonical_smiles_components_can_be_sorted_by_callers() {
             .iter_mut()
             .map(|molecule| {
                 normalize_and_perceive(molecule).expect("component normalizes_and_perceives");
-                smiles_api::write_canonical_with_options(molecule, CanonicalSmilesWriteOptions)
+                smiles_api::write_canonical(molecule)
                     .expect("canonical component SMILES should write")
             })
             .collect::<Vec<_>>();
@@ -382,14 +411,12 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
     let mut molecule = read_smiles("N[C@H](O)C").expect("chiral SMILES parses");
     normalize_and_perceive(&mut molecule).expect("chiral molecule normalizes_and_perceives");
 
-    assert!(
-        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-            .expect_err("ordinary writer should reject lossy atom stereo")
-            .message
-            .contains("atom stereochemistry")
-    );
+    assert!(smiles_api::write(&molecule)
+        .expect_err("ordinary writer should reject lossy atom stereo")
+        .message
+        .contains("atom stereochemistry"));
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("non-isomeric canonical SMILES should ignore atom stereo");
     let reparsed = read_smiles(&written).expect("canonical output should parse");
 
@@ -400,7 +427,7 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
 
     let isotope = read_smiles("[11CH3]OC").expect("isotope parses");
     assert_eq!(
-        smiles_api::write_canonical_with_options(&isotope, CanonicalSmilesWriteOptions)
+        smiles_api::write_canonical(&isotope)
             .expect("non-isomeric canonical SMILES should ignore isotope labels"),
         "COC"
     );
@@ -409,8 +436,7 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
     normalize_and_perceive(&mut aromatic_isotope)
         .expect("aromatic isotope normalizes_and_perceives");
     assert_eq!(
-        smiles_api::write_canonical_with_options(&aromatic_isotope, CanonicalSmilesWriteOptions,)
-            .expect("aromatic isotope canonicalizes"),
+        smiles_api::write_canonical(&aromatic_isotope,).expect("aromatic isotope canonicalizes"),
         "c1ccccc1"
     );
 
@@ -418,9 +444,8 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
         read_smiles("[H]C([3H])(F)Cl").expect("explicit hydrogen isotopologue parses");
     normalize_and_perceive(&mut explicit_hydrogens)
         .expect("explicit hydrogen isotopologue normalizes_and_perceives");
-    let written =
-        smiles_api::write_canonical_with_options(&explicit_hydrogens, CanonicalSmilesWriteOptions)
-            .expect("explicit hydrogen isotopologue canonicalizes");
+    let written = smiles_api::write_canonical(&explicit_hydrogens)
+        .expect("explicit hydrogen isotopologue canonicalizes");
     assert_eq!(written.matches("[H]").count(), 1, "{written}");
     let reparsed = read_smiles(&written).expect("normalized explicit hydrogen output reparses");
     assert_eq!(reparsed.graph().atom_count(), 4, "{written}");
@@ -433,9 +458,8 @@ fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
             read_smiles(input).unwrap_or_else(|_| panic!("SMILES should parse: {input}"));
         normalize_and_perceive(&mut molecule)
             .unwrap_or_else(|_| panic!("SMILES should normalize_and_perceive: {input}"));
-        let written =
-            smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-                .unwrap_or_else(|_| panic!("canonical SMILES should write: {input}"));
+        let written = smiles_api::write_canonical(&molecule)
+            .unwrap_or_else(|_| panic!("canonical SMILES should write: {input}"));
         let reparsed = read_smiles(&written)
             .unwrap_or_else(|_| panic!("canonical output should parse: {written}"));
 
@@ -448,8 +472,7 @@ fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
 fn canonical_smiles_prefers_clean_simple_ring_closure() {
     let molecule = read_smiles("C1=CC=CC=C1").expect("benzene parses");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
 
     assert_eq!(written, "C1=CC=CC=C1");
 }
@@ -462,11 +485,9 @@ fn canonical_smiles_converges_after_aromaticity_perception() {
     normalize_and_perceive(&mut kekule).expect("Kekule benzene normalizes_and_perceives");
 
     let aromatic_written =
-        smiles_api::write_canonical_with_options(&aromatic, CanonicalSmilesWriteOptions)
-            .expect("aromatic benzene canonicalizes");
+        smiles_api::write_canonical(&aromatic).expect("aromatic benzene canonicalizes");
     let kekule_written =
-        smiles_api::write_canonical_with_options(&kekule, CanonicalSmilesWriteOptions)
-            .expect("perceived Kekule benzene canonicalizes");
+        smiles_api::write_canonical(&kekule).expect("perceived Kekule benzene canonicalizes");
 
     assert_eq!(aromatic_written, kekule_written);
     assert_eq!(aromatic_written, "c1ccccc1");
@@ -482,10 +503,9 @@ fn canonical_smiles_preserves_aromatic_high_order_bonds() {
     let mut reparsed = read_smiles(&written).expect("cyclohexyne canonical output reparses");
     normalize_and_perceive(&mut reparsed)
         .expect("cyclohexyne canonical output normalizes_and_perceives");
-    assert!(reparsed
-        .graph()
-        .bonds()
-        .any(|(_, bond)| bond.order == BondOrder::Triple && bond.aromatic));
+    assert!(reparsed.graph().bonds().any(
+        |(bond_id, bond)| bond.order == BondOrder::Triple && aromatic_bond(&reparsed, bond_id)
+    ));
 }
 
 #[test]
@@ -504,29 +524,30 @@ fn aromatic_smiles_omitted_bonds_normalize_and_perceive_with_expected_hydrogens(
         .bonds()
         .all(|(_, bond)| bond.order == BondOrder::Aromatic));
     normalize_and_perceive(&mut benzene).expect("benzene should normalize_and_perceive");
-    for (_, atom) in benzene.graph().atoms() {
-        assert_eq!(atom.implicit_hydrogens, Some(1));
-        assert!(atom.aromatic);
+    for atom_id in benzene.graph().atom_ids() {
+        assert_eq!(implicit_hydrogens(&benzene, atom_id), Some(1));
+        assert!(aromatic_atom(&benzene, atom_id));
     }
 
     let mut pyridine = read_smiles("n1ccccc1").expect("pyridine should parse");
     normalize_and_perceive(&mut pyridine).expect("pyridine should normalize_and_perceive");
-    let nitrogen = pyridine.graph().atom(AtomId::new(0)).expect("nitrogen");
-    assert_eq!(nitrogen.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&pyridine, AtomId::new(0)), Some(0));
     for atom_id in 1..6 {
-        let atom = pyridine.graph().atom(AtomId::new(atom_id)).expect("carbon");
-        assert_eq!(atom.implicit_hydrogens, Some(1));
+        assert_eq!(implicit_hydrogens(&pyridine, AtomId::new(atom_id)), Some(1));
     }
 
     let mut pyridinium = read_smiles("[nH+]1ccccc1").expect("pyridinium should parse");
     normalize_and_perceive(&mut pyridinium).expect("pyridinium should normalize_and_perceive");
     let nitrogen = pyridinium.graph().atom(AtomId::new(0)).expect("nitrogen");
-    assert!(nitrogen.aromatic);
+    assert!(aromatic_atom(&pyridinium, AtomId::new(0)));
     assert_eq!(nitrogen.formal_charge, 1);
     assert_eq!(nitrogen.radical, None);
     assert_eq!(nitrogen.explicit_hydrogens, 1);
-    assert_eq!(nitrogen.implicit_hydrogens, Some(0));
-    assert!(pyridinium.graph().bonds().all(|(_, bond)| bond.aromatic));
+    assert_eq!(implicit_hydrogens(&pyridinium, AtomId::new(0)), Some(0));
+    assert_eq!(
+        aromatic_bond_count(&pyridinium),
+        pyridinium.graph().bond_count()
+    );
     assert_eq!(
         pyridinium
             .graph()
@@ -551,7 +572,7 @@ fn aromatic_smiles_omitted_bonds_normalize_and_perceive_with_expected_hydrogens(
             normalize_and_perceive(molecule).unwrap_or_else(|_| {
                 panic!("supported aromatic component should normalize_and_perceive: {smiles}")
             });
-            let written = smiles_api::write_with_options(molecule, SmilesWriteOptions)
+            let written = smiles_api::write(molecule)
                 .unwrap_or_else(|_| panic!("supported aromatic component should write: {smiles}"));
             read_smiles(&written)
                 .unwrap_or_else(|_| panic!("writer output should parse: {written}"));
@@ -583,41 +604,24 @@ fn thiocarbonyl_chalcogen_ring_normalizes_and_perceives_aromatic_like_rdkit() {
     normalize_and_perceive(&mut molecule)
         .expect("thiocarbonyl heterocycle should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     assert_eq!(aromatic_atoms, 6);
     assert_eq!(aromatic_bonds, 6);
 
-    let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
+    let written = smiles_api::write(&molecule)
         .expect("normalized_and_perceived thiocarbonyl heterocycle should write");
     let reparsed = read_smiles(&written).expect("writer output should parse");
     assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
     assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
 
-    let canonical =
-        smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-            .expect("normalized_and_perceived thiocarbonyl heterocycle should canonicalize");
+    let canonical = smiles_api::write_canonical(&molecule)
+        .expect("normalized_and_perceived thiocarbonyl heterocycle should canonicalize");
     let mut canonical_reparsed = read_smiles(&canonical).expect("canonical output should parse");
     normalize_and_perceive(&mut canonical_reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {canonical}: {error:?}")
     });
-    assert_eq!(
-        canonical_reparsed
-            .graph()
-            .atoms()
-            .filter(|(_, atom)| atom.aromatic)
-            .count(),
-        6,
-        "{canonical}"
-    );
+    assert_eq!(aromatic_atom_count(&canonical_reparsed), 6, "{canonical}");
 }
 
 #[test]
@@ -628,23 +632,9 @@ fn fused_chalcogen_bridge_does_not_over_aromatize_hetero_bridge() {
     normalize_and_perceive(&mut molecule)
         .expect("phenothiazine-like heterocycle should normalize_and_perceive");
 
-    let sulfur_bridge = molecule
-        .graph()
-        .atom(AtomId::new(8))
-        .expect("bridge sulfur");
-    let nitrogen_bridge = molecule
-        .graph()
-        .atom(AtomId::new(15))
-        .expect("bridge nitrogen");
-    assert!(!sulfur_bridge.aromatic);
-    assert!(!nitrogen_bridge.aromatic);
-
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    assert_eq!(aromatic_atoms, 12);
+    assert!(!aromatic_atom(&molecule, AtomId::new(8)));
+    assert!(!aromatic_atom(&molecule, AtomId::new(15)));
+    assert_eq!(aromatic_atom_count(&molecule), 12);
 }
 
 #[test]
@@ -655,13 +645,14 @@ fn bracket_carbon_suppresses_implicit_hydrogens() {
     normalize_and_perceive(&mut molecule)
         .expect("bracket carbon fused aromatic should normalize_and_perceive");
 
+    let bracket_carbon_id = AtomId::new(6);
     let bracket_carbon = molecule
         .graph()
-        .atom(AtomId::new(6))
+        .atom(bracket_carbon_id)
         .expect("bracket carbon");
     assert!(bracket_carbon.no_implicit_hydrogens);
     assert_eq!(bracket_carbon.explicit_hydrogens, 1);
-    assert_eq!(bracket_carbon.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&molecule, bracket_carbon_id), Some(0));
 }
 
 #[test]
@@ -674,21 +665,13 @@ fn fused_polycycle_aromatic_core_extends_to_fused_edge() {
 
     for atom_id in 0..3 {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("saturated atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "saturated ring atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("fused core atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "fused core atom {atom_id} should be aromatic"
         );
     }
@@ -702,16 +685,8 @@ fn rdkit_source_comment_fused_system_matches_reference_counts() {
     normalize_and_perceive(&mut molecule)
         .expect("RDKit source fused example should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     assert_eq!(aromatic_atoms, 14);
     assert_eq!(aromatic_bonds, 16);
 }
@@ -723,16 +698,8 @@ fn ring_atom_with_multiple_pi_bonds_is_not_aromatic_candidate() {
     normalize_and_perceive(&mut molecule)
         .expect("multiple-pi-bond ring should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     assert_eq!(aromatic_atoms, 0);
     assert_eq!(aromatic_bonds, 0);
 }
@@ -768,8 +735,7 @@ fn fused_aromatic_component_preserves_explicit_single_bond() {
         .collect::<Vec<_>>();
     assert_eq!(explicit_single_between_aromatic_atoms.len(), 1);
 
-    let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-        .expect("fused aromatic system should write");
+    let written = smiles_api::write(&molecule).expect("fused aromatic system should write");
     assert!(written.contains('-'));
     let mut reparsed = read_smiles(&written).expect("writer output should parse");
     normalize_and_perceive(&mut reparsed).expect("writer output should normalize_and_perceive");
@@ -807,28 +773,16 @@ fn fused_subset_marks_perimeter_without_aromatizing_internal_shared_bond() {
 
     for atom_id in [20, 21, 22, 23, 24, 25, 26, 27, 28] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("fused aromatic atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "fused atom {atom_id} should be aromatic"
         );
     }
     assert!(
-        molecule
-            .graph()
-            .bond(BondId::new(30))
-            .expect("accepted fused perimeter bond")
-            .aromatic,
+        aromatic_bond(&molecule, BondId::new(30)),
         "accepted fused-subset perimeter bond should be aromatic"
     );
     assert!(
-        !molecule
-            .graph()
-            .bond(BondId::new(26))
-            .expect("internal fused shared bond")
-            .aromatic,
+        !aromatic_bond(&molecule, BondId::new(26)),
         "internal fused shared bond should remain aliphatic"
     );
 }
@@ -907,11 +861,7 @@ $$$$
     normalize_and_perceive(&mut molecule).expect("fused SDF regression normalizes_and_perceives");
 
     assert!(
-        molecule
-            .graph()
-            .bond(BondId::new(17))
-            .expect("shared fused bond")
-            .aromatic,
+        aromatic_bond(&molecule, BondId::new(17)),
         "candidate five-electron fused neighbor should not suppress the accepted shared bond"
     );
 }
@@ -967,21 +917,10 @@ $$$$
     normalize_and_perceive(&mut molecule).expect("fused dione regression normalizes_and_perceives");
 
     assert!(
-        molecule
-            .graph()
-            .bond(BondId::new(12))
-            .expect("shared dione fused bond")
-            .aromatic,
+        aromatic_bond(&molecule, BondId::new(12)),
         "accepted lone-pair dione fused partner should not suppress the shared bond"
     );
-    assert_eq!(
-        molecule
-            .graph()
-            .bonds()
-            .filter(|(_, bond)| bond.aromatic)
-            .count(),
-        11
-    );
+    assert_eq!(aromatic_bond_count(&molecule), 11);
 }
 
 #[test]
@@ -993,29 +932,17 @@ fn fused_chalcogen_subset_with_exocyclic_pi_links_becomes_aromatic() {
         .expect("PubChem fused chalcogen regression should normalize_and_perceive");
 
     assert!(
-        molecule
-            .graph()
-            .atom(AtomId::new(3))
-            .expect("fused bridge oxygen")
-            .aromatic,
+        aromatic_atom(&molecule, AtomId::new(3)),
         "fused bridge oxygen should be aromatic"
     );
     for bond_id in [2, 3] {
         assert!(
-            molecule
-                .graph()
-                .bond(BondId::new(bond_id))
-                .expect("oxygen fused-subset perimeter bond")
-                .aromatic,
+            aromatic_bond(&molecule, BondId::new(bond_id)),
             "oxygen perimeter bond {bond_id} should be aromatic"
         );
     }
     assert!(
-        !molecule
-            .graph()
-            .atom(AtomId::new(10))
-            .expect("carbonyl center")
-            .aromatic,
+        !aromatic_atom(&molecule, AtomId::new(10)),
         "adjacent carbonyl center should stay aliphatic"
     );
 }
@@ -1029,11 +956,7 @@ fn fused_simple_aromatic_member_rings_can_share_aromatic_single_bond() {
         .expect("fused pyrimidinedione regression should normalize_and_perceive");
 
     assert!(
-        molecule
-            .graph()
-            .bond(BondId::new(17))
-            .expect("shared simple-ring bond")
-            .aromatic,
+        aromatic_bond(&molecule, BondId::new(17)),
         "shared bond between simple aromatic member rings should be aromatic"
     );
 }
@@ -1047,11 +970,7 @@ fn fused_quinone_cn_core_excludes_carbonyl_centers() {
 
     for atom_id in [6, 10] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("carbonyl center")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "carbonyl center {atom_id} should stay aliphatic"
         );
     }
@@ -1059,22 +978,11 @@ fn fused_quinone_cn_core_excludes_carbonyl_centers() {
         0, 1, 2, 3, 4, 5, 8, 9, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23, 24,
     ] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("fused aromatic atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "fused aromatic atom {atom_id} should be aromatic"
         );
     }
-    assert_eq!(
-        molecule
-            .graph()
-            .atoms()
-            .filter(|(_, atom)| atom.aromatic)
-            .count(),
-        20
-    );
+    assert_eq!(aromatic_atom_count(&molecule), 20);
 }
 
 #[test]
@@ -1083,8 +991,8 @@ fn canonical_fused_quinone_cn_core_round_trip_matches_aromatic_shape() {
         .expect("fused quinone should parse");
     normalize_and_perceive(&mut molecule).expect("fused quinone should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical fused quinone should write");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("canonical fused quinone should write");
     let mut reparsed = read_smiles(&written).expect("canonical fused quinone output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -1101,12 +1009,12 @@ fn canonical_fused_quinone_cn_core_round_trip_matches_aromatic_shape() {
     let aromatic_n_h_count = reparsed
         .graph()
         .atoms()
-        .filter(|(_, atom)| {
+        .filter(|(atom_id, atom)| {
             atom.element.symbol() == "N"
-                && atom.aromatic
+                && aromatic_atom(&reparsed, *atom_id)
                 && atom
                     .explicit_hydrogens
-                    .saturating_add(atom.implicit_hydrogens.unwrap_or(0))
+                    .saturating_add(implicit_hydrogens(&reparsed, *atom_id).unwrap_or(0))
                     == 1
         })
         .count();
@@ -1120,8 +1028,8 @@ fn canonical_aromatic_carbonyl_component_uses_representable_kekule_form() {
     normalize_and_perceive(&mut molecule)
         .expect("aromatic carbonyl ring should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical aromatic carbonyl should write");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("canonical aromatic carbonyl should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -1143,8 +1051,7 @@ fn canonical_charged_aromatic_carbon_component_uses_representable_kekule_form() 
         normalize_and_perceive(molecule)
             .expect("cyclopentadienyl salt component should normalize_and_perceive");
         let component_smiles =
-            smiles_api::write_canonical_with_options(molecule, CanonicalSmilesWriteOptions)
-                .expect("canonical component should write");
+            smiles_api::write_canonical(molecule).expect("canonical component should write");
         let mut reparsed = read_smiles(&component_smiles).expect("canonical output should parse");
         normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
             panic!("canonical output should normalize_and_perceive: {component_smiles}: {error}")
@@ -1163,7 +1070,7 @@ fn aromatic_carbonyl_center_count(mol: &Molecule) -> usize {
     mol.atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "C"
-                && atom.aromatic
+                && mol.atom_is_aromatic(*atom_id) == Ok(Some(true))
                 && mol
                     .incident_bonds(*atom_id)
                     .expect("atom should be live")
@@ -1186,21 +1093,13 @@ fn indole_quinone_keeps_carbonyl_ring_atoms_aliphatic() {
 
     for atom_id in [11, 13, 14, 15] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("quinone ring atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "quinone ring atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("fused aromatic atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "fused aromatic atom {atom_id} should be aromatic"
         );
     }
@@ -1216,21 +1115,13 @@ fn fused_imine_and_pyrimidinedione_aromaticity_matches_reference_shape() {
 
     for atom_id in [1, 2, 9] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("imine-ring atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "imine-ring atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [3, 4, 5, 6, 7, 8, 11, 12, 13, 14, 16, 17] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("aromatic fused atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "fused aromatic atom {atom_id} should be aromatic"
         );
     }
@@ -1246,16 +1137,12 @@ fn exocyclic_iminium_sulfur_ring_remains_aromatic() {
 
     for atom_id in [2, 3, 4, 8, 9] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("heteroaromatic ring atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "heteroaromatic ring atom {atom_id} should be aromatic"
         );
     }
     let exocyclic_iminium = molecule.graph().atom(AtomId::new(5)).expect("iminium N");
-    assert!(!exocyclic_iminium.aromatic);
+    assert!(!aromatic_atom(&molecule, AtomId::new(5)));
     assert_eq!(exocyclic_iminium.formal_charge, 1);
 }
 
@@ -1269,11 +1156,7 @@ fn fused_exocyclic_imine_sulfur_ring_remains_aromatic() {
 
     for atom_id in [26, 27, 28, 29, 30, 31, 32, 33, 34] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("fused benzothiazine atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "fused benzothiazine atom {atom_id} should be aromatic"
         );
     }
@@ -1289,21 +1172,13 @@ fn fused_sulfoxide_ring_does_not_follow_benzene_aromaticity() {
 
     for atom_id in [5, 6, 13] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("sulfoxide ring atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "sulfoxide ring atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [7, 8, 9, 10, 11, 12] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("benzene ring atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "benzene ring atom {atom_id} should stay aromatic"
         );
     }
@@ -1321,21 +1196,13 @@ fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
 
     for atom_id in [14, 15, 22] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("neutral sulfur ring atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "neutral sulfur ring atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [10, 12] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("cationic sulfur ring atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "cationic sulfur ring atom {atom_id} should be aromatic"
         );
     }
@@ -1344,7 +1211,7 @@ fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && !atom.aromatic
+                && !aromatic_atom(&molecule, *id)
                 && molecule.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds.len() == 3
@@ -1377,7 +1244,7 @@ fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
         .filter(|(id, atom)| {
             atom.element.symbol() == "N"
                 && atom.formal_charge == 0
-                && !atom.aromatic
+                && !aromatic_atom(&molecule, *id)
                 && molecule.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     bonds.into_iter().any(|(_, bond)| {
                         molecule
@@ -1385,7 +1252,7 @@ fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
                             .atom(bond.other_atom(*id))
                             .is_ok_and(|other| {
                                 other.element.symbol() == "C"
-                                    && !other.aromatic
+                                    && !aromatic_atom(&molecule, bond.other_atom(*id))
                                     && molecule
                                         .graph()
                                         .incident_bonds(bond.other_atom(*id))
@@ -1422,7 +1289,7 @@ fn fused_seven_membered_ether_ring_stays_aliphatic() {
         .graph()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "O")
-        .all(|(_, atom)| !atom.aromatic));
+        .all(|(atom_id, _)| !aromatic_atom(&molecule, atom_id)));
 }
 
 #[test]
@@ -1437,26 +1304,19 @@ fn charged_bracket_halogen_and_bismuth_salt_normalizes_and_perceives() {
             .expect("charged bracket salt component should normalize_and_perceive");
     }
 
-    let protonated_chlorine = components
-        .iter()
-        .flat_map(|molecule| molecule.graph().atoms())
-        .map(|(_, atom)| atom)
-        .find(|atom| atom.element.symbol() == "Cl" && atom.formal_charge == 1)
+    let protonated_chlorine = components[2]
+        .graph()
+        .atom(AtomId::new(0))
         .expect("protonated chlorine");
     assert_eq!(protonated_chlorine.element.symbol(), "Cl");
     assert_eq!(protonated_chlorine.formal_charge, 1);
     assert_eq!(protonated_chlorine.explicit_hydrogens, 2);
-    assert_eq!(protonated_chlorine.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&components[2], AtomId::new(0)), Some(0));
 
-    let bismuth = components
-        .iter()
-        .flat_map(|molecule| molecule.graph().atoms())
-        .map(|(_, atom)| atom)
-        .find(|atom| atom.element.symbol() == "Bi")
-        .expect("bismuth");
+    let bismuth = components[4].graph().atom(AtomId::new(0)).expect("bismuth");
     assert_eq!(bismuth.element.symbol(), "Bi");
     assert_eq!(bismuth.formal_charge, 3);
-    assert_eq!(bismuth.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&components[4], AtomId::new(0)), Some(0));
 }
 
 #[test]
@@ -1469,17 +1329,11 @@ fn oxide_dianion_transition_metal_salt_normalizes_and_perceives() {
             .expect("oxide transition-metal salt component should normalize_and_perceive");
     }
 
-    let oxides = components
-        .iter()
-        .flat_map(|molecule| molecule.graph().atoms())
-        .filter(|(_, atom)| atom.element.symbol() == "O")
-        .map(|(_, atom)| atom)
-        .collect::<Vec<_>>();
-    assert_eq!(oxides.len(), 3);
-    for oxygen in oxides {
+    for oxide in &components[..3] {
+        let oxygen = oxide.graph().atom(AtomId::new(0)).expect("oxide");
         assert_eq!(oxygen.element.symbol(), "O");
         assert_eq!(oxygen.formal_charge, -2);
-        assert_eq!(oxygen.implicit_hydrogens, Some(0));
+        assert_eq!(implicit_hydrogens(oxide, AtomId::new(0)), Some(0));
     }
 }
 
@@ -1496,7 +1350,7 @@ fn hydroxide_niobium_v_salt_normalizes_and_perceives() {
     let niobium = components[1].graph().atom(AtomId::new(0)).expect("niobium");
     assert_eq!(niobium.element.symbol(), "Nb");
     assert_eq!(niobium.formal_charge, 5);
-    assert_eq!(niobium.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&components[1], AtomId::new(0)), Some(0));
 }
 
 #[test]
@@ -1512,7 +1366,7 @@ fn formate_indium_salt_normalizes_and_perceives() {
     let indium = components[3].graph().atom(AtomId::new(0)).expect("indium");
     assert_eq!(indium.element.symbol(), "In");
     assert_eq!(indium.formal_charge, 3);
-    assert_eq!(indium.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&components[3], AtomId::new(0)), Some(0));
 }
 
 #[test]
@@ -1524,7 +1378,7 @@ fn periodate_cleanup_normalizes_and_perceives_iodine_plus_three() {
     let iodine = molecule.graph().atom(AtomId::new(1)).expect("iodine");
     assert_eq!(iodine.element.symbol(), "I");
     assert_eq!(iodine.formal_charge, 3);
-    assert_eq!(iodine.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&molecule, AtomId::new(1)), Some(0));
 }
 
 #[test]
@@ -1534,10 +1388,8 @@ fn sodium_chlorate_normalizes_and_perceives_without_aromaticity() {
     for molecule in &mut components {
         normalize_and_perceive(molecule)
             .expect("sodium chlorate component should normalize_and_perceive");
-        assert!(
-            molecule.graph().atoms().all(|(_, atom)| !atom.aromatic)
-                && molecule.graph().bonds().all(|(_, bond)| !bond.aromatic)
-        );
+        assert_eq!(aromatic_atom_count(molecule), 0);
+        assert_eq!(aromatic_bond_count(molecule), 0);
     }
 }
 
@@ -1603,15 +1455,10 @@ fn uranyl_beta_diketonate_salt_normalizes_and_perceives() {
             .expect("uranyl salt component should normalize_and_perceive");
     }
 
-    let uranium = components[2]
-        .graph()
-        .atoms()
-        .find(|(_, atom)| atom.element.symbol() == "U")
-        .expect("uranium")
-        .1;
+    let uranium = components[2].graph().atom(AtomId::new(1)).expect("uranium");
     assert_eq!(uranium.element.symbol(), "U");
     assert_eq!(uranium.formal_charge, 2);
-    assert_eq!(uranium.implicit_hydrogens, Some(0));
+    assert_eq!(implicit_hydrogens(&components[2], AtomId::new(1)), Some(0));
 }
 
 #[test]
@@ -1632,10 +1479,7 @@ fn cyclopentadienyl_anion_normalizes_and_perceives_aromatic() {
             .expect("cyclopentadienyl atom");
         assert_eq!(atom.element.symbol(), "C");
         assert_eq!(atom.formal_charge, -1);
-        assert!(
-            atom.aromatic,
-            "anion ring atom {atom_id} should be aromatic"
-        );
+        assert!(aromatic_atom(molecule, AtomId::new(atom_id)));
     }
 }
 
@@ -1650,21 +1494,13 @@ fn fused_quinone_ring_does_not_follow_benzene_aromaticity() {
 
     for atom_id in [17, 18, 19, 27] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("quinone ring atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "quinone ring atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [21, 22, 23, 24, 25, 26] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("benzene ring atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "benzene ring atom {atom_id} should stay aromatic"
         );
     }
@@ -1683,11 +1519,7 @@ fn singly_carbonylated_fused_ring_stays_aromatic() {
 
     for atom_id in [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("aromatic fused atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "fused atom {atom_id} should be aromatic"
         );
     }
@@ -1703,21 +1535,13 @@ fn saturated_fused_ring_does_not_follow_aromatic_core() {
 
     for atom_id in [0, 1, 2, 13] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("saturated fused atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "saturated fused atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("aromatic core atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "aromatic core atom {atom_id} should be aromatic"
         );
     }
@@ -1730,7 +1554,7 @@ fn canonical_saturated_fused_ring_round_trip_stays_aliphatic() {
     normalize_and_perceive(&mut molecule)
         .expect("saturated fused ring salt should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("saturated fused ring salt should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
@@ -1741,13 +1565,13 @@ fn canonical_saturated_fused_ring_round_trip_stays_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && atom.implicit_hydrogens == Some(2)
+                && implicit_hydrogens(&reparsed, *id) == Some(2)
                 && reparsed
                     .graph()
                     .incident_bonds(*id)
                     .is_ok_and(|bonds| bonds.count() == 2)
         })
-        .filter(|(_, atom)| !atom.aromatic)
+        .filter(|(atom_id, _)| !aromatic_atom(&reparsed, *atom_id))
         .count();
     assert!(
         saturated_carbons >= 4,
@@ -1761,17 +1585,13 @@ fn canonical_fused_chromanone_round_trip_keeps_lactone_ring_aliphatic() {
         read_smiles("C1C(C(=O)C2=CC=CC=C2O1)C3=CC=CC=C3").expect("fused chromanone should parse");
     normalize_and_perceive(&mut molecule).expect("fused chromanone should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("fused chromanone should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("fused chromanone should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(
         aromatic_atoms, 12,
         "canonical output should keep only the phenyl and fused benzene rings aromatic: {written}"
@@ -1787,17 +1607,13 @@ fn conjugated_fused_benzopyrone_round_trip_keeps_lactone_ring_aromatic() {
     normalize_and_perceive(&mut molecule)
         .expect("conjugated benzopyrone should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("conjugated benzopyrone should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("conjugated benzopyrone should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(
         aromatic_atoms, 27,
         "canonical output should preserve the conjugated benzopyrone aromatic system: {written}"
@@ -1814,17 +1630,13 @@ fn fused_fluorenone_round_trip_keeps_carbonyl_bridge_aliphatic() {
     normalize_and_perceive(&mut molecule)
         .expect("fused fluorenone salt should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("fused fluorenone salt should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("fused fluorenone salt should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(
         aromatic_atoms, 12,
         "canonical output should keep the fluorenone carbonyl bridge aliphatic: {written}"
@@ -1837,25 +1649,21 @@ fn fused_saturated_carbonyl_bridge_round_trip_stays_aliphatic() {
         .expect("saturated carbonyl bridge should parse");
     normalize_and_perceive(&mut molecule)
         .expect("saturated carbonyl bridge should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("saturated carbonyl bridge should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(
         aromatic_atoms, 12,
         "canonical output should preserve only the two aromatic rings: {written}"
     );
     assert!(reparsed.graph().atoms().any(|(id, atom)| {
         atom.element.symbol() == "C"
-            && !atom.aromatic
-            && atom.implicit_hydrogens == Some(0)
+            && !aromatic_atom(&reparsed, id)
+            && implicit_hydrogens(&reparsed, id) == Some(0)
             && reparsed.graph().incident_bonds(id).is_ok_and(|bonds| {
                 let bonds = bonds.collect::<Vec<_>>();
                 bonds.len() == 3
@@ -1876,15 +1684,14 @@ fn fused_multi_quinone_bridge_round_trip_normalizes_and_perceives() {
         .expect("fused multi-quinone should parse");
     normalize_and_perceive(&mut molecule)
         .expect("fused multi-quinone should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("fused multi-quinone should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("fused multi-quinone should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let rewritten =
-        smiles_api::write_canonical_with_options(&reparsed, CanonicalSmilesWriteOptions)
-            .expect("reparsed fused multi-quinone should canonicalize");
+    let rewritten = smiles_api::write_canonical(&reparsed)
+        .expect("reparsed fused multi-quinone should canonicalize");
     assert!(!rewritten.is_empty());
 }
 
@@ -1892,25 +1699,20 @@ fn fused_multi_quinone_bridge_round_trip_normalizes_and_perceives() {
 fn canonical_tellurophene_round_trip_preserves_aromatic_chalcogen() {
     let mut molecule = read_smiles("C1=C[Te]C=C1").expect("tellurophene should parse");
     normalize_and_perceive(&mut molecule).expect("tellurophene should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("tellurophene should canonicalize");
+    let written = smiles_api::write_canonical(&molecule).expect("tellurophene should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(aromatic_atoms, 5, "{written}");
     let tellurium = reparsed
         .graph()
         .atoms()
-        .find_map(|(_, atom)| (atom.element.symbol() == "Te").then_some(atom))
+        .find_map(|(atom_id, atom)| (atom.element.symbol() == "Te").then_some((atom_id, atom)))
         .expect("tellurium atom");
-    assert!(tellurium.aromatic, "{written}");
-    assert!(tellurium.no_implicit_hydrogens, "{written}");
+    assert!(aromatic_atom(&reparsed, tellurium.0), "{written}");
+    assert!(tellurium.1.no_implicit_hydrogens, "{written}");
 }
 
 #[test]
@@ -1918,8 +1720,7 @@ fn canonical_aryl_mercury_round_trip_preserves_no_implicit_aromatic_carbon() {
     let mut molecule =
         read_smiles("C1=CC=C(C(=C1)[N+](=O)[O-])[Hg]").expect("aryl mercury should parse");
     normalize_and_perceive(&mut molecule).expect("aryl mercury should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("aryl mercury should canonicalize");
+    let written = smiles_api::write_canonical(&molecule).expect("aryl mercury should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
@@ -1937,13 +1738,16 @@ fn canonical_aryl_mercury_round_trip_preserves_no_implicit_aromatic_carbon() {
                             .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
                     })
                 }))
-            .then_some(atom)
+            .then_some((id, atom))
         })
         .expect("aromatic carbon bound to mercury");
-    assert!(mercury_bound_carbon.aromatic, "{written}");
-    assert!(mercury_bound_carbon.no_implicit_hydrogens, "{written}");
+    assert!(
+        aromatic_atom(&reparsed, mercury_bound_carbon.0),
+        "{written}"
+    );
+    assert!(mercury_bound_carbon.1.no_implicit_hydrogens, "{written}");
     assert_eq!(
-        mercury_bound_carbon.implicit_hydrogens,
+        implicit_hydrogens(&reparsed, mercury_bound_carbon.0),
         Some(0),
         "{written}"
     );
@@ -1955,7 +1759,7 @@ fn fused_sulfonamide_tertiary_amine_round_trip_keeps_ring_nitrogen_aliphatic() {
         .expect("fused sulfonamide tertiary amine should parse");
     normalize_and_perceive(&mut molecule)
         .expect("fused sulfonamide tertiary amine should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("fused sulfonamide tertiary amine should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
@@ -1966,7 +1770,7 @@ fn fused_sulfonamide_tertiary_amine_round_trip_keeps_ring_nitrogen_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "N"
-                && !atom.aromatic
+                && !aromatic_atom(&reparsed, *id)
                 && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds.len() == 3
@@ -1990,25 +1794,21 @@ fn cationic_fused_imide_round_trip_clears_carbonyl_ring_atoms() {
     .expect("cationic fused imide should parse");
     normalize_and_perceive(&mut molecule)
         .expect("cationic fused imide should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("cationic fused imide should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("cationic fused imide should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(aromatic_atoms, 22, "{written}");
     let aliphatic_carbonyl_ring_atoms = reparsed
         .graph()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && !atom.aromatic
-                && atom.implicit_hydrogens == Some(0)
+                && !aromatic_atom(&reparsed, *id)
+                && implicit_hydrogens(&reparsed, *id) == Some(0)
                 && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds.len() == 3
@@ -2030,15 +1830,14 @@ fn fused_quinone_ring_round_trip_normalizes_and_perceives() {
     let mut molecule =
         read_smiles("C1=CC=C(C=C1)C2=CC3=C(N2)C(=O)C=CC3=O").expect("fused quinone should parse");
     normalize_and_perceive(&mut molecule).expect("fused quinone should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("fused quinone should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("fused quinone should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
     let rewritten =
-        smiles_api::write_canonical_with_options(&reparsed, CanonicalSmilesWriteOptions)
-            .expect("reparsed fused quinone should canonicalize");
+        smiles_api::write_canonical(&reparsed).expect("reparsed fused quinone should canonicalize");
     assert!(!rewritten.is_empty());
 }
 
@@ -2048,7 +1847,7 @@ fn thiofuran_pyrimidinedione_canonical_round_trip_normalizes_and_perceives() {
         .expect("thiofuran pyrimidinedione should parse");
     normalize_and_perceive(&mut molecule)
         .expect("thiofuran pyrimidinedione should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("thiofuran pyrimidinedione should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
@@ -2063,7 +1862,7 @@ fn fused_thiadiazolopyrimidinone_canonical_round_trip_preserves_aromatic_nitroge
             .expect("fused thiadiazolopyrimidinone should parse");
     normalize_and_perceive(&mut molecule)
         .expect("fused thiadiazolopyrimidinone should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("fused thiadiazolopyrimidinone should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
@@ -2077,25 +1876,21 @@ fn imine_fused_benzene_with_exocyclic_pyrimidinedione_keeps_imine_ring_aliphatic
         .expect("imine fused benzene should parse");
     normalize_and_perceive(&mut molecule)
         .expect("imine fused benzene should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("imine fused benzene should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("imine fused benzene should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
     });
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(aromatic_atoms, 12, "{written}");
     let aliphatic_imine_nitrogens = reparsed
         .graph()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "N"
-                && !atom.aromatic
+                && !aromatic_atom(&reparsed, *id)
                 && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     bonds
                         .into_iter()
@@ -2113,16 +1908,15 @@ fn fused_naphthalimide_canonical_round_trip_normalizes_and_perceives() {
             .expect("fused naphthalimide should parse");
     normalize_and_perceive(&mut molecule)
         .expect("fused naphthalimide should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("fused naphthalimide should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("fused naphthalimide should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
     });
 
-    let rewritten =
-        smiles_api::write_canonical_with_options(&reparsed, CanonicalSmilesWriteOptions)
-            .expect("reparsed fused naphthalimide should canonicalize");
+    let rewritten = smiles_api::write_canonical(&reparsed)
+        .expect("reparsed fused naphthalimide should canonicalize");
     assert!(!rewritten.is_empty());
 }
 
@@ -2133,7 +1927,7 @@ fn partially_saturated_fused_amide_enone_ring_stays_aliphatic() {
             .expect("partially saturated fused amide enone should parse");
     normalize_and_perceive(&mut molecule)
         .expect("partially saturated fused amide enone should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("partially saturated fused amide enone should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
@@ -2145,7 +1939,7 @@ fn partially_saturated_fused_amide_enone_ring_stays_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && !atom.aromatic
+                && !aromatic_atom(&reparsed, *id)
                 && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds
@@ -2155,7 +1949,8 @@ fn partially_saturated_fused_amide_enone_ring_stays_aliphatic() {
                             reparsed
                                 .graph()
                                 .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "C" && !other.aromatic)
+                                .is_ok_and(|other| other.element.symbol() == "C")
+                                && !aromatic_atom(&reparsed, bond.other_atom(*id))
                         })
                 })
         })
@@ -2172,8 +1967,8 @@ fn fused_lactam_enone_canonical_round_trip_keeps_bridge_carbon_aliphatic() {
     .expect("fused lactam enone should parse");
     normalize_and_perceive(&mut molecule)
         .expect("fused lactam enone should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("fused lactam enone should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("fused lactam enone should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -2184,7 +1979,7 @@ fn fused_lactam_enone_canonical_round_trip_keeps_bridge_carbon_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && !atom.aromatic
+                && !aromatic_atom(&reparsed, *id)
                 && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds.iter().any(|(_, bond)| {
@@ -2192,7 +1987,8 @@ fn fused_lactam_enone_canonical_round_trip_keeps_bridge_carbon_aliphatic() {
                             && reparsed
                                 .graph()
                                 .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "C" && !other.aromatic)
+                                .is_ok_and(|other| other.element.symbol() == "C")
+                            && !aromatic_atom(&reparsed, bond.other_atom(*id))
                     }) && bonds.iter().any(|(_, bond)| {
                         matches!(bond.order, BondOrder::Single)
                             && reparsed
@@ -2210,7 +2006,9 @@ fn fused_lactam_enone_canonical_round_trip_keeps_bridge_carbon_aliphatic() {
     let aromatic_oxygens = reparsed
         .graph()
         .atoms()
-        .filter(|(_, atom)| atom.element.symbol() == "O" && atom.aromatic)
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "O" && aromatic_atom(&reparsed, *atom_id)
+        })
         .count();
     assert_eq!(aromatic_oxygens, 0, "{written}");
 }
@@ -2221,7 +2019,7 @@ fn spiro_saturated_fused_hydrocarbon_bridge_stays_aliphatic() {
         .expect("spiro saturated fused hydrocarbon should parse");
     normalize_and_perceive(&mut molecule)
         .expect("spiro saturated fused hydrocarbon should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("spiro saturated fused hydrocarbon should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
@@ -2233,13 +2031,15 @@ fn spiro_saturated_fused_hydrocarbon_bridge_stays_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && atom.aromatic
+                && aromatic_atom(&reparsed, *id)
                 && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds
                         .iter()
                         .all(|(_, bond)| matches!(bond.order, BondOrder::Single))
-                        && bonds.iter().any(|(_, bond)| !bond.aromatic)
+                        && bonds
+                            .iter()
+                            .any(|(bond_id, _)| !aromatic_bond(&reparsed, *bond_id))
                 })
         })
         .count();
@@ -2252,8 +2052,8 @@ fn fused_cyclic_imine_round_trip_keeps_imine_carbon_aliphatic() {
         read_smiles("C1CN2CC3=CC=CC=C3N=C2[C@@H]1O").expect("fused cyclic imine should parse");
     normalize_and_perceive(&mut molecule)
         .expect("fused cyclic imine should normalize_and_perceive");
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("fused cyclic imine should canonicalize");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("fused cyclic imine should canonicalize");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -2264,7 +2064,7 @@ fn fused_cyclic_imine_round_trip_keeps_imine_carbon_aliphatic() {
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
-                && atom.aromatic
+                && aromatic_atom(&reparsed, *id)
                 && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
                     let bonds = bonds.collect::<Vec<_>>();
                     bonds.iter().any(|(_, bond)| {
@@ -2297,21 +2097,13 @@ fn partially_saturated_carbonyl_fused_rings_stay_aliphatic() {
 
     for atom_id in [1, 2, 3, 4, 5, 7, 9, 10, 21, 23, 24, 25] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("partially saturated ring atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "partially saturated ring atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [12, 13, 14, 15, 16, 17] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("phenyl atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "phenyl atom {atom_id} should be aromatic"
         );
     }
@@ -2327,21 +2119,13 @@ fn fused_lactam_bridge_ring_stays_aliphatic() {
 
     for atom_id in [2, 9, 12] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("lactam bridge atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "lactam bridge atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [3, 4, 5, 6, 7, 8, 10, 11, 14, 15, 16, 17] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("aromatic fused atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "aromatic fused atom {atom_id} should be aromatic"
         );
     }
@@ -2356,16 +2140,8 @@ fn fused_pubchem_subset_aromaticity_remains_additive() {
     normalize_and_perceive(&mut molecule)
         .expect("PubChem fused subset boundary should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     assert_eq!(
         (aromatic_atoms, aromatic_bonds),
         (18, 20),
@@ -2381,25 +2157,13 @@ fn fused_imine_sulfonamide_neighbor_ring_stays_aliphatic() {
     normalize_and_perceive(&mut molecule)
         .expect("fused imine sulfonamide record should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     assert_eq!((aromatic_atoms, aromatic_bonds), (10, 11));
 
     for atom_id in [13, 14, 15, 16, 17, 24] {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("sulfonamide-adjacent ring atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "sulfonamide-adjacent fused atom {atom_id} should stay aliphatic"
         );
     }
@@ -2414,20 +2178,14 @@ fn fused_imide_heterocycle_keeps_only_phenyl_rings_aromatic() {
     normalize_and_perceive(&mut molecule)
         .expect("fused imide heterocycle should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     let aromatic_nitrogens = molecule
         .graph()
         .atoms()
-        .filter(|(_, atom)| atom.element.symbol() == "N" && atom.aromatic)
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "N" && aromatic_atom(&molecule, *atom_id)
+        })
         .count();
     assert_eq!((aromatic_atoms, aromatic_bonds), (18, 18));
     assert_eq!(aromatic_nitrogens, 0);
@@ -2443,11 +2201,7 @@ fn fused_four_member_diketone_ring_can_be_aromatic() {
 
     for atom_id in [12, 13, 14, 16] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("four-member diketone atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "four-member diketone atom {atom_id} should be aromatic"
         );
     }
@@ -2460,11 +2214,7 @@ fn large_conjugated_macrocycle_aromatic_core_is_not_size_skipped() {
 
     normalize_and_perceive(&mut molecule).expect("macrocycle salt should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
     assert!(
         aromatic_atoms > 24,
         "large fused systems should not be constrained by a pre-RDKit-size cap"
@@ -2479,7 +2229,7 @@ fn large_conjugated_macrocycle_aromatic_core_is_not_size_skipped() {
         .graph()
         .atom(AtomId::new(0))
         .expect("copper atom");
-    assert!(!copper.aromatic);
+    assert!(!aromatic_atom(&copper_component, AtomId::new(0)));
     assert_eq!(copper.formal_charge, 2);
 }
 
@@ -2495,7 +2245,7 @@ fn tetrahydroporphyrin_marks_each_conjugated_pyrrole_ring_aromatic() {
     let aromatic_atoms = molecule
         .graph()
         .atoms()
-        .filter(|(_, atom)| atom.aromatic)
+        .filter(|(atom_id, _)| aromatic_atom(&molecule, *atom_id))
         .map(|(atom_id, atom)| (atom_id.index(), atom.element.symbol()))
         .collect::<Vec<_>>();
     let rings = molecule
@@ -2516,7 +2266,7 @@ fn tetrahydroporphyrin_marks_each_conjugated_pyrrole_ring_aromatic() {
                         atom.index(),
                         payload.element.symbol(),
                         payload.explicit_hydrogens,
-                        payload.implicit_hydrogens,
+                        implicit_hydrogens(&molecule, *atom),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -2547,16 +2297,8 @@ fn fused_lone_pair_five_ring_with_macrocycle_pi_links_stays_aromatic() {
     normalize_and_perceive(&mut molecule)
         .expect("porphyrinoid macrocycle should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     assert_eq!((aromatic_atoms, aromatic_bonds), (20, 22));
 }
 
@@ -2568,16 +2310,8 @@ fn fused_five_electron_support_ring_keeps_outer_perimeter_aliphatic() {
     normalize_and_perceive(&mut molecule)
         .expect("anionic macrocycle salt should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
-    let aromatic_bonds = molecule
-        .graph()
-        .bonds()
-        .filter(|(_, bond)| bond.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
+    let aromatic_bonds = aromatic_bond_count(&molecule);
     assert_eq!((aromatic_atoms, aromatic_bonds), (20, 22));
 }
 
@@ -2591,30 +2325,18 @@ fn neutral_aza_macrocycle_core_stays_aliphatic() {
     normalize_and_perceive(&mut molecule)
         .expect("neutral aza macrocycle should normalize_and_perceive");
 
-    let aromatic_atoms = molecule
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&molecule);
     assert_eq!(aromatic_atoms, 24);
 
     for atom_id in 6..=21 {
         assert!(
-            !molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("neutral aza macrocycle atom")
-                .aromatic,
+            !aromatic_atom(&molecule, AtomId::new(atom_id)),
             "neutral aza macrocycle atom {atom_id} should stay aliphatic"
         );
     }
     for atom_id in [0, 1, 2, 3, 4, 5, 22, 23, 24, 25, 26, 27] {
         assert!(
-            molecule
-                .graph()
-                .atom(AtomId::new(atom_id))
-                .expect("benzene atom")
-                .aromatic,
+            aromatic_atom(&molecule, AtomId::new(atom_id)),
             "benzene atom {atom_id} should stay aromatic"
         );
     }
@@ -2632,7 +2354,7 @@ fn fused_azo_indole_ring_keeps_explicit_hydrogen_nitrogen_aromatic() {
     let aromatic_atom_ids = molecule
         .graph()
         .atoms()
-        .filter_map(|(atom_id, atom)| atom.aromatic.then_some(atom_id.index()))
+        .filter_map(|(atom_id, _)| aromatic_atom(&molecule, atom_id).then_some(atom_id.index()))
         .collect::<Vec<_>>();
     assert_eq!(aromatic_atom_ids.len(), 15, "{aromatic_atom_ids:?}");
 }
@@ -2645,34 +2367,18 @@ fn fused_tertiary_amine_ring_does_not_extend_aromatic_core() {
     normalize_and_perceive(&mut molecule)
         .expect("fused tertiary amine record should normalize_and_perceive");
 
-    assert_eq!(
-        molecule
-            .graph()
-            .atoms()
-            .filter(|(_, atom)| atom.aromatic)
-            .count(),
-        6
-    );
+    assert_eq!(aromatic_atom_count(&molecule), 6);
     assert!(molecule
         .graph()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "N")
-        .all(|(_, atom)| !atom.aromatic));
+        .all(|(atom_id, _)| !aromatic_atom(&molecule, atom_id)));
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
-    assert_eq!(
-        reparsed
-            .graph()
-            .atoms()
-            .filter(|(_, atom)| atom.aromatic)
-            .count(),
-        6,
-        "{written}"
-    );
+    assert_eq!(aromatic_atom_count(&reparsed), 6, "{written}");
 }
 
 #[test]
@@ -2687,8 +2393,7 @@ fn fused_n_hydroxy_lactam_ring_stays_aromatic() {
         .graph()
         .atoms()
         .filter_map(|(atom_id, atom)| {
-            atom.aromatic
-                .then_some((atom_id.index(), atom.element.symbol()))
+            aromatic_atom(&molecule, atom_id).then_some((atom_id.index(), atom.element.symbol()))
         })
         .collect::<Vec<_>>();
     assert_eq!(aromatic_atoms.len(), 10, "{aromatic_atoms:?}");
@@ -2696,22 +2401,13 @@ fn fused_n_hydroxy_lactam_ring_stays_aromatic() {
         .graph()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "N")
-        .all(|(_, atom)| atom.aromatic));
+        .all(|(atom_id, _)| aromatic_atom(&molecule, atom_id)));
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
-    assert_eq!(
-        reparsed
-            .graph()
-            .atoms()
-            .filter(|(_, atom)| atom.aromatic)
-            .count(),
-        10,
-        "{written}"
-    );
+    assert_eq!(aromatic_atom_count(&reparsed), 10, "{written}");
 }
 
 #[test]
@@ -2728,22 +2424,25 @@ fn n_aryl_fused_pyrrole_ring_stays_aromatic() {
     let aromatic_neutral_nitrogens = molecule
         .graph()
         .atoms()
-        .filter(|(_, atom)| {
-            atom.element.symbol() == "N" && atom.formal_charge == 0 && atom.aromatic
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "N"
+                && atom.formal_charge == 0
+                && aromatic_atom(&molecule, *atom_id)
         })
         .count();
     assert_eq!(aromatic_neutral_nitrogens, 1);
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
     let reparsed_aromatic_neutral_nitrogens = reparsed
         .graph()
         .atoms()
-        .filter(|(_, atom)| {
-            atom.element.symbol() == "N" && atom.formal_charge == 0 && atom.aromatic
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "N"
+                && atom.formal_charge == 0
+                && aromatic_atom(&reparsed, *atom_id)
         })
         .count();
     assert_eq!(reparsed_aromatic_neutral_nitrogens, 1, "{written}");
@@ -2762,22 +2461,25 @@ fn fused_saturated_thioether_bridge_stays_aliphatic() {
     let neutral_sulfur_aromatic_count = molecule
         .graph()
         .atoms()
-        .filter(|(_, atom)| {
-            atom.element.symbol() == "S" && atom.formal_charge == 0 && atom.aromatic
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "S"
+                && atom.formal_charge == 0
+                && aromatic_atom(&molecule, *atom_id)
         })
         .count();
     assert_eq!(neutral_sulfur_aromatic_count, 0);
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
     let reparsed_neutral_sulfur_aromatic_count = reparsed
         .graph()
         .atoms()
-        .filter(|(_, atom)| {
-            atom.element.symbol() == "S" && atom.formal_charge == 0 && atom.aromatic
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "S"
+                && atom.formal_charge == 0
+                && aromatic_atom(&reparsed, *atom_id)
         })
         .count();
     assert_eq!(reparsed_neutral_sulfur_aromatic_count, 0, "{written}");
@@ -2791,8 +2493,7 @@ fn canonical_smiles_prefers_normalizable_lactone_candidate() {
         normalize_and_perceive(molecule)
             .expect("lactone imidazole component should normalize_and_perceive");
         let written =
-            smiles_api::write_canonical_with_options(molecule, CanonicalSmilesWriteOptions)
-                .expect("canonical component SMILES should write");
+            smiles_api::write_canonical(molecule).expect("canonical component SMILES should write");
         let mut reparsed = read_smiles(&written).expect("canonical output should parse");
         normalize_and_perceive(&mut reparsed).unwrap_or_else(|_| {
             panic!("canonical output should normalize_and_perceive: {written}")
@@ -2810,17 +2511,12 @@ fn saturated_fused_benzodiazepinone_lactam_round_trip_stays_aliphatic() {
             .expect("benzodiazepinone should parse");
     normalize_and_perceive(&mut molecule).expect("benzodiazepinone should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed)
         .unwrap_or_else(|_| panic!("canonical output should normalize_and_perceive: {written}"));
 
-    let aromatic_atoms = reparsed
-        .graph()
-        .atoms()
-        .filter(|(_, atom)| atom.aromatic)
-        .count();
+    let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(
         aromatic_atoms, 12,
         "canonical output should keep only the two benzene rings aromatic: {written}"
@@ -2828,7 +2524,9 @@ fn saturated_fused_benzodiazepinone_lactam_round_trip_stays_aliphatic() {
     let aromatic_nitrogens = reparsed
         .graph()
         .atoms()
-        .filter(|(_, atom)| atom.element.symbol() == "N" && atom.aromatic)
+        .filter(|(atom_id, atom)| {
+            atom.element.symbol() == "N" && aromatic_atom(&reparsed, *atom_id)
+        })
         .count();
     assert_eq!(aromatic_nitrogens, 0, "{written}");
 }
@@ -2845,25 +2543,24 @@ fn aromatic_pyridinium_smiles_normalizes_and_perceives() {
         .graph()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "N" && atom.formal_charge > 0)
-        .expect("pyridinium nitrogen should exist")
-        .1;
-    assert!(cationic_nitrogen.aromatic);
+        .expect("pyridinium nitrogen should exist");
+    assert!(aromatic_atom(&molecule, cationic_nitrogen.0));
 
     let mut protonated = read_smiles("Nc1ccc[nH+]c1").expect("protonated pyridinium should parse");
     normalize_and_perceive(&mut protonated)
         .expect("protonated pyridinium should normalize_and_perceive");
-    assert!(protonated
-        .graph()
-        .atoms()
-        .any(|(_, atom)| atom.element.symbol() == "N" && atom.formal_charge > 0 && atom.aromatic));
+    assert!(protonated.graph().atoms().any(|(atom_id, atom)| {
+        atom.element.symbol() == "N"
+            && atom.formal_charge > 0
+            && aromatic_atom(&protonated, atom_id)
+    }));
 
     let mut anionic = read_smiles("c1[n-]cnn1").expect("anionic aromatic nitrogen should parse");
     normalize_and_perceive(&mut anionic)
         .expect("anionic aromatic nitrogen should normalize_and_perceive");
-    assert!(anionic
-        .graph()
-        .atoms()
-        .any(|(_, atom)| atom.element.symbol() == "N" && atom.formal_charge < 0 && atom.aromatic));
+    assert!(anionic.graph().atoms().any(|(atom_id, atom)| {
+        atom.element.symbol() == "N" && atom.formal_charge < 0 && aromatic_atom(&anionic, atom_id)
+    }));
 }
 
 #[test]
@@ -2878,8 +2575,7 @@ fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
     let mut molecule = read_smiles("CC[Hg+]").expect("organomercury SMILES parses");
     normalize_and_perceive(&mut molecule).expect("organomercury SMILES normalizes_and_perceives");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
 
     assert!(written.contains("[CH2][Hg+]"), "{written}");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
@@ -2901,17 +2597,15 @@ fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
                             .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
                     })
         })
-        .expect("canonical output should retain a carbon-mercury bond")
-        .1;
-    assert_eq!(metal_bound_carbon.explicit_hydrogens, 2);
-    assert!(metal_bound_carbon.no_implicit_hydrogens);
-    assert_eq!(metal_bound_carbon.implicit_hydrogens, Some(0));
+        .expect("canonical output should retain a carbon-mercury bond");
+    assert_eq!(metal_bound_carbon.1.explicit_hydrogens, 2);
+    assert!(metal_bound_carbon.1.no_implicit_hydrogens);
+    assert_eq!(implicit_hydrogens(&reparsed, metal_bound_carbon.0), Some(0));
 
     let mut thallium = read_smiles("C[Tl](C)C").expect("organothallium SMILES parses");
     normalize_and_perceive(&mut thallium).expect("organothallium SMILES normalizes_and_perceives");
-    let thallium_written =
-        smiles_api::write_canonical_with_options(&thallium, CanonicalSmilesWriteOptions)
-            .expect("organothallium canonical SMILES should write");
+    let thallium_written = smiles_api::write_canonical(&thallium)
+        .expect("organothallium canonical SMILES should write");
     assert_eq!(
         thallium_written.matches("[CH3]").count(),
         3,
@@ -2934,8 +2628,8 @@ fn canonical_smiles_materializes_hydrogen_on_bracketed_hypervalent_phosphorus() 
     let mut molecule = read_smiles("OP(=O)O").expect("phosphorous acid should parse");
     normalize_and_perceive(&mut molecule).expect("phosphorous acid should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical phosphorous acid should write");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("canonical phosphorous acid should write");
     assert!(written.contains("[PH]"), "{written}");
 
     let mut reparsed = read_smiles(&written).expect("canonical phosphorous acid should reparse");
@@ -2945,11 +2639,10 @@ fn canonical_smiles_materializes_hydrogen_on_bracketed_hypervalent_phosphorus() 
         .graph()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "P")
-        .expect("phosphorus should remain")
-        .1;
-    assert_eq!(phosphorus.explicit_hydrogens, 1);
-    assert_eq!(phosphorus.implicit_hydrogens, Some(0));
-    assert!(phosphorus.no_implicit_hydrogens);
+        .expect("phosphorus should remain");
+    assert_eq!(phosphorus.1.explicit_hydrogens, 1);
+    assert_eq!(implicit_hydrogens(&reparsed, phosphorus.0), Some(0));
+    assert!(phosphorus.1.no_implicit_hydrogens);
 }
 
 #[test]
@@ -3006,7 +2699,7 @@ fn canonical_aryl_germanium_round_trip_preserves_no_implicit_aromatic_carbon() {
         read_smiles("C1=CC=C(C=C1)[Ge](Cl)(Cl)Cl").expect("aryl germanium SMILES parses");
     normalize_and_perceive(&mut molecule).expect("aryl germanium SMILES normalizes_and_perceives");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
+    let written = smiles_api::write_canonical(&molecule)
         .expect("aryl germanium canonical SMILES should write");
     assert!(written.contains("[c]"), "{written}");
 
@@ -3018,7 +2711,7 @@ fn canonical_aryl_germanium_round_trip_preserves_no_implicit_aromatic_carbon() {
         .atoms()
         .find(|(atom_id, atom)| {
             atom.element.symbol() == "C"
-                && atom.aromatic
+                && aromatic_atom(&reparsed, *atom_id)
                 && reparsed
                     .graph()
                     .incident_bonds(*atom_id)
@@ -3042,8 +2735,8 @@ fn canonical_aryl_tin_round_trip_preserves_no_implicit_aromatic_carbons() {
         read_smiles("C1=CC=C(C=C1)[SnH](C2=CC=CC=C2)Cl").expect("aryl tin SMILES parses");
     normalize_and_perceive(&mut molecule).expect("aryl tin SMILES normalizes_and_perceives");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("aryl tin canonical SMILES should write");
+    let written =
+        smiles_api::write_canonical(&molecule).expect("aryl tin canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).expect("canonical output should normalize_and_perceive");
 
@@ -3052,7 +2745,7 @@ fn canonical_aryl_tin_round_trip_preserves_no_implicit_aromatic_carbons() {
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "C"
-                && atom.aromatic
+                && aromatic_atom(&reparsed, *atom_id)
                 && reparsed
                     .graph()
                     .incident_bonds(*atom_id)
@@ -3065,13 +2758,13 @@ fn canonical_aryl_tin_round_trip_preserves_no_implicit_aromatic_carbons() {
                             .is_ok_and(|neighbor| neighbor.element.symbol() == "Sn")
                     })
         })
-        .map(|(_, atom)| atom)
         .collect::<Vec<_>>();
     assert_eq!(tin_bound_aromatic_carbons.len(), 2, "{written}");
     assert!(
         tin_bound_aromatic_carbons
             .iter()
-            .all(|atom| atom.no_implicit_hydrogens && atom.implicit_hydrogens == Some(0)),
+            .all(|(atom_id, atom)| atom.no_implicit_hydrogens
+                && implicit_hydrogens(&reparsed, *atom_id) == Some(0)),
         "{written}"
     );
 }
@@ -3083,8 +2776,7 @@ fn cationic_thiadiazolium_imine_canonical_round_trip_normalizes_and_perceives() 
     normalize_and_perceive(&mut molecule)
         .expect("cationic thiadiazolium imine should normalize_and_perceive");
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -3093,7 +2785,9 @@ fn cationic_thiadiazolium_imine_canonical_round_trip_normalizes_and_perceives() 
     let aromatic_ring_atoms = reparsed
         .graph()
         .atoms()
-        .filter(|(_, atom)| matches!(atom.element.symbol(), "C" | "N" | "S") && atom.aromatic)
+        .filter(|(atom_id, atom)| {
+            matches!(atom.element.symbol(), "C" | "N" | "S") && aromatic_atom(&reparsed, *atom_id)
+        })
         .count();
     assert_eq!(aromatic_ring_atoms, 5, "{written}");
 }
@@ -3106,8 +2800,7 @@ fn canonical_multicomponent_oxygen_neighbors_match_after_round_trip() {
         normalize_and_perceive(molecule)
             .expect("oxygen-rich component should normalize_and_perceive");
         let written =
-            smiles_api::write_canonical_with_options(molecule, CanonicalSmilesWriteOptions)
-                .expect("canonical component SMILES should write");
+            smiles_api::write_canonical(molecule).expect("canonical component SMILES should write");
         let mut reparsed = read_smiles(&written).expect("canonical output should parse");
         normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
             panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -3128,8 +2821,7 @@ fn canonical_pubchem_macrocycle_anionic_nitrogen_round_trip_matches_neighbors() 
         normalize_and_perceive(molecule)
             .expect("PubChem mixture component should normalize_and_perceive");
         let written =
-            smiles_api::write_canonical_with_options(molecule, CanonicalSmilesWriteOptions)
-                .expect("canonical component SMILES should write");
+            smiles_api::write_canonical(molecule).expect("canonical component SMILES should write");
         let mut reparsed = read_smiles(&written).expect("canonical output should parse");
         normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
             panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -3164,8 +2856,7 @@ fn canonical_substituted_pyrrole_uses_perceived_nitrogen_hydrogen_without_feedba
     );
     assert!(!nitrogen.no_implicit_hydrogens);
 
-    let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)
-        .expect("canonical SMILES should write");
+    let written = smiles_api::write_canonical(&molecule).expect("canonical SMILES should write");
     let mut reparsed = read_smiles(&written).expect("canonical output should parse");
     normalize_and_perceive(&mut reparsed).unwrap_or_else(|error| {
         panic!("canonical output should normalize_and_perceive: {written}: {error}")
@@ -3193,7 +2884,7 @@ fn local_atom_neighbor_signatures_ignoring_halogen_no_implicit(
 
 fn local_atom_neighbor_signatures_with(
     mol: &Molecule,
-    atom_signature: fn(&Atom) -> TestAtomStateSignature,
+    atom_signature: fn(&Molecule, AtomId, &Atom) -> TestAtomStateSignature,
 ) -> Vec<TestAtomNeighborSignature> {
     let mut atoms = mol
         .atoms()
@@ -3201,47 +2892,56 @@ fn local_atom_neighbor_signatures_with(
             let mut neighbors = mol
                 .incident_bonds(id)
                 .expect("atom should be live")
-                .map(|(_, bond)| {
-                    let neighbor = mol
-                        .atom(bond.other_atom(id))
-                        .expect("neighbor should be live");
+                .map(|(bond_id, bond)| {
+                    let neighbor_id = bond.other_atom(id);
+                    let neighbor = mol.atom(neighbor_id).expect("neighbor should be live");
                     (
-                        atom_signature(neighbor),
-                        test_semantic_bond_order_code(bond),
-                        bond.aromatic,
+                        atom_signature(mol, neighbor_id, neighbor),
+                        test_semantic_bond_order_code(mol, bond_id, bond),
+                        mol.bond_is_aromatic(bond_id) == Ok(Some(true)),
                     )
                 })
                 .collect::<Vec<_>>();
             neighbors.sort_unstable();
-            (atom_signature(atom), neighbors)
+            (atom_signature(mol, id, atom), neighbors)
         })
         .collect::<Vec<_>>();
     atoms.sort_unstable();
     atoms
 }
 
-fn test_atom_state_signature(atom: &Atom) -> TestAtomStateSignature {
+fn test_atom_state_signature(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> TestAtomStateSignature {
     (
         atom.element.atomic_number(),
         atom.formal_charge,
         atom.isotope.unwrap_or_default(),
         atom.explicit_hydrogens,
-        atom.implicit_hydrogens.unwrap_or_default(),
+        mol.implicit_hydrogens(atom_id)
+            .expect("atom should be live")
+            .unwrap_or_default(),
         atom.no_implicit_hydrogens,
-        atom.aromatic,
+        mol.atom_is_aromatic(atom_id) == Ok(Some(true)),
     )
 }
 
-fn test_atom_state_signature_ignoring_halogen_no_implicit(atom: &Atom) -> TestAtomStateSignature {
-    let mut signature = test_atom_state_signature(atom);
+fn test_atom_state_signature_ignoring_halogen_no_implicit(
+    mol: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> TestAtomStateSignature {
+    let mut signature = test_atom_state_signature(mol, atom_id, atom);
     if matches!(atom.element.symbol(), "F" | "Cl" | "Br" | "I") {
         signature.5 = false;
     }
     signature
 }
 
-fn test_semantic_bond_order_code(bond: &Bond) -> u8 {
-    if bond.aromatic {
+fn test_semantic_bond_order_code(mol: &Molecule, bond_id: BondId, bond: &Bond) -> u8 {
+    if mol.bond_is_aromatic(bond_id) == Ok(Some(true)) {
         test_bond_order_code(BondOrder::Aromatic)
     } else {
         test_bond_order_code(bond.order)
@@ -3275,12 +2975,10 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .graph_mut()
         .add_bond(a, b, BondOrder::Dative)
         .expect("bond");
-    assert!(
-        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-            .expect_err("dative bond should be rejected")
-            .message
-            .contains("cannot encode")
-    );
+    assert!(smiles_api::write(&molecule)
+        .expect_err("dative bond should be rejected")
+        .message
+        .contains("cannot encode"));
 
     molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Single;
     molecule
@@ -3291,12 +2989,10 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
             source: StereoSource::Smiles,
         })
         .expect("stereo mark");
-    assert!(
-        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-            .expect_err("stereo should be rejected")
-            .message
-            .contains("stereochemistry")
-    );
+    assert!(smiles_api::write(&molecule)
+        .expect_err("stereo should be rejected")
+        .message
+        .contains("stereochemistry"));
 
     molecule
         .graph_mut()
@@ -3313,12 +3009,10 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
             StereoSource::User,
         ))
         .expect("atom stereo");
-    assert!(
-        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-            .expect_err("atom chirality should be rejected")
-            .message
-            .contains("atom stereochemistry")
-    );
+    assert!(smiles_api::write(&molecule)
+        .expect_err("atom chirality should be rejected")
+        .message
+        .contains("atom stereochemistry"));
 
     let element = molecule
         .graph()
@@ -3335,12 +3029,10 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         atom.explicit_hydrogens = 2;
         atom.no_implicit_hydrogens = true;
     }
-    assert!(
-        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-            .expect_err("the supported SMILES grammar has no explicit radical token")
-            .message
-            .contains("explicit radical token")
-    );
+    assert!(smiles_api::write(&molecule)
+        .expect_err("the supported SMILES grammar has no explicit radical token")
+        .message
+        .contains("explicit radical token"));
 
     {
         let mut atom = molecule.graph_mut().atom_mut(a).expect("atom");
@@ -3348,8 +3040,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         atom.explicit_hydrogens = 0;
         atom.no_implicit_hydrogens = true;
     }
-    let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-        .expect("no-implicit-hydrogen atom should write");
+    let written = smiles_api::write(&molecule).expect("no-implicit-hydrogen atom should write");
     assert!(written.contains("[C]"));
     let reparsed = read_smiles(&written).expect("writer output should parse");
     assert!(reparsed
@@ -3562,16 +3253,8 @@ fn isomeric_smiles_round_trips_pubchem_anthraquinone_aromatic_shape() {
         .expect("anthraquinone isomeric output should normalize_and_perceive");
 
     assert_eq!(
-        reparsed
-            .graph()
-            .atoms()
-            .filter(|(_, atom)| atom.aromatic)
-            .count(),
-        molecule
-            .graph()
-            .atoms()
-            .filter(|(_, atom)| atom.aromatic)
-            .count(),
+        aromatic_atom_count(&reparsed),
+        aromatic_atom_count(&molecule),
         "{written}"
     );
     assert_eq!(
@@ -3606,17 +3289,13 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
         ),
     ] {
         let mut molecule = SmallMolecule::default();
-        let mut left_atom = carbon();
-        left_atom.implicit_hydrogens = Some(1);
         let left = molecule
             .graph_mut()
-            .add_atom(left_atom)
+            .add_atom(carbon())
             .expect("atom identifier capacity");
-        let mut right_atom = carbon();
-        right_atom.implicit_hydrogens = Some(1);
         let right = molecule
             .graph_mut()
-            .add_atom(right_atom)
+            .add_atom(carbon())
             .expect("atom identifier capacity");
         let fluorine = molecule
             .graph_mut()
@@ -3652,6 +3331,8 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
                 StereoSource::User,
             ))
             .expect("double-bond stereo");
+        molecule.graph_mut().set_implicit_hydrogens(left, 1);
+        molecule.graph_mut().set_implicit_hydrogens(right, 1);
 
         let written =
             smiles_api::write_isomeric(&molecule).expect("implicit-carrier stereo should write");
@@ -3696,10 +3377,8 @@ fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
         }
     }
 
-    assert!(
-        smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-            .expect_err("more than 99 ring closures should be rejected")
-            .message
-            .contains("at most 99")
-    );
+    assert!(smiles_api::write(&molecule)
+        .expect_err("more than 99 ring closures should be rejected")
+        .message
+        .contains("at most 99"));
 }

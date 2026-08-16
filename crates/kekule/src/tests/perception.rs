@@ -1,5 +1,13 @@
 use super::*;
 
+fn aromatic_atom(molecule: &Molecule, atom: AtomId) -> bool {
+    molecule.atom_is_aromatic(atom).expect("atom exists") == Some(true)
+}
+
+fn aromatic_bond(molecule: &Molecule, bond: BondId) -> bool {
+    molecule.bond_is_aromatic(bond).expect("bond exists") == Some(true)
+}
+
 #[test]
 fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     let mut empty = Molecule::new();
@@ -143,12 +151,8 @@ fn aromaticity_marks_benzene_like_ring() {
         .expect("benzene should be supported");
 
     assert!(mol.perception().has_aromaticity());
-    assert!(atoms
-        .iter()
-        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| aromatic_bond(&mol, *bond)));
 }
 
 #[test]
@@ -228,6 +232,38 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
     assert_eq!(molecule.graph().stereo_groups().count(), 1);
     assert!(molecule.graph().stereo_bond_marks().next().is_none());
+}
+
+#[test]
+fn molecule_perception_queries_read_the_installed_state_directly() {
+    let mut molecule =
+        read_smiles("F[C@](Cl)(Br)c1cc[nH]c1").expect("stereo aromatic fixture should parse");
+    normalize_and_perceive(&mut molecule).expect("fixture should normalize_and_perceive");
+    stereo_api::assign_cip_descriptors(molecule.graph_mut()).expect("CIP assignment");
+
+    let graph = molecule.graph();
+    for atom in graph.atom_ids() {
+        assert_eq!(
+            graph.implicit_hydrogens(atom).expect("live atom"),
+            graph.perception().implicit_hydrogens(atom)
+        );
+        assert_eq!(
+            graph.atom_is_aromatic(atom).expect("live atom"),
+            graph.perception().atom_is_aromatic(atom)
+        );
+    }
+    for bond in graph.bond_ids() {
+        assert_eq!(
+            graph.bond_is_aromatic(bond).expect("live bond"),
+            graph.perception().bond_is_aromatic(bond)
+        );
+    }
+    for element in graph.stereo_element_ids() {
+        assert_eq!(
+            graph.cip_descriptor(element).expect("live stereo element"),
+            graph.perception().cip_descriptor(element)
+        );
+    }
 }
 
 #[test]
@@ -463,10 +499,10 @@ fn aromaticity_evaluates_larger_simple_rings_like_rdkit() {
 
     assert!(ten_atoms
         .iter()
-        .all(|atom| ten_member.atom(*atom).expect("atom exists").aromatic));
+        .all(|atom| aromatic_atom(&ten_member, *atom)));
     assert!(ten_bonds
         .iter()
-        .all(|bond| ten_member.bond(*bond).expect("bond exists").aromatic));
+        .all(|bond| aromatic_bond(&ten_member, *bond)));
 
     let alternating_twelve = [
         BondOrder::Double,
@@ -490,10 +526,10 @@ fn aromaticity_evaluates_larger_simple_rings_like_rdkit() {
 
     assert!(twelve_atoms
         .iter()
-        .all(|atom| !twelve_member.atom(*atom).expect("atom exists").aromatic));
+        .all(|atom| !aromatic_atom(&twelve_member, *atom)));
     assert!(twelve_bonds
         .iter()
-        .all(|bond| !twelve_member.bond(*bond).expect("bond exists").aromatic));
+        .all(|bond| !aromatic_bond(&twelve_member, *bond)));
 }
 
 #[test]
@@ -502,12 +538,8 @@ fn aromaticity_leaves_cyclohexane_and_cyclobutadiene_non_aromatic() {
         ring_molecule(&["C", "C", "C", "C", "C", "C"], &[BondOrder::Single; 6]);
     aromaticity_api::perceive_aromaticity(&mut cyclohexane, AromaticityModel::RdkitLike)
         .expect("cyclohexane should be supported");
-    assert!(atoms
-        .iter()
-        .all(|atom| !cyclohexane.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| !cyclohexane.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| !aromatic_atom(&cyclohexane, *atom)));
+    assert!(bonds.iter().all(|bond| !aromatic_bond(&cyclohexane, *bond)));
 
     let (mut cyclobutadiene, atoms, bonds) = ring_molecule(
         &["C", "C", "C", "C"],
@@ -522,10 +554,10 @@ fn aromaticity_leaves_cyclohexane_and_cyclobutadiene_non_aromatic() {
         .expect("cyclobutadiene should be supported");
     assert!(atoms
         .iter()
-        .all(|atom| !cyclobutadiene.atom(*atom).expect("atom exists").aromatic));
+        .all(|atom| !aromatic_atom(&cyclobutadiene, *atom)));
     assert!(bonds
         .iter()
-        .all(|bond| !cyclobutadiene.bond(*bond).expect("bond exists").aromatic));
+        .all(|bond| !aromatic_bond(&cyclobutadiene, *bond)));
 }
 
 #[test]
@@ -544,12 +576,8 @@ fn aromaticity_supports_heteroaromatic_ring() {
     aromaticity_api::perceive_aromaticity(&mut furan_like, AromaticityModel::RdkitLike)
         .expect("furan-like ring should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| furan_like.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| furan_like.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| aromatic_atom(&furan_like, *atom)));
+    assert!(bonds.iter().all(|bond| aromatic_bond(&furan_like, *bond)));
 }
 
 #[test]
@@ -569,19 +597,15 @@ fn aromaticity_supports_explicit_nitrogen_lone_pair_donor_ring() {
             .atom_mut(atoms[0])
             .expect("ring nitrogen should exist");
         nitrogen.explicit_hydrogens = 1;
-        nitrogen.implicit_hydrogens = Some(0);
         nitrogen.no_implicit_hydrogens = true;
     }
+    pyrrole_like.set_implicit_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut pyrrole_like, AromaticityModel::RdkitLike)
         .expect("pyrrole-like ring should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| pyrrole_like.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| pyrrole_like.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| aromatic_atom(&pyrrole_like, *atom)));
+    assert!(bonds.iter().all(|bond| aromatic_bond(&pyrrole_like, *bond)));
 }
 
 #[test]
@@ -602,10 +626,10 @@ fn aromaticity_supports_phosphorus_lone_pair_donor_ring() {
 
     assert!(atoms
         .iter()
-        .all(|atom| phosphole_like.atom(*atom).expect("atom exists").aromatic));
+        .all(|atom| aromatic_atom(&phosphole_like, *atom)));
     assert!(bonds
         .iter()
-        .all(|bond| phosphole_like.bond(*bond).expect("bond exists").aromatic));
+        .all(|bond| aromatic_bond(&phosphole_like, *bond)));
 }
 
 #[test]
@@ -628,13 +652,9 @@ fn aromaticity_rejects_ring_atom_above_rdkit_default_valence() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("hypervalent phosphorus ring should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
-    assert!(!mol.atom(methyl).expect("substituent exists").aromatic);
+    assert!(atoms.iter().all(|atom| !aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| !aromatic_bond(&mol, *bond)));
+    assert!(!aromatic_atom(&mol, methyl));
 }
 
 #[test]
@@ -658,10 +678,9 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
     aromaticity_api::perceive_aromaticity(&mut neutral_carbon_radical, AromaticityModel::RdkitLike)
         .expect("neutral carbon radical ring should be supported");
 
-    assert!(atoms.iter().all(|atom| neutral_carbon_radical
-        .atom(*atom)
-        .expect("atom exists")
-        .aromatic));
+    assert!(atoms
+        .iter()
+        .all(|atom| aromatic_atom(&neutral_carbon_radical, *atom)));
 
     let (mut oxygen_radical, atoms, _) = ring_molecule(
         &["O", "C", "C", "C", "C"],
@@ -683,7 +702,7 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
 
     assert!(atoms
         .iter()
-        .all(|atom| !oxygen_radical.atom(*atom).expect("atom exists").aromatic));
+        .all(|atom| !aromatic_atom(&oxygen_radical, *atom)));
 
     let (mut charged_carbon_radical, atoms, _) = ring_molecule(
         &["C", "C", "C", "C", "C", "C"],
@@ -707,10 +726,9 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
     aromaticity_api::perceive_aromaticity(&mut charged_carbon_radical, AromaticityModel::RdkitLike)
         .expect("charged carbon radical ring should be supported");
 
-    assert!(atoms.iter().all(|atom| !charged_carbon_radical
-        .atom(*atom)
-        .expect("atom exists")
-        .aromatic));
+    assert!(atoms
+        .iter()
+        .all(|atom| !aromatic_atom(&charged_carbon_radical, *atom)));
 }
 
 #[test]
@@ -738,12 +756,8 @@ fn aromaticity_rejects_tetracoordinate_ring_atom_candidate() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("tetracoordinate ring atom should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| !aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| !aromatic_bond(&mol, *bond)));
 }
 
 #[test]
@@ -762,19 +776,15 @@ fn aromaticity_rejects_protonated_saturated_ring_nitrogen_donor() {
         let mut nitrogen = mol.atom_mut(atoms[0]).expect("ring atom exists");
         nitrogen.formal_charge = 1;
         nitrogen.explicit_hydrogens = 1;
-        nitrogen.implicit_hydrogens = Some(0);
         nitrogen.no_implicit_hydrogens = true;
     }
+    mol.set_implicit_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("protonated saturated ring nitrogen should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| !aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| !aromatic_bond(&mol, *bond)));
 }
 
 #[test]
@@ -787,19 +797,15 @@ fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
         let mut cation = mol.atom_mut(atoms[0]).expect("ring atom exists");
         cation.formal_charge = 1;
         cation.explicit_hydrogens = 1;
-        cation.implicit_hydrogens = Some(0);
         cation.no_implicit_hydrogens = true;
     }
+    mol.set_implicit_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("cyclopropenyl cation should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| aromatic_bond(&mol, *bond)));
 }
 
 #[test]
@@ -818,19 +824,15 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
     {
         let mut saturated = mol.atom_mut(atoms[0]).expect("ring atom exists");
         saturated.explicit_hydrogens = 2;
-        saturated.implicit_hydrogens = Some(0);
         saturated.no_implicit_hydrogens = true;
     }
+    mol.set_implicit_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("over-valent candidate rejection should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| !aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| !aromatic_bond(&mol, *bond)));
 }
 
 #[test]
@@ -874,13 +876,11 @@ fn aromaticity_marks_azulene_fused_perimeter_but_not_shared_bond() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("azulene-like fused system should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
+    assert!(atoms.iter().all(|atom| aromatic_atom(&mol, *atom)));
     assert!(perimeter_bonds
         .iter()
-        .all(|bond| mol.bond(*bond).expect("bond exists").aromatic));
-    assert!(!mol.bond(shared).expect("shared bond exists").aromatic);
+        .all(|bond| aromatic_bond(&mol, *bond)));
+    assert!(!aromatic_bond(&mol, shared));
 }
 
 #[test]
@@ -931,13 +931,13 @@ fn aromaticity_keeps_aromatic_heteroring_bond_shared_with_saturated_ring() {
 
     for bond_id in aromatic_bonds {
         assert!(
-            mol.bond(bond_id).expect("aromatic bond exists").aromatic,
+            aromatic_bond(&mol, bond_id),
             "aromatic ring bond {bond_id} should be aromatic"
         );
     }
     for bond_id in saturated_bonds {
         assert!(
-            !mol.bond(bond_id).expect("saturated bond exists").aromatic,
+            !aromatic_bond(&mol, bond_id),
             "saturated fused-neighbor bond {bond_id} should stay aliphatic"
         );
     }
@@ -971,10 +971,8 @@ fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("cyclopentadienyl anion should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(!mol.atom(hydrogen).expect("hydrogen exists").aromatic);
+    assert!(atoms.iter().all(|atom| aromatic_atom(&mol, *atom)));
+    assert!(!aromatic_atom(&mol, hydrogen));
 }
 
 #[test]
@@ -993,12 +991,8 @@ fn aromaticity_rejects_neutral_saturated_carbon_in_conjugated_ring() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("cyclopentadiene should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| !aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| !aromatic_bond(&mol, *bond)));
 }
 
 #[test]
@@ -1013,30 +1007,27 @@ fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("acyclic molecule should be supported");
 
-    assert!(!mol.atom(a).expect("atom exists").aromatic);
-    assert!(!mol.bond(BondId::new(0)).expect("bond exists").aromatic);
+    assert!(!aromatic_atom(&mol, a));
+    assert!(!aromatic_bond(&mol, BondId::new(0)));
 }
 
 #[test]
 fn aromaticity_clears_existing_flags_before_assignment() {
     let (mut mol, atoms, bonds) =
         ring_molecule(&["C", "C", "C", "C", "C", "C"], &[BondOrder::Single; 6]);
+    mol.begin_aromaticity(AromaticityModel::RdkitLike);
     for atom in &atoms {
-        mol.atom_mut(*atom).expect("atom exists").aromatic = true;
+        mol.set_atom_aromatic(*atom, true);
     }
     for bond in &bonds {
-        mol.bond_mut(*bond).expect("bond exists").aromatic = true;
+        mol.set_bond_aromatic(*bond, true);
     }
 
     aromaticity_api::perceive_aromaticity(&mut mol, AromaticityModel::RdkitLike)
         .expect("cyclohexane should be supported");
 
-    assert!(atoms
-        .iter()
-        .all(|atom| !mol.atom(*atom).expect("atom exists").aromatic));
-    assert!(bonds
-        .iter()
-        .all(|bond| !mol.bond(*bond).expect("bond exists").aromatic));
+    assert!(atoms.iter().all(|atom| !aromatic_atom(&mol, *atom)));
+    assert!(bonds.iter().all(|bond| !aromatic_bond(&mol, *bond)));
 }
 
 #[test]
@@ -1059,7 +1050,7 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
     assert!(!mol.perception().has_aromaticity());
     assert!(atoms
         .iter()
-        .all(|atom| mol.atom(*atom).expect("atom exists").aromatic));
+        .all(|atom| mol.atom_is_aromatic(*atom).expect("atom exists").is_none()));
 }
 
 #[test]
@@ -1086,7 +1077,6 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
             specifiedness: StereoSpecifiedness::Unknown,
             source: StereoSource::User,
             group: None,
-            descriptor: None,
         })
         .expect("stereo element");
     mark_all_fresh(&mut mol);
