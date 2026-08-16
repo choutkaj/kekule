@@ -175,12 +175,12 @@ pub(crate) fn implementation_expected(
                 json!({ "records": records.iter_mut().map(valence_record_json).collect::<Vec<_>>() }),
             )
         }
-        "chem.hydrogen-normalization" => {
+        "chem.hydrogen-transforms" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(json!({
                 "records": records
                     .iter_mut()
-                    .map(hydrogen_normalization_record_json)
+                    .map(hydrogen_transform_record_json)
                     .collect::<Vec<_>>()
             }))
         }
@@ -492,7 +492,7 @@ fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
     if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
             "queries": [],
         });
@@ -502,7 +502,7 @@ fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
         let graph =
             query::parse_smarts(smarts).expect("checked-in bounded benchmark SMARTS must parse");
         let matches = substructure::find_substructure_matches(record.molecule.graph(), &graph)
-            .expect("sanitized benchmark molecule must satisfy query prerequisites");
+            .expect("normalized and perceived benchmark molecule must satisfy query prerequisites");
         let mut atom_sets = matches
             .into_iter()
             .map(|query_match| {
@@ -763,7 +763,7 @@ pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) 
     if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
         });
     }
@@ -839,7 +839,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
         let mol = record.molecule.graph();
         return json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
@@ -849,7 +849,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
         let mol = record.molecule.graph();
         return json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
@@ -867,7 +867,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "bond_count": mol.bond_count(),
             "candidates": candidates.iter().map(stereo_candidate_json).collect::<Vec<_>>(),
             "normalization_report": normalization_report_json(&normalization_report),
-            "report": stereo_perception_report_json(&report),
+            "report": coordinate_stereo_materialization_report_json(&report),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
             "stereo_bond_marks": stereo_bond_marks_json(mol),
@@ -880,7 +880,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "bond_count": mol.bond_count(),
             "candidates": candidates.iter().map(stereo_candidate_json).collect::<Vec<_>>(),
             "normalization_report": normalization_report_json(&normalization_report),
-            "error": stereo_perception_error_json(&error),
+            "error": coordinate_stereo_error_json(&error),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
             "stereo_bond_marks": stereo_bond_marks_json(mol),
@@ -1124,7 +1124,7 @@ pub(crate) fn default_perception_atom_record_json(record: &mut IndexedSmallRecor
     } else {
         json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
         })
     }
@@ -1156,11 +1156,11 @@ pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
     })
 }
 
-pub(crate) fn hydrogen_normalization_record_json(record: &mut IndexedSmallRecord) -> Value {
+pub(crate) fn hydrogen_transform_record_json(record: &mut IndexedSmallRecord) -> Value {
     if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
         });
     }
@@ -1207,7 +1207,7 @@ pub(crate) fn hydrogen_normalization_record_json(record: &mut IndexedSmallRecord
                 "count": count,
             }))
             .collect::<Vec<_>>(),
-        "round_trip": hydrogen_normalized_semantic_json(record.molecule.clone()),
+        "round_trip": hydrogen_transform_semantic_json(record.molecule.clone()),
     })
 }
 
@@ -1215,7 +1215,7 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
     if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
         });
     }
@@ -1233,7 +1233,7 @@ pub(crate) fn canonical_ranking_record_json(record: &mut IndexedSmallRecord) -> 
     if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
         });
     }
@@ -1275,7 +1275,7 @@ pub(crate) fn smiles_write_record_json(
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
-        "sanitized": smiles_sanitized_semantic_json(reparsed),
+        "normalized_perceived": smiles_perceived_semantic_json(reparsed),
     }))
 }
 
@@ -1314,7 +1314,7 @@ pub(crate) fn canonical_smiles_record_json(
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
-        "sanitized": smiles_sanitized_semantic_json(reparsed),
+        "normalized_perceived": smiles_perceived_semantic_json(reparsed),
     });
     if exact_smiles {
         item["canonical_smiles"] = json!(written);
@@ -1332,7 +1332,7 @@ pub(crate) fn isomeric_smiles_record_json(
     if molecule.normalize().is_err() || molecule.perceive().is_err() {
         return Ok(json!({
             "record_index": record.record_index,
-            "status": "sanitize_error",
+            "status": "normalization_or_perception_error",
             "title": record.title,
             "input_smiles": record.input_smiles,
         }));
@@ -1365,7 +1365,7 @@ pub(crate) fn isomeric_smiles_record_json(
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
-        "sanitized": smiles_sanitized_semantic_json(reparsed.clone()),
+        "normalized_perceived": smiles_perceived_semantic_json(reparsed.clone()),
         "stereo": smiles_isomeric_stereo_semantic_json(reparsed),
     }))
 }
@@ -1394,7 +1394,7 @@ pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
         .map_err(|_| ())
         .and_then(|text| interpret_smiles(text).map_err(|_| ()))
     {
-        Ok(reparsed) => smiles_sanitized_semantic_json(reparsed),
+        Ok(reparsed) => smiles_perceived_semantic_json(reparsed),
         Err(_) => json!({ "status": "write_reparse_error" }),
     };
     json!({
@@ -1403,7 +1403,7 @@ pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
         "title": record.title,
         "input_smiles": record.input_smiles,
         "raw": smiles_raw_semantic_json(molecule),
-        "sanitized": smiles_sanitized_semantic_json(molecule.clone()),
+        "normalized_perceived": smiles_perceived_semantic_json(molecule.clone()),
         "write_round_trip": round_trip,
     })
 }
@@ -1427,21 +1427,21 @@ pub(crate) fn smiles_raw_semantic_json(molecule: &SmallMolecule) -> Value {
     })
 }
 
-pub(crate) fn smiles_sanitized_semantic_json(mut molecule: SmallMolecule) -> Value {
+pub(crate) fn smiles_perceived_semantic_json(mut molecule: SmallMolecule) -> Value {
     if molecule.normalize().is_err() || molecule.perceive().is_err() {
-        return json!({ "status": "sanitize_error" });
+        return json!({ "status": "normalization_or_perception_error" });
     }
     let mol = molecule.graph();
     json!({
         "status": "ok",
         "atom_count": mol.atom_count(),
         "bond_count": mol.bond_count(),
-        "atoms": smiles_sanitized_atoms_json(mol),
-        "bonds": smiles_sanitized_bonds_json(mol),
+        "atoms": smiles_perceived_atoms_json(mol),
+        "bonds": smiles_perceived_bonds_json(mol),
     })
 }
 
-pub(crate) fn hydrogen_normalized_semantic_json(mut molecule: SmallMolecule) -> Value {
+pub(crate) fn hydrogen_transform_semantic_json(mut molecule: SmallMolecule) -> Value {
     let _ = valence::perceive_valence_with_options(
         molecule.graph_mut(),
         ValenceModel::RdkitLike,
@@ -1480,7 +1480,7 @@ pub(crate) fn hydrogen_normalized_semantic_json(mut molecule: SmallMolecule) -> 
 
 pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) -> Value {
     if molecule.normalize().is_err() || molecule.perceive().is_err() {
-        return json!({ "status": "sanitize_error" });
+        return json!({ "status": "normalization_or_perception_error" });
     }
     if stereo::assign_cip_descriptors(molecule.graph_mut()).is_err() {
         return json!({ "status": "cip_error" });
@@ -1504,7 +1504,7 @@ pub(crate) fn smiles_cip_atom_descriptor_keys_json(mol: &Molecule) -> Vec<Value>
                 .and_then(|descriptor| {
                     let atom = mol.atom(stereo.center).ok()?;
                     Some(json!({
-                        "center_atom": smiles_sanitized_atom_key(mol, stereo.center, atom),
+                        "center_atom": smiles_perceived_atom_key(mol, stereo.center, atom),
                         "descriptor": stereo_descriptor_json(descriptor),
                     }))
                 }),
@@ -1527,8 +1527,8 @@ pub(crate) fn smiles_cip_bond_descriptor_keys_json(mol: &Molecule) -> Vec<Value>
                     let left = mol.atom(stereo.left).ok()?;
                     let right = mol.atom(stereo.right).ok()?;
                     let mut endpoint_atoms = [
-                        smiles_sanitized_atom_key(mol, stereo.left, left),
-                        smiles_sanitized_atom_key(mol, stereo.right, right),
+                        smiles_perceived_atom_key(mol, stereo.left, left),
+                        smiles_perceived_atom_key(mol, stereo.right, right),
                     ];
                     endpoint_atoms.sort();
                     Some(json!({
@@ -1546,8 +1546,8 @@ pub(crate) fn smiles_cip_bond_descriptor_keys_json(mol: &Molecule) -> Vec<Value>
                         let begin_atom = mol.atom(begin).ok()?;
                         let end_atom = mol.atom(end).ok()?;
                         let mut endpoint_atoms = [
-                            smiles_sanitized_atom_key(mol, begin, begin_atom),
-                            smiles_sanitized_atom_key(mol, end, end_atom),
+                            smiles_perceived_atom_key(mol, begin, begin_atom),
+                            smiles_perceived_atom_key(mol, end, end_atom),
                         ];
                         endpoint_atoms.sort();
                         Some(json!({
@@ -1563,15 +1563,15 @@ pub(crate) fn smiles_cip_bond_descriptor_keys_json(mol: &Molecule) -> Vec<Value>
     descriptors
 }
 
-pub(crate) fn smiles_sanitized_bonds_json(mol: &Molecule) -> Vec<Value> {
+pub(crate) fn smiles_perceived_bonds_json(mol: &Molecule) -> Vec<Value> {
     let mut bonds = mol
         .bonds()
         .map(|(bond_id, bond)| {
             let left = mol.atom(bond.a()).expect("bond endpoint should exist");
             let right = mol.atom(bond.b()).expect("bond endpoint should exist");
             let mut endpoints = [
-                smiles_sanitized_atom_key(mol, bond.a(), left),
-                smiles_sanitized_atom_key(mol, bond.b(), right),
+                smiles_perceived_atom_key(mol, bond.a(), left),
+                smiles_perceived_atom_key(mol, bond.b(), right),
             ];
             endpoints.sort();
             json!({
@@ -1585,7 +1585,7 @@ pub(crate) fn smiles_sanitized_bonds_json(mol: &Molecule) -> Vec<Value> {
     bonds
 }
 
-pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
+pub(crate) fn smiles_perceived_atoms_json(mol: &Molecule) -> Vec<Value> {
     let mut atoms = mol
         .atoms()
         .map(|(id, atom)| {
@@ -1601,7 +1601,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
                     let neighbor_id = if bond.a() == id { bond.b() } else { bond.a() };
                     let neighbor = mol.atom(neighbor_id).expect("bond endpoint should exist");
                     json!({
-                        "atom": smiles_sanitized_atom_key(mol, neighbor_id, neighbor),
+                        "atom": smiles_perceived_atom_key(mol, neighbor_id, neighbor),
                         "bond_type": smiles_semantic_bond_type(mol, bond_id, bond),
                         "is_aromatic": mol.bond_is_aromatic(bond_id).ok().flatten().unwrap_or(false),
                     })
@@ -1609,7 +1609,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
                 .collect::<Vec<_>>();
             neighbors.sort_by_key(|value| value.to_string());
             (
-                smiles_sanitized_atom_key(mol, id, atom),
+                smiles_perceived_atom_key(mol, id, atom),
                 json!({
                     "atomic_number": atom.element.atomic_number(),
                     "symbol": atom.element.symbol(),
@@ -1634,7 +1634,7 @@ pub(crate) fn smiles_sanitized_atoms_json(mol: &Molecule) -> Vec<Value> {
     atoms.into_iter().map(|(_, value)| value).collect()
 }
 
-pub(crate) fn smiles_sanitized_atom_key(mol: &Molecule, id: AtomId, atom: &Atom) -> String {
+pub(crate) fn smiles_perceived_atom_key(mol: &Molecule, id: AtomId, atom: &Atom) -> String {
     let (explicit_hydrogens, implicit_hydrogens) = smiles_effective_hydrogens(mol, id, atom);
     let no_implicit_hydrogens = smiles_effective_no_implicit_hydrogens(mol, id, atom);
     let explicit_valence = explicit_valence_json(mol, id) + explicit_hydrogens;
@@ -1771,7 +1771,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
         .filter(|(id, _)| mol.bond_is_aromatic(*id).ok().flatten() == Some(true))
         .count();
     // The RDKit semantic record treats a pyrrolic donor H as explicit after
-    // sanitization. Kekule keeps an inferred H in PerceptionState, so derive
+    // RDKit's prepared state. Kekule keeps an inferred H in PerceptionState, so derive
     // the comparable bond-valence contribution without rewriting the atom.
     let has_aromatic_nitrogen_hydrogen = atom_record.is_some_and(|atom_record| {
         atom_record.element.symbol() == "N"
@@ -1957,7 +1957,7 @@ pub(crate) fn bond_direction_json(
     }
 }
 
-pub(crate) fn stereo_perception_report_json(
+pub(crate) fn coordinate_stereo_materialization_report_json(
     report: &CoordinateStereoMaterializationReport,
 ) -> Value {
     json!({
@@ -2008,7 +2008,7 @@ pub(crate) fn stereo_candidate_json(candidate: &StereoCandidate) -> Value {
     }
 }
 
-pub(crate) fn stereo_perception_error_json(error: &CoordinateStereoError) -> Value {
+pub(crate) fn coordinate_stereo_error_json(error: &CoordinateStereoError) -> Value {
     let issues = match error {
         CoordinateStereoError::InvalidStereo(error) => error
             .issues

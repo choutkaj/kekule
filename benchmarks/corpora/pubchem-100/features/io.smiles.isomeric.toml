@@ -9,6 +9,6 @@ fixtures = [
 ]
 
 notes = [
-  "Externally supplied PubChem isomeric SMILES pack provides broader noncanonical isomeric SMILES writer parity coverage for sanitized records with source stereo syntax.",
-  "Goldens compare semantic output after write and reparse, including sanitized graph semantics plus CIP descriptor-bearing stereo semantics.",
+  "Externally supplied PubChem isomeric SMILES pack provides broader noncanonical isomeric SMILES writer parity coverage for normalized/perceived records with source stereo syntax.",
+  "Goldens compare semantic output after write and reparse, including normalized/perceived graph semantics plus CIP descriptor-bearing stereo semantics.",
 ]

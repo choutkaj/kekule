@@ -20,7 +20,7 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 
 - Element handling covers periodic-table symbols and atomic numbers.
 - Atom fields stay chemically general and do not contain biomolecular hierarchy labels.
-- Bond order storage is descriptive and does not imply valence validation, sanitization, or stereochemical assignment.
+- Bond order storage is descriptive and does not imply valence validation, normalization, perception, or stereochemical assignment.
 
 ## Tests
 

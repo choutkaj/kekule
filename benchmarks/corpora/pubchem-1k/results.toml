@@ -76,20 +76,20 @@ input_count = 109
 legacy_source = "validation-status-v2"
 benchmarked_at_unix = 1784357750
 
-[features."chem.hydrogen-normalization"]
-outcome = "match"
+[features."chem.hydrogen-transforms"]
+outcome = "differences"
 scope = "full"
 fixture_count = 10
-compared_count = 10
-difference_count = 0
+compared_count = 0
+difference_count = 10
+first_detail = "fixture `data/packs/pack_01.sdf` implementation output failed: SDF interpretation error in record 1 at line 5: molecule must be connected, but contains 3 graph components"
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"
-manifest_digest = "cc4a2eeb83454843f51876410d50a5e8c9b9d403990393de6883d8695ec8d813"
-input_digest_schema_version = 2
-input_digest = "0f3d91e830eb3139b48ab1e1b773f1e770ffabdcc9ed6777f463e390fd7be07e"
-input_count = 109
-legacy_source = "validation-status-v2"
-benchmarked_at_unix = 1784358405
+manifest_digest = "67bf0f9907c6249077f0f4c589247c7b47848011a503654ea3fb16b1f5f170d3"
+input_digest_schema_version = 1
+input_digest = "a4152e688256900d11ff37266b2a7c041a19b477e3ee40442833269526de5fab"
+input_count = 121
+benchmarked_at_unix = 1786890015
 
 [features."chem.perception.default"]
 outcome = "differences"
@@ -257,19 +257,19 @@ legacy_source = "validation-status-v2"
 benchmarked_at_unix = 1784360759
 
 [features."io.smiles.parse"]
-outcome = "match"
+outcome = "differences"
 scope = "full"
 fixture_count = 10
-compared_count = 10
-difference_count = 0
+compared_count = 0
+difference_count = 10
+first_detail = 'benchmarks\corpora\pubchem-1k\golden\io.smiles.parse\data_packs_pack_01.smi.json.gz differs from implementation output for fixture `data/packs/pack_01.smi`: $.records[0].normalized_perceived missing from actual output'
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"
 manifest_digest = "bea402e8963608bb1c10f108566c4560b54666b25e9dad230b966c474006dd08"
-input_digest_schema_version = 2
-input_digest = "696a29dbdac0b85d19419e3cb5f4401bc99ad5474872610f7eb99da5a997c57c"
-input_count = 109
-legacy_source = "validation-status-v2"
-benchmarked_at_unix = 1784360762
+input_digest_schema_version = 1
+input_digest = "cc8b6ee3db1f51de4b730bb70b0496013e4a8459aff46f276d2dba6276cbe2dc"
+input_count = 121
+benchmarked_at_unix = 1786890017
 
 [features."io.smiles.write"]
 outcome = "match"
@@ -302,19 +302,19 @@ legacy_source = "validation-status-v2"
 benchmarked_at_unix = 1784361412
 
 [features."stereo.perception"]
-outcome = "match"
+outcome = "differences"
 scope = "full"
 fixture_count = 10
-compared_count = 10
-difference_count = 0
+compared_count = 0
+difference_count = 10
+first_detail = 'benchmarks\corpora\pubchem-1k\golden\stereo.perception\data_packs_pack_01.smi.json.gz differs from implementation output for fixture `data/packs/pack_01.smi`: $.records length differs: expected 100, actual 80'
 reference_tool = "pubchem-manual-semantic"
 reference_version = "PubChem PUG REST 2026-07-05"
 manifest_digest = "5820cbef749f35f9aa7f128d73bf264828ecd1d12b7285f34f3488c1c75a0bdf"
-input_digest_schema_version = 2
-input_digest = "10f60860241a9dca28e1f2301fc72010f717a902c2c329c395afa40d114047c1"
-input_count = 107
-legacy_source = "validation-status-v2"
-benchmarked_at_unix = 1784361487
+input_digest_schema_version = 1
+input_digest = "d6979fb9df8fc178390216ba98036d4a328146556b579067c7e0ad6b7c3e072c"
+input_count = 119
+benchmarked_at_unix = 1786890018
 
 [features."stereo.representation"]
 outcome = "match"

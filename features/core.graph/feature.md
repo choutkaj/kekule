@@ -27,7 +27,7 @@ single-atom values are valid connected boundary cases.
 - Rejects invalid atom IDs, invalid bond IDs, self-bonds, and duplicate bonds.
 - Iterates live atoms, live bonds, neighbors, and incident bonds.
 - Reports the `i64` sum of asserted formal charges across live atoms without
-  requiring sanitization or perception.
+  requiring normalization or perception.
 - Preserves stable `AtomId` and `BondId` values after deletion.
 - Returns scoped `AtomMut` and `BondMut` guards from mutable graph access.
 - Owns one internally consistent `PerceptionState` with read-only valence,

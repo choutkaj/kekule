@@ -275,18 +275,6 @@ pub mod perception {
         pub use crate::core::AromaticityModel;
     }
 
-    pub mod stereo {
-        pub use crate::algorithms::{
-            assign_cip_descriptors, assign_cip_descriptors_with_options, detect_stereo_candidates,
-            infer_coordinate_stereo, infer_coordinate_stereo_with_options,
-            materialize_coordinate_stereo, materialize_coordinate_stereo_with_options,
-            validate_stereo, CipAssignment, CipAssignmentError, CipAssignmentIssue,
-            CipAssignmentOptions, CipAssignmentReport, CipSkipped, CipSkippedReason,
-            CoordinateStereoError, CoordinateStereoMaterializationReport, CoordinateStereoOptions,
-            CoordinateStereoResult, StereoCandidate, StereoValidationError, StereoValidationIssue,
-        };
-    }
-
     /// Install the transactional default valence, ring-set, and aromaticity profile.
     ///
     /// The represented molecule must already be normalized. This operation
@@ -294,6 +282,23 @@ pub mod perception {
     pub fn perceive(molecule: &mut Molecule) -> Result<(), PerceptionError> {
         crate::chemistry::perceive_molecule(molecule)
     }
+}
+
+/// Focused stereochemistry validation, inference, transforms, and CIP assignment.
+///
+/// Coordinate inference and candidate detection are read-only. Coordinate
+/// materialization is an explicitly named representation transform, while CIP
+/// descriptors remain opt-in derived state.
+pub mod stereo {
+    pub use crate::algorithms::{
+        assign_cip_descriptors, assign_cip_descriptors_with_options, detect_stereo_candidates,
+        infer_coordinate_stereo, infer_coordinate_stereo_with_options,
+        materialize_coordinate_stereo, materialize_coordinate_stereo_with_options, validate_stereo,
+        CipAssignment, CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions,
+        CipAssignmentReport, CipSkipped, CipSkippedReason, CoordinateStereoError,
+        CoordinateStereoMaterializationReport, CoordinateStereoOptions, CoordinateStereoResult,
+        StereoCandidate, StereoValidationError, StereoValidationIssue,
+    };
 }
 
 pub mod canon {
@@ -315,8 +320,8 @@ pub mod canon {
 pub mod hydrogens {
     pub use crate::algorithms::{
         AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
-        HydrogenCountAdjustment, HydrogenNormalizationError, RemoveHydrogensReport,
-        RemovedHydrogen, RetainedHydrogen, RetainedHydrogenReason,
+        HydrogenCountAdjustment, HydrogenTransformError, RemoveHydrogensReport, RemovedHydrogen,
+        RetainedHydrogen, RetainedHydrogenReason,
     };
 
     use crate::algorithms::{add_hydrogens_to_molecule, remove_hydrogens_from_molecule};
@@ -325,7 +330,7 @@ pub mod hydrogens {
     /// Materialize stored explicit counts and perceived implicit hydrogens.
     pub fn add_hydrogens(
         molecule: &mut SmallMolecule,
-    ) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
+    ) -> Result<AddHydrogensReport, HydrogenTransformError> {
         add_hydrogens_with_options(molecule, AddHydrogensOptions::default())
     }
 
@@ -333,7 +338,7 @@ pub mod hydrogens {
     pub fn add_hydrogens_with_options(
         molecule: &mut SmallMolecule,
         options: AddHydrogensOptions,
-    ) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
+    ) -> Result<AddHydrogensReport, HydrogenTransformError> {
         add_hydrogens_to_molecule(molecule.graph_mut_raw(), options)
     }
 
@@ -344,7 +349,7 @@ pub mod hydrogens {
     /// described by the returned report.
     pub fn remove_hydrogens(
         molecule: &mut SmallMolecule,
-    ) -> Result<RemoveHydrogensReport, HydrogenNormalizationError> {
+    ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
         remove_hydrogens_from_molecule(molecule.graph_mut_raw())
     }
 }

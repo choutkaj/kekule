@@ -5,12 +5,15 @@ use crate::normalization as normalization_api;
 use crate::normalization::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
-    stereo as stereo_api, stereo::*, valence as valence_api, valence::*,
+    valence as valence_api, valence::*,
 };
 use crate::sdf::*;
 use crate::small::*;
 use crate::smiles::*;
-use crate::{canon, molfile, perception as perception_api, sdf, smiles as smiles_api};
+use crate::{
+    canon, molfile, perception as perception_api, sdf, smiles as smiles_api, stereo as stereo_api,
+    stereo::*,
+};
 
 pub(super) fn carbon() -> Atom {
     Atom::new(Element::from_symbol("C").expect("carbon should be available"))

@@ -9,7 +9,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - The foundation package and Rust import root are both named `kekule`; there is
   no compatibility package or alias under a previous project name.
 - Public modules are focused around `core`, `units`, `small`, `bio`, `smiles`,
-  `molfile`, `sdf`, `mmcif`, `normalization`, `perception`, `hydrogens`, `query`,
+  `molfile`, `sdf`, `mmcif`, `normalization`, `perception`, `stereo`, `hydrogens`, `query`,
   `substructure`, `canon`, `descriptors`, `geometry`, `topology`, `structure`,
   `alignment`, and `modeling`. Ordered trajectory state, codecs, and focused
   trajectory workflows live in the one-way `kekule-traj` companion, whose
@@ -24,7 +24,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Macro graph growth uses atomic bonded-atom insertion after the first atom and
   reports `MacroGraphEditError` rather than exposing an unattached public atom.
 - `MacroMolecule` exposes direct hierarchy iterators, atom-site lookup, and
-  read-only validation. The placeholder macro sanitization surface is absent.
+  read-only validation. The placeholder macro preparation surface is absent.
 - SMILES, Molfile, SDF, and mmCIF expose format-specific Documents and explicit
   interpretation results with reports/mappings; superseded direct reader APIs
   are absent.
@@ -54,7 +54,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   surfaces report focused fixed-width identifier capacity errors before
   mutation rather than truncating or panicking.
 - `Molecule::formal_charge` exposes the asserted live-atom charge aggregate as
-  an `i64` without hiding sanitization or perception.
+  an `i64` without hiding normalization or perception.
 - `mmcif::interpret` returns a selected-coordinate `Model` plus report;
   `MolecularContents` and `Solvent` are removed.
 - `mmcif::interpret_ensemble` is a separate shared-topology multi-model path
@@ -84,12 +84,12 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   returns the existing normalization report, and exposes the focused
   `small::NormalizeAndPerceiveError` without adding it to the crate root or
   prelude.
-- `perception::stereo` separately exposes stored-element validation,
+- Top-level `stereo` separately exposes stored-element validation,
   read-only candidate detection, detached read-only coordinate-stereo
   inference, and a separately named transactional materialization transform.
   Source-mark assembly and diagnostics are absent from this facade and live
   under `normalization`.
-- The same stereo facade exposes CIP assignment as
+- The same top-level stereo facade exposes CIP assignment as
   `Result<CipAssignmentReport, CipAssignmentError>`: successful assignments and
   skips are sidecar output, while failed assignment preserves the exact prior
   descriptor map.
@@ -187,7 +187,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 ## Out Of Scope
 
-- Implementing new chemistry perception, stereochemistry, preparation, or invasive macromolecule sanitization behavior.
+- Implementing new chemistry perception, stereochemistry, preparation, or invasive macromolecule repair behavior.
 - Keeping root-level compatibility aliases for the previous pre-release API.
 
 ## Revision Notes
@@ -207,7 +207,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v9: Expose opaque shared model-definition identity and instance-qualified
   structured potential failures through the focused modelling namespace.
 - v10: Add the focused `hydrogens` namespace and `SmallMolecule`
-  conveniences for transactional explicit/implicit hydrogen normalization.
+  conveniences for transactional hydrogen materialization and collapse.
 - v11: Add focused `query` and `substructure` namespaces for syntax-neutral
   query graphs, bounded SMARTS parsing, and matching without expanding the prelude.
 - v12: Add the foundational `mmcif::write` model-serialization surface without
@@ -299,3 +299,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v47: Add the atomic `SmallMolecule::normalize_and_perceive` convenience and
   replace mutating stereo-perception publication with read-only coordinate
   inference plus explicit materialization.
+- v48: Move validation, coordinate inference/materialization, and CIP
+  assignment into the focused top-level `stereo` facade; remove
+  `perception::stereo`; and rename hydrogen normalization terminology to
+  topology transforms.

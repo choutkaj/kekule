@@ -10,7 +10,7 @@ fixtures = [
 ]
 
 notes = [
-  "Reference RDKit goldens compare exact non-isomeric canonical SMILES plus sanitized reparse semantics for the current non-fused-ring subset.",
+  "Reference RDKit goldens compare exact non-isomeric canonical SMILES plus normalized/perceived reparse semantics for the current non-fused-ring subset.",
   "Fused ring, heteroaromatic ring, and fused heterocycle canonical traversal parity remains out of scope for this first benchmark slice.",
   "All molecule fixtures are externally supplied PubChem SMILES records.",
 ]

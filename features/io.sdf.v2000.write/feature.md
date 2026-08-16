@@ -18,7 +18,7 @@ Write canonical `SdfRecord` values as ordered SDF V2000 records.
 - Rejects titles with line breaks, malformed field names, field values with
   blank lines or carriage returns, and field values containing a `$$$$`
   delimiter line instead of emitting SDF text that cannot round-trip safely.
-- Does not run sanitization, canonicalization, or perception.
+- Does not run normalization, canonicalization, or perception.
 
 ## Implementation Notes
 
