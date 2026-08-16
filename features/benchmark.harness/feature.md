@@ -77,6 +77,9 @@ release status, CI success, or whether the repository is ready for development.
 - SMILES semantic regressions cover represented `[nH]` and a perceived
   aromatic-nitrogen hydrogen whose reference-facing valence is derived without
   perception-to-representation feedback.
+- SMILES benchmark adapters preserve one output record per source line while
+  aggregating the already-separated connected component interpretations for
+  raw, normalized/perceived, round-trip, and stereo semantic comparison.
 
 ## Benchmarks
 
@@ -110,3 +113,6 @@ release status, CI success, or whether the repository is ready for development.
 - v45: Rename internal SMILES semantic helpers, prepared-state keys, and
   workflow failure statuses to the final normalize/perceive vocabulary, and
   migrate the hydrogen-transform benchmark identity without changing chemistry.
+- v46: Preserve source-record cardinality for disconnected SMILES benchmark
+  inputs by aggregating connected interpretation components in the adapter,
+  and retain the established stereo benchmark serialization contract.
