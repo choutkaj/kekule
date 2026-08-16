@@ -281,8 +281,7 @@ struct RepresentedStereoElementSnapshot {
     group: Option<StereoGroupId>,
 }
 
-/// Complete primary molecule state, excluding only `PerceptionState` and the
-/// atom/bond/stereo test mirrors that shadow its installed sections.
+/// Complete primary molecule state, excluding only `PerceptionState`.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct RepresentedMoleculeSnapshot {
     atoms: Vec<Option<RepresentedAtomSnapshot>>,

@@ -14,9 +14,8 @@ fn normalization_and_default_perception_are_explicit() {
     assert_eq!(
         small
             .graph()
-            .atom(AtomId::new(2))
-            .expect("oxygen")
-            .implicit_hydrogens,
+            .implicit_hydrogens(AtomId::new(2))
+            .expect("oxygen"),
         Some(1)
     );
 }
@@ -363,7 +362,7 @@ fn valence_reports_excess_common_valence() {
         ValenceOptions { strict: false },
     )
     .expect("permissive valence inspection should succeed");
-    assert_eq!(mol.atom(c).expect("carbon").implicit_hydrogens, Some(0));
+    assert_eq!(mol.implicit_hydrogens(c).expect("carbon"), Some(0));
 }
 
 #[test]
@@ -408,7 +407,7 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
         [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon
     ));
     assert_eq!(mol.perception(), &previous);
-    assert_eq!(mol.atom(carbon).unwrap().implicit_hydrogens, Some(2));
+    assert_eq!(mol.implicit_hydrogens(carbon).unwrap(), Some(2));
 }
 
 #[test]
@@ -423,7 +422,7 @@ fn unsupported_valence_target_remains_strictly_diagnostic_and_permissively_insta
 
     assert_eq!(error.issues, vec![ValenceIssue::UnsupportedElement(carbon)]);
     assert_eq!(strict.perception(), &PerceptionState::default());
-    assert_eq!(strict.atom(carbon).unwrap().implicit_hydrogens, None);
+    assert_eq!(strict.implicit_hydrogens(carbon).unwrap(), None);
 
     valence_api::perceive_valence_with_options(
         &mut strict,
@@ -432,7 +431,7 @@ fn unsupported_valence_target_remains_strictly_diagnostic_and_permissively_insta
     )
     .expect("permissive unsupported-element inspection should install");
     assert!(strict.perception().has_valence());
-    assert_eq!(strict.atom(carbon).unwrap().implicit_hydrogens, Some(0));
+    assert_eq!(strict.implicit_hydrogens(carbon).unwrap(), Some(0));
 }
 
 #[test]
@@ -460,7 +459,7 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
             max_allowed: 4,
         }]
     );
-    assert_eq!(mol.atom(carbon).expect("carbon").implicit_hydrogens, None);
+    assert_eq!(mol.implicit_hydrogens(carbon).expect("carbon"), None);
 }
 
 #[test]
@@ -488,7 +487,7 @@ fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
 
         assert!(report.is_ok(), "neutral {symbol} should be supported");
         assert_eq!(
-            mol.atom(atom_id).expect("atom").implicit_hydrogens,
+            mol.implicit_hydrogens(atom_id).expect("atom"),
             Some(expected_implicit_hydrogens),
             "neutral {symbol} implicit hydrogens"
         );
@@ -609,7 +608,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
 
         assert!(report.is_ok(), "{symbol}{charge:+} should be supported");
         assert_eq!(
-            mol.atom(atom_id).expect("atom").implicit_hydrogens,
+            mol.implicit_hydrogens(atom_id).expect("atom"),
             Some(expected_implicit_hydrogens),
             "{symbol}{charge:+} implicit hydrogens"
         );
@@ -628,7 +627,7 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             "isolated unsupported spectator {symbol} should be accepted"
         );
         assert_eq!(
-            mol.atom(atom_id).expect("atom").implicit_hydrogens,
+            mol.implicit_hydrogens(atom_id).expect("atom"),
             Some(0),
             "{symbol} implicit hydrogens"
         );
@@ -656,9 +655,8 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     assert!(report.is_ok(), "tetracyanomercurate should be supported");
     assert_eq!(
         mercury_cyanide
-            .atom(mercury)
-            .expect("mercury")
-            .implicit_hydrogens,
+            .implicit_hydrogens(mercury)
+            .expect("mercury"),
         Some(0)
     );
 
@@ -683,9 +681,8 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     );
     assert_eq!(
         covalent_aluminum
-            .atom(aluminum)
-            .expect("aluminum")
-            .implicit_hydrogens,
+            .implicit_hydrogens(aluminum)
+            .expect("aluminum"),
         Some(0)
     );
 
@@ -710,9 +707,8 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
     );
     assert_eq!(
         neutral_magnesium
-            .atom(magnesium)
-            .expect("magnesium")
-            .implicit_hydrogens,
+            .implicit_hydrogens(magnesium)
+            .expect("magnesium"),
         Some(0)
     );
 }

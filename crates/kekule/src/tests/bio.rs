@@ -254,7 +254,7 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
     for input in deterministic_text_mutations("CC(=O)O") {
         std::panic::catch_unwind(|| {
             if let Ok(molecule) = read_smiles(&input) {
-                if let Ok(output) = smiles_api::write_with_options(&molecule, SmilesWriteOptions) {
+                if let Ok(output) = smiles_api::write(&molecule) {
                     let _ = read_smiles(&output);
                 }
             }

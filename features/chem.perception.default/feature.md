@@ -20,8 +20,9 @@ discrete small-molecule perception state after representation normalization.
 - Requires normalized represented chemistry. Remaining
   `BondOrder::Aromatic` source bonds fail through `PerceptionError::Valence`;
   the operation never normalizes implicitly.
-- Stages the complete operation on a clone. Any valence, ring, or aromaticity
-  failure preserves the exact input molecule and prior `PerceptionState`.
+- A standalone call stages only the prior `PerceptionState`; because perception
+  is representation-pure, any valence, ring, or aromaticity failure restores
+  that state exactly without cloning the complete molecule.
 - On success, installs complete fresh valence, ring-set, and aromaticity state
   while leaving all primary represented chemistry unchanged.
 - Does not assemble source stereo, perceive coordinate stereo, or assign CIP
@@ -37,6 +38,9 @@ discrete small-molecule perception state after representation normalization.
 - Normalization and perception remain separate public operations. The ordinary
   convenience composes only those two stages; `SmallMolecule::from_smiles`
   remains parse plus interpret only.
+- The combined convenience owns one outer full-molecule staging clone and runs
+  normalization plus default perception inside it without nested molecule
+  transactions.
 
 ## Tests
 
@@ -44,6 +48,8 @@ discrete small-molecule perception state after representation normalization.
   purity, idempotence, and aromatic/heteroaromatic chemistry behavior.
 - Failure tests prove exact rollback for unnormalized aromatic input and for a
   downstream ring resource failure after staged valence perception succeeds.
+- Query-path tests prove unit and production builds read the same installed
+  implicit-H, aromaticity, and CIP state.
 - Public API and reconstruction tests exercise the explicit
   `normalize()` then `perceive()` workflow.
 - Combined-workflow tests cover simple and aromatic chemistry, source-stereo
@@ -70,3 +76,6 @@ discrete small-molecule perception state after representation normalization.
   discrete perception operation over normalized chemistry.
 - v2: Add the atomic `SmallMolecule::normalize_and_perceive` composition while
   keeping parsing, coordinate stereo, and CIP separate.
+- v3: Replace nested whole-molecule staging with exact `PerceptionState`
+  rollback for standalone perception and one outer clone for the combined
+  workflow.

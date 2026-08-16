@@ -10,8 +10,9 @@ small-molecule representation normalization.
 - Exposes `normalization::{normalize, NormalizationReport,
   NormalizationWarning, NormalizationError}` plus focused source-stereo issue
   types and the thin `SmallMolecule::normalize()` convenience.
-- Normalization stages work on a clone and publish only after every rewrite
-  succeeds. Failure leaves the complete input molecule unchanged.
+- A standalone normalization call owns one staging clone and publishes only
+  after every rewrite succeeds. Failure leaves the complete input molecule
+  unchanged.
 - Every successful call clears the complete installed `PerceptionState`, even
   when the represented chemistry was already canonical.
 - Canonicalizes supported neutral hypervalent chlorine, bromine, and iodine
@@ -62,6 +63,8 @@ small-molecule representation normalization.
   never inferred by normalization.
 - Normalization remains a separate public operation. Default perception
   expects its localized represented output and never invokes it implicitly.
+- The combined small-molecule workflow invokes the same normalization stages
+  in its one outer staging molecule instead of opening a nested transaction.
 
 ## Tests
 
@@ -91,3 +94,5 @@ small-molecule representation normalization.
 - v3: Canonicalize source-declared stereo transactionally after chemistry
   normalization, consume resolved marks, expose focused source diagnostics,
   and keep decoding independent of installed chemical perception.
+- v4: Centralize standalone transaction ownership around one staging clone and
+  let the atomic combined workflow reuse its existing outer staging molecule.

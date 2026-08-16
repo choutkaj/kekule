@@ -309,7 +309,7 @@ fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
 
     let (mut small, conformer, a, _, _) = two_atom_small(1.0);
     small
-        .graph_mut_raw()
+        .graph_mut()
         .conformer_mut(conformer)
         .unwrap()
         .set_position(a, Quantity::new(Point3::new(f64::NAN, 0.0, 0.0), ANGSTROM))

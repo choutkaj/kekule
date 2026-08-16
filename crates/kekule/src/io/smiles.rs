@@ -138,18 +138,6 @@ impl Default for SmilesParseOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct SmilesWriteOptions;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct IsomericSmilesWriteOptions;
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CanonicalSmilesWriteOptions;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesParseError {
     pub(crate) offset: usize,
@@ -1380,10 +1368,7 @@ fn ascii_digits_end(bytes: &[u8], mut index: usize) -> usize {
     index
 }
 
-pub fn write_smiles(
-    molecule: &SmallMolecule,
-    _options: SmilesWriteOptions,
-) -> std::result::Result<String, MolWriteError> {
+pub fn write_smiles(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
     let plan = plan_smiles_write(mol, StereoWriteMode::Reject)?;
     let mut parts = Vec::new();
@@ -1402,7 +1387,6 @@ pub fn write_smiles(
 
 pub fn write_isomeric_smiles(
     molecule: &SmallMolecule,
-    _options: IsomericSmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
     let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
@@ -1434,7 +1418,6 @@ pub fn write_isomeric_smiles(
 
 pub fn write_canonical_smiles(
     molecule: &SmallMolecule,
-    _options: CanonicalSmilesWriteOptions,
 ) -> std::result::Result<String, MolWriteError> {
     validate_smiles_writeable(molecule.graph(), StereoWriteMode::Ignore)?;
     let normalized = canonical_nonisomeric_graph(molecule.graph())?;
