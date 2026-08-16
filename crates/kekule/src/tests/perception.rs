@@ -152,6 +152,89 @@ fn aromaticity_marks_benzene_like_ring() {
 }
 
 #[test]
+fn discrete_chemical_perception_changes_only_perception_state() {
+    let mut molecule =
+        read_smiles("F[C@](Cl)(Br)c1cc[nH]c1").expect("heteroaromatic stereo fixture should parse");
+    molecule
+        .normalize()
+        .expect("heteroaromatic stereo fixture should normalize");
+
+    let atom_ids = molecule.graph().atom_ids().collect::<Vec<_>>();
+    let annotated_atom = atom_ids[0];
+    let annotated_bond = molecule.graph().bond_ids().next().expect("fixture bond");
+    molecule.graph_mut().props_mut().insert(
+        "perception_purity_fixture".to_owned(),
+        PropValue::String("molecule property".to_owned()),
+    );
+    molecule
+        .graph_mut()
+        .atom_mut(annotated_atom)
+        .expect("fixture atom")
+        .props
+        .insert("atom_note".to_owned(), PropValue::Bool(true));
+    molecule
+        .graph_mut()
+        .bond_mut(annotated_bond)
+        .expect("fixture bond")
+        .props
+        .insert("bond_note".to_owned(), PropValue::Int(7));
+
+    let stereo_element = molecule
+        .graph()
+        .stereo_element_ids()
+        .next()
+        .expect("direct SMILES stereo element");
+    molecule
+        .graph_mut()
+        .add_stereo_group(StereoGroup {
+            kind: StereoGroupKind::Absolute,
+            members: vec![stereo_element],
+        })
+        .expect("valid absolute stereo group");
+
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).expect("angstrom conformer");
+    conformer.props_mut().insert(
+        "conformer_note".to_owned(),
+        PropValue::String("source coordinates".to_owned()),
+    );
+    for (index, atom) in atom_ids.iter().copied().enumerate() {
+        conformer
+            .set_position(
+                atom,
+                crate::units::Quantity::new(
+                    Point3::new(index as f64, (index % 3) as f64, 0.25),
+                    crate::units::ANGSTROM,
+                ),
+            )
+            .expect("finite fixture coordinate");
+    }
+    molecule
+        .graph_mut()
+        .add_conformer(conformer)
+        .expect("valid complete conformer");
+
+    assert_eq!(molecule.graph().perception(), &PerceptionState::default());
+    let represented_before = represented_molecule_snapshot(molecule.graph());
+
+    valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
+        .expect("valence perception");
+    rings_api::perceive_ring_set(molecule.graph_mut()).expect("ring perception");
+    aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        .expect("aromaticity perception");
+
+    assert_eq!(
+        represented_molecule_snapshot(molecule.graph()),
+        represented_before
+    );
+    assert!(molecule.graph().perception().has_valence());
+    assert!(molecule.graph().perception().has_rings());
+    assert!(molecule.graph().perception().has_aromaticity());
+    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert_eq!(molecule.graph().stereo_groups().count(), 1);
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
+}
+
+#[test]
 fn aromaticity_evaluates_larger_simple_rings_like_rdkit() {
     let alternating_ten = [
         BondOrder::Double,

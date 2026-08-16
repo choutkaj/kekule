@@ -57,6 +57,10 @@ release status, CI success, or whether the repository is ready for development.
   the next benchmark replaces each selected target with the current schema.
 - Representation-only graph differences such as undirected bond orientation,
   bond-array order, and ring-atom order are normalized before comparison.
+- Sanitized SMILES semantics derive RDKit-comparable aromatic-nitrogen
+  hydrogen/valence output from Kekule's represented explicit-H plus perceived
+  implicit-H layers; the benchmark adapter does not require perception to
+  rewrite represented atoms.
 - Reference tools are never Rust runtime dependencies.
 
 ## Tests
@@ -70,6 +74,9 @@ release status, CI success, or whether the repository is ready for development.
   dependency changes are detected.
 - Corpus checks retain source-lock, nested-prefix, provenance, gzip,
   comparison-normalization, and manual-golden safeguards.
+- SMILES semantic regressions cover represented `[nH]` and a perceived
+  aromatic-nitrogen hydrogen whose reference-facing valence is derived without
+  sanitizer representation feedback.
 
 ## Benchmarks
 
@@ -94,3 +101,6 @@ release status, CI success, or whether the repository is ready for development.
   and make input digests independent of repository identity.
 - v42: Discover implementation sources from the Kekule core crate while
   labeling them through a package-neutral digest namespace.
+- v43: Derive reference-facing aromatic-nitrogen hydrogen and valence semantics
+  from separated represented and perceived state after removal of sanitizer
+  representation feedback.
