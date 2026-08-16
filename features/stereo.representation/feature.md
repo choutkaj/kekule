@@ -49,6 +49,10 @@ not atom/bond payload flags.
 - Supported V2000 and V3000 bond stereo fields are preserved as source bond
   marks. Atom `CFG`/parity and enhanced stereo collections remain unsupported
   until explicit format features are implemented.
+- Source bond marks are intermediate represented source syntax. Successful
+  normalization resolves every supported mark into canonical `StereoElement`
+  state and consumes the mark, while already-canonical SMILES `@`/`@@`
+  elements remain unchanged and unduplicated.
 - Writers read the new stereo model. Non-isomeric SMILES rejects stored stereo
   unless canonical non-isomeric output explicitly opts to ignore it; Molfile
   writers emit supported source bond marks and reject unsupported stereo
@@ -64,14 +68,14 @@ not atom/bond payload flags.
   and tombstones a group when its final member is removed.
 - Topology or stereo mutation invalidates the stereo perception cache state.
 - Source bond marks intentionally preserve parser syntax or Molfile wedge/either
-  fields even before perception can assemble them into validated stereo
-  elements.
+  fields until explicit representation normalization assembles them into
+  structurally validated stereo elements.
 - Implicit lone-pair carriers are local stereo placeholders only. They preserve
   supported imported tetrahedral syntax for heteroatom centers without
   converting lone pairs into graph atoms.
 - Macromolecules may carry stereo metadata through the shared graph, but
-  small-molecule stereo perception is a later explicit workflow and should not
-  run over whole `MacroMolecule` structures by default.
+  small-molecule source normalization and stereo perception are later explicit
+  workflows and should not run over whole `MacroMolecule` structures by default.
 
 ## Tests
 
@@ -97,8 +101,8 @@ not atom/bond payload flags.
 
 ## Out Of Scope
 
-- Candidate stereo perception, coordinate/wedge assignment, local stereo
-  validation, exact CIP assignment, isomeric SMILES writing, enhanced
+- Source-normalization algorithms, candidate or coordinate stereo perception,
+  local stereo validation, exact CIP assignment, isomeric SMILES writing, enhanced
   V3000/CXSMILES stereo, stereo enumeration, and reaction stereo transfer.
 
 ## Revision Notes
@@ -134,3 +138,6 @@ not atom/bond payload flags.
 - v16: Reject pre-grouped stereo-element insertion before mutation or
   invalidation, and return removed stereo elements detached from their prior
   relation group.
+- v17: Define source bond marks as normalization inputs that are consumed after
+  canonical source-declared `StereoElement` assembly while preserving direct
+  SMILES-local elements exactly once.

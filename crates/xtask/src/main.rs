@@ -19,13 +19,14 @@ use kekule::{
     dssp, hydrogens,
     mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions},
     molfile,
+    normalization::{NormalizationReport, NormalizationWarning},
     perception::{
         self,
         aromaticity::{self, AromaticityModel},
         rings,
         stereo::{
             self, StereoCandidate, StereoPerceptionError, StereoPerceptionIssue,
-            StereoPerceptionReport, StereoPerceptionWarning, StereoValidationIssue,
+            StereoPerceptionReport, StereoValidationIssue,
         },
         valence::{self, ValenceModel, ValenceOptions},
         SanitizeError, SanitizeOptions,

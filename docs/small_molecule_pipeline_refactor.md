@@ -303,14 +303,14 @@ Goal: make represented stereo complete before chemical perception.
 
 Implement:
 
-- split current stereo source-mark assembly from coordinate-derived stereo inference;
-- move wedge/directional/either/source-axis decoding into normalization;
-- source-declared stereo becomes canonical `StereoElement` state transactionally;
-- successful normalization consumes/removes source marks that were canonically represented;
-- normalization warnings/errors replace source-mark warnings/errors currently exposed by stereo perception;
-- source-stereo normalization must not require installed valence/aromaticity/ring perception;
-- narrow structural `validate_stereo()` so represented stereo validity can be checked without `PerceptionState`; move semantic availability checks to appropriate perception/CIP helpers;
-- preserve direct SMILES `@`/`@@` stereo elements where already canonical.
+- [x] split current stereo source-mark assembly from coordinate-derived stereo inference;
+- [x] move wedge/directional/either/source-axis decoding into normalization;
+- [x] source-declared stereo becomes canonical `StereoElement` state transactionally;
+- [x] successful normalization consumes/removes source marks that were canonically represented;
+- [x] normalization warnings/errors replace source-mark warnings/errors currently exposed by stereo perception;
+- [x] source-stereo normalization must not require installed valence/aromaticity/ring perception;
+- [x] narrow structural `validate_stereo()` so represented stereo validity can be checked without `PerceptionState`; move semantic availability checks to appropriate perception/CIP helpers;
+- [x] preserve direct SMILES `@`/`@@` stereo elements where already canonical.
 
 Do not redesign coordinate-stereo publication yet.
 

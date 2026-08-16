@@ -5,7 +5,11 @@ fn happy_path_small_molecule_api_matches_architecture() {
     let mut molecule = SmallMolecule::from_smiles("c1ccccc1O").expect("phenol parses");
 
     let report = molecule.sanitize().expect("phenol sanitizes");
-    let crate::perception::SanitizeReport { stereo } = report;
+    let crate::perception::SanitizeReport {
+        normalization,
+        stereo,
+    } = report;
+    assert!(normalization.warnings.is_empty());
     assert!(stereo.is_some());
     assert_eq!(
         molecule

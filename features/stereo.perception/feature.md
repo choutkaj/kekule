@@ -2,8 +2,8 @@
 
 ## Summary
 
-Validate graph-local stereo elements, detect candidate stereochemical units,
-and assign local stereo elements from supported source marks and coordinates.
+Validate graph-local represented stereo, detect candidate stereochemical units,
+and assign local stereo elements only from coordinates.
 
 ## Behavior/API
 
@@ -11,172 +11,84 @@ and assign local stereo elements from supported source marks and coordinates.
   `validate_stereo`, `detect_stereo_candidates`, and
   `perceive_stereo`/`perceive_stereo_with_options`.
 - `validate_stereo(&Molecule) -> Result<(), StereoValidationError>` validates
-  only already-stored `StereoElement` values and collects structural
-  `StereoValidationIssue` diagnostics. It does not detect candidates, inspect
-  source marks or coordinates for new stereo, or mutate the molecule.
-  Unavailable implicit carriers retain the precise `StereoCarrier` in
-  tetrahedral and double-bond issues, while implicit axis carriers are reported
-  as unsupported rather than non-adjacent.
-- `detect_stereo_candidates(&Molecule) -> Vec<StereoCandidate>` returns the
-  existing conservative tetrahedral and double-bond candidate set as read-only
-  exploratory output.
+  represented `StereoElement` structure only: live focus references, carrier
+  counts and uniqueness, adjacency, focus/end-point coherence, bond order, and
+  carrier forms supported by each represented stereo kind. It does not require
+  valence, hydrogen, ring, or aromaticity perception.
+- Implicit hydrogen and lone-pair carriers are structurally valid tetrahedral
+  forms, and implicit hydrogen is a structurally valid double-bond carrier.
+  Whether such a carrier is chemically available or stereogenic is deferred to
+  perception or CIP. Double-bond lone-pair and implicit axis carriers remain
+  structurally unsupported.
+- `detect_stereo_candidates(&Molecule) -> Vec<StereoCandidate>` remains a
+  read-only exploratory query over the current graph and installed hydrogen or
+  ring state where its conservative chemical heuristics require them.
+- Stereo perception never reads, assembles, consumes, warns about, or errors on
+  `StereoBondMark` state. Source-declared stereo belongs to normalization.
 - Stereo perception returns `Result<StereoPerceptionReport,
-  StereoPerceptionError>`, always assembles supported source marks, optionally
-  assigns coordinate-derived elements, and publishes every created element
-  together only after the complete proposed state validates.
-- `StereoPerceptionReport` contains created element IDs and nonfatal
-  `StereoPerceptionWarning` values. Fatal validation, source-mark, or insertion
-  diagnostics are returned through structured perception errors and issues.
-- `StereoPerceptionOptions` controls only coordinate assignment and the
-  default-off coordinate-axis subset. Direct perception retains default
-  coordinate assignment; sanitization disables coordinate-only assignment.
-- Candidate detection uses current graph and hydrogen state. Sanitization or
-  valence perception should run first when implicit hydrogens matter.
-- Validation accepts stored implicit lone-pair tetrahedral carriers for
-  supported no-implicit heteroatom centers, but candidate detection does not
-  broadly perceive lone-pair stereocenters.
-- Tetrahedral candidates are local geometry candidates only; no exact ligand
-  ranking, symmetry pruning, or CIP descriptor assignment is performed.
-- Stored axis elements are validated structurally: the axis bond must exist and
-  the local reference carriers must be atom carriers adjacent to opposite
-  endpoints of the axis bond. Broad axis candidate detection remains out of
-  scope, but the Molfile wedge subset below can assemble supported stored
-  axes.
-- Double-bond candidates include atom and implicit-hydrogen carriers. Paired
-  directional `/` and `\` source marks are normalized relative to each alkene
-  endpoint and can create specified double-bond stereo elements when compatible
-  marked single bonds are available on both ends. A substituted alkene endpoint
-  may carry two redundant directional marks when they cover both atom carriers
-  with opposite endpoint-normalized directions. Aromatic-focus bonds,
-  double bonds between aromatic atoms, double bonds in rings smaller than
-  eight atoms, and endocyclic double bonds with a non-carbon endpoint are
-  skipped until those unsupported stereo cases have explicit
-  format/perception semantics.
-- Molfile wedge up/down marks can create specified tetrahedral stereo elements.
-  When conformer coordinates are available, wedge up/down orientation is
-  assembled from those coordinates with the marked bond direction treated as
-  the local out-of-plane sense. If the local center has exactly one implicit
-  hydrogen carrier, perception synthesizes a virtual implicit-H coordinate from
-  the three explicit substituent vectors after applying the wedge z offset
-  rather than falling back to a fixed up/down orientation.
-  Molfile wedge/either marks can create explicit unknown tetrahedral stereo
-  elements. In both cases the marked bond's first endpoint is treated as the
-  local stereo center and the marked carrier is placed first in carrier order.
-  Explicit source-mark centers may use single through quadruple carrier bonds
-  (but not aromatic, zero, or dative bonds); supported three-coordinate
-  P/As/Sb/S/Se/Te centers receive an implicit-lone-pair carrier. This is
-  deliberately broader than conservative unmarked candidate detection.
-  Conflicting multi-wedge input is consumed as a nonfatal warning without
-  inventing a stereo element; sanitization treats that diagnostic as non-fatal,
-  matching RDKit's warning-and-ignore behavior.
-- Molfile double-bond either marks create explicit unknown double-bond stereo
-  elements when both endpoints have valid carriers. Their stored orientation is
-  non-semantic while specifiedness is unknown. Marks on bonds without a valid
-  local double-bond stereo representation remain structured diagnostics.
-- Molfile wedge up/down marks that cannot support tetrahedral stereo can
-  conservatively create specified atropisomeric axis elements when the marked
-  bond is adjacent to a single-bond axis whose endpoints are SP2-like, have
-  total degree two or three, and have one or two explicit reference bonds each.
-  Ring membership, aromatic flags, aromatic-order bonds, and local double bonds
-  provide the current SP2-like evidence. When a Molfile source mark can support
-  both non-ring and ring-internal axis candidates, non-ring candidates are
-  preferred; ring-internal macrocyclic axes are allowed when no non-ring
-  candidate remains. Redundant wedge marks that define the same axis are
-  consumed as the same local axis evidence instead of becoming hard tetrahedral
-  ambiguity. The stored local reference carriers are the lowest-ID explicit
-  carriers on the two axis endpoints, matching RDKit's documented internal
-  convention. Coordinates determine the stored axis handedness; for 2D
-  Molfiles, the wedge/hash mark supplies a virtual out-of-plane sign used to
-  lift the reference carriers consistently.
-- Coordinate-derived assignment uses the first conformer conservatively. It
-  assigns tetrahedral stereo only when all four carriers are explicit atoms
-  with nondegenerate 3D coordinates, and assigns double-bond stereo only when
-  each side has exactly one explicit atom carrier with nondegenerate 2D or 3D
-  geometry. `StereoPerceptionOptions::assign_coordinate_axes` is default-off
-  and opt-in; when enabled, it assigns axis stereo only when a single-bond axis
-  has two SP2-like endpoints, exactly two explicit atom carriers per endpoint,
-  no existing or planned stored-axis element, and nondegenerate 3D handedness
-  from the endpoint reference carriers. It does not infer coordinates for
-  implicit hydrogens or assign coordinate-only axes from flat 2D geometry.
+  StereoPerceptionError>`, publishes coordinate-derived elements together only
+  after complete structural validation, and reports created element IDs.
+  Perception errors contain structural-validation or insertion failures; the
+  former source-mark warning and issue vocabulary is absent.
+- `StereoPerceptionOptions::assign_coordinates` controls coordinate-derived
+  tetrahedral and double-bond assignment. The default-off
+  `assign_coordinate_axes` enables the existing conservative 3D axis subset.
+  The current mutating publication behavior remains transitional for Stage 8.
+- Coordinate-derived tetrahedral assignment requires four explicit atom
+  carriers with nondegenerate 3D coordinates. Double-bond assignment requires
+  one explicit atom carrier on each side with nondegenerate 2D or 3D geometry.
+- Opt-in coordinate-axis assignment requires a single-bond axis with two
+  SP2-like endpoints, exactly two explicit atom carriers per endpoint, no
+  existing stored-axis element, and nondegenerate 3D handedness from the
+  lowest-ID endpoint references.
+- Conservative double-bond candidate exclusions retain the RDKit-like
+  small-ring boundary and current unsupported aromatic/endocyclic hetero cases.
 
 ## Implementation Notes
 
-This feature identifies candidate tetrahedral atoms and double bonds, validates
-existing local stereo elements against current topology and hydrogen semantics,
-including supported implicit lone-pair tetrahedral carriers and structurally
-valid stored axis carriers, assembles SMILES-style paired directional bond
-marks with endpoint-relative normalization, and assembles supported Molfile
-tetrahedral wedge/either source marks plus supported Molfile atropisomeric
-wedge subsets. Coordinate-bearing Molfile tetrahedral
-wedges with one implicit hydrogen use a virtual carrier coordinate derived
-from explicit substituent geometry. Molfile atrop axes store lowest-neighbor
-endpoint references and compute local handedness from coordinates so equivalent
-wedge placements around the same axis collapse to the same local axis state.
-Ring-internal single bonds adjacent to the same wedged endpoint are ignored
-when a non-ring candidate is available so alternate wedged substituent
-placement does not create ambiguous axes; otherwise ring-internal macrocyclic
-axis candidates are accepted. Exocyclic axes may have either two ring endpoints
-or one ring endpoint plus one locally SP2 endpoint, and macrocyclic
-ring-internal axes follow the same endpoint and reference-carrier structural
-checks, matching the official RDKit atropisomer fixtures covered by the smoke
-CIP benchmark.
-Coordinate-derived assignment is local and conservative; exact CIP descriptors
-belong to `stereo.cip`. Small-ring double-bond exclusion uses a bounded
-shortest-path check around the candidate bond so direct perception and
-sanitizer-driven perception follow the same RDKit-like stereogenic-bond
-boundary. Opt-in coordinate-derived axes use the same lowest-ID endpoint
-reference carrier convention as supported Molfile atropisomeric axes, leaving
-priority flips and `M`/`P` descriptor assignment to the CIP layer.
+Stored stereo validation is representation-structural and independent of
+`PerceptionState`. Candidate detection and coordinate assignment retain their
+existing conservative chemistry heuristics because they are true perception
+work. Coordinate assignment uses a staged clone, skips foci that already have a
+represented element, validates the complete proposed state, and publishes only
+on success.
 
-Small-molecule perception runs as an explicit staged-clone transaction and may be
-run from the small-molecule sanitizer when `SanitizeOptions::perceive_stereo`
-is enabled. The sanitizer uses the source-mark assembly subset and leaves
-coordinate-derived assignment to explicit stereo perception calls. It should not
-run over whole `MacroMolecule` structures by default.
+The compatibility sanitizer calls normalization before valence, rings,
+aromaticity, and its stereo step. Because sanitization disables coordinate-only
+assignment, that final stereo call now validates canonical represented stereo
+without decoding source marks. Source mark normalization and its warnings or
+errors are exposed through `normalization`, not this feature.
+
 
 ## Tests
 
-- Focused unit and regression tests cover stored-state-only validation,
-  standalone candidate detection, successful warnings, structured fatal
-  errors, exact direct-perception rollback, and the chemistry contracts
-  described above.
+- Focused unit and regression tests cover perception-independent structural
+  validation, standalone candidate detection, transactional coordinate-derived
+  tetrahedral/double-bond/axis assignment, coordinate-axis opt-in behavior,
+  exact rollback, and explicit proof that perception leaves source marks
+  untouched and creates no source-declared elements.
+- Normalization regressions own wedge/hash/either, directional, source-axis,
+  implicit source carrier, source-warning, and source-error coverage.
 
 ## Benchmarks
 
-- Unit tests cover read-only validation, candidate detection after sanitization,
-  directional double-bond assembly, unsupported double-bond exclusions including
-  the small-ring alkene boundary, Molfile wedge/either assembly, unsupported
-  source-mark diagnostics, structural validation for stored axis elements,
-  Molfile atropisomeric axis assembly from official RDKit fixtures, including
-  alternate wedged substituent placement around the same exocyclic axis,
-  redundant wedge marks around the same atrop axis, one-ring-endpoint SP2
-  exocyclic axes, ring-internal macrocyclic axes,
-  virtual implicit-H Molfile tetrahedral orientation,
-  coordinate-derived tetrahedral and double-bond assignment, opt-in
-  conservative 3D axis assignment, default coordinate-axis non-assignment,
-  flat-coordinate axis rejection, sanitizer integration, transactional
-  rollback, and preservation of explicit unknown versus absent stereo.
-- Smoke, PubChem 100, PubChem 1k, PubChem 100k, Enamine diversity, and PL-REX
-  validation record semantic perception JSON for externally pinned isomeric
-  SMILES fixtures covering absent stereo, stored tetrahedral stereo, and
-  directional double-bond source-mark assembly. PL-REX adds coordinate-bearing
-  ligand SDF packs for Molfile wedge/either, conformer-aware tetrahedral
-  orientation, and supported atropisomeric source-mark assembly coverage. The
-  broader PubChem, Enamine, and PL-REX tiers are implementation-golden semantic
-  regression gates for perception stability, while exact RDKit descriptor
-  parity belongs to `stereo.cip`. Broad semantic benchmark records sanitize
-  failures per record when unrelated unsupported valence chemistry prevents
-  stereo perception.
-- Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `pl-rex`, `enamine-diversity`.
-- Benchmark observations are informational and never determine this feature's release status or repository health.
+- PubChem, Enamine, and PL-REX semantic fixtures continue to record represented
+  stereo plus candidate and coordinate-perception output after sanitization.
+  Source-declared elements are now present in the normalization report and
+  canonical molecule before stereo perception runs.
+- Exact descriptor parity remains the responsibility of `stereo.cip`.
+- Optional external-reference manifests are available for `pubchem-1k`,
+  `pubchem-100k`, `pl-rex`, and `enamine-diversity`.
+- Benchmark observations are informational and never determine this feature's
+  release status or repository health.
+
 
 ## Out Of Scope
-Exact CIP descriptors, default broad axis candidate perception beyond
-supported Molfile wedge subsets, non-opt-in coordinate-only axis assignment,
-2D coordinate-only axis assignment without source marks, CXSMILES
-atropisomeric syntax, isomeric SMILES writing, enhanced stereo serialization,
-implicit-hydrogen coordinate reconstruction, stereo enumeration, and reaction
-stereo transfer.
+Exact CIP descriptors, default broad axis candidate perception, non-opt-in
+coordinate-only axis assignment, 2D coordinate-only axis assignment,
+source-mark normalization, CXSMILES atropisomeric syntax, isomeric SMILES
+writing, enhanced stereo serialization, implicit-hydrogen coordinate
+reconstruction, stereo enumeration, and reaction stereo transfer.
 
 ## Revision Notes
 
@@ -249,3 +161,6 @@ stereo transfer.
   separate successful warnings from fatal structured errors; and narrow
   perception options and successful report output. Use carrier-accurate public
   validation issues for unavailable implicit and unsupported axis carriers.
+- v26: Move all source-mark assembly and diagnostics into normalization,
+  remove source warnings from perception output, and narrow validation to
+  represented structural invariants independent of installed perception.

@@ -20,5 +20,19 @@ pub(crate) use stereo::{
     atom_hydrogen_count, double_bond_between_aromatic_atoms, double_bond_endpoint_carriers,
     double_bond_has_noncarbon_endpoint, double_bond_is_in_ring,
 };
+
+pub(crate) fn compute_graph_ring_membership(
+    molecule: &crate::core::Molecule,
+) -> crate::core::RingMembership {
+    rings::compute_ring_membership(molecule)
+}
+
+pub(crate) fn graph_bond_in_ring_smaller_than(
+    molecule: &crate::core::Molecule,
+    bond: crate::core::BondId,
+    ring_size: usize,
+) -> bool {
+    rings::bond_in_ring_smaller_than(molecule, bond, ring_size)
+}
 pub use substructure::*;
 pub use valence::*;
