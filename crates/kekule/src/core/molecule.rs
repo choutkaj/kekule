@@ -838,45 +838,27 @@ impl Molecule {
     ) -> std::result::Result<(), PerceptionStateInstallError> {
         self.validate_perception_state(&state)?;
         self.perception = state;
-        #[cfg(test)]
-        self.sync_legacy_perception_fields();
         Ok(())
     }
 
     pub fn implicit_hydrogens(&self, atom: AtomId) -> Result<Option<u8>> {
         self.atom(atom)?;
-        let perceived = self.perception.implicit_hydrogens(atom);
-        #[cfg(test)]
-        return Ok(perceived.or(self.atom(atom)?.implicit_hydrogens));
-        #[cfg(not(test))]
-        Ok(perceived)
+        Ok(self.perception.implicit_hydrogens(atom))
     }
 
     pub fn atom_is_aromatic(&self, atom: AtomId) -> Result<Option<bool>> {
         self.atom(atom)?;
-        let perceived = self.perception.atom_is_aromatic(atom);
-        #[cfg(test)]
-        return Ok(perceived.or(self.atom(atom)?.aromatic.then_some(true)));
-        #[cfg(not(test))]
-        Ok(perceived)
+        Ok(self.perception.atom_is_aromatic(atom))
     }
 
     pub fn bond_is_aromatic(&self, bond: BondId) -> Result<Option<bool>> {
         self.bond(bond)?;
-        let perceived = self.perception.bond_is_aromatic(bond);
-        #[cfg(test)]
-        return Ok(perceived.or(self.bond(bond)?.aromatic.then_some(true)));
-        #[cfg(not(test))]
-        Ok(perceived)
+        Ok(self.perception.bond_is_aromatic(bond))
     }
 
     pub fn cip_descriptor(&self, element: StereoElementId) -> Result<Option<StereoDescriptor>> {
         self.stereo_element(element)?;
-        let perceived = self.perception.cip_descriptor(element);
-        #[cfg(test)]
-        return Ok(perceived.or(self.stereo_element(element)?.descriptor));
-        #[cfg(not(test))]
-        Ok(perceived)
+        Ok(self.perception.cip_descriptor(element))
     }
 
     pub fn ring_membership(&self) -> Option<&RingMembership> {
@@ -1179,12 +1161,6 @@ impl Molecule {
         model: ValenceModel,
         implicit_hydrogens: BTreeMap<AtomId, u8>,
     ) {
-        #[cfg(test)]
-        for (raw, atom) in (0..=u32::MAX).zip(self.atoms.iter_mut()) {
-            if let Some(atom) = atom {
-                atom.implicit_hydrogens = implicit_hydrogens.get(&AtomId::new(raw)).copied();
-            }
-        }
         self.perception.valence = Some(ValencePerceptionState {
             model: Some(model),
             implicit_hydrogens,
@@ -1202,10 +1178,6 @@ impl Molecule {
             })
             .implicit_hydrogens
             .insert(atom, count);
-        #[cfg(test)]
-        if let Some(payload) = self.atoms.get_mut(atom.index()).and_then(Option::as_mut) {
-            payload.implicit_hydrogens = Some(count);
-        }
     }
 
     pub(crate) fn install_ring_membership(&mut self, membership: RingMembership) {
@@ -1229,15 +1201,6 @@ impl Molecule {
             bonds: BTreeSet::new(),
         });
         self.perception.cip_descriptors.clear();
-        #[cfg(test)]
-        {
-            for atom in self.atoms.iter_mut().flatten() {
-                atom.aromatic = false;
-            }
-            for bond in self.bonds.iter_mut().flatten() {
-                bond.aromatic = false;
-            }
-        }
     }
 
     pub(crate) fn set_atom_aromatic(&mut self, atom: AtomId, aromatic: bool) {
@@ -1248,10 +1211,6 @@ impl Molecule {
             state.atoms.insert(atom);
         } else {
             state.atoms.remove(&atom);
-        }
-        #[cfg(test)]
-        if let Some(payload) = self.atoms.get_mut(atom.index()).and_then(Option::as_mut) {
-            payload.aromatic = aromatic;
         }
     }
 
@@ -1264,10 +1223,6 @@ impl Molecule {
         } else {
             state.bonds.remove(&bond);
         }
-        #[cfg(test)]
-        if let Some(payload) = self.bonds.get_mut(bond.index()).and_then(Option::as_mut) {
-            payload.aromatic = aromatic;
-        }
     }
 
     pub(crate) fn install_cip_descriptor(
@@ -1276,32 +1231,13 @@ impl Molecule {
         descriptor: StereoDescriptor,
     ) {
         self.perception.cip_descriptors.insert(element, descriptor);
-        #[cfg(test)]
-        if let Some(payload) = self
-            .stereo_elements
-            .get_mut(element.index())
-            .and_then(Option::as_mut)
-        {
-            payload.descriptor = Some(descriptor);
-        }
     }
 
     pub(crate) fn replace_cip_descriptors(
         &mut self,
         descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
     ) -> BTreeMap<StereoElementId, StereoDescriptor> {
-        let previous = std::mem::replace(&mut self.perception.cip_descriptors, descriptors);
-        #[cfg(test)]
-        for (raw, element) in (0..=u32::MAX).zip(self.stereo_elements.iter_mut()) {
-            if let Some(element) = element {
-                element.descriptor = self
-                    .perception
-                    .cip_descriptors
-                    .get(&StereoElementId::new(raw))
-                    .copied();
-            }
-        }
-        previous
+        std::mem::replace(&mut self.perception.cip_descriptors, descriptors)
     }
 
     fn validate_perception_state(
@@ -1540,42 +1476,6 @@ impl Molecule {
             });
         }
         Ok(())
-    }
-
-    #[cfg(test)]
-    fn sync_legacy_perception_fields(&mut self) {
-        for (raw, atom) in (0..=u32::MAX).zip(self.atoms.iter_mut()) {
-            if let Some(atom) = atom {
-                atom.implicit_hydrogens = self
-                    .perception
-                    .valence
-                    .as_ref()
-                    .and_then(|state| state.implicit_hydrogens.get(&AtomId::new(raw)).copied());
-                atom.aromatic = self
-                    .perception
-                    .aromaticity
-                    .as_ref()
-                    .is_some_and(|state| state.atoms.contains(&AtomId::new(raw)));
-            }
-        }
-        for (raw, bond) in (0..=u32::MAX).zip(self.bonds.iter_mut()) {
-            if let Some(bond) = bond {
-                bond.aromatic = self
-                    .perception
-                    .aromaticity
-                    .as_ref()
-                    .is_some_and(|state| state.bonds.contains(&BondId::new(raw)));
-            }
-        }
-        for (raw, element) in (0..=u32::MAX).zip(self.stereo_elements.iter_mut()) {
-            if let Some(element) = element {
-                element.descriptor = self
-                    .perception
-                    .cip_descriptors
-                    .get(&StereoElementId::new(raw))
-                    .copied();
-            }
-        }
     }
 
     pub(crate) fn without_conformers(mut self) -> Self {

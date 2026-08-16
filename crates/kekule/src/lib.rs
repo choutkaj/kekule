@@ -63,10 +63,9 @@ pub mod substructure {
 
 pub mod smiles {
     pub use crate::io::{
-        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, MolWriteError, SmilesAtomMapping,
-        SmilesBondMapping, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
-        SmilesInterpretError, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
-        SmilesParseOptions, SmilesWriteOptions,
+        MolWriteError, SmilesAtomMapping, SmilesBondMapping, SmilesDocument, SmilesDocumentToken,
+        SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
+        SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
     };
     use crate::small::SmallMolecule;
 
@@ -88,36 +87,15 @@ pub mod smiles {
     }
 
     pub fn write(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
-        crate::io::write_smiles(molecule, SmilesWriteOptions)
-    }
-
-    pub fn write_with_options(
-        molecule: &SmallMolecule,
-        options: SmilesWriteOptions,
-    ) -> Result<String, MolWriteError> {
-        crate::io::write_smiles(molecule, options)
+        crate::io::write_smiles(molecule)
     }
 
     pub fn write_isomeric(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
-        crate::io::write_isomeric_smiles(molecule, IsomericSmilesWriteOptions)
-    }
-
-    pub fn write_isomeric_with_options(
-        molecule: &SmallMolecule,
-        options: IsomericSmilesWriteOptions,
-    ) -> Result<String, MolWriteError> {
-        crate::io::write_isomeric_smiles(molecule, options)
+        crate::io::write_isomeric_smiles(molecule)
     }
 
     pub fn write_canonical(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
-        crate::io::write_canonical_smiles(molecule, CanonicalSmilesWriteOptions)
-    }
-
-    pub fn write_canonical_with_options(
-        molecule: &SmallMolecule,
-        options: CanonicalSmilesWriteOptions,
-    ) -> Result<String, MolWriteError> {
-        crate::io::write_canonical_smiles(molecule, options)
+        crate::io::write_canonical_smiles(molecule)
     }
 }
 
@@ -339,7 +317,7 @@ pub mod hydrogens {
         molecule: &mut SmallMolecule,
         options: AddHydrogensOptions,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_to_molecule(molecule.graph_mut_raw(), options)
+        add_hydrogens_to_molecule(molecule.graph_mut(), options)
     }
 
     /// Collapse ordinary degree-one hydrogens without discarding protected state.
@@ -350,7 +328,7 @@ pub mod hydrogens {
     pub fn remove_hydrogens(
         molecule: &mut SmallMolecule,
     ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-        remove_hydrogens_from_molecule(molecule.graph_mut_raw())
+        remove_hydrogens_from_molecule(molecule.graph_mut())
     }
 }
 
@@ -358,9 +336,6 @@ pub mod prelude {
     pub use crate::bio::{MacroMolecule, SmcraHierarchy};
     pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
     pub use crate::small::SmallMolecule;
-    pub use crate::smiles::{
-        CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions, SmilesWriteOptions,
-    };
 }
 
 #[cfg(test)]

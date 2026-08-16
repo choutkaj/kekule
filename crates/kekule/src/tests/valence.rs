@@ -239,8 +239,7 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
         .sum::<usize>();
     assert_eq!(total_hydrogens, 5);
 
-    let written = smiles_api::write_with_options(&molecule, SmilesWriteOptions)
-        .expect("perceived pyrrole should write");
+    let written = smiles_api::write(&molecule).expect("perceived pyrrole should write");
     assert!(written.contains("[nH]"), "{written}");
 }
 

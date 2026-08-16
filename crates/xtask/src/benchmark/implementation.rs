@@ -1480,7 +1480,7 @@ pub(crate) fn smiles_write_record_json(
     let written = record
         .components
         .iter()
-        .map(|molecule| smiles::write_with_options(molecule, SmilesWriteOptions::default()))
+        .map(smiles::write)
         .collect::<Result<Vec<_>, _>>()?;
     let reparsed = written
         .iter()
@@ -1524,8 +1524,7 @@ pub(crate) fn canonical_smiles_record_json(
             "input_smiles": record.input_smiles,
         }));
     }
-    let written =
-        smiles::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions::default())?;
+    let written = smiles::write_canonical(&molecule)?;
     let reparsed = match interpret_smiles(&written) {
         Ok(reparsed) => reparsed,
         Err(_) => {
@@ -1566,7 +1565,7 @@ pub(crate) fn isomeric_smiles_record_json(
             "input_smiles": record.input_smiles,
         }));
     }
-    let written = match smiles::write_isomeric_with_options(&molecule, Default::default()) {
+    let written = match smiles::write_isomeric(&molecule) {
         Ok(written) => written,
         Err(error) => {
             return Ok(json!({
@@ -1621,7 +1620,7 @@ pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
         .components
         .iter()
         .map(|molecule| {
-            smiles::write_with_options(molecule, SmilesWriteOptions::default())
+            smiles::write(molecule)
                 .map_err(|_| ())
                 .and_then(|text| interpret_smiles(&text).map_err(|_| ()))
         })

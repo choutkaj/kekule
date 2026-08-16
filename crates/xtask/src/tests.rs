@@ -1883,8 +1883,7 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
         .components
         .iter()
         .map(|molecule| {
-            let text = smiles::write_with_options(molecule, SmilesWriteOptions::default())
-                .expect("component should write");
+            let text = smiles::write(molecule).expect("component should write");
             let document = smiles::parse_str(&text).expect("written component should parse");
             smiles::interpret(&document)
                 .expect("written component should interpret")
@@ -1896,12 +1895,11 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
         written["records"][0]["normalized_perceived"],
         smiles_components_perceived_semantic_json(&reparsed)
     );
-    let connected_written = smiles::write_with_options(
+    let connected_written = smiles::write(
         records[1]
             .molecule
             .as_ref()
             .expect("connected record should have one molecule"),
-        SmilesWriteOptions::default(),
     )
     .expect("connected record should write");
     let connected_document =

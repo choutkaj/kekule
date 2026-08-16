@@ -7,7 +7,9 @@ round-trip workflows.
 
 ## Behavior/API
 
-- Exposes `smiles::{SmilesWriteOptions, write, write_with_options}`.
+- Exposes the single noncanonical entry point `smiles::write` and the
+  `SmallMolecule::to_smiles()` convenience; there is no empty options type or
+  redundant options overload.
 - Emits graph-order-based noncanonical SMILES with branches, ring closures,
   common bond symbols, and bracket atoms when needed. Multi-component documents
   are interpreted and written component-by-component by callers.
@@ -79,3 +81,4 @@ round-trip workflows.
   feedback.
 - v15: Reject radical atoms explicitly after removing model-driven bracket
   radical inference from SMILES interpretation.
+- v16: Remove the empty writer-options type and redundant options overload.

@@ -25,9 +25,8 @@ fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
     assert_eq!(
         s_alanine
             .graph()
-            .stereo_element(StereoElementId::new(0))
-            .expect("stereo element")
-            .descriptor,
+            .cip_descriptor(StereoElementId::new(0))
+            .expect("stereo element"),
         Some(StereoDescriptor::S)
     );
 
@@ -126,7 +125,7 @@ fn cip_assigns_axis_descriptors_from_ranked_anchors() {
             }]
         );
         assert_eq!(
-            mol.stereo_element(stereo).expect("axis element").descriptor,
+            mol.cip_descriptor(stereo).expect("axis element"),
             Some(expected)
         );
     }
@@ -173,10 +172,7 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("axis element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("axis element"), None);
 }
 
 #[test]
@@ -199,9 +195,8 @@ fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
         }]
     );
     assert_eq!(
-        mol.stereo_element(StereoElementId::new(0))
-            .expect("axis element")
-            .descriptor,
+        mol.cip_descriptor(StereoElementId::new(0))
+            .expect("axis element"),
         Some(StereoDescriptor::P)
     );
 }
@@ -217,9 +212,7 @@ fn cip_assigns_pseudo_axis_descriptors_for_pseudoasymmetric_endpoint_ordering() 
         assign_cip(&mut mol);
 
         assert_eq!(
-            mol.stereo_element(axis_element)
-                .expect("axis stereo")
-                .descriptor,
+            mol.cip_descriptor(axis_element).expect("axis stereo"),
             Some(expected)
         );
     }
@@ -243,9 +236,8 @@ fn cip_matches_rdkit_for_molfile_atropisomeric_axis() {
     assert_eq!(
         molecule
             .graph()
-            .stereo_element(StereoElementId::new(0))
-            .expect("axis stereo element")
-            .descriptor,
+            .cip_descriptor(StereoElementId::new(0))
+            .expect("axis stereo element"),
         Some(StereoDescriptor::P)
     );
 }
@@ -612,10 +604,7 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
 }
 
 #[test]
@@ -666,10 +655,7 @@ fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
 }
 
 #[test]
@@ -681,16 +667,7 @@ fn cip_skips_endocyclic_kekule_bond_stereo_after_ring_perception() {
 
     assign_cip(molecule.graph_mut());
 
-    let bond_descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::DoubleBond(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.left.raw(), stereo.right.raw(), descriptor)),
-            StereoElementKind::Tetrahedral(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let bond_descriptors = double_bond_descriptor_map(molecule.graph());
     assert_eq!(
         bond_descriptors,
         vec![
@@ -761,9 +738,8 @@ fn cip_assigns_sequence_descriptors_for_pseudoasymmetric_double_bond_endpoints()
         assign_cip(&mut mol);
 
         assert_eq!(
-            mol.stereo_element(double_bond_element)
-                .expect("double-bond stereo")
-                .descriptor,
+            mol.cip_descriptor(double_bond_element)
+                .expect("double-bond stereo"),
             Some(expected)
         );
     }
@@ -776,26 +752,8 @@ fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
 
     assign_cip(molecule.graph_mut());
 
-    let atom_descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
-    let bond_descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::DoubleBond(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.left.raw(), stereo.right.raw(), descriptor)),
-            StereoElementKind::Tetrahedral(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let atom_descriptors = tetrahedral_descriptor_map(molecule.graph());
+    let bond_descriptors = double_bond_descriptor_map(molecule.graph());
 
     assert_eq!(atom_descriptors, vec![(1, StereoDescriptor::R)]);
     assert_eq!(
@@ -876,21 +834,13 @@ fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, Stere
 }
 
 fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -> (AtomId, AtomId) {
-    let mut child_r_atom = carbon();
-    child_r_atom.implicit_hydrogens = Some(1);
-    let child_r = mol
-        .add_atom(child_r_atom)
-        .expect("atom identifier capacity");
+    let child_r = mol.add_atom(carbon()).expect("atom identifier capacity");
     let child_r_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let child_r_nitrogen = mol
         .add_atom(element_atom("N"))
         .expect("atom identifier capacity");
 
-    let mut child_s_atom = carbon();
-    child_s_atom.implicit_hydrogens = Some(1);
-    let child_s = mol
-        .add_atom(child_s_atom)
-        .expect("atom identifier capacity");
+    let child_s = mol.add_atom(carbon()).expect("atom identifier capacity");
     let child_s_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let child_s_nitrogen = mol
         .add_atom(element_atom("N"))
@@ -939,15 +889,16 @@ fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -
     ))
     .expect("S child stereo element");
 
+    mol.set_implicit_hydrogens(child_r, 1);
+    mol.set_implicit_hydrogens(child_s, 1);
+
     (child_r, child_s)
 }
 
 #[test]
 fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands() {
     let mut mol = Molecule::new();
-    let mut center_atom = carbon();
-    center_atom.implicit_hydrogens = Some(0);
-    let center = mol.add_atom(center_atom).expect("atom identifier capacity");
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let chlorine = mol
         .add_atom(element_atom("Cl"))
         .expect("atom identifier capacity");
@@ -955,21 +906,13 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
         .add_atom(element_atom("F"))
         .expect("atom identifier capacity");
 
-    let mut child_r_atom = carbon();
-    child_r_atom.implicit_hydrogens = Some(1);
-    let child_r = mol
-        .add_atom(child_r_atom)
-        .expect("atom identifier capacity");
+    let child_r = mol.add_atom(carbon()).expect("atom identifier capacity");
     let child_r_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let child_r_nitrogen = mol
         .add_atom(element_atom("N"))
         .expect("atom identifier capacity");
 
-    let mut child_s_atom = carbon();
-    child_s_atom.implicit_hydrogens = Some(1);
-    let child_s = mol
-        .add_atom(child_s_atom)
-        .expect("atom identifier capacity");
+    let child_s = mol.add_atom(carbon()).expect("atom identifier capacity");
     let child_s_oxygen = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let child_s_nitrogen = mol
         .add_atom(element_atom("N"))
@@ -1035,24 +978,22 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
         ))
         .expect("parent pseudoasymmetric stereo element");
 
+    mol.set_implicit_hydrogens(center, 0);
+    mol.set_implicit_hydrogens(child_r, 1);
+    mol.set_implicit_hydrogens(child_s, 1);
+
     assign_cip(&mut mol);
 
     assert_eq!(
-        mol.stereo_element(child_r_element)
-            .expect("R child stereo")
-            .descriptor,
+        mol.cip_descriptor(child_r_element).expect("R child stereo"),
         Some(StereoDescriptor::R)
     );
     assert_eq!(
-        mol.stereo_element(child_s_element)
-            .expect("S child stereo")
-            .descriptor,
+        mol.cip_descriptor(child_s_element).expect("S child stereo"),
         Some(StereoDescriptor::S)
     );
     assert_eq!(
-        mol.stereo_element(parent_element)
-            .expect("parent stereo")
-            .descriptor,
+        mol.cip_descriptor(parent_element).expect("parent stereo"),
         Some(StereoDescriptor::LowerR)
     );
 }
@@ -1066,16 +1007,7 @@ fn cip_bootstraps_coupled_pseudoasymmetric_tetrahedral_centers() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(report.assigned.len(), 2);
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![(6, StereoDescriptor::LowerR), (9, StereoDescriptor::LowerR)]
@@ -1165,16 +1097,7 @@ fn cip_preserves_absolute_centers_next_to_pseudoasymmetric_ring_center() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1194,16 +1117,7 @@ fn cip_bootstraps_coupled_pseudoasymmetric_fused_ring_centers() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![(4, StereoDescriptor::LowerS), (6, StereoDescriptor::LowerS)]
@@ -1220,16 +1134,7 @@ fn cip_bootstraps_coupled_pseudoasymmetric_cyclopentane_centers() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1249,16 +1154,7 @@ fn cip_marks_middle_center_pseudoasymmetric_in_fused_three_center_system() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1279,16 +1175,7 @@ fn cip_bootstraps_enamine_coupled_cyclobutane_pseudoasymmetric_centers() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1308,16 +1195,7 @@ fn cip_matches_rdkit_for_enamine_quaternary_ring_center() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1339,16 +1217,7 @@ fn cip_matches_rdkit_for_enamine_fused_three_center_pseudoasymmetry() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1369,16 +1238,7 @@ fn cip_matches_rdkit_for_enamine_fused_ring_dual_pseudoasymmetry() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1399,16 +1259,7 @@ fn cip_matches_rdkit_for_enamine_spiro_fused_pseudoasymmetry() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1427,16 +1278,7 @@ fn cip_matches_rdkit_for_enamine_absolute_center_in_coupled_bicycle() {
 
     assign_cip(molecule.graph_mut());
 
-    let descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.center.raw(), descriptor)),
-            StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let descriptors = tetrahedral_descriptor_map(molecule.graph());
     assert_eq!(
         descriptors,
         vec![
@@ -1450,9 +1292,7 @@ fn cip_matches_rdkit_for_enamine_absolute_center_in_coupled_bicycle() {
 #[test]
 fn cip_applies_recursive_rule1a_before_isotope_priority() {
     let mut mol = Molecule::new();
-    let mut center_atom = carbon();
-    center_atom.implicit_hydrogens = Some(1);
-    let center = mol.add_atom(center_atom).expect("atom identifier capacity");
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let bromine = mol
         .add_atom(element_atom("Br"))
         .expect("atom identifier capacity");
@@ -1486,6 +1326,8 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
             StereoSource::User,
         ))
         .expect("stereo element");
+
+    mol.set_implicit_hydrogens(center, 1);
 
     let report = assign_cip(&mut mol);
 
@@ -1646,16 +1488,7 @@ fn cip_skips_endocyclic_hetero_double_bond_stereo() {
 
     assign_cip(molecule.graph_mut());
 
-    let bond_descriptors = molecule
-        .graph()
-        .stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::DoubleBond(stereo) => element
-                .descriptor
-                .map(|descriptor| (stereo.left.raw(), stereo.right.raw(), descriptor)),
-            StereoElementKind::Tetrahedral(_) | StereoElementKind::Axis(_) => None,
-        })
-        .collect::<Vec<_>>();
+    let bond_descriptors = double_bond_descriptor_map(molecule.graph());
     assert_eq!(
         bond_descriptors,
         vec![
@@ -1708,10 +1541,7 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
 }
 
 #[test]
@@ -1767,10 +1597,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
 }
 
 #[test]
@@ -1826,10 +1653,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
 }
 
 #[test]
@@ -1880,10 +1704,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
 }
 
 fn add_carbon_chain(mol: &mut Molecule, start: AtomId, length: usize) {
@@ -1948,10 +1769,7 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
             reason: CipSkippedReason::NotStereogenic,
         }]
     );
-    assert_eq!(
-        mol.stereo_element(stereo).expect("element").descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
 }
 
 #[test]
@@ -1982,9 +1800,8 @@ fn failed_cip_resource_limit_restores_previous_descriptors() {
     assert_eq!(
         molecule
             .graph()
-            .stereo_element(StereoElementId::new(0))
-            .expect("stereo element")
-            .descriptor,
+            .cip_descriptor(StereoElementId::new(0))
+            .expect("stereo element"),
         Some(StereoDescriptor::S)
     );
 }
@@ -2028,7 +1845,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     assert!(molecule
         .graph()
         .stereo_elements()
-        .all(|(_, element)| element.descriptor.is_none()));
+        .all(|(element_id, _)| molecule.graph().cip_descriptor(element_id) == Ok(None)));
 }
 
 #[test]
@@ -2055,7 +1872,6 @@ fn failed_cip_validation_preserves_previous_descriptors() {
             specifiedness: StereoSpecifiedness::Unknown,
             source: StereoSource::User,
             group: None,
-            descriptor: None,
         })
         .expect("stored malformed stereo element");
     mol.install_cip_descriptor(element, StereoDescriptor::R);
@@ -2070,9 +1886,7 @@ fn failed_cip_validation_preserves_previous_descriptors() {
         .all(|issue| matches!(issue, CipAssignmentIssue::InvalidStereo { .. })));
     assert_eq!(installed_cip_descriptors(&mol), before);
     assert_eq!(
-        mol.stereo_element(element)
-            .expect("stereo element")
-            .descriptor,
+        mol.cip_descriptor(element).expect("stereo element"),
         Some(StereoDescriptor::R)
     );
 }
@@ -2106,7 +1920,6 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
             specifiedness: StereoSpecifiedness::Unknown,
             source: StereoSource::User,
             group: None,
-            descriptor: None,
         })
         .expect("unknown stereo element");
     mol.install_cip_descriptor(specified, StereoDescriptor::S);
@@ -2127,12 +1940,7 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
         installed_cip_descriptors(&mol),
         vec![(specified, report.assigned[0].descriptor)]
     );
-    assert_eq!(
-        mol.stereo_element(unknown)
-            .expect("unknown element")
-            .descriptor,
-        None
-    );
+    assert_eq!(mol.cip_descriptor(unknown).expect("unknown element"), None);
 }
 
 #[test]
@@ -2164,11 +1972,24 @@ fn cip_descriptors_are_cleared_by_stereo_invalidating_mutations() {
 
 fn tetrahedral_descriptor_map(mol: &Molecule) -> Vec<(u32, StereoDescriptor)> {
     mol.stereo_elements()
-        .filter_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => element
-                .descriptor
+        .filter_map(|(element_id, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => mol
+                .cip_descriptor(element_id)
+                .expect("stereo element")
                 .map(|descriptor| (stereo.center.raw(), descriptor)),
             StereoElementKind::DoubleBond(_) | StereoElementKind::Axis(_) => None,
+        })
+        .collect()
+}
+
+fn double_bond_descriptor_map(mol: &Molecule) -> Vec<(u32, u32, StereoDescriptor)> {
+    mol.stereo_elements()
+        .filter_map(|(element_id, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo) => mol
+                .cip_descriptor(element_id)
+                .expect("stereo element")
+                .map(|descriptor| (stereo.left.raw(), stereo.right.raw(), descriptor)),
+            StereoElementKind::Tetrahedral(_) | StereoElementKind::Axis(_) => None,
         })
         .collect()
 }
