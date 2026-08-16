@@ -1,8 +1,0 @@
-id = "model.system"
-title = "Topology-bound molecular model"
-area = "modeling"
-domains = ["small-molecule", "macromolecule"]
-version = 18
-status = "supported"
-description = "Represent one concrete molecular model as an immutable Topology plus direct positions, optional cell, topology-bound AtomData and BondData, and zero-copy qualified hierarchy navigation."
-depends_on = ["model.topology", "core.conformers", "core.units"]

@@ -1,8 +1,0 @@
-id = "algo.valence.rdkit-like"
-title = "RDKit-like valence perception"
-area = "algorithms"
-domains = ["small-molecule"]
-version = 20
-status = "supported"
-description = "Transactionally assign RDKit-like implicit hydrogens from normalized localized represented chemistry and reject remaining aromatic source bond orders before assignment."
-depends_on = ["core.graph", "core.atom-bond", "chem.normalization"]

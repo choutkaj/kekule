@@ -1,8 +1,0 @@
-id = "core.atom-bond"
-title = "Core atom and bond model"
-area = "core"
-domains = ["small-molecule", "macromolecule"]
-version = 8
-status = "supported"
-description = "Represent chemically general atom and bond data shared by small and macromolecular workflows, including singlet through quintet radical multiplicity and excluding authoritative stereo state."
-depends_on = ["core.graph"]

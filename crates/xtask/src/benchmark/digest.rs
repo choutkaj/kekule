@@ -1,49 +1,5 @@
 use crate::*;
 
-#[derive(Default)]
-pub(crate) struct BenchmarkHashCache {
-    exact: std::sync::Mutex<BTreeMap<PathBuf, String>>,
-    normalized: std::sync::Mutex<BTreeMap<PathBuf, String>>,
-}
-
-impl BenchmarkHashCache {
-    pub(crate) fn exact_hash(&self, path: &Path) -> Result<String, Box<dyn Error>> {
-        if let Some(hash) = self
-            .exact
-            .lock()
-            .map_err(|_| boxed_error("benchmark exact-hash cache lock was poisoned"))?
-            .get(path)
-            .cloned()
-        {
-            return Ok(hash);
-        }
-        let hash = hash_file(path)?;
-        let mut cache = self
-            .exact
-            .lock()
-            .map_err(|_| boxed_error("benchmark exact-hash cache lock was poisoned"))?;
-        Ok(cache.entry(path.to_path_buf()).or_insert(hash).clone())
-    }
-
-    pub(crate) fn normalized_hash(&self, path: &Path) -> Result<String, Box<dyn Error>> {
-        if let Some(hash) = self
-            .normalized
-            .lock()
-            .map_err(|_| boxed_error("benchmark normalized-hash cache lock was poisoned"))?
-            .get(path)
-            .cloned()
-        {
-            return Ok(hash);
-        }
-        let hash = hash_normalized_file(path)?;
-        let mut cache = self
-            .normalized
-            .lock()
-            .map_err(|_| boxed_error("benchmark normalized-hash cache lock was poisoned"))?;
-        Ok(cache.entry(path.to_path_buf()).or_insert(hash).clone())
-    }
-}
-
 fn digest_hex(digest: impl AsRef<[u8]>) -> String {
     digest
         .as_ref()
@@ -65,234 +21,6 @@ pub(crate) fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
         hasher.update(&buffer[..read]);
     }
     Ok(digest_hex(hasher.finalize()))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct DigestInput {
-    path: String,
-    sha256: String,
-}
-
-#[cfg(test)]
-pub(crate) fn build_benchmark_input_digest(
-    repo_root: &Path,
-    manifest_path: &Path,
-    manifest: &BenchmarkManifest,
-) -> Result<BenchmarkInputDigest, Box<dyn Error>> {
-    build_benchmark_input_digest_cached(
-        repo_root,
-        manifest_path,
-        manifest,
-        &BenchmarkHashCache::default(),
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn build_benchmark_input_digest_with_core_source_root(
-    repo_root: &Path,
-    manifest_path: &Path,
-    manifest: &BenchmarkManifest,
-    core_source_root: &Path,
-) -> Result<BenchmarkInputDigest, Box<dyn Error>> {
-    build_benchmark_input_digest_cached_with_core_source_root(
-        repo_root,
-        manifest_path,
-        manifest,
-        &BenchmarkHashCache::default(),
-        core_source_root,
-    )
-}
-
-pub(crate) fn build_benchmark_input_digest_cached(
-    repo_root: &Path,
-    manifest_path: &Path,
-    manifest: &BenchmarkManifest,
-    hash_cache: &BenchmarkHashCache,
-) -> Result<BenchmarkInputDigest, Box<dyn Error>> {
-    build_benchmark_input_digest_cached_with_core_source_root(
-        repo_root,
-        manifest_path,
-        manifest,
-        hash_cache,
-        &repo_root.join("crates/kekule/src"),
-    )
-}
-
-fn build_benchmark_input_digest_cached_with_core_source_root(
-    repo_root: &Path,
-    manifest_path: &Path,
-    manifest: &BenchmarkManifest,
-    hash_cache: &BenchmarkHashCache,
-    core_source_root: &Path,
-) -> Result<BenchmarkInputDigest, Box<dyn Error>> {
-    let corpus_root = manifest_path
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| boxed_error(format!("{} has no corpus root", manifest_path.display())))?;
-    let mut paths = BTreeSet::<PathBuf>::new();
-    paths.insert(manifest_path.to_path_buf());
-    paths.insert(corpus_root.join("corpus.toml"));
-    paths.insert(corpus_root.join("sources.lock.json"));
-    collect_files(core_source_root, &mut paths)?;
-    collect_files(&repo_root.join("crates/xtask/src"), &mut paths)?;
-
-    match manifest.reference_tool.as_str() {
-        "rdkit" => {
-            let reference_root = repo_root.join("benchmarks/reference/rdkit");
-            paths.insert(reference_root.join("run_feature.py"));
-            paths.insert(reference_root.join("environment.yml"));
-        }
-        "biopython" => {
-            let reference_root = repo_root.join("benchmarks/reference/biopython");
-            paths.insert(reference_root.join("run_feature.py"));
-            paths.insert(reference_root.join("environment.yml"));
-        }
-        value if is_manual_semantic_reference_tool(value) => {}
-        value => {
-            return Err(boxed_error(format!(
-                "{} uses unsupported reference_tool `{value}`",
-                manifest_path.display()
-            )))
-        }
-    }
-
-    for fixture in &manifest.fixtures {
-        paths.insert(corpus_root.join(fixture));
-        paths.insert(
-            corpus_root
-                .join("golden")
-                .join(&manifest.feature_id)
-                .join(format!("{}.json.gz", slugify_fixture(fixture))),
-        );
-    }
-
-    let mut inputs = Vec::new();
-    for path in paths {
-        if !path.exists() {
-            return Err(boxed_error(format!(
-                "benchmark input is missing: {}",
-                path.display()
-            )));
-        }
-        if !path.is_file() {
-            continue;
-        }
-        inputs.push(DigestInput {
-            path: benchmark_digest_input_path(repo_root, core_source_root, &path)?,
-            sha256: hash_cache.normalized_hash(&path)?,
-        });
-    }
-    inputs.push(DigestInput {
-        path: "Cargo.lock#external-dependencies".to_owned(),
-        sha256: external_dependency_hash(&repo_root.join("Cargo.lock"))?,
-    });
-    inputs.sort_by(|left, right| left.path.cmp(&right.path));
-    let input_count = inputs.len();
-    let digest_document = json!({
-        "schema_version": BENCHMARK_INPUT_DIGEST_SCHEMA_VERSION,
-        "comparison_mode": manifest.comparison_mode,
-        "inputs": inputs,
-    });
-    let mut hasher = Sha256::new();
-    hasher.update(serde_json::to_vec(&digest_document)?);
-    let sha256 = digest_hex(hasher.finalize());
-    Ok(BenchmarkInputDigest {
-        schema_version: BENCHMARK_INPUT_DIGEST_SCHEMA_VERSION,
-        input_count,
-        sha256,
-    })
-}
-
-fn benchmark_digest_input_path(
-    repo_root: &Path,
-    core_source_root: &Path,
-    path: &Path,
-) -> Result<String, Box<dyn Error>> {
-    if path.strip_prefix(core_source_root).is_ok() {
-        return Ok(format!(
-            "implementation/core/src/{}",
-            relative_path(core_source_root, path)?
-        ));
-    }
-    relative_path(repo_root, path)
-}
-
-fn external_dependency_hash(path: &Path) -> Result<String, Box<dyn Error>> {
-    let lock: toml::Value = toml::from_str(&fs::read_to_string(path)?)?;
-    let mut packages = lock
-        .get("package")
-        .and_then(toml::Value::as_array)
-        .ok_or_else(|| boxed_error(format!("{} has no package array", path.display())))?
-        .iter()
-        .filter(|package| package.get("source").is_some())
-        .map(|package| {
-            let mut dependencies = package
-                .get("dependencies")
-                .and_then(toml::Value::as_array)
-                .map(|values| {
-                    values
-                        .iter()
-                        .filter_map(toml::Value::as_str)
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            dependencies.sort();
-            json!({
-                "name": package.get("name").and_then(toml::Value::as_str),
-                "version": package.get("version").and_then(toml::Value::as_str),
-                "source": package.get("source").and_then(toml::Value::as_str),
-                "checksum": package.get("checksum").and_then(toml::Value::as_str),
-                "dependencies": dependencies,
-            })
-        })
-        .collect::<Vec<_>>();
-    packages.sort_by_key(|package| package.to_string());
-    let mut hasher = Sha256::new();
-    hasher.update(serde_json::to_vec(&packages)?);
-    Ok(digest_hex(hasher.finalize()))
-}
-
-pub(crate) fn collect_files(
-    root: &Path,
-    paths: &mut BTreeSet<PathBuf>,
-) -> Result<(), Box<dyn Error>> {
-    if !root.exists() {
-        return Err(boxed_error(format!("{} does not exist", root.display())));
-    }
-    for entry in fs::read_dir(root)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect_files(&path, paths)?;
-        } else {
-            paths.insert(path);
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn hash_normalized_file(path: &Path) -> Result<String, Box<dyn Error>> {
-    let mut hasher = Sha256::new();
-    match String::from_utf8(fs::read(path)?) {
-        Ok(text) if text.contains('\r') => {
-            hasher.update(text.replace("\r\n", "\n").replace('\r', "\n"));
-        }
-        Ok(text) => hasher.update(text),
-        Err(error) => hasher.update(error.into_bytes()),
-    }
-    Ok(digest_hex(hasher.finalize()))
-}
-
-pub(crate) fn relative_path(repo_root: &Path, path: &Path) -> Result<String, Box<dyn Error>> {
-    let relative = if path.is_absolute() {
-        path.strip_prefix(repo_root).unwrap_or(path)
-    } else {
-        path
-    };
-    relative
-        .to_str()
-        .map(|value| value.replace('\\', "/").trim_start_matches("./").to_owned())
-        .ok_or_else(|| boxed_error(format!("{} is not valid UTF-8", path.display())))
 }
 
 pub(crate) fn read_gzip_string(path: &Path) -> Result<String, Box<dyn Error>> {
@@ -374,10 +102,10 @@ fn accept_one_implementation_golden(
 ) -> Result<(), Box<dyn Error>> {
     let fixture_path = corpus_root.join(fixture);
     let expected =
-        implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path)?;
+        implementation_expected(&manifest.benchmark_id, &manifest.corpus_id, &fixture_path)?;
     let document = json!({
         "schema_version": GOLDEN_SCHEMA_VERSION,
-        "feature_id": manifest.feature_id,
+        "feature_id": manifest.benchmark_id,
         "corpus_id": manifest.corpus_id,
         "fixture_id": slugify_fixture(fixture),
         "fixture_path": fixture,
@@ -397,7 +125,7 @@ fn accept_one_implementation_golden(
     let compressed = encoder.finish()?;
     let golden_path = corpus_root
         .join("golden")
-        .join(&manifest.feature_id)
+        .join(&manifest.benchmark_id)
         .join(format!("{}.json.gz", slugify_fixture(fixture)));
     write_atomic_bytes(&golden_path, &compressed)
 }
@@ -424,7 +152,7 @@ pub(crate) fn check_manifest_paths(
             )));
         }
     }
-    let lock = read_source_lock(&manifest.corpus_id)?;
+    let lock = read_source_lock_path(&base.join("sources.lock.json"))?;
     let pinned_paths = lock
         .entries
         .iter()
@@ -449,28 +177,11 @@ pub(crate) struct BenchmarkComparison {
     pub(crate) first_difference: Option<String>,
 }
 
-#[cfg(test)]
 pub(crate) fn compare_golden_outputs(
     manifest_path: &Path,
     manifest: &BenchmarkManifest,
     jobs: usize,
     progress: Option<&FixtureProgress>,
-) -> Result<BenchmarkComparison, Box<dyn Error>> {
-    compare_golden_outputs_cached(
-        manifest_path,
-        manifest,
-        jobs,
-        progress,
-        &BenchmarkHashCache::default(),
-    )
-}
-
-pub(crate) fn compare_golden_outputs_cached(
-    manifest_path: &Path,
-    manifest: &BenchmarkManifest,
-    jobs: usize,
-    progress: Option<&FixtureProgress>,
-    hash_cache: &BenchmarkHashCache,
 ) -> Result<BenchmarkComparison, Box<dyn Error>> {
     if manifest.fixtures.is_empty() {
         return Ok(BenchmarkComparison {
@@ -490,7 +201,7 @@ pub(crate) fn compare_golden_outputs_cached(
         })?;
     let worker_count = benchmark_worker_count(jobs, manifest.fixtures.len());
     if worker_count == 1 {
-        return compare_golden_outputs_serial(manifest_path, manifest, base, progress, hash_cache);
+        return compare_golden_outputs_serial(manifest_path, manifest, base, progress);
     }
 
     let next_fixture = std::sync::Mutex::new(0usize);
@@ -518,7 +229,7 @@ pub(crate) fn compare_golden_outputs_cached(
                     break;
                 };
                 let fixture = &manifest.fixtures[index];
-                let result = compare_one_golden(manifest_path, base, manifest, fixture, hash_cache)
+                let result = compare_one_golden(manifest_path, base, manifest, fixture)
                     .map_err(|error| error.to_string());
                 if let Some(progress) = progress {
                     progress.fixture_finished();
@@ -551,7 +262,6 @@ fn compare_golden_outputs_serial(
     manifest: &BenchmarkManifest,
     base: &Path,
     progress: Option<&FixtureProgress>,
-    hash_cache: &BenchmarkHashCache,
 ) -> Result<BenchmarkComparison, Box<dyn Error>> {
     let mut comparison = BenchmarkComparison {
         compared_count: 0,
@@ -559,7 +269,7 @@ fn compare_golden_outputs_serial(
         first_difference: None,
     };
     for fixture in &manifest.fixtures {
-        let result = compare_one_golden(manifest_path, base, manifest, fixture, hash_cache);
+        let result = compare_one_golden(manifest_path, base, manifest, fixture);
         if let Some(progress) = progress {
             progress.fixture_finished();
         }
@@ -594,12 +304,11 @@ fn compare_one_golden(
     base: &Path,
     manifest: &BenchmarkManifest,
     fixture: &str,
-    hash_cache: &BenchmarkHashCache,
 ) -> Result<FixtureComparison, Box<dyn Error>> {
     let fixture_path = base.join(fixture);
     let golden_path = base
         .join("golden")
-        .join(&manifest.feature_id)
+        .join(&manifest.benchmark_id)
         .join(format!("{}.json.gz", slugify_fixture(fixture)));
     if !golden_path.exists() {
         return Err(boxed_error(format!(
@@ -608,19 +317,12 @@ fn compare_one_golden(
         )));
     }
     let mut golden: Value = serde_json::from_str(&read_gzip_string(&golden_path)?)?;
-    check_golden_metadata(
-        &golden_path,
-        &golden,
-        manifest,
-        fixture,
-        &fixture_path,
-        hash_cache,
-    )?;
+    check_golden_metadata(&golden_path, &golden, manifest, fixture, &fixture_path)?;
     let expected = golden
         .get_mut("expected")
         .ok_or_else(|| boxed_error(format!("{} is missing `expected`", golden_path.display())))?;
     let mut actual =
-        match implementation_expected(&manifest.feature_id, &manifest.corpus_id, &fixture_path) {
+        match implementation_expected(&manifest.benchmark_id, &manifest.corpus_id, &fixture_path) {
             Ok(actual) => actual,
             Err(error) => {
                 return Ok(FixtureComparison::Difference(format!(
@@ -628,9 +330,9 @@ fn compare_one_golden(
                 )))
             }
         };
-    normalize_feature_for_comparison_in_place(&manifest.feature_id, expected);
-    normalize_feature_for_comparison_in_place(&manifest.feature_id, &mut actual);
-    if let Some(diff) = first_json_diff(&manifest.feature_id, "$", expected, &actual) {
+    normalize_benchmark_for_comparison_in_place(&manifest.benchmark_id, expected);
+    normalize_benchmark_for_comparison_in_place(&manifest.benchmark_id, &mut actual);
+    if let Some(diff) = first_json_diff(&manifest.benchmark_id, "$", expected, &actual) {
         return Ok(FixtureComparison::Difference(format!(
             "{} differs from implementation output for fixture `{fixture}`: {diff}",
             golden_path.display()
@@ -645,7 +347,6 @@ pub(crate) fn check_golden_metadata(
     manifest: &BenchmarkManifest,
     fixture: &str,
     fixture_path: &Path,
-    hash_cache: &BenchmarkHashCache,
 ) -> Result<(), Box<dyn Error>> {
     if golden.get("schema_version") != Some(&json!(GOLDEN_SCHEMA_VERSION)) {
         return Err(boxed_error(format!(
@@ -653,7 +354,7 @@ pub(crate) fn check_golden_metadata(
             golden_path.display()
         )));
     }
-    if golden.get("feature_id").and_then(Value::as_str) != Some(manifest.feature_id.as_str()) {
+    if golden.get("feature_id").and_then(Value::as_str) != Some(manifest.benchmark_id.as_str()) {
         return Err(boxed_error(format!(
             "{} feature_id does not match manifest",
             golden_path.display()
@@ -675,7 +376,7 @@ pub(crate) fn check_golden_metadata(
         .get("input_sha256")
         .and_then(Value::as_str)
         .ok_or_else(|| boxed_error(format!("{} is missing input_sha256", golden_path.display())))?;
-    let fixture_hash = hash_cache.exact_hash(fixture_path)?;
+    let fixture_hash = hash_file(fixture_path)?;
     if input_sha256 != fixture_hash {
         return Err(boxed_error(format!(
             "{} input_sha256 does not match current fixture `{fixture}`",

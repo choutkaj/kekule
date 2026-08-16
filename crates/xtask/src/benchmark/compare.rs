@@ -1,7 +1,7 @@
 use crate::*;
 
 pub(crate) fn first_json_diff(
-    feature_id: &str,
+    benchmark_id: &str,
     path: &str,
     expected: &Value,
     actual: &Value,
@@ -13,7 +13,8 @@ pub(crate) fn first_json_diff(
                 let Some(actual_value) = actual.get(key) else {
                     return Some(format!("{next} missing from actual output"));
                 };
-                if let Some(diff) = first_json_diff(feature_id, &next, &expected[key], actual_value)
+                if let Some(diff) =
+                    first_json_diff(benchmark_id, &next, &expected[key], actual_value)
                 {
                     return Some(diff);
                 }
@@ -35,7 +36,7 @@ pub(crate) fn first_json_diff(
             }
             for (index, (expected_value, actual_value)) in expected.iter().zip(actual).enumerate() {
                 if let Some(diff) = first_json_diff(
-                    feature_id,
+                    benchmark_id,
                     &format!("{path}[{index}]"),
                     expected_value,
                     actual_value,
@@ -56,7 +57,7 @@ pub(crate) fn first_json_diff(
             None
         }
         (Value::Number(expected), Value::Number(actual))
-            if feature_id == "bio.secondary-structure.dssp"
+            if benchmark_id == "bio.secondary-structure.dssp"
                 && (path.ends_with(".phi_degrees")
                     || path.ends_with(".psi_degrees")
                     || path.ends_with(".kappa_degrees")
@@ -70,7 +71,7 @@ pub(crate) fn first_json_diff(
             None
         }
         (Value::Number(expected), Value::Number(actual))
-            if feature_id == "descriptor.molecular"
+            if benchmark_id == "descriptor.molecular"
                 && path.ends_with(".average_mass_da")
                 && expected
                     .as_f64()
@@ -81,7 +82,7 @@ pub(crate) fn first_json_diff(
             None
         }
         (Value::Number(expected), Value::Number(actual))
-            if feature_id == "descriptor.molecular"
+            if benchmark_id == "descriptor.molecular"
                 && path.ends_with(".monoisotopic_mass_da")
                 && expected
                     .as_f64()
@@ -92,7 +93,7 @@ pub(crate) fn first_json_diff(
             None
         }
         (Value::Number(expected), Value::Number(actual))
-            if feature_id == "bio.secondary-structure.dssp"
+            if benchmark_id == "bio.secondary-structure.dssp"
                 && path.ends_with(".tco")
                 && expected
                     .as_f64()
@@ -103,7 +104,7 @@ pub(crate) fn first_json_diff(
             None
         }
         (Value::Number(expected), Value::Number(actual))
-            if feature_id == "bio.secondary-structure.dssp"
+            if benchmark_id == "bio.secondary-structure.dssp"
                 && path.ends_with(".energy_kcal_per_mol")
                 && expected
                     .as_f64()
@@ -121,9 +122,9 @@ pub(crate) fn first_json_diff(
     }
 }
 
-pub(crate) fn normalize_feature_for_comparison_in_place(feature_id: &str, value: &mut Value) {
+pub(crate) fn normalize_benchmark_for_comparison_in_place(benchmark_id: &str, value: &mut Value) {
     normalize_for_comparison_in_place(value);
-    if feature_id == "bio.secondary-structure.dssp" {
+    if benchmark_id == "bio.secondary-structure.dssp" {
         normalize_dssp_residue_order(value);
     }
 }

@@ -1,8 +1,0 @@
-id = "model.potential"
-title = "Model potential interface"
-area = "modeling"
-domains = ["small-molecule", "macromolecule"]
-version = 9
-status = "supported"
-description = "Evaluate finite energies and complete Cartesian gradients over borrowed structural views bound to one shared topology allocation."
-depends_on = ["model.topology", "model.system", "core.units"]

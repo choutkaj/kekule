@@ -1,8 +1,0 @@
-id = "model.ensemble"
-title = "Shared-topology structural ensembles"
-area = "modeling"
-domains = ["small-molecule", "macromolecule"]
-version = 6
-status = "supported"
-description = "Store finite non-temporal model members with direct positions, cells, AtomData, and BondData that share one exact topology and remap through explicit topology lineage."
-depends_on = ["model.topology", "model.system"]

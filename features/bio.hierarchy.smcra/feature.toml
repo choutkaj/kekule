@@ -1,8 +1,0 @@
-id = "bio.hierarchy.smcra"
-title = "SMCRA-like biomolecular hierarchy"
-area = "bio"
-domains = ["macromolecule"]
-version = 14
-status = "supported"
-description = "Represent connected macromolecular definitions with coordinated definition-local SMCRA hierarchy construction, editing, enrichment, and explicit validation."
-depends_on = ["core.graph"]
