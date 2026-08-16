@@ -10,7 +10,6 @@ availability and observations without folding them into feature health.
 
 - Exposes `cargo xtask features`.
 - Exposes `cargo xtask dashboard` and `cargo xtask dashboard --check`.
-- Exposes `cargo xtask skills --check` for repository-local workflow checks.
 - Discovers benchmark availability only from manifests under
   `benchmarks/corpora/<corpus>/features/`.
 - Allows features with no benchmark manifest; missing manifests cannot prevent
@@ -43,8 +42,7 @@ availability and observations without folding them into feature health.
   discovery, neutral benchmark cells, legacy/current result rendering, stable
   generation, and platform-independent line endings.
 - Routine checks run formatting, clippy, workspace tests, documentation,
-  dashboard consistency, and skill consistency without external benchmark
-  data.
+  and dashboard consistency without external benchmark data.
 
 ## Out Of Scope
 
@@ -60,3 +58,5 @@ availability and observations without folding them into feature health.
 - v14: Remove required benchmark metadata and health semantics; discover
   optional manifests directly and render neutral availability and historical
   match/difference/error observations.
+- v15: Remove the obsolete repository-local workflow checker after its checked
+  artifacts were retired.

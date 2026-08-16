@@ -815,47 +815,6 @@ fn dashboard_corpus_cells_show_optional_benchmark_observations() {
 }
 
 #[test]
-fn skill_metadata_parser_and_check_validate_repo_skill_contract() {
-    let root = temp_feature_root("skills-check");
-    write_skill(
-        &root,
-        "feature-work",
-        r#"---
-name: feature-work
-description: Builder skill.
----
-# Feature Work
-add -> optional research -> plan -> implement
-Use feature.md. Set status = "supported", declare depends_on, and remember the `validation_required` key has no replacement.
-Kekule benchmark fixtures must be externally supplied.
-Run cargo xtask dashboard --check. Cargo xtask benchmark --feature <feature-id> --corpus <corpus-id> is never a routine acceptance condition.
-"#,
-    );
-    write_skill(
-        &root,
-        "feature-review",
-        r#"---
-name: feature-review
-description: Review skill.
----
-# Feature Review
-Independent audit for architecture and benchmark claims.
-Read feature.md. Run cargo test --workspace. Cargo xtask benchmark --feature <feature-id> --corpus <corpus-id>. A benchmark match is not an acceptance gate.
-"#,
-    );
-
-    check_skills(&root).expect("skills should pass");
-
-    fs::write(
-        root.join("feature-review").join("SKILL.md"),
-        "# Missing frontmatter",
-    )
-    .expect("skill should rewrite");
-    assert!(check_skills(&root).is_err());
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
 fn benchmark_manifest_path_is_feature_scoped() {
     assert_eq!(
         benchmark_manifest_path("core.graph", "smoke"),
@@ -2516,12 +2475,6 @@ fn write_feature_without_doc(root: &Path, id: &str, metadata: &str) {
     let dir = root.join(id);
     fs::create_dir_all(&dir).expect("feature dir should create");
     fs::write(dir.join("feature.toml"), metadata).expect("feature metadata should write");
-}
-
-fn write_skill(root: &Path, name: &str, text: &str) {
-    let dir = root.join(name);
-    fs::create_dir_all(&dir).expect("skill dir should create");
-    fs::write(dir.join("SKILL.md"), text).expect("skill should write");
 }
 
 fn write_gzip_json(path: &Path, value: &Value) {

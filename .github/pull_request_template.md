@@ -11,7 +11,6 @@
 - [ ] `cargo test --workspace`
 - [ ] `cargo test --workspace --doc`
 - [ ] `cargo xtask dashboard --check`
-- [ ] `cargo xtask skills --check`
 - [ ] Targeted `cargo xtask corpus check --corpus <id> --require-data`, if applicable
 
 ## Optional Benchmarks
