@@ -1,6 +1,6 @@
 use super::*;
 use crate::hydrogens::{
-    AddHydrogensOptions, AddedHydrogenOrigin, HydrogenNormalizationError, RetainedHydrogen,
+    AddHydrogensOptions, AddedHydrogenOrigin, HydrogenTransformError, RetainedHydrogen,
     RetainedHydrogenReason,
 };
 
@@ -53,7 +53,7 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
     let original = unperceived.clone();
     assert_eq!(
         unperceived.add_hydrogens(),
-        Err(HydrogenNormalizationError::MissingValencePerception)
+        Err(HydrogenTransformError::MissingValencePerception)
     );
     assert_eq!(unperceived, original);
 
@@ -65,7 +65,7 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
     };
     assert_eq!(
         perceived.add_hydrogens_with_options(options),
-        Err(HydrogenNormalizationError::ResourceLimit {
+        Err(HydrogenTransformError::ResourceLimit {
             requested_hydrogens: 4,
             limit: 3,
         })
@@ -324,7 +324,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
 
     assert_eq!(
         molecule.remove_hydrogens(),
-        Err(HydrogenNormalizationError::HydrogenCountOverflow {
+        Err(HydrogenTransformError::HydrogenCountOverflow {
             atom: parent,
             count: 256,
         })

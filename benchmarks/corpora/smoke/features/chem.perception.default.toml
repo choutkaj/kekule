@@ -13,6 +13,6 @@ fixtures = [
 
 
 notes = [
-  "Reference RDKit goldens compare sanitized atom state.",
+  "Reference RDKit goldens compare the equivalent prepared atom state.",
   "All molecule fixtures are externally supplied PubChem records.",
 ]

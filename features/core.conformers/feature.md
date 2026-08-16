@@ -25,7 +25,7 @@ Store 2D or 3D atom coordinates as conformers on the shared core `Molecule` grap
 - A conformer selects its storage unit at construction; it does not assume a
   hidden coordinate convention.
 - Stable conformer IDs use slot storage, matching atom and bond ID behavior.
-- Parsers may attach a conformer without running sanitization or perception.
+- Parsers may attach a conformer without running normalization or perception.
 - Molecule-local conformers remain convenience coordinate storage. System-wide
   models, ensembles, and trajectories use the topology-bound structure layer.
 

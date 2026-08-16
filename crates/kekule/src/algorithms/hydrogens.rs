@@ -102,7 +102,7 @@ pub struct RemoveHydrogensReport {
 /// Failure from planning or committing a transactional hydrogen transform.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HydrogenNormalizationError {
+pub enum HydrogenTransformError {
     MissingValencePerception,
     ResourceLimit {
         requested_hydrogens: usize,
@@ -127,12 +127,12 @@ pub enum HydrogenNormalizationError {
     Molecule(MoleculeError),
 }
 
-impl fmt::Display for HydrogenNormalizationError {
+impl fmt::Display for HydrogenTransformError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingValencePerception => write!(
                 f,
-                "hydrogen normalization requires current valence perception"
+                "hydrogen transformation requires current valence perception"
             ),
             Self::ResourceLimit {
                 requested_hydrogens,
@@ -159,16 +159,16 @@ impl fmt::Display for HydrogenNormalizationError {
                 actual,
             } => write!(
                 f,
-                "hydrogen normalization changed the total hydrogen count at atom {atom}: expected {expected}, got {actual}"
+                "hydrogen transformation changed the total hydrogen count at atom {atom}: expected {expected}, got {actual}"
             ),
             Self::Molecule(error) => write!(f, "{error}"),
         }
     }
 }
 
-impl std::error::Error for HydrogenNormalizationError {}
+impl std::error::Error for HydrogenTransformError {}
 
-impl From<MoleculeError> for HydrogenNormalizationError {
+impl From<MoleculeError> for HydrogenTransformError {
     fn from(error: MoleculeError) -> Self {
         Self::Molecule(error)
     }
@@ -177,9 +177,9 @@ impl From<MoleculeError> for HydrogenNormalizationError {
 pub(crate) fn add_hydrogens_to_molecule(
     molecule: &mut Molecule,
     options: AddHydrogensOptions,
-) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
+) -> Result<AddHydrogensReport, HydrogenTransformError> {
     if !options.explicit_only && !molecule.perception().has_valence() {
-        return Err(HydrogenNormalizationError::MissingValencePerception);
+        return Err(HydrogenTransformError::MissingValencePerception);
     }
 
     let plan = molecule
@@ -199,7 +199,7 @@ pub(crate) fn add_hydrogens_to_molecule(
         .map(|(_, explicit, implicit)| explicit + implicit)
         .sum::<usize>();
     if requested_hydrogens > options.max_added_hydrogens {
-        return Err(HydrogenNormalizationError::ResourceLimit {
+        return Err(HydrogenTransformError::ResourceLimit {
             requested_hydrogens,
             limit: options.max_added_hydrogens,
         });
@@ -239,9 +239,9 @@ pub(crate) fn add_hydrogens_to_molecule(
 
 pub(crate) fn remove_hydrogens_from_molecule(
     molecule: &mut Molecule,
-) -> Result<RemoveHydrogensReport, HydrogenNormalizationError> {
+) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
     if !molecule.perception().has_valence() {
-        return Err(HydrogenNormalizationError::MissingValencePerception);
+        return Err(HydrogenTransformError::MissingValencePerception);
     }
 
     let mut report = RemoveHydrogensReport::default();
@@ -335,7 +335,7 @@ fn validate_materialized_stereo_hydrogens(
     molecule: &Molecule,
     plan: &[(AtomId, usize, usize)],
     explicit_only: bool,
-) -> Result<(), HydrogenNormalizationError> {
+) -> Result<(), HydrogenTransformError> {
     let totals = plan
         .iter()
         .map(|(atom, explicit, implicit)| (*atom, explicit + implicit))
@@ -377,11 +377,9 @@ fn validate_materialized_stereo_hydrogens(
                     .iter()
                     .any(|carrier| matches!(carrier, StereoCarrier::ImplicitHydrogen))
                 {
-                    return Err(
-                        HydrogenNormalizationError::UnsupportedImplicitAxisHydrogen {
-                            element: element_id,
-                        },
-                    );
+                    return Err(HydrogenTransformError::UnsupportedImplicitAxisHydrogen {
+                        element: element_id,
+                    });
                 }
             }
         }
@@ -395,12 +393,12 @@ fn validate_implicit_stereo_count(
     implicit_carriers: usize,
     added_hydrogens: usize,
     explicit_only: bool,
-) -> Result<(), HydrogenNormalizationError> {
+) -> Result<(), HydrogenTransformError> {
     if implicit_carriers > 1
         || (implicit_carriers == 1
             && ((!explicit_only && added_hydrogens != 1) || (explicit_only && added_hydrogens > 1)))
     {
-        return Err(HydrogenNormalizationError::InconsistentStereoHydrogen { element, atom });
+        return Err(HydrogenTransformError::InconsistentStereoHydrogen { element, atom });
     }
     Ok(())
 }
@@ -408,7 +406,7 @@ fn validate_implicit_stereo_count(
 fn materialize_stereo_hydrogen_carriers(
     molecule: &mut Molecule,
     added_by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
-) -> Result<(), HydrogenNormalizationError> {
+) -> Result<(), HydrogenTransformError> {
     let replacements = molecule
         .stereo_elements()
         .filter_map(|(id, element)| {
@@ -578,7 +576,7 @@ fn stereo_hydrogen_is_collapsible(
 fn collapse_stereo_hydrogen_carriers(
     molecule: &mut Molecule,
     removable: &BTreeSet<AtomId>,
-) -> Result<(), HydrogenNormalizationError> {
+) -> Result<(), HydrogenTransformError> {
     let replacements = molecule
         .stereo_elements()
         .filter_map(|(id, element)| {
@@ -646,7 +644,7 @@ fn adjust_collapsed_hydrogen_counts(
     expected_totals: &BTreeMap<AtomId, usize>,
     by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
     explicit_count_parents: &BTreeSet<AtomId>,
-) -> Result<(), HydrogenNormalizationError> {
+) -> Result<(), HydrogenTransformError> {
     let mut probe = molecule.clone();
     let _ = perceive_valence_with_options(
         &mut probe,
@@ -656,7 +654,7 @@ fn adjust_collapsed_hydrogen_counts(
     for (parent, expected) in expected_totals {
         if explicit_count_parents.contains(parent) {
             let adjusted = u8::try_from(*expected).map_err(|_| {
-                HydrogenNormalizationError::HydrogenCountOverflow {
+                HydrogenTransformError::HydrogenCountOverflow {
                     atom: *parent,
                     count: *expected,
                 }
@@ -670,7 +668,7 @@ fn adjust_collapsed_hydrogen_counts(
         if actual < *expected {
             let adjusted = explicit + (*expected - actual);
             let adjusted = u8::try_from(adjusted).map_err(|_| {
-                HydrogenNormalizationError::HydrogenCountOverflow {
+                HydrogenTransformError::HydrogenCountOverflow {
                     atom: *parent,
                     count: adjusted,
                 }
@@ -678,7 +676,7 @@ fn adjust_collapsed_hydrogen_counts(
             molecule.atom_mut(*parent)?.explicit_hydrogens = adjusted;
         } else if actual > *expected {
             let adjusted = u8::try_from(*expected).map_err(|_| {
-                HydrogenNormalizationError::HydrogenCountOverflow {
+                HydrogenTransformError::HydrogenCountOverflow {
                     atom: *parent,
                     count: *expected,
                 }
@@ -696,7 +694,7 @@ fn verify_collapsed_hydrogen_counts(
     molecule: &Molecule,
     expected_totals: &BTreeMap<AtomId, usize>,
     by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
-) -> Result<Vec<HydrogenCountAdjustment>, HydrogenNormalizationError> {
+) -> Result<Vec<HydrogenCountAdjustment>, HydrogenTransformError> {
     let mut probe = molecule.clone();
     let _ = perceive_valence_with_options(
         &mut probe,
@@ -709,7 +707,7 @@ fn verify_collapsed_hydrogen_counts(
         let implicit = probe.implicit_hydrogens(*parent)?.unwrap_or(0);
         let actual = usize::from(explicit) + usize::from(implicit);
         if actual != *expected {
-            return Err(HydrogenNormalizationError::HydrogenCountNotPreserved {
+            return Err(HydrogenTransformError::HydrogenCountNotPreserved {
                 atom: *parent,
                 expected: *expected,
                 actual,

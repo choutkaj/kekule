@@ -1,8 +1,8 @@
-id = "chem.hydrogen-normalization"
-title = "Hydrogen topology normalization"
+id = "chem.hydrogen-transforms"
+title = "Hydrogen topology transforms"
 area = "chemistry"
 domains = ["small-molecule"]
-version = 4
+version = 5
 status = "supported"
 description = "Materialize and collapse ordinary small-molecule hydrogens transactionally without hiding perception or losing protected hydrogen state."
 depends_on = [

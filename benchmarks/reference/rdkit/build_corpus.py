@@ -42,7 +42,7 @@ SDF_FEATURES = (
     "algo.rings.fast",
     "algo.rings.sssr",
     "algo.valence.rdkit-like",
-    "chem.hydrogen-normalization",
+    "chem.hydrogen-transforms",
     "chem.perception.default",
     "core.conformers",
     "io.mol.v2000.parse",
@@ -461,19 +461,19 @@ def manifest_notes(corpus: str, feature: str) -> tuple[str, ...]:
         final_note = (
             "Exact canonical SMILES string parity remains validated only for the smoke non-fused-ring subset."
             if corpus == "pubchem-100"
-            else "Public corpus parity compares sanitized canonical reparse semantics rather than exact canonical string identity."
+            else "Public corpus parity compares normalized/perceived canonical reparse semantics rather than exact canonical string identity."
         )
         return (
-            "Reference RDKit goldens compare sanitized reparse semantics for canonical output across all declared records.",
-            "The implementation benchmark sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model.",
+            "Reference RDKit goldens compare normalized/perceived reparse semantics for canonical output across all declared records.",
+            "The implementation benchmark normalizes and perceives parsed fixtures before canonical writing to match RDKit's canonicalization input model.",
             "The canonical benchmark applies no feature-specific unsupported-chemistry filter; parser or writer gaps surface as benchmark differences.",
             final_note,
         )
     if feature == "io.smiles.isomeric":
         plurality = "pack provides" if corpus == "pubchem-100" else "packs provide"
         return (
-            f"Externally supplied PubChem isomeric SMILES {plurality} broader noncanonical isomeric SMILES writer parity coverage for sanitized records with source stereo syntax.",
-            "Goldens compare semantic output after write and reparse, including sanitized graph semantics plus CIP descriptor-bearing stereo semantics.",
+            f"Externally supplied PubChem isomeric SMILES {plurality} broader noncanonical isomeric SMILES writer parity coverage for normalized/perceived records with source stereo syntax.",
+            "Goldens compare semantic output after write and reparse, including normalized/perceived graph semantics plus CIP descriptor-bearing stereo semantics.",
         )
     if feature == "stereo.cip":
         if corpus == "pubchem-100":

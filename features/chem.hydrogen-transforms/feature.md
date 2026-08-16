@@ -1,4 +1,4 @@
-# Hydrogen Topology Normalization
+# Hydrogen Topology Transforms
 
 ## Summary
 
@@ -80,3 +80,5 @@ implicit hydrogens.
 - v3: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v4: Preserve aromatic nitrogen bracket-hydrogen counts explicitly after the
   normalized valence model stopped consulting installed aromaticity.
+- v5: Rename the feature and public error vocabulary from normalization to
+  hydrogen topology transforms, without changing behavior.

@@ -57,7 +57,7 @@ release status, CI success, or whether the repository is ready for development.
   the next benchmark replaces each selected target with the current schema.
 - Representation-only graph differences such as undirected bond orientation,
   bond-array order, and ring-atom order are normalized before comparison.
-- Sanitized SMILES semantics derive RDKit-comparable aromatic-nitrogen
+- Normalized and perceived SMILES semantics derive RDKit-comparable aromatic-nitrogen
   hydrogen/valence output from Kekule's represented explicit-H plus perceived
   implicit-H layers; the benchmark adapter does not require perception to
   rewrite represented atoms.
@@ -76,7 +76,11 @@ release status, CI success, or whether the repository is ready for development.
   comparison-normalization, and manual-golden safeguards.
 - SMILES semantic regressions cover represented `[nH]` and a perceived
   aromatic-nitrogen hydrogen whose reference-facing valence is derived without
-  sanitizer representation feedback.
+  perception-to-representation feedback.
+- SMILES benchmark adapters preserve one output record per source line while
+  aggregating the already-separated connected component interpretations for
+  raw, noncanonical write/reparse, normalized/perceived, round-trip, and stereo
+  semantic comparison.
 
 ## Benchmarks
 
@@ -107,3 +111,11 @@ release status, CI success, or whether the repository is ready for development.
 - v44: Migrate the former sanitizer benchmark identity and Kekule call paths to
   the explicit default perception feature while preserving pinned external
   reference schemas and goldens.
+- v45: Rename internal SMILES semantic helpers, prepared-state keys, and
+  workflow failure statuses to the final normalize/perceive vocabulary, and
+  migrate the hydrogen-transform benchmark identity without changing chemistry.
+- v46: Preserve source-record cardinality for disconnected SMILES benchmark
+  inputs by aggregating connected interpretation components in the adapter,
+  and retain the established stereo benchmark serialization contract.
+- v47: Make the noncanonical SMILES write benchmark write and reparse every
+  connected source component before aggregating one result per source record.

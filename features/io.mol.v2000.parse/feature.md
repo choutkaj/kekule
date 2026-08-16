@@ -37,7 +37,7 @@ V2000 CTAB as one `SmallMolecule` plus source mappings.
   remain in the typed document and fail with `MolfileInterpretError` when they
   cannot be translated into represented Kekule chemistry.
 - Rejects V3000, zero or out-of-range graph endpoints, non-ASCII structural fields, truncated records, malformed M records, non-finite coordinates, and counts above the V2000 limit.
-- Does not run sanitization, valence perception, ring perception, aromaticity, or stereochemistry perception.
+- Does not run normalization, valence perception, ring perception, aromaticity, or stereo inference.
 
 ## Implementation Notes
 
@@ -71,7 +71,7 @@ V2000 CTAB as one `SmallMolecule` plus source mappings.
 
 ## Out Of Scope
 
-- V3000, query atom/bond semantics, atom parity, full MDL property coverage, sanitization, and runtime RDKit.
+- V3000, query atom/bond semantics, atom parity, full MDL property coverage, automatic normalization/perception, and runtime RDKit.
 
 ## Revision Notes
 

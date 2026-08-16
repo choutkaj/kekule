@@ -7,7 +7,7 @@ over validated local stereo elements.
 
 ## Behavior/API
 
-`kekule::perception::stereo` exposes:
+`kekule::stereo` exposes:
 
 - `assign_cip_descriptors`
 - `assign_cip_descriptors_with_options`
@@ -151,16 +151,16 @@ Counterclockwise top-anchor handedness maps to `M`, and clockwise top-anchor
 handedness maps to `P`, matching RDKit's atropisomeric bond convention; when
 either endpoint priority ordering is pseudoasymmetric, the corresponding
 lowercase `m`/`p` pseudo descriptor is assigned.
-Molfile atropisomeric wedge perception, including the conservative exocyclic
-axis subset, remains in `stereo.perception`; this layer only consumes the
-resulting stored axis element. For Molfile-derived axes, perception stores the
-lowest-ID explicit carrier at each endpoint as the local reference pair, so CIP
-priority flips are applied from a stable RDKit-like local axis convention
-instead of from whichever wedge carrier happened to trigger perception.
+Molfile atropisomeric wedge normalization, including the conservative exocyclic
+axis subset, remains in `chem.normalization`; this layer only consumes the
+resulting stored axis element. For Molfile-derived axes, normalization stores
+the lowest-ID explicit carrier at each endpoint as the local reference pair, so
+CIP priority flips are applied from a stable RDKit-like local axis convention
+instead of from whichever wedge carrier happened to trigger normalization.
 Opt-in conservative 3D coordinate-derived axes use the same stored reference
 convention, so this layer consumes them through the ordinary stored-axis
 descriptor path rather than adding coordinate-specific descriptor logic.
-The consumed perception subset includes redundant same-axis Molfile atrop
+The consumed normalization subset includes redundant same-axis Molfile atrop
 wedges, exocyclic axes with one ring endpoint plus one locally SP2 endpoint,
 and ring-internal macrocyclic axes when no non-ring candidate is available
 from the same Molfile source mark.
@@ -230,8 +230,8 @@ compare atom and bond
 descriptor maps, not bytewise SMILES spelling or internal stereo element IDs.
 Benchmark records include molecules where RDKit or the implementation assigns
 at least one CIP descriptor; no-descriptor molecules are filtered out so broad
-CIP benchmarking is not dominated by unrelated parser or sanitizer coverage for
-structures with no stereochemical labels. Bond descriptors are keyed by
+CIP benchmarking is not dominated by unrelated parse or chemistry-workflow
+coverage for structures with no stereochemical labels. Bond descriptors are keyed by
 endpoint atom indexes and descriptor instead of parser-local bond IDs, because
 SMILES bond insertion order is not a portable chemical identity. Benchmarking
 maps removable plain explicit hydrogens out of descriptor records
@@ -375,3 +375,5 @@ benchmark corpora, isomeric SMILES emission, and stereo enumeration.
   transactional across validation, ranking, and resource-limit failures.
 - v46: Depend on the explicit default perception profile after retirement of
   sanitizer orchestration; CIP remains separately opt-in.
+- v47: Move CIP assignment to the top-level `stereo` facade and correct the
+  remaining source-axis ownership text to normalization.

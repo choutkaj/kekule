@@ -1174,12 +1174,12 @@ ATOM 1 C CA CA . ALA ALA A A 1 1 ? 1.00 10.00 1.0 2.0 3.0 1
     fs::remove_dir_all(root).ok();
 }
 #[test]
-fn implementation_dispatch_supports_hydrogen_normalization() {
-    let root = temp_feature_root("hydrogen-normalization-dispatch");
+fn implementation_dispatch_supports_hydrogen_transforms() {
+    let root = temp_feature_root("hydrogen-transforms-dispatch");
     let fixture = root.join("fixture.sdf");
     fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
 
-    let expected = implementation_expected("chem.hydrogen-normalization", "pubchem-1k", &fixture)
+    let expected = implementation_expected("chem.hydrogen-transforms", "pubchem-1k", &fixture)
         .expect("feature should compare");
     let record = &expected["records"][0];
 
@@ -1845,9 +1845,118 @@ fn stereo_perception_benchmark_records_reference_preparation_errors_per_record()
 
     assert_eq!(
         value.get("status").and_then(Value::as_str),
-        Some("sanitize_error")
+        Some("normalization_or_perception_error")
     );
     assert!(value.get("report").is_none());
+}
+
+#[test]
+fn smiles_component_benchmarks_preserve_source_record_cardinality() {
+    let root = temp_feature_root("smiles-component-benchmark-cardinality");
+    let fixture = root.join("fixture.smi");
+    fs::write(&fixture, "CC.Cl.Cl multi\nC=C connected\n").expect("fixture should write");
+
+    let parsed = implementation_expected("io.smiles.parse", "pubchem-1k", &fixture)
+        .expect("parse benchmark should serialize");
+    assert_eq!(parsed["records"].as_array().map(Vec::len), Some(2));
+    assert_eq!(parsed["records"][0]["status"], "ok");
+    assert_eq!(parsed["records"][0]["raw"]["atom_count"], 4);
+    assert_eq!(parsed["records"][0]["raw"]["bond_count"], 1);
+    assert!(parsed["records"][0].get("normalized_perceived").is_some());
+    assert!(parsed["records"][0].get("write_round_trip").is_some());
+
+    let written = implementation_expected("io.smiles.write", "pubchem-1k", &fixture)
+        .expect("write benchmark should serialize");
+    assert_eq!(written["records"].as_array().map(Vec::len), Some(2));
+    assert_eq!(written["records"][0]["status"], "ok");
+    assert_eq!(
+        written["records"][0]["normalized_perceived"]["atom_count"],
+        4
+    );
+    assert_eq!(
+        written["records"][0]["normalized_perceived"]["bond_count"],
+        1
+    );
+
+    let records = read_nonisomeric_smiles_records(&fixture).expect("fixture should interpret");
+    let reparsed = records[0]
+        .components
+        .iter()
+        .map(|molecule| {
+            let text = smiles::write_with_options(molecule, SmilesWriteOptions::default())
+                .expect("component should write");
+            let document = smiles::parse_str(&text).expect("written component should parse");
+            smiles::interpret(&document)
+                .expect("written component should interpret")
+                .into_molecule()
+                .expect("written component should remain connected")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        written["records"][0]["normalized_perceived"],
+        smiles_components_perceived_semantic_json(&reparsed)
+    );
+    let connected_written = smiles::write_with_options(
+        records[1]
+            .molecule
+            .as_ref()
+            .expect("connected record should have one molecule"),
+        SmilesWriteOptions::default(),
+    )
+    .expect("connected record should write");
+    let connected_document =
+        smiles::parse_str(&connected_written).expect("written component should parse");
+    let connected_reparsed = smiles::interpret(&connected_document)
+        .expect("written component should interpret")
+        .into_molecule()
+        .expect("written component should remain connected");
+    assert_eq!(
+        written["records"][1]["normalized_perceived"],
+        smiles_perceived_semantic_json(connected_reparsed)
+    );
+
+    let skipped = IndexedSmilesRecord {
+        record_index: 0,
+        status: "ok".to_owned(),
+        title: "missing components".to_owned(),
+        input_smiles: "CC.Cl.Cl".to_owned(),
+        molecule: None,
+        components: Vec::new(),
+    };
+    let skipped = smiles_write_record_json(&skipped).expect("error record should serialize");
+    assert_ne!(skipped["status"], "ok");
+
+    let stereo = implementation_expected("stereo.perception", "pubchem-1k", &fixture)
+        .expect("stereo benchmark should serialize");
+    assert_eq!(stereo["records"].as_array().map(Vec::len), Some(2));
+    assert_eq!(stereo["records"][0]["status"], "ok");
+    assert_eq!(stereo["records"][0]["atom_count"], 4);
+    assert_eq!(stereo["records"][0]["bond_count"], 1);
+    assert!(stereo["records"][0]["report"].get("candidates").is_some());
+    assert!(stereo["records"][0].get("normalization_report").is_none());
+
+    let stereo_fixture = root.join("stereo.smi");
+    fs::write(&stereo_fixture, "F/C=C/F.F/C=C/F directional\n")
+        .expect("stereo fixture should write");
+    let stereo = implementation_expected("stereo.perception", "pubchem-1k", &stereo_fixture)
+        .expect("component stereo benchmark should serialize");
+    assert_eq!(stereo["records"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        stereo["records"][0]["report"]["assembled_elements"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        stereo["records"][0]["report"]["assembled_elements"][0]["index"],
+        0
+    );
+    assert_eq!(
+        stereo["records"][0]["report"]["assembled_elements"][1]["index"],
+        1
+    );
+
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
@@ -1901,8 +2010,8 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     let single = SmallMolecule::from_smiles("CC").expect("single bond should parse");
     let double = SmallMolecule::from_smiles("C=C").expect("double bond should parse");
     assert_ne!(
-        smiles_sanitized_bonds_json(single.graph()),
-        smiles_sanitized_bonds_json(double.graph())
+        smiles_perceived_bonds_json(single.graph()),
+        smiles_perceived_bonds_json(double.graph())
     );
 
     let aromatic = SmallMolecule::from_smiles("c1ccccc1").expect("benzene should parse");
@@ -2089,19 +2198,19 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(fused_triazine.graph(), tricoordinate_aromatic_nitrogen),
         3
     );
-    assert!(smiles_sanitized_bonds_json(aromatic.graph())
+    assert!(smiles_perceived_bonds_json(aromatic.graph())
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == false));
     assert!(perceived_aromatic
         .graph()
         .bonds()
         .all(|(_, bond)| bond.order != BondOrder::Aromatic));
-    assert!(smiles_sanitized_bonds_json(perceived_aromatic.graph())
+    assert!(smiles_perceived_bonds_json(perceived_aromatic.graph())
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
 
     let labeled = SmallMolecule::from_smiles("[13CH3:7]C").expect("labeled carbon should parse");
-    let atoms = smiles_sanitized_atoms_json(labeled.graph());
+    let atoms = smiles_perceived_atoms_json(labeled.graph());
     assert!(atoms
         .iter()
         .any(|atom| atom["isotope"] == 13 && atom["atom_map"] == 7));
@@ -2155,10 +2264,10 @@ fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
     let molecule = SmallMolecule::from_smiles("CCCCCCCc1cc2c(=O)ccn(O)c2cc1")
         .expect("aromatic carbonyl SMILES should parse");
 
-    let item = smiles_sanitized_semantic_json(molecule);
+    let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
         .as_array()
-        .expect("sanitized atoms should be an array");
+        .expect("perceived atoms should be an array");
 
     assert!(atoms.iter().any(|atom| {
         atom["symbol"] == "C"
@@ -2199,10 +2308,10 @@ fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
     let molecule =
         SmallMolecule::from_smiles("[nH]1cccc1").expect("aromatic nH SMILES should parse");
 
-    let item = smiles_sanitized_semantic_json(molecule);
+    let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
         .as_array()
-        .expect("sanitized atoms should be an array");
+        .expect("perceived atoms should be an array");
 
     assert!(atoms.iter().any(|atom| {
         atom["symbol"] == "N"
@@ -2218,10 +2327,10 @@ fn smiles_semantics_derive_promoted_aromatic_nh_valence_without_feedback() {
     let molecule = SmallMolecule::from_smiles("CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C")
         .expect("substituted pyrrole SMILES should parse");
 
-    let item = smiles_sanitized_semantic_json(molecule);
+    let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
         .as_array()
-        .expect("sanitized atoms should be an array");
+        .expect("perceived atoms should be an array");
 
     assert!(
         atoms.iter().any(|atom| {
