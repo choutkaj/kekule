@@ -180,17 +180,14 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
 }
 
 #[test]
-fn cip_assigns_axis_descriptor_from_coordinate_perception() {
+fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
     let (mut mol, _axis) = coordinate_axis_graph(true);
-    let perception_report = stereo_api::perceive_stereo_with_options(
+    let materialization_report = stereo_api::materialize_coordinate_stereo_with_options(
         &mut mol,
-        StereoPerceptionOptions {
-            assign_coordinate_axes: true,
-            ..StereoPerceptionOptions::default()
-        },
+        CoordinateStereoOptions { infer_axes: true },
     )
-    .expect("coordinate axis perception");
-    assert_eq!(perception_report.created_elements.len(), 1);
+    .expect("coordinate axis materialization");
+    assert_eq!(materialization_report.created_elements.len(), 1);
 
     let report = assign_cip(&mut mol);
 

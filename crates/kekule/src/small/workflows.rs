@@ -38,6 +38,21 @@ impl SmallMolecule {
         perceive_molecule(self.graph_mut_raw())
     }
 
+    /// Normalize represented chemistry and install the default perception profile.
+    ///
+    /// The complete composition is transactional. Coordinate-derived stereo
+    /// and CIP assignment remain separate explicit operations.
+    pub fn normalize_and_perceive(
+        &mut self,
+    ) -> Result<NormalizationReport, NormalizeAndPerceiveError> {
+        let mut staged = self.clone();
+        let report = normalize_molecule(staged.graph_mut_raw())
+            .map_err(NormalizeAndPerceiveError::Normalization)?;
+        perceive_molecule(staged.graph_mut_raw()).map_err(NormalizeAndPerceiveError::Perception)?;
+        *self = staged;
+        Ok(report)
+    }
+
     /// Materialize stored and perceived hydrogens as graph atoms.
     pub fn add_hydrogens(&mut self) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
         self.add_hydrogens_with_options(AddHydrogensOptions::default())
@@ -106,5 +121,31 @@ impl From<SmilesParseError> for SmallMoleculeReadError {
 impl From<SmilesInterpretError> for SmallMoleculeReadError {
     fn from(error: SmilesInterpretError) -> Self {
         Self::Interpret(error)
+    }
+}
+
+/// Failure from the ordinary normalization plus default-perception workflow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NormalizeAndPerceiveError {
+    Normalization(NormalizationError),
+    Perception(PerceptionError),
+}
+
+impl fmt::Display for NormalizeAndPerceiveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Normalization(error) => write!(f, "{error}"),
+            Self::Perception(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for NormalizeAndPerceiveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Normalization(error) => Some(error),
+            Self::Perception(error) => Some(error),
+        }
     }
 }

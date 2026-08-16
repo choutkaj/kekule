@@ -2,8 +2,7 @@ use kekule::prelude::*;
 
 fn perceived_smiles(input: &str) -> Result<SmallMolecule, Box<dyn std::error::Error>> {
     let mut molecule = SmallMolecule::from_smiles(input)?;
-    molecule.normalize()?;
-    molecule.perceive()?;
+    molecule.normalize_and_perceive()?;
     Ok(molecule)
 }
 
@@ -22,9 +21,13 @@ fn quantity_and_unit_public_api() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::normalization::NormalizationReport;
+    use kekule::small::NormalizeAndPerceiveError;
+
     let mut mol = SmallMolecule::from_smiles("c1ccccc1O")?;
-    mol.normalize()?;
-    mol.perceive()?;
+    let result: Result<NormalizationReport, NormalizeAndPerceiveError> =
+        mol.normalize_and_perceive();
+    result?;
     assert_eq!(mol.atom_count(), 7);
     assert_eq!(mol.bond_count(), 7);
     let formal_charge: i64 = mol.graph().formal_charge();
@@ -606,7 +609,8 @@ fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::e
 fn production_smiles_stereo_uses_installed_perception_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use kekule::perception::stereo::{
-        StereoCandidate, StereoPerceptionError, StereoPerceptionReport, StereoValidationError,
+        CoordinateStereoError, CoordinateStereoMaterializationReport, CoordinateStereoResult,
+        StereoCandidate, StereoValidationError,
     };
     use kekule::perception::{self, stereo};
 
@@ -635,10 +639,14 @@ fn production_smiles_stereo_uses_installed_perception_state(
         "{:?}",
         candidates
     );
-    let perception: Result<StereoPerceptionReport, StereoPerceptionError> =
-        stereo::perceive_stereo(molecule.graph_mut());
-    let report = perception?;
-    assert!(report.created_elements.is_empty());
+    let before = molecule.clone();
+    let inference: Result<CoordinateStereoResult, CoordinateStereoError> =
+        stereo::infer_coordinate_stereo(molecule.graph());
+    assert!(inference?.elements.is_empty());
+    assert_eq!(molecule, before);
+    let materialization: Result<CoordinateStereoMaterializationReport, CoordinateStereoError> =
+        stereo::materialize_coordinate_stereo(molecule.graph_mut());
+    assert!(materialization?.created_elements.is_empty());
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
     Ok(())
 }

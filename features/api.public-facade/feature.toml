@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 46
+version = 47
 status = "supported"
-description = "Expose the focused Kekule facade with explicit source-stereo-aware representation normalization, sealed molecule staging, qualified hierarchy navigation, shared topology, and direct model state."
+description = "Expose the focused Kekule facade with an explicit normalize-and-perceive small-molecule workflow, read-only coordinate-stereo inference, sealed molecule staging, qualified hierarchy navigation, shared topology, and direct model state."
 depends_on = [
   "core.units",
   "core.graph",
@@ -16,6 +16,7 @@ depends_on = [
   "io.mmcif.write",
   "chem.normalization",
   "chem.perception.default",
+  "stereo.perception",
   "chem.hydrogen-normalization",
   "query.graph",
   "query.smarts",

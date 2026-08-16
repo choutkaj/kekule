@@ -141,9 +141,14 @@ fn default_perception_does_not_assign_coordinate_only_stereo() {
 
     assert_eq!(molecule.graph().stereo_elements().count(), 0);
 
-    let direct_report = stereo_api::perceive_stereo(molecule.graph_mut())
-        .expect("direct coordinate perception should succeed");
-    assert_eq!(direct_report.created_elements.len(), 1);
+    let inferred = stereo_api::infer_coordinate_stereo(molecule.graph())
+        .expect("direct coordinate inference should succeed");
+    assert_eq!(inferred.elements.len(), 1);
+    assert_eq!(molecule.graph().stereo_elements().count(), 0);
+
+    let materialized = stereo_api::materialize_coordinate_stereo(molecule.graph_mut())
+        .expect("explicit coordinate materialization should succeed");
+    assert_eq!(materialized.created_elements.len(), 1);
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
 }
 
