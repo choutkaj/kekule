@@ -2221,7 +2221,7 @@ fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
 }
 
 #[test]
-fn smiles_semantics_match_rdkit_promoted_aromatic_nh_valence() {
+fn smiles_semantics_derive_promoted_aromatic_nh_valence_without_feedback() {
     let molecule = SmallMolecule::from_smiles("CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C")
         .expect("substituted pyrrole SMILES should parse");
 
@@ -2230,14 +2230,17 @@ fn smiles_semantics_match_rdkit_promoted_aromatic_nh_valence() {
         .as_array()
         .expect("sanitized atoms should be an array");
 
-    assert!(atoms.iter().any(|atom| {
-        atom["symbol"] == "N"
-            && atom["aromatic"] == true
-            && atom["explicit_hydrogens"] == 1
-            && atom["implicit_hydrogens"] == 0
-            && atom["no_implicit_hydrogens"] == false
-            && atom["explicit_valence"] == 3
-    }));
+    assert!(
+        atoms.iter().any(|atom| {
+            atom["symbol"] == "N"
+                && atom["aromatic"] == true
+                && atom["explicit_hydrogens"] == 1
+                && atom["implicit_hydrogens"] == 0
+                && atom["no_implicit_hydrogens"] == false
+                && atom["explicit_valence"] == 3
+        }),
+        "{atoms:#?}"
+    );
     assert!(!atoms.iter().any(|atom| {
         atom["symbol"] == "N" && atom["aromatic"] == true && atom["explicit_valence"] == 4
     }));

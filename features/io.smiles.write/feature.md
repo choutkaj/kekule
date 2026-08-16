@@ -11,7 +11,9 @@ round-trip workflows.
 - Emits graph-order-based noncanonical SMILES with branches, ring closures,
   common bond symbols, and bracket atoms when needed. Multi-component documents
   are interpreted and written component-by-component by callers.
-- Emits `[nH]` for sanitized aromatic donor nitrogen when the perceived hydrogen must survive reparse.
+- Emits `[nH]` for aromatic donor nitrogen from either a represented explicit
+  hydrogen or one perceived implicit hydrogen, without requiring perception to
+  rewrite the atom payload.
 - Preserves bracket-only no-implicit-hydrogen semantics.
 - Rejects zero, dative, quadruple, stored stereo elements, source bond stereo
   marks, and graphs requiring more than 99 ring labels instead of silently
@@ -38,6 +40,8 @@ round-trip workflows.
 - Unit tests cover parse/write/parse round trips for branches, rings, brackets,
   individually interpreted components, aromatic examples, and unsupported
   lossy bond/stereo cases from the graph-adjacent stereo model.
+- Pyrrole regressions cover both represented `[nH]` and an aromatic donor whose
+  hydrogen remains derived in `PerceptionState` after sanitization.
 
 ## Benchmarks
 
@@ -68,3 +72,6 @@ round-trip workflows.
   overflow-prone collection-index arithmetic.
 - v13: Align writer input and multi-component workflows with the connected
   `SmallMolecule` boundary.
+- v14: Preserve aromatic donor `[nH]` output from the explicit represented-H
+  plus perceived implicit-H split after removing sanitizer representation
+  feedback.
