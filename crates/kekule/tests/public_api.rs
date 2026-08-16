@@ -74,6 +74,7 @@ fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::core::{Atom, BondOrder, Element, Molecule};
+    use kekule::normalization::NormalizationReport;
 
     let mut builder = Molecule::builder();
     let chlorine = builder.add_atom(Atom::new(Element::from_symbol("Cl").unwrap()))?;
@@ -88,6 +89,11 @@ fn normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(molecule.graph().atom(chlorine)?.formal_charge, 1);
     assert_eq!(molecule.graph().atom(oxo)?.formal_charge, -1);
+
+    let mut directional = SmallMolecule::from_smiles("C/C=C\\F")?;
+    let source_report: NormalizationReport = directional.normalize()?;
+    assert_eq!(source_report.created_stereo_elements.len(), 1);
+    assert!(directional.graph().stereo_bond_marks().next().is_none());
 
     let mut perceived = SmallMolecule::from_smiles_sanitized("CCO")?;
     assert!(perceived.graph().perception().has_valence());
@@ -596,13 +602,17 @@ fn production_smiles_stereo_uses_installed_perception_state(
 
     let document = kekule::smiles::parse_str(r"C(=C\F)\F")?;
     let mut molecule = kekule::smiles::interpret(&document)?.into_molecule()?;
-    perception::sanitize_with_options(
+    let sanitize_report = perception::sanitize_with_options(
         &mut molecule,
         SanitizeOptions {
             perceive_stereo: false,
             ..SanitizeOptions::default()
         },
     )?;
+    assert_eq!(
+        sanitize_report.normalization.created_stereo_elements.len(),
+        1
+    );
 
     let graph = molecule.graph();
     assert_eq!(graph.implicit_hydrogens(AtomId::new(0))?, Some(1));
@@ -626,8 +636,8 @@ fn production_smiles_stereo_uses_installed_perception_state(
     let perception: Result<StereoPerceptionReport, StereoPerceptionError> =
         stereo::perceive_stereo(molecule.graph_mut());
     let report = perception?;
-    assert_eq!(report.created_elements.len(), 1);
-    assert!(report.warnings.is_empty());
+    assert!(report.created_elements.is_empty());
+    assert_eq!(molecule.graph().stereo_elements().count(), 1);
     Ok(())
 }
 

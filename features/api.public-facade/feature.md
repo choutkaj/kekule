@@ -58,20 +58,24 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Expert perception functions live under focused modules such as `perception::rings`, `perception::aromaticity`, and `perception::valence`.
 - Meaning-preserving representation cleanup lives under
   `normalization::normalize` with a thin `SmallMolecule::normalize()`
-  convenience. The facade exposes its focused error without adding
+  convenience. The facade exposes focused `NormalizationReport`, warning,
+  error, and source-stereo issue types without adding
   normalization items to the crate root or prelude. Successful normalization
   publishes deterministic localized ordinary bond orders for imported
-  aromatic source representation.
+  aromatic source representation plus canonical source-declared
+  `StereoElement` state, and consumes resolved source bond marks.
 - `perception::valence` exposes standard `Result<(), ValenceError>` operations
   and structured `ValenceIssue` diagnostics without an empty-success report.
 - `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
   values plus bounded ring options and errors; algorithm work instrumentation
   is not part of the public facade.
-- `perception::SanitizeReport` exposes useful successful stereo output without
-  duplicating installed valence or ring state.
+- `perception::SanitizeReport` exposes useful normalization output and optional
+  stereo-stage output without duplicating installed valence or ring state.
 - `perception::stereo` separately exposes stored-element validation,
   read-only candidate detection, and transactional mutating perception with
-  focused validation errors, perception errors, and successful warnings.
+  focused structural-validation and coordinate-perception errors. Source-mark
+  assembly and diagnostics are absent from this facade and live under
+  `normalization`.
 - The same stereo facade exposes CIP assignment as
   `Result<CipAssignmentReport, CipAssignmentError>`: successful assignments and
   skips are sidecar output, while failed assignment preserves the exact prior
@@ -158,7 +162,7 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - Workspace tests exercise the benchmark tooling and existing chemistry/IO behavior through the new wrapper accessors.
 - A downstream normalization test compiles the focused facade and
   `SmallMolecule` convenience and verifies the canonical oxo-halide rewrite
-  plus perception clearing.
+  plus source-stereo reporting and perception clearing.
 - Downstream tests verify connected builder/editor behavior, structured
   multi-component SMILES handling, disconnected Molfile/SDF rejection, and
   connected mmCIF topology instances.
@@ -267,3 +271,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v43: Localize imported aromatic source bonds through normalization, expose
   only model-perceived aromaticity in reconstruction APIs, and keep
   aromaticity perception representation-pure.
+- v44: Expose focused source-stereo normalization reports and diagnostics,
+  include normalization output in sanitizer reports, and narrow the stereo
+  facade to structural validation and coordinate-derived perception.

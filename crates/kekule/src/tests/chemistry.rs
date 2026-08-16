@@ -99,20 +99,22 @@ fn sanitize_options_do_not_leave_skipped_passes_fresh() {
 }
 
 #[test]
-fn sanitization_perceives_stereo_by_default_and_can_skip_it() {
+fn sanitization_normalizes_source_stereo_even_when_perception_is_skipped() {
     let mut molecule = read_smiles("C/C=C\\F").expect("directional smiles should parse");
 
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("directional molecule should sanitize");
 
-    assert_eq!(
-        report.stereo.expect("stereo report").created_elements.len(),
-        1
-    );
+    assert_eq!(report.normalization.created_stereo_elements.len(), 1);
+    assert!(report
+        .stereo
+        .expect("stereo report")
+        .created_elements
+        .is_empty());
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
 
     let mut skipped = read_smiles("C/C=C\\F").expect("directional smiles should parse");
-    perception_api::sanitize_with_options(
+    let skipped_report = perception_api::sanitize_with_options(
         &mut skipped,
         SanitizeOptions {
             perceive_stereo: false,
@@ -122,7 +124,11 @@ fn sanitization_perceives_stereo_by_default_and_can_skip_it() {
     .expect("stereo-skipped molecule should sanitize");
 
     assert!(!skipped.graph().perception().has_cip_descriptors());
-    assert_eq!(skipped.graph().stereo_elements().count(), 0);
+    assert_eq!(
+        skipped_report.normalization.created_stereo_elements.len(),
+        1
+    );
+    assert_eq!(skipped.graph().stereo_elements().count(), 1);
 }
 
 #[test]
@@ -145,10 +151,7 @@ fn sanitization_preserves_unknown_double_bond_stereo() {
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("unknown double-bond stereo should sanitize");
 
-    assert_eq!(
-        report.stereo.expect("stereo report").created_elements.len(),
-        1
-    );
+    assert_eq!(report.normalization.created_stereo_elements.len(), 1);
     let (_, element) = molecule
         .graph()
         .stereo_elements()
@@ -222,7 +225,7 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
 }
 
 #[test]
-fn failed_stereo_sanitization_is_transactional() {
+fn failed_source_stereo_normalization_in_sanitizer_is_transactional() {
     let mut mol = Molecule::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -241,11 +244,12 @@ fn failed_stereo_sanitization_is_transactional() {
 
     assert!(matches!(
         error,
-        SanitizeError::Stereo(StereoPerceptionError { issues })
-            if issues.contains(&StereoPerceptionIssue::UnassembledTetrahedralBondMark {
-                bond,
-                kind: StereoBondMarkKind::WedgeEither,
-            })
+        SanitizeError::Normalization(NormalizationError::SourceStereo(
+            SourceStereoNormalizationError { issues }
+        )) if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
+            bond,
+            kind: StereoBondMarkKind::WedgeEither,
+        })
     ));
     assert_eq!(molecule, before);
 }
@@ -280,15 +284,13 @@ fn sanitization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
 
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("ambiguous drawing wedges should not reject valid chemistry");
-    let stereo = report.stereo.expect("stereo report");
-
-    assert!(stereo
-        .warnings
-        .contains(&StereoPerceptionWarning::AmbiguousTetrahedralWedgeMarks {
+    assert!(report.normalization.warnings.contains(
+        &NormalizationWarning::AmbiguousTetrahedralWedgeMarks {
             center,
             mark_count: 4,
-        }));
-    assert_eq!(stereo.warnings.len(), 1);
+        }
+    ));
+    assert_eq!(report.normalization.warnings.len(), 1);
     assert!(molecule.graph().stereo_elements().next().is_none());
 }
 
@@ -813,13 +815,13 @@ $$$$
 
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("tetracoordinate phosphorus should sanitize");
-    let stereo = report.stereo.expect("stereo report");
+    let normalization = report.normalization;
 
-    assert!(stereo.warnings.is_empty());
-    assert_eq!(stereo.created_elements.len(), 1);
+    assert!(normalization.warnings.is_empty());
+    assert_eq!(normalization.created_stereo_elements.len(), 1);
     let element = molecule
         .graph()
-        .stereo_element(stereo.created_elements[0])
+        .stereo_element(normalization.created_stereo_elements[0])
         .expect("created tetrahedral element");
     assert!(matches!(
         &element.kind,
@@ -851,13 +853,13 @@ $$$$
 
     let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("pyramidal sulfur should sanitize");
-    let stereo = report.stereo.expect("stereo report");
+    let normalization = report.normalization;
 
-    assert!(stereo.warnings.is_empty());
-    assert_eq!(stereo.created_elements.len(), 1);
+    assert!(normalization.warnings.is_empty());
+    assert_eq!(normalization.created_stereo_elements.len(), 1);
     let element = molecule
         .graph()
-        .stereo_element(stereo.created_elements[0])
+        .stereo_element(normalization.created_stereo_elements[0])
         .expect("created tetrahedral element");
     assert!(matches!(
         &element.kind,

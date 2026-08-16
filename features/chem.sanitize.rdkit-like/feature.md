@@ -11,21 +11,22 @@ for common small molecules.
 - Normalizes represented chemistry, then runs valence, ring set, aromaticity,
   aromatic-N hydrogen normalization, and stereo perception according to
   options.
-- The stereo stage validates existing local stereo and assembles explicit source
-  marks; coordinate-only stereo assignment remains an explicit
-  `stereo.perception` operation.
+- Normalization assembles supported source marks into canonical local stereo
+  and consumes them before valence perception. The stereo-perception stage no
+  longer decodes source marks; coordinate-only stereo assignment remains an
+  explicit `stereo.perception` operation.
 - Commits changes only after every requested pass succeeds; any error leaves the input exactly unchanged.
 - Propagates valence, ring, aromaticity, and stereo failures through
   `SanitizeError` without committing staged mutations.
 - Propagates canonical representation failures through
   `SanitizeError::Normalization` without committing staged mutations.
-- `SanitizeError::Stereo` carries `StereoPerceptionError` through normal
-  `Result` propagation. Successful stereo reports retain created element IDs
-  and nonfatal warnings.
+- `SanitizeError::Stereo` carries coordinate-perception validation or insertion
+  failures. Source-mark diagnostics propagate through
+  `SanitizeError::Normalization`.
 - `SanitizeError::Valence` carries `ValenceError`. Successful
-  `SanitizeReport` values retain useful stereo output only; installed valence
-  and ring state are inspected through the molecule rather than duplicated in
-  the report.
+  `SanitizeReport` values retain the useful `NormalizationReport` plus optional
+  stereo-stage output; installed valence and ring state are
+  inspected through the molecule rather than duplicated in the report.
 - Installs requested successful perception state and clears skipped state.
   Aromaticity reuses an already-installed ring basis. It may compute rings
   internally when no basis is installed, but an unrequested ring result is not
@@ -37,8 +38,8 @@ for common small molecules.
 
 - The workflow stages work on a clone and atomically replace the caller's
   molecule after success.
-- The workflow returns successful stereo sidecar information because created
-  elements and nonfatal warnings remain useful to callers.
+- The workflow returns normalization sidecar information because created
+  source-stereo elements and concrete warnings remain useful to callers.
 - It operates on `SmallMolecule` while using shared core graph algorithms internally.
 - The public facade is `perception`; lower-level sanitizer internals are not root-level API.
 - Delegates canonical representation cleanup to the focused normalization
@@ -46,13 +47,15 @@ for common small molecules.
   oxyhalogen rewrite nor imported aromatic localization, and it does not
   restore perception cleared by normalization.
 - Performs the aromatic nitrogen hydrogen normalization after both valence and aromaticity perception succeed, preserving total hydrogen count while exposing RDKit-like sanitized atom fields.
-- Runs stereo perception after aromaticity so local stereo validation and
-  source-mark assembly can use sanitized valence and hydrogen semantics.
+- Runs stereo perception after aromaticity for compatibility, but source-mark
+  assembly has already completed without installed perception during
+  normalization.
 - Preserves representable Molfile double-bond either marks as explicit unknown
   stereo elements instead of rejecting the whole molecule.
-- Retains conflicting multi-wedge input as a stereo perception warning while
+- Retains conflicting multi-wedge input as a normalization warning while
   allowing otherwise valid chemistry to sanitize; lone unassemblable marks and
-  structural stereo errors remain fatal and transactional.
+  structural stereo errors remain fatal and transactional normalization
+  failures.
 - Retains valence-implied explicit hydrogen carriers established by Molfile
   wedge parsing so tetrahedral local stereo survives the full pipeline.
 - Its valence, ring, aromaticity, and stereo passes are compared together against each required corpus.
@@ -65,9 +68,9 @@ for common small molecules.
 
 - Unit tests cover parse-without-sanitize behavior, every option combination,
   installed ring-basis reuse, transient aromaticity ring computation,
-  normalization delegation, idempotence, default and skipped stereo perception,
-  coordinate-only stereo staying outside sanitization, and exact rollback after
-  normalization, valence, aromaticity, or stereo failure.
+  source-stereo normalization regardless of the stereo-perception option,
+  idempotence, coordinate-only stereo staying outside sanitization, and exact
+  rollback after normalization, valence, aromaticity, or stereo failure.
 
 ## Benchmarks
 
@@ -118,3 +121,6 @@ for common small molecules.
 - v21: Delegate imported aromatic localization to normalization, remove the
   transitional perception restore, and call purely perceptual aromaticity on
   localized ordinary bond orders.
+- v22: Delegate source-declared stereo assembly and diagnostics to
+  normalization, expose normalization sidecar output, and leave the sanitizer's
+  stereo step responsible only for true perception/validation work.

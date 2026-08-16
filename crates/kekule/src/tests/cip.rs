@@ -528,25 +528,12 @@ fn cip_matches_rdkit_for_polyene_directional_double_bonds() {
 
 #[test]
 fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
-    let mut cyclohexene = read_smiles(r"C1/C=C\CCC1").expect("marked cyclohexene parses");
-    perception_api::sanitize_with_options(
-        &mut cyclohexene,
-        SanitizeOptions {
-            perceive_stereo: false,
-            ..SanitizeOptions::default()
-        },
-    )
-    .expect("marked cyclohexene sanitizes without stereo perception");
-    let stereo_error = stereo_api::perceive_stereo(cyclohexene.graph_mut())
-        .expect_err("excluded small-ring directional marks should remain unpaired");
+    let mut cyclohexene = read_smiles("C1C=CCCC1").expect("cyclohexene parses");
+    perception_api::sanitize(&mut cyclohexene).expect("cyclohexene sanitizes");
     assert!(cyclohexene
         .graph()
         .stereo_elements()
         .all(|(_, element)| !matches!(element.kind, StereoElementKind::DoubleBond(_))));
-    assert!(stereo_error.issues.iter().any(|issue| matches!(
-        issue,
-        StereoPerceptionIssue::UnpairedDirectionalBondMark { .. }
-    )));
 
     let cip_report = assign_cip(cyclohexene.graph_mut());
     assert!(cip_report.assigned.is_empty());

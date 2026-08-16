@@ -2,9 +2,9 @@ id = "api.public-facade"
 title = "Public API facade"
 area = "api"
 domains = ["small-molecule", "macromolecule"]
-version = 43
+version = 44
 status = "supported"
-description = "Expose the focused Kekule facade with explicit representation normalization, sealed molecule staging, qualified hierarchy navigation, shared topology, and direct model state."
+description = "Expose the focused Kekule facade with explicit source-stereo-aware representation normalization, sealed molecule staging, qualified hierarchy navigation, shared topology, and direct model state."
 depends_on = [
   "core.units",
   "core.graph",
