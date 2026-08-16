@@ -25,6 +25,8 @@ Represent chemically general atom and bond data shared by small-molecule and mac
 ## Tests
 
 - Current coverage is unit-test based.
+- Tests seed and inspect derived chemistry through `Molecule` and
+  `PerceptionState`, never through test-only atom, bond, or stereo payloads.
 - No RDKit or Biopython golden data is required for the representation feature.
 
 ## Out Of Scope
@@ -43,3 +45,5 @@ Represent chemically general atom and bond data shared by small-molecule and mac
   bracket-SMILES high-spin states are not collapsed to triplets.
 - v7: Remove derived implicit-H/aromatic/CIP payload fields in favor of the
   canonical `PerceptionState`.
+- v8: Remove the remaining test-configuration payload mirrors and migrate all
+  unit fixtures to the production perception-state path.

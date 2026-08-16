@@ -5,12 +5,12 @@ use crate::algorithms::{
     AddHydrogensReport, HydrogenTransformError, RemoveHydrogensReport,
 };
 use crate::chemistry::{
-    normalize_molecule, perceive_molecule, NormalizationError, NormalizationReport, PerceptionError,
+    normalize_molecule, normalize_molecule_in_place, perceive_molecule, perceive_molecule_in_place,
+    NormalizationError, NormalizationReport, PerceptionError,
 };
 use crate::io::{
     interpret_smiles_document, parse_smiles_document, write_canonical_smiles,
-    write_isomeric_smiles, write_smiles, CanonicalSmilesWriteOptions, IsomericSmilesWriteOptions,
-    MolWriteError, SmilesInterpretError, SmilesParseError, SmilesWriteOptions,
+    write_isomeric_smiles, write_smiles, MolWriteError, SmilesInterpretError, SmilesParseError,
 };
 
 use super::model::SmallMolecule;
@@ -27,7 +27,7 @@ impl SmallMolecule {
 
     /// Normalize represented chemistry and source stereo into canonical form.
     pub fn normalize(&mut self) -> Result<NormalizationReport, NormalizationError> {
-        normalize_molecule(self.graph_mut_raw())
+        normalize_molecule(self.graph_mut())
     }
 
     /// Install the transactional default valence, ring-set, and aromaticity profile.
@@ -35,7 +35,7 @@ impl SmallMolecule {
     /// Call [`Self::normalize`] first when the molecule came from source
     /// representation that has not yet been normalized.
     pub fn perceive(&mut self) -> Result<(), PerceptionError> {
-        perceive_molecule(self.graph_mut_raw())
+        perceive_molecule(self.graph_mut())
     }
 
     /// Normalize represented chemistry and install the default perception profile.
@@ -46,9 +46,10 @@ impl SmallMolecule {
         &mut self,
     ) -> Result<NormalizationReport, NormalizeAndPerceiveError> {
         let mut staged = self.clone();
-        let report = normalize_molecule(staged.graph_mut_raw())
+        let report = normalize_molecule_in_place(staged.graph_mut())
             .map_err(NormalizeAndPerceiveError::Normalization)?;
-        perceive_molecule(staged.graph_mut_raw()).map_err(NormalizeAndPerceiveError::Perception)?;
+        perceive_molecule_in_place(staged.graph_mut())
+            .map_err(NormalizeAndPerceiveError::Perception)?;
         *self = staged;
         Ok(report)
     }
@@ -63,24 +64,24 @@ impl SmallMolecule {
         &mut self,
         options: AddHydrogensOptions,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_to_molecule(self.graph_mut_raw(), options)
+        add_hydrogens_to_molecule(self.graph_mut(), options)
     }
 
     /// Collapse ordinary graph hydrogens and report retained protected atoms.
     pub fn remove_hydrogens(&mut self) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-        remove_hydrogens_from_molecule(self.graph_mut_raw())
+        remove_hydrogens_from_molecule(self.graph_mut())
     }
 
     pub fn to_smiles(&self) -> Result<String, MolWriteError> {
-        write_smiles(self, SmilesWriteOptions)
+        write_smiles(self)
     }
 
     pub fn to_isomeric_smiles(&self) -> Result<String, MolWriteError> {
-        write_isomeric_smiles(self, IsomericSmilesWriteOptions)
+        write_isomeric_smiles(self)
     }
 
     pub fn to_canonical_smiles(&self) -> Result<String, MolWriteError> {
-        write_canonical_smiles(self, CanonicalSmilesWriteOptions)
+        write_canonical_smiles(self)
     }
 }
 

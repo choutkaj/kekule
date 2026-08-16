@@ -37,6 +37,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - SMILES and Molfile retain simple default-bounded `parse_str` entry points and
   expose focused parse-options overloads; SDF and mmCIF accept their parse
   options directly.
+- SMILES writing exposes only the meaningful `write`, `write_isomeric`, and
+  `write_canonical` operations plus thin `SmallMolecule` conveniences; empty
+  writer-options types and redundant overloads are absent from the facade and
+  prelude.
 - Dot-separated SMILES interpretation exposes one connected component result
   per component. Single-molecule accessors and convenience readers return a
   structured component-count error when the document contains more than one.
@@ -303,3 +307,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   assignment into the focused top-level `stereo` facade; remove
   `perception::stereo`; and rename hydrogen normalization terminology to
   topology transforms.
+- v49: Remove empty SMILES writer-options types and their redundant overloads,
+  keeping only the three meaningful focused writer operations and wrapper
+  conveniences.

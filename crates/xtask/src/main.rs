@@ -27,7 +27,7 @@ use kekule::{
     query,
     sdf::{self, SdfDataField, SdfParseOptions, SdfRecord},
     small::SmallMolecule,
-    smiles::{self, CanonicalSmilesWriteOptions, SmilesWriteOptions},
+    smiles::{self},
     stereo::{
         self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,
         StereoValidationIssue,

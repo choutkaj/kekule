@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use kekule::smiles::{interpret, parse_str, write_with_options, SmilesWriteOptions};
+use kekule::smiles::{interpret, parse_str, write};
 
 fuzz_target!(|data: &[u8]| {
     let Ok(input) = std::str::from_utf8(data) else {
@@ -12,7 +12,7 @@ fuzz_target!(|data: &[u8]| {
             return;
         };
         for molecule in interpreted.molecules() {
-            if let Ok(output) = write_with_options(molecule, SmilesWriteOptions::default()) {
+            if let Ok(output) = write(molecule) {
                 if let Ok(document) = parse_str(&output) {
                     let _ = interpret(&document);
                 }

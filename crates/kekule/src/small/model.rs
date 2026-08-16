@@ -38,10 +38,6 @@ impl SmallMolecule {
         &mut self.graph
     }
 
-    pub(crate) fn graph_mut_raw(&mut self) -> &mut Molecule {
-        &mut self.graph
-    }
-
     pub(crate) fn without_conformers(mut self) -> Self {
         self.graph = self.graph.without_conformers();
         self

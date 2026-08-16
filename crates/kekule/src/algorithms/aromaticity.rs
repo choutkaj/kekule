@@ -74,12 +74,30 @@ pub fn perceive_aromaticity_with_ring_options(
     model: AromaticityModel,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
-    let mut staged = mol.clone();
-    match model {
-        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(&mut staged, ring_options),
-    }?;
-    *mol = staged;
+    let previous = mol.perception().clone();
+    if let Err(error) = perceive_aromaticity_with_ring_options_in_place(mol, model, ring_options) {
+        mol.install_perception_state(previous)
+            .expect("previous perception state must remain valid");
+        return Err(error);
+    }
     Ok(())
+}
+
+pub(crate) fn perceive_aromaticity_in_place(
+    mol: &mut Molecule,
+    model: AromaticityModel,
+) -> std::result::Result<(), AromaticityError> {
+    perceive_aromaticity_with_ring_options_in_place(mol, model, RingPerceptionOptions::default())
+}
+
+fn perceive_aromaticity_with_ring_options_in_place(
+    mol: &mut Molecule,
+    model: AromaticityModel,
+    ring_options: RingPerceptionOptions,
+) -> std::result::Result<(), AromaticityError> {
+    match model {
+        AromaticityModel::RdkitLike => perceive_rdkit_like_aromaticity(mol, ring_options),
+    }
 }
 
 fn perceive_rdkit_like_aromaticity(
@@ -673,12 +691,18 @@ mod tests {
             .bond(protected_single)
             .expect("protected fusion bond");
         assert_eq!(protected.order, BondOrder::Single);
-        assert!(!protected.aromatic);
+        assert_eq!(
+            molecule.graph().bond_is_aromatic(protected_single),
+            Ok(Some(false))
+        );
         assert_eq!(
             molecule
                 .graph()
                 .atoms()
-                .filter(|(_, atom)| atom.element.symbol() != "O" && atom.aromatic)
+                .filter(|(atom_id, atom)| {
+                    atom.element.symbol() != "O"
+                        && molecule.graph().atom_is_aromatic(*atom_id) == Ok(Some(true))
+                })
                 .count(),
             9
         );
@@ -707,9 +731,20 @@ mod tests {
             .graph()
             .atoms()
             .filter(|(_, atom)| atom.element.symbol() == "N")
-            .map(|(_, atom)| (atom.aromatic, atom.implicit_hydrogens))
+            .map(|(atom_id, _)| {
+                (
+                    molecule.graph().atom_is_aromatic(atom_id),
+                    molecule.graph().implicit_hydrogens(atom_id),
+                )
+            })
             .collect::<Vec<_>>();
-        assert_eq!(nitrogens, vec![(false, Some(1)), (false, Some(1))]);
+        assert_eq!(
+            nitrogens,
+            vec![
+                (Ok(Some(false)), Ok(Some(1))),
+                (Ok(Some(false)), Ok(Some(1)))
+            ]
+        );
     }
 
     #[test]
@@ -747,7 +782,10 @@ mod tests {
             molecule
                 .graph()
                 .atoms()
-                .filter(|(_, atom)| atom.element.symbol() == "C" && atom.aromatic)
+                .filter(|(atom_id, atom)| {
+                    atom.element.symbol() == "C"
+                        && molecule.graph().atom_is_aromatic(*atom_id) == Ok(Some(true))
+                })
                 .count(),
             6
         );
@@ -761,7 +799,9 @@ mod tests {
             molecule.normalize().expect("carbocation normalizes");
             molecule.perceive().expect("carbocation perceives");
             assert!(
-                molecule.graph().atoms().all(|(_, atom)| !atom.aromatic),
+                molecule.graph().atom_ids().all(|atom_id| {
+                    molecule.graph().atom_is_aromatic(atom_id) == Ok(Some(false))
+                }),
                 "{smiles}"
             );
         }

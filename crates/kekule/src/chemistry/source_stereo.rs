@@ -241,8 +241,6 @@ fn tetrahedral_element_from_wedge(
         specifiedness,
         source: mark.source,
         group: None,
-        #[cfg(test)]
-        descriptor: None,
     }
 }
 
@@ -478,8 +476,6 @@ fn atropisomeric_axis_candidate(
         specifiedness: StereoSpecifiedness::Specified,
         source: mark.source,
         group: None,
-        #[cfg(test)]
-        descriptor: None,
     })
 }
 
@@ -715,8 +711,6 @@ fn assemble_unknown_double_bonds(
             specifiedness: StereoSpecifiedness::Unknown,
             source: mark.source,
             group: None,
-            #[cfg(test)]
-            descriptor: None,
         });
     }
     assembled

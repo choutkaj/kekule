@@ -3685,9 +3685,8 @@ mod tests {
         let atoms = (0..6)
             .map(|index| {
                 let symbol = if index == 3 { "N" } else { "C" };
-                let mut atom = Atom::new(Element::from_symbol(symbol).expect("element"));
-                atom.implicit_hydrogens = Some(if index == 3 { 0 } else { 1 });
-                mol.add_atom(atom).expect("atom identifier capacity")
+                mol.add_atom(Atom::new(Element::from_symbol(symbol).expect("element")))
+                    .expect("atom identifier capacity")
             })
             .collect::<Vec<_>>();
         for (left, right, order) in [
@@ -3700,6 +3699,9 @@ mod tests {
         ] {
             mol.add_bond(atoms[left], atoms[right], order)
                 .expect("ring bond");
+        }
+        for (index, atom) in atoms.iter().copied().enumerate() {
+            mol.set_implicit_hydrogens(atom, if index == 3 { 0 } else { 1 });
         }
 
         let cip_bond_orders = CipBondOrders::new(&mol, false);
@@ -3827,7 +3829,6 @@ mod tests {
         let atoms = (0..5)
             .map(|index| {
                 let mut atom = Atom::new(Element::from_symbol("C").expect("carbon"));
-                atom.implicit_hydrogens = Some(1);
                 if index == 2 {
                     atom.formal_charge = -1;
                 }
@@ -3843,6 +3844,9 @@ mod tests {
         ] {
             mol.add_bond(atoms[left], atoms[right], order)
                 .expect("ring bond");
+        }
+        for atom in &atoms {
+            mol.set_implicit_hydrogens(*atom, 1);
         }
 
         let mut fractions = vec![AtomicNumberFraction::element(6); mol.atoms.len()];

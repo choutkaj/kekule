@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::algorithms::{
-    perceive_aromaticity, perceive_ring_set, perceive_valence, AromaticityError,
+    perceive_aromaticity_in_place, perceive_ring_set, perceive_valence, AromaticityError,
     RingPerceptionError, ValenceError,
 };
 use crate::core::{AromaticityModel, Molecule, ValenceModel};
@@ -41,11 +41,19 @@ impl std::error::Error for PerceptionError {
 /// the default deterministic ring set and RDKit-like aromaticity. The complete
 /// operation is transactional and never normalizes represented chemistry.
 pub fn perceive_molecule(molecule: &mut Molecule) -> Result<(), PerceptionError> {
-    let mut staged = molecule.clone();
-    perceive_valence(&mut staged, ValenceModel::RdkitLike).map_err(PerceptionError::Valence)?;
-    perceive_ring_set(&mut staged).map_err(PerceptionError::Rings)?;
-    perceive_aromaticity(&mut staged, AromaticityModel::RdkitLike)
-        .map_err(PerceptionError::Aromaticity)?;
-    *molecule = staged;
+    let previous = molecule.perception().clone();
+    if let Err(error) = perceive_molecule_in_place(molecule) {
+        molecule
+            .install_perception_state(previous)
+            .expect("previous perception state must remain valid");
+        return Err(error);
+    }
     Ok(())
+}
+
+pub(crate) fn perceive_molecule_in_place(molecule: &mut Molecule) -> Result<(), PerceptionError> {
+    perceive_valence(molecule, ValenceModel::RdkitLike).map_err(PerceptionError::Valence)?;
+    perceive_ring_set(molecule).map_err(PerceptionError::Rings)?;
+    perceive_aromaticity_in_place(molecule, AromaticityModel::RdkitLike)
+        .map_err(PerceptionError::Aromaticity)
 }

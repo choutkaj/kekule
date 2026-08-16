@@ -45,9 +45,10 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   valence, donor, candidate, and graph-topology rules.
 - Keeps parsing separate from aromaticity perception. Canonical SMILES normalization issues exposed by these flags belong to `io.smiles.canonical`, not hidden aromaticity cleanup.
 - Treats unsupported or ambiguous systems conservatively rather than claiming full RDKit parity.
-- The direct public API stages the complete operation, including any required
-  ring perception, and commits only on success. Atom/bond payloads, bond
-  orders, local stereo, source marks, properties, and conformers are preserved.
+- The direct public API stages the prior `PerceptionState`, including any ring
+  basis it may replace, and restores it exactly on failure. Atom/bond payloads,
+  bond orders, local stereo, source marks, properties, and conformers are never
+  cloned or changed.
 
 ## Tests
 
@@ -106,3 +107,6 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 - v100: Enforce complete primary-representation purity across the ordinary
   valence -> rings -> aromaticity sequence and remove the sanitizer's remaining
   aromatic-nitrogen representation feedback.
+- v101: Replace whole-molecule transactional staging with exact
+  `PerceptionState` rollback and expose a crate-private in-place stage for the
+  default composed workflow.

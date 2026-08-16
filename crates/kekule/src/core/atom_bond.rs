@@ -22,10 +22,6 @@ pub struct Atom {
     pub no_implicit_hydrogens: bool,
     pub atom_map: Option<u32>,
     pub props: PropMap,
-    #[cfg(test)]
-    pub(crate) implicit_hydrogens: Option<u8>,
-    #[cfg(test)]
-    pub(crate) aromatic: bool,
 }
 
 impl Atom {
@@ -39,10 +35,6 @@ impl Atom {
             no_implicit_hydrogens: false,
             atom_map: None,
             props: PropMap::new(),
-            #[cfg(test)]
-            implicit_hydrogens: None,
-            #[cfg(test)]
-            aromatic: false,
         }
     }
 }
@@ -74,8 +66,6 @@ pub struct Bond {
     pub(crate) b: AtomId,
     pub order: BondOrder,
     pub props: PropMap,
-    #[cfg(test)]
-    pub(crate) aromatic: bool,
 }
 
 impl Bond {
@@ -85,8 +75,6 @@ impl Bond {
             b,
             order,
             props: PropMap::new(),
-            #[cfg(test)]
-            aromatic: order == BondOrder::Aromatic,
         }
     }
 

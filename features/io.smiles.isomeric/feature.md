@@ -6,7 +6,9 @@ Write noncanonical isomeric SMILES from the first-class stereo representation.
 
 ## Behavior/API
 
-- Exposes `smiles::{IsomericSmilesWriteOptions, write_isomeric, write_isomeric_with_options}`.
+- Exposes `smiles::write_isomeric` and
+  `SmallMolecule::to_isomeric_smiles()`; there is no empty options type or
+  redundant options overload.
 - Exposes `SmallMolecule::to_isomeric_smiles()`.
 - Emits tetrahedral `@`/`@@` markers for specified tetrahedral stereo elements.
 - Computes the marker from the writer's actual emitted carrier order, so branch,
@@ -114,3 +116,4 @@ parity benchmarking.
 - v10: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v11: Inherit explicit radical rejection after removing model-driven bracket
   radical inference from SMILES interpretation.
+- v12: Remove the empty writer-options type and redundant options overload.

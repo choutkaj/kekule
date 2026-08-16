@@ -32,6 +32,8 @@ single-atom values are valid connected boundary cases.
 - Returns scoped `AtomMut` and `BondMut` guards from mutable graph access.
 - Owns one internally consistent `PerceptionState` with read-only valence,
   implicit-H, ring, model-perceived aromaticity, and CIP queries.
+- Uses those same queries in test and production builds; no payload-side test
+  mirror or fallback can supply alternate derived state.
 - Exposes immutable exact perception-section views, detached checked
   construction, and one whole-state validated atomic installation operation;
   incremental perception mutators remain crate-private.
@@ -85,6 +87,8 @@ single-atom values are valid connected boundary cases.
 - Reference-tool golden data is not required for this data-structure feature.
 - Downstream regressions cover exact installed-perception export/install,
   malformed transactional rejection, and normal post-install invalidation.
+- Unit regressions compare every public derived-state query directly with its
+  installed `PerceptionState` section.
 
 ## Out Of Scope
 
@@ -125,3 +129,5 @@ single-atom values are valid connected boundary cases.
 - v15: Restrict installed aromaticity to semantic model-perceived membership,
   remove imported representation provenance, and expose the installed
   `AromaticityModel` directly.
+- v16: Remove the test-only perception synchronization and fallback path so
+  every build reads the single installed `PerceptionState`.
