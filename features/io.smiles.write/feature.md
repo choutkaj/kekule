@@ -20,7 +20,7 @@ round-trip workflows.
   coercing them. Radical atoms are writeable only when reparsing the emitted
   bracket atom will infer the same multiplicity from its valence; arbitrary
   stored radical/valence combinations are rejected.
-- Does not canonicalize or sanitize before writing.
+- Does not canonicalize, normalize, or perceive before writing.
 
 ## Implementation Notes
 
@@ -41,11 +41,14 @@ round-trip workflows.
   individually interpreted components, aromatic examples, and unsupported
   lossy bond/stereo cases from the graph-adjacent stereo model.
 - Pyrrole regressions cover both represented `[nH]` and an aromatic donor whose
-  hydrogen remains derived in `PerceptionState` after sanitization.
+  hydrogen remains derived in `PerceptionState` after default perception.
 
 ## Benchmarks
 
-- RDKit-generated goldens compare sanitize/write/reparse atom identity, labeled-neighbor topology, bond order/aromaticity, charge, isotope, hydrogen, map, and valence records for external PubChem SMILES fixtures rather than exact RDKit noncanonical traversal strings.
+- RDKit-generated goldens compare normalize/perceive/write/reparse atom
+  identity, labeled-neighbor topology, bond order/aromaticity, charge, isotope,
+  hydrogen, map, and valence records for external PubChem SMILES fixtures
+  rather than exact RDKit noncanonical traversal strings.
 - Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`, `enamine-diversity`.
 - Benchmark observations are informational and never determine this feature's release status or repository health.
 

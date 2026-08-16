@@ -11,7 +11,7 @@ fn installed_cip_descriptors(mol: &Molecule) -> Vec<(StereoElementId, StereoDesc
 #[test]
 fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
     let mut s_alanine = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
-    perception_api::sanitize(&mut s_alanine).expect("alanine sanitizes");
+    normalize_and_perceive(&mut s_alanine).expect("alanine normalizes_and_perceives");
 
     let report = assign_cip(s_alanine.graph_mut());
 
@@ -32,7 +32,7 @@ fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
     );
 
     let mut r_alanine = read_smiles("C[C@H](C(=O)O)N").expect("alanine parses");
-    perception_api::sanitize(&mut r_alanine).expect("alanine sanitizes");
+    normalize_and_perceive(&mut r_alanine).expect("alanine normalizes_and_perceives");
 
     let report = assign_cip(r_alanine.graph_mut());
 
@@ -60,7 +60,7 @@ M  END
 "
         );
         let mut molecule = read_molfile(&input).expect("wedge molfile parses");
-        perception_api::sanitize(&mut molecule).expect("wedge molfile sanitizes");
+        normalize_and_perceive(&mut molecule).expect("wedge molfile normalizes_and_perceives");
 
         let report = assign_cip(molecule.graph_mut());
 
@@ -78,7 +78,8 @@ M  END
 fn cip_matches_rdkit_for_molfile_implicit_h_wedge_geometry() {
     let mut molecule = read_molfile(implicit_h_wedge_geometry_molblock())
         .expect("implicit-H wedge molfile parses");
-    perception_api::sanitize(&mut molecule).expect("implicit-H wedge molfile sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("implicit-H wedge molfile normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -231,7 +232,7 @@ fn cip_assigns_pseudo_axis_descriptors_for_pseudoasymmetric_endpoint_ordering() 
 fn cip_matches_rdkit_for_molfile_atropisomeric_axis() {
     let mut molecule =
         read_molfile(rdkit_rp6306_atrop_molblock()).expect("RDKit atropisomer fixture parses");
-    perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
+    normalize_and_perceive(&mut molecule).expect("atropisomer fixture normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -256,7 +257,7 @@ fn cip_matches_rdkit_for_molfile_atropisomeric_axis() {
 fn cip_matches_rdkit_for_alternate_molfile_atropisomeric_wedge() {
     let mut molecule = read_molfile(rdkit_rp6306_atrop3_molblock())
         .expect("RDKit alternate atropisomer fixture parses");
-    perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
+    normalize_and_perceive(&mut molecule).expect("atropisomer fixture normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -279,7 +280,8 @@ fn cip_axis_ranking_is_stable_across_all_carbon_aromatic_source_kekule_variants(
         ),
     ] {
         let mut molecule = read_molfile(fixture).expect("RDKit atropisomer fixture parses");
-        perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
+        normalize_and_perceive(&mut molecule)
+            .expect("atropisomer fixture normalizes_and_perceives");
 
         let report = assign_cip(molecule.graph_mut());
 
@@ -298,7 +300,8 @@ fn cip_axis_ranking_is_stable_across_all_carbon_aromatic_source_kekule_variants(
 fn cip_axis_ranking_preserves_heteromancude_source_kekule_guardrail() {
     let mut molecule = read_molfile(rdkit_jdq443_atrop1_molblock())
         .expect("RDKit JDQ443 atropisomer fixture parses");
-    perception_api::sanitize(&mut molecule).expect("JDQ443 atropisomer fixture sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("JDQ443 atropisomer fixture normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -328,7 +331,8 @@ fn cip_matches_rdkit_for_broader_molfile_atropisomeric_axis_perception() {
         ),
     ] {
         let mut molecule = read_molfile(fixture).expect("RDKit atropisomer fixture parses");
-        perception_api::sanitize(&mut molecule).expect("atropisomer fixture sanitizes");
+        normalize_and_perceive(&mut molecule)
+            .expect("atropisomer fixture normalizes_and_perceives");
 
         let report = assign_cip(molecule.graph_mut());
 
@@ -354,7 +358,8 @@ fn cip_matches_rdkit_for_ring_internal_molfile_atropisomeric_axis() {
     ] {
         let mut molecule =
             read_molfile(fixture).expect("RDKit macrocycle atropisomer fixture parses");
-        perception_api::sanitize(&mut molecule).expect("macrocycle atropisomer fixture sanitizes");
+        normalize_and_perceive(&mut molecule)
+            .expect("macrocycle atropisomer fixture normalizes_and_perceives");
 
         let report = assign_cip(molecule.graph_mut());
 
@@ -366,7 +371,7 @@ fn cip_matches_rdkit_for_ring_internal_molfile_atropisomeric_axis() {
 #[test]
 fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let mut molecule = read_smiles("[C@@H]([C@H](C(=O)O)O)(C(=O)O)O").expect("tartrate parses");
-    perception_api::sanitize(&mut molecule).expect("tartrate sanitizes");
+    normalize_and_perceive(&mut molecule).expect("tartrate normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -440,7 +445,7 @@ fn axis_stereo_graph(
 fn cip_matches_rdkit_for_smiles_ring_digit_tetrahedral_order() {
     let mut molecule = read_smiles("CC(C)C[C@@H]1CN2CCC3=CC(=C(C=C3C2CC1=O)OC)O[11CH3]")
         .expect("ring chiral molecule parses");
-    perception_api::sanitize(&mut molecule).expect("ring chiral molecule sanitizes");
+    normalize_and_perceive(&mut molecule).expect("ring chiral molecule normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -458,7 +463,7 @@ fn cip_matches_rdkit_for_branch_preserving_sugar_ligand_ranking() {
     let mut molecule =
         read_smiles("C1=C2C(=NC=N1)N(C=N2)[C@H]3[C@@H]([C@@H]([C@H](O3)COP(=O)(O)O)O)O")
             .expect("nucleotide sugar parses");
-    perception_api::sanitize(&mut molecule).expect("nucleotide sugar sanitizes");
+    normalize_and_perceive(&mut molecule).expect("nucleotide sugar normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -482,7 +487,7 @@ fn cip_matches_rdkit_for_fused_ring_paired_breadth_first_ranking() {
     let mut molecule =
         read_smiles("CC(=O)OC[C@]1([C@@H](CC[C@@]2(C1C[C@@H]([C@]34[C@H]2CC[C@@H](C3)C(=C)C4)OC(=O)C5=CC=C(C=C5)OC)C)OC(=O)C6=CC=C(C=C6)OC)C")
             .expect("polycycle parses");
-    perception_api::sanitize(&mut molecule).expect("polycycle sanitizes");
+    normalize_and_perceive(&mut molecule).expect("polycycle normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -508,7 +513,7 @@ fn cip_matches_rdkit_for_fused_ring_paired_breadth_first_ranking() {
 fn cip_matches_rdkit_for_polyene_directional_double_bonds() {
     let mut molecule =
         read_smiles("CC1=C(C(CCC1)(C)C)/C=C/C(=C/C=C/C(C)C=C)/C").expect("polyene parses");
-    perception_api::sanitize(&mut molecule).expect("polyene sanitizes");
+    normalize_and_perceive(&mut molecule).expect("polyene normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -529,7 +534,7 @@ fn cip_matches_rdkit_for_polyene_directional_double_bonds() {
 #[test]
 fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
     let mut cyclohexene = read_smiles("C1C=CCCC1").expect("cyclohexene parses");
-    perception_api::sanitize(&mut cyclohexene).expect("cyclohexene sanitizes");
+    normalize_and_perceive(&mut cyclohexene).expect("cyclohexene normalizes_and_perceives");
     assert!(cyclohexene
         .graph()
         .stereo_elements()
@@ -539,7 +544,7 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
     assert!(cip_report.assigned.is_empty());
 
     let mut cyclooctene = read_smiles(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
-    perception_api::sanitize(&mut cyclooctene).expect("marked cyclooctene sanitizes");
+    normalize_and_perceive(&mut cyclooctene).expect("marked cyclooctene normalizes_and_perceives");
     let cip_report = assign_cip(cyclooctene.graph_mut());
 
     assert_eq!(
@@ -660,7 +665,7 @@ fn cip_skips_endocyclic_kekule_bond_stereo_after_ring_perception() {
     let mut molecule =
         read_smiles("CC\\1=C(/C/2=C/C3=C(C(=C(N3)/C=C\\4/[C@@](C(=C(N4)/C=C\\5/[C@@](C(=C(N5)/C=C1\\N2)O)(C)CC(=O)O)O)(C)CC(=O)O)C)CCC(=O)O)CCC(=O)O")
             .expect("CID 445170 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 445170 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 445170 normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -690,7 +695,7 @@ fn cip_matches_rdkit_for_large_fused_ring_with_many_centers() {
     let mut molecule =
         read_smiles("CN1CC[C@@]23[C@H]4[C@H]1CC5=C2C(=C(C=C5)OC)O[C@@H]3[C@]6(C4)C(=O)C7=C8N6CCC9=C8C(=C(C=C9)OC)OC1=C7C=CC(=C1O)OC")
             .expect("fused ring parses");
-    perception_api::sanitize(&mut molecule).expect("fused ring sanitizes");
+    normalize_and_perceive(&mut molecule).expect("fused ring normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -713,7 +718,7 @@ fn cip_matches_rdkit_for_large_fused_ring_with_many_centers() {
 #[test]
 fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
     let mut together = read_smiles("C(=C\\F)\\F").expect("alkene parses");
-    perception_api::sanitize(&mut together).expect("alkene sanitizes");
+    normalize_and_perceive(&mut together).expect("alkene normalizes_and_perceives");
 
     let report = assign_cip(together.graph_mut());
 
@@ -726,7 +731,7 @@ fn cip_assigns_double_bond_descriptors_from_ranked_carriers() {
     );
 
     let mut opposite = read_smiles("C(=C/F)\\F").expect("alkene parses");
-    perception_api::sanitize(&mut opposite).expect("alkene sanitizes");
+    normalize_and_perceive(&mut opposite).expect("alkene normalizes_and_perceives");
 
     let report = assign_cip(opposite.graph_mut());
 
@@ -755,7 +760,7 @@ fn cip_assigns_sequence_descriptors_for_pseudoasymmetric_double_bond_endpoints()
 #[test]
 fn cip_uses_rule3_embedded_e_z_descriptors_to_order_ligands() {
     let mut molecule = read_smiles("Br[C@H](/C=C/F)/C=C\\F").expect("Rule 3 alkene pair parses");
-    perception_api::sanitize(&mut molecule).expect("Rule 3 alkene pair sanitizes");
+    normalize_and_perceive(&mut molecule).expect("Rule 3 alkene pair normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1044,7 +1049,7 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
 fn cip_bootstraps_coupled_pseudoasymmetric_tetrahedral_centers() {
     let mut molecule = read_smiles("CC1=NC(=NN1)[C@@H]2CC[C@H](CC2)NC3CCC3CC(C)C")
         .expect("para-stereo scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("para-stereo scaffold sanitizes");
+    normalize_and_perceive(&mut molecule).expect("para-stereo scaffold normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -1086,8 +1091,8 @@ fn cip_matches_rdkit_for_para_stereochemistry_with_directional_double_bonds() {
         ),
     ] {
         let mut molecule = read_smiles(smiles).expect("RDKit para-stereochemistry scaffold parses");
-        perception_api::sanitize(&mut molecule)
-            .expect("RDKit para-stereochemistry scaffold sanitizes");
+        normalize_and_perceive(&mut molecule)
+            .expect("RDKit para-stereochemistry scaffold normalizes_and_perceives");
 
         assign_cip(molecule.graph_mut());
 
@@ -1099,8 +1104,8 @@ fn cip_matches_rdkit_for_para_stereochemistry_with_directional_double_bonds() {
 fn cip_matches_rdkit_for_auxiliary_stereochemistry_beyond_initial_expansion() {
     let mut molecule = read_smiles("CC[C@H](C)CCCCC[C@H]1CC[C@@H](C)CC1")
         .expect("RDKit auxiliary para-stereochemistry scaffold parses");
-    perception_api::sanitize(&mut molecule)
-        .expect("RDKit auxiliary para-stereochemistry scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("RDKit auxiliary para-stereochemistry scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1131,7 +1136,8 @@ fn cip_matches_rdkit_for_cyclohexane_pseudo_symmetry_examples() {
         ),
     ] {
         let mut molecule = read_smiles(smiles).expect("RDKit pseudo-symmetry scaffold parses");
-        perception_api::sanitize(&mut molecule).expect("RDKit pseudo-symmetry scaffold sanitizes");
+        normalize_and_perceive(&mut molecule)
+            .expect("RDKit pseudo-symmetry scaffold normalizes_and_perceives");
 
         assign_cip(molecule.graph_mut());
 
@@ -1143,7 +1149,7 @@ fn cip_matches_rdkit_for_cyclohexane_pseudo_symmetry_examples() {
 fn cip_preserves_absolute_centers_next_to_pseudoasymmetric_ring_center() {
     let mut molecule = read_smiles("CCOC=1C=CC(=CC1OCC)C(C)N[C@H]2CC[C@]3(C[C@H]3C#N)CC2")
         .expect("mixed absolute and pseudoasymmetric scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("mixed scaffold sanitizes");
+    normalize_and_perceive(&mut molecule).expect("mixed scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1171,7 +1177,8 @@ fn cip_preserves_absolute_centers_next_to_pseudoasymmetric_ring_center() {
 fn cip_bootstraps_coupled_pseudoasymmetric_fused_ring_centers() {
     let mut molecule = read_smiles("O=S(=O)(N[C@H]1C[C@H](C1)C2=NN=C3CCCCCN23)C4CC54CCC5")
         .expect("fused para-stereo scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("fused para-stereo scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("fused para-stereo scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1196,7 +1203,8 @@ fn cip_bootstraps_coupled_pseudoasymmetric_cyclopentane_centers() {
     let mut molecule =
         read_smiles("CC=1N=CC(=CN1)C(=O)N[C@@H]2C[C@H](CNC(=O)C=3C=NC(=NC3)C(F)(F)F)C2")
             .expect("cyclopentane para-stereo scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("cyclopentane para-stereo scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("cyclopentane para-stereo scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1224,7 +1232,8 @@ fn cip_marks_middle_center_pseudoasymmetric_in_fused_three_center_system() {
     let mut molecule =
         read_smiles("CCC1(CCOCC1)C(=O)N2C[C@H]3[C@H](NC(=O)C4=CN(C)C(=O)C=N4)[C@H]3C2")
             .expect("three-center fused scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("three-center fused scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("three-center fused scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1253,7 +1262,8 @@ fn cip_bootstraps_enamine_coupled_cyclobutane_pseudoasymmetric_centers() {
     let mut molecule =
         read_smiles("O=C(CCC(=O)N1CCC(=N1)C=2C=CC=CC2)N[C@@H]3C[C@H](C3)C4=CC=CC(=C4)C=5N=NNN5")
             .expect("Enamine coupled pseudoasymmetric scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("Enamine coupled scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("Enamine coupled scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1281,7 +1291,8 @@ fn cip_matches_rdkit_for_enamine_quaternary_ring_center() {
     let mut molecule =
         read_smiles("C[C@]1(O)C[C@H](C1)C(=O)N2CC[C@H](CCNC(=O)C[C@@H]3CCCC[C@H]3O)C2")
             .expect("Enamine quaternary ring-center scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("Enamine quaternary scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("Enamine quaternary scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1311,7 +1322,8 @@ fn cip_matches_rdkit_for_enamine_quaternary_ring_center() {
 fn cip_matches_rdkit_for_enamine_fused_three_center_pseudoasymmetry() {
     let mut molecule = read_smiles("CC1=CSC=C1C(=O)N2C[C@H]3[C@H](CNC(=O)CN4CCC(C)CC4)[C@H]3C2")
         .expect("Enamine fused three-center scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("Enamine fused three-center scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("Enamine fused three-center scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1340,8 +1352,8 @@ fn cip_matches_rdkit_for_enamine_fused_ring_dual_pseudoasymmetry() {
     let mut molecule =
         read_smiles("CC(C)(C)C(=O)N[C@H]1C[C@H]2C[C@H](C[C@H]2C1)NC(=O)C=3C=CC=CC3N4C=NC=N4")
             .expect("Enamine fused-ring dual pseudoasymmetric scaffold parses");
-    perception_api::sanitize(&mut molecule)
-        .expect("Enamine fused-ring dual pseudoasymmetric scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("Enamine fused-ring dual pseudoasymmetric scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1370,8 +1382,8 @@ fn cip_matches_rdkit_for_enamine_fused_ring_dual_pseudoasymmetry() {
 fn cip_matches_rdkit_for_enamine_spiro_fused_pseudoasymmetry() {
     let mut molecule = read_smiles("O=C(NS(=O)(=O)C=1C=NN(C1)C=2C=CC=CC2F)[C@@]34CCC[C@H]4CCC3")
         .expect("Enamine spiro-fused pseudoasymmetric scaffold parses");
-    perception_api::sanitize(&mut molecule)
-        .expect("Enamine spiro-fused pseudoasymmetric scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("Enamine spiro-fused pseudoasymmetric scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1398,7 +1410,8 @@ fn cip_matches_rdkit_for_enamine_spiro_fused_pseudoasymmetry() {
 fn cip_matches_rdkit_for_enamine_absolute_center_in_coupled_bicycle() {
     let mut molecule = read_smiles("CN1N=CN=C1C=2C=CC(=CC2)C(=O)N3[C@H](C(=O)O)[C@@H]4CC[C@H]3CC4")
         .expect("Enamine coupled bicyclic scaffold parses");
-    perception_api::sanitize(&mut molecule).expect("Enamine coupled bicyclic scaffold sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("Enamine coupled bicyclic scaffold normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1478,7 +1491,7 @@ fn cip_matches_rdkit_for_pubchem_73056_recursive_rule_ordering() {
     let mut molecule =
         read_smiles("CC1=C(C(=O)O[C@@H](C1)[C@@H](C)[C@H]2CC[C@@H]3[C@@]2(CC[C@H]4[C@H]3C[C@@H]5[C@]6([C@@]4(C(=O)C=C[C@@H]6OC(=O)C)C)O5)C)COC(=O)C")
             .expect("CID 73056 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 73056 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 73056 normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -1508,7 +1521,7 @@ fn cip_matches_rdkit_for_pubchem_73056_recursive_rule_ordering() {
 fn cip_matches_rdkit_for_pubchem_134556_recursive_rule_ordering() {
     let mut molecule = read_smiles("CC1=CN(C(=O)NC1=O)[C@H]2C[C@@H]([C@H](O2)[14CH2]O)O")
         .expect("CID 134556 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 134556 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 134556 normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -1531,7 +1544,7 @@ fn cip_matches_rdkit_for_pubchem_246236_phosphorus_centers() {
     let mut molecule =
         read_smiles("C1COCCN1[P@]2(=NP(=N[P@@](=NP(=N2)(Cl)Cl)(N3CCOCC3)Cl)(Cl)Cl)Cl")
             .expect("CID 246236 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 246236 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 246236 normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -1549,7 +1562,7 @@ fn cip_matches_rdkit_for_pubchem_246236_phosphorus_centers() {
 fn cip_matches_rdkit_for_pubchem_359164_sulfur_lone_pair() {
     let mut molecule =
         read_smiles("C1=CC=C(C=C1)N=NC2=CC3=C(C=C2)S[S@@](=O)N3").expect("CID 359164 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 359164 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 359164 normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -1568,7 +1581,7 @@ fn cip_matches_rdkit_for_pubchem_444295_with_spectators_interpreted_separately()
     let mut molecule =
         read_smiles_component("C1=NC(=C2C(=N1)N(C=N2)[C@H]3[C@@H]([C@@H]([C@H](O3)COP(=O)(O)OP(=O)(O)OP(=O)(O)OP(=O)(O)OP(=O)(O)O)O)O)N.[NH2-].[NH2-].[NH2-].[NH2-].[NH2-].[OH3+].[OH3+].O.[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac].[Ac]", 0)
             .expect("CID 444295 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 444295 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 444295 normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -1592,7 +1605,7 @@ fn cip_matches_rdkit_for_pubchem_446291_with_unsupported_spectator_interpreted_s
     let mut molecule =
         read_smiles_component("CCCCCCCCCCCCC(=O)CSCCNC(=O)CCNC(=O)[C@H](C(C)(C)COP(=O)(O)OP(=O)(O)OC[C@@H]1[C@H]([C@H]([C@@H](O1)N2C=NC3=C(N=CN=C32)N)O)OP(=O)(O)O)O.[Cf]", 0)
             .expect("CID 446291 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 446291 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 446291 normalizes_and_perceives");
 
     let report = assign_cip(molecule.graph_mut());
 
@@ -1617,7 +1630,7 @@ fn cip_skips_endocyclic_hetero_double_bond_stereo() {
     let mut molecule =
         read_smiles("C/C/1=C/2\\[C@@]([C@@H](/C(=C/C3=N/C(=C(\\C4=N[C@H]([C@@H]([C@@]4(C)CCC(=O)O)CC(=O)O)[C@]5([C@@]([C@@H](C1=N5)CCC(=O)O)(C)CC(=O)O)C)/C)/[C@@H](C3(C)C)CCC(=O)O)/N2)CCC(=O)O)(C)CC(=O)O")
             .expect("CID 446180 parses");
-    perception_api::sanitize(&mut molecule).expect("CID 446180 sanitizes");
+    normalize_and_perceive(&mut molecule).expect("CID 446180 normalizes_and_perceives");
 
     assign_cip(molecule.graph_mut());
 
@@ -1932,7 +1945,7 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
 #[test]
 fn failed_cip_resource_limit_restores_previous_descriptors() {
     let mut molecule = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
-    perception_api::sanitize(&mut molecule).expect("alanine sanitizes");
+    normalize_and_perceive(&mut molecule).expect("alanine normalizes_and_perceives");
     let report = assign_cip(molecule.graph_mut());
     assert_eq!(report.assigned.len(), 1);
     let before = installed_cip_descriptors(molecule.graph());
@@ -1973,7 +1986,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     };
 
     let mut first_only = read_smiles(FIXTURE).expect("fixture parses");
-    perception_api::sanitize(&mut first_only).expect("fixture sanitizes");
+    normalize_and_perceive(&mut first_only).expect("fixture normalizes_and_perceives");
     first_only
         .graph_mut()
         .remove_stereo_element(StereoElementId::new(1))
@@ -1989,7 +2002,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     );
 
     let mut molecule = read_smiles(FIXTURE).expect("fixture parses");
-    perception_api::sanitize(&mut molecule).expect("fixture sanitizes");
+    normalize_and_perceive(&mut molecule).expect("fixture normalizes_and_perceives");
     let error = stereo_api::assign_cip_descriptors_with_options(molecule.graph_mut(), options)
         .expect_err("the later center should exceed the resource limit");
     assert_eq!(
@@ -2113,7 +2126,7 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
 #[test]
 fn cip_descriptors_are_cleared_by_stereo_invalidating_mutations() {
     let mut molecule = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
-    perception_api::sanitize(&mut molecule).expect("alanine sanitizes");
+    normalize_and_perceive(&mut molecule).expect("alanine normalizes_and_perceives");
     assign_cip(molecule.graph_mut());
     assert_eq!(
         molecule

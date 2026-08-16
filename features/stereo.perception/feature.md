@@ -53,11 +53,9 @@ work. Coordinate assignment uses a staged clone, skips foci that already have a
 represented element, validates the complete proposed state, and publishes only
 on success.
 
-The compatibility sanitizer calls normalization before valence, rings,
-aromaticity, and its stereo step. Because sanitization disables coordinate-only
-assignment, that final stereo call now validates canonical represented stereo
-without decoding source marks. Source mark normalization and its warnings or
-errors are exposed through `normalization`, not this feature.
+Default perception does not call stereo perception. Source marks and their
+warnings or errors remain owned by `normalization`; coordinate-derived stereo
+remains an explicit focused operation.
 
 
 ## Tests
@@ -73,7 +71,8 @@ errors are exposed through `normalization`, not this feature.
 ## Benchmarks
 
 - PubChem, Enamine, and PL-REX semantic fixtures continue to record represented
-  stereo plus candidate and coordinate-perception output after sanitization.
+  stereo plus candidate and coordinate-perception output after explicit
+  normalization and default perception.
   Source-declared elements are now present in the normalization report and
   canonical molecule before stereo perception runs.
 - Exact descriptor parity remains the responsibility of `stereo.cip`.

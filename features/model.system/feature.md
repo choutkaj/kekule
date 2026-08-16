@@ -89,7 +89,7 @@ connected definition graph.
 - Complete positions and cells may change without changing the shared topology.
 - Conformer export belongs to the modeling layer, validates exact live local
   atom-ID compatibility, and does not mutate topology or chemistry.
-- Construction never sanitizes, perceives, prepares, or merges source molecules.
+- Construction never normalizes, perceives, prepares, or merges source molecules.
 
 ## Tests
 

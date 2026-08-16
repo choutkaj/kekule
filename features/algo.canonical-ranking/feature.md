@@ -25,7 +25,9 @@ Assign deterministic non-stereo atom symmetry ranks for later canonical SMILES a
 - Uses deterministic Weisfeiler-Lehman-style local refinement followed by an
   RDKit-like ring-topology pass. Breadth-first level widths encode cyclic
   distances and revisit multiplicities encode path reconvergence.
-- Callers should sanitize first when rank invariants should include perceived valence, hydrogens, rings, and aromaticity.
+- Callers should normalize and run default perception first when rank
+  invariants should include perceived valence, hydrogens, rings, and
+  aromaticity.
 - Non-stereo ranking and its reference validation do not require the stereo
   perception stage to accept the input molecule.
 - Symmetric ties are intentionally preserved as equal ranks. Later canonical SMILES work must add traversal/backtracking policy instead of treating rank plus `AtomId` as chemically canonical.
@@ -60,3 +62,5 @@ Stereochemistry-sensitive ranking, total canonical atom ordering, canonical SMIL
   triggered rooted cyclic-topology refinement for WL-hard ring systems.
 - v6: Use PubChem-1k as the required baseline benchmark corpus after retiring the former smoke corpus from public validation.
 - v7: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
+- v8: Depend on the explicit default perception profile after retirement of
+  sanitizer orchestration.

@@ -1,5 +1,10 @@
 use super::*;
 
+fn normalize_and_perceive(molecule: &mut SmallMolecule) {
+    molecule.normalize().expect("molecule should normalize");
+    molecule.perceive().expect("molecule should be perceived");
+}
+
 #[test]
 fn corpus_data_is_required_only_when_requested() {
     assert!(!corpus_requires_data("pubchem-1k", false));
@@ -1826,7 +1831,7 @@ fn benchmark_comparison_counts_multiple_fixture_failures() {
 }
 
 #[test]
-fn stereo_perception_benchmark_records_sanitize_errors_per_record() {
+fn stereo_perception_benchmark_records_reference_preparation_errors_per_record() {
     let molecule =
         SmallMolecule::from_smiles("c1cccc1").expect("invalid aromatic molecule should parse");
     let mut record = IndexedSmallRecord {
@@ -1901,17 +1906,15 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
 
     let aromatic = SmallMolecule::from_smiles("c1ccccc1").expect("benzene should parse");
-    let mut sanitized_aromatic = aromatic.clone();
-    perception::sanitize_with_options(&mut sanitized_aromatic, SanitizeOptions::default())
-        .expect("benzene should sanitize");
+    let mut perceived_aromatic = aromatic.clone();
+    normalize_and_perceive(&mut perceived_aromatic);
     assert_eq!(
-        explicit_valence_json(sanitized_aromatic.graph(), AtomId::new(0)),
+        explicit_valence_json(perceived_aromatic.graph(), AtomId::new(0)),
         3
     );
     let mut aromatic_cyclohexyne =
         SmallMolecule::from_smiles("C1=CC#CC=C1").expect("cyclohexyne parses");
-    perception::sanitize_with_options(&mut aromatic_cyclohexyne, SanitizeOptions::default())
-        .expect("cyclohexyne should sanitize");
+    normalize_and_perceive(&mut aromatic_cyclohexyne);
     let alkyne_atoms = aromatic_cyclohexyne
         .graph()
         .bonds()
@@ -1935,8 +1938,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         4
     );
     let mut thiophene = SmallMolecule::from_smiles("c1ccsc1").expect("thiophene parses");
-    perception::sanitize_with_options(&mut thiophene, SanitizeOptions::default())
-        .expect("thiophene should sanitize");
+    normalize_and_perceive(&mut thiophene);
     let sulfur_id = thiophene
         .graph()
         .atoms()
@@ -1946,8 +1948,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     let mut phosphorus_ring =
         SmallMolecule::from_smiles("C(F)(F)(F)P1P(P(P(P1C(F)(F)F)C(F)(F)F)C(F)(F)F)C(F)(F)F")
             .expect("phosphorus ring parses");
-    perception::sanitize_with_options(&mut phosphorus_ring, SanitizeOptions::default())
-        .expect("phosphorus ring should sanitize");
+    normalize_and_perceive(&mut phosphorus_ring);
     for (phosphorus_id, _phosphorus) in phosphorus_ring
         .graph()
         .atoms()
@@ -1966,8 +1967,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         );
     }
     let mut phosphinine = SmallMolecule::from_smiles("C1=CC=PC=C1").expect("phosphinine parses");
-    perception::sanitize_with_options(&mut phosphinine, SanitizeOptions::default())
-        .expect("phosphinine should sanitize");
+    normalize_and_perceive(&mut phosphinine);
     let phosphinine_phosphorus = phosphinine
         .graph()
         .atoms()
@@ -1983,8 +1983,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .expect("anionic macrocycle mixture interprets")
         .into_molecules()
         .swap_remove(1);
-    perception::sanitize_with_options(&mut anionic_macrocycle, SanitizeOptions::default())
-        .expect("anionic macrocycle should sanitize");
+    normalize_and_perceive(&mut anionic_macrocycle);
     let anionic_nitrogen = anionic_macrocycle
         .graph()
         .atoms()
@@ -2006,8 +2005,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
     let mut cyclopentadienyl = SmallMolecule::from_smiles("[CH-]1[C-]=[C-][C-]=[C-]1")
         .expect("cyclopentadienyl anion parses");
-    perception::sanitize_with_options(&mut cyclopentadienyl, SanitizeOptions::default())
-        .expect("cyclopentadienyl anion should sanitize");
+    normalize_and_perceive(&mut cyclopentadienyl);
     let anionic_carbon_with_h = cyclopentadienyl
         .graph()
         .atoms()
@@ -2030,11 +2028,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
     let mut substituted_cyclopentadienyl = SmallMolecule::from_smiles("C[C-]1[C-]=[C-][C-]=[C-]1")
         .expect("substituted cyclopentadienyl parses");
-    perception::sanitize_with_options(
-        &mut substituted_cyclopentadienyl,
-        SanitizeOptions::default(),
-    )
-    .expect("substituted cyclopentadienyl should sanitize");
+    normalize_and_perceive(&mut substituted_cyclopentadienyl);
     let substituted_anionic_carbon = substituted_cyclopentadienyl
         .graph()
         .atoms()
@@ -2067,8 +2061,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
     )
     .expect("fused triazine should parse");
-    perception::sanitize_with_options(&mut fused_triazine, SanitizeOptions::default())
-        .expect("fused triazine should sanitize");
+    normalize_and_perceive(&mut fused_triazine);
     let tricoordinate_aromatic_nitrogen = fused_triazine
         .graph()
         .atoms()
@@ -2099,11 +2092,11 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     assert!(smiles_sanitized_bonds_json(aromatic.graph())
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == false));
-    assert!(sanitized_aromatic
+    assert!(perceived_aromatic
         .graph()
         .bonds()
         .all(|(_, bond)| bond.order != BondOrder::Aromatic));
-    assert!(smiles_sanitized_bonds_json(sanitized_aromatic.graph())
+    assert!(smiles_sanitized_bonds_json(perceived_aromatic.graph())
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
 
@@ -2131,8 +2124,8 @@ fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
 }
 
 #[test]
-fn canonical_smiles_benchmark_sanitizes_before_writing() {
-    let root = temp_feature_root("canonical-sanitize-before-write");
+fn canonical_smiles_benchmark_normalizes_and_perceives_before_writing() {
+    let root = temp_feature_root("canonical-perceive-before-write");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "C1=CC=CC=C1 CID:benzene\n").expect("fixture should write");
 
@@ -2145,8 +2138,8 @@ fn canonical_smiles_benchmark_sanitizes_before_writing() {
 }
 
 #[test]
-fn canonical_smiles_benchmark_matches_rdkit_parse_status_for_unsanitizable_input() {
-    let root = temp_feature_root("canonical-unsanitizable-input");
+fn canonical_smiles_benchmark_matches_rdkit_parse_status_for_invalid_input() {
+    let root = temp_feature_root("canonical-invalid-input");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "[Cl-](Br)Br CID:invalid\n").expect("fixture should write");
 

@@ -368,31 +368,3 @@ fn failed_normalization_is_transactional() {
     );
     assert_eq!(molecule, before);
 }
-
-#[test]
-fn sanitizer_delegates_normalization_failure_transactionally() {
-    let (mut molecule, chlorine, ..) = oxo_halide(128);
-    let before = molecule.clone();
-
-    let error = perception_api::sanitize_with_options(
-        &mut molecule,
-        SanitizeOptions {
-            perceive_valence: false,
-            perceive_rings: false,
-            perceive_aromaticity: false,
-            perceive_stereo: false,
-        },
-    )
-    .expect_err("normalization failure should fail sanitization");
-
-    assert_eq!(
-        error,
-        SanitizeError::Normalization(
-            crate::normalization::NormalizationError::FormalChargeOutOfRange {
-                atom: chlorine,
-                charge: 128,
-            }
-        )
-    );
-    assert_eq!(molecule, before);
-}

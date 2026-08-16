@@ -27,7 +27,7 @@ Provide conservative valence perception for normalized small-molecule graphs.
   `ValenceOptions { strict: false }` still computes and installs assignments
   while suppressing unsupported-element and valence-excess issues for
   inspection workflows; the normalized-input preflight remains mandatory.
-  Sanitization continues to use strict mode.
+  Default perception uses strict mode.
 - Exact installed state is publicly distinguishable as absent, model-neutral,
   or `ValenceModel::RdkitLike` and can be detached and transactionally restored
   with every atom-wise implicit-H assignment.
@@ -81,8 +81,8 @@ Provide conservative valence perception for normalized small-molecule graphs.
 ## Out Of Scope
 
 - Imported-aromatic localization, query atoms, bond-order-dependent
-  organometallic interpretation, valence tautomer handling, and sanitization
-  orchestration.
+  organometallic interpretation, valence tautomer handling, and default
+  perception orchestration.
 
 ## Revision Notes
 

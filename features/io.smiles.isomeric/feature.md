@@ -18,7 +18,7 @@ Write noncanonical isomeric SMILES from the first-class stereo representation.
   explicit substituent bond at that endpoint with the local direction inverted.
 - Uses stored-Kekule atom style for components that retain stored Kekule bond
   orders, so isomeric output does not emit fused aromatic/carbonyl spellings
-  that the parser and sanitizer cannot round-trip semantically.
+  that explicit normalization and perception cannot round-trip semantically.
 - Allows source directional bond marks only when they are covered by stored
   double-bond stereo elements; unassembled source marks are rejected rather than
   treated as authoritative stereo, except for inert directional marks next to
@@ -28,7 +28,8 @@ Write noncanonical isomeric SMILES from the first-class stereo representation.
   non-directional source bond marks, and
   unknown/unspecified/invalid-cleared stereo until those layers have explicit
   writer support.
-- Does not sanitize, perceive stereo, or assign CIP descriptors before writing.
+- Does not normalize, run default perception, perceive stereo, or assign CIP
+  descriptors before writing.
 - Inherits valence-implied singlet-through-quintet bracket-radical output from
   the underlying noncanonical writer and rejects non-representable stored
   radical/valence combinations.
@@ -70,9 +71,9 @@ marks and explicit unknown stereo.
 
 The smoke benchmark compares semantic output against externally generated RDKit
 goldens after noncanonical isomeric SMILES write and reparse. The comparison
-includes sanitized graph semantics plus CIP descriptor-bearing stereo semantics,
+includes normalized/perceived graph semantics plus CIP descriptor-bearing stereo semantics,
 not bytewise SMILES spelling. PubChem 100 and PubChem 1k benchmarks use the
-same semantic comparison over sanitized records from the externally supplied
+same semantic comparison over normalized/perceived records from the externally supplied
 PubChem SMILES packs whose source SMILES contains isomeric stereo syntax, so
 the broader tiers exercise stereochemical round-trip behavior without being
 dominated by unrelated non-stereo SMILES valence and aromaticity differences.

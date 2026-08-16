@@ -16,7 +16,7 @@ small-molecule graph.
 - Multi-component source documents are canonicalized per interpreted component;
   callers may sort the resulting strings when a document-level ordering is
   required.
-- Does not sanitize or perceive chemistry before writing.
+- Does not normalize or perceive chemistry before writing.
 - Applies non-isomeric normalization on a clone: isotope labels are suppressed,
   ordinary explicit hydrogen atoms are collapsed into parent hydrogen counts
   when safe, isotopic hydrogen atoms remain graph atoms but lose their isotope
@@ -29,7 +29,9 @@ small-molecule graph.
   traversal/output: graph-derived atom and bond invariants drive traversal,
   branch order, and ring closure order.
 - Symmetric ties are handled by candidate string selection across roots and bond-order traversal preferences, with `AtomId` only as a final deterministic fallback inside rank-equivalent traversal choices.
-- Canonical candidate ranking is derived from the graph and emitted SMILES syntax only; it does not reparse candidates, run sanitization, or switch to motif-specific stored-Kekule fallback spellings.
+- Canonical candidate ranking is derived from the graph and emitted SMILES
+  syntax only; it does not reparse candidates, run normalization/perception,
+  or switch to motif-specific stored-Kekule fallback spellings.
 - Uses stored Kekule atom/bond spelling when a mixed aromatic/aliphatic pi component has non-aromatic multiple-bonded framework atoms that aromatic shorthand cannot represent without seeding a different aromaticity partition on reparse, and only when concrete stored single/double bond orders are available.
 - Preserves explicit hydrogens and no-implicit organic atoms when organic shorthand cannot represent the stored atom state, including metal/main-group neighbor cases handled by the shared SMILES parse/write fidelity rules.
 - Uses the shared charge-adjusted valence rules to choose organic shorthand and
@@ -45,7 +47,13 @@ small-molecule graph.
 
 ## Benchmarks
 
-- RDKit-generated PubChem-1k baseline goldens compare sanitized reparse semantics for canonical output across all declared records; broader manifests extend the same semantic contract. Benchmark setup sanitizes parsed fixtures before canonical writing to match RDKit's canonicalization input model. It does not apply a feature-specific unsupported-chemistry filter; parser, sanitizer, or writer gaps surface as benchmark differences.
+- RDKit-generated PubChem-1k baseline goldens compare normalized/perceived
+  reparse semantics for canonical output across all declared records; broader
+  manifests extend the same semantic contract. Benchmark setup explicitly
+  normalizes and perceives parsed fixtures before canonical writing to match
+  RDKit's canonicalization input model. It does not apply a feature-specific
+  unsupported-chemistry filter; parser, perception, or writer gaps surface as
+  benchmark differences.
 - Optional external-reference manifests are available for `pubchem-1k`, `pubchem-100k`.
 - Benchmark observations are informational and never determine this feature's release status or repository health.
 

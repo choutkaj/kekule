@@ -3,8 +3,10 @@ use std::error::Error;
 use kekule::{perception::stereo, small::SmallMolecule};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse a chiral amino acid and run the explicit sanitization workflow.
-    let mut molecule = SmallMolecule::from_smiles_sanitized("C[C@@H](C(=O)O)N")?;
+    // Parse a chiral amino acid, normalize its representation, and perceive chemistry.
+    let mut molecule = SmallMolecule::from_smiles("C[C@@H](C(=O)O)N")?;
+    molecule.normalize()?;
+    molecule.perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
     let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut())?;

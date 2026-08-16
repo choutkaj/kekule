@@ -753,7 +753,8 @@ mod tests {
         for smiles in ["C1=C[C+]=CC(=C1)N", "C1=C[C+]=CC(=C1)C=O"] {
             let mut molecule =
                 crate::small::SmallMolecule::from_smiles(smiles).expect("carbocation parses");
-            crate::perception::sanitize(&mut molecule).expect("carbocation sanitizes");
+            molecule.normalize().expect("carbocation normalizes");
+            molecule.perceive().expect("carbocation perceives");
             assert!(
                 molecule.graph().atoms().all(|(_, atom)| !atom.aromatic),
                 "{smiles}"

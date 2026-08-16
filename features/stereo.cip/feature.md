@@ -59,11 +59,12 @@ matching the RDKit-style stereogenic-bond boundary.
 ## Implementation Notes
 
 The implementation is a descriptor layer over `stereo.representation` and
-`stereo.perception`; it does not create stereo elements. Callers should sanitize
-or otherwise ensure explicit valence and hydrogen semantics before assignment.
+`stereo.perception`; it does not create stereo elements. Callers should
+normalize and perceive, or otherwise ensure explicit valence and hydrogen
+semantics, before assignment.
 
 Carrier ranking uses bounded graph expansion with explicit node limits
-(defaulting to a 100,000-node budget), sanitized implicit and explicit
+(defaulting to a 100,000-node budget), perceived implicit and represented explicit
 hydrogens, implicit lone-pair carriers, cycle guards, and terminal duplicate
 nodes for higher-order bonds and ring closures. Ligands are compared as
 branch-preserving paired digraphs using RDKit-like recursive sequence-rule
@@ -372,3 +373,5 @@ benchmark corpora, isomeric SMILES emission, and stereo enumeration.
 - v45: Return structured assignment failures separately from successful
   assignment/skip output and make complete CIP descriptor replacement
   transactional across validation, ranking, and resource-limit failures.
+- v46: Depend on the explicit default perception profile after retirement of
+  sanitizer orchestration; CIP remains separately opt-in.

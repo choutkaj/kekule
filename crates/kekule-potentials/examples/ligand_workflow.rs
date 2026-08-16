@@ -9,7 +9,7 @@ use kekule::{
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse and interpret one SDF record without silently sanitizing it.
+    // Parse and interpret one SDF record without normalizing or perceiving it.
     let input = fs::read_to_string("examples/ligand.sdf")?;
     let document = sdf::parse_str(&input, SdfParseOptions::default())?;
     let mut records = sdf::interpret(&document)?.into_records();
@@ -20,9 +20,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let title = record.title().to_owned();
     let data_fields = record.data_fields().to_vec();
     let mut ligand = record.into_molecule();
-    ligand.sanitize()?;
+    ligand.normalize()?;
+    ligand.perceive()?;
 
-    // Inspect the sanitized ligand before modeling it.
+    // Inspect the normalized, perceived ligand before modeling it.
     println!("atoms: {}", ligand.atom_count());
     println!("bonds: {}", ligand.bond_count());
     println!("formal charge: {}", ligand.graph().formal_charge());
