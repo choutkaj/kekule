@@ -1470,27 +1470,41 @@ pub(crate) fn canonical_ranking_record_json(record: &mut IndexedSmallRecord) -> 
 pub(crate) fn smiles_write_record_json(
     record: &IndexedSmilesRecord,
 ) -> Result<Value, Box<dyn Error>> {
-    let Some(molecule) = &record.molecule else {
-        return Ok(smiles_error_record_json(record));
-    };
-    let written = smiles::write_with_options(molecule, SmilesWriteOptions::default())?;
-    let reparsed = match interpret_smiles(&written) {
-        Ok(reparsed) => reparsed,
-        Err(_) => {
-            return Ok(json!({
-                "record_index": record.record_index,
-                "status": "write_reparse_error",
-                "title": record.title,
-                "input_smiles": record.input_smiles,
-            }));
+    if record.components.is_empty() {
+        let mut item = smiles_error_record_json(record);
+        if record.status == "ok" {
+            item["status"] = json!("write_error");
         }
+        return Ok(item);
+    }
+    let written = record
+        .components
+        .iter()
+        .map(|molecule| smiles::write_with_options(molecule, SmilesWriteOptions::default()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let reparsed = written
+        .iter()
+        .map(|text| interpret_smiles(text))
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(reparsed) = reparsed else {
+        return Ok(json!({
+            "record_index": record.record_index,
+            "status": "write_reparse_error",
+            "title": record.title,
+            "input_smiles": record.input_smiles,
+        }));
+    };
+    let normalized_perceived = if reparsed.len() == 1 {
+        smiles_perceived_semantic_json(reparsed.into_iter().next().expect("one reparsed component"))
+    } else {
+        smiles_components_perceived_semantic_json(&reparsed)
     };
     Ok(json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "input_smiles": record.input_smiles,
-        "normalized_perceived": smiles_perceived_semantic_json(reparsed),
+        "normalized_perceived": normalized_perceived,
     }))
 }
 

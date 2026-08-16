@@ -279,11 +279,10 @@ difference_count = 0
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"
 manifest_digest = "72bfd653c733dedca3f462f59fb63b30903876fa12f51437e783abe7b1128819"
-input_digest_schema_version = 2
-input_digest = "e31f190af62b9fbff2700215b5f42f35c7788a2e7b1ce3c2ad71e01266a5a687"
-input_count = 109
-legacy_source = "validation-status-v2"
-benchmarked_at_unix = 1784361211
+input_digest_schema_version = 1
+input_digest = "f93d84c31e34799103a03deacb665eaa97de7041590cb522784de0e6c83729b4"
+input_count = 121
+benchmarked_at_unix = 1786894317
 
 [features."stereo.cip"]
 outcome = "match"
