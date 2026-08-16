@@ -1,13 +1,13 @@
 use crate::*;
 
 mod compare;
-mod digest;
+mod golden;
 mod implementation;
 mod manifest;
 mod progress;
 
 pub(crate) use compare::*;
-pub(crate) use digest::*;
+pub(crate) use golden::*;
 pub(crate) use implementation::*;
 pub(crate) use manifest::*;
 pub(crate) use progress::*;
@@ -42,7 +42,8 @@ pub(crate) fn benchmark(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     let jobs = benchmark_jobs(&args)?;
-    let mut progress = BenchmarkProgress::start(targets.len(), jobs);
+    let target_count = targets.len();
+    let mut progress = BenchmarkProgress::start(target_count, jobs);
     let mut failures = Vec::new();
     let mut matched_targets = 0usize;
     let mut matched_fixtures = 0usize;
@@ -58,14 +59,15 @@ pub(crate) fn benchmark(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         ) {
             Ok(comparison) if comparison.difference_count == 0 => {
                 matched_targets += 1;
-                matched_fixtures += comparison.compared_count;
-                progress.target_match(comparison.compared_count, comparison.compared_count);
+                matched_fixtures += comparison.match_count;
+                progress.target_match(comparison.match_count, comparison.match_count);
             }
             Ok(comparison) => {
+                matched_fixtures += comparison.match_count;
                 progress.target_differences(
                     comparison.difference_count,
-                    comparison.compared_count,
-                    comparison.compared_count + comparison.difference_count,
+                    comparison.match_count,
+                    comparison.match_count + comparison.difference_count,
                 );
                 failures.push(format!(
                     "{} [{}]: {} difference(s); first: {}",
@@ -88,7 +90,7 @@ pub(crate) fn benchmark(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    println!("benchmark matched {matched_fixtures} fixture(s) across {matched_targets} target(s)");
+    println!("benchmark summary: {matched_fixtures} fixture matches; {matched_targets}/{target_count} targets fully matched");
     if !failures.is_empty() {
         for failure in &failures {
             eprintln!("benchmark result: {failure}");
