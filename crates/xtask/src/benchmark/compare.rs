@@ -337,14 +337,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dssp_numeric_tolerances_do_not_relax_other_features() {
+    fn dssp_numeric_tolerances_do_not_relax_other_benchmarks() {
         let expected = json!({ "phi_degrees": -75.0 });
         let actual = json!({ "phi_degrees": -74.9 });
 
         assert!(
             first_json_diff("bio.secondary-structure.dssp", "$", &expected, &actual,).is_none()
         );
-        assert!(first_json_diff("unrelated.feature", "$", &expected, &actual).is_some());
+        assert!(first_json_diff("unrelated.benchmark", "$", &expected, &actual).is_some());
     }
 
     #[test]
@@ -367,6 +367,6 @@ mod tests {
             "formal_charge": 1,
         });
         assert!(first_json_diff("descriptor.molecular", "$", &expected, &wrong_charge).is_some());
-        assert!(first_json_diff("unrelated.feature", "$", &expected, &actual).is_some());
+        assert!(first_json_diff("unrelated.benchmark", "$", &expected, &actual).is_some());
     }
 }

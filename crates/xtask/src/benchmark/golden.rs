@@ -172,7 +172,7 @@ pub(crate) fn check_manifest_paths(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BenchmarkComparison {
-    pub(crate) compared_count: usize,
+    pub(crate) match_count: usize,
     pub(crate) difference_count: usize,
     pub(crate) first_difference: Option<String>,
 }
@@ -185,7 +185,7 @@ pub(crate) fn compare_golden_outputs(
 ) -> Result<BenchmarkComparison, Box<dyn Error>> {
     if manifest.fixtures.is_empty() {
         return Ok(BenchmarkComparison {
-            compared_count: 0,
+            match_count: 0,
             difference_count: 0,
             first_difference: None,
         });
@@ -245,7 +245,7 @@ pub(crate) fn compare_golden_outputs(
         .into_inner()
         .expect("benchmark result lock should not be poisoned");
     let mut comparison = BenchmarkComparison {
-        compared_count: 0,
+        match_count: 0,
         difference_count: 0,
         first_difference: None,
     };
@@ -264,7 +264,7 @@ fn compare_golden_outputs_serial(
     progress: Option<&FixtureProgress>,
 ) -> Result<BenchmarkComparison, Box<dyn Error>> {
     let mut comparison = BenchmarkComparison {
-        compared_count: 0,
+        match_count: 0,
         difference_count: 0,
         first_difference: None,
     };
@@ -290,7 +290,7 @@ fn record_fixture_comparison(
     fixture_result: FixtureComparison,
 ) {
     match fixture_result {
-        FixtureComparison::Match => comparison.compared_count += 1,
+        FixtureComparison::Match => comparison.match_count += 1,
         FixtureComparison::Difference(difference) => {
             eprintln!("fixture comparison difference: {difference}");
             comparison.difference_count += 1;

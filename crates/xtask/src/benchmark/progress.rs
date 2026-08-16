@@ -58,8 +58,8 @@ impl BenchmarkProgress {
         }
     }
 
-    pub(crate) fn target_match(&mut self, compared_count: usize, fixture_count: usize) {
-        println!("  result: match ({compared_count}/{fixture_count} fixture(s))");
+    pub(crate) fn target_match(&mut self, match_count: usize, fixture_count: usize) {
+        println!("  result: match ({match_count}/{fixture_count} fixture(s))");
         self.completed_targets += 1;
         self.matched_targets += 1;
         self.print_overall();
@@ -68,11 +68,11 @@ impl BenchmarkProgress {
     pub(crate) fn target_differences(
         &mut self,
         difference_count: usize,
-        compared_count: usize,
+        match_count: usize,
         fixture_count: usize,
     ) {
         println!(
-            "  result: differences ({difference_count} different, {compared_count}/{fixture_count} matched)"
+            "  result: differences ({difference_count} different, {match_count}/{fixture_count} matched)"
         );
         self.completed_targets += 1;
         self.failed_targets += 1;

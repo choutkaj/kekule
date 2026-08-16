@@ -167,11 +167,11 @@ fn benchmark_jobs_uses_a_memory_safe_default_and_accepts_override() {
 
 #[test]
 fn implementation_golden_acceptance_is_limited_to_manual_semantic_references() {
-    let root = temp_feature_root("accept-implementation-goldens");
+    let root = temp_workspace_root("accept-implementation-goldens");
     let corpus_root = root.join("benchmarks/corpora/smoke");
     let manifest_path = corpus_root.join("features/stereo.perception.toml");
     fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
-        .expect("features directory");
+        .expect("manifest directory");
     fs::create_dir_all(corpus_root.join("data")).expect("data directory");
     fs::write(corpus_root.join("data/example.smi"), "CC CID:1\n").expect("fixture should write");
     let mut manifest = BenchmarkManifest {
@@ -211,7 +211,7 @@ fn progress_bars_are_compact_and_deterministic() {
 
 #[test]
 fn benchmark_discovery_is_manifest_only_and_deterministic() {
-    let root = temp_feature_root("benchmark-discovery");
+    let root = temp_workspace_root("benchmark-discovery");
     write_test_benchmark_manifest(&root, "zeta", "corpus-b");
     write_test_benchmark_manifest(&root, "alpha", "corpus-b");
     write_test_benchmark_manifest(&root, "alpha", "corpus-a");
@@ -230,13 +230,12 @@ fn benchmark_discovery_is_manifest_only_and_deterministic() {
             ("zeta", "corpus-b"),
         ]
     );
-    assert!(!root.join("features").exists());
     fs::remove_dir_all(root).ok();
 }
 
 #[test]
 fn selecting_one_benchmark_and_corpus_uses_manifest_directly() {
-    let root = temp_feature_root("benchmark-selection");
+    let root = temp_workspace_root("benchmark-selection");
     write_test_benchmark_manifest(&root, "io.smiles.parse", "smoke");
     write_test_benchmark_manifest(&root, "io.smiles.write", "smoke");
 
@@ -250,7 +249,7 @@ fn selecting_one_benchmark_and_corpus_uses_manifest_directly() {
 
 #[test]
 fn unknown_benchmark_corpus_and_missing_pair_errors_are_clear() {
-    let root = temp_feature_root("benchmark-selection-errors");
+    let root = temp_workspace_root("benchmark-selection-errors");
     write_test_benchmark_manifest(&root, "io.smiles.parse", "smoke");
     write_test_benchmark_manifest(&root, "io.smiles.write", "other");
 
@@ -290,18 +289,18 @@ fn corpus_builders_reuse_locked_membership_unless_reselection_is_explicit() {
 
 #[test]
 fn implementation_dispatch_uses_current_molfile_benchmark_ids() {
-    let root = temp_feature_root("mol-feature-dispatch");
+    let root = temp_workspace_root("mol-benchmark-dispatch");
     let fixture = root.join("fixture.sdf");
     fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
 
-    for feature in [
+    for benchmark_id in [
         "io.mol.v2000.parse",
         "io.mol.v2000.write",
         "io.mol.v3000.parse",
         "io.mol.v3000.write",
     ] {
-        let expected = implementation_expected(feature, "pubchem-1k", &fixture)
-            .expect("feature should compare");
+        let expected = implementation_expected(benchmark_id, "pubchem-1k", &fixture)
+            .expect("benchmark should compare");
         assert_eq!(expected["records"][0]["status"], "ok");
     }
 
@@ -310,7 +309,7 @@ fn implementation_dispatch_uses_current_molfile_benchmark_ids() {
 
 #[test]
 fn implementation_dispatch_supports_mmcif_document_rows() {
-    let root = temp_feature_root("mmcif-document-dispatch");
+    let root = temp_workspace_root("mmcif-document-dispatch");
     let fixture = root.join("fixture.cif");
     fs::write(
         &fixture,
@@ -341,7 +340,7 @@ ATOM 1 C CA CA . ALA ALA A A 1 1 ? 1.00 10.00 1.0 2.0 3.0 1
     .expect("fixture should write");
 
     let expected = implementation_expected("io.mmcif.parse", "pdb-100", &fixture)
-        .expect("mmCIF document feature should compare");
+        .expect("mmCIF document benchmark should compare");
     let atom_site = &expected["atom_site_rows"];
     assert_eq!(atom_site["status"], "ok");
     assert_eq!(atom_site["row_count"], 1);
@@ -354,12 +353,12 @@ ATOM 1 C CA CA . ALA ALA A A 1 1 ? 1.00 10.00 1.0 2.0 3.0 1
 }
 #[test]
 fn implementation_dispatch_supports_hydrogen_transforms() {
-    let root = temp_feature_root("hydrogen-transforms-dispatch");
+    let root = temp_workspace_root("hydrogen-transforms-dispatch");
     let fixture = root.join("fixture.sdf");
     fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
 
     let expected = implementation_expected("chem.hydrogen-transforms", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let record = &expected["records"][0];
 
     assert_eq!(record["status"], "ok");
@@ -375,12 +374,12 @@ fn implementation_dispatch_supports_hydrogen_transforms() {
 
 #[test]
 fn implementation_dispatch_supports_query_benchmark() {
-    let root = temp_feature_root("query-benchmark-dispatch");
+    let root = temp_workspace_root("query-benchmark-dispatch");
     let smarts_fixture = root.join("fixture.smi");
     fs::write(&smarts_fixture, "CCO\nC1=CC=CC=C1\n").expect("fixture should write");
 
     let parsed = implementation_expected("query.smarts", "pubchem-1k", &smarts_fixture)
-        .expect("SMARTS feature should compare");
+        .expect("SMARTS benchmark should compare");
     assert_eq!(parsed["records"][0]["status"], "ok");
     assert_eq!(parsed["records"][0]["atom_count"], 3);
     assert_eq!(parsed["records"][1]["bond_count"], 6);
@@ -388,7 +387,7 @@ fn implementation_dispatch_supports_query_benchmark() {
     let molecule_fixture = root.join("fixture.sdf");
     fs::write(&molecule_fixture, simple_sdf_record("methane")).expect("fixture should write");
     let matched = implementation_expected("algo.substructure.vf2", "pubchem-1k", &molecule_fixture)
-        .expect("substructure feature should compare");
+        .expect("substructure benchmark should compare");
     assert_eq!(matched["records"][0]["status"], "ok");
     assert_eq!(matched["records"][0]["queries"][0]["smarts"], "[#6]");
     assert_eq!(matched["records"][0]["queries"][0]["matches"], json!([[0]]));
@@ -398,7 +397,7 @@ fn implementation_dispatch_supports_query_benchmark() {
 
 #[test]
 fn implementation_dispatch_uses_current_isomeric_smiles_benchmark_id() {
-    let root = temp_feature_root("isomeric-smiles-feature-dispatch");
+    let root = temp_workspace_root("isomeric-smiles-benchmark-dispatch");
     let fixture = root.join("fixture.smi");
     fs::write(
         &fixture,
@@ -412,7 +411,7 @@ fn implementation_dispatch_uses_current_isomeric_smiles_benchmark_id() {
     .expect("fixture should write");
 
     let expected = implementation_expected("io.smiles.isomeric", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -445,7 +444,7 @@ fn nonisomeric_smiles_benchmark_excludes_stereo_syntax() {
 
 #[test]
 fn stereo_and_nonisomeric_benchmark_use_distinct_smiles_subsets() {
-    let root = temp_feature_root("smiles-benchmark-subsets");
+    let root = temp_workspace_root("smiles-benchmark-subsets");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "C[C@H](N)C CID:stereo\n").expect("fixture should write");
 
@@ -463,7 +462,7 @@ fn stereo_and_nonisomeric_benchmark_use_distinct_smiles_subsets() {
 
 #[test]
 fn stereo_cip_benchmark_compares_only_descriptor_bearing_records() {
-    let root = temp_feature_root("stereo-cip-descriptor-filter");
+    let root = temp_workspace_root("stereo-cip-descriptor-filter");
     let fixture = root.join("fixture.smi");
     fs::write(
         &fixture,
@@ -477,7 +476,7 @@ fn stereo_cip_benchmark_compares_only_descriptor_bearing_records() {
     .expect("fixture should write");
 
     let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -494,12 +493,12 @@ fn stereo_cip_benchmark_compares_only_descriptor_bearing_records() {
 
 #[test]
 fn stereo_cip_benchmark_uses_rdkit_default_hydrogen_indexing() {
-    let root = temp_feature_root("stereo-cip-rdkit-h-index");
+    let root = temp_workspace_root("stereo-cip-rdkit-h-index");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "[H][C@](F)(Cl)Br CID:explicit-h\n").expect("fixture should write");
 
     let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -514,7 +513,7 @@ fn stereo_cip_benchmark_uses_rdkit_default_hydrogen_indexing() {
 
 #[test]
 fn stereo_cip_benchmark_reads_all_sdf_pack_records() {
-    let root = temp_feature_root("stereo-cip-sdf-pack");
+    let root = temp_workspace_root("stereo-cip-sdf-pack");
     let fixture = root.join("fixture.sdf");
     fs::write(
         &fixture,
@@ -527,7 +526,7 @@ fn stereo_cip_benchmark_reads_all_sdf_pack_records() {
     .expect("fixture should write");
 
     let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -548,7 +547,7 @@ fn stereo_cip_benchmark_reads_all_sdf_pack_records() {
 
 #[test]
 fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
-    let root = temp_feature_root("pack-members");
+    let root = temp_workspace_root("pack-members");
     let sdf_path = root.join("pack.sdf");
     fs::write(
         &sdf_path,
@@ -608,7 +607,7 @@ fn unsupported_comparison_mode_is_rejected() {
 
 #[test]
 fn benchmark_comparison_detects_matches_and_differences() {
-    let root = temp_feature_root("comparison-match-and-difference");
+    let root = temp_workspace_root("comparison-match-and-difference");
     let corpus_root = root.join("benchmarks").join("corpora").join("smoke");
     let manifest_dir = corpus_root.join("features");
     let data_dir = corpus_root.join("data");
@@ -658,7 +657,7 @@ fn benchmark_comparison_detects_matches_and_differences() {
     let comparison = compare_golden_outputs(&manifest_path, &manifest, 1, None)
         .expect("comparison should complete");
 
-    assert_eq!(comparison.compared_count, 1);
+    assert_eq!(comparison.match_count, 1);
     assert_eq!(comparison.difference_count, 1);
     assert!(comparison
         .first_difference
@@ -669,7 +668,7 @@ fn benchmark_comparison_detects_matches_and_differences() {
 
 #[test]
 fn benchmark_run_does_not_rewrite_dashboard_or_results_metadata() {
-    let root = temp_feature_root("benchmark-does-not-rewrite-metadata");
+    let root = temp_workspace_root("benchmark-does-not-rewrite-metadata");
     let manifest_path = write_test_benchmark_manifest(&root, "io.smiles.parse", "smoke");
     let corpus_root = root.join("benchmarks/corpora/smoke");
     let fixture = corpus_root.join("data/example.smi");
@@ -733,8 +732,7 @@ fn benchmark_run_does_not_rewrite_dashboard_or_results_metadata() {
     let mut progress = BenchmarkProgress::start(1, 1);
     let comparison =
         run_target(&target, None, false, 1, &mut progress).expect("benchmark target should match");
-    assert_eq!(comparison.compared_count, 1);
-    assert_eq!(comparison.difference_count, 0);
+    assert_eq!(comparison.match_count, 1);
     assert_eq!(
         fs::read_to_string(dashboard_path).expect("dashboard sentinel should read"),
         "sentinel dashboard\n"
@@ -768,7 +766,7 @@ fn stereo_perception_benchmark_records_reference_preparation_errors_per_record()
 
 #[test]
 fn smiles_component_benchmarks_preserve_source_record_cardinality() {
-    let root = temp_feature_root("smiles-component-benchmark-cardinality");
+    let root = temp_workspace_root("smiles-component-benchmark-cardinality");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "CC.Cl.Cl multi\nC=C connected\n").expect("fixture should write");
 
@@ -1133,7 +1131,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
 
 #[test]
 fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
-    let root = temp_feature_root("canonical-no-prefilter");
+    let root = temp_workspace_root("canonical-no-prefilter");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "* CID:example\n").expect("fixture should write");
 
@@ -1148,7 +1146,7 @@ fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
 
 #[test]
 fn canonical_smiles_benchmark_normalizes_and_perceives_before_writing() {
-    let root = temp_feature_root("canonical-perceive-before-write");
+    let root = temp_workspace_root("canonical-perceive-before-write");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "C1=CC=CC=C1 CID:benzene\n").expect("fixture should write");
 
@@ -1162,7 +1160,7 @@ fn canonical_smiles_benchmark_normalizes_and_perceives_before_writing() {
 
 #[test]
 fn canonical_smiles_benchmark_matches_rdkit_parse_status_for_invalid_input() {
-    let root = temp_feature_root("canonical-invalid-input");
+    let root = temp_workspace_root("canonical-invalid-input");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "[Cl-](Br)Br CID:invalid\n").expect("fixture should write");
 
@@ -1304,13 +1302,13 @@ $$$$
     )
 }
 
-fn temp_feature_root(label: &str) -> PathBuf {
+fn temp_workspace_root(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time should be available")
         .as_nanos();
     let root = env::temp_dir().join(format!("kekule-xtask-{label}-{}-{nonce}", process::id()));
-    fs::create_dir_all(&root).expect("temp feature root should create");
+    fs::create_dir_all(&root).expect("temporary workspace root should create");
     root
 }
 
