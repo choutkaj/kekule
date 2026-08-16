@@ -23,8 +23,8 @@ use kekule::{
     perception::{
         rings,
         stereo::{
-            self, StereoCandidate, StereoPerceptionError, StereoPerceptionIssue,
-            StereoPerceptionReport, StereoValidationIssue,
+            self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,
+            StereoValidationIssue,
         },
         valence::{self, ValenceModel, ValenceOptions},
     },

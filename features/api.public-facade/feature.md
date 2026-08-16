@@ -79,11 +79,16 @@ Expose the architecture-defined public facade instead of a flat root namespace.
   transactional default valence -> ring-set -> aromaticity profile over
   normalized representation. Focused `PerceptionError` variants preserve the
   underlying valence, ring, or aromaticity failure.
+- `SmallMolecule::normalize_and_perceive` is the single ordinary workflow
+  convenience. It atomically composes normalization and default perception,
+  returns the existing normalization report, and exposes the focused
+  `small::NormalizeAndPerceiveError` without adding it to the crate root or
+  prelude.
 - `perception::stereo` separately exposes stored-element validation,
-  read-only candidate detection, and transactional mutating perception with
-  focused structural-validation and coordinate-perception errors. Source-mark
-  assembly and diagnostics are absent from this facade and live under
-  `normalization`.
+  read-only candidate detection, detached read-only coordinate-stereo
+  inference, and a separately named transactional materialization transform.
+  Source-mark assembly and diagnostics are absent from this facade and live
+  under `normalization`.
 - The same stereo facade exposes CIP assignment as
   `Result<CipAssignmentReport, CipAssignmentError>`: successful assignments and
   skips are sidecar output, while failed assignment preserves the exact prior
@@ -130,8 +135,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 
 - Existing algorithm and I/O internals remain available through focused facade modules rather than root aliases.
 - `SmallMolecule::from_smiles` orchestrates parse/interpret only and accepts
-  exactly one dot component. Callers explicitly invoke `normalize()` and then
-  `perceive()`; no parse-to-ready constructor is part of this stage.
+  exactly one dot component. Callers may explicitly invoke `normalize()` then
+  `perceive()`, or deliberately compose those two operations through
+  `normalize_and_perceive()`; there is no parse-to-ready constructor.
 - `graph_mut()` itself is state-neutral; chemistry and topology mutators on the
   returned graph perform their own targeted invalidation, allowing perception
   operations to consume already-installed prerequisite state.
@@ -171,6 +177,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - A downstream normalization test compiles the focused facade and
   `SmallMolecule` convenience and verifies the canonical oxo-halide rewrite
   plus source-stereo reporting and perception clearing.
+- Downstream tests compile the combined workflow error/report surface and the
+  read-only coordinate-inference plus explicit-materialization stereo surface.
 - Downstream tests verify connected builder/editor behavior, structured
   multi-component SMILES handling, disconnected Molfile/SDF rejection, and
   connected mmCIF topology instances.
@@ -288,3 +296,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v46: Make SMILES and Molfile Documents genuinely format-specific, assign all
   source-to-core chemistry construction to interpretation, and keep SDF record
   interpretation delegated to Molfile.
+- v47: Add the atomic `SmallMolecule::normalize_and_perceive` convenience and
+  replace mutating stereo-perception publication with read-only coordinate
+  inference plus explicit materialization.
