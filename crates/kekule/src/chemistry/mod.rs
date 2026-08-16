@@ -1,6 +1,6 @@
 mod normalization;
-mod sanitize;
+mod perception;
 mod source_stereo;
 
 pub use normalization::*;
-pub use sanitize::*;
+pub use perception::*;

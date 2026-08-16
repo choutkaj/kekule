@@ -49,7 +49,7 @@ gradients once for supported nonperiodic structural views.
   instances use the same chemistry requirements.
 - Excludes 1-2 and 1-3 nonbonded pairs and includes full-strength 1-4 and inter-instance
   pairs. Nonbonded work is all-pairs and therefore O(N^2).
-- Preparation never sanitizes, adds hydrogens, or mutates topology or the
+- Preparation never normalizes, perceives, adds hydrogens, or mutates topology or the
   reference model.
 - No periodic cell is ignored and no orthorhombic-only minimum-image shortcut
   is applied.

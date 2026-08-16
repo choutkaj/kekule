@@ -1,0 +1,8 @@
+id = "chem.perception.default"
+title = "Default discrete perception pipeline"
+area = "chemistry"
+domains = ["small-molecule"]
+version = 1
+status = "supported"
+description = "Transactionally install the complete default valence, ring-set, and aromaticity perception state for normalized small-molecule representation."
+depends_on = ["chem.normalization", "algo.valence.rdkit-like", "algo.rings.sssr", "algo.aromaticity.rdkit-like"]

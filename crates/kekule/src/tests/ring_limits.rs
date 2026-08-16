@@ -249,7 +249,7 @@ fn cycle_size_limit_returns_structured_error() {
 }
 
 #[test]
-fn ring_resource_errors_propagate_transactionally() {
+fn focused_ring_resource_errors_are_transactional() {
     let mut molecule = SmallMolecule::default();
     let atoms = (0..3)
         .map(|_| {
@@ -270,18 +270,9 @@ fn ring_resource_errors_propagate_transactionally() {
         max_path_expansions: 0,
         ..RingPerceptionOptions::default()
     };
-    let error = perception_api::sanitize_with_ring_options(
-        &mut molecule,
-        SanitizeOptions {
-            perceive_valence: false,
-            perceive_rings: true,
-            perceive_aromaticity: false,
-            perceive_stereo: false,
-        },
-        ring_options,
-    )
-    .expect_err("ring limit should fail sanitization");
-    assert!(matches!(error, SanitizeError::Rings(_)));
+    let error = rings_api::perceive_ring_set_with_options(molecule.graph_mut(), ring_options)
+        .expect_err("ring limit should fail focused perception");
+    assert!(matches!(error, RingPerceptionError::ResourceLimit { .. }));
     assert_eq!(molecule, original);
 
     let mut aromatic = read_smiles("c1ccccc1").expect("benzene should parse");

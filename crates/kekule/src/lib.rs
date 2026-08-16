@@ -52,7 +52,7 @@ pub mod units;
 /// Syntax-independent substructure matching algorithms.
 ///
 /// Matching consumes `query::QueryGraph` and current target perception state;
-/// it never invokes parsing, sanitization, or perception implicitly.
+/// it never invokes parsing, normalization, or perception implicitly.
 pub mod substructure {
     pub use crate::algorithms::{
         find_substructure_match, find_substructure_matches, find_substructure_matches_with_options,
@@ -242,9 +242,9 @@ pub mod normalization {
 }
 
 pub mod perception {
-    pub use crate::chemistry::{SanitizeError, SanitizeOptions, SanitizeReport};
+    pub use crate::chemistry::PerceptionError;
 
-    use crate::small::SmallMolecule;
+    use crate::core::Molecule;
 
     /// Expert valence perception for normalized represented chemistry.
     ///
@@ -286,23 +286,12 @@ pub mod perception {
         };
     }
 
-    pub fn sanitize(molecule: &mut SmallMolecule) -> Result<SanitizeReport, SanitizeError> {
-        crate::chemistry::sanitize_small_molecule(molecule, SanitizeOptions::default())
-    }
-
-    pub fn sanitize_with_options(
-        molecule: &mut SmallMolecule,
-        options: SanitizeOptions,
-    ) -> Result<SanitizeReport, SanitizeError> {
-        crate::chemistry::sanitize_small_molecule(molecule, options)
-    }
-
-    pub fn sanitize_with_ring_options(
-        molecule: &mut SmallMolecule,
-        options: SanitizeOptions,
-        ring_options: rings::RingPerceptionOptions,
-    ) -> Result<SanitizeReport, SanitizeError> {
-        crate::chemistry::sanitize_small_molecule_with_ring_options(molecule, options, ring_options)
+    /// Install the transactional default valence, ring-set, and aromaticity profile.
+    ///
+    /// The represented molecule must already be normalized. This operation
+    /// does not normalize source chemistry or perform stereo or CIP work.
+    pub fn perceive(molecule: &mut Molecule) -> Result<(), PerceptionError> {
+        crate::chemistry::perceive_molecule(molecule)
     }
 }
 
@@ -318,10 +307,10 @@ pub mod canon {
 
 /// Explicit small-molecule hydrogen topology transforms.
 ///
-/// These functions never sanitize implicitly. Addition consumes current
-/// valence assignments unless `explicit_only` is selected, and removal
-/// requires current valence assignments. Successful topology changes
-/// invalidate perception state.
+/// These functions never normalize or perceive chemistry implicitly. Addition
+/// consumes current valence assignments unless `explicit_only` is selected,
+/// and removal requires current valence assignments. Successful topology
+/// changes invalidate perception state.
 pub mod hydrogens {
     pub use crate::algorithms::{
         AddHydrogensOptions, AddHydrogensReport, AddedHydrogen, AddedHydrogenOrigin,
@@ -361,7 +350,6 @@ pub mod hydrogens {
 
 pub mod prelude {
     pub use crate::bio::{MacroMolecule, SmcraHierarchy};
-    pub use crate::chemistry::{SanitizeOptions, SanitizeReport};
     pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
     pub use crate::small::SmallMolecule;
     pub use crate::smiles::{

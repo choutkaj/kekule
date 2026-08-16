@@ -69,8 +69,10 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `perception::rings` exposes semantic `Ring`, `RingMembership`, and `RingSet`
   values plus bounded ring options and errors; algorithm work instrumentation
   is not part of the public facade.
-- `perception::SanitizeReport` exposes useful normalization output and optional
-  stereo-stage output without duplicating installed valence or ring state.
+- `perception::perceive` and `SmallMolecule::perceive` expose one
+  transactional default valence -> ring-set -> aromaticity profile over
+  normalized representation. Focused `PerceptionError` variants preserve the
+  underlying valence, ring, or aromaticity failure.
 - `perception::stereo` separately exposes stored-element validation,
   read-only candidate detection, and transactional mutating perception with
   focused structural-validation and coordinate-perception errors. Source-mark
@@ -107,8 +109,8 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - `Model::instance_to_conformer` provides an explicit transactional path from
   instance-qualified model positions back to a compatible local conformer.
 - Explicit small-molecule hydrogen topology transforms live under `hydrogens`
-  and as `SmallMolecule` convenience methods; they are not hidden in parsing or
-  sanitization.
+  and as `SmallMolecule` convenience methods; they are not hidden in parsing,
+  normalization, or perception.
 - Syntax-independent query graphs and bounded SMARTS translation live under
   `query`; matching lives under `substructure`, preserving one-way dependency
   on the query IR. Neither namespace is added to the prelude.
@@ -121,9 +123,9 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 ## Implementation Notes
 
 - Existing algorithm and I/O internals remain available through focused facade modules rather than root aliases.
-- `SmallMolecule::from_smiles` orchestrates parse/interpret without sanitizing
-  and accepts exactly one dot component; `from_smiles_sanitized` names the
-  additional operation explicitly and has the same component-count boundary.
+- `SmallMolecule::from_smiles` orchestrates parse/interpret only and accepts
+  exactly one dot component. Callers explicitly invoke `normalize()` and then
+  `perceive()`; no parse-to-ready constructor is part of this stage.
 - `graph_mut()` itself is state-neutral; chemistry and topology mutators on the
   returned graph perform their own targeted invalidation, allowing perception
   operations to consume already-installed prerequisite state.
@@ -274,3 +276,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v44: Expose focused source-stereo normalization reports and diagnostics,
   include normalization output in sanitizer reports, and narrow the stereo
   facade to structural validation and coordinate-derived perception.
+- v45: Replace sanitizer APIs and their parse-to-ready convenience with the
+  focused transactional default `perception::perceive` operation and thin
+  `SmallMolecule::perceive` method.

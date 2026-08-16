@@ -3,8 +3,7 @@ use super::*;
 #[test]
 fn canonical_ranking_groups_symmetric_atoms() {
     let mut molecule = read_smiles("CC(C)C").expect("isobutane parses");
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("isobutane sanitizes");
+    normalize_and_perceive(&mut molecule).expect("isobutane normalizes_and_perceives");
 
     let ranking = canon::atom_ranking(molecule.graph());
 
@@ -46,8 +45,7 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
         .graph_mut()
         .add_bond(first_center, first_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perception_api::sanitize_with_options(&mut first, SanitizeOptions::default())
-        .expect("propane sanitizes");
+    normalize_and_perceive(&mut first).expect("propane normalizes_and_perceives");
 
     let mut second = SmallMolecule::new();
     let second_center = second
@@ -70,8 +68,7 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
         .graph_mut()
         .add_bond(second_center, second_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perception_api::sanitize_with_options(&mut second, SanitizeOptions::default())
-        .expect("propane sanitizes");
+    normalize_and_perceive(&mut second).expect("propane normalizes_and_perceives");
 
     let first_ranking = canon::atom_ranking(first.graph());
     let second_ranking = canon::atom_ranking(second.graph());
@@ -93,8 +90,8 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
 #[test]
 fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
     let mut molecule = read_smiles("[13CH3:7][CH3]").expect("mapped isotope molecule parses");
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("mapped isotope molecule sanitizes");
+    normalize_and_perceive(&mut molecule)
+        .expect("mapped isotope molecule normalizes_and_perceives");
 
     let ranking = canon::atom_ranking(molecule.graph());
 
@@ -107,8 +104,7 @@ fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
 #[test]
 fn canonical_ranking_ignores_kekule_choice_for_perceived_aromatic_bonds() {
     let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene parses");
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("naphthalene sanitizes");
+    normalize_and_perceive(&mut molecule).expect("naphthalene normalizes_and_perceives");
 
     let ranking = canon::atom_ranking(molecule.graph());
 

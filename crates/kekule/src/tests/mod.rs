@@ -1,5 +1,4 @@
 use crate::bio::*;
-use crate::chemistry::{SanitizeError, SanitizeOptions};
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::normalization as normalization_api;
@@ -49,6 +48,14 @@ pub(super) fn read_smiles_component(
             )
             .into()
         })
+}
+
+pub(super) fn normalize_and_perceive(
+    molecule: &mut SmallMolecule,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    molecule.normalize()?;
+    molecule.perceive()?;
+    Ok(())
 }
 
 pub(super) fn read_molfile(

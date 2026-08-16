@@ -216,11 +216,7 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     assert_eq!(molecule.graph().perception(), &PerceptionState::default());
     let represented_before = represented_molecule_snapshot(molecule.graph());
 
-    valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
-        .expect("valence perception");
-    rings_api::perceive_ring_set(molecule.graph_mut()).expect("ring perception");
-    aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
-        .expect("aromaticity perception");
+    perception_api::perceive(molecule.graph_mut()).expect("default perception");
 
     assert_eq!(
         represented_molecule_snapshot(molecule.graph()),
@@ -232,6 +228,71 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
     assert_eq!(molecule.graph().stereo_groups().count(), 1);
     assert!(molecule.graph().stereo_bond_marks().next().is_none());
+}
+
+#[test]
+fn default_perception_rejects_unnormalized_aromatic_source_transactionally() {
+    let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
+    let first_atom = molecule.graph().atom_ids().next().expect("benzene atom");
+    molecule.graph_mut().set_implicit_hydrogens(first_atom, 2);
+    molecule
+        .graph_mut()
+        .begin_aromaticity(AromaticityModel::RdkitLike);
+    molecule.graph_mut().set_atom_aromatic(first_atom, true);
+    let original = molecule.clone();
+
+    let error = perception_api::perceive(molecule.graph_mut())
+        .expect_err("raw aromatic source must be normalized explicitly");
+
+    assert!(matches!(
+        error,
+        perception_api::PerceptionError::Valence(ValenceError { issues })
+            if !issues.is_empty() && issues.iter().all(|issue| matches!(
+                issue,
+                ValenceIssue::UnsupportedBondOrder(_)
+            ))
+    ));
+    assert_eq!(molecule, original);
+}
+
+#[test]
+fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
+    const ATOM_COUNT: usize = 4_097;
+
+    let mut molecule = SmallMolecule::default();
+    let atoms = (0..ATOM_COUNT)
+        .map(|_| {
+            molecule
+                .graph_mut()
+                .add_atom(carbon())
+                .expect("atom identifier capacity")
+        })
+        .collect::<Vec<_>>();
+    for index in 0..ATOM_COUNT {
+        molecule
+            .graph_mut()
+            .add_bond(
+                atoms[index],
+                atoms[(index + 1) % ATOM_COUNT],
+                BondOrder::Single,
+            )
+            .expect("large ring bond");
+    }
+    rings_api::perceive_ring_membership(molecule.graph_mut());
+    let original = molecule.clone();
+
+    let error = perception_api::perceive(molecule.graph_mut())
+        .expect_err("default ring cycle-size limit must fail");
+
+    assert!(matches!(
+        error,
+        perception_api::PerceptionError::Rings(RingPerceptionError::ResourceLimit {
+            resource: "cycle size",
+            observed: ATOM_COUNT,
+            limit: 4_096,
+        })
+    ));
+    assert_eq!(molecule, original);
 }
 
 #[test]
@@ -1036,10 +1097,9 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
 }
 
 #[test]
-fn stereo_candidates_use_sanitized_hydrogen_state_without_cip_assignment() {
+fn stereo_candidates_use_normalized_and_perceived_hydrogen_state_without_cip_assignment() {
     let mut molecule = read_smiles("CC(F)(Cl)Br").expect("smiles should parse");
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("molecule should sanitize");
+    normalize_and_perceive(&mut molecule).expect("molecule should normalize_and_perceive");
 
     stereo_api::validate_stereo(molecule.graph()).expect("stored stereo should be valid");
     let candidates = stereo_api::detect_stereo_candidates(molecule.graph());
@@ -1543,14 +1603,7 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
 #[test]
 fn failed_source_stereo_normalization_preserves_complete_original_state() {
     let mut molecule = read_smiles("F[C@](Cl)(Br)I").expect("stereo SMILES should parse");
-    perception_api::sanitize_with_options(
-        &mut molecule,
-        SanitizeOptions {
-            perceive_stereo: false,
-            ..SanitizeOptions::default()
-        },
-    )
-    .expect("stored stereo should prepare");
+    normalize_and_perceive(&mut molecule).expect("stored stereo should prepare");
     let marked_bond = molecule.graph().bond_ids().next().expect("single bond");
     molecule
         .graph_mut()

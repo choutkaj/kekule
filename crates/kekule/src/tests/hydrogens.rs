@@ -4,9 +4,15 @@ use crate::hydrogens::{
     RetainedHydrogenReason,
 };
 
+fn perceived_smiles(input: &str) -> SmallMolecule {
+    let mut molecule = SmallMolecule::from_smiles(input).expect("SMILES should parse");
+    normalize_and_perceive(&mut molecule).expect("molecule should normalize_and_perceive");
+    molecule
+}
+
 #[test]
 fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
-    let mut molecule = SmallMolecule::from_smiles_sanitized("C").expect("sanitized methane");
+    let mut molecule = perceived_smiles("C");
     let carbon = molecule.graph().atom_ids().next().expect("carbon");
     assert_eq!(molecule.graph().implicit_hydrogens(carbon), Ok(Some(4)));
 
@@ -43,33 +49,33 @@ fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
 
 #[test]
 fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
-    let mut unsanitized = SmallMolecule::from_smiles("C").expect("methane");
-    let original = unsanitized.clone();
+    let mut unperceived = SmallMolecule::from_smiles("C").expect("methane");
+    let original = unperceived.clone();
     assert_eq!(
-        unsanitized.add_hydrogens(),
+        unperceived.add_hydrogens(),
         Err(HydrogenNormalizationError::MissingValencePerception)
     );
-    assert_eq!(unsanitized, original);
+    assert_eq!(unperceived, original);
 
-    let mut sanitized = SmallMolecule::from_smiles_sanitized("C").expect("methane");
-    let original = sanitized.clone();
+    let mut perceived = perceived_smiles("C");
+    let original = perceived.clone();
     let options = AddHydrogensOptions {
         max_added_hydrogens: 3,
         ..AddHydrogensOptions::default()
     };
     assert_eq!(
-        sanitized.add_hydrogens_with_options(options),
+        perceived.add_hydrogens_with_options(options),
         Err(HydrogenNormalizationError::ResourceLimit {
             requested_hydrogens: 4,
             limit: 3,
         })
     );
-    assert_eq!(sanitized, original);
+    assert_eq!(perceived, original);
 }
 
 #[test]
 fn explicit_only_materializes_bracket_counts_without_implicit_hydrogens() {
-    let mut molecule = SmallMolecule::from_smiles_sanitized("[CH3]").expect("methyl radical");
+    let mut molecule = perceived_smiles("[CH3]");
     let carbon = molecule.graph().atom_ids().next().expect("carbon");
     let report = molecule
         .add_hydrogens_with_options(AddHydrogensOptions {
@@ -95,10 +101,10 @@ fn explicit_only_materializes_bracket_counts_without_implicit_hydrogens() {
 
 #[test]
 fn add_and_remove_hydrogens_round_trip_methane_semantics() {
-    let mut molecule = SmallMolecule::from_smiles_sanitized("C").expect("methane");
+    let mut molecule = perceived_smiles("C");
     let carbon = molecule.graph().atom_ids().next().expect("carbon");
     let added = molecule.add_hydrogens().expect("add hydrogens");
-    molecule.sanitize().expect("resanitize explicit methane");
+    normalize_and_perceive(&mut molecule).expect("re-perceive explicit methane");
 
     let removed = molecule.remove_hydrogens().expect("remove hydrogens");
 
@@ -115,13 +121,13 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
         .added
         .iter()
         .all(|entry| molecule.graph().atom(entry.hydrogen).is_err()));
-    molecule.sanitize().expect("resanitize collapsed methane");
+    normalize_and_perceive(&mut molecule).expect("re-perceive collapsed methane");
     assert_eq!(molecule.to_canonical_smiles().expect("canonical"), "C");
 }
 
 #[test]
 fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
-    let mut molecule = SmallMolecule::from_smiles_sanitized("c1cc[nH]c1").expect("pyrrole");
+    let mut molecule = perceived_smiles("c1cc[nH]c1");
     let nitrogen = molecule
         .atoms()
         .find_map(|(id, atom)| (atom.element.symbol() == "N").then_some(id))
@@ -134,7 +140,7 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
         .expect("materialize bracket hydrogen");
     assert_eq!(added.added.len(), 1);
     assert_eq!(added.added[0].parent, nitrogen);
-    molecule.sanitize().expect("resanitize explicit pyrrole");
+    normalize_and_perceive(&mut molecule).expect("re-perceive explicit pyrrole");
 
     let removed = molecule.remove_hydrogens().expect("collapse hydrogen");
 
@@ -154,8 +160,7 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
 
 #[test]
 fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() {
-    let mut molecule =
-        SmallMolecule::from_smiles_sanitized("F[C@H](Cl)Br").expect("chiral molecule");
+    let mut molecule = perceived_smiles("F[C@H](Cl)Br");
     let (element_id, before) = molecule
         .graph()
         .stereo_elements()
@@ -185,7 +190,7 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
         }
         _ => panic!("expected tetrahedral stereo"),
     }
-    molecule.sanitize().expect("resanitize explicit hydrogen");
+    normalize_and_perceive(&mut molecule).expect("re-perceive explicit hydrogen");
 
     let removed = molecule.remove_hydrogens().expect("collapse hydrogen");
     assert_eq!(removed.adjustments[0].explicit_hydrogens, 1);
@@ -205,7 +210,7 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
 
 #[test]
 fn added_hydrogens_have_explicitly_missing_conformer_positions() {
-    let mut molecule = SmallMolecule::from_smiles_sanitized("C").expect("methane");
+    let mut molecule = perceived_smiles("C");
     let carbon = molecule.graph().atom_ids().next().expect("carbon");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer

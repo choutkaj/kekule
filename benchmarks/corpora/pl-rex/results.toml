@@ -91,7 +91,7 @@ input_count = 93
 benchmarked_at_unix = 1784358405
 legacy_source = "validation-status-v2"
 
-[features."chem.sanitize.rdkit-like"]
+[features."chem.perception.default"]
 outcome = "match"
 scope = "full"
 fixture_count = 2

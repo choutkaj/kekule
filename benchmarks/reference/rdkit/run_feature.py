@@ -20,7 +20,7 @@ SUPPORTED_FEATURES = {
     "algo.rings.sssr",
     "algo.valence.rdkit-like",
     "chem.hydrogen-normalization",
-    "chem.sanitize.rdkit-like",
+    "chem.perception.default",
     "core.conformers",
     "descriptor.molecular",
     "io.mol.v2000.parse",
@@ -253,7 +253,7 @@ def generate_document(
         expected = {
             "records": [hydrogen_normalization_record(record) for record in records]
         }
-    elif feature_id == "chem.sanitize.rdkit-like":
+    elif feature_id == "chem.perception.default":
         records = read_sdf_records(fixture_path, rdkit["Chem"])
         expected = {"records": [sanitized_atom_record(record) for record in records]}
     elif feature_id == "algo.aromaticity.rdkit-like":

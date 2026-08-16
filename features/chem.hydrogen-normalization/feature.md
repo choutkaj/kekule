@@ -25,7 +25,7 @@ implicit hydrogens.
 - Added hydrogen coordinates are missing in every existing conformer; the
   transform does not invent 2D or 3D geometry.
 - Both operations require current valence perception whenever implicit counts
-  are consumed or reconstructed. They do not sanitize implicitly.
+  are consumed or reconstructed. They do not normalize or perceive implicitly.
 
 ## Implementation Notes
 
@@ -45,7 +45,7 @@ implicit hydrogens.
 - Retained topology uses stable IDs. Removed IDs become tombstones through the
   ordinary graph deletion path, which also clears their conformer positions.
 - Topology changes invalidate installed perception; callers may explicitly
-  sanitize or perceive the result afterward.
+  normalize or perceive the result afterward.
 
 ## Tests
 

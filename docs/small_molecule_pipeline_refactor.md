@@ -339,18 +339,18 @@ Goal: replace the broad sanitizer concept with explicit normalization and defaul
 
 Implement:
 
-- add one transactional default discrete `perception::perceive()` pipeline using the agreed dependency order;
-- define focused `PerceptionError` wrapping valence/ring/aromaticity failures as needed;
-- do not recreate `SanitizeOptions` as a boolean-filled `PerceptionOptions`;
-- experts use individual focused algorithms for custom subsets/models;
-- remove `SanitizeOptions`, `SanitizeReport`, `SanitizeError`, sanitizer functions, sanitizer facade exports, and `SmallMolecule::sanitize*`;
-- remove/replace `from_smiles_sanitized`; do not finalize the ordinary fast-forward constructor yet unless the new low-level API has already made its semantics obvious;
-- retire the sanitization feature/docs terminology and update examples/benchmarks/tests.
+- [x] add one transactional default discrete `perception::perceive()` pipeline using the agreed dependency order;
+- [x] define focused `PerceptionError` wrapping valence/ring/aromaticity failures as needed;
+- [x] do not recreate `SanitizeOptions` as a boolean-filled `PerceptionOptions`;
+- [x] experts use individual focused algorithms for custom subsets/models;
+- [x] remove `SanitizeOptions`, `SanitizeReport`, `SanitizeError`, sanitizer functions, sanitizer facade exports, and `SmallMolecule::sanitize*`;
+- [x] remove/replace `from_smiles_sanitized`; do not finalize the ordinary fast-forward constructor yet unless the new low-level API has already made its semantics obvious;
+- [x] retire the sanitization feature/docs terminology and update examples/benchmarks/tests.
 
 Acceptance:
 
-- the central public vocabulary is normalize + perceive, not sanitize;
-- default perception is transactional and leaves representation unchanged on success and failure.
+- [x] the central public vocabulary is normalize + perceive, not sanitize;
+- [x] default perception is transactional and leaves representation unchanged on success and failure.
 
 ### Stage 7 — Clean parse / interpret boundaries
 

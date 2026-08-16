@@ -11,7 +11,7 @@ monoisotopic mass descriptors for connected `SmallMolecule` values.
   `HydrogenCountPolicy`, `MolecularDescriptorError`, `molecular_formula`,
   `average_mass`, and `monoisotopic_mass`; it is not re-exported from the
   crate root or prelude.
-- Every operation accepts `&SmallMolecule`, never mutates it, never sanitizes
+- Every operation accepts `&SmallMolecule`, never mutates it, never normalizes
   or perceives chemistry implicitly, and requires the caller to select one of
   two hydrogen policies:
   - `StoredOnly` counts live hydrogen atoms and stored explicit-hydrogen
@@ -101,7 +101,7 @@ monoisotopic mass descriptors for connected `SmallMolecule` values.
 
 - LogP, polar surface area, hydrogen-bond counts, rotatable-bond counts,
   fragment descriptors, fingerprints, and 3D descriptors.
-- Automatic sanitization, valence perception, protonation, neutralization,
+- Automatic normalization, valence perception, protonation, neutralization,
   fragment selection, isotope-distribution envelopes, abundance-weighted
   isotopologue probabilities, uncertainty propagation, and material-specific
   atomic weights.
