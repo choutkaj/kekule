@@ -32,7 +32,6 @@ explicit reselection options require new repository-neutral corpus version
 identifiers.
 
 Output defaults to
-`benchmarks/corpora/<corpus-id>/golden/<feature-id>/`. Use `--fixture` to limit
+`benchmarks/corpora/<corpus-id>/golden/<benchmark-id>/`. Use `--fixture` to limit
 generation or `--output-dir` for separate review. Golden changes require
-independent review; running a generator does not claim repository health or
-update benchmark observations.
+independent review; running a generator does not claim repository health.

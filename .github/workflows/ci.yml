@@ -42,7 +42,6 @@ jobs:
       # validate each exact package file set.
       - run: cargo package -p kekule-potentials --locked --list
       - run: cargo package -p kekule-traj --locked --list
-      - run: cargo xtask dashboard --check
 
   fuzz-smoke:
     name: Fuzz smoke

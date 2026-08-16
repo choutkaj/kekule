@@ -27,7 +27,7 @@ pub(crate) struct BenchmarkProgress {
     total_targets: usize,
     completed_targets: usize,
     matched_targets: usize,
-    observed_targets: usize,
+    failed_targets: usize,
 }
 
 impl BenchmarkProgress {
@@ -38,13 +38,13 @@ impl BenchmarkProgress {
             total_targets,
             completed_targets: 0,
             matched_targets: 0,
-            observed_targets: 0,
+            failed_targets: 0,
         }
     }
 
-    pub(crate) fn target_start(&self, index: usize, feature_id: &str, corpus: &str) {
+    pub(crate) fn target_start(&self, index: usize, benchmark_id: &str, corpus: &str) {
         println!();
-        println!("[{index}/{}] {feature_id} [{corpus}]", self.total_targets);
+        println!("[{index}/{}] {benchmark_id} [{corpus}]", self.total_targets);
     }
 
     pub(crate) fn manifest(&self, reference_tool: &str, reference_version: &str) {
@@ -58,8 +58,8 @@ impl BenchmarkProgress {
         }
     }
 
-    pub(crate) fn target_match(&mut self, compared_count: usize, fixture_count: usize) {
-        println!("  observation: match ({compared_count}/{fixture_count} fixture(s))");
+    pub(crate) fn target_match(&mut self, match_count: usize, fixture_count: usize) {
+        println!("  result: match ({match_count}/{fixture_count} fixture(s))");
         self.completed_targets += 1;
         self.matched_targets += 1;
         self.print_overall();
@@ -68,21 +68,21 @@ impl BenchmarkProgress {
     pub(crate) fn target_differences(
         &mut self,
         difference_count: usize,
-        compared_count: usize,
+        match_count: usize,
         fixture_count: usize,
     ) {
         println!(
-            "  observation: differences ({difference_count} different, {compared_count}/{fixture_count} matched)"
+            "  result: differences ({difference_count} different, {match_count}/{fixture_count} matched)"
         );
         self.completed_targets += 1;
-        self.observed_targets += 1;
+        self.failed_targets += 1;
         self.print_overall();
     }
 
     pub(crate) fn target_error(&mut self) {
-        println!("  observation: error");
+        println!("  result: error");
         self.completed_targets += 1;
-        self.observed_targets += 1;
+        self.failed_targets += 1;
         self.print_overall();
     }
 
@@ -91,7 +91,7 @@ impl BenchmarkProgress {
             "overall {} matched={} differences-or-errors={}",
             progress_bar(self.completed_targets, self.total_targets),
             self.matched_targets,
-            self.observed_targets
+            self.failed_targets
         );
     }
 }

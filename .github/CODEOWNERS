@@ -1,8 +1,7 @@
-# These paths affect generated evidence, trusted inputs, or repository policy.
+# These paths affect trusted scientific inputs or repository policy.
 # Enforcement requires branch protection or a repository ruleset.
 /.github/ @choutkaj
 /benchmarks/reference/ @choutkaj
 /benchmarks/corpora/**/sources.lock.json @choutkaj
 /benchmarks/corpora/**/golden/ @choutkaj
 /benchmarks/corpora/**/corpus.toml @choutkaj
-/features/ @choutkaj

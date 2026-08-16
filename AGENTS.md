@@ -1,63 +1,30 @@
 # Agent rules
 
-These rules apply to AI agents working in this repository.
+These rules apply to contributors and AI agents working in this repository.
 
 ## Workflow
 
-1. Start from one canonical feature ID under `features/`; list every affected feature ID if the work spans direct dependencies.
-2. Read `ARCHITECTURE.md`, this file, and the selected feature directories before editing code.
-3. Keep the change scoped. Update feature metadata or docs only when behavior, public API, test contracts, or benchmark contracts change.
-4. Add or update a regression test for every defect fix or API/behavior contract change.
-5. Run applicable checks before handoff and report every command that was not run, with the reason.
-6. Commit logical chunks. End every commit message with:
+1. Read `ARCHITECTURE.md` and keep its object boundaries and invariants intact.
+2. Keep changes scoped; do not mix unrelated cleanup into a functional change.
+3. Add or update a regression test for every defect fix or behavior/API contract change.
+4. Run the applicable Rust formatting, check, clippy, test, documentation, and package checks before handoff. Report every applicable command not run and why.
+5. Use optional external-reference benchmarks only when they are scientifically useful. They are not routine CI or release gates.
+6. Do not modify `README.md` without the human's consent.
 
-   ```text
-   Co-authored-by: codex <codex@openai.com>
-   ```
-7. Do not modify README.md without the consent of the human
+## Branches and commits
 
-## Branching and PR strategy
+- Do not push feature work directly to `main`; use a short-lived branch based on current `main`.
+- Preserve unrelated user changes in a dirty worktree.
+- Keep commits reviewable and end every commit message with:
 
-Use trunk-based development with short-lived feature branches.
+  ```text
+  Co-authored-by: codex <codex@openai.com>
+  ```
 
-- `main` is the clean integration branch. Keep it buildable, tested, and aligned with `ARCHITECTURE.md`.
-- Do not push feature work directly to `main`.
-- Start each work branch from current `main`.
-- Use one branch per feature ID or tightly scoped set of directly dependent feature IDs.
-- Prefer branch names such as `codex/<feature-id>-<short-topic>`, `docs/<short-topic>`, or `hotfix/<short-topic>`.
-- For broad changes and/or refactors, namethe branch accordingly.
-- Open a PR for every nontrivial change.
-- Use draft PRs for larger or staged work.
-- Keep PRs small enough to review. Prefer stacked or sequential PRs over one large branch.
-- Rebase or merge from `main` before review if the branch has drifted.
-- Delete branches after merge.
-- Prefer squash merge for normal feature PRs so `main` remains readable.
+## Scientific tooling
 
-
-## Architecture guardrails
-
-- Treat `Molecule` as the raw graph kernel; domain meaning belongs in `SmallMolecule`, `MacroMolecule`, and focused modules.
-- Follow the public API shape in `ARCHITECTURE.md`. Do not add broad root re-exports or bloat the prelude casually.
-- Keep parsing separate from normalization, perception, validation, and preparation. Never hide later chemistry stages inside parsing or interpretation.
-- Keep small-molecule normalization and perception separate from macromolecule validation and preparation; use focused options, reports, and errors.
-- Keep biomolecular labels and structure metadata in `SmcraHierarchy`, not core `Atom` or `Bond`, unless chemically general.
-- Topology or chemistry-relevant mutation must invalidate affected computed state. Failed transactional operations must leave inputs unchanged.
-- Parsers must return structured errors for malformed input. Writers must reject unsupported chemistry rather than silently coercing it.
-- RDKit, Biopython, and DSSP are benchmark/reference tools only, not Rust runtime dependencies.
-- Algorithms must document assumptions, edge cases, and resource limits.
-
-## Test and benchmark guardrails
-
-- Every tracked feature must have canonical `feature.toml` and `feature.md`.
-- Every feature document must have a `Tests` section. An optional `Benchmarks`
-  section documents external-reference coverage where manifests exist.
-- Do not claim feature/corpus parity without a deliberately run current
-  benchmark or documented manual evidence accepted by the benchmark harness.
-- Benchmark fixtures must be externally supplied and provenance-pinned; toy
-  molecules are allowed only for focused unit regressions.
-- Benchmarks are informational conveniences. Do not require benchmark
-  manifests, results, or matching snapshots for feature health, routine
-  development, release status, CI, dashboard generation, or agent handoff.
-- Do not weaken comparisons, remove asserted fields, delete regression tests, or regenerate goldens merely to make failures disappear.
-- The dashboard is generated from feature metadata; do not hand-edit `features/DASHBOARD.html`.
-- Do not claim a check, workflow, branch-protection rule, corpus result, or repository setting was verified unless it was actually inspected or run.
+- Keep parsing separate from interpretation, normalization, perception, validation, and preparation as defined by `ARCHITECTURE.md`.
+- RDKit, Biopython, DSSP, and similar tools are benchmark references only, never Rust runtime dependencies.
+- Benchmark fixtures must be externally supplied and provenance-pinned. Toy molecules belong only in focused unit regressions.
+- Do not weaken comparisons, remove asserted fields, or regenerate goldens merely to hide a mismatch.
+- Do not claim a check, benchmark, workflow, or repository setting was verified unless it was actually inspected or run.

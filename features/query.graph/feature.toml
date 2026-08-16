@@ -1,8 +1,0 @@
-id = "query.graph"
-title = "Syntax-independent query graph"
-area = "query"
-domains = ["small-molecule"]
-version = 1
-status = "supported"
-description = "Represent bounded boolean atom and bond predicates on an immutable query topology without overloading concrete molecule payloads."
-depends_on = ["core.atom-bond"]
