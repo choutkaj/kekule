@@ -325,9 +325,9 @@ Goal: enforce the one-way boundary from represented molecule to perception state
 
 Implement:
 
-- delete `normalize_aromatic_nitrogen_hydrogens()` and adapt tests/writers/algorithms to read represented explicit H plus perceived implicit H correctly;
-- audit valence/rings/aromaticity operations for primary-representation mutation and remove any remaining representation writes;
-- add a strong regression that snapshots primary represented state before default perception and proves it is unchanged afterward except for `PerceptionState`.
+- [x] delete `normalize_aromatic_nitrogen_hydrogens()` and adapt tests/writers/algorithms to read represented explicit H plus perceived implicit H correctly;
+- [x] audit valence/rings/aromaticity operations for primary-representation mutation and remove any remaining representation writes;
+- [x] add a strong regression that snapshots primary represented state before default perception and proves it is unchanged afterward except for `PerceptionState`.
 
 Acceptance:
 

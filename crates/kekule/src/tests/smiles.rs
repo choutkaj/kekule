@@ -3175,19 +3175,25 @@ fn canonical_pubchem_macrocycle_anionic_nitrogen_round_trip_matches_neighbors() 
 }
 
 #[test]
-fn canonical_substituted_pyrrole_uses_aromatic_nitrogen_form() {
+fn canonical_substituted_pyrrole_uses_perceived_nitrogen_hydrogen_without_feedback() {
     let mut molecule = read_smiles("CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C")
         .expect("substituted pyrrole should parse");
     perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
         .expect("substituted pyrrole should sanitize");
-    let nitrogen = molecule
+    let (nitrogen_id, nitrogen) = molecule
         .graph()
         .atoms()
-        .find_map(|(_, atom)| (atom.element.symbol() == "N").then_some(atom))
+        .find(|(_, atom)| atom.element.symbol() == "N")
         .expect("substituted pyrrole nitrogen");
-    assert!(nitrogen.aromatic);
-    assert_eq!(nitrogen.explicit_hydrogens, 1);
-    assert_eq!(nitrogen.implicit_hydrogens, Some(0));
+    assert_eq!(
+        molecule.graph().atom_is_aromatic(nitrogen_id),
+        Ok(Some(true))
+    );
+    assert_eq!(nitrogen.explicit_hydrogens, 0);
+    assert_eq!(
+        molecule.graph().implicit_hydrogens(nitrogen_id),
+        Ok(Some(1))
+    );
     assert!(!nitrogen.no_implicit_hydrogens);
 
     let written = smiles_api::write_canonical_with_options(&molecule, CanonicalSmilesWriteOptions)

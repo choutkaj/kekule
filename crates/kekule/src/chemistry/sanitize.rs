@@ -86,9 +86,6 @@ pub fn sanitize_small_molecule_with_ring_options(
             ring_options,
         )
         .map_err(SanitizeError::Aromaticity)?;
-        if options.perceive_valence {
-            normalize_aromatic_nitrogen_hydrogens(staged.graph_mut_raw());
-        }
         if !options.perceive_rings {
             staged.graph_mut_raw().discard_ring_results();
         }
@@ -126,27 +123,5 @@ fn prepare_sanitize_states(mol: &mut Molecule, options: SanitizeOptions) {
     }
     if !options.perceive_stereo {
         mol.clear_cip_descriptors();
-    }
-}
-
-fn normalize_aromatic_nitrogen_hydrogens(mol: &mut Molecule) {
-    let nitrogens = mol
-        .atoms()
-        .filter_map(|(atom_id, atom)| {
-            let aromatic = mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true);
-            let implicit = mol.implicit_hydrogens(atom_id).ok().flatten().unwrap_or(0);
-            (atom.element.symbol() == "N"
-                && aromatic
-                && atom.formal_charge == 0
-                && atom.explicit_hydrogens.saturating_add(implicit) == 1)
-                .then_some(atom_id)
-        })
-        .collect::<Vec<_>>();
-    for atom_id in nitrogens {
-        if let Some(atom) = mol.atoms[atom_id.index()].as_mut() {
-            atom.explicit_hydrogens = 1;
-            atom.no_implicit_hydrogens = false;
-        }
-        mol.set_implicit_hydrogens(atom_id, 0);
     }
 }
