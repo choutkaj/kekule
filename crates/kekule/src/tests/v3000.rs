@@ -58,7 +58,7 @@ M  END
 }
 
 #[test]
-fn v3000_preserves_valence_implied_tetrahedral_hydrogen_carrier() {
+fn v3000_preserves_source_declared_tetrahedral_hydrogen_carrier() {
     let input = "\
 stereo hydrogen
 kekule
@@ -67,7 +67,7 @@ kekule
 M  V30 BEGIN CTAB
 M  V30 COUNTS 4 3 0 0 0
 M  V30 BEGIN ATOM
-M  V30 1 C 0 0 0 0
+M  V30 1 C 0 0 0 0 HCOUNT=1
 M  V30 2 F 1 0 0 0
 M  V30 3 Cl -1 0 0 0
 M  V30 4 Br 0 1 0 0
@@ -81,7 +81,7 @@ M  V30 END CTAB
 M  END
 ";
 
-    let parsed = read_molfile(input).expect("V3000 should parse");
+    let mut parsed = read_molfile(input).expect("V3000 should parse");
 
     assert_eq!(
         parsed
@@ -91,6 +91,64 @@ M  END
             .explicit_hydrogens,
         1
     );
+    assert!(
+        parsed
+            .graph()
+            .atom(AtomId::new(0))
+            .expect("stereo center")
+            .no_implicit_hydrogens
+    );
+    assert!(!parsed.graph().perception().has_valence());
+    assert!(parsed.graph().stereo_bond_marks().next().is_some());
+    parsed
+        .normalize()
+        .expect("source-declared carrier normalizes");
+    assert!(parsed.graph().stereo_bond_marks().next().is_none());
+    assert_eq!(parsed.graph().stereo_elements().count(), 1);
+}
+
+#[test]
+fn v3000_valence_is_source_semantics_but_unsupported_chemistry_is_interpretation_owned() {
+    let valence = "\
+declared valence
+kekule
+
+  0  0  0  0  0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 1 0 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 0 0 0 0 VAL=4
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+";
+    let document = molfile::parse_str(valence).expect("VAL is valid V3000 syntax");
+    let molecule = molfile::interpret(&document)
+        .expect("VAL can be interpreted from source semantics")
+        .into_molecule();
+    let carbon = molecule.graph().atom(AtomId::new(0)).expect("carbon");
+    assert_eq!(carbon.explicit_hydrogens, 4);
+    assert!(carbon.no_implicit_hydrogens);
+    assert!(!molecule.graph().perception().has_valence());
+
+    let zero_declarations = valence.replace("VAL=4", "HCOUNT=-1 VAL=-1");
+    let document =
+        molfile::parse_str(&zero_declarations).expect("zero-count sentinels are valid syntax");
+    let molecule = molfile::interpret(&document)
+        .expect("zero-count sentinels have exact source semantics")
+        .into_molecule();
+    let carbon = molecule.graph().atom(AtomId::new(0)).expect("carbon");
+    assert_eq!(carbon.explicit_hydrogens, 0);
+    assert!(carbon.no_implicit_hydrogens);
+
+    let unsupported = valence.replace("1 C 0 0 0 0 VAL=4", "1 Xx 0 0 0 0");
+    let document = molfile::parse_str(&unsupported).expect("unknown symbol remains valid syntax");
+    assert!(molfile::interpret(&document)
+        .expect_err("core element support belongs to interpretation")
+        .message()
+        .contains("unsupported element"));
 }
 
 #[test]
@@ -121,8 +179,7 @@ M  END
         mol.bond(BondId::new(0)).expect("bond").order,
         BondOrder::Aromatic
     );
-    assert!(!mol.perception().has_rings());
-    assert!(!mol.perception().has_aromaticity());
+    assert_all_stale(mol);
 }
 
 #[test]
@@ -183,10 +240,6 @@ fn malformed_mol_v3000_returns_errors_without_panicking() {
         (
             "record outside CTAB",
             "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 NOTE=outside\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
-        ),
-        (
-            "unsupported atom option",
-            "Bad\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 VAL=4\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n",
         ),
         (
             "malformed atom option",

@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::core::*;
 use crate::geometry::Point3;
-use crate::io::{
-    preserve_molfile_tetrahedral_hydrogens, MolWriteError, MolfileParseOptions, SdfParseError,
-};
+use crate::io::{MolWriteError, MolfileParseOptions, SdfParseError};
 use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
@@ -17,17 +15,32 @@ pub(super) struct V3000Syntax {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct V3000AtomSyntax {
     pub(super) index: usize,
-    pub(super) atom: Atom,
-    pub(super) point: Point3,
+    pub(super) symbol: String,
+    pub(super) formal_charge: i32,
+    pub(super) isotope: Option<i32>,
+    pub(super) radical: Option<V3000RadicalSyntax>,
+    pub(super) hydrogen_count: Option<i32>,
+    pub(super) valence: Option<i32>,
+    pub(super) atom_map: Option<u32>,
+    pub(super) unsupported_options: Vec<String>,
+    pub(super) coordinates: [f64; 3],
     pub(super) line: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum V3000RadicalSyntax {
+    Singlet,
+    Doublet,
+    Triplet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct V3000BondSyntax {
     pub(super) a: usize,
     pub(super) b: usize,
-    pub(super) order: BondOrder,
-    pub(super) stereo: Option<StereoBondMarkKind>,
+    pub(super) order_code: u8,
+    pub(super) stereo_code: Option<u8>,
+    pub(super) unsupported_options: Vec<String>,
     pub(super) line: usize,
 }
 
@@ -247,23 +260,22 @@ pub(super) fn parse_v3000_syntax(
                 "duplicate V3000 atom index",
             ));
         }
-        let element = Element::from_symbol(parsed.symbol).ok_or_else(|| {
-            SdfParseError::new(
-                record,
-                row.line,
-                format!("unknown element symbol `{}`", parsed.symbol),
-            )
-        })?;
-        let mut atom = Atom::new(element);
-        atom.atom_map = (parsed.atom_map != 0).then_some(parsed.atom_map);
+        let mut atom = V3000AtomSyntax {
+            index: parsed.index,
+            symbol: parsed.symbol.to_owned(),
+            formal_charge: 0,
+            isotope: None,
+            radical: None,
+            hydrogen_count: None,
+            valence: None,
+            atom_map: (parsed.atom_map != 0).then_some(parsed.atom_map),
+            unsupported_options: Vec::new(),
+            coordinates: parsed.coordinates,
+            line: row.line,
+        };
         apply_v3000_atom_options(record, row.line, &mut atom, &parsed.options)?;
         atom_indices.insert(parsed.index, atoms.len());
-        atoms.push(V3000AtomSyntax {
-            index: parsed.index,
-            atom,
-            point: parsed.point,
-            line: row.line,
-        });
+        atoms.push(atom);
     }
 
     let mut bonds = Vec::with_capacity(bond_rows.len());
@@ -313,8 +325,9 @@ pub(super) fn parse_v3000_syntax(
         bonds.push(V3000BondSyntax {
             a: parsed.a,
             b: parsed.b,
-            order: parsed.order,
-            stereo: parsed.stereo,
+            order_code: parsed.order_code,
+            stereo_code: parsed.stereo_code,
+            unsupported_options: parsed.unsupported_options,
             line: row.line,
         });
     }
@@ -330,11 +343,22 @@ pub(super) fn interpret_v3000_syntax(
     let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
         .expect("angstrom is a length unit");
     for record in &syntax.atoms {
-        let atom_id = mol.add_atom(record.atom.clone()).map_err(|error| {
+        let atom = interpret_v3000_atom(record)?;
+        let atom_id = mol.add_atom(atom).map_err(|error| {
             SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
         })?;
         conformer
-            .set_position(atom_id, Quantity::new(record.point, ANGSTROM))
+            .set_position(
+                atom_id,
+                Quantity::new(
+                    Point3::new(
+                        record.coordinates[0],
+                        record.coordinates[1],
+                        record.coordinates[2],
+                    ),
+                    ANGSTROM,
+                ),
+            )
             .expect("matching coordinate units");
         atom_ids.insert(record.index, atom_id);
     }
@@ -345,10 +369,18 @@ pub(super) fn interpret_v3000_syntax(
         let b = *atom_ids.get(&record.b).ok_or_else(|| {
             SdfParseError::new(1, record.line, "bond endpoint outside parsed atom records")
         })?;
+        if let Some(option) = record.unsupported_options.first() {
+            return Err(SdfParseError::new(
+                1,
+                record.line,
+                format!("unsupported V3000 bond option `{option}`"),
+            ));
+        }
+        let order = interpret_v3000_bond_order(record.order_code, record.line)?;
         let bond_id = mol
-            .add_bond(a, b, record.order)
+            .add_bond(a, b, order)
             .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
-        if let Some(kind) = record.stereo {
+        if let Some(kind) = interpret_v3000_bond_stereo(order, record.stereo_code, record.line)? {
             mol.set_stereo_bond_mark(StereoBondMark {
                 bond: bond_id,
                 kind,
@@ -358,13 +390,159 @@ pub(super) fn interpret_v3000_syntax(
         }
     }
 
-    preserve_molfile_tetrahedral_hydrogens(&mut mol);
+    apply_v3000_declared_hydrogens(&mut mol, syntax, &atom_ids)?;
 
     if conformer.positions().next().is_some() {
         mol.add_conformer(conformer)
             .expect("parsed coordinates reference live atoms");
     }
     Ok(SmallMolecule::from_graph_unchecked_connectedness(mol))
+}
+
+fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
+    if let Some(option) = record.unsupported_options.first() {
+        return Err(SdfParseError::new(
+            1,
+            record.line,
+            format!("unsupported V3000 atom option `{option}`"),
+        ));
+    }
+    let element = Element::from_symbol(&record.symbol).ok_or_else(|| {
+        SdfParseError::new(
+            1,
+            record.line,
+            format!("unsupported element symbol `{}`", record.symbol),
+        )
+    })?;
+    let mut atom = Atom::new(element);
+    atom.formal_charge = i8::try_from(record.formal_charge)
+        .map_err(|_| SdfParseError::new(1, record.line, "formal charge is outside i8 range"))?;
+    atom.isotope = match record.isotope {
+        Some(value) if value > 0 => Some(
+            u16::try_from(value)
+                .map_err(|_| SdfParseError::new(1, record.line, "isotope is outside u16 range"))?,
+        ),
+        _ => None,
+    };
+    atom.radical = record.radical.map(|radical| match radical {
+        V3000RadicalSyntax::Singlet => AtomRadical::Singlet,
+        V3000RadicalSyntax::Doublet => AtomRadical::Doublet,
+        V3000RadicalSyntax::Triplet => AtomRadical::Triplet,
+    });
+    atom.explicit_hydrogens =
+        interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
+            .unwrap_or(0);
+    atom.no_implicit_hydrogens = record.hydrogen_count.is_some() || record.valence.is_some();
+    atom.atom_map = record.atom_map;
+    Ok(atom)
+}
+
+fn interpret_v3000_bond_order(
+    code: u8,
+    line: usize,
+) -> std::result::Result<BondOrder, SdfParseError> {
+    v3000_bond_order(code).ok_or_else(|| {
+        SdfParseError::new(1, line, format!("unsupported V3000 bond order code {code}"))
+    })
+}
+
+fn interpret_v3000_bond_stereo(
+    order: BondOrder,
+    code: Option<u8>,
+    line: usize,
+) -> std::result::Result<Option<StereoBondMarkKind>, SdfParseError> {
+    let Some(code) = code else {
+        return Ok(None);
+    };
+    v3000_bond_stereo(order, &code.to_string()).ok_or_else(|| {
+        SdfParseError::new(1, line, format!("unsupported V3000 bond CFG value {code}"))
+    })
+}
+
+fn apply_v3000_declared_hydrogens(
+    molecule: &mut Molecule,
+    syntax: &V3000Syntax,
+    atom_ids: &BTreeMap<usize, AtomId>,
+) -> std::result::Result<(), SdfParseError> {
+    for record in &syntax.atoms {
+        let Some(declared_valence) =
+            interpret_v3000_count_declaration(record.valence, "VAL", record.line)?
+        else {
+            continue;
+        };
+        let atom_id = *atom_ids.get(&record.index).ok_or_else(|| {
+            SdfParseError::new(1, record.line, "V3000 atom index was not interpreted")
+        })?;
+        let represented_valence = molecule
+            .incident_bonds(atom_id)
+            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?
+            .try_fold(0usize, |total, (_, bond)| {
+                let contribution = match bond.order {
+                    BondOrder::Single => 1,
+                    BondOrder::Double => 2,
+                    BondOrder::Triple => 3,
+                    BondOrder::Zero | BondOrder::Dative => 0,
+                    BondOrder::Aromatic | BondOrder::Quadruple => {
+                        return Err(SdfParseError::new(
+                            1,
+                            record.line,
+                            "declared V3000 valence cannot determine hydrogens for this bond order",
+                        ))
+                    }
+                };
+                Ok(total + contribution)
+            })?;
+        let declared_hydrogens = usize::from(declared_valence)
+            .checked_sub(represented_valence)
+            .ok_or_else(|| {
+                SdfParseError::new(
+                    1,
+                    record.line,
+                    "declared V3000 valence is below represented bond valence",
+                )
+            })?;
+        if record.hydrogen_count.is_some() {
+            let explicit = molecule
+                .atom(atom_id)
+                .expect("interpreted V3000 atom remains live")
+                .explicit_hydrogens;
+            if declared_hydrogens != usize::from(explicit) {
+                return Err(SdfParseError::new(
+                    1,
+                    record.line,
+                    "V3000 HCOUNT and VAL declarations conflict",
+                ));
+            }
+            continue;
+        }
+        let explicit = u8::try_from(declared_hydrogens).map_err(|_| {
+            SdfParseError::new(1, record.line, "declared V3000 hydrogen count exceeds u8")
+        })?;
+        molecule
+            .atom_mut(atom_id)
+            .expect("interpreted V3000 atom remains live")
+            .explicit_hydrogens = explicit;
+    }
+    Ok(())
+}
+
+fn interpret_v3000_count_declaration(
+    value: Option<i32>,
+    name: &str,
+    line: usize,
+) -> std::result::Result<Option<u8>, SdfParseError> {
+    value
+        .map(|value| {
+            let value = if value == -1 { 0 } else { value };
+            u8::try_from(value).map_err(|_| {
+                SdfParseError::new(
+                    1,
+                    line,
+                    format!("V3000 {name} declaration is outside the represented count range"),
+                )
+            })
+        })
+        .transpose()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -389,18 +567,19 @@ struct V3000Line {
 struct V3000Atom<'a> {
     index: usize,
     symbol: &'a str,
-    point: Point3,
+    coordinates: [f64; 3],
     atom_map: u32,
     options: Vec<(&'a str, &'a str)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct V3000Bond {
     index: usize,
-    order: BondOrder,
+    order_code: u8,
     a: usize,
     b: usize,
-    stereo: Option<StereoBondMarkKind>,
+    stereo_code: Option<u8>,
+    unsupported_options: Vec<String>,
 }
 
 fn collect_v3000_lines(
@@ -521,17 +700,17 @@ fn parse_v3000_atom(line: &str) -> Option<V3000Atom<'_>> {
     let mut fields = line.split_whitespace();
     let index = fields.next()?.parse().ok()?;
     let symbol = fields.next()?;
-    let point = Point3::new(
+    let coordinates = [
         parse_finite_f64(fields.next()?)?,
         parse_finite_f64(fields.next()?)?,
         parse_finite_f64(fields.next()?)?,
-    );
+    ];
     let atom_map = fields.next()?.parse().ok()?;
     let options = fields.map(split_v3000_option).collect::<Option<Vec<_>>>()?;
     Some(V3000Atom {
         index,
         symbol,
-        point,
+        coordinates,
         atom_map,
         options,
     })
@@ -540,7 +719,7 @@ fn parse_v3000_atom(line: &str) -> Option<V3000Atom<'_>> {
 fn apply_v3000_atom_options(
     record: usize,
     line: usize,
-    atom: &mut Atom,
+    atom: &mut V3000AtomSyntax,
     options: &[(&str, &str)],
 ) -> std::result::Result<(), SdfParseError> {
     let mut seen = std::collections::BTreeSet::new();
@@ -560,15 +739,15 @@ fn apply_v3000_atom_options(
             }
             "MASS" => {
                 let isotope = value
-                    .parse::<u16>()
+                    .parse::<i32>()
                     .map_err(|_| SdfParseError::new(record, line, "invalid V3000 MASS value"))?;
                 atom.isotope = (isotope != 0).then_some(isotope);
             }
             "RAD" => {
                 atom.radical = Some(match *value {
-                    "1" => AtomRadical::Singlet,
-                    "2" => AtomRadical::Doublet,
-                    "3" => AtomRadical::Triplet,
+                    "1" => V3000RadicalSyntax::Singlet,
+                    "2" => V3000RadicalSyntax::Doublet,
+                    "3" => V3000RadicalSyntax::Triplet,
                     _ => {
                         return Err(SdfParseError::new(
                             record,
@@ -578,23 +757,35 @@ fn apply_v3000_atom_options(
                     }
                 });
             }
-            "CFG" => {
-                return Err(SdfParseError::new(
-                    record,
-                    line,
-                    "V3000 atom stereochemistry is not supported",
-                ));
+            "HCOUNT" => {
+                atom.hydrogen_count = parse_v3000_count_declaration(record, line, value, "HCOUNT")?;
             }
-            _ => {
-                return Err(SdfParseError::new(
-                    record,
-                    line,
-                    format!("unsupported V3000 atom option `{key}`"),
-                ))
+            "VAL" => {
+                atom.valence = parse_v3000_count_declaration(record, line, value, "VAL")?;
             }
+            _ => atom.unsupported_options.push((*key).to_owned()),
         }
     }
     Ok(())
+}
+
+fn parse_v3000_count_declaration(
+    record: usize,
+    line: usize,
+    value: &str,
+    name: &str,
+) -> std::result::Result<Option<i32>, SdfParseError> {
+    let value = value
+        .parse::<i32>()
+        .map_err(|_| SdfParseError::new(record, line, format!("invalid V3000 {name} value")))?;
+    if value < -1 {
+        return Err(SdfParseError::new(
+            record,
+            line,
+            format!("invalid V3000 {name} value"),
+        ));
+    }
+    Ok((value != 0).then_some(value))
 }
 
 fn parse_v3000_bond(
@@ -624,8 +815,8 @@ fn parse_v3000_bond(
         .ok_or_else(invalid)?
         .parse()
         .map_err(|_| invalid())?;
-    let order = v3000_bond_order(order_code).ok_or_else(invalid)?;
-    let mut stereo = None;
+    let mut stereo_code = None;
+    let mut unsupported_options = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for field in fields {
         let (key, value) = split_v3000_option(field).ok_or_else(invalid)?;
@@ -636,23 +827,19 @@ fn parse_v3000_bond(
                 format!("duplicate V3000 bond option `{key}`"),
             ));
         }
-        if key != "CFG" {
-            return Err(SdfParseError::new(
-                record,
-                line_number,
-                format!("unsupported V3000 bond option `{key}`"),
-            ));
+        if key == "CFG" {
+            stereo_code = Some(value.parse::<u8>().map_err(|_| invalid())?);
+        } else {
+            unsupported_options.push(key.to_owned());
         }
-        stereo = v3000_bond_stereo(order, value).ok_or_else(|| {
-            SdfParseError::new(record, line_number, "unsupported V3000 bond CFG value")
-        })?;
     }
     Ok(V3000Bond {
         index,
-        order,
+        order_code,
         a,
         b,
-        stereo,
+        stereo_code,
+        unsupported_options,
     })
 }
 

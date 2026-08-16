@@ -14,12 +14,14 @@ component-qualified source mappings.
   errors.
 - Preserves source text, tokens and UTF-8 spans, branch/ring/stereo marks, and
   dot-component token ranges. Parsing also builds and validates the private
-  syntax program consumed by interpretation.
+  format-specific syntax program consumed by interpretation. That program owns
+  SMILES symbols, bond/direction/chirality tokens, and source indices rather
+  than core `Atom`, `BondOrder`, or stable-ID values.
 - Each `SmilesComponentInterpretation` contains one connected molecule and a
   `SmilesInterpretationReport` that maps the component's parsed atom and bond
   records, including source spans, to stable canonical IDs.
 - Interpretation supports the established atom, bond, branch, ring, charge,
-  isotope, map, radical, aromatic-token, and local-stereo subset.
+  isotope, map, aromatic-token, and local-stereo subset.
 - Dots delimit distinct asserted molecules. `[Na+].[Cl-]` produces two ordered
   component interpretations rather than one disconnected graph.
 - `components()` and `into_molecules()` expose all component results.
@@ -27,10 +29,11 @@ component-qualified source mappings.
   exactly one component and return `SmilesComponentCountError` otherwise; they
   never panic on valid multi-component input.
 - Interpretation preserves aromatic source syntax as represented
-  `BondOrder::Aromatic` bonds but installs no semantic aromaticity. Bracket
-  radical inference uses private source-token membership rather than
-  `PerceptionState`. Interpretation never normalizes or runs
-  chemical perception.
+  `BondOrder::Aromatic` bonds but installs no semantic aromaticity. The
+  supported grammar has no explicit radical token, so bracket atoms do not
+  acquire radicals through a valence-model guess. Interpretation never
+  normalizes or runs chemical perception, and publishes an empty general
+  `PerceptionState`.
 - `SmilesParseOptions` bounds input bytes plus parsed atom and bond counts.
   Defaults permit large molecules while preventing unbounded parser allocation;
   callers handling intentionally larger records can opt into higher limits.
@@ -77,3 +80,6 @@ component-qualified source mappings.
 - v20: Preserve aromatic source bond representation without installing
   semantic aromaticity; normalization now localizes that source form before
   perception.
+- v21: Make the private parser program format-specific, move all core atom,
+  bond, source-mark, and direct-stereo construction into interpretation, and
+  remove model-driven bracket-radical inference.

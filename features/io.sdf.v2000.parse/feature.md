@@ -12,6 +12,9 @@ per-record reports.
   `SdfRecord`, `SdfInterpretation`, `sdf::parse_str`, and `sdf::interpret`.
 - Each raw record owns a `MolfileDocument` and ordered raw data fields with source
   lines. Molfile versions are auto-detected per record.
+- SDF parsing owns record structure and data-field syntax only. Chemistry
+  construction is delegated to the shared Molfile interpreter rather than
+  duplicated in the SDF layer.
 - Interpretation returns ordered records plus an `SdfInterpretationReport`.
   Each `SdfRecordInterpretationReport` qualifies the underlying Molfile
   atom/bond mappings with its record index and source start line.
@@ -33,6 +36,8 @@ per-record reports.
   field must end at a blank line or record delimiter; malformed post-CTAB
   content is rejected rather than discarded.
 - Parsing and interpretation never sanitize or run chemical perception.
+- Molfile chemistry translation failures remain interpretation errors qualified
+  with the SDF record index and source location.
 
 ## Tests
 
@@ -77,3 +82,6 @@ per-record reports.
 - v19: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v20: Reject an SDF record whose Molfile CTAB is disconnected while retaining
   record-qualified interpretation diagnostics and loss-preserving parsing.
+- v21: Preserve the clean record/document boundary while delegating all CTAB
+  source-to-chemistry conversion and chemistry errors to Molfile
+  interpretation.
