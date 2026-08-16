@@ -137,19 +137,19 @@ legacy_source = "validation-status-v2"
 benchmarked_at_unix = 1784407501
 
 [features."io.mol.v2000.parse"]
-outcome = "differences"
+outcome = "match"
 scope = "full"
 fixture_count = 10
-compared_count = 0
-difference_count = 10
-first_detail = "fixture `data/packs/pack_01.sdf` implementation output failed: SDF interpretation error in record 1 at line 5: molecule must be connected, but contains 3 graph components"
+compared_count = 10
+difference_count = 0
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"
 manifest_digest = "a2a76e3242851b71aba7c249dc14232d80d7b049dbbda2006ad4eda32f704df5"
-input_digest_schema_version = 1
-input_digest = "fafcce47a5a21970f92ea78ab8d7344fa52dd00c6ee2e24ae3ea27b155e74bbf"
-input_count = 121
-benchmarked_at_unix = 1786884111
+input_digest_schema_version = 2
+input_digest = "761f51aba467dc8df504ca48c87b257c72826b281a578822d498edf03570a9dc"
+input_count = 109
+legacy_source = "validation-status-v2"
+benchmarked_at_unix = 1784358831
 
 [features."io.mol.v2000.write"]
 outcome = "match"
@@ -257,19 +257,19 @@ legacy_source = "validation-status-v2"
 benchmarked_at_unix = 1784360759
 
 [features."io.smiles.parse"]
-outcome = "differences"
+outcome = "match"
 scope = "full"
 fixture_count = 10
-compared_count = 0
-difference_count = 10
-first_detail = 'benchmarks\corpora\pubchem-1k\golden\io.smiles.parse\data_packs_pack_01.smi.json.gz differs from implementation output for fixture `data/packs/pack_01.smi`: $.records[0].raw missing from actual output'
+compared_count = 10
+difference_count = 0
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"
 manifest_digest = "bea402e8963608bb1c10f108566c4560b54666b25e9dad230b966c474006dd08"
-input_digest_schema_version = 1
-input_digest = "0d109d3edc00a6664e0229624f23eec4220f90df7a9fb41cb4cc9fb5d5ffba0d"
-input_count = 121
-benchmarked_at_unix = 1786884040
+input_digest_schema_version = 2
+input_digest = "696a29dbdac0b85d19419e3cb5f4401bc99ad5474872610f7eb99da5a997c57c"
+input_count = 109
+legacy_source = "validation-status-v2"
+benchmarked_at_unix = 1784360762
 
 [features."io.smiles.write"]
 outcome = "match"
