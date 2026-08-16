@@ -716,6 +716,11 @@ mod tests {
     fn neutral_carbon_radical_can_complete_an_aromatic_sextet() {
         let mut molecule = crate::small::SmallMolecule::from_smiles("C1=CC(=CC=[C]1)N")
             .expect("aminophenyl radical parses");
+        molecule
+            .graph_mut()
+            .atom_mut(AtomId::new(5))
+            .expect("source-selected radical carbon")
+            .radical = Some(AtomRadical::Doublet);
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
         perceive_ring_set(molecule.graph_mut()).expect("ring perception");

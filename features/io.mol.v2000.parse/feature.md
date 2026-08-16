@@ -27,11 +27,15 @@ V2000 CTAB as one `SmallMolecule` plus source mappings.
   metadata rather than molecule properties.
 - Atom-block charge code 4 is preserved as a doublet radical; `M  RAD` records
   continue to preserve explicit singlet, doublet, and triplet multiplicities.
-- Preserves the valence-implied hydrogen carrier on degree-three tetrahedral
-  wedge centers as an explicit atom hydrogen, matching RDKit's CTfile parsing
-  semantics without running general valence perception.
-- Preserves a populated V2000 atom-block valence field as
-  `no_implicit_hydrogens`, including code 15 for zero valence.
+- Interprets only source-declared atom-block hydrogen-count and valence fields.
+  An exact declared valence may determine represented hydrogens from the
+  record's ordinary bond orders; an undeclared degree-three wedge center does
+  not acquire a hydrogen through Kekule's allowed-valence model.
+- Preserves a populated V2000 atom-block hydrogen-count or valence field as
+  `no_implicit_hydrogens`, including valence code 15 for zero valence.
+- Syntactically valid but unsupported element, bond-order, or stereo codes can
+  remain in the typed document and fail with `MolfileInterpretError` when they
+  cannot be translated into represented Kekule chemistry.
 - Rejects V3000, zero or out-of-range graph endpoints, non-ASCII structural fields, truncated records, malformed M records, non-finite coordinates, and counts above the V2000 limit.
 - Does not run sanitization, valence perception, ring perception, aromaticity, or stereochemistry perception.
 
@@ -46,6 +50,8 @@ V2000 CTAB as one `SmallMolecule` plus source mappings.
 - Allocation is bounded by the V2000 limit of 999 atoms and 999 bonds.
 - Coordinates are interpreted as angstrom quantities and stored in the first
   conformer with that explicit unit.
+- Interpretation publishes source representation with an empty general
+  `PerceptionState`; source wedge/either marks remain for normalization.
 
 ## Tests
 
@@ -101,3 +107,6 @@ V2000 CTAB as one `SmallMolecule` plus source mappings.
 - v18: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v19: Reject disconnected V2000 CTAB interpretation at the connected
   `SmallMolecule` boundary while retaining loss-preserving document parsing.
+- v20: Keep typed parsing format-specific, move element/bond/stereo conversion
+  into interpretation, interpret only actual HCOUNT/VAL declarations, and
+  remove allowed-valence inference for undeclared tetrahedral carriers.

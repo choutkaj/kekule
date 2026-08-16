@@ -59,9 +59,8 @@ small-molecule graph.
 
 ## Out Of Scope
 Isomeric SMILES, fused-ring canonical traversal parity, SMARTS, reactions,
-query atoms/bonds, radical states that are not implied by bracket valence,
-unsupported bond orders, and full RDKit canonicalization parity for every
-symmetry edge case.
+query atoms/bonds, radical states, unsupported bond orders, and full RDKit
+canonicalization parity for every symmetry edge case.
 
 ## Revision Notes
 
@@ -105,3 +104,5 @@ symmetry edge case.
 - v32: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v33: Align canonical writer input with connected `SmallMolecule` values and
   move document-level component ordering explicitly to the caller.
+- v34: Inherit explicit radical rejection from the shared SMILES writer after
+  interpretation stopped guessing radicals from bracket valence.

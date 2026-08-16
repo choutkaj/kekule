@@ -272,14 +272,25 @@ fn cip_matches_rdkit_for_alternate_molfile_atropisomeric_wedge() {
 
 #[test]
 fn cip_axis_ranking_is_stable_across_all_carbon_aromatic_source_kekule_variants() {
-    for (fixture, expected) in [
-        (rdkit_rp6306_atrop4_molblock(), vec![StereoDescriptor::P]),
+    for (fixture, declared_hydrogen, expected) in [
+        (
+            rdkit_rp6306_atrop4_molblock(),
+            None,
+            vec![StereoDescriptor::P],
+        ),
         (
             rdkit_bms986142_atrop4_molblock(),
+            Some(AtomId::new(10)),
             vec![StereoDescriptor::S, StereoDescriptor::P],
         ),
     ] {
         let mut molecule = read_molfile(fixture).expect("RDKit atropisomer fixture parses");
+        if let Some(atom) = declared_hydrogen {
+            // This external fixture omits the tetrahedral carrier declaration.
+            // Supply it explicitly for this CIP-only benchmark instead of asking
+            // Molfile interpretation to infer it from a valence model.
+            declare_explicit_fixture_hydrogen(&mut molecule, atom);
+        }
         normalize_and_perceive(&mut molecule)
             .expect("atropisomer fixture normalizes_and_perceives");
 
@@ -316,21 +327,25 @@ fn cip_axis_ranking_preserves_heteromancude_source_kekule_guardrail() {
 
 #[test]
 fn cip_matches_rdkit_for_broader_molfile_atropisomeric_axis_perception() {
-    for (fixture, expected) in [
+    for (fixture, declared_hydrogen, expected) in [
         (
             rdkit_bms986142_atrop5_molblock(),
+            AtomId::new(10),
             vec![StereoDescriptor::S, StereoDescriptor::P],
         ),
         (
             rdkit_zm374979_atrop1_molblock(),
+            AtomId::new(3),
             vec![StereoDescriptor::R, StereoDescriptor::M],
         ),
         (
             rdkit_zm374979_atrop2_molblock(),
+            AtomId::new(3),
             vec![StereoDescriptor::R, StereoDescriptor::M],
         ),
     ] {
         let mut molecule = read_molfile(fixture).expect("RDKit atropisomer fixture parses");
+        declare_explicit_fixture_hydrogen(&mut molecule, declared_hydrogen);
         normalize_and_perceive(&mut molecule)
             .expect("atropisomer fixture normalizes_and_perceives");
 

@@ -358,19 +358,19 @@ Goal: make format `*Document` values genuinely format-specific and interpretatio
 
 Implement incrementally by format, starting with SMILES and then Molfile/SDF:
 
-- parsers produce typed format syntax/AST state rather than core `Atom`/`BondOrder` chemistry objects where practical;
-- interpretation converts source syntax to core represented chemistry;
-- remove general chemical inference from interpretation;
-- replace SMILES bracket-radical inference with exact format semantics if the radical is semantically determined by SMILES; otherwise leave it to perception rather than guessing;
-- remove Molfile `preserve_molfile_tetrahedral_hydrogens()` valence inference and encode only actual source hydrogen/valence semantics;
-- keep source-to-canonical mappings and interpretation reports.
+- [x] parsers produce typed format syntax/AST state rather than core `Atom`/`BondOrder` chemistry objects where practical;
+- [x] interpretation converts source syntax to core represented chemistry;
+- [x] remove general chemical inference from interpretation;
+- [x] replace SMILES bracket-radical inference with exact format semantics if the radical is semantically determined by SMILES; otherwise leave it to perception rather than guessing;
+- [x] remove Molfile `preserve_molfile_tetrahedral_hydrogens()` valence inference and encode only actual source hydrogen/valence semantics;
+- [x] keep source-to-canonical mappings and interpretation reports.
 
 Do not force all formats through a generic `Document` trait.
 
 Acceptance:
 
-- parse can represent syntactically valid chemistry that interpretation or normalization may later reject;
-- interpretation returns represented chemistry with empty general `PerceptionState`.
+- [x] parse can represent syntactically valid chemistry that interpretation or normalization may later reject;
+- [x] interpretation returns represented chemistry with empty general `PerceptionState`.
 
 ### Stage 8 — Coordinate stereo and ordinary fast-forward API
 

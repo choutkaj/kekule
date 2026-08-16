@@ -23,15 +23,19 @@ Interpret a connected V3000 CTAB from the version-autodetected loss-preserving
 - Preserves title/program/comment document metadata, atom coordinates, bond
   orders, atom map numbers, formal charges, isotopes via `MASS`, radical
   multiplicities, and supported V3000 bond `CFG` stereo as source bond marks.
-- Preserves valence-implied hydrogen carriers on degree-three tetrahedral `CFG`
-  centers as explicit atom hydrogens using the same rule as V2000 parsing.
+- Interprets explicit `HCOUNT` and `VAL` atom options as source declarations.
+  An undeclared degree-three tetrahedral `CFG` center does not acquire a
+  hydrogen from general allowed-valence chemistry. The CTfile `-1` sentinel is
+  represented as an explicit zero declaration; option value zero remains
+  unspecified.
 - Rejects malformed sections, incomplete or malformed count records, count
   mismatches, duplicate count or section-control records, misplaced count
   records, structural records outside the CTAB,
-  zero or duplicate atom/bond indices, out-of-range bond endpoints, unknown
-  elements, non-finite coordinates, malformed, duplicate, or unsupported
-  embedded atom/bond options, unsupported bond orders, and atom
-  stereochemistry with structured parse errors.
+  zero or duplicate atom/bond indices, out-of-range bond endpoints, non-finite
+  coordinates, and malformed or duplicate embedded options with structured
+  parse errors. Syntactically valid unknown elements, unsupported chemistry
+  options, bond orders, and CFG combinations are retained for interpretation
+  to reject.
 - Loss-preserves unsupported nonstructural CTAB records such as enhanced stereo
   collections in the document and reports their source lines as ignored during
   interpretation; required CTAB control records are not misreported as ignored
@@ -45,6 +49,8 @@ Interpret a connected V3000 CTAB from the version-autodetected loss-preserving
 - Supported bond `CFG` mappings are stored as source bond marks for wedge/either cases.
 - Coordinates are interpreted as angstrom quantities and stored in the first
   conformer with that explicit unit.
+- Interpretation constructs core atom/bond/stereo/conformer state and publishes
+  an empty general `PerceptionState`.
 
 ## Tests
 
@@ -101,3 +107,7 @@ SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistr
 - v18: Reclassify external-reference parity from a required gate to optional benchmarking without changing implementation behavior or golden expectations.
 - v19: Reject disconnected V3000 CTAB interpretation at the connected
   `SmallMolecule` boundary while retaining loss-preserving document parsing.
+- v20: Make the typed syntax representation format-specific, move core
+  chemistry conversion and unsupported-chemistry rejection into
+  interpretation, support source HCOUNT/VAL declarations, and remove
+  allowed-valence carrier inference.

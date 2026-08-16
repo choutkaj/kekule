@@ -4,7 +4,7 @@ use std::ops::Range;
 use crate::core::{AtomId, BondId};
 use crate::small::model::SmallMolecule;
 
-use super::smiles::{self, SmilesDocument, SmilesParseOptions};
+use super::smiles::{self, SmilesDocument};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesInterpretError {
@@ -222,38 +222,15 @@ pub fn interpret_smiles_document(
     document: &SmilesDocument,
 ) -> Result<SmilesInterpretation, SmilesInterpretError> {
     let mut components = Vec::with_capacity(document.component_token_ranges().len());
-    for token_range in document.component_token_ranges() {
+    for (component_index, token_range) in document.component_token_ranges().iter().enumerate() {
         let source_span = component_source_span(document, token_range.clone())?;
-        let source =
-            document
-                .source()
-                .get(source_span.clone())
-                .ok_or_else(|| SmilesInterpretError {
-                    offset: source_span.start,
-                    message: "component source span is outside the SMILES document".to_owned(),
-                })?;
-
-        // The complete document has already passed the caller's resource policy.
-        // Reparse the isolated component only to reuse the mature single-component
-        // semantic interpreter without imposing a second, stricter default limit.
-        let local_document = smiles::parse_smiles_document_with_options(
-            source,
-            SmilesParseOptions {
-                max_input_bytes: source.len(),
-                max_atoms: u32::MAX as usize,
-                max_bonds: u32::MAX as usize,
-            },
-        )
-        .map_err(|error| SmilesInterpretError {
-            offset: source_span.start.saturating_add(error.offset()),
-            message: error.message().to_owned(),
-        })?;
-        let local = smiles::interpret_smiles_document(&local_document).map_err(|error| {
-            SmilesInterpretError {
-                offset: source_span.start.saturating_add(error.offset()),
-                message: error.message().to_owned(),
-            }
-        })?;
+        let local =
+            smiles::interpret_smiles_component(document, component_index).map_err(|error| {
+                SmilesInterpretError {
+                    offset: error.offset(),
+                    message: error.message().to_owned(),
+                }
+            })?;
         let (molecule, report) = local.into_parts();
         molecule
             .graph()
@@ -266,13 +243,9 @@ pub fn interpret_smiles_document(
         let atom_mappings = report
             .atom_mappings()
             .iter()
-            .map(|mapping| {
-                let local_span = mapping.source_span();
-                SmilesAtomMapping {
-                    atom: mapping.atom(),
-                    source_span: source_span.start.saturating_add(local_span.start)
-                        ..source_span.start.saturating_add(local_span.end),
-                }
+            .map(|mapping| SmilesAtomMapping {
+                atom: mapping.atom(),
+                source_span: mapping.source_span(),
             })
             .collect();
         let bond_mappings = report
@@ -280,7 +253,7 @@ pub fn interpret_smiles_document(
             .iter()
             .map(|mapping| SmilesBondMapping {
                 bond: mapping.bond(),
-                source_offset: source_span.start.saturating_add(mapping.source_offset()),
+                source_offset: mapping.source_offset(),
             })
             .collect();
 

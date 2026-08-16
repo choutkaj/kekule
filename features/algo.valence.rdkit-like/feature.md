@@ -48,8 +48,9 @@ Provide conservative valence perception for normalized small-molecule graphs.
   the same localized bond-order and charge-adjusted periodic-table path as
   other represented chemistry; there is no aromaticity-specific valence
   target.
-- Its allowed-valence table is also the single source of truth for preserving
-  valence-implied tetrahedral hydrogen carriers during Molfile parsing.
+- The allowed-valence table is confined to valence perception. Molfile
+  interpretation does not call it to manufacture represented hydrogen
+  carriers.
 - The pass stages every implicit-hydrogen assignment and all strict issues
   before mutation. It installs semantic valence state only on success; failure
   diagnostics remain sidecar error information.
