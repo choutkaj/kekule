@@ -1374,9 +1374,10 @@ hidden molecular boundary.
 potential implementations while the dependency-light `Potential` contract
 remains in `kekule`. Its `dreiding` module demonstrates this boundary: it may
 assign atom types and fixed charges during explicit preparation, but evaluation
-does not sanitize, change topology, or update charges implicitly. Implementations
-with heavyweight or incompatible runtime dependencies may remain separate
-adapter crates rather than forcing those dependencies into the companion.
+does not normalize, perceive chemistry, change topology, or update charges
+implicitly. Implementations with heavyweight or incompatible runtime
+dependencies may remain separate adapter crates rather than forcing those
+dependencies into the companion.
 
 ## Public module responsibilities
 

@@ -3,7 +3,7 @@
 ## Summary
 
 Let external persistence adapters reconstruct the complete canonical molecular
-state that Kekule owns without source reparsing, perception, sanitization,
+state that Kekule owns without source reparsing, normalization, perception,
 dummy chemistry, or stable-ID renumbering.
 
 ## Behavior/API

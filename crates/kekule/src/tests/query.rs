@@ -3,8 +3,10 @@ use crate::substructure::{self, *};
 
 use super::*;
 
-fn sanitized(input: &str) -> SmallMolecule {
-    SmallMolecule::from_smiles_sanitized(input).expect("test target should sanitize")
+fn perceived(input: &str) -> SmallMolecule {
+    let mut molecule = SmallMolecule::from_smiles(input).expect("test target should parse");
+    normalize_and_perceive(&mut molecule).expect("test target should normalize_and_perceive");
+    molecule
 }
 
 fn manual_element_query(symbol: &str) -> QueryGraph {
@@ -102,7 +104,7 @@ fn bounded_smarts_builds_branches_rings_components_and_boolean_atoms() {
 
 #[test]
 fn smarts_logical_precedence_matches_daylight_operator_order() {
-    let target = sanitized("CN");
+    let target = perceived("CN");
 
     // High-precedence &: C OR (N AND H2). Both atoms match in methylamine.
     let high_and = parse_smarts("[C,N&H2]").unwrap();
@@ -130,7 +132,7 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
 
 #[test]
 fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
-    let ethanol = sanitized("CCO");
+    let ethanol = perceived("CCO");
     for (smarts, expected) in [("[H,D]", 2), ("[C,H]", 3), ("[!H]", 2)] {
         let query = parse_smarts(smarts).unwrap();
         assert_eq!(
@@ -142,9 +144,9 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
         );
     }
 
-    let mut methane = sanitized("C");
+    let mut methane = perceived("C");
     crate::hydrogens::add_hydrogens(&mut methane).unwrap();
-    methane.sanitize().unwrap();
+    normalize_and_perceive(&mut methane).unwrap();
     let elemental_hydrogen = parse_smarts("[H]").unwrap();
     assert_eq!(
         substructure::find_substructure_matches(methane.graph(), &elemental_hydrogen)
@@ -250,7 +252,7 @@ fn smarts_limits_cover_input_topology_and_expressions() {
 
 #[test]
 fn matcher_handles_elements_bonds_hydrogens_degree_and_negation() {
-    let ethanol = sanitized("CCO");
+    let ethanol = perceived("CCO");
     for (smarts, expected) in [
         ("[#6]", 2),
         ("CO", 1),
@@ -268,7 +270,7 @@ fn matcher_handles_elements_bonds_hydrogens_degree_and_negation() {
 
 #[test]
 fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
-    let benzene = sanitized("c1ccccc1");
+    let benzene = perceived("c1ccccc1");
     let query = parse_smarts("c1ccccc1").unwrap();
     assert_eq!(
         substructure::find_substructure_matches(benzene.graph(), &query)
@@ -287,7 +289,7 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     .unwrap();
     assert_eq!(embeddings.len(), 12);
 
-    let cyclohexane = sanitized("C1CCCCC1");
+    let cyclohexane = perceived("C1CCCCC1");
     let ring_atoms = parse_smarts("[#6;R]").unwrap();
     assert_eq!(
         substructure::find_substructure_matches(cyclohexane.graph(), &ring_atoms)
@@ -306,14 +308,14 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
 
 #[test]
 fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
-    let connected_target = sanitized("OCO");
+    let connected_target = perceived("OCO");
     let query = parse_smarts("[#8].[#8]").unwrap();
     let matches =
         substructure::find_substructure_matches(connected_target.graph(), &query).unwrap();
     assert_eq!(matches.len(), 1);
     assert_ne!(matches[0].atoms()[0], matches[0].atoms()[1]);
 
-    let cyclopropane = sanitized("C1CC1");
+    let cyclopropane = perceived("C1CC1");
     let edge = parse_smarts("C-C").unwrap();
     assert_eq!(
         substructure::find_substructure_matches(cyclopropane.graph(), &edge)
@@ -353,7 +355,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
 
 #[test]
 fn matcher_search_and_candidate_limits_are_hard_failures() {
-    let target = sanitized("CCCC");
+    let target = perceived("CCCC");
     let query = parse_smarts("[#6]").unwrap();
     let candidate_error = substructure::find_substructure_matches_with_options(
         target.graph(),

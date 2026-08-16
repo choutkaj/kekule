@@ -5,8 +5,7 @@ use crate::algorithms::{
     AddHydrogensReport, HydrogenNormalizationError, RemoveHydrogensReport,
 };
 use crate::chemistry::{
-    normalize_molecule, sanitize_small_molecule, sanitize_small_molecule_with_ring_options,
-    NormalizationError, NormalizationReport, SanitizeError, SanitizeOptions, SanitizeReport,
+    normalize_molecule, perceive_molecule, NormalizationError, NormalizationReport, PerceptionError,
 };
 use crate::io::{
     interpret_smiles_document, parse_smiles_document, write_canonical_smiles,
@@ -26,30 +25,17 @@ impl SmallMolecule {
             })
     }
 
-    pub fn from_smiles_sanitized(input: &str) -> Result<Self, SmallMoleculeReadError> {
-        let mut molecule = Self::from_smiles(input)?;
-        molecule.sanitize()?;
-        Ok(molecule)
-    }
-
-    pub fn sanitize(&mut self) -> Result<SanitizeReport, SanitizeError> {
-        sanitize_small_molecule(self, SanitizeOptions::default())
-    }
-
     /// Normalize represented chemistry and source stereo into canonical form.
     pub fn normalize(&mut self) -> Result<NormalizationReport, NormalizationError> {
         normalize_molecule(self.graph_mut_raw())
     }
 
-    pub fn sanitize_with_options(
-        &mut self,
-        options: SanitizeOptions,
-    ) -> Result<SanitizeReport, SanitizeError> {
-        sanitize_small_molecule_with_ring_options(
-            self,
-            options,
-            crate::algorithms::RingPerceptionOptions::default(),
-        )
+    /// Install the transactional default valence, ring-set, and aromaticity profile.
+    ///
+    /// Call [`Self::normalize`] first when the molecule came from source
+    /// representation that has not yet been normalized.
+    pub fn perceive(&mut self) -> Result<(), PerceptionError> {
+        perceive_molecule(self.graph_mut_raw())
     }
 
     /// Materialize stored and perceived hydrogens as graph atoms.
@@ -94,7 +80,6 @@ pub enum SmallMoleculeReadError {
     ComponentCount {
         actual: usize,
     },
-    Sanitize(SanitizeError),
 }
 
 impl fmt::Display for SmallMoleculeReadError {
@@ -106,7 +91,6 @@ impl fmt::Display for SmallMoleculeReadError {
                 f,
                 "SmallMolecule requires exactly one connected SMILES component, found {actual}"
             ),
-            Self::Sanitize(error) => write!(f, "{error}"),
         }
     }
 }
@@ -122,11 +106,5 @@ impl From<SmilesParseError> for SmallMoleculeReadError {
 impl From<SmilesInterpretError> for SmallMoleculeReadError {
     fn from(error: SmilesInterpretError) -> Self {
         Self::Interpret(error)
-    }
-}
-
-impl From<SanitizeError> for SmallMoleculeReadError {
-    fn from(error: SanitizeError) -> Self {
-        Self::Sanitize(error)
     }
 }

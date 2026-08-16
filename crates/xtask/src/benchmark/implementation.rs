@@ -184,10 +184,10 @@ pub(crate) fn implementation_expected(
                     .collect::<Vec<_>>()
             }))
         }
-        "chem.sanitize.rdkit-like" => {
+        "chem.perception.default" => {
             let mut records = read_small_records_by_suffix(fixture_path)?;
             Ok(
-                json!({ "records": records.iter_mut().map(sanitized_atom_record_json).collect::<Vec<_>>() }),
+                json!({ "records": records.iter_mut().map(default_perception_atom_record_json).collect::<Vec<_>>() }),
             )
         }
         "algo.aromaticity.rdkit-like" => {
@@ -489,7 +489,7 @@ fn smarts_query_records_json(path: &Path) -> Result<Vec<Value>, Box<dyn Error>> 
 }
 
 fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if perception::sanitize(&mut record.molecule).is_err() {
+    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
@@ -760,7 +760,7 @@ pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if perception::sanitize(&mut record.molecule).is_err() {
+    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
@@ -835,14 +835,7 @@ pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let sanitize = perception::sanitize_with_options(
-        &mut record.molecule,
-        SanitizeOptions {
-            perceive_stereo: false,
-            ..SanitizeOptions::default()
-        },
-    );
-    let Ok(sanitize_report) = sanitize else {
+    let Ok(normalization_report) = record.molecule.normalize() else {
         let mol = record.molecule.graph();
         return json!({
             "record_index": record.record_index,
@@ -852,6 +845,16 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "bond_count": mol.bond_count(),
         });
     };
+    if record.molecule.perceive().is_err() {
+        let mol = record.molecule.graph();
+        return json!({
+            "record_index": record.record_index,
+            "status": "sanitize_error",
+            "title": record.title,
+            "atom_count": mol.atom_count(),
+            "bond_count": mol.bond_count(),
+        });
+    }
     let candidates = stereo::detect_stereo_candidates(record.molecule.graph());
     let result = stereo::perceive_stereo(record.molecule.graph_mut());
     let mol = record.molecule.graph();
@@ -863,7 +866,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
             "candidates": candidates.iter().map(stereo_candidate_json).collect::<Vec<_>>(),
-            "normalization_report": normalization_report_json(&sanitize_report.normalization),
+            "normalization_report": normalization_report_json(&normalization_report),
             "report": stereo_perception_report_json(&report),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
@@ -876,7 +879,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
             "candidates": candidates.iter().map(stereo_candidate_json).collect::<Vec<_>>(),
-            "normalization_report": normalization_report_json(&sanitize_report.normalization),
+            "normalization_report": normalization_report_json(&normalization_report),
             "error": stereo_perception_error_json(&error),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
@@ -889,14 +892,7 @@ pub(crate) fn stereo_cip_record_json(
     record: &mut IndexedSmallRecord,
     remove_plain_hydrogens: bool,
 ) -> Option<Value> {
-    let sanitize = perception::sanitize_with_options(
-        &mut record.molecule,
-        SanitizeOptions {
-            perceive_stereo: false,
-            ..SanitizeOptions::default()
-        },
-    );
-    if sanitize.is_err() {
+    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return None;
     }
     let perception_result = stereo::perceive_stereo_with_options(
@@ -1124,19 +1120,20 @@ pub(crate) fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
     }
 }
 
-pub(crate) fn sanitized_atom_record_json(record: &mut IndexedSmallRecord) -> Value {
-    match perception::sanitize_with_options(&mut record.molecule, SanitizeOptions::default()) {
-        Ok(_) => json!({
+pub(crate) fn default_perception_atom_record_json(record: &mut IndexedSmallRecord) -> Value {
+    if record.molecule.normalize().is_ok() && record.molecule.perceive().is_ok() {
+        json!({
             "record_index": record.record_index,
             "status": "ok",
             "title": record.title,
             "atoms": basic_atoms_json(record.molecule.graph()),
-        }),
-        Err(_) => json!({
+        })
+    } else {
+        json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
             "title": record.title,
-        }),
+        })
     }
 }
 
@@ -1167,8 +1164,7 @@ pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn hydrogen_normalization_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if perception::sanitize_with_options(&mut record.molecule, SanitizeOptions::default()).is_err()
-    {
+    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
@@ -1223,20 +1219,7 @@ pub(crate) fn hydrogen_normalization_record_json(record: &mut IndexedSmallRecord
 }
 
 pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let status = perception::sanitize_with_options(
-        &mut record.molecule,
-        SanitizeOptions {
-            perceive_valence: true,
-            perceive_rings: true,
-            perceive_aromaticity: false,
-            perceive_stereo: false,
-        },
-    )
-    .and_then(|_| {
-        aromaticity::perceive_aromaticity(record.molecule.graph_mut(), AromaticityModel::RdkitLike)
-            .map_err(SanitizeError::Aromaticity)
-    });
-    if status.is_err() {
+    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
@@ -1254,13 +1237,7 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
 }
 
 pub(crate) fn canonical_ranking_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let options = SanitizeOptions {
-        perceive_valence: true,
-        perceive_rings: true,
-        perceive_aromaticity: true,
-        perceive_stereo: false,
-    };
-    if perception::sanitize_with_options(&mut record.molecule, options).is_err() {
+    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
@@ -1317,7 +1294,7 @@ pub(crate) fn canonical_smiles_record_json(
         return Ok(smiles_error_record_json(record));
     };
     let mut molecule = molecule.clone();
-    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
+    if molecule.normalize().is_err() || molecule.perceive().is_err() {
         return Ok(json!({
             "record_index": record.record_index,
             "status": "parse_error",
@@ -1359,7 +1336,7 @@ pub(crate) fn isomeric_smiles_record_json(
         return Ok(smiles_error_record_json(record));
     };
     let mut molecule = molecule.clone();
-    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
+    if molecule.normalize().is_err() || molecule.perceive().is_err() {
         return Ok(json!({
             "record_index": record.record_index,
             "status": "sanitize_error",
@@ -1411,7 +1388,7 @@ pub(crate) fn isomeric_smiles_record_is_stereo_bearing(record: &IndexedSmilesRec
         return false;
     };
     let mut molecule = molecule.clone();
-    perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_ok()
+    molecule.normalize().is_ok() && molecule.perceive().is_ok()
 }
 
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
@@ -1458,19 +1435,17 @@ pub(crate) fn smiles_raw_semantic_json(molecule: &SmallMolecule) -> Value {
 }
 
 pub(crate) fn smiles_sanitized_semantic_json(mut molecule: SmallMolecule) -> Value {
-    match perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()) {
-        Ok(_) => {
-            let mol = molecule.graph();
-            json!({
-                "status": "ok",
-                "atom_count": mol.atom_count(),
-                "bond_count": mol.bond_count(),
-                "atoms": smiles_sanitized_atoms_json(mol),
-                "bonds": smiles_sanitized_bonds_json(mol),
-            })
-        }
-        Err(_) => json!({ "status": "sanitize_error" }),
+    if molecule.normalize().is_err() || molecule.perceive().is_err() {
+        return json!({ "status": "sanitize_error" });
     }
+    let mol = molecule.graph();
+    json!({
+        "status": "ok",
+        "atom_count": mol.atom_count(),
+        "bond_count": mol.bond_count(),
+        "atoms": smiles_sanitized_atoms_json(mol),
+        "bonds": smiles_sanitized_bonds_json(mol),
+    })
 }
 
 pub(crate) fn hydrogen_normalized_semantic_json(mut molecule: SmallMolecule) -> Value {
@@ -1511,7 +1486,7 @@ pub(crate) fn hydrogen_normalized_semantic_json(mut molecule: SmallMolecule) -> 
 }
 
 pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) -> Value {
-    if perception::sanitize_with_options(&mut molecule, SanitizeOptions::default()).is_err() {
+    if molecule.normalize().is_err() || molecule.perceive().is_err() {
         return json!({ "status": "sanitize_error" });
     }
     if stereo::assign_cip_descriptors(molecule.graph_mut()).is_err() {

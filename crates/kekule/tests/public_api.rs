@@ -1,5 +1,12 @@
 use kekule::prelude::*;
 
+fn perceived_smiles(input: &str) -> Result<SmallMolecule, Box<dyn std::error::Error>> {
+    let mut molecule = SmallMolecule::from_smiles(input)?;
+    molecule.normalize()?;
+    molecule.perceive()?;
+    Ok(molecule)
+}
+
 #[test]
 fn quantity_and_unit_public_api() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::units::{Dimension, Quantity, Unit, ANGSTROM, NANOMETER};
@@ -16,7 +23,8 @@ fn quantity_and_unit_public_api() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
     let mut mol = SmallMolecule::from_smiles("c1ccccc1O")?;
-    mol.sanitize()?;
+    mol.normalize()?;
+    mol.perceive()?;
     assert_eq!(mol.atom_count(), 7);
     assert_eq!(mol.bond_count(), 7);
     let formal_charge: i64 = mol.graph().formal_charge();
@@ -34,7 +42,7 @@ fn molecular_descriptor_public_api() -> Result<(), Box<dyn std::error::Error>> {
     };
     use kekule::units::DALTON;
 
-    let molecule = SmallMolecule::from_smiles_sanitized("[13CH3]CO")?;
+    let molecule = perceived_smiles("[13CH3]CO")?;
     let formula: MolecularFormula =
         molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)?;
     assert_eq!(formula.to_string(), "C[13C]H6O");
@@ -65,7 +73,8 @@ fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(interpreted.report()?.atom_mappings().len(), 4);
     assert_eq!(interpreted.report()?.bond_mappings().len(), 3);
     let mut mol = interpreted.into_molecule()?;
-    kekule::perception::sanitize(&mut mol)?;
+    kekule::normalization::normalize(mol.graph_mut())?;
+    kekule::perception::perceive(mol.graph_mut())?;
     let smiles = kekule::smiles::write_canonical(&mol)?;
     assert!(!smiles.is_empty());
     Ok(())
@@ -95,7 +104,7 @@ fn normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(source_report.created_stereo_elements.len(), 1);
     assert!(directional.graph().stereo_bond_marks().next().is_none());
 
-    let mut perceived = SmallMolecule::from_smiles_sanitized("CCO")?;
+    let mut perceived = perceived_smiles("CCO")?;
     assert!(perceived.graph().perception().has_valence());
     perceived.normalize()?;
     assert_eq!(
@@ -183,11 +192,12 @@ fn parser_resource_options_are_public() -> Result<(), Box<dyn std::error::Error>
 
 #[test]
 fn hydrogen_normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
-    let mut molecule = SmallMolecule::from_smiles_sanitized("C")?;
+    let mut molecule = perceived_smiles("C")?;
     let added = kekule::hydrogens::add_hydrogens(&mut molecule)?;
     assert_eq!(added.added.len(), 4);
 
-    molecule.sanitize()?;
+    molecule.normalize()?;
+    molecule.perceive()?;
     let removed = molecule.remove_hydrogens()?;
     assert_eq!(removed.removed.len(), 4);
     assert_eq!(molecule.atom_count(), 1);
@@ -196,7 +206,7 @@ fn hydrogen_normalization_public_api() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn query_graph_smarts_and_substructure_public_api() -> Result<(), Box<dyn std::error::Error>> {
-    let target = SmallMolecule::from_smiles_sanitized("CC(=O)O")?;
+    let target = perceived_smiles("CC(=O)O")?;
     let query = kekule::query::parse_smarts("[C](=O)[O;H1]")?;
     let matches = kekule::substructure::find_substructure_matches(target.graph(), &query)?;
 
@@ -454,7 +464,7 @@ fn topology_and_ensemble_public_api() -> Result<(), Box<dyn std::error::Error>> 
     };
     use kekule::units::{Quantity, ANGSTROM, SQUARE_ANGSTROM};
 
-    let water = SmallMolecule::from_smiles_sanitized("O")?;
+    let water = perceived_smiles("O")?;
     let mut topology_builder = TopologyBuilder::new();
     let definition = topology_builder.add_small_molecule_definition(&water)?;
     let mut metadata = MoleculeInstanceMetadata::default();
@@ -523,7 +533,7 @@ fn atom_and_bond_custom_property_public_api() -> Result<(), Box<dyn std::error::
     use kekule::topology::{MoleculeInstanceMetadata, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE};
 
-    let molecule = SmallMolecule::from_smiles_sanitized("CC")?;
+    let molecule = perceived_smiles("CC")?;
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
@@ -571,7 +581,7 @@ fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::e
         MoleculeInstanceMetadata, TopologyBuilder, TopologyEditResult, TopologyMapping,
     };
 
-    let water = SmallMolecule::from_smiles_sanitized("O")?;
+    let water = perceived_smiles("O")?;
     let build = || -> Result<_, Box<dyn std::error::Error>> {
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&water)?;
@@ -598,21 +608,13 @@ fn production_smiles_stereo_uses_installed_perception_state(
     use kekule::perception::stereo::{
         StereoCandidate, StereoPerceptionError, StereoPerceptionReport, StereoValidationError,
     };
-    use kekule::perception::{self, stereo, SanitizeOptions};
+    use kekule::perception::{self, stereo};
 
     let document = kekule::smiles::parse_str(r"C(=C\F)\F")?;
     let mut molecule = kekule::smiles::interpret(&document)?.into_molecule()?;
-    let sanitize_report = perception::sanitize_with_options(
-        &mut molecule,
-        SanitizeOptions {
-            perceive_stereo: false,
-            ..SanitizeOptions::default()
-        },
-    )?;
-    assert_eq!(
-        sanitize_report.normalization.created_stereo_elements.len(),
-        1
-    );
+    let normalization_report = molecule.normalize()?;
+    assert_eq!(normalization_report.created_stereo_elements.len(), 1);
+    perception::perceive(molecule.graph_mut())?;
 
     let graph = molecule.graph();
     assert_eq!(graph.implicit_hydrogens(AtomId::new(0))?, Some(1));
@@ -644,17 +646,15 @@ fn production_smiles_stereo_uses_installed_perception_state(
 #[test]
 fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::core::{StereoDescriptor, StereoElementId};
-    use kekule::perception::{
-        self,
-        stereo::{self, CipAssignmentError, CipAssignmentReport},
-    };
+    use kekule::perception::stereo::{self, CipAssignmentError, CipAssignmentReport};
 
     let input = include_str!(
         "../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
     );
     let document = kekule::molfile::parse_str(input)?;
     let mut molecule = kekule::molfile::interpret(&document)?.into_molecule();
-    perception::sanitize(&mut molecule)?;
+    molecule.normalize()?;
+    molecule.perceive()?;
     let assignment: Result<CipAssignmentReport, CipAssignmentError> =
         stereo::assign_cip_descriptors(molecule.graph_mut());
     let report = assignment?;
@@ -676,7 +676,8 @@ fn production_canonical_smiles_preserves_collapsed_hydrogen_without_perception(
 
     let written = kekule::smiles::write_canonical(&molecule)?;
     let mut reparsed = SmallMolecule::from_smiles(&written)?;
-    reparsed.sanitize()?;
+    reparsed.normalize()?;
+    reparsed.perceive()?;
     let carbon = reparsed
         .graph()
         .atoms()

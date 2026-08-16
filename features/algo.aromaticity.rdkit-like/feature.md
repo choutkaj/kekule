@@ -13,7 +13,7 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
   basis.
 - Replaces existing semantic aromatic membership transactionally and records
   `AromaticityModel::RdkitLike` as the perception model.
-- Can be run directly or through the explicit sanitization pipeline.
+- Can be run directly or through the explicit default perception pipeline.
 - Treats unsupported ring elements as non-candidates, allowing a supported
   aromatic subring to remain aromatic when fused or attached to a nonaromatic
   unsupported-element ring.
@@ -54,7 +54,7 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 - Unit tests cover installed ring-basis reuse, missing and membership-only ring
   state, localized donor analysis, candidate gates, radical and valence
   eligibility, normalized-input enforcement, represented-state preservation,
-  fused-subsystem search, and SMILES sanitize/reparse smoke cases.
+  fused-subsystem search, and SMILES normalize/perceive/reparse smoke cases.
 - A cross-pass regression snapshots the complete primary representation of a
   normalized heteroaromatic stereo fixture and proves valence, ring-set, and
   aromaticity perception change only `PerceptionState`.
@@ -69,7 +69,7 @@ supported organic ring systems using an RDKit-like graph aromaticity model.
 
 - Full RDKit aromaticity parity.
 - Runtime RDKit dependency.
-- Valence perception, sanitization policy, general-purpose Kekule-form
+- Valence perception, default-pipeline policy, general-purpose Kekule-form
   enumeration, stereochemistry, and parser behavior.
 - Canonical SMILES normalization for every valid aromaticity assignment.
 

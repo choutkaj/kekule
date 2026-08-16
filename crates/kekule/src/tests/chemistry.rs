@@ -1,15 +1,16 @@
 use super::*;
 
 #[test]
-fn valence_and_sanitization_are_explicit() {
+fn normalization_and_default_perception_are_explicit() {
     let mut small = read_smiles("CCO").expect("smiles should parse");
     assert!(!small.graph().perception().has_valence());
 
-    perception_api::sanitize_with_options(&mut small, SanitizeOptions::default())
-        .expect("ethanol should sanitize");
+    small.normalize().expect("ethanol normalization");
+    small.perceive().expect("ethanol perception");
 
     assert!(small.graph().perception().has_valence());
     assert!(small.graph().perception().has_rings());
+    assert!(small.graph().perception().has_aromaticity());
     assert_eq!(
         small
             .graph()
@@ -21,11 +22,11 @@ fn valence_and_sanitization_are_explicit() {
 }
 
 #[test]
-fn normal_sanitization_installs_one_ring_basis_for_aromaticity() {
-    let mut molecule = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
+fn default_perception_installs_one_ring_basis_for_aromaticity() {
+    let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
+    molecule.normalize().expect("benzene normalization");
 
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("benzene should sanitize");
+    molecule.perceive().expect("benzene perception");
 
     let ring_set = molecule.graph().ring_set().expect("installed ring basis");
     assert_eq!(ring_set.len(), 1);
@@ -41,98 +42,23 @@ fn normal_sanitization_installs_one_ring_basis_for_aromaticity() {
 }
 
 #[test]
-fn aromaticity_without_requested_rings_leaves_no_ring_state() {
-    let mut molecule = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
-
-    perception_api::sanitize_with_options(
-        &mut molecule,
-        SanitizeOptions {
-            perceive_rings: false,
-            ..SanitizeOptions::default()
-        },
-    )
-    .expect("benzene should sanitize with transient ring perception");
-
-    assert!(molecule.graph().ring_membership().is_none());
-    assert!(molecule.graph().ring_set().is_none());
-    assert!(molecule.graph().perception().has_aromaticity());
-}
-
-#[test]
-fn sanitize_options_do_not_leave_skipped_passes_fresh() {
-    let mut baseline = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
-    perception_api::sanitize_with_options(&mut baseline, SanitizeOptions::default())
-        .expect("benzene should sanitize");
-
-    for mask in 0..16 {
-        let options = SanitizeOptions {
-            perceive_valence: mask & 1 != 0,
-            perceive_rings: mask & 2 != 0,
-            perceive_aromaticity: mask & 4 != 0,
-            perceive_stereo: mask & 8 != 0,
-        };
-        let mut molecule = baseline.clone();
-        perception_api::sanitize_with_options(&mut molecule, options)
-            .unwrap_or_else(|error| panic!("options {mask:04b} should succeed: {error}"));
-
-        assert_eq!(
-            molecule.graph().perception().has_valence(),
-            options.perceive_valence,
-            "valence state for options {mask:04b}"
-        );
-        assert_eq!(
-            molecule.graph().perception().has_rings(),
-            options.perceive_rings,
-            "ring state for options {mask:04b}"
-        );
-        assert_eq!(
-            molecule.graph().perception().has_aromaticity(),
-            options.perceive_aromaticity,
-            "aromaticity state for options {mask:04b}"
-        );
-        assert_eq!(
-            molecule.graph().ring_set().is_some(),
-            options.perceive_rings,
-            "ring cache exposure for options {mask:04b}"
-        );
-    }
-}
-
-#[test]
-fn sanitization_normalizes_source_stereo_even_when_perception_is_skipped() {
+fn normalization_owns_source_stereo_before_default_perception() {
     let mut molecule = read_smiles("C/C=C\\F").expect("directional smiles should parse");
 
-    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("directional molecule should sanitize");
+    let report = molecule.normalize().expect("directional normalization");
 
-    assert_eq!(report.normalization.created_stereo_elements.len(), 1);
-    assert!(report
-        .stereo
-        .expect("stereo report")
-        .created_elements
-        .is_empty());
+    assert_eq!(report.created_stereo_elements.len(), 1);
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
 
-    let mut skipped = read_smiles("C/C=C\\F").expect("directional smiles should parse");
-    let skipped_report = perception_api::sanitize_with_options(
-        &mut skipped,
-        SanitizeOptions {
-            perceive_stereo: false,
-            ..SanitizeOptions::default()
-        },
-    )
-    .expect("stereo-skipped molecule should sanitize");
+    molecule.perceive().expect("directional perception");
 
-    assert!(!skipped.graph().perception().has_cip_descriptors());
-    assert_eq!(
-        skipped_report.normalization.created_stereo_elements.len(),
-        1
-    );
-    assert_eq!(skipped.graph().stereo_elements().count(), 1);
+    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert!(!molecule.graph().perception().has_cip_descriptors());
 }
 
 #[test]
-fn sanitization_preserves_unknown_double_bond_stereo() {
+fn normalization_preserves_unknown_double_bond_stereo() {
     let mut molecule = read_smiles("CC=CC").expect("alkene should parse");
     let double_bond = molecule
         .graph()
@@ -148,10 +74,11 @@ fn sanitization_preserves_unknown_double_bond_stereo() {
         })
         .expect("double bond either mark");
 
-    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("unknown double-bond stereo should sanitize");
+    let report = molecule
+        .normalize()
+        .expect("unknown double-bond stereo should normalize");
 
-    assert_eq!(report.normalization.created_stereo_elements.len(), 1);
+    assert_eq!(report.created_stereo_elements.len(), 1);
     let (_, element) = molecule
         .graph()
         .stereo_elements()
@@ -165,7 +92,7 @@ fn sanitization_preserves_unknown_double_bond_stereo() {
 }
 
 #[test]
-fn sanitization_does_not_assign_coordinate_only_stereo() {
+fn default_perception_does_not_assign_coordinate_only_stereo() {
     let mut mol = Molecule::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -208,14 +135,10 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
     mol.add_conformer(conformer).expect("valid conformer");
     let mut molecule = SmallMolecule::from_graph(mol);
 
-    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("coordinate-only molecule should sanitize");
+    molecule
+        .perceive()
+        .expect("coordinate-only molecule should perceive discrete chemistry");
 
-    assert!(report
-        .stereo
-        .expect("stereo report")
-        .created_elements
-        .is_empty());
     assert_eq!(molecule.graph().stereo_elements().count(), 0);
 
     let direct_report = stereo_api::perceive_stereo(molecule.graph_mut())
@@ -225,7 +148,7 @@ fn sanitization_does_not_assign_coordinate_only_stereo() {
 }
 
 #[test]
-fn failed_source_stereo_normalization_in_sanitizer_is_transactional() {
+fn failed_source_stereo_normalization_is_transactional() {
     let mut mol = Molecule::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -239,14 +162,14 @@ fn failed_source_stereo_normalization_in_sanitizer_is_transactional() {
     let mut molecule = SmallMolecule::from_graph(mol);
     let before = molecule.clone();
 
-    let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect_err("unassembled stereo mark should fail sanitization");
+    let error = molecule
+        .normalize()
+        .expect_err("unassembled stereo mark should fail normalization");
 
     assert!(matches!(
         error,
-        SanitizeError::Normalization(NormalizationError::SourceStereo(
-            SourceStereoNormalizationError { issues }
-        )) if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
+        NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
+            if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
             bond,
             kind: StereoBondMarkKind::WedgeEither,
         })
@@ -255,7 +178,7 @@ fn failed_source_stereo_normalization_in_sanitizer_is_transactional() {
 }
 
 #[test]
-fn sanitization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
+fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let mut marked_bonds = Vec::new();
@@ -282,20 +205,21 @@ fn sanitization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
     }
     let mut molecule = SmallMolecule::from_graph(mol);
 
-    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+    let report = molecule
+        .normalize()
         .expect("ambiguous drawing wedges should not reject valid chemistry");
-    assert!(report.normalization.warnings.contains(
-        &NormalizationWarning::AmbiguousTetrahedralWedgeMarks {
+    assert!(report
+        .warnings
+        .contains(&NormalizationWarning::AmbiguousTetrahedralWedgeMarks {
             center,
             mark_count: 4,
-        }
-    ));
-    assert_eq!(report.normalization.warnings.len(), 1);
+        }));
+    assert_eq!(report.warnings.len(), 1);
     assert!(molecule.graph().stereo_elements().next().is_none());
 }
 
 #[test]
-fn failed_valence_sanitization_is_transactional() {
+fn failed_default_valence_perception_is_transactional() {
     let mut mol = Molecule::new();
     let carbon = mol.add_atom(carbon()).expect("atom identifier capacity");
     for _ in 0..5 {
@@ -309,26 +233,31 @@ fn failed_valence_sanitization_is_transactional() {
     let mut molecule = SmallMolecule::from_graph(mol);
     let before = molecule.clone();
 
-    let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
+    let error = molecule
+        .perceive()
         .expect_err("pentavalent carbon should fail valence");
 
     assert!(matches!(
         error,
-        SanitizeError::Valence(ValenceError { issues })
+        perception_api::PerceptionError::Valence(ValenceError { issues })
             if matches!(issues.as_slice(), [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon)
     ));
     assert_eq!(molecule, before);
 }
 
 #[test]
-fn failed_aromaticity_sanitization_is_transactional() {
+fn failed_aromatic_source_normalization_is_transactional() {
     let mut molecule = read_smiles("c1cccc1").expect("raw invalid aromatic representation parses");
     let before = molecule.clone();
 
-    let error = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect_err("unmatchable aromatic representation should fail");
+    let error = molecule
+        .normalize()
+        .expect_err("unmatchable aromatic representation should fail normalization");
 
-    assert!(matches!(error, SanitizeError::Normalization(_)));
+    assert!(matches!(
+        error,
+        NormalizationError::InvalidAromaticRepresentation(_)
+    ));
     assert_eq!(molecule, before);
 }
 
@@ -346,20 +275,23 @@ fn failed_direct_aromaticity_perception_is_transactional() {
 }
 
 #[test]
-fn successful_sanitization_is_idempotent() {
+fn successful_default_perception_is_idempotent() {
     let mut molecule = read_smiles("CCO").expect("ethanol should parse");
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("first sanitize should succeed");
+    molecule.normalize().expect("ethanol normalization");
+    molecule
+        .perceive()
+        .expect("first perception should succeed");
     let once = molecule.clone();
 
-    perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("second sanitize should succeed");
+    molecule
+        .perceive()
+        .expect("second perception should succeed");
 
     assert_eq!(molecule, once);
 }
 
 #[test]
-fn sanitize_cleanup_invalidates_preexisting_perception() {
+fn normalization_cleanup_invalidates_preexisting_perception() {
     let mut mol = Molecule::new();
     let chlorine = mol
         .add_atom(Atom::new(Element::from_symbol("Cl").expect("chlorine")))
@@ -373,16 +305,7 @@ fn sanitize_cleanup_invalidates_preexisting_perception() {
     mark_all_fresh(&mut mol);
     let mut molecule = SmallMolecule::from_graph(mol);
 
-    perception_api::sanitize_with_options(
-        &mut molecule,
-        SanitizeOptions {
-            perceive_valence: false,
-            perceive_rings: false,
-            perceive_aromaticity: false,
-            perceive_stereo: false,
-        },
-    )
-    .expect("cleanup-only sanitize should succeed");
+    molecule.normalize().expect("representation cleanup");
 
     assert_all_stale(molecule.graph());
     assert_eq!(
@@ -813,9 +736,9 @@ $$$$
         .next()
         .expect("one molecule");
 
-    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("tetracoordinate phosphorus should sanitize");
-    let normalization = report.normalization;
+    let normalization = molecule
+        .normalize()
+        .expect("tetracoordinate phosphorus should normalize");
 
     assert!(normalization.warnings.is_empty());
     assert_eq!(normalization.created_stereo_elements.len(), 1);
@@ -851,9 +774,9 @@ $$$$
         .next()
         .expect("one molecule");
 
-    let report = perception_api::sanitize_with_options(&mut molecule, SanitizeOptions::default())
-        .expect("pyramidal sulfur should sanitize");
-    let normalization = report.normalization;
+    let normalization = molecule
+        .normalize()
+        .expect("pyramidal sulfur should normalize");
 
     assert!(normalization.warnings.is_empty());
     assert_eq!(normalization.created_stereo_elements.len(), 1);
