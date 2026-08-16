@@ -2,4 +2,4 @@ pub(crate) mod model;
 mod workflows;
 
 pub use model::SmallMolecule;
-pub use workflows::SmallMoleculeReadError;
+pub use workflows::{NormalizeAndPerceiveError, SmallMoleculeReadError};

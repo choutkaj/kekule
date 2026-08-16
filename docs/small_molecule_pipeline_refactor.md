@@ -378,17 +378,17 @@ Goal: finish the user-facing workflow after the low-level contracts are clean.
 
 Implement:
 
-- make coordinate-derived stereo inference a read-only perception/result operation;
-- provide an explicit transform to materialize inferred coordinate stereo into represented `StereoElement` state if useful;
-- decide and implement the ordinary fast-forward convenience API that composes parse/interpret/normalize/default-perceive for common small-molecule use;
-- update README examples to use the ordinary path while retaining explicit expert examples;
-- consider whether CIP belongs in the ordinary convenience or remains opt-in; default preference is opt-in unless there is a strong usability reason otherwise.
+- [x] make coordinate-derived stereo inference a read-only perception/result operation;
+- [x] provide an explicit transactional transform to materialize inferred coordinate stereo into represented `StereoElement` state;
+- [x] add `SmallMolecule::normalize_and_perceive()` as the single atomic ordinary convenience while keeping `from_smiles()` parse/interpret-only;
+- [x] update README examples to use the ordinary path while retaining explicit expert examples;
+- [x] keep coordinate stereo and CIP explicitly opt-in outside the ordinary convenience.
 
 Acceptance:
 
-- ordinary users have one obvious path to a ready-to-use molecule;
-- expert users retain direct access to every semantic stage;
-- convenience composition does not weaken the underlying stage boundaries.
+- [x] ordinary users have one obvious path to a ready-to-use molecule;
+- [x] expert users retain direct access to every semantic stage;
+- [x] convenience composition does not weaken the underlying stage boundaries.
 
 ### Stage 9 — Final desloppification and terminology cleanup
 

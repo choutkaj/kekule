@@ -51,6 +51,22 @@ Kekule separates the basic chemistry pipeline into clear stages:
 
 Normalization changes representation, not chemical meaning. Chemistry-changing standardization such as tautomer or protonation-state selection is a separate future concern. High-level APIs may compose these stages while lower-level APIs keep them individually accessible.
 
+Expert workflows can keep every stage explicit:
+
+```rust
+use std::error::Error;
+
+use kekule::{smiles, small::SmallMolecule};
+
+fn load_explicitly(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
+    let document = smiles::parse_str(input)?;
+    let mut molecule = smiles::interpret(&document)?.into_molecule()?;
+    molecule.normalize()?;
+    molecule.perceive()?;
+    Ok(molecule)
+}
+```
+
 
 ## Basic Usage
 
@@ -62,10 +78,9 @@ use std::error::Error;
 use kekule::{perception::stereo, small::SmallMolecule};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse a chiral amino acid, normalize its representation, and perceive chemistry.
+    // Parse a chiral amino acid, then atomically normalize and perceive it.
     let mut molecule = SmallMolecule::from_smiles("C[C@@H](C(=O)O)N")?;
-    molecule.normalize()?;
-    molecule.perceive()?;
+    molecule.normalize_and_perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
     let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut())?;

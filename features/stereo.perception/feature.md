@@ -3,13 +3,15 @@
 ## Summary
 
 Validate graph-local represented stereo, detect candidate stereochemical units,
-and assign local stereo elements only from coordinates.
+infer coordinate-derived stereo read-only, and materialize it only through an
+explicit representation transform.
 
 ## Behavior/API
 
-- Exposes three focused operations under `perception::stereo`:
-  `validate_stereo`, `detect_stereo_candidates`, and
-  `perceive_stereo`/`perceive_stereo_with_options`.
+- Exposes focused operations under `perception::stereo` for
+  `validate_stereo`, `detect_stereo_candidates`, read-only
+  `infer_coordinate_stereo*`, and explicit
+  `materialize_coordinate_stereo*`.
 - `validate_stereo(&Molecule) -> Result<(), StereoValidationError>` validates
   represented `StereoElement` structure only: live focus references, carrier
   counts and uniqueness, adjacency, focus/end-point coherence, bond order, and
@@ -23,17 +25,20 @@ and assign local stereo elements only from coordinates.
 - `detect_stereo_candidates(&Molecule) -> Vec<StereoCandidate>` remains a
   read-only exploratory query over the current graph and installed hydrogen or
   ring state where its conservative chemical heuristics require them.
-- Stereo perception never reads, assembles, consumes, warns about, or errors on
-  `StereoBondMark` state. Source-declared stereo belongs to normalization.
-- Stereo perception returns `Result<StereoPerceptionReport,
-  StereoPerceptionError>`, publishes coordinate-derived elements together only
-  after complete structural validation, and reports created element IDs.
-  Perception errors contain structural-validation or insertion failures; the
-  former source-mark warning and issue vocabulary is absent.
-- `StereoPerceptionOptions::assign_coordinates` controls coordinate-derived
-  tetrahedral and double-bond assignment. The default-off
-  `assign_coordinate_axes` enables the existing conservative 3D axis subset.
-  The current mutating publication behavior remains transitional for Stage 8.
+- Coordinate inference and materialization never read, assemble, consume, warn
+  about, or error on `StereoBondMark` state. Source-declared stereo belongs to
+  normalization.
+- `infer_coordinate_stereo*(&Molecule)` returns detached proposed
+  `StereoElement` values and leaves the complete molecule, including
+  `PerceptionState`, unchanged.
+- `CoordinateStereoOptions::infer_axes` enables the default-off conservative
+  3D axis subset. Tetrahedral and double-bond inference are always considered.
+- `materialize_coordinate_stereo*(&mut Molecule)` is the separately named
+  transactional transform. It stages the inferred elements on a clone,
+  skips already represented foci, validates the complete final stereo
+  representation, publishes only on success, and reports created element IDs.
+- `CoordinateStereoError` preserves structural-validation and insertion
+  failures. Source-mark warning and issue vocabulary remains absent.
 - Coordinate-derived tetrahedral assignment requires four explicit atom
   carriers with nondegenerate 3D coordinates. Double-bond assignment requires
   one explicit atom carrier on each side with nondegenerate 2D or 3D geometry.
@@ -47,34 +52,32 @@ and assign local stereo elements only from coordinates.
 ## Implementation Notes
 
 Stored stereo validation is representation-structural and independent of
-`PerceptionState`. Candidate detection and coordinate assignment retain their
+`PerceptionState`. Candidate detection and coordinate inference retain their
 existing conservative chemistry heuristics because they are true perception
-work. Coordinate assignment uses a staged clone, skips foci that already have a
-represented element, validates the complete proposed state, and publishes only
-on success.
+work. Inference returns a snapshot result; only explicit materialization
+changes represented stereo.
 
-Default perception does not call stereo perception. Source marks and their
-warnings or errors remain owned by `normalization`; coordinate-derived stereo
-remains an explicit focused operation.
+Default perception does not call coordinate inference or materialization.
+Source marks and their warnings or errors remain owned by `normalization`.
 
 
 ## Tests
 
 - Focused unit and regression tests cover perception-independent structural
-  validation, standalone candidate detection, transactional coordinate-derived
-  tetrahedral/double-bond/axis assignment, coordinate-axis opt-in behavior,
-  exact rollback, and explicit proof that perception leaves source marks
-  untouched and creates no source-declared elements.
+  validation, standalone candidate detection, completely read-only
+  tetrahedral/double-bond/axis inference, coordinate-axis opt-in behavior,
+  explicit transactional materialization, duplicate avoidance, orientation
+  and source preservation, and exact rollback.
 - Normalization regressions own wedge/hash/either, directional, source-axis,
   implicit source carrier, source-warning, and source-error coverage.
 
 ## Benchmarks
 
 - PubChem, Enamine, and PL-REX semantic fixtures continue to record represented
-  stereo plus candidate and coordinate-perception output after explicit
-  normalization and default perception.
+  stereo plus candidate and explicitly materialized coordinate-stereo output
+  after explicit normalization and default perception.
   Source-declared elements are now present in the normalization report and
-  canonical molecule before stereo perception runs.
+  canonical molecule before coordinate inference runs.
 - Exact descriptor parity remains the responsibility of `stereo.cip`.
 - Optional external-reference manifests are available for `pubchem-1k`,
   `pubchem-100k`, `pl-rex`, and `enamine-diversity`.
@@ -83,8 +86,8 @@ remains an explicit focused operation.
 
 
 ## Out Of Scope
-Exact CIP descriptors, default broad axis candidate perception, non-opt-in
-coordinate-only axis assignment, 2D coordinate-only axis assignment,
+Exact CIP descriptors, default broad axis candidate inference, non-opt-in
+coordinate-only axis inference, 2D coordinate-only axis inference,
 source-mark normalization, CXSMILES atropisomeric syntax, isomeric SMILES
 writing, enhanced stereo serialization, implicit-hydrogen coordinate
 reconstruction, stereo enumeration, and reaction stereo transfer.
@@ -163,3 +166,6 @@ reconstruction, stereo enumeration, and reaction stereo transfer.
 - v26: Move all source-mark assembly and diagnostics into normalization,
   remove source warnings from perception output, and narrow validation to
   represented structural invariants independent of installed perception.
+- v27: Replace mutating coordinate-stereo perception with detached read-only
+  inference results and a separately named transactional materialization
+  transform.
