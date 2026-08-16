@@ -1,42 +1,25 @@
 # Benchmarks
 
-This tree provides optional external-reference comparisons:
+This tree provides optional comparisons between Kekule and pinned external references:
 
-- `corpora/<corpus-id>/` owns corpus metadata, pinned membership, local inputs,
-  feature manifests, compressed goldens, and informational `results.toml`
-  observations.
-- `reference/` owns RDKit, Biopython, and DSSP corpus/reproduction tooling.
+- `corpora/<corpus-id>/corpus.toml` describes a corpus;
+- `sources.lock.json` pins record identity, URLs, checksums, categories, and packs;
+- `features/*.toml` contains benchmark manifests;
+- `golden/<benchmark-id>/` contains deterministic compressed reference outputs;
+- `reference/` contains RDKit, Biopython, and DSSP reproduction tools.
 
-All registered `data/` directories are generated locally and ignored.
-`sources.lock.json` pins record identity, URL, checksum, category, and pack
-membership. Locks, manifests, goldens, and result observations are tracked.
+The `features` directory name and manifest `feature_id` field are legacy benchmark-schema vocabulary. They identify benchmark targets and do not refer to a repository feature registry.
+
+All tracked manifests are discovered directly from the filesystem. Run one comparison or a deterministic selection of all available manifests with:
 
 ```bash
-cargo xtask benchmark --feature <feature-id> --corpus <corpus-id>
-cargo xtask benchmark --feature all
-cargo xtask benchmark --feature all --corpus all
-cargo xtask corpus check --corpus all
+cargo xtask benchmark --benchmark io.smiles.parse --corpus pubchem-1k
+cargo xtask benchmark --benchmark all --corpus pubchem-1k
+cargo xtask benchmark --benchmark all --corpus all
 ```
 
-Omitting `--corpus` considers only manifest-backed PubChem-1k and PDB-100
-targets. Explicit `--corpus all` also considers registered broad corpora.
-Absent combinations and planned features are skipped for `all` selectors; a
-concrete feature/corpus request without a manifest is an error.
+Use `--fixture PATH` for a partial diagnostic run. Independently reviewed `*-manual-semantic` goldens can be accepted only with one concrete benchmark/corpus pair plus `--accept-implementation-goldens`; generated RDKit, Biopython, and DSSP goldens cannot be replaced by that option.
 
-Every requested target records `match`, `differences`, or `error` with its
-scope and timestamp, then refreshes the dashboard. A difference or error is
-nonzero for that explicit invocation, but no repository workflow uses
-benchmarks as a gate. Result snapshots never affect feature or release status.
+`cargo xtask corpus check --corpus all` validates tracked provenance, nesting, and compressed goldens. Add `--require-data` to require and byte-check ignored local fixtures and packs. `--jobs N` overrides the automatic comparison worker count, which is capped at four.
 
-Use `--fixture PATH` for a partial diagnostic run. Independently reviewed
-`*-manual-semantic` goldens can be accepted only with one concrete
-feature/corpus plus `--accept-implementation-goldens`; generated RDKit,
-Biopython, and DSSP goldens cannot be replaced by that option.
-
-`cargo xtask corpus check` is an optional integrity utility. Add
-`--require-data` to require and byte-check ignored local fixtures and packs.
-The automatic comparison worker count is capped at four; `--jobs N` overrides
-it.
-
-External fixtures remain provenance-pinned, and reference tools must never
-become Rust runtime dependencies.
+Benchmark invocations report current matches and differences without updating unrelated repository metadata. They are deliberate scientific tools, not CI or release gates. External fixtures remain provenance-pinned, and reference tools never become Rust runtime dependencies.

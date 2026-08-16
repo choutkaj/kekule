@@ -1,11 +1,11 @@
 use crate::*;
 
 pub(crate) fn implementation_expected(
-    feature: &str,
+    benchmark: &str,
     _corpus: &str,
     fixture_path: &Path,
 ) -> Result<Value, Box<dyn Error>> {
-    match feature {
+    match benchmark {
         "bio.secondary-structure.dssp" => dssp_record_json(fixture_path),
         "io.mmcif.parse" => mmcif_document_json(fixture_path),
         "io.sdf.v2000.parse" => {
@@ -232,7 +232,7 @@ pub(crate) fn implementation_expected(
             }))
         }
         _ => Err(boxed_error(format!(
-            "no implementation comparison configured for feature `{feature}`"
+            "no implementation comparison configured for benchmark `{benchmark}`"
         ))),
     }
 }

@@ -1,8 +1,0 @@
-id = "model.force-field.dreiding"
-title = "DREIDING force-field adapter"
-area = "modeling"
-domains = ["small-molecule", "macromolecule"]
-version = 12
-status = "supported"
-description = "Prepare one fixed-charge nonperiodic DREIDING potential for an exact topology and evaluate supported structural views."
-depends_on = ["model.topology", "model.system", "model.potential", "core.units"]

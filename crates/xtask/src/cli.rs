@@ -5,10 +5,8 @@ const DEFAULT_BENCHMARK_JOB_LIMIT: usize = 4;
 pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
-        Some("dashboard") => crate::dashboard::dashboard(args.collect()),
         Some("benchmark") => benchmark(args.collect()),
         Some("corpus") => crate::corpus::corpus(args.collect()),
-        Some("features") => list_features(),
         _ => {
             print_help();
             Ok(())
@@ -18,7 +16,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
 
 pub(crate) fn print_help() {
     eprintln!(
-        "usage:\n  cargo xtask dashboard [--check]\n  cargo xtask benchmark --feature FEATURE_ID|all [--corpus CORPUS_ID|all (default: baseline)] [--fixture PATH] [--accept-implementation-goldens] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]\n  cargo xtask features"
+        "usage:\n  cargo xtask benchmark --benchmark BENCHMARK_ID|all --corpus CORPUS_ID|all [--fixture PATH] [--accept-implementation-goldens] [--jobs N]\n  cargo xtask corpus check --corpus CORPUS_ID|all [--require-data]"
     );
 }
 
@@ -32,7 +30,7 @@ pub(crate) fn benchmark_args(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--feature" | "--corpus" | "--fixture" | "--jobs" => {
+            "--benchmark" | "--corpus" | "--fixture" | "--jobs" => {
                 if index + 1 >= args.len() {
                     return Err(boxed_error(format!("missing value after {}", args[index])));
                 }

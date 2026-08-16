@@ -13,7 +13,7 @@
 
 `kekule` is an experimental chemistry backend scoped for both small molecules and macromolecules. The project is intended to cover regular cheminformatics workflows, as well as modeling-oriented tasks. `kekule` is human-architected and AI-coded.
 
-For feature overview and parity checks, see the [feature dashboard](https://choutkaj.github.io/kekule/).
+The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md). Optional external-reference comparisons are documented in [`benchmarks/README.md`](benchmarks/README.md).
 
 > [!NOTE]
 > `kekule` is in early development. Breaking API changes will happen without notice.

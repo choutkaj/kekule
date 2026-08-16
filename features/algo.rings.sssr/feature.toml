@@ -1,8 +1,0 @@
-id = "algo.rings.sssr"
-title = "Smallest-set ring basis"
-area = "algorithms"
-domains = ["small-molecule"]
-version = 16
-status = "supported"
-description = "Compute a deterministic smallest-set ring basis for connected small-molecule graphs."
-depends_on = ["algo.rings.fast"]

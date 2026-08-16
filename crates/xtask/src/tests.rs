@@ -33,84 +33,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn value_after_flag_finds_following_value() {
     let args = vec![
         "benchmark".to_owned(),
-        "--feature".to_owned(),
+        "--benchmark".to_owned(),
         "core.graph".to_owned(),
     ];
 
-    assert_eq!(value_after_flag(&args, "--feature"), Some("core.graph"));
-}
-
-#[test]
-fn read_feature_parses_typed_metadata() {
-    let root = temp_feature_root("read-feature");
-    write_feature(
-        &root,
-        "example.feature",
-        r#"id = "example.feature"
-title = "Example"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 2
-status = "planned"
-description = "Example feature."
-depends_on = ["core.graph"]
-"#,
-    );
-
-    let feature = read_feature(&root.join("example.feature").join("feature.toml"))
-        .expect("feature should parse");
-
-    assert_eq!(feature.id, "example.feature");
-    assert_eq!(feature.version, 2);
-    assert_eq!(feature.status, FeatureStatus::Planned);
-    assert!(!feature.status.has_implementation());
-    assert_eq!(feature.domains, vec![FeatureDomain::Infrastructure]);
-    assert_eq!(feature.depends_on, vec!["core.graph"]);
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn feature_status_parses_the_release_vocabulary() {
-    #[derive(Deserialize)]
-    struct StatusOnly {
-        status: FeatureStatus,
-    }
-
-    for (name, expected, has_implementation) in [
-        ("planned", FeatureStatus::Planned, false),
-        ("experimental", FeatureStatus::Experimental, true),
-        ("supported", FeatureStatus::Supported, true),
-        ("deprecated", FeatureStatus::Deprecated, true),
-    ] {
-        let parsed: StatusOnly =
-            toml::from_str(&format!("status = \"{name}\"")).expect("release status should parse");
-        assert_eq!(parsed.status, expected);
-        assert_eq!(parsed.status.has_implementation(), has_implementation);
-    }
-}
-
-#[test]
-fn local_only_corpus_descriptors_match_the_registry() {
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for corpus_id in [
-        "pubchem-1k",
-        "pubchem-100k",
-        "pl-rex",
-        "enamine-diversity",
-        "pdb-100",
-        "pdb-1000",
-    ] {
-        let path = workspace_root
-            .join("benchmarks/corpora")
-            .join(corpus_id)
-            .join("corpus.toml");
-        let text = fs::read_to_string(&path).expect("corpus descriptor should read");
-        let descriptor: CorpusDescriptor =
-            toml::from_str(&text).expect("corpus descriptor should parse");
-        let registered = benchmark_corpus(corpus_id).expect("corpus should be registered");
-        assert_eq!(descriptor.id, registered.id);
-        assert_eq!(descriptor.local_only, registered.local_only);
-    }
+    assert_eq!(value_after_flag(&args, "--benchmark"), Some("core.graph"));
 }
 
 #[test]
@@ -202,627 +129,6 @@ fn kekule_package_metadata_uses_the_initial_release_contract() {
 }
 
 #[test]
-fn feature_metadata_does_not_require_benchmark_manifests() {
-    let root = temp_feature_root("optional-benchmark-manifest");
-    write_feature(
-        &root,
-        "valid.feature",
-        r#"id = "valid.feature"
-title = "Valid feature"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-status = "supported"
-description = "Feature without a benchmark manifest."
-depends_on = []
-"#,
-    );
-
-    let feature = read_feature(&root.join("valid.feature").join("feature.toml"))
-        .expect("feature should not require a benchmark manifest");
-    assert!(benchmark_targets_from(&root, std::slice::from_ref(&feature), "all", "all").is_empty());
-    assert!(BENCHMARK_CORPORA.iter().all(|corpus| corpus.local_only));
-    assert!(benchmark_corpus("smoke").is_none());
-    assert!(benchmark_corpus("pubchem-100").is_none());
-    assert!(benchmark_corpus("pdb-10").is_none());
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn feature_schema_rejects_removed_validation_and_benchmark_requirement_keys() {
-    let root = temp_feature_root("removed-benchmark-requirement");
-    for removed_key in ["validation_required", "benchmark_required"] {
-        write_feature(
-            &root,
-            removed_key,
-            &format!(
-                r#"id = "{removed_key}"
-title = "Removed key"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-status = "supported"
-description = "Removed schema key."
-depends_on = []
-{removed_key} = ["pubchem-1k"]
-"#
-            ),
-        );
-        let error = read_feature(&root.join(removed_key).join("feature.toml"))
-            .expect_err("removed schema key should be rejected");
-        assert!(error.to_string().contains("unknown field"));
-    }
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn read_feature_rejects_unknown_status_removed_keys_and_shape_errors() {
-    let root = temp_feature_root("bad-feature");
-    write_feature(
-        &root,
-        "bad.bool",
-        r#"id = "bad.bool"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-status = "unknown"
-description = "Bad feature."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("bad.bool").join("feature.toml")).is_err());
-
-    write_feature(
-        &root,
-        "bad.implemented",
-        r#"id = "bad.implemented"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-implemented = false
-description = "Removed metadata field."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("bad.implemented").join("feature.toml")).is_err());
-
-    write_feature(
-        &root,
-        "bad.deprecated",
-        r#"id = "bad.deprecated"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-priority = "P0"
-status = "planned"
-description = "Bad feature."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("bad.deprecated").join("feature.toml")).is_err());
-
-    write_feature(
-        &root,
-        "bad.removed",
-        r#"id = "bad.removed"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-status = "planned"
-validated = false
-description = "Removed metadata field."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("bad.removed").join("feature.toml")).is_err());
-
-    write_feature(
-        &root,
-        "bad.version",
-        r#"id = "bad.version"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 0
-status = "planned"
-description = "Bad feature."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("bad.version").join("feature.toml")).is_err());
-
-    write_feature(
-        &root,
-        "bad.domains",
-        r#"id = "bad.domains"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure", "small-molecule"]
-version = 1
-status = "planned"
-description = "Bad feature domains."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("bad.domains").join("feature.toml")).is_err());
-
-    write_feature_without_doc(
-        &root,
-        "missing.doc",
-        r#"id = "missing.doc"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-status = "planned"
-description = "Bad feature."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("missing.doc").join("feature.toml")).is_err());
-
-    write_feature(
-        &root,
-        "real.id",
-        r#"id = "wrong.id"
-title = "Bad"
-area = "infrastructure"
-domains = ["infrastructure"]
-version = 1
-status = "planned"
-description = "Bad feature."
-depends_on = []
-"#,
-    );
-    assert!(read_feature(&root.join("real.id").join("feature.toml")).is_err());
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn read_features_sorts_skips_templates_and_validates_dependencies() {
-    let root = temp_feature_root("feature-set");
-    write_feature(
-        &root,
-        "z.feature",
-        r#"id = "z.feature"
-title = "Zed"
-area = "core"
-domains = ["small-molecule", "macromolecule"]
-version = 1
-status = "experimental"
-description = "Z feature."
-depends_on = ["a.feature"]
-"#,
-    );
-    write_feature(
-        &root,
-        "a.feature",
-        r#"id = "a.feature"
-title = "Aye"
-area = "core"
-domains = ["small-molecule", "macromolecule"]
-version = 1
-status = "experimental"
-description = "A feature."
-depends_on = []
-"#,
-    );
-    fs::create_dir_all(root.join("_template")).expect("template dir should create");
-    fs::write(root.join("_template").join("feature.toml"), "not = valid")
-        .expect("template metadata should write");
-
-    let features = read_features_from(&root).expect("feature set should parse");
-
-    assert_eq!(
-        features
-            .iter()
-            .map(|feature| feature.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["a.feature", "z.feature"]
-    );
-
-    write_feature(
-        &root,
-        "bad.dependency",
-        r#"id = "bad.dependency"
-title = "Bad"
-area = "core"
-domains = ["small-molecule"]
-version = 1
-status = "planned"
-description = "Bad dependency."
-depends_on = ["missing.feature"]
-"#,
-    );
-    assert!(read_features_from(&root).is_err());
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn feature_graph_rejects_duplicate_self_cyclic_and_incompatible_dependencies() {
-    let base = feature_for_test("base", FeatureStatus::Supported, &[]);
-
-    let duplicate = feature_for_test("duplicate", FeatureStatus::Experimental, &["base", "base"]);
-    let error = validate_feature_set(&[base.clone(), duplicate])
-        .expect_err("duplicate dependencies should be rejected");
-    assert!(error.to_string().contains("more than once"));
-
-    let self_dependent = feature_for_test("self", FeatureStatus::Planned, &["self"]);
-    let error =
-        validate_feature_set(&[self_dependent]).expect_err("self dependencies should be rejected");
-    assert!(error.to_string().contains("depends on itself"));
-
-    let cycle_a = feature_for_test("cycle.a", FeatureStatus::Planned, &["cycle.b"]);
-    let cycle_b = feature_for_test("cycle.b", FeatureStatus::Planned, &["cycle.a"]);
-    let error = validate_feature_set(&[cycle_a, cycle_b])
-        .expect_err("dependency cycles should be rejected");
-    assert!(error
-        .to_string()
-        .contains("feature dependency graph contains a cycle: cycle.a -> cycle.b -> cycle.a"));
-
-    let experimental = feature_for_test("experimental", FeatureStatus::Experimental, &[]);
-    let supported = feature_for_test("supported", FeatureStatus::Supported, &["experimental"]);
-    let error = validate_feature_set(&[experimental, supported])
-        .expect_err("supported features should require supported dependencies");
-    assert!(error
-        .to_string()
-        .contains("`supported` features may depend only on `supported` features"));
-
-    let planned = feature_for_test("planned", FeatureStatus::Planned, &[]);
-    let experimental = feature_for_test("experimental", FeatureStatus::Experimental, &["planned"]);
-    let error = validate_feature_set(&[planned, experimental])
-        .expect_err("experimental features should not depend on planned work");
-    assert!(error.to_string().contains(
-        "`experimental` features may depend only on `experimental` or `supported` features"
-    ));
-
-    let supported = feature_for_test("supported", FeatureStatus::Supported, &[]);
-    let experimental =
-        feature_for_test("experimental", FeatureStatus::Experimental, &["supported"]);
-    let deprecated = feature_for_test("deprecated", FeatureStatus::Deprecated, &["experimental"]);
-    let planned = feature_for_test("planned", FeatureStatus::Planned, &["deprecated"]);
-    validate_feature_set(&[supported, experimental, deprecated, planned])
-        .expect("each status should accept its documented dependency maturity");
-}
-
-#[test]
-fn feature_dependency_layers_are_deterministic() {
-    let features = vec![
-        feature_for_test("leaf", FeatureStatus::Supported, &["right", "left"]),
-        feature_for_test("right", FeatureStatus::Supported, &["root"]),
-        feature_for_test("root", FeatureStatus::Supported, &[]),
-        feature_for_test("left", FeatureStatus::Supported, &["root"]),
-    ];
-
-    validate_feature_set(&features).expect("feature graph should be valid");
-    let layers = feature_dependency_layers(&features).expect("layers should resolve");
-    assert_eq!(
-        layers
-            .iter()
-            .map(|layer| {
-                layer
-                    .iter()
-                    .map(|feature| feature.id.as_str())
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>(),
-        vec![vec!["root"], vec!["left", "right"], vec!["leaf"]]
-    );
-}
-
-#[test]
-fn render_dashboard_is_stable_and_uses_compact_benchmark_cells() {
-    let features = vec![
-        Feature {
-            id: "a.feature".to_owned(),
-            title: "Aye".to_owned(),
-            area: "core".to_owned(),
-            domains: vec![FeatureDomain::SmallMolecule, FeatureDomain::Macromolecule],
-            version: 1,
-            status: FeatureStatus::Supported,
-            description: "A feature.".to_owned(),
-            depends_on: Vec::new(),
-        },
-        Feature {
-            id: "z.feature".to_owned(),
-            title: "Zed".to_owned(),
-            area: "io".to_owned(),
-            domains: vec![FeatureDomain::SmallMolecule],
-            version: 3,
-            status: FeatureStatus::Supported,
-            description: "Z feature.".to_owned(),
-            depends_on: vec!["a.feature".to_owned()],
-        },
-        Feature {
-            id: "failing.feature".to_owned(),
-            title: "Failing".to_owned(),
-            area: "benchmark".to_owned(),
-            domains: vec![FeatureDomain::SmallMolecule],
-            version: 1,
-            status: FeatureStatus::Deprecated,
-            description: "Feature with counted failures.".to_owned(),
-            depends_on: Vec::new(),
-        },
-        Feature {
-            id: "missing.feature".to_owned(),
-            title: "Missing".to_owned(),
-            area: "benchmark".to_owned(),
-            domains: vec![FeatureDomain::Macromolecule],
-            version: 1,
-            status: FeatureStatus::Experimental,
-            description: "Feature without recorded status.".to_owned(),
-            depends_on: Vec::new(),
-        },
-        Feature {
-            id: "harness.feature".to_owned(),
-            title: "Harness".to_owned(),
-            area: "infrastructure".to_owned(),
-            domains: vec![FeatureDomain::Infrastructure],
-            version: 2,
-            status: FeatureStatus::Supported,
-            description: "Infrastructure feature.".to_owned(),
-            depends_on: Vec::new(),
-        },
-    ];
-    let results = BTreeMap::from([(
-        "failing.feature".to_owned(),
-        BenchmarkResults {
-            feature_id: "failing.feature".to_owned(),
-            corpora: BTreeMap::from([(
-                "pubchem-1k".to_owned(),
-                BenchmarkResult {
-                    outcome: BenchmarkResultOutcome::Differences,
-                    scope: "full".to_owned(),
-                    fixture_count: 7,
-                    compared_count: 4,
-                    difference_count: 3,
-                    first_detail: Some("fixture `data/bad.sdf` differs".to_owned()),
-                    reference_tool: Some("rdkit".to_owned()),
-                    reference_version: Some("RDKit test".to_owned()),
-                    manifest_digest: Some("0".repeat(64)),
-                    input_digest_schema_version: Some(BENCHMARK_INPUT_DIGEST_SCHEMA_VERSION),
-                    input_digest: Some("1".repeat(64)),
-                    input_count: 1,
-                    legacy_source: None,
-                    benchmarked_at_unix: 1,
-                },
-            )]),
-        },
-    )]);
-    let corpus_info = BTreeMap::from([
-        (
-            "smoke".to_owned(),
-            CorpusDashboardInfo {
-                id: "smoke".to_owned(),
-                label: "smoke".to_owned(),
-                title: "Checked-in external smoke corpus".to_owned(),
-                kind: CorpusKind::Mixed,
-                expected_count: 7,
-                features: BTreeMap::from([
-                    (
-                        "failing.feature".to_owned(),
-                        CorpusFeatureDashboardInfo {
-                            reference_tool: "rdkit".to_owned(),
-                            reference_version: "RDKit 2026.03.3".to_owned(),
-                        },
-                    ),
-                    (
-                        "missing.feature".to_owned(),
-                        CorpusFeatureDashboardInfo {
-                            reference_tool: "biopython".to_owned(),
-                            reference_version: "Biopython 1.87 / mkdssp version 4.6.1".to_owned(),
-                        },
-                    ),
-                ]),
-            },
-        ),
-        (
-            "pubchem-1k".to_owned(),
-            CorpusDashboardInfo {
-                id: "pubchem-1k".to_owned(),
-                label: "PubChem 1k".to_owned(),
-                title: "PubChem deterministic 1000-compound corpus".to_owned(),
-                kind: CorpusKind::SmallMolecule,
-                expected_count: 1000,
-                features: BTreeMap::from([
-                    (
-                        "a.feature".to_owned(),
-                        CorpusFeatureDashboardInfo {
-                            reference_tool: "rdkit".to_owned(),
-                            reference_version: "RDKit 2026.03.3".to_owned(),
-                        },
-                    ),
-                    (
-                        "failing.feature".to_owned(),
-                        CorpusFeatureDashboardInfo {
-                            reference_tool: "rdkit".to_owned(),
-                            reference_version: "RDKit 2026.03.3".to_owned(),
-                        },
-                    ),
-                ]),
-            },
-        ),
-        (
-            "pdb-100".to_owned(),
-            CorpusDashboardInfo {
-                id: "pdb-100".to_owned(),
-                label: "PDB 100".to_owned(),
-                title: "PDB deterministic 100-entry corpus".to_owned(),
-                kind: CorpusKind::Macromolecule,
-                expected_count: 100,
-                features: BTreeMap::from([(
-                    "missing.feature".to_owned(),
-                    CorpusFeatureDashboardInfo {
-                        reference_tool: "biopython".to_owned(),
-                        reference_version: "Biopython 1.87 / mkdssp version 4.6.1".to_owned(),
-                    },
-                )]),
-            },
-        ),
-    ]);
-
-    let dashboard = render_dashboard(&features, &results, &corpus_info);
-
-    assert!(dashboard.starts_with("<!doctype html>\n"));
-    assert!(
-        dashboard.contains("<table id=\"small-molecules-dashboard\" class=\"feature-dashboard\">")
-    );
-    assert!(
-        dashboard.contains("<table id=\"macromolecules-dashboard\" class=\"feature-dashboard\">")
-    );
-    assert!(dashboard.contains(
-        "<table id=\"infrastructure-dashboard\" class=\"feature-dashboard infrastructure-table\">"
-    ));
-    assert!(dashboard.contains("<h2>Small molecules</h2>"));
-    assert!(dashboard.contains("<h2>Macromolecules</h2>"));
-    assert!(dashboard.contains("<h2>Infrastructure and harness</h2>"));
-    assert!(dashboard.contains("<h2>Feature dependency graph</h2>"));
-    let infrastructure_position = dashboard
-        .find("<h2>Infrastructure and harness</h2>")
-        .expect("infrastructure section should be present");
-    let graph_position = dashboard
-        .find("<h2>Feature dependency graph</h2>")
-        .expect("dependency graph should be present");
-    assert!(
-        infrastructure_position < graph_position,
-        "all feature tables should precede the dependency graph"
-    );
-    assert!(dashboard.contains("class=\"feature-graph\""));
-    assert!(dashboard.contains("marker-end=\"url(#feature-graph-arrow)\""));
-    assert!(dashboard.contains("<a href=\"./z.feature/feature.md\">"));
-    assert!(dashboard.contains("layer 0"));
-    assert!(dashboard.contains("layer 1"));
-    assert!(dashboard.contains("<strong>Reference codebase:</strong> RDKit v2026.03.3"));
-    assert!(dashboard.contains("<strong>Reference codebase:</strong> Biopython v1.87"));
-    assert!(dashboard.contains("<strong>DSSP executable:</strong> mkdssp v4.6.1"));
-    assert!(dashboard.contains("th.area, td.area { text-align: left; }"));
-    assert!(dashboard.contains("<th class=\"compact area\" data-sort-type=\"text\" title=\"Area\"><button class=\"sort\" type=\"button\" aria-label=\"Sort by Area\">Area</button></th>"));
-    assert!(dashboard.contains("<td class=\"compact area\" data-sort-value=\"core\">core</td>"));
-    assert!(!dashboard
-        .contains("aria-label=\"Sort by Area\"><span class=\"rotated-label\">Area</span>"));
-    assert!(dashboard.contains("aria-label=\"Sort by Status\">Status</button>"));
-    assert!(dashboard.contains("<span class=\"feature-status status-supported\">supported</span>"));
-    assert!(dashboard
-        .contains("<span class=\"feature-status status-experimental\">experimental</span>"));
-    assert!(
-        dashboard.contains("<span class=\"feature-status status-deprecated\">deprecated</span>")
-    );
-    assert!(!dashboard.contains(">Implemented<"));
-    assert!(dashboard.contains("height: 168px"));
-    assert!(dashboard.contains("left: calc(50% + 23px)"));
-    assert!(dashboard.contains("bottom: 12px"));
-    assert!(dashboard.contains("width: 144px"));
-    assert!(dashboard.contains("height: 46px"));
-    assert!(dashboard.contains("display: flex"));
-    assert!(dashboard.contains("rotate(-90deg)"));
-    assert!(dashboard.contains("transform-origin: left bottom"));
-    assert!(dashboard.contains("overflow: hidden"));
-    assert!(dashboard.contains("white-space: nowrap"));
-    assert!(!dashboard.contains("Validated"));
-    assert!(!dashboard.contains("<span class=\"rotated-name\">smoke</span>"));
-    assert!(dashboard.contains(
-        "<span class=\"rotated-name\">pubchem-1k</span><br><span class=\"rotated-count\">(n=1000)</span>"
-    ));
-    assert!(dashboard.contains(
-        "<span class=\"rotated-name\">pdb-100</span><br><span class=\"rotated-count\">(n=100)</span>"
-    ));
-    assert_eq!(dashboard.matches("<code>a.feature</code>").count(), 2);
-    assert!(dashboard.contains("data-sort-value=\"0\""));
-    assert!(dashboard.contains("<code>z.feature</code>"));
-    assert!(dashboard.contains("<code>harness.feature</code>"));
-    assert!(dashboard.contains("data-sort-value=\"1\""));
-    assert!(dashboard.contains("aria-label=\"last differences\""));
-    assert!(dashboard.contains("<span class=\"count\">3</span>"));
-    assert!(dashboard.contains("<span class=\"available\">A</span>available"));
-    assert!(dashboard.contains(
-        "<span class=\"available\" aria-label=\"available\" title=\"benchmark available; no recorded result; reference: Biopython v1.87"
-    ));
-    assert!(dashboard.contains("never affect feature status or release health"));
-    assert!(dashboard.contains("document.querySelectorAll('table.feature-dashboard')"));
-    assert!(dashboard.contains("button.addEventListener('click'"));
-    assert!(dashboard.ends_with('\n'));
-}
-
-#[test]
-fn dashboard_corpus_cells_show_optional_benchmark_observations() {
-    let feature = Feature {
-        id: "optional.feature".to_owned(),
-        title: "Optional".to_owned(),
-        area: "benchmark".to_owned(),
-        domains: vec![FeatureDomain::SmallMolecule],
-        version: 1,
-        status: FeatureStatus::Supported,
-        description: "Feature with optional corpus evidence.".to_owned(),
-        depends_on: Vec::new(),
-    };
-    let matched = BenchmarkResult {
-        outcome: BenchmarkResultOutcome::Match,
-        scope: "full".to_owned(),
-        fixture_count: 1,
-        compared_count: 1,
-        difference_count: 0,
-        first_detail: None,
-        reference_tool: Some("rdkit".to_owned()),
-        reference_version: Some("RDKit test".to_owned()),
-        manifest_digest: Some("a".repeat(64)),
-        input_digest_schema_version: Some(BENCHMARK_INPUT_DIGEST_SCHEMA_VERSION),
-        input_digest: Some("b".repeat(64)),
-        input_count: 1,
-        legacy_source: None,
-        benchmarked_at_unix: 1,
-    };
-    let results = BenchmarkResults {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([("pubchem-1k".to_owned(), matched)]),
-    };
-    let reference = CorpusFeatureDashboardInfo {
-        reference_tool: "rdkit".to_owned(),
-        reference_version: "RDKit test".to_owned(),
-    };
-
-    assert!(dashboard_corpus_cell(
-        &feature,
-        Some(&results),
-        "pubchem-1k",
-        Some(&reference),
-        true,
-    )
-    .contains("aria-label=\"last match\""));
-    assert!(
-        dashboard_corpus_cell(&feature, None, "pubchem-1k", Some(&reference), true)
-            .contains("title=\"benchmark available; no recorded result; reference: RDKit vtest\"")
-    );
-    assert!(
-        dashboard_corpus_cell(&feature, None, "pubchem-1k", None, true)
-            .contains("aria-label=\"not available\"")
-    );
-    assert!(
-        dashboard_corpus_cell(&feature, Some(&results), "pubchem-1k", None, true)
-            .contains("aria-label=\"not available\"")
-    );
-    assert!(dashboard_corpus_cell(
-        &feature,
-        Some(&results),
-        "pubchem-1k",
-        Some(&reference),
-        false
-    )
-    .contains("aria-label=\"not available\""));
-}
-
-#[test]
-fn benchmark_manifest_path_is_feature_scoped() {
-    assert_eq!(
-        benchmark_manifest_path("core.graph", "smoke"),
-        PathBuf::from("benchmarks/corpora/smoke/features/core.graph.toml")
-    );
-}
-
-#[test]
 fn benchmark_jobs_uses_a_memory_safe_default_and_accepts_override() {
     let default_jobs = benchmark_jobs(&[]).expect("default worker count should resolve");
     assert!((1..=4).contains(&default_jobs));
@@ -833,13 +139,13 @@ fn benchmark_jobs_uses_a_memory_safe_default_and_accepts_override() {
     assert!(benchmark_jobs(&["--jobs".to_owned(), "0".to_owned()]).is_err());
     assert!(benchmark_jobs(&["--jobs".to_owned(), "many".to_owned()]).is_err());
     assert!(benchmark_args(&[
-        "--feature".to_owned(),
+        "--benchmark".to_owned(),
         "all".to_owned(),
         "--jobs".to_owned()
     ])
     .is_err());
     assert!(benchmark_args(&[
-        "--feature".to_owned(),
+        "--benchmark".to_owned(),
         "io.smiles.canonical".to_owned(),
         "--corpus".to_owned(),
         "pubchem-100k".to_owned(),
@@ -848,7 +154,7 @@ fn benchmark_jobs_uses_a_memory_safe_default_and_accepts_override() {
     ])
     .is_ok());
     assert!(benchmark_args(&[
-        "--feature".to_owned(),
+        "--benchmark".to_owned(),
         "stereo.perception".to_owned(),
         "--corpus".to_owned(),
         "pubchem-100k".to_owned(),
@@ -861,15 +167,15 @@ fn benchmark_jobs_uses_a_memory_safe_default_and_accepts_override() {
 
 #[test]
 fn implementation_golden_acceptance_is_limited_to_manual_semantic_references() {
-    let root = temp_feature_root("accept-implementation-goldens");
+    let root = temp_workspace_root("accept-implementation-goldens");
     let corpus_root = root.join("benchmarks/corpora/smoke");
     let manifest_path = corpus_root.join("features/stereo.perception.toml");
     fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
-        .expect("features directory");
+        .expect("manifest directory");
     fs::create_dir_all(corpus_root.join("data")).expect("data directory");
     fs::write(corpus_root.join("data/example.smi"), "CC CID:1\n").expect("fixture should write");
     let mut manifest = BenchmarkManifest {
-        feature_id: "stereo.perception".to_owned(),
+        benchmark_id: "stereo.perception".to_owned(),
         corpus_id: "smoke".to_owned(),
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit 2026.03.3".to_owned(),
@@ -904,150 +210,63 @@ fn progress_bars_are_compact_and_deterministic() {
 }
 
 #[test]
-fn benchmark_defaults_to_small_corpora_and_all_includes_broad_manifest_backed_features() {
-    assert_eq!(benchmark_corpus_selector(&[]), "baseline");
-    assert_eq!(
-        benchmark_corpus_selector(&[
-            "--feature".to_owned(),
-            "all".to_owned(),
-            "--corpus".to_owned(),
-            "pubchem-1k".to_owned(),
-        ]),
-        "pubchem-1k"
-    );
+fn benchmark_discovery_is_manifest_only_and_deterministic() {
+    let root = temp_workspace_root("benchmark-discovery");
+    write_test_benchmark_manifest(&root, "zeta", "corpus-b");
+    write_test_benchmark_manifest(&root, "alpha", "corpus-b");
+    write_test_benchmark_manifest(&root, "alpha", "corpus-a");
 
-    let root = temp_feature_root("all-benchmark-corpora");
-    let features = vec![
-        Feature {
-            id: "small".to_owned(),
-            title: "Small".to_owned(),
-            area: "io".to_owned(),
-            domains: vec![FeatureDomain::SmallMolecule],
-            version: 1,
-            status: FeatureStatus::Supported,
-            description: "Small feature.".to_owned(),
-            depends_on: Vec::new(),
-        },
-        Feature {
-            id: "macro".to_owned(),
-            title: "Macro".to_owned(),
-            area: "bio".to_owned(),
-            domains: vec![FeatureDomain::Macromolecule],
-            version: 1,
-            status: FeatureStatus::Experimental,
-            description: "Macro feature.".to_owned(),
-            depends_on: Vec::new(),
-        },
-        Feature {
-            id: "planned".to_owned(),
-            title: "Planned".to_owned(),
-            area: "descriptors".to_owned(),
-            domains: vec![FeatureDomain::SmallMolecule],
-            version: 1,
-            status: FeatureStatus::Planned,
-            description: "Planned feature.".to_owned(),
-            depends_on: Vec::new(),
-        },
-        Feature {
-            id: "deprecated".to_owned(),
-            title: "Deprecated".to_owned(),
-            area: "descriptors".to_owned(),
-            domains: vec![FeatureDomain::SmallMolecule],
-            version: 1,
-            status: FeatureStatus::Deprecated,
-            description: "Deprecated feature.".to_owned(),
-            depends_on: Vec::new(),
-        },
-    ];
-    for (feature, corpus) in [
-        ("small", "pubchem-1k"),
-        ("small", "pubchem-100k"),
-        ("small", "enamine-diversity"),
-        ("macro", "pdb-100"),
-        ("macro", "pdb-1000"),
-        ("planned", "pubchem-1k"),
-        ("deprecated", "pubchem-100k"),
-    ] {
-        let path = benchmark_manifest_path_from(&root, feature, corpus);
-        fs::create_dir_all(path.parent().expect("manifest parent"))
-            .expect("manifest directory should create");
-        fs::write(path, "").expect("manifest marker should write");
-    }
-
+    let targets =
+        discover_benchmark_targets_from(&root).expect("benchmark manifests should be discovered");
+    let identities = targets
+        .iter()
+        .map(|target| (target.benchmark_id.as_str(), target.corpus_id.as_str()))
+        .collect::<Vec<_>>();
     assert_eq!(
-        benchmark_targets_from(&root, &features, "all", "baseline")
-            .into_iter()
-            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
-            .collect::<Vec<_>>(),
+        identities,
         vec![
-            ("small", "pubchem-1k".to_owned()),
-            ("macro", "pdb-100".to_owned()),
+            ("alpha", "corpus-a"),
+            ("alpha", "corpus-b"),
+            ("zeta", "corpus-b"),
         ]
-    );
-    assert_eq!(
-        benchmark_targets_from(&root, &features, "all", "pubchem-1k")
-            .into_iter()
-            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
-            .collect::<Vec<_>>(),
-        vec![("small", "pubchem-1k".to_owned())]
-    );
-    assert_eq!(
-        benchmark_targets_from(&root, &features, "all", "all")
-            .into_iter()
-            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
-            .collect::<Vec<_>>(),
-        vec![
-            ("small", "pubchem-1k".to_owned()),
-            ("small", "pubchem-100k".to_owned()),
-            ("small", "enamine-diversity".to_owned()),
-            ("macro", "pdb-100".to_owned()),
-            ("macro", "pdb-1000".to_owned()),
-            ("deprecated", "pubchem-100k".to_owned()),
-        ]
-    );
-    assert_eq!(
-        benchmark_targets_from(&root, &features, "small", "all")
-            .into_iter()
-            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
-            .collect::<Vec<_>>(),
-        vec![
-            ("small", "pubchem-1k".to_owned()),
-            ("small", "pubchem-100k".to_owned()),
-            ("small", "enamine-diversity".to_owned()),
-        ]
-    );
-    assert_eq!(
-        benchmark_targets_from(&root, &features, "small", "pubchem-100k")
-            .into_iter()
-            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
-            .collect::<Vec<_>>(),
-        vec![("small", "pubchem-100k".to_owned())]
-    );
-    assert_eq!(
-        benchmark_targets_from(&root, &features, "macro", "pubchem-1k")
-            .into_iter()
-            .map(|(feature, corpus)| (feature.id.as_str(), corpus))
-            .collect::<Vec<_>>(),
-        Vec::<(&str, String)>::new()
     );
     fs::remove_dir_all(root).ok();
 }
 
 #[test]
-fn concrete_missing_manifest_error_is_clear_while_all_selectors_skip() {
-    assert_eq!(
-        concrete_missing_manifest_error("io.smiles.parse", "pdb-100").as_deref(),
-        Some("no benchmark manifest for feature `io.smiles.parse` and corpus `pdb-100`")
-    );
-    assert_eq!(concrete_missing_manifest_error("all", "pdb-100"), None);
-    assert_eq!(
-        concrete_missing_manifest_error("io.smiles.parse", "all"),
-        None
-    );
-    assert_eq!(
-        concrete_missing_manifest_error("io.smiles.parse", "baseline"),
-        None
-    );
+fn selecting_one_benchmark_and_corpus_uses_manifest_directly() {
+    let root = temp_workspace_root("benchmark-selection");
+    write_test_benchmark_manifest(&root, "io.smiles.parse", "smoke");
+    write_test_benchmark_manifest(&root, "io.smiles.write", "smoke");
+
+    let targets = select_benchmark_targets_from(&root, "io.smiles.parse", "smoke")
+        .expect("one benchmark and corpus should select");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].benchmark_id, "io.smiles.parse");
+    assert_eq!(targets[0].corpus_id, "smoke");
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn unknown_benchmark_corpus_and_missing_pair_errors_are_clear() {
+    let root = temp_workspace_root("benchmark-selection-errors");
+    write_test_benchmark_manifest(&root, "io.smiles.parse", "smoke");
+    write_test_benchmark_manifest(&root, "io.smiles.write", "other");
+
+    let error = select_benchmark_targets_from(&root, "missing", "smoke")
+        .expect_err("unknown benchmark should fail");
+    assert!(error.to_string().contains("unknown benchmark: missing"));
+
+    let error = select_benchmark_targets_from(&root, "io.smiles.parse", "missing")
+        .expect_err("unknown corpus should fail");
+    assert!(error.to_string().contains("unknown corpus: missing"));
+
+    let error = select_benchmark_targets_from(&root, "io.smiles.parse", "other")
+        .expect_err("missing benchmark/corpus pair should fail");
+    assert!(error
+        .to_string()
+        .contains("no benchmark manifest for benchmark `io.smiles.parse` and corpus `other`"));
+    fs::remove_dir_all(root).ok();
 }
 
 #[test]
@@ -1069,19 +288,19 @@ fn corpus_builders_reuse_locked_membership_unless_reselection_is_explicit() {
 }
 
 #[test]
-fn implementation_dispatch_uses_current_molfile_feature_ids() {
-    let root = temp_feature_root("mol-feature-dispatch");
+fn implementation_dispatch_uses_current_molfile_benchmark_ids() {
+    let root = temp_workspace_root("mol-benchmark-dispatch");
     let fixture = root.join("fixture.sdf");
     fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
 
-    for feature in [
+    for benchmark_id in [
         "io.mol.v2000.parse",
         "io.mol.v2000.write",
         "io.mol.v3000.parse",
         "io.mol.v3000.write",
     ] {
-        let expected = implementation_expected(feature, "pubchem-1k", &fixture)
-            .expect("feature should compare");
+        let expected = implementation_expected(benchmark_id, "pubchem-1k", &fixture)
+            .expect("benchmark should compare");
         assert_eq!(expected["records"][0]["status"], "ok");
     }
 
@@ -1090,7 +309,7 @@ fn implementation_dispatch_uses_current_molfile_feature_ids() {
 
 #[test]
 fn implementation_dispatch_supports_mmcif_document_rows() {
-    let root = temp_feature_root("mmcif-document-dispatch");
+    let root = temp_workspace_root("mmcif-document-dispatch");
     let fixture = root.join("fixture.cif");
     fs::write(
         &fixture,
@@ -1121,7 +340,7 @@ ATOM 1 C CA CA . ALA ALA A A 1 1 ? 1.00 10.00 1.0 2.0 3.0 1
     .expect("fixture should write");
 
     let expected = implementation_expected("io.mmcif.parse", "pdb-100", &fixture)
-        .expect("mmCIF document feature should compare");
+        .expect("mmCIF document benchmark should compare");
     let atom_site = &expected["atom_site_rows"];
     assert_eq!(atom_site["status"], "ok");
     assert_eq!(atom_site["row_count"], 1);
@@ -1134,12 +353,12 @@ ATOM 1 C CA CA . ALA ALA A A 1 1 ? 1.00 10.00 1.0 2.0 3.0 1
 }
 #[test]
 fn implementation_dispatch_supports_hydrogen_transforms() {
-    let root = temp_feature_root("hydrogen-transforms-dispatch");
+    let root = temp_workspace_root("hydrogen-transforms-dispatch");
     let fixture = root.join("fixture.sdf");
     fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
 
     let expected = implementation_expected("chem.hydrogen-transforms", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let record = &expected["records"][0];
 
     assert_eq!(record["status"], "ok");
@@ -1155,12 +374,12 @@ fn implementation_dispatch_supports_hydrogen_transforms() {
 
 #[test]
 fn implementation_dispatch_supports_query_benchmark() {
-    let root = temp_feature_root("query-benchmark-dispatch");
+    let root = temp_workspace_root("query-benchmark-dispatch");
     let smarts_fixture = root.join("fixture.smi");
     fs::write(&smarts_fixture, "CCO\nC1=CC=CC=C1\n").expect("fixture should write");
 
     let parsed = implementation_expected("query.smarts", "pubchem-1k", &smarts_fixture)
-        .expect("SMARTS feature should compare");
+        .expect("SMARTS benchmark should compare");
     assert_eq!(parsed["records"][0]["status"], "ok");
     assert_eq!(parsed["records"][0]["atom_count"], 3);
     assert_eq!(parsed["records"][1]["bond_count"], 6);
@@ -1168,7 +387,7 @@ fn implementation_dispatch_supports_query_benchmark() {
     let molecule_fixture = root.join("fixture.sdf");
     fs::write(&molecule_fixture, simple_sdf_record("methane")).expect("fixture should write");
     let matched = implementation_expected("algo.substructure.vf2", "pubchem-1k", &molecule_fixture)
-        .expect("substructure feature should compare");
+        .expect("substructure benchmark should compare");
     assert_eq!(matched["records"][0]["status"], "ok");
     assert_eq!(matched["records"][0]["queries"][0]["smarts"], "[#6]");
     assert_eq!(matched["records"][0]["queries"][0]["matches"], json!([[0]]));
@@ -1177,8 +396,8 @@ fn implementation_dispatch_supports_query_benchmark() {
 }
 
 #[test]
-fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
-    let root = temp_feature_root("isomeric-smiles-feature-dispatch");
+fn implementation_dispatch_uses_current_isomeric_smiles_benchmark_id() {
+    let root = temp_workspace_root("isomeric-smiles-benchmark-dispatch");
     let fixture = root.join("fixture.smi");
     fs::write(
         &fixture,
@@ -1192,7 +411,7 @@ fn implementation_dispatch_uses_current_isomeric_smiles_feature_id() {
     .expect("fixture should write");
 
     let expected = implementation_expected("io.smiles.isomeric", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -1225,7 +444,7 @@ fn nonisomeric_smiles_benchmark_excludes_stereo_syntax() {
 
 #[test]
 fn stereo_and_nonisomeric_benchmark_use_distinct_smiles_subsets() {
-    let root = temp_feature_root("smiles-benchmark-subsets");
+    let root = temp_workspace_root("smiles-benchmark-subsets");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "C[C@H](N)C CID:stereo\n").expect("fixture should write");
 
@@ -1243,7 +462,7 @@ fn stereo_and_nonisomeric_benchmark_use_distinct_smiles_subsets() {
 
 #[test]
 fn stereo_cip_benchmark_compares_only_descriptor_bearing_records() {
-    let root = temp_feature_root("stereo-cip-descriptor-filter");
+    let root = temp_workspace_root("stereo-cip-descriptor-filter");
     let fixture = root.join("fixture.smi");
     fs::write(
         &fixture,
@@ -1257,7 +476,7 @@ fn stereo_cip_benchmark_compares_only_descriptor_bearing_records() {
     .expect("fixture should write");
 
     let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -1274,12 +493,12 @@ fn stereo_cip_benchmark_compares_only_descriptor_bearing_records() {
 
 #[test]
 fn stereo_cip_benchmark_uses_rdkit_default_hydrogen_indexing() {
-    let root = temp_feature_root("stereo-cip-rdkit-h-index");
+    let root = temp_workspace_root("stereo-cip-rdkit-h-index");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "[H][C@](F)(Cl)Br CID:explicit-h\n").expect("fixture should write");
 
     let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -1294,7 +513,7 @@ fn stereo_cip_benchmark_uses_rdkit_default_hydrogen_indexing() {
 
 #[test]
 fn stereo_cip_benchmark_reads_all_sdf_pack_records() {
-    let root = temp_feature_root("stereo-cip-sdf-pack");
+    let root = temp_workspace_root("stereo-cip-sdf-pack");
     let fixture = root.join("fixture.sdf");
     fs::write(
         &fixture,
@@ -1307,7 +526,7 @@ fn stereo_cip_benchmark_reads_all_sdf_pack_records() {
     .expect("fixture should write");
 
     let expected = implementation_expected("stereo.cip", "pubchem-1k", &fixture)
-        .expect("feature should compare");
+        .expect("benchmark should compare");
     let records = expected["records"]
         .as_array()
         .expect("records should be an array");
@@ -1328,7 +547,7 @@ fn stereo_cip_benchmark_reads_all_sdf_pack_records() {
 
 #[test]
 fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
-    let root = temp_feature_root("pack-members");
+    let root = temp_workspace_root("pack-members");
     let sdf_path = root.join("pack.sdf");
     fs::write(
         &sdf_path,
@@ -1373,357 +592,9 @@ fn pack_members_support_custom_sdf_property_and_smiles_title_prefix() {
 }
 
 #[test]
-fn benchmark_digest_changes_after_material_input_changes() {
-    let root = temp_feature_root("digest-change");
-    let (_, _, manifest_path) = write_digest_test_repo(&root);
-    let manifest = read_benchmark_manifest(&manifest_path).expect("manifest should read");
-    let original = build_benchmark_input_digest(&root, &manifest_path, &manifest)
-        .expect("digest should build");
-
-    fs::write(root.join("crates/kekule/src/lib.rs"), "changed source\n")
-        .expect("source should mutate");
-    let source_changed = build_benchmark_input_digest(&root, &manifest_path, &manifest)
-        .expect("digest should build");
-    assert_ne!(original.sha256, source_changed.sha256);
-
-    fs::write(
-        root.join("benchmarks/corpora/smoke/data/example.sdf"),
-        "changed fixture\n",
-    )
-    .expect("fixture should mutate");
-    let fixture_changed = build_benchmark_input_digest(&root, &manifest_path, &manifest)
-        .expect("digest should build");
-    assert_ne!(source_changed.sha256, fixture_changed.sha256);
-
-    fs::write(
-        root.join("benchmarks/corpora/smoke/golden/example/data_example.sdf.json.gz"),
-        "changed golden\n",
-    )
-    .expect("golden should mutate");
-    let golden_changed = build_benchmark_input_digest(&root, &manifest_path, &manifest)
-        .expect("digest should build");
-    assert_ne!(fixture_changed.sha256, golden_changed.sha256);
-
-    fs::write(
-        root.join("benchmarks/reference/rdkit/run_feature.py"),
-        "changed generator\n",
-    )
-    .expect("generator should mutate");
-    let generator_changed = build_benchmark_input_digest(&root, &manifest_path, &manifest)
-        .expect("digest should build");
-    assert_ne!(golden_changed.sha256, generator_changed.sha256);
-
-    fs::write(
-        &manifest_path,
-        "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"rdkit\"\nreference_version = \"RDKit changed\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
-    )
-    .expect("manifest should mutate");
-    let changed_manifest =
-        read_benchmark_manifest(&manifest_path).expect("changed manifest should read");
-    let manifest_changed = build_benchmark_input_digest(&root, &manifest_path, &changed_manifest)
-        .expect("digest should build");
-    assert_ne!(generator_changed.sha256, manifest_changed.sha256);
-
-    write_digest_lock(
-        &root.join("Cargo.lock"),
-        "registry+https://example.invalid/index",
-    );
-    let dependency_changed = build_benchmark_input_digest(&root, &manifest_path, &changed_manifest)
-        .expect("digest should build");
-    assert_ne!(manifest_changed.sha256, dependency_changed.sha256);
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn manual_semantic_reference_digest_does_not_require_generator_files() {
-    let root = temp_feature_root("manual-reference-digest");
-    let (_, _, manifest_path) = write_digest_test_repo(&root);
-    fs::write(
-        &manifest_path,
-        "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"enamine-manual-semantic\"\nreference_version = \"Enamine Discovery Diversity Set 2026-07-05\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
-    )
-    .expect("manual manifest should write");
-    fs::remove_dir_all(root.join("benchmarks/reference")).ok();
-
-    let manifest = read_benchmark_manifest(&manifest_path).expect("manifest should read");
-    let digest = build_benchmark_input_digest(&root, &manifest_path, &manifest)
-        .expect("digest should build");
-    assert!(digest.input_count > 0);
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn benchmark_hash_normalizes_text_line_endings() {
-    let root = temp_feature_root("digest-line-endings");
-    let path = root.join("source.rs");
-    fs::write(&path, "first\nsecond\n").expect("LF source should write");
-    let lf_hash = hash_normalized_file(&path).expect("LF input should hash");
-
-    fs::write(&path, "first\r\nsecond\r\n").expect("CRLF source should write");
-    let crlf_hash = hash_normalized_file(&path).expect("CRLF input should hash");
-
-    assert_eq!(lf_hash, crlf_hash);
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
-fn benchmark_digest_ignores_checkout_and_workspace_identity() {
-    let first = temp_feature_root("digest-identity-first");
-    let second = temp_feature_root("digest-identity-second");
-    let (_, _, first_manifest_path) = write_digest_test_repo(&first);
-    let (_, _, second_manifest_path) = write_digest_test_repo(&second);
-    let first_manifest =
-        read_benchmark_manifest(&first_manifest_path).expect("manifest should read");
-    let second_manifest =
-        read_benchmark_manifest(&second_manifest_path).expect("manifest should read");
-
-    let first_digest = build_benchmark_input_digest(&first, &first_manifest_path, &first_manifest)
-        .expect("first digest should build");
-    let second_digest =
-        build_benchmark_input_digest(&second, &second_manifest_path, &second_manifest)
-            .expect("second digest should build");
-    assert_eq!(first_digest.sha256, second_digest.sha256);
-
-    fs::write(
-        second.join("Cargo.toml"),
-        "[workspace]\n[workspace.package]\nrepository = \"https://example.invalid/renamed-repository\"\n",
-    )
-    .expect("workspace identity should mutate");
-    write_digest_lock_with_local_name(&second.join("Cargo.lock"), "renamed-workspace-package");
-    fs::write(
-        second.join("features/example/feature.md"),
-        "# Renamed repository documentation\n",
-    )
-    .expect("feature documentation should mutate");
-    let renamed_digest =
-        build_benchmark_input_digest(&second, &second_manifest_path, &second_manifest)
-            .expect("renamed digest should build");
-    assert_eq!(first_digest.sha256, renamed_digest.sha256);
-
-    fs::remove_dir_all(first).ok();
-    fs::remove_dir_all(second).ok();
-}
-
-#[test]
-fn benchmark_digest_ignores_core_package_directory_identity() {
-    let first = temp_feature_root("digest-package-identity-first");
-    let second = temp_feature_root("digest-package-identity-second");
-    let (_, _, first_manifest_path) = write_digest_test_repo(&first);
-    let (_, _, second_manifest_path) = write_digest_test_repo(&second);
-    let first_manifest =
-        read_benchmark_manifest(&first_manifest_path).expect("manifest should read");
-    let second_manifest =
-        read_benchmark_manifest(&second_manifest_path).expect("manifest should read");
-
-    let first_core_source = first.join("crates/kekule/src");
-    let renamed_package = second.join("crates/renamed-core");
-    fs::rename(second.join("crates/kekule"), &renamed_package)
-        .expect("core package directory should rename");
-    let second_core_source = renamed_package.join("src");
-
-    let first_digest = build_benchmark_input_digest_with_core_source_root(
-        &first,
-        &first_manifest_path,
-        &first_manifest,
-        &first_core_source,
-    )
-    .expect("first digest should build");
-    let second_digest = build_benchmark_input_digest_with_core_source_root(
-        &second,
-        &second_manifest_path,
-        &second_manifest,
-        &second_core_source,
-    )
-    .expect("renamed-package digest should build");
-
-    assert_eq!(first_digest.sha256, second_digest.sha256);
-    fs::remove_dir_all(first).ok();
-    fs::remove_dir_all(second).ok();
-}
-
-#[test]
-fn dashboard_text_comparison_ignores_platform_line_endings() {
-    assert_eq!(
-        normalize_text_line_endings("one\r\ntwo\rthree\n"),
-        "one\ntwo\nthree\n"
-    );
-}
-
-#[test]
-fn dashboard_result_requires_a_current_manifest() {
-    let feature = Feature {
-        id: "portable.feature".to_owned(),
-        title: "Portable".to_owned(),
-        area: "infrastructure".to_owned(),
-        domains: vec![FeatureDomain::Infrastructure],
-        version: 1,
-        status: FeatureStatus::Supported,
-        description: "Portable dashboard evidence.".to_owned(),
-        depends_on: Vec::new(),
-    };
-    let results = BenchmarkResults {
-        feature_id: feature.id.clone(),
-        corpora: BTreeMap::from([(
-            "pubchem-1k".to_owned(),
-            BenchmarkResult {
-                outcome: BenchmarkResultOutcome::Match,
-                scope: "full".to_owned(),
-                fixture_count: 1,
-                compared_count: 1,
-                difference_count: 0,
-                first_detail: None,
-                reference_tool: Some("rdkit".to_owned()),
-                reference_version: Some("test".to_owned()),
-                manifest_digest: Some("0".repeat(64)),
-                input_digest_schema_version: Some(BENCHMARK_INPUT_DIGEST_SCHEMA_VERSION),
-                input_digest: Some("1".repeat(64)),
-                input_count: 1,
-                legacy_source: None,
-                benchmarked_at_unix: 1,
-            },
-        )]),
-    };
-    let reference = CorpusFeatureDashboardInfo {
-        reference_tool: "rdkit".to_owned(),
-        reference_version: "test".to_owned(),
-    };
-
-    assert!(
-        dashboard_corpus_cell(&feature, Some(&results), "pubchem-1k", None, true)
-            .contains("no benchmark manifest")
-    );
-    assert!(dashboard_corpus_cell(
-        &feature,
-        Some(&results),
-        "pubchem-1k",
-        Some(&reference),
-        true,
-    )
-    .contains("aria-label=\"last match\""));
-}
-#[test]
-fn result_writer_prunes_entries_without_manifests_and_records_errors() {
-    let root = temp_feature_root("result-manifest-pruning");
-    let results_path = benchmark_results_path_from(&root, "pubchem-1k");
-    fs::create_dir_all(results_path.parent().expect("results parent"))
-        .expect("results directory should create");
-    fs::write(&results_path, "stale").expect("stale results should write");
-
-    let feature_result = BenchmarkResult::from_run(BenchmarkRun {
-        outcome: BenchmarkResultOutcome::Error,
-        scope: "fixture:data/example.sdf".to_owned(),
-        fixture_count: 1,
-        compared_count: 0,
-        difference_count: 0,
-        first_detail: Some("fixture could not be read".to_owned()),
-        reference_tool: Some("rdkit".to_owned()),
-        reference_version: Some("test".to_owned()),
-        manifest_digest: Some("0".repeat(64)),
-        input_digest: None,
-    })
-    .expect("error result should build");
-    let results = BTreeMap::from([(
-        "example.feature".to_owned(),
-        BenchmarkResults {
-            feature_id: "example.feature".to_owned(),
-            corpora: BTreeMap::from([("pubchem-1k".to_owned(), feature_result)]),
-        },
-    )]);
-    let selected = BTreeSet::from(["pubchem-1k".to_owned()]);
-
-    write_benchmark_results_from(&root, &results, &selected)
-        .expect("result pruning should succeed");
-    assert!(!results_path.exists());
-
-    let manifest = benchmark_manifest_path_from(&root, "example.feature", "pubchem-1k");
-    fs::create_dir_all(manifest.parent().expect("manifest parent"))
-        .expect("manifest directory should create");
-    fs::write(&manifest, "").expect("manifest marker should write");
-    write_benchmark_results_from(&root, &results, &selected)
-        .expect("manifest-backed result should write");
-    let stored = read_corpus_results(&results_path).expect("written results should parse");
-    let stored_result = stored
-        .features
-        .get("example.feature")
-        .expect("feature result should exist");
-    assert_eq!(stored_result.outcome, BenchmarkResultOutcome::Error);
-    assert_eq!(stored_result.scope, "fixture:data/example.sdf");
-    assert_eq!(
-        stored_result.first_detail.as_deref(),
-        Some("fixture could not be read")
-    );
-
-    fs::remove_dir_all(root).ok();
-}
-#[test]
-fn historical_legacy_result_is_replaced_by_a_new_target_snapshot() {
-    let root = temp_feature_root("legacy-result");
-    let path = benchmark_results_path_from(&root, "pubchem-1k");
-    fs::create_dir_all(path.parent().expect("result parent")).expect("result directory");
-    fs::write(
-        &path,
-        r#"
-corpus_id = "pubchem-1k"
-
-[features.example]
-outcome = "match"
-scope = "full"
-fixture_count = 1
-compared_count = 1
-manifest_digest = "0000000000000000000000000000000000000000000000000000000000000000"
-input_digest_schema_version = 2
-input_digest = "1111111111111111111111111111111111111111111111111111111111111111"
-input_count = 1
-legacy_source = "validation-status-v2"
-benchmarked_at_unix = 1
-"#,
-    )
-    .expect("legacy result fixture should write");
-    let legacy = read_corpus_results(&path).expect("legacy result should deserialize");
-    assert_eq!(
-        legacy.features["example"].legacy_source.as_deref(),
-        Some("validation-status-v2")
-    );
-
-    let manifest = benchmark_manifest_path_from(&root, "example", "pubchem-1k");
-    fs::create_dir_all(manifest.parent().expect("manifest parent")).expect("manifest directory");
-    fs::write(manifest, "").expect("manifest marker");
-    let current = BenchmarkResult::from_run(BenchmarkRun {
-        outcome: BenchmarkResultOutcome::Differences,
-        scope: "fixture:data/example.sdf".to_owned(),
-        fixture_count: 1,
-        compared_count: 1,
-        difference_count: 1,
-        first_detail: Some("changed".to_owned()),
-        reference_tool: None,
-        reference_version: None,
-        manifest_digest: None,
-        input_digest: None,
-    })
-    .expect("current result should build");
-    let results = BTreeMap::from([(
-        "example".to_owned(),
-        BenchmarkResults {
-            feature_id: "example".to_owned(),
-            corpora: BTreeMap::from([("pubchem-1k".to_owned(), current)]),
-        },
-    )]);
-    write_benchmark_results_from(&root, &results, &BTreeSet::from(["pubchem-1k".to_owned()]))
-        .expect("current result should replace legacy result");
-    let replaced = read_corpus_results(&path).expect("replacement should parse");
-    let result = replaced
-        .features
-        .get("example")
-        .expect("feature result should exist");
-    assert_eq!(result.outcome, BenchmarkResultOutcome::Differences);
-    assert_eq!(result.legacy_source, None);
-    fs::remove_dir_all(root).ok();
-}
-
-#[test]
 fn unsupported_comparison_mode_is_rejected() {
     let manifest = BenchmarkManifest {
-        feature_id: "example".to_owned(),
+        benchmark_id: "example".to_owned(),
         corpus_id: "smoke".to_owned(),
         reference_tool: "rdkit".to_owned(),
         reference_version: "RDKit test".to_owned(),
@@ -1735,8 +606,8 @@ fn unsupported_comparison_mode_is_rejected() {
 }
 
 #[test]
-fn benchmark_comparison_counts_multiple_fixture_failures() {
-    let root = temp_feature_root("comparison-counts-failures");
+fn benchmark_comparison_detects_matches_and_differences() {
+    let root = temp_workspace_root("comparison-match-and-difference");
     let corpus_root = root.join("benchmarks").join("corpora").join("smoke");
     let manifest_dir = corpus_root.join("features");
     let data_dir = corpus_root.join("data");
@@ -1752,6 +623,17 @@ fn benchmark_comparison_counts_multiple_fixture_failures() {
     .expect("manifest should write");
     for (fixture, text) in [("data/one.smi", "C CID:1\n"), ("data/two.smi", "O CID:2\n")] {
         fs::write(corpus_root.join(fixture), text).expect("fixture should write");
+        let expected = if fixture == "data/one.smi" {
+            implementation_expected("io.smiles.parse", "smoke", &corpus_root.join(fixture))
+                .expect("implementation output should serialize")
+        } else {
+            json!({
+                "records": [{
+                    "record_index": 999,
+                    "status": "intentionally_wrong",
+                }]
+            })
+        };
         let golden = json!({
             "schema_version": GOLDEN_SCHEMA_VERSION,
             "feature_id": "io.smiles.parse",
@@ -1763,12 +645,7 @@ fn benchmark_comparison_counts_multiple_fixture_failures() {
                 "version": "RDKit test",
                 "runtime_dependency": false,
             },
-            "expected": {
-                "records": [{
-                    "record_index": 999,
-                    "status": "intentionally_wrong",
-                }]
-            },
+            "expected": expected,
         });
         write_gzip_json(
             &golden_dir.join(format!("{}.json.gz", slugify_fixture(fixture))),
@@ -1780,12 +657,90 @@ fn benchmark_comparison_counts_multiple_fixture_failures() {
     let comparison = compare_golden_outputs(&manifest_path, &manifest, 1, None)
         .expect("comparison should complete");
 
-    assert_eq!(comparison.compared_count, 0);
-    assert_eq!(comparison.difference_count, 2);
+    assert_eq!(comparison.match_count, 1);
+    assert_eq!(comparison.difference_count, 1);
     assert!(comparison
         .first_difference
         .as_deref()
-        .is_some_and(|failure| failure.contains("data/one.smi")));
+        .is_some_and(|failure| failure.contains("data/two.smi")));
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn benchmark_run_does_not_rewrite_dashboard_or_results_metadata() {
+    let root = temp_workspace_root("benchmark-does-not-rewrite-metadata");
+    let manifest_path = write_test_benchmark_manifest(&root, "io.smiles.parse", "smoke");
+    let corpus_root = root.join("benchmarks/corpora/smoke");
+    let fixture = corpus_root.join("data/example.smi");
+    fs::create_dir_all(fixture.parent().expect("fixture parent")).expect("fixture directory");
+    fs::write(&fixture, "C CID:1\n").expect("fixture should write");
+    fs::write(
+        corpus_root.join("sources.lock.json"),
+        serde_json::to_vec_pretty(&json!({
+            "schema_version": 1,
+            "corpus_id": "smoke",
+            "source": "test",
+            "selection_id": "test",
+            "entries": [{
+                "id": "1",
+                "category": "test",
+                "files": [{
+                    "path": "data/example.smi",
+                    "url": "https://example.invalid/example.smi",
+                    "sha256": hash_file(&fixture).expect("fixture should hash"),
+                }]
+            }],
+            "packs": [],
+        }))
+        .expect("source lock should serialize"),
+    )
+    .expect("source lock should write");
+
+    let expected = implementation_expected("io.smiles.parse", "smoke", &fixture)
+        .expect("implementation output should serialize");
+    let golden_dir = corpus_root.join("golden/io.smiles.parse");
+    fs::create_dir_all(&golden_dir).expect("golden directory");
+    write_gzip_json(
+        &golden_dir.join("data_example.smi.json.gz"),
+        &json!({
+            "schema_version": GOLDEN_SCHEMA_VERSION,
+            "feature_id": "io.smiles.parse",
+            "corpus_id": "smoke",
+            "fixture_path": "data/example.smi",
+            "input_sha256": hash_file(&fixture).expect("fixture should hash"),
+            "reference": {
+                "tool": "rdkit",
+                "version": "RDKit test",
+                "runtime_dependency": false,
+            },
+            "expected": expected,
+        }),
+    );
+
+    let dashboard_path = root.join("features/DASHBOARD.html");
+    fs::create_dir_all(dashboard_path.parent().expect("dashboard parent"))
+        .expect("dashboard directory");
+    fs::write(&dashboard_path, "sentinel dashboard\n").expect("dashboard sentinel");
+    let results_path = corpus_root.join("results.toml");
+    fs::write(&results_path, "sentinel results\n").expect("results sentinel");
+
+    let target = BenchmarkTarget {
+        benchmark_id: "io.smiles.parse".to_owned(),
+        corpus_id: "smoke".to_owned(),
+        manifest_path,
+    };
+    let mut progress = BenchmarkProgress::start(1, 1);
+    let comparison =
+        run_target(&target, None, false, 1, &mut progress).expect("benchmark target should match");
+    assert_eq!(comparison.match_count, 1);
+    assert_eq!(
+        fs::read_to_string(dashboard_path).expect("dashboard sentinel should read"),
+        "sentinel dashboard\n"
+    );
+    assert_eq!(
+        fs::read_to_string(results_path).expect("results sentinel should read"),
+        "sentinel results\n"
+    );
     fs::remove_dir_all(root).ok();
 }
 
@@ -1811,7 +766,7 @@ fn stereo_perception_benchmark_records_reference_preparation_errors_per_record()
 
 #[test]
 fn smiles_component_benchmarks_preserve_source_record_cardinality() {
-    let root = temp_feature_root("smiles-component-benchmark-cardinality");
+    let root = temp_workspace_root("smiles-component-benchmark-cardinality");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "CC.Cl.Cl multi\nC=C connected\n").expect("fixture should write");
 
@@ -1932,8 +887,8 @@ fn dssp_comparison_matches_residues_by_source_identity_not_container_order() {
             {"chain_id": "B", "sequence_id": 1, "insertion_code": null, "label_chain_id": "B", "label_sequence_id": 1, "residue_name": "ALA", "sheet": 10, "strand": 15, "ladders": [30, null]}
         ]
     });
-    normalize_feature_for_comparison_in_place("bio.secondary-structure.dssp", &mut expected);
-    normalize_feature_for_comparison_in_place("bio.secondary-structure.dssp", &mut actual);
+    normalize_benchmark_for_comparison_in_place("bio.secondary-structure.dssp", &mut expected);
+    normalize_benchmark_for_comparison_in_place("bio.secondary-structure.dssp", &mut actual);
     assert_eq!(expected, actual);
 }
 
@@ -2176,7 +1131,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
 
 #[test]
 fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
-    let root = temp_feature_root("canonical-no-prefilter");
+    let root = temp_workspace_root("canonical-no-prefilter");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "* CID:example\n").expect("fixture should write");
 
@@ -2191,7 +1146,7 @@ fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
 
 #[test]
 fn canonical_smiles_benchmark_normalizes_and_perceives_before_writing() {
-    let root = temp_feature_root("canonical-perceive-before-write");
+    let root = temp_workspace_root("canonical-perceive-before-write");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "C1=CC=CC=C1 CID:benzene\n").expect("fixture should write");
 
@@ -2205,7 +1160,7 @@ fn canonical_smiles_benchmark_normalizes_and_perceives_before_writing() {
 
 #[test]
 fn canonical_smiles_benchmark_matches_rdkit_parse_status_for_invalid_input() {
-    let root = temp_feature_root("canonical-invalid-input");
+    let root = temp_workspace_root("canonical-invalid-input");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "[Cl-](Br)Br CID:invalid\n").expect("fixture should write");
 
@@ -2347,134 +1302,38 @@ $$$$
     )
 }
 
-fn temp_feature_root(label: &str) -> PathBuf {
+fn temp_workspace_root(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time should be available")
         .as_nanos();
     let root = env::temp_dir().join(format!("kekule-xtask-{label}-{}-{nonce}", process::id()));
-    fs::create_dir_all(&root).expect("temp feature root should create");
+    fs::create_dir_all(&root).expect("temporary workspace root should create");
     root
 }
 
-fn feature_for_test(id: &str, status: FeatureStatus, depends_on: &[&str]) -> Feature {
-    Feature {
-        id: id.to_owned(),
-        title: id.to_owned(),
-        area: "test".to_owned(),
-        domains: vec![FeatureDomain::Infrastructure],
-        version: 1,
-        status,
-        description: format!("Test feature {id}."),
-        depends_on: depends_on
-            .iter()
-            .map(|dependency| (*dependency).to_owned())
-            .collect(),
-    }
-}
-
-fn write_digest_test_repo(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
-    let features_root = root.join("features");
-    let benchmark_root = root.join("benchmarks");
-    let feature_dir = features_root.join("example");
-    let corpus_root = benchmark_root.join("corpora").join("smoke");
-    let manifest_dir = corpus_root.join("features");
-    fs::create_dir_all(&feature_dir).expect("feature dir should create");
-    fs::create_dir_all(&manifest_dir).expect("manifest dir should create");
+fn write_test_benchmark_manifest(root: &Path, benchmark: &str, corpus: &str) -> PathBuf {
+    let corpus_root = root.join("benchmarks").join("corpora").join(corpus);
+    let manifest_path = corpus_root
+        .join("features")
+        .join(format!("{benchmark}.toml"));
+    fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
+        .expect("manifest directory should create");
     fs::write(
-        feature_dir.join("feature.toml"),
-        "id = \"example\"\ntitle = \"Example\"\narea = \"test\"\ndomains = [\"small-molecule\"]\nversion = 1\nstatus = \"supported\"\ndescription = \"Example feature.\"\ndepends_on = []\n",
-    )
-    .expect("metadata should write");
-    fs::write(feature_dir.join("feature.md"), "# Example\n").expect("feature doc should write");
-    let manifest_path = manifest_dir.join("example.toml");
-    fs::write(
-            &manifest_path,
-            "feature_id = \"example\"\ncorpus_id = \"smoke\"\nreference_tool = \"rdkit\"\nreference_version = \"RDKit test\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.sdf\"]\n",
-        )
-        .expect("manifest should write");
-    fs::create_dir_all(corpus_root.join("data")).expect("data dir should create");
-    fs::create_dir_all(corpus_root.join("golden").join("example"))
-        .expect("golden dir should create");
-    fs::write(corpus_root.join("corpus.toml"), "id = \"smoke\"\n")
-        .expect("corpus descriptor should write");
-    fs::write(corpus_root.join("sources.lock.json"), "{}\n").expect("source lock should write");
-    fs::write(corpus_root.join("data").join("example.sdf"), "fixture\n")
-        .expect("fixture should write");
-    fs::write(
-        corpus_root
-            .join("golden")
-            .join("example")
-            .join("data_example.sdf.json.gz"),
-        "golden\n",
-    )
-    .expect("golden should write");
-    fs::write(root.join("Cargo.toml"), "[workspace]\n").expect("cargo toml should write");
-    write_digest_lock(
-        &root.join("Cargo.lock"),
-        "registry+https://github.com/rust-lang/crates.io-index",
-    );
-    for path in [
-        "crates/kekule/Cargo.toml",
-        "crates/xtask/Cargo.toml",
-        "crates/kekule/src/lib.rs",
-        "crates/xtask/src/main.rs",
-        "benchmarks/reference/rdkit/run_feature.py",
-        "benchmarks/reference/rdkit/environment.yml",
-    ] {
-        let path = root.join(path);
-        fs::create_dir_all(path.parent().expect("test path should have parent"))
-            .expect("test parent should create");
-        fs::write(path, "test\n").expect("test evidence file should write");
-    }
-    (features_root, benchmark_root, manifest_path)
-}
-
-fn write_digest_lock(path: &Path, external_source: &str) {
-    write_digest_lock_contents(path, "workspace-package", external_source);
-}
-
-fn write_digest_lock_with_local_name(path: &Path, local_name: &str) {
-    write_digest_lock_contents(
-        path,
-        local_name,
-        "registry+https://github.com/rust-lang/crates.io-index",
-    );
-}
-
-fn write_digest_lock_contents(path: &Path, local_name: &str, external_source: &str) {
-    fs::write(
-        path,
+        corpus_root.join("corpus.toml"),
         format!(
-            r#"version = 3
-
-[[package]]
-name = "{local_name}"
-version = "0.1.0"
-
-[[package]]
-name = "serde"
-version = "1.0.0"
-source = "{external_source}"
-checksum = "0000000000000000000000000000000000000000000000000000000000000000"
-dependencies = []
-"#
+            "id = \"{corpus}\"\ntitle = \"Test corpus\"\nkind = \"small-molecule\"\nready = true\nexpected_count = 1\nlocal_only = true\nselection_id = \"test\"\nformats = [\"smiles\"]\nbuild_command = \"test\"\n"
         ),
     )
-    .expect("digest lock should write");
-}
-
-fn write_feature(root: &Path, id: &str, metadata: &str) {
-    let dir = root.join(id);
-    fs::create_dir_all(&dir).expect("feature dir should create");
-    fs::write(dir.join("feature.toml"), metadata).expect("feature metadata should write");
-    fs::write(dir.join("feature.md"), "# Feature\n").expect("feature doc should write");
-}
-
-fn write_feature_without_doc(root: &Path, id: &str, metadata: &str) {
-    let dir = root.join(id);
-    fs::create_dir_all(&dir).expect("feature dir should create");
-    fs::write(dir.join("feature.toml"), metadata).expect("feature metadata should write");
+    .expect("corpus descriptor should write");
+    fs::write(
+        &manifest_path,
+        format!(
+            "feature_id = \"{benchmark}\"\ncorpus_id = \"{corpus}\"\nreference_tool = \"rdkit\"\nreference_version = \"RDKit test\"\ncomparison_mode = \"implementation-golden\"\nfixtures = [\"data/example.smi\"]\n"
+        ),
+    )
+    .expect("benchmark manifest should write");
+    manifest_path
 }
 
 fn write_gzip_json(path: &Path, value: &Value) {

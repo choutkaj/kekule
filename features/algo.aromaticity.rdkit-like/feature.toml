@@ -1,8 +1,0 @@
-id = "algo.aromaticity.rdkit-like"
-title = "RDKit-like aromaticity perception"
-area = "algorithms"
-domains = ["small-molecule"]
-version = 101
-status = "supported"
-description = "Perceive semantic aromatic membership on normalized localized graphs while preserving complete primary molecular representation."
-depends_on = ["core.graph", "chem.normalization", "algo.rings.fast", "algo.rings.sssr", "algo.valence.rdkit-like"]

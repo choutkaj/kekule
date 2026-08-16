@@ -1,8 +1,0 @@
-id = "io.smiles.canonical"
-title = "Canonical SMILES writer"
-area = "io"
-domains = ["small-molecule"]
-version = 35
-status = "supported"
-description = "Write one connected small molecule as deterministic non-stereo canonical SMILES using atom ranking and rank-guided traversal."
-depends_on = ["io.smiles.write", "algo.canonical-ranking", "stereo.representation"]
