@@ -62,8 +62,10 @@ use std::error::Error;
 use kekule::{perception::stereo, small::SmallMolecule};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse a chiral amino acid and run the explicit sanitization workflow.
-    let mut molecule = SmallMolecule::from_smiles_sanitized("C[C@@H](C(=O)O)N")?;
+    // Parse a chiral amino acid, normalize its representation, and perceive chemistry.
+    let mut molecule = SmallMolecule::from_smiles("C[C@@H](C(=O)O)N")?;
+    molecule.normalize()?;
+    molecule.perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
     let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut())?;
@@ -99,7 +101,7 @@ use kekule::{
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse and interpret one SDF record without silently sanitizing it.
+    // Parse and interpret one SDF record without normalizing or perceiving it.
     let input = fs::read_to_string("examples/ligand.sdf")?;
     let document = sdf::parse_str(&input, SdfParseOptions::default())?;
     let mut records = sdf::interpret(&document)?.into_records();
@@ -110,9 +112,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let title = record.title().to_owned();
     let data_fields = record.data_fields().to_vec();
     let mut ligand = record.into_molecule();
-    ligand.sanitize()?;
+    ligand.normalize()?;
+    ligand.perceive()?;
 
-    // Inspect the sanitized ligand before modeling it.
+    // Inspect the normalized, perceived ligand before modeling it.
     println!("atoms: {}", ligand.atom_count());
     println!("bonds: {}", ligand.bond_count());
     println!("formal charge: {}", ligand.graph().formal_charge());

@@ -104,3 +104,6 @@ release status, CI success, or whether the repository is ready for development.
 - v43: Derive reference-facing aromatic-nitrogen hydrogen and valence semantics
   from separated represented and perceived state after removal of sanitizer
   representation feedback.
+- v44: Migrate the former sanitizer benchmark identity and Kekule call paths to
+  the explicit default perception feature while preserving pinned external
+  reference schemas and goldens.

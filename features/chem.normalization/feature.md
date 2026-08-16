@@ -60,8 +60,8 @@ small-molecule representation normalization.
   ring work. Coordinates are consulted only to decode the drawing-local sense
   of an explicit source wedge/hash assertion; unmarked coordinate stereo is
   never inferred by normalization.
-- The rewrite no longer belongs to sanitization. The compatibility sanitizer
-  delegates to normalization before running its existing perception stages.
+- Normalization remains a separate public operation. Default perception
+  expects its localized represented output and never invokes it implicitly.
 
 ## Tests
 
@@ -78,8 +78,8 @@ small-molecule representation normalization.
 ## Out Of Scope
 
 - General parser redesign, coordinate-only stereo perception publication,
-  chemical standardization, perception-pipeline frameworks, and removal of the
-  compatibility sanitizer APIs.
+  chemical standardization, perception-pipeline frameworks, and an ordinary
+  parse-to-ready convenience API.
 
 ## Revision Notes
 

@@ -29,14 +29,15 @@ component-qualified source mappings.
 - Interpretation preserves aromatic source syntax as represented
   `BondOrder::Aromatic` bonds but installs no semantic aromaticity. Bracket
   radical inference uses private source-token membership rather than
-  `PerceptionState`. Interpretation never normalizes, sanitizes, or runs
+  `PerceptionState`. Interpretation never normalizes or runs
   chemical perception.
 - `SmilesParseOptions` bounds input bytes plus parsed atom and bond counts.
   Defaults permit large molecules while preventing unbounded parser allocation;
   callers handling intentionally larger records can opt into higher limits.
-- `SmallMolecule::from_smiles` and `from_smiles_sanitized` remain deliberate
-  single-component convenience orchestrators, use the default parser limits,
-  and report `SmallMoleculeReadError::ComponentCount` for dot-separated input.
+- `SmallMolecule::from_smiles` remains a deliberate parse/interpret-only
+  single-component convenience, uses the default parser limits, and reports
+  `SmallMoleculeReadError::ComponentCount` for dot-separated input. Callers
+  explicitly normalize and perceive afterward when needed.
 
 ## Tests
 
@@ -53,7 +54,8 @@ component-qualified source mappings.
 
 ## Out Of Scope
 
-- SMARTS, reactions, sanitization during parsing, and full grammar parity.
+- SMARTS, reactions, normalization or perception during parsing, and full
+  grammar parity.
 
 ## Revision Notes
 

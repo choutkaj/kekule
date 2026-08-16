@@ -2506,6 +2506,13 @@ mod tests {
     use crate::substructure;
     use crate::units::{Quantity, ANGSTROM};
 
+    fn perceived_small_molecule(smiles: &str) -> SmallMolecule {
+        let mut molecule = SmallMolecule::from_smiles(smiles).expect("SMILES should parse");
+        molecule.normalize().expect("molecule should normalize");
+        molecule.perceive().expect("molecule should perceive");
+        molecule
+    }
+
     fn tombstoned_molecule() -> (SmallMolecule, AtomId, AtomId, BondId) {
         let mut graph = Molecule::new();
         let carbon = graph
@@ -2546,7 +2553,7 @@ mod tests {
         Vec<AtomId>,
         Vec<BondId>,
     ) {
-        let molecule = SmallMolecule::from_smiles_sanitized(smiles).unwrap();
+        let molecule = perceived_small_molecule(smiles);
         let atoms = molecule.graph().atom_ids().collect();
         let bonds = molecule.graph().bond_ids().collect();
         let mut builder = TopologyBuilder::new();
@@ -2564,8 +2571,8 @@ mod tests {
     }
 
     fn topology_with_two_distinct_definitions(reverse: bool) -> Arc<Topology> {
-        let carbon = SmallMolecule::from_smiles_sanitized("C").unwrap();
-        let carbon_oxygen = SmallMolecule::from_smiles_sanitized("CO").unwrap();
+        let carbon = perceived_small_molecule("C");
+        let carbon_oxygen = perceived_small_molecule("CO");
         let molecules = if reverse {
             [&carbon_oxygen, &carbon]
         } else {
@@ -2582,7 +2589,7 @@ mod tests {
     }
 
     fn topology_with_repeated_identical_definitions() -> Arc<Topology> {
-        let water = SmallMolecule::from_smiles_sanitized("O").unwrap();
+        let water = perceived_small_molecule("O");
         let mut builder = TopologyBuilder::new();
         for _ in 0..2 {
             let definition = builder.add_small_molecule_definition(&water).unwrap();
@@ -2811,8 +2818,8 @@ mod tests {
 
     #[test]
     fn selections_distinguish_instances_components_elements_and_queries() {
-        let ethane = SmallMolecule::from_smiles_sanitized("CC").unwrap();
-        let water = SmallMolecule::from_smiles_sanitized("O").unwrap();
+        let ethane = perceived_small_molecule("CC");
+        let water = perceived_small_molecule("O");
         let mut builder = TopologyBuilder::new();
         let ethane_definition = builder.add_small_molecule_definition(&ethane).unwrap();
         let water_definition = builder.add_small_molecule_definition(&water).unwrap();
@@ -2881,7 +2888,7 @@ mod tests {
         let first = builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        let small = SmallMolecule::from_smiles_sanitized("O").unwrap();
+        let small = perceived_small_molecule("O");
         let small_definition = builder.add_small_molecule_definition(&small).unwrap();
         let small_instance = builder
             .add_instance(small_definition, MoleculeInstanceMetadata::default())
@@ -3055,7 +3062,7 @@ mod tests {
         let old_instance = old_builder
             .add_instance(old_definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        let old_extra_molecule = SmallMolecule::from_smiles_sanitized("O").unwrap();
+        let old_extra_molecule = perceived_small_molecule("O");
         let old_extra_definition = old_builder
             .add_small_molecule_definition(&old_extra_molecule)
             .unwrap();
@@ -3076,7 +3083,7 @@ mod tests {
         let new_instance = new_builder
             .add_instance(new_definition, MoleculeInstanceMetadata::default())
             .unwrap();
-        let new_extra_molecule = SmallMolecule::from_smiles_sanitized("N").unwrap();
+        let new_extra_molecule = perceived_small_molecule("N");
         let new_extra_definition = new_builder
             .add_small_molecule_definition(&new_extra_molecule)
             .unwrap();

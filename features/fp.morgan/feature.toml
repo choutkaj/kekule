@@ -5,4 +5,4 @@ domains = ["small-molecule"]
 version = 1
 status = "planned"
 description = "Plan a Morgan-style circular fingerprint for small molecules."
-depends_on = ["chem.sanitize.rdkit-like"]
+depends_on = ["chem.perception.default"]

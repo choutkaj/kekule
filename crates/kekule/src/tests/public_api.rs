@@ -4,13 +4,9 @@ use super::*;
 fn happy_path_small_molecule_api_matches_architecture() {
     let mut molecule = SmallMolecule::from_smiles("c1ccccc1O").expect("phenol parses");
 
-    let report = molecule.sanitize().expect("phenol sanitizes");
-    let crate::perception::SanitizeReport {
-        normalization,
-        stereo,
-    } = report;
+    let normalization = molecule.normalize().expect("phenol normalizes");
     assert!(normalization.warnings.is_empty());
-    assert!(stereo.is_some());
+    molecule.perceive().expect("phenol perceives");
     assert_eq!(
         molecule
             .graph()
@@ -35,11 +31,11 @@ fn happy_path_small_molecule_api_matches_architecture() {
 }
 
 #[test]
-fn namespaced_small_molecule_api_keeps_parsing_and_sanitization_separate() {
+fn namespaced_small_molecule_api_keeps_pipeline_stages_separate() {
     let mut molecule = read_smiles("CC(=O)O").expect("acetic acid parses");
     assert!(!molecule.graph().perception().has_valence());
 
-    perception_api::sanitize(&mut molecule).expect("acetic acid sanitizes");
+    normalize_and_perceive(&mut molecule).expect("acetic acid normalizes_and_perceives");
     assert!(molecule.graph().perception().has_valence());
 
     let canonical = smiles_api::write_canonical(&molecule).expect("canonical SMILES writes");

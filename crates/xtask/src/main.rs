@@ -21,15 +21,12 @@ use kekule::{
     molfile,
     normalization::{NormalizationReport, NormalizationWarning},
     perception::{
-        self,
-        aromaticity::{self, AromaticityModel},
         rings,
         stereo::{
             self, StereoCandidate, StereoPerceptionError, StereoPerceptionIssue,
             StereoPerceptionReport, StereoValidationIssue,
         },
         valence::{self, ValenceModel, ValenceOptions},
-        SanitizeError, SanitizeOptions,
     },
     query,
     sdf::{self, SdfDataField, SdfParseOptions, SdfRecord},

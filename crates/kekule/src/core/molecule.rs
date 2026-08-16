@@ -617,7 +617,7 @@ impl Molecule {
 
     /// Returns the sum of the asserted formal charges on all live atoms.
     ///
-    /// This aggregate does not require sanitization or perception.
+    /// This aggregate does not require normalization or perception.
     pub fn formal_charge(&self) -> i64 {
         self.atoms()
             .map(|(_, atom)| i64::from(atom.formal_charge))
@@ -1208,16 +1208,6 @@ impl Molecule {
         }
     }
 
-    pub(crate) fn clear_valence(&mut self) {
-        self.perception.valence = None;
-        self.perception.aromaticity = None;
-        self.perception.cip_descriptors.clear();
-        #[cfg(test)]
-        for atom in self.atoms.iter_mut().flatten() {
-            atom.implicit_hydrogens = None;
-        }
-    }
-
     pub(crate) fn install_ring_membership(&mut self, membership: RingMembership) {
         self.perception.rings = Some(RingPerceptionState {
             membership,
@@ -1232,36 +1222,12 @@ impl Molecule {
         });
     }
 
-    pub(crate) fn clear_rings(&mut self) {
-        self.perception.rings = None;
-        self.perception.aromaticity = None;
-        self.perception.cip_descriptors.clear();
-    }
-
-    pub(crate) fn discard_ring_results(&mut self) {
-        self.perception.rings = None;
-    }
-
     pub(crate) fn begin_aromaticity(&mut self, model: AromaticityModel) {
         self.perception.aromaticity = Some(AromaticityPerceptionState {
             model,
             atoms: BTreeSet::new(),
             bonds: BTreeSet::new(),
         });
-        self.perception.cip_descriptors.clear();
-        #[cfg(test)]
-        {
-            for atom in self.atoms.iter_mut().flatten() {
-                atom.aromatic = false;
-            }
-            for bond in self.bonds.iter_mut().flatten() {
-                bond.aromatic = false;
-            }
-        }
-    }
-
-    pub(crate) fn clear_aromaticity(&mut self) {
-        self.perception.aromaticity = None;
         self.perception.cip_descriptors.clear();
         #[cfg(test)]
         {
@@ -1318,10 +1284,6 @@ impl Molecule {
         {
             payload.descriptor = Some(descriptor);
         }
-    }
-
-    pub(crate) fn clear_cip_descriptors(&mut self) {
-        drop(self.replace_cip_descriptors(BTreeMap::new()));
     }
 
     pub(crate) fn replace_cip_descriptors(
