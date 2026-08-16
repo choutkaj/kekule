@@ -1174,12 +1174,12 @@ ATOM 1 C CA CA . ALA ALA A A 1 1 ? 1.00 10.00 1.0 2.0 3.0 1
     fs::remove_dir_all(root).ok();
 }
 #[test]
-fn implementation_dispatch_supports_hydrogen_normalization() {
-    let root = temp_feature_root("hydrogen-normalization-dispatch");
+fn implementation_dispatch_supports_hydrogen_transforms() {
+    let root = temp_feature_root("hydrogen-transforms-dispatch");
     let fixture = root.join("fixture.sdf");
     fs::write(&fixture, simple_sdf_record("methane")).expect("fixture should write");
 
-    let expected = implementation_expected("chem.hydrogen-normalization", "pubchem-1k", &fixture)
+    let expected = implementation_expected("chem.hydrogen-transforms", "pubchem-1k", &fixture)
         .expect("feature should compare");
     let record = &expected["records"][0];
 
@@ -1845,7 +1845,7 @@ fn stereo_perception_benchmark_records_reference_preparation_errors_per_record()
 
     assert_eq!(
         value.get("status").and_then(Value::as_str),
-        Some("sanitize_error")
+        Some("normalization_or_perception_error")
     );
     assert!(value.get("report").is_none());
 }
@@ -1901,8 +1901,8 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     let single = SmallMolecule::from_smiles("CC").expect("single bond should parse");
     let double = SmallMolecule::from_smiles("C=C").expect("double bond should parse");
     assert_ne!(
-        smiles_sanitized_bonds_json(single.graph()),
-        smiles_sanitized_bonds_json(double.graph())
+        smiles_perceived_bonds_json(single.graph()),
+        smiles_perceived_bonds_json(double.graph())
     );
 
     let aromatic = SmallMolecule::from_smiles("c1ccccc1").expect("benzene should parse");
@@ -2089,19 +2089,19 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(fused_triazine.graph(), tricoordinate_aromatic_nitrogen),
         3
     );
-    assert!(smiles_sanitized_bonds_json(aromatic.graph())
+    assert!(smiles_perceived_bonds_json(aromatic.graph())
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == false));
     assert!(perceived_aromatic
         .graph()
         .bonds()
         .all(|(_, bond)| bond.order != BondOrder::Aromatic));
-    assert!(smiles_sanitized_bonds_json(perceived_aromatic.graph())
+    assert!(smiles_perceived_bonds_json(perceived_aromatic.graph())
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
 
     let labeled = SmallMolecule::from_smiles("[13CH3:7]C").expect("labeled carbon should parse");
-    let atoms = smiles_sanitized_atoms_json(labeled.graph());
+    let atoms = smiles_perceived_atoms_json(labeled.graph());
     assert!(atoms
         .iter()
         .any(|atom| atom["isotope"] == 13 && atom["atom_map"] == 7));
@@ -2155,10 +2155,10 @@ fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
     let molecule = SmallMolecule::from_smiles("CCCCCCCc1cc2c(=O)ccn(O)c2cc1")
         .expect("aromatic carbonyl SMILES should parse");
 
-    let item = smiles_sanitized_semantic_json(molecule);
+    let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
         .as_array()
-        .expect("sanitized atoms should be an array");
+        .expect("perceived atoms should be an array");
 
     assert!(atoms.iter().any(|atom| {
         atom["symbol"] == "C"
@@ -2199,10 +2199,10 @@ fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
     let molecule =
         SmallMolecule::from_smiles("[nH]1cccc1").expect("aromatic nH SMILES should parse");
 
-    let item = smiles_sanitized_semantic_json(molecule);
+    let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
         .as_array()
-        .expect("sanitized atoms should be an array");
+        .expect("perceived atoms should be an array");
 
     assert!(atoms.iter().any(|atom| {
         atom["symbol"] == "N"
@@ -2218,10 +2218,10 @@ fn smiles_semantics_derive_promoted_aromatic_nh_valence_without_feedback() {
     let molecule = SmallMolecule::from_smiles("CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C")
         .expect("substituted pyrrole SMILES should parse");
 
-    let item = smiles_sanitized_semantic_json(molecule);
+    let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
         .as_array()
-        .expect("sanitized atoms should be an array");
+        .expect("perceived atoms should be an array");
 
     assert!(
         atoms.iter().any(|atom| {

@@ -15,7 +15,7 @@ Write `SmallMolecule` values to Molfile V2000 text for round-trip oriented workf
   including code 15 for explicit zero valence, and rejects values beyond the
   V2000 field range.
 - Emits supported V2000 bond stereo codes from source bond marks without conflating wedge direction and double-bond either stereo.
-- Does not sanitize or canonicalize before writing.
+- Does not normalize, perceive, or canonicalize before writing.
 
 ## Implementation Notes
 

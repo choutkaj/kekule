@@ -1,5 +1,7 @@
 # Small-Molecule Pipeline Refactor Plan
 
+Status: complete through Stage 9.
+
 ## Purpose
 
 This document is the implementation plan for the small-molecule chemistry pipeline defined in `ARCHITECTURE.md`.
@@ -394,15 +396,26 @@ Acceptance:
 
 Goal: remove migration residue.
 
-Audit and remove:
-
-- sanitize naming and compatibility shims;
-- unused perception helpers that existed only for source representation handling;
-- `AromaticityProvenance::Imported` residue;
-- old source-stereo perception report types or fields no longer meaningful;
-- redundant test-only compatibility paths where feasible;
-- `Hydrogen Topology Normalization` terminology if it conflicts with the canonical normalization concept;
-- outdated feature docs, dashboard entries, README examples, benchmark plumbing, and comments.
+- [x] move validation, candidate detection, coordinate inference and
+  materialization, and CIP assignment to the focused top-level `stereo` facade;
+- [x] remove the `perception::stereo` compatibility namespace;
+- [x] remove obsolete sanitize naming from current APIs, benchmark adapters,
+  statuses, docs, and metadata while retaining genuinely historical revision
+  notes and RDKit's own API spelling;
+- [x] rename `chem.hydrogen-normalization` and
+  `HydrogenNormalizationError` to the focused hydrogen-transform vocabulary;
+- [x] verify that no sanitizer compatibility module, imported-aromatic
+  provenance, or old source-stereo perception report surface remains;
+- [x] audit the test-only atom, bond, and stereo perception mirrors. They
+  remain temporarily because hundreds of legacy crate-internal assertions use
+  them; production access already goes exclusively through `PerceptionState`,
+  so removing them belongs in a dedicated test-fixture cleanup rather than this
+  public/API terminology pass;
+- [x] update feature docs, benchmark identities and schemas, README/examples,
+  architecture text, and generated dashboard metadata.
+- [x] run rustfmt, clippy, workspace tests, explicit doc tests, warning-free
+  rustdoc, feature/dashboard checks, corpus integrity, and focused benchmark
+  smoke comparisons.
 
 Run full repository formatting, clippy, tests, doc tests, feature/dashboard consistency, and relevant benchmark smoke checks.
 

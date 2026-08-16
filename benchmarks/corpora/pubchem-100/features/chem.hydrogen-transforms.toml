@@ -1,4 +1,4 @@
-feature_id = "chem.hydrogen-normalization"
+feature_id = "chem.hydrogen-transforms"
 corpus_id = "pubchem-100"
 reference_tool = "rdkit"
 reference_version = "RDKit 2026.03.3"

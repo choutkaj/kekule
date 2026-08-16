@@ -194,9 +194,13 @@ fn parser_resource_options_are_public() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
-fn hydrogen_normalization_public_api() -> Result<(), Box<dyn std::error::Error>> {
+fn hydrogen_transforms_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut molecule = perceived_smiles("C")?;
-    let added = kekule::hydrogens::add_hydrogens(&mut molecule)?;
+    let added: Result<
+        kekule::hydrogens::AddHydrogensReport,
+        kekule::hydrogens::HydrogenTransformError,
+    > = kekule::hydrogens::add_hydrogens(&mut molecule);
+    let added = added?;
     assert_eq!(added.added.len(), 4);
 
     molecule.normalize()?;
@@ -608,11 +612,11 @@ fn topology_layout_and_checked_mapping_public_api() -> Result<(), Box<dyn std::e
 #[test]
 fn production_smiles_stereo_uses_installed_perception_state(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use kekule::perception::stereo::{
+    use kekule::stereo::{
         CoordinateStereoError, CoordinateStereoMaterializationReport, CoordinateStereoResult,
         StereoCandidate, StereoValidationError,
     };
-    use kekule::perception::{self, stereo};
+    use kekule::{perception, stereo};
 
     let document = kekule::smiles::parse_str(r"C(=C\F)\F")?;
     let mut molecule = kekule::smiles::interpret(&document)?.into_molecule()?;
@@ -630,7 +634,7 @@ fn production_smiles_stereo_uses_installed_perception_state(
     assert!(
         candidates.iter().any(|candidate| matches!(
             candidate,
-            kekule::perception::stereo::StereoCandidate::DoubleBond {
+            kekule::stereo::StereoCandidate::DoubleBond {
                 left_carriers,
                 right_carriers,
                 ..
@@ -654,7 +658,7 @@ fn production_smiles_stereo_uses_installed_perception_state(
 #[test]
 fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::core::{StereoDescriptor, StereoElementId};
-    use kekule::perception::stereo::{self, CipAssignmentError, CipAssignmentReport};
+    use kekule::stereo::{self, CipAssignmentError, CipAssignmentReport};
 
     let input = include_str!(
         "../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"

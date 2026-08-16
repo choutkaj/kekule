@@ -12,6 +12,6 @@ fixtures = [
 
 
 notes = [
-  "Reference RDKit goldens compare valence-specific output, not full sanitization.",
+  "Reference RDKit goldens compare valence-specific output, not the full normalize/perceive workflow.",
   "All molecule fixtures are externally supplied PubChem records.",
 ]

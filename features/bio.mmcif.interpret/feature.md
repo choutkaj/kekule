@@ -10,7 +10,7 @@ shared-topology ensemble.
 ## Behavior/API
 
 - `mmcif::interpret` returns `MmcifInterpretation { model, report }` and never
-  sanitizes or prepares chemistry.
+  normalizes, perceives, or prepares chemistry.
 - `MmcifInterpretation::into_model` consumes the interpretation and returns its
   canonical `Model` when the report is not needed.
 - `mmcif::interpret_ensemble` separately interprets selected or all coordinate
@@ -137,7 +137,7 @@ shared-topology ensemble.
 ## Out Of Scope
 
 - External CCD/template lookup, proximity-inferred bonds, assembly generation,
-  sanitization, force-field preparation, and serialization.
+  chemical normalization/perception, force-field preparation, and serialization.
 
 ## Revision Notes
 

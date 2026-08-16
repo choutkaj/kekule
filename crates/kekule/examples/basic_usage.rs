@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use kekule::{perception::stereo, small::SmallMolecule};
+use kekule::{small::SmallMolecule, stereo};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse a chiral amino acid, normalize its representation, and perceive chemistry.

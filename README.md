@@ -75,7 +75,7 @@ Parse and inspect a simple chiral molecule, assign its stereochemistry, and writ
 ```rust
 use std::error::Error;
 
-use kekule::{perception::stereo, small::SmallMolecule};
+use kekule::{small::SmallMolecule, stereo};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse a chiral amino acid, then atomically normalize and perceive it.

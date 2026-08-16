@@ -40,7 +40,7 @@ Interpret a connected V3000 CTAB from the version-autodetected loss-preserving
   collections in the document and reports their source lines as ignored during
   interpretation; required CTAB control records are not misreported as ignored
   chemistry.
-- Does not run sanitization, valence perception, ring perception, aromaticity, or stereochemistry perception.
+- Does not run normalization, valence perception, ring perception, aromaticity, or stereo inference.
 
 ## Implementation Notes
 
@@ -70,7 +70,7 @@ Interpret a connected V3000 CTAB from the version-autodetected loss-preserving
 - Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistry, enhanced stereochemistry collections, full MDL property coverage, sanitization, and runtime RDKit.
+SDF V3000 parsing, V3000 writing, query atom/bond semantics, atom stereochemistry, enhanced stereochemistry collections, full MDL property coverage, automatic normalization/perception, and runtime RDKit.
 
 ## Revision Notes
 

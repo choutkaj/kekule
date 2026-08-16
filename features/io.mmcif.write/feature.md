@@ -3,7 +3,7 @@
 ## Summary
 
 Write a supported canonical `Model` as one structural PDBx/mmCIF data
-block without hiding validation, perception, sanitization, or preparation.
+block without hiding validation, perception, normalization, or preparation.
 
 ## Behavior/API
 
@@ -31,7 +31,7 @@ block without hiding validation, perception, sanitization, or preparation.
   ambiguous connection selectors, unrepresentable disconnected multi-asym
   molecule boundaries, unsupported atom/stereo fields, formal charges outside
   the PDBx range, and zero/aromatic/dative bond orders.
-- Does not mutate, sanitize, canonicalize, perceive, or prepare the input model.
+- Does not mutate, normalize, canonicalize, perceive, or prepare the input model.
 
 ## Implementation Notes
 

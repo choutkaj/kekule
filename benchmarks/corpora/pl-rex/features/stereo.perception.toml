@@ -11,5 +11,5 @@ fixtures = [
 
 notes = [
   "Externally supplied PL-REX ligand SDF packs provide manually reviewed coordinate- and Molfile-stereo perception regression coverage over curated protein-ligand benchmark structures.",
-  "Goldens compare semantic stereo perception reports and resulting stereo elements after sanitization, not bytewise SDF spelling.",
+  "Goldens compare semantic stereo reports and resulting stereo elements after normalization and default perception, not bytewise SDF spelling.",
 ]

@@ -1,8 +1,8 @@
 id = "stereo.perception"
-title = "Stereochemistry perception"
+title = "Stereo inference and materialization"
 area = "stereo"
 domains = ["small-molecule"]
-version = 27
+version = 28
 status = "supported"
 description = "Structurally validate represented stereo, detect conservative candidates, infer coordinate-derived tetrahedral, double-bond, and opt-in axis stereo read-only, and materialize it only through an explicit transform."
 depends_on = ["stereo.representation", "algo.valence.rdkit-like"]
