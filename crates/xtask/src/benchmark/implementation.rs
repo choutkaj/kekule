@@ -842,7 +842,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             ..SanitizeOptions::default()
         },
     );
-    if sanitize.is_err() {
+    let Ok(sanitize_report) = sanitize else {
         let mol = record.molecule.graph();
         return json!({
             "record_index": record.record_index,
@@ -851,7 +851,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
         });
-    }
+    };
     let candidates = stereo::detect_stereo_candidates(record.molecule.graph());
     let result = stereo::perceive_stereo(record.molecule.graph_mut());
     let mol = record.molecule.graph();
@@ -863,6 +863,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
             "candidates": candidates.iter().map(stereo_candidate_json).collect::<Vec<_>>(),
+            "normalization_report": normalization_report_json(&sanitize_report.normalization),
             "report": stereo_perception_report_json(&report),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
@@ -875,6 +876,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
             "candidates": candidates.iter().map(stereo_candidate_json).collect::<Vec<_>>(),
+            "normalization_report": normalization_report_json(&sanitize_report.normalization),
             "error": stereo_perception_error_json(&error),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
@@ -1975,13 +1977,23 @@ pub(crate) fn bond_direction_json(
 
 pub(crate) fn stereo_perception_report_json(report: &StereoPerceptionReport) -> Value {
     json!({
+        "created_element_indices": report
+            .created_elements
+            .iter()
+            .map(|id| id.raw())
+            .collect::<Vec<_>>(),
+    })
+}
+
+pub(crate) fn normalization_report_json(report: &NormalizationReport) -> Value {
+    json!({
         "warnings": report
             .warnings
             .iter()
-            .map(stereo_perception_warning_json)
+            .map(normalization_warning_json)
             .collect::<Vec<_>>(),
-        "created_element_indices": report
-            .created_elements
+        "created_stereo_element_indices": report
+            .created_stereo_elements
             .iter()
             .map(|id| id.raw())
             .collect::<Vec<_>>(),
@@ -2022,9 +2034,9 @@ pub(crate) fn stereo_perception_error_json(error: &StereoPerceptionError) -> Val
     })
 }
 
-pub(crate) fn stereo_perception_warning_json(warning: &StereoPerceptionWarning) -> Value {
+pub(crate) fn normalization_warning_json(warning: &NormalizationWarning) -> Value {
     match warning {
-        StereoPerceptionWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => json!({
+        NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => json!({
             "type": "ambiguous_tetrahedral_wedge_marks",
             "center_atom_index": center.raw(),
             "mark_count": mark_count,
@@ -2034,30 +2046,6 @@ pub(crate) fn stereo_perception_warning_json(warning: &StereoPerceptionWarning) 
 
 pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Value {
     match issue {
-        StereoPerceptionIssue::UnassembledTetrahedralBondMark { bond, kind } => json!({
-            "type": "unassembled_tetrahedral_bond_mark",
-            "bond_index": bond.raw(),
-            "kind": stereo_bond_mark_kind_json(*kind),
-        }),
-        StereoPerceptionIssue::AmbiguousDirectionalBondMarks {
-            double_bond,
-            endpoint,
-            mark_count,
-        } => json!({
-            "type": "ambiguous_directional_bond_marks",
-            "double_bond_index": double_bond.raw(),
-            "endpoint_atom_index": endpoint.raw(),
-            "mark_count": mark_count,
-        }),
-        StereoPerceptionIssue::UnpairedDirectionalBondMark { bond } => json!({
-            "type": "unpaired_directional_bond_mark",
-            "bond_index": bond.raw(),
-        }),
-        StereoPerceptionIssue::UnsupportedSourceBondMark { bond, kind } => json!({
-            "type": "unsupported_source_bond_mark",
-            "bond_index": bond.raw(),
-            "kind": stereo_bond_mark_kind_json(*kind),
-        }),
         StereoPerceptionIssue::InvalidStereo(issue) => json!({
             "type": "invalid_stereo",
             "issue": stereo_validation_issue_json(issue),
@@ -2111,16 +2099,6 @@ pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Val
             "center_atom_index": center.raw(),
             "carrier": stereo_carrier_json(carrier),
         }),
-        StereoValidationIssue::TetrahedralCarrierUnavailable {
-            element,
-            center,
-            carrier,
-        } => json!({
-            "type": "tetrahedral_carrier_unavailable",
-            "element_index": element.raw(),
-            "center_atom_index": center.raw(),
-            "carrier": stereo_carrier_json(carrier),
-        }),
         StereoValidationIssue::InvalidDoubleBondOrder {
             element,
             bond,
@@ -2163,12 +2141,12 @@ pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Val
             "endpoint_atom_index": endpoint.raw(),
             "carrier": stereo_carrier_json(carrier),
         }),
-        StereoValidationIssue::DoubleBondCarrierUnavailable {
+        StereoValidationIssue::UnsupportedDoubleBondCarrier {
             element,
             endpoint,
             carrier,
         } => json!({
-            "type": "double_bond_carrier_unavailable",
+            "type": "unsupported_double_bond_carrier",
             "element_index": element.raw(),
             "endpoint_atom_index": endpoint.raw(),
             "carrier": stereo_carrier_json(carrier),

@@ -223,14 +223,20 @@ pub mod mmcif {
 ///
 /// Normalization changes only how already-asserted chemistry is represented.
 /// It is transactional, model-independent, and idempotent, and successful
-/// normalization clears installed derived perception state.
+/// normalization clears installed derived perception state. Imported aromatic
+/// orders are localized and supported source stereo marks become canonical
+/// represented stereo elements.
 pub mod normalization {
-    pub use crate::chemistry::NormalizationError;
+    pub use crate::chemistry::{
+        NormalizationError, NormalizationReport, NormalizationWarning,
+        SourceStereoNormalizationError, SourceStereoNormalizationIssue,
+    };
 
     use crate::core::Molecule;
 
-    /// Normalize one represented molecule into Kekule's canonical form.
-    pub fn normalize(molecule: &mut Molecule) -> Result<(), NormalizationError> {
+    /// Normalize one represented molecule into Kekule's canonical form and
+    /// return created source-stereo elements plus concrete warnings.
+    pub fn normalize(molecule: &mut Molecule) -> Result<NormalizationReport, NormalizationError> {
         crate::chemistry::normalize_molecule(molecule)
     }
 }
@@ -276,7 +282,7 @@ pub mod perception {
             CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
             CipSkipped, CipSkippedReason, StereoCandidate, StereoPerceptionError,
             StereoPerceptionIssue, StereoPerceptionOptions, StereoPerceptionReport,
-            StereoPerceptionWarning, StereoValidationError, StereoValidationIssue,
+            StereoValidationError, StereoValidationIssue,
         };
     }
 
