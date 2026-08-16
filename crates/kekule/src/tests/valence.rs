@@ -74,8 +74,23 @@ fn assert_aromatic_valence_pipeline(
     expected_implicit_hydrogens: &[u8],
     expected_aromatic_atoms: usize,
 ) {
-    let mut molecule = read_smiles(smiles)
+    let molecule = read_smiles(smiles)
         .unwrap_or_else(|error| panic!("aromatic fixture should parse: {smiles}: {error}"));
+    assert_aromatic_valence_pipeline_for_molecule(
+        smiles,
+        molecule,
+        expected_implicit_hydrogens,
+        expected_aromatic_atoms,
+    );
+}
+
+fn assert_aromatic_valence_pipeline_for_molecule(
+    label: &str,
+    mut molecule: SmallMolecule,
+    expected_implicit_hydrogens: &[u8],
+    expected_aromatic_atoms: usize,
+) {
+    let smiles = label;
     assert!(!molecule.graph().perception().has_aromaticity(), "{smiles}");
 
     molecule
@@ -137,10 +152,25 @@ fn normalized_aromatic_systems_perceive_valence_before_rings_and_aromaticity() {
         ("c1ccsc1", &[1, 1, 1, 0, 1][..], 5),
         ("C[n+]1ccccc1", &[3, 0, 1, 1, 1, 1, 1][..], 6),
         ("c1[n-]cnn1", &[1, 0, 1, 0, 0][..], 5),
-        ("[c]1ccccc1", &[0, 1, 1, 1, 1, 1][..], 6),
     ] {
         assert_aromatic_valence_pipeline(smiles, implicit_hydrogens, aromatic_atoms);
     }
+
+    let mut radical = read_smiles("c1ccccc1").expect("radical fixture syntax should interpret");
+    {
+        let mut radical_carbon = radical
+            .graph_mut()
+            .atom_mut(AtomId::new(0))
+            .expect("radical carbon");
+        radical_carbon.radical = Some(AtomRadical::Doublet);
+        radical_carbon.no_implicit_hydrogens = true;
+    }
+    assert_aromatic_valence_pipeline_for_molecule(
+        "explicitly represented phenyl radical",
+        radical,
+        &[0, 1, 1, 1, 1, 1],
+        6,
+    );
 }
 
 #[test]

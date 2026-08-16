@@ -28,6 +28,12 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - SMILES, Molfile, SDF, and mmCIF expose format-specific Documents and explicit
   interpretation results with reports/mappings; superseded direct reader APIs
   are absent.
+- SMILES and Molfile parsing retain format-side symbols, record codes, source
+  relationships, and resource-bounded syntax state without constructing core
+  chemistry. Their interpreters alone translate that syntax into represented
+  atoms, bonds, source stereo, and conformers, and publish no general
+  perception state. SDF delegates each record's chemistry translation to the
+  Molfile interpreter.
 - SMILES and Molfile retain simple default-bounded `parse_str` entry points and
   expose focused parse-options overloads; SDF and mmCIF accept their parse
   options directly.
@@ -279,3 +285,6 @@ Expose the architecture-defined public facade instead of a flat root namespace.
 - v45: Replace sanitizer APIs and their parse-to-ready convenience with the
   focused transactional default `perception::perceive` operation and thin
   `SmallMolecule::perceive` method.
+- v46: Make SMILES and Molfile Documents genuinely format-specific, assign all
+  source-to-core chemistry construction to interpretation, and keep SDF record
+  interpretation delegated to Molfile.

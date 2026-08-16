@@ -5,8 +5,7 @@ use std::ops::Range;
 use crate::algorithms::{
     allowed_valences, canonical_atom_ranking, double_bond_between_aromatic_atoms,
     double_bond_endpoint_carriers, double_bond_has_noncarbon_endpoint, double_bond_is_in_ring,
-    explicit_valence, ordered_atom_pair, rdkit_charge_adjusted_default_valence,
-    rdkit_default_valence, CanonicalAtomRanking,
+    ordered_atom_pair, rdkit_default_valence, CanonicalAtomRanking,
 };
 use crate::core::*;
 use crate::io::MolWriteError;
@@ -38,25 +37,57 @@ impl SmilesDocument {
 struct SmilesProgram {
     atoms: Vec<SmilesProgramAtom>,
     bonds: Vec<SmilesProgramBond>,
-    imported_aromatic_atoms: BTreeSet<AtomId>,
-    bracket_atoms: Vec<AtomId>,
+    imported_aromatic_atoms: BTreeSet<usize>,
     tetrahedral: Vec<PendingTetrahedral>,
-    tetrahedral_carriers: BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+    tetrahedral_carriers: BTreeMap<usize, Vec<PendingStereoCarrier>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct SmilesProgramAtom {
-    atom: Atom,
+    syntax: SmilesAtomSyntax,
     span: Range<usize>,
+    component: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SmilesAtomSyntax {
+    symbol: String,
+    isotope: Option<u16>,
+    explicit_hydrogens: u8,
+    formal_charge: i8,
+    atom_map: Option<u32>,
+    aromatic: bool,
+    bracketed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SmilesProgramBond {
-    left: AtomId,
-    right: AtomId,
-    order: BondOrder,
-    stereo: Option<StereoBondMarkKind>,
+    left: usize,
+    right: usize,
+    token: SmilesBondToken,
+    direction: Option<SmilesDirectionToken>,
     offset: usize,
+    component: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmilesBondToken {
+    Single,
+    Double,
+    Triple,
+    Aromatic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmilesDirectionToken {
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmilesChiralityToken {
+    At,
+    AtAt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -360,10 +391,11 @@ pub fn parse_smiles_document_with_options(
     })
 }
 
-pub fn interpret_smiles_document(
+pub(super) fn interpret_smiles_component(
     document: &SmilesDocument,
+    component: usize,
 ) -> std::result::Result<SmilesInterpretation, SmilesInterpretError> {
-    interpret_smiles_program(&document.program, document.source.len())
+    interpret_smiles_program_component(&document.program, component, document.source.len())
 }
 
 fn parse_smiles_program(
@@ -374,20 +406,19 @@ fn parse_smiles_program(
     let mut atoms = Vec::<SmilesProgramAtom>::new();
     let mut bonds = Vec::<SmilesProgramBond>::new();
     let mut imported_aromatic_atoms = BTreeSet::new();
-    let mut current: Option<AtomId> = None;
-    let mut stack = Vec::<AtomId>::new();
-    let mut pending_bond = None::<(BondOrder, Option<StereoBondMarkKind>, usize)>;
+    let mut current: Option<usize> = None;
+    let mut stack = Vec::<usize>::new();
+    let mut pending_bond = None::<(SmilesBondToken, Option<SmilesDirectionToken>, usize)>;
     let mut rings = BTreeMap::<
         usize,
         (
-            AtomId,
-            Option<(BondOrder, Option<StereoBondMarkKind>)>,
+            usize,
+            Option<(SmilesBondToken, Option<SmilesDirectionToken>)>,
             usize,
         ),
     >::new();
     let mut pending_tetrahedral = Vec::<PendingTetrahedral>::new();
-    let mut tetrahedral_carriers = BTreeMap::<AtomId, Vec<PendingStereoCarrier>>::new();
-    let mut bracket_atoms = Vec::<AtomId>::new();
+    let mut tetrahedral_carriers = BTreeMap::<usize, Vec<PendingStereoCarrier>>::new();
     let mut component = 0usize;
     let mut previous = SmilesTokenKind::Start;
     let mut cursor = 0;
@@ -460,20 +491,20 @@ fn parse_smiles_program(
                 {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
                 }
-                let order = match ch {
-                    '-' => BondOrder::Single,
-                    '=' => BondOrder::Double,
-                    '#' => BondOrder::Triple,
-                    ':' => BondOrder::Aromatic,
-                    '/' | '\\' => BondOrder::Single,
+                let token = match ch {
+                    '-' => SmilesBondToken::Single,
+                    '=' => SmilesBondToken::Double,
+                    '#' => SmilesBondToken::Triple,
+                    ':' => SmilesBondToken::Aromatic,
+                    '/' | '\\' => SmilesBondToken::Single,
                     _ => unreachable!(),
                 };
-                let stereo = match ch {
-                    '/' => Some(StereoBondMarkKind::DirectionalUp),
-                    '\\' => Some(StereoBondMarkKind::DirectionalDown),
+                let direction = match ch {
+                    '/' => Some(SmilesDirectionToken::Up),
+                    '\\' => Some(SmilesDirectionToken::Down),
                     _ => None,
                 };
-                pending_bond = Some((order, stereo, offset));
+                pending_bond = Some((token, direction, offset));
                 previous = SmilesTokenKind::Bond;
                 cursor += 1;
             }
@@ -483,7 +514,7 @@ fn parse_smiles_program(
                 let (label, next_cursor) = parse_smiles_ring_label(chars, cursor)?;
                 let close_bond = pending_bond
                     .take()
-                    .map(|(order, stereo, _)| (order, stereo));
+                    .map(|(token, direction, _)| (token, direction));
                 if let Some((other, open_bond, open_component)) = rings.remove(&label) {
                     if open_component != component {
                         return Err(SmilesParseError::new(
@@ -497,8 +528,8 @@ fn parse_smiles_program(
                             "conflicting ring bond symbols",
                         ));
                     }
-                    let (order, stereo) = match close_bond.or(open_bond) {
-                        Some((order, stereo)) => (order, stereo),
+                    let (token, direction) = match close_bond.or(open_bond) {
+                        Some((token, direction)) => (token, direction),
                         None => (
                             default_smiles_bond_order(&imported_aromatic_atoms, other, atom),
                             None,
@@ -506,11 +537,11 @@ fn parse_smiles_program(
                     };
                     add_smiles_program_bond(
                         &mut bonds,
-                        other,
-                        atom,
-                        order,
-                        stereo,
+                        (other, atom),
+                        token,
+                        direction,
                         offset,
+                        component,
                         options.max_bonds,
                     )?;
                     resolve_tetrahedral_ring_carrier(
@@ -523,7 +554,7 @@ fn parse_smiles_program(
                     push_tetrahedral_carrier(
                         &mut tetrahedral_carriers,
                         atom,
-                        StereoCarrier::Atom(other),
+                        SmilesStereoCarrier::Atom(other),
                     );
                 } else {
                     rings.insert(label, (atom, close_bond, component));
@@ -540,19 +571,19 @@ fn parse_smiles_program(
             '[' => {
                 let (atom, aromatic, chirality, next_cursor) = parse_bracket_atom(chars, cursor)?;
                 let explicit_hydrogens = atom.explicit_hydrogens;
-                let atom_id = next_smiles_atom_id(atoms.len(), offset, options.max_atoms)?;
+                let atom_id = next_smiles_atom_index(atoms.len(), offset, options.max_atoms)?;
                 let end = chars
                     .get(next_cursor)
                     .map(|(offset, _)| *offset)
                     .unwrap_or(input.len());
                 atoms.push(SmilesProgramAtom {
-                    atom,
+                    syntax: atom,
                     span: offset..end,
+                    component,
                 });
                 if aromatic {
                     imported_aromatic_atoms.insert(atom_id);
                 }
-                bracket_atoms.push(atom_id);
                 if let Some(orientation) = chirality {
                     pending_tetrahedral.push(PendingTetrahedral {
                         center: atom_id,
@@ -564,11 +595,11 @@ fn parse_smiles_program(
                     );
                 }
                 if let Some(previous) = current {
-                    let (order, stereo) = match pending_bond
+                    let (token, direction) = match pending_bond
                         .take()
-                        .map(|(order, stereo, _)| (order, stereo))
+                        .map(|(token, direction, _)| (token, direction))
                     {
-                        Some((order, stereo)) => (order, stereo),
+                        Some((token, direction)) => (token, direction),
                         None => (
                             default_smiles_bond_order(&imported_aromatic_atoms, previous, atom_id),
                             None,
@@ -576,17 +607,17 @@ fn parse_smiles_program(
                     };
                     add_smiles_program_bond(
                         &mut bonds,
-                        previous,
-                        atom_id,
-                        order,
-                        stereo,
+                        (previous, atom_id),
+                        token,
+                        direction,
                         offset,
+                        component,
                         options.max_bonds,
                     )?;
                     push_tetrahedral_carrier(
                         &mut tetrahedral_carriers,
                         previous,
-                        StereoCarrier::Atom(atom_id),
+                        SmilesStereoCarrier::Atom(atom_id),
                     );
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
@@ -603,24 +634,25 @@ fn parse_smiles_program(
             }
             _ => {
                 let (atom, aromatic, next_cursor) = parse_organic_atom(chars, cursor)?;
-                let atom_id = next_smiles_atom_id(atoms.len(), offset, options.max_atoms)?;
+                let atom_id = next_smiles_atom_index(atoms.len(), offset, options.max_atoms)?;
                 let end = chars
                     .get(next_cursor)
                     .map(|(offset, _)| *offset)
                     .unwrap_or(input.len());
                 atoms.push(SmilesProgramAtom {
-                    atom,
+                    syntax: atom,
                     span: offset..end,
+                    component,
                 });
                 if aromatic {
                     imported_aromatic_atoms.insert(atom_id);
                 }
                 if let Some(previous) = current {
-                    let (order, stereo) = match pending_bond
+                    let (token, direction) = match pending_bond
                         .take()
-                        .map(|(order, stereo, _)| (order, stereo))
+                        .map(|(token, direction, _)| (token, direction))
                     {
-                        Some((order, stereo)) => (order, stereo),
+                        Some((token, direction)) => (token, direction),
                         None => (
                             default_smiles_bond_order(&imported_aromatic_atoms, previous, atom_id),
                             None,
@@ -628,17 +660,17 @@ fn parse_smiles_program(
                     };
                     add_smiles_program_bond(
                         &mut bonds,
-                        previous,
-                        atom_id,
-                        order,
-                        stereo,
+                        (previous, atom_id),
+                        token,
+                        direction,
                         offset,
+                        component,
                         options.max_bonds,
                     )?;
                     push_tetrahedral_carrier(
                         &mut tetrahedral_carriers,
                         previous,
-                        StereoCarrier::Atom(atom_id),
+                        SmilesStereoCarrier::Atom(atom_id),
                     );
                 } else if pending_bond.is_some() {
                     return Err(SmilesParseError::new(offset, "bond without left endpoint"));
@@ -665,62 +697,86 @@ fn parse_smiles_program(
         atoms,
         bonds,
         imported_aromatic_atoms,
-        bracket_atoms,
         tetrahedral: pending_tetrahedral,
         tetrahedral_carriers,
     })
 }
 
-fn next_smiles_atom_id(
+fn next_smiles_atom_index(
     atom_count: usize,
     offset: usize,
     max_atoms: usize,
-) -> std::result::Result<AtomId, SmilesParseError> {
+) -> std::result::Result<usize, SmilesParseError> {
     if atom_count >= max_atoms {
         return Err(SmilesParseError::new(
             offset,
             "SMILES atom count exceeds configured limit",
         ));
     }
-    let raw = crate::core::checked_raw_id(atom_count)
-        .map_err(|_| SmilesParseError::new(offset, "SMILES atom identifier capacity exceeded"))?;
-    Ok(AtomId::new(raw))
+    if atom_count > u32::MAX as usize {
+        return Err(SmilesParseError::new(
+            offset,
+            "SMILES atom index capacity exceeded",
+        ));
+    }
+    Ok(atom_count)
 }
 
-fn interpret_smiles_program(
+fn interpret_smiles_program_component(
     program: &SmilesProgram,
+    component: usize,
     end_offset: usize,
 ) -> std::result::Result<SmilesInterpretation, SmilesInterpretError> {
-    interpret_smiles_program_inner(program, end_offset).map_err(|error| SmilesInterpretError {
-        offset: error.offset,
-        message: error.message,
-    })
-}
-
-fn interpret_smiles_program_inner(
-    program: &SmilesProgram,
-    end_offset: usize,
-) -> std::result::Result<SmilesInterpretation, SmilesParseError> {
     let mut mol = Molecule::new();
-    let mut atom_mappings = Vec::with_capacity(program.atoms.len());
+    let mut source_to_atom = BTreeMap::<usize, AtomId>::new();
+    let mut atom_mappings = Vec::new();
     for (index, record) in program.atoms.iter().enumerate() {
-        let atom_id = mol.add_atom(record.atom.clone()).map_err(|error| {
-            SmilesParseError::new(record.span.start, format!("invalid graph atom: {error}"))
+        if record.component != component {
+            continue;
+        }
+        if record.syntax.aromatic != program.imported_aromatic_atoms.contains(&index) {
+            return Err(SmilesInterpretError {
+                offset: record.span.start,
+                message: "inconsistent aromatic atom syntax state".to_owned(),
+            });
+        }
+        let atom = interpret_smiles_atom(&record.syntax, record.span.start)?;
+        let atom_id = mol.add_atom(atom).map_err(|error| SmilesInterpretError {
+            offset: record.span.start,
+            message: format!("invalid represented atom: {error}"),
         })?;
-        debug_assert_eq!(atom_id.index(), index);
+        source_to_atom.insert(index, atom_id);
         atom_mappings.push(SmilesAtomMapping {
             atom: atom_id,
             source_span: record.span.clone(),
         });
     }
-    let mut bond_mappings = Vec::with_capacity(program.bonds.len());
+    let mut bond_mappings = Vec::new();
     for bond in &program.bonds {
+        if bond.component != component {
+            continue;
+        }
+        let left = source_to_atom
+            .get(&bond.left)
+            .copied()
+            .ok_or_else(|| SmilesInterpretError {
+                offset: bond.offset,
+                message: "bond left endpoint is outside its SMILES component".to_owned(),
+            })?;
+        let right =
+            source_to_atom
+                .get(&bond.right)
+                .copied()
+                .ok_or_else(|| SmilesInterpretError {
+                    offset: bond.offset,
+                    message: "bond right endpoint is outside its SMILES component".to_owned(),
+                })?;
         let bond_id = add_smiles_bond(
             &mut mol,
-            bond.left,
-            bond.right,
-            bond.order,
-            bond.stereo,
+            left,
+            right,
+            interpret_smiles_bond_token(bond.token),
+            bond.direction.map(interpret_smiles_direction),
             bond.offset,
         )?;
         bond_mappings.push(SmilesBondMapping {
@@ -729,16 +785,11 @@ fn interpret_smiles_program_inner(
         });
     }
 
-    infer_smiles_bracket_radicals(
-        &mut mol,
-        &program.bracket_atoms,
-        &program.imported_aromatic_atoms,
-        end_offset,
-    )?;
     add_smiles_tetrahedral_elements(
         &mut mol,
-        program.tetrahedral.clone(),
-        program.tetrahedral_carriers.clone(),
+        &source_to_atom,
+        &program.tetrahedral,
+        &program.tetrahedral_carriers,
         end_offset,
     )?;
     Ok(SmilesInterpretation {
@@ -750,75 +801,37 @@ fn interpret_smiles_program_inner(
     })
 }
 
-fn infer_smiles_bracket_radicals(
-    mol: &mut Molecule,
-    bracket_atoms: &[AtomId],
-    imported_aromatic_atoms: &BTreeSet<AtomId>,
+fn interpret_smiles_atom(
+    syntax: &SmilesAtomSyntax,
     offset: usize,
-) -> std::result::Result<(), SmilesParseError> {
-    for atom_id in bracket_atoms {
-        let radical = inferred_smiles_bracket_radical(
-            mol,
-            *atom_id,
-            imported_aromatic_atoms.contains(atom_id),
-        )
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
-        let atom = mol
-            .atoms
-            .get_mut(atom_id.index())
-            .and_then(Option::as_mut)
-            .ok_or_else(|| SmilesParseError::new(offset, format!("invalid atom id: {atom_id}")))?;
-        atom.radical = radical;
-    }
-    Ok(())
+) -> std::result::Result<Atom, SmilesInterpretError> {
+    let element = Element::from_symbol(&syntax.symbol).ok_or_else(|| SmilesInterpretError {
+        offset,
+        message: format!("unsupported element symbol `{}`", syntax.symbol),
+    })?;
+    let mut atom = Atom::new(element);
+    atom.isotope = syntax.isotope;
+    atom.formal_charge = syntax.formal_charge;
+    atom.explicit_hydrogens = syntax.explicit_hydrogens;
+    atom.no_implicit_hydrogens = syntax.bracketed;
+    atom.atom_map = syntax.atom_map;
+    Ok(atom)
 }
 
-fn inferred_smiles_bracket_radical(
-    mol: &Molecule,
-    atom_id: AtomId,
-    imported_aromatic: bool,
-) -> std::result::Result<Option<AtomRadical>, MoleculeError> {
-    let atom = mol.atom(atom_id)?;
-    let Some(target_valence) = rdkit_charge_adjusted_default_valence(atom) else {
-        return Ok(None);
-    };
-    let occupied_valence = smiles_bracket_occupied_valence(mol, atom_id, atom, imported_aromatic);
-    Ok(
-        match usize::from(target_valence).saturating_sub(occupied_valence) {
-            0 => None,
-            1 => Some(AtomRadical::Doublet),
-            2 => Some(AtomRadical::Triplet),
-            3 => Some(AtomRadical::Quartet),
-            4 => Some(AtomRadical::Quintet),
-            _ => unreachable!("RDKit default valence is at most four"),
-        },
-    )
+const fn interpret_smiles_bond_token(token: SmilesBondToken) -> BondOrder {
+    match token {
+        SmilesBondToken::Single => BondOrder::Single,
+        SmilesBondToken::Double => BondOrder::Double,
+        SmilesBondToken::Triple => BondOrder::Triple,
+        SmilesBondToken::Aromatic => BondOrder::Aromatic,
+    }
 }
 
-fn smiles_bracket_occupied_valence(
-    mol: &Molecule,
-    atom_id: AtomId,
-    atom: &Atom,
-    imported_aromatic: bool,
-) -> usize {
-    if !imported_aromatic {
-        return explicit_valence(mol, atom_id) + usize::from(atom.explicit_hydrogens);
+const fn interpret_smiles_direction(direction: SmilesDirectionToken) -> StereoBondMarkKind {
+    match direction {
+        SmilesDirectionToken::Up => StereoBondMarkKind::DirectionalUp,
+        SmilesDirectionToken::Down => StereoBondMarkKind::DirectionalDown,
     }
-    let bond_valence_twice = mol
-        .incident_bonds(atom_id)
-        .ok()
-        .into_iter()
-        .flatten()
-        .map(|(_, bond)| match bond.order {
-            BondOrder::Zero | BondOrder::Dative => 0,
-            BondOrder::Single => 2,
-            BondOrder::Double => 4,
-            BondOrder::Triple => 6,
-            BondOrder::Quadruple => 8,
-            BondOrder::Aromatic => 3,
-        })
-        .sum::<usize>();
-    (bond_valence_twice + usize::from(atom.explicit_hydrogens) * 2) / 2
 }
 
 fn add_smiles_bond(
@@ -828,30 +841,37 @@ fn add_smiles_bond(
     order: BondOrder,
     stereo: Option<StereoBondMarkKind>,
     offset: usize,
-) -> std::result::Result<BondId, SmilesParseError> {
+) -> std::result::Result<BondId, SmilesInterpretError> {
     let bond_id = mol
         .add_bond(left, right, order)
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+        .map_err(|error| SmilesInterpretError {
+            offset,
+            message: error.to_string(),
+        })?;
     if let Some(kind) = stereo {
         mol.set_stereo_bond_mark(StereoBondMark {
             bond: bond_id,
             kind,
             source: StereoSource::Smiles,
         })
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+        .map_err(|error| SmilesInterpretError {
+            offset,
+            message: error.to_string(),
+        })?;
     }
     Ok(bond_id)
 }
 
 fn add_smiles_program_bond(
     bonds: &mut Vec<SmilesProgramBond>,
-    left: AtomId,
-    right: AtomId,
-    order: BondOrder,
-    stereo: Option<StereoBondMarkKind>,
+    endpoints: (usize, usize),
+    token: SmilesBondToken,
+    direction: Option<SmilesDirectionToken>,
     offset: usize,
+    component: usize,
     max_bonds: usize,
 ) -> std::result::Result<(), SmilesParseError> {
+    let (left, right) = endpoints;
     if bonds.len() >= max_bonds {
         return Err(SmilesParseError::new(
             offset,
@@ -861,73 +881,94 @@ fn add_smiles_program_bond(
     if left == right {
         return Err(SmilesParseError::new(offset, "self bond"));
     }
-    let endpoints = ordered_atom_pair(left, right);
-    if bonds
-        .iter()
-        .any(|bond| ordered_atom_pair(bond.left, bond.right) == endpoints)
-    {
+    let endpoints = if left < right {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    if bonds.iter().any(|bond| {
+        let bond_endpoints = if bond.left < bond.right {
+            (bond.left, bond.right)
+        } else {
+            (bond.right, bond.left)
+        };
+        bond_endpoints == endpoints
+    }) {
         return Err(SmilesParseError::new(offset, "duplicate bond"));
     }
     bonds.push(SmilesProgramBond {
         left,
         right,
-        order,
-        stereo,
+        token,
+        direction,
         offset,
+        component,
     });
     Ok(())
 }
 
 fn add_smiles_tetrahedral_elements(
     mol: &mut Molecule,
-    centers: Vec<PendingTetrahedral>,
-    mut carriers_by_center: BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
+    source_to_atom: &BTreeMap<usize, AtomId>,
+    centers: &[PendingTetrahedral],
+    carriers_by_center: &BTreeMap<usize, Vec<PendingStereoCarrier>>,
     offset: usize,
-) -> std::result::Result<(), SmilesParseError> {
+) -> std::result::Result<(), SmilesInterpretError> {
     for pending in centers {
+        let Some(&center) = source_to_atom.get(&pending.center) else {
+            continue;
+        };
         let carriers = resolve_smiles_tetrahedral_carriers(
             mol,
-            pending.center,
+            center,
+            source_to_atom,
             carriers_by_center
-                .remove(&pending.center)
+                .get(&pending.center)
+                .cloned()
                 .unwrap_or_default(),
             offset,
         )?;
         mol.add_stereo_element(StereoElement::specified(
             StereoElementKind::Tetrahedral(TetrahedralStereo {
-                center: pending.center,
+                center,
                 carriers,
-                orientation: pending.orientation,
+                orientation: match pending.orientation {
+                    SmilesChiralityToken::At => TetrahedralOrientation::Clockwise,
+                    SmilesChiralityToken::AtAt => TetrahedralOrientation::CounterClockwise,
+                },
             }),
             StereoSource::Smiles,
         ))
-        .map_err(|error| SmilesParseError::new(offset, error.to_string()))?;
+        .map_err(|error| SmilesInterpretError {
+            offset,
+            message: error.to_string(),
+        })?;
     }
     Ok(())
 }
 
 fn initial_tetrahedral_carriers(
-    previous: Option<AtomId>,
+    previous: Option<usize>,
     explicit_hydrogens: u8,
 ) -> Vec<PendingStereoCarrier> {
     let mut carriers = Vec::new();
     if let Some(previous) = previous {
-        carriers.push(PendingStereoCarrier::Resolved(StereoCarrier::Atom(
+        carriers.push(PendingStereoCarrier::Resolved(SmilesStereoCarrier::Atom(
             previous,
         )));
     }
     for _ in 0..explicit_hydrogens {
         carriers.push(PendingStereoCarrier::Resolved(
-            StereoCarrier::ImplicitHydrogen,
+            SmilesStereoCarrier::ImplicitHydrogen,
         ));
     }
     carriers
 }
 
 fn push_tetrahedral_carrier(
-    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
-    center: AtomId,
-    carrier: StereoCarrier,
+    carriers_by_center: &mut BTreeMap<usize, Vec<PendingStereoCarrier>>,
+    center: usize,
+    carrier: SmilesStereoCarrier,
 ) {
     if let Some(carriers) = carriers_by_center.get_mut(&center) {
         carriers.push(PendingStereoCarrier::Resolved(carrier));
@@ -935,8 +976,8 @@ fn push_tetrahedral_carrier(
 }
 
 fn push_tetrahedral_ring_carrier(
-    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
-    center: AtomId,
+    carriers_by_center: &mut BTreeMap<usize, Vec<PendingStereoCarrier>>,
+    center: usize,
     label: usize,
     component: usize,
 ) {
@@ -946,11 +987,11 @@ fn push_tetrahedral_ring_carrier(
 }
 
 fn resolve_tetrahedral_ring_carrier(
-    carriers_by_center: &mut BTreeMap<AtomId, Vec<PendingStereoCarrier>>,
-    center: AtomId,
+    carriers_by_center: &mut BTreeMap<usize, Vec<PendingStereoCarrier>>,
+    center: usize,
     label: usize,
     component: usize,
-    carrier: AtomId,
+    carrier: usize,
 ) {
     let Some(carriers) = carriers_by_center.get_mut(&center) else {
         return;
@@ -964,24 +1005,35 @@ fn resolve_tetrahedral_ring_carrier(
             } if *pending_label == label && *pending_component == component
         )
     }) {
-        *pending = PendingStereoCarrier::Resolved(StereoCarrier::Atom(carrier));
+        *pending = PendingStereoCarrier::Resolved(SmilesStereoCarrier::Atom(carrier));
     }
 }
 
 fn resolve_smiles_tetrahedral_carriers(
     mol: &Molecule,
     center: AtomId,
+    source_to_atom: &BTreeMap<usize, AtomId>,
     carriers: Vec<PendingStereoCarrier>,
     offset: usize,
-) -> std::result::Result<Vec<StereoCarrier>, SmilesParseError> {
+) -> std::result::Result<Vec<StereoCarrier>, SmilesInterpretError> {
     let mut carriers = carriers
         .into_iter()
         .map(|carrier| match carrier {
-            PendingStereoCarrier::Resolved(carrier) => Ok(carrier),
-            PendingStereoCarrier::Ring { .. } => Err(SmilesParseError::new(
+            PendingStereoCarrier::Resolved(SmilesStereoCarrier::Atom(source)) => source_to_atom
+                .get(&source)
+                .copied()
+                .map(StereoCarrier::Atom)
+                .ok_or_else(|| SmilesInterpretError {
+                    offset,
+                    message: "tetrahedral carrier is outside its SMILES component".to_owned(),
+                }),
+            PendingStereoCarrier::Resolved(SmilesStereoCarrier::ImplicitHydrogen) => {
+                Ok(StereoCarrier::ImplicitHydrogen)
+            }
+            PendingStereoCarrier::Ring { .. } => Err(SmilesInterpretError {
                 offset,
-                "unresolved tetrahedral ring carrier",
-            )),
+                message: "unresolved tetrahedral ring carrier".to_owned(),
+            }),
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
     if carriers.len() == 3 && smiles_tetrahedral_center_can_have_lone_pair(mol, center) {
@@ -997,32 +1049,37 @@ fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) 
                 atom.element.symbol(),
                 "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
             ) && atom.explicit_hydrogens == 0
-                && mol.implicit_hydrogens(center).ok().flatten().unwrap_or(0) == 0
         })
         .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PendingTetrahedral {
-    center: AtomId,
-    orientation: TetrahedralOrientation,
+    center: usize,
+    orientation: SmilesChiralityToken,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingStereoCarrier {
-    Resolved(StereoCarrier),
+    Resolved(SmilesStereoCarrier),
     Ring { label: usize, component: usize },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmilesStereoCarrier {
+    Atom(usize),
+    ImplicitHydrogen,
+}
+
 fn default_smiles_bond_order(
-    imported_aromatic_atoms: &BTreeSet<AtomId>,
-    left: AtomId,
-    right: AtomId,
-) -> BondOrder {
+    imported_aromatic_atoms: &BTreeSet<usize>,
+    left: usize,
+    right: usize,
+) -> SmilesBondToken {
     if imported_aromatic_atoms.contains(&left) && imported_aromatic_atoms.contains(&right) {
-        BondOrder::Aromatic
+        SmilesBondToken::Aromatic
     } else {
-        BondOrder::Single
+        SmilesBondToken::Single
     }
 }
 
@@ -1067,7 +1124,7 @@ fn parse_smiles_ring_label(
 fn parse_organic_atom(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(Atom, bool, usize), SmilesParseError> {
+) -> std::result::Result<(SmilesAtomSyntax, bool, usize), SmilesParseError> {
     let (offset, ch) = chars[cursor];
     let mut symbol = ch.to_string();
     let mut aromatic = false;
@@ -1085,15 +1142,28 @@ fn parse_organic_atom(
             format!("unsupported organic-subset atom `{ch}`"),
         ));
     }
-    let element = Element::from_symbol(&symbol)
-        .ok_or_else(|| SmilesParseError::new(offset, format!("unsupported atom `{ch}`")))?;
-    Ok((Atom::new(element), aromatic, next))
+    Ok((
+        SmilesAtomSyntax {
+            symbol,
+            isotope: None,
+            explicit_hydrogens: 0,
+            formal_charge: 0,
+            atom_map: None,
+            aromatic,
+            bracketed: false,
+        },
+        aromatic,
+        next,
+    ))
 }
 
 fn parse_bracket_atom(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(Atom, bool, Option<TetrahedralOrientation>, usize), SmilesParseError> {
+) -> std::result::Result<
+    (SmilesAtomSyntax, bool, Option<SmilesChiralityToken>, usize),
+    SmilesParseError,
+> {
     let start = chars[cursor].0;
     let mut end = cursor + 1;
     while end < chars.len() && chars[end].1 != ']' {
@@ -1157,12 +1227,9 @@ fn parse_bracket_atom(
             "bracket atom missing element",
         ));
     };
-    let element = Element::from_symbol(&canonical_symbol).ok_or_else(|| {
-        SmilesParseError::new(start + 1 + symbol_start, "unsupported bracket element")
-    })?;
-    let mut atom = Atom::new(element);
-    atom.isotope = isotope;
-    atom.no_implicit_hydrogens = true;
+    let mut explicit_hydrogens = 0;
+    let mut formal_charge = 0;
+    let mut atom_map = None;
     let mut saw_chirality = false;
     let mut chirality = None;
     let mut saw_hydrogen = false;
@@ -1175,16 +1242,16 @@ fn parse_bracket_atom(
                 index += 1;
                 chirality = if bytes.get(index) == Some(&b'@') {
                     index += 1;
-                    Some(TetrahedralOrientation::CounterClockwise)
+                    Some(SmilesChiralityToken::AtAt)
                 } else {
-                    Some(TetrahedralOrientation::Clockwise)
+                    Some(SmilesChiralityToken::At)
                 };
             }
             b'H' if !saw_hydrogen && !saw_charge && !saw_map => {
                 saw_hydrogen = true;
                 index += 1;
                 let digit_end = ascii_digits_end(bytes, index);
-                atom.explicit_hydrogens = if digit_end == index {
+                explicit_hydrogens = if digit_end == index {
                     1
                 } else {
                     let value = text[index..digit_end].parse::<u8>().map_err(|_| {
@@ -1236,7 +1303,7 @@ fn parse_bracket_atom(
                         SmilesParseError::new(start + 1 + index, "charge overflow")
                     })?)
                     .ok_or_else(|| SmilesParseError::new(start + 1 + index, "charge overflow"))?;
-                atom.formal_charge = i8::try_from(charge).map_err(|_| {
+                formal_charge = i8::try_from(charge).map_err(|_| {
                     SmilesParseError::new(start + 1 + index, "charge is outside i8 range")
                 })?;
             }
@@ -1259,7 +1326,7 @@ fn parse_bracket_atom(
                         "atom map must be positive",
                     ));
                 }
-                atom.atom_map = Some(map);
+                atom_map = Some(map);
                 index = digit_end;
             }
             b'/' | b'\\' | b'*' => {
@@ -1276,7 +1343,20 @@ fn parse_bracket_atom(
             }
         }
     }
-    Ok((atom, aromatic, chirality, end + 1))
+    Ok((
+        SmilesAtomSyntax {
+            symbol: canonical_symbol,
+            isotope,
+            explicit_hydrogens,
+            formal_charge,
+            atom_map,
+            aromatic,
+            bracketed: true,
+        },
+        aromatic,
+        chirality,
+        end + 1,
+    ))
 }
 
 fn parse_aromatic_bracket_element(bytes: &[u8], index: usize) -> Option<(&'static str, usize)> {
@@ -1763,18 +1843,10 @@ fn validate_smiles_writeable(
         StereoWriteMode::Encode => validate_isomeric_smiles_stereo(mol)?,
         StereoWriteMode::Reject | StereoWriteMode::Ignore => {}
     }
-    for (atom_id, atom) in mol.atoms() {
-        if atom.radical.is_some()
-            && inferred_smiles_bracket_radical(
-                mol,
-                atom_id,
-                mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true),
-            )
-            .map_err(|error| MolWriteError::new(error.to_string()))?
-                != atom.radical
-        {
+    for (_, atom) in mol.atoms() {
+        if atom.radical.is_some() {
             return Err(MolWriteError::new(
-                "SMILES writer cannot encode radical multiplicity for the atom valence",
+                "SMILES writer cannot encode radicals without an explicit radical token",
             ));
         }
     }
