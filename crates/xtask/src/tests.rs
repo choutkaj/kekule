@@ -1865,6 +1865,67 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
     assert!(parsed["records"][0].get("normalized_perceived").is_some());
     assert!(parsed["records"][0].get("write_round_trip").is_some());
 
+    let written = implementation_expected("io.smiles.write", "pubchem-1k", &fixture)
+        .expect("write benchmark should serialize");
+    assert_eq!(written["records"].as_array().map(Vec::len), Some(2));
+    assert_eq!(written["records"][0]["status"], "ok");
+    assert_eq!(
+        written["records"][0]["normalized_perceived"]["atom_count"],
+        4
+    );
+    assert_eq!(
+        written["records"][0]["normalized_perceived"]["bond_count"],
+        1
+    );
+
+    let records = read_nonisomeric_smiles_records(&fixture).expect("fixture should interpret");
+    let reparsed = records[0]
+        .components
+        .iter()
+        .map(|molecule| {
+            let text = smiles::write_with_options(molecule, SmilesWriteOptions::default())
+                .expect("component should write");
+            let document = smiles::parse_str(&text).expect("written component should parse");
+            smiles::interpret(&document)
+                .expect("written component should interpret")
+                .into_molecule()
+                .expect("written component should remain connected")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        written["records"][0]["normalized_perceived"],
+        smiles_components_perceived_semantic_json(&reparsed)
+    );
+    let connected_written = smiles::write_with_options(
+        records[1]
+            .molecule
+            .as_ref()
+            .expect("connected record should have one molecule"),
+        SmilesWriteOptions::default(),
+    )
+    .expect("connected record should write");
+    let connected_document =
+        smiles::parse_str(&connected_written).expect("written component should parse");
+    let connected_reparsed = smiles::interpret(&connected_document)
+        .expect("written component should interpret")
+        .into_molecule()
+        .expect("written component should remain connected");
+    assert_eq!(
+        written["records"][1]["normalized_perceived"],
+        smiles_perceived_semantic_json(connected_reparsed)
+    );
+
+    let skipped = IndexedSmilesRecord {
+        record_index: 0,
+        status: "ok".to_owned(),
+        title: "missing components".to_owned(),
+        input_smiles: "CC.Cl.Cl".to_owned(),
+        molecule: None,
+        components: Vec::new(),
+    };
+    let skipped = smiles_write_record_json(&skipped).expect("error record should serialize");
+    assert_ne!(skipped["status"], "ok");
+
     let stereo = implementation_expected("stereo.perception", "pubchem-1k", &fixture)
         .expect("stereo benchmark should serialize");
     assert_eq!(stereo["records"].as_array().map(Vec::len), Some(2));

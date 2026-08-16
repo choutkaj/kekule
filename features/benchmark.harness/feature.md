@@ -79,7 +79,8 @@ release status, CI success, or whether the repository is ready for development.
   perception-to-representation feedback.
 - SMILES benchmark adapters preserve one output record per source line while
   aggregating the already-separated connected component interpretations for
-  raw, normalized/perceived, round-trip, and stereo semantic comparison.
+  raw, noncanonical write/reparse, normalized/perceived, round-trip, and stereo
+  semantic comparison.
 
 ## Benchmarks
 
@@ -116,3 +117,5 @@ release status, CI success, or whether the repository is ready for development.
 - v46: Preserve source-record cardinality for disconnected SMILES benchmark
   inputs by aggregating connected interpretation components in the adapter,
   and retain the established stereo benchmark serialization contract.
+- v47: Make the noncanonical SMILES write benchmark write and reparse every
+  connected source component before aggregating one result per source record.
