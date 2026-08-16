@@ -1,8 +1,0 @@
-id = "algo.geometry-minimization"
-title = "Geometry minimization"
-area = "algorithms"
-domains = ["small-molecule", "macromolecule"]
-version = 6
-status = "supported"
-description = "Minimize fixed-topology molecular-model coordinates with deterministic normalized steepest descent and Armijo backtracking."
-depends_on = ["model.potential", "core.units"]

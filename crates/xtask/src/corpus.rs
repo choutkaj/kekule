@@ -18,13 +18,14 @@ pub(crate) fn corpus(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             arg => return Err(boxed_error(format!("unknown corpus check argument: {arg}"))),
         }
     }
-    if selector != "all" && !is_known_corpus(selector) {
+    let available_corpora = discover_corpus_ids()?;
+    if selector != "all" && !available_corpora.iter().any(|corpus| corpus == selector) {
         return Err(boxed_error(format!("unknown corpus: {selector}")));
     }
 
-    let corpora = BENCHMARK_CORPORA
+    let corpora = available_corpora
         .iter()
-        .map(|corpus| corpus.id)
+        .map(String::as_str)
         .filter(|id| selector == "all" || selector == *id)
         .collect::<Vec<_>>();
     let mut locks = BTreeMap::new();
@@ -77,11 +78,13 @@ pub(crate) enum CorpusKind {
 pub(crate) struct CorpusDescriptor {
     pub(crate) id: String,
     pub(crate) title: String,
-    pub(crate) kind: CorpusKind,
+    #[serde(rename = "kind")]
+    pub(crate) _kind: CorpusKind,
     pub(crate) ready: bool,
     pub(crate) expected_count: usize,
     #[serde(default)]
-    pub(crate) local_only: bool,
+    #[serde(rename = "local_only")]
+    pub(crate) _local_only: bool,
     #[serde(default)]
     pub(crate) parent: Option<String>,
     #[serde(default)]
@@ -95,88 +98,7 @@ pub(crate) struct CorpusDescriptor {
     pub(crate) build_command: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CorpusFeatureDashboardInfo {
-    pub(crate) reference_tool: String,
-    pub(crate) reference_version: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CorpusDashboardInfo {
-    pub(crate) id: String,
-    pub(crate) label: String,
-    pub(crate) title: String,
-    pub(crate) kind: CorpusKind,
-    pub(crate) expected_count: usize,
-    pub(crate) features: BTreeMap<String, CorpusFeatureDashboardInfo>,
-}
-
-pub(crate) fn read_dashboard_corpus_info(
-) -> Result<BTreeMap<String, CorpusDashboardInfo>, Box<dyn Error>> {
-    let mut summaries = BTreeMap::new();
-    for corpus in BENCHMARK_CORPORA {
-        let descriptor = read_corpus_descriptor(corpus.id)?;
-        let manifest_dir = Path::new("benchmarks")
-            .join("corpora")
-            .join(corpus.id)
-            .join("features");
-        let mut features = BTreeMap::new();
-        if manifest_dir.exists() {
-            for entry in fs::read_dir(&manifest_dir)? {
-                let path = entry?.path();
-                if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
-                    continue;
-                }
-                let feature_id =
-                    path.file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| {
-                            boxed_error(format!(
-                                "{} has a non-UTF-8 benchmark manifest name",
-                                path.display()
-                            ))
-                        })?;
-                let manifest = read_benchmark_manifest(&path)?;
-                if manifest.feature_id != feature_id {
-                    return Err(boxed_error(format!(
-                        "{} declares feature_id `{}`, expected `{feature_id}`",
-                        path.display(),
-                        manifest.feature_id
-                    )));
-                }
-                if manifest.corpus_id != corpus.id {
-                    return Err(boxed_error(format!(
-                        "{} declares corpus_id `{}`, expected `{}`",
-                        path.display(),
-                        manifest.corpus_id,
-                        corpus.id
-                    )));
-                }
-                features.insert(
-                    feature_id.to_owned(),
-                    CorpusFeatureDashboardInfo {
-                        reference_tool: manifest.reference_tool,
-                        reference_version: manifest.reference_version,
-                    },
-                );
-            }
-        }
-        summaries.insert(
-            corpus.id.to_owned(),
-            CorpusDashboardInfo {
-                id: corpus.id.to_owned(),
-                label: corpus.label.to_owned(),
-                title: descriptor.title,
-                kind: descriptor.kind,
-                expected_count: descriptor.expected_count,
-                features,
-            },
-        );
-    }
-    Ok(summaries)
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceLock {
     pub(crate) schema_version: u32,
@@ -188,7 +110,7 @@ pub(crate) struct SourceLock {
     pub(crate) packs: Vec<SourcePack>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceEntry {
     pub(crate) id: String,
@@ -196,17 +118,17 @@ pub(crate) struct SourceEntry {
     pub(crate) files: Vec<SourceFile>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourceFile {
     pub(crate) path: String,
     pub(crate) url: String,
     pub(crate) sha256: String,
-    #[serde(default)]
-    pub(crate) record_type: Option<String>,
+    #[serde(default, rename = "record_type")]
+    pub(crate) _record_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SourcePack {
     pub(crate) path: String,
@@ -221,11 +143,42 @@ pub(crate) struct SourcePack {
 }
 
 pub(crate) fn corpus_root(corpus: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+    workspace_root()
         .join("benchmarks")
         .join("corpora")
         .join(corpus)
+}
+
+pub(crate) fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+pub(crate) fn discover_corpus_ids() -> Result<Vec<String>, Box<dyn Error>> {
+    discover_corpus_ids_from(&workspace_root())
+}
+
+pub(crate) fn discover_corpus_ids_from(root: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+    let corpora_root = root.join("benchmarks").join("corpora");
+    let mut ids = Vec::new();
+    for entry in fs::read_dir(&corpora_root)? {
+        let path = entry?.path();
+        if !path.is_dir() || !path.join("corpus.toml").is_file() {
+            continue;
+        }
+        let id = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                boxed_error(format!("{} has a non-UTF-8 corpus name", path.display()))
+            })?;
+        ids.push(id.to_owned());
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+pub(crate) fn is_known_corpus(corpus: &str) -> bool {
+    corpus_descriptor_path(corpus).is_file()
 }
 
 pub(crate) fn corpus_descriptor_path(corpus: &str) -> PathBuf {
@@ -233,27 +186,7 @@ pub(crate) fn corpus_descriptor_path(corpus: &str) -> PathBuf {
 }
 
 pub(crate) fn read_corpus_descriptor(corpus: &str) -> Result<CorpusDescriptor, Box<dyn Error>> {
-    let descriptor = read_tracked_corpus_descriptor(corpus)?;
-    let path = corpus_descriptor_path(corpus);
-    let registered = benchmark_corpus(corpus)
-        .ok_or_else(|| boxed_error(format!("unknown benchmark corpus `{corpus}`")))?;
-    if descriptor.id != registered.id {
-        return Err(boxed_error(format!(
-            "{} declares id `{}`, expected `{}`",
-            path.display(),
-            descriptor.id,
-            registered.id
-        )));
-    }
-    if descriptor.local_only != registered.local_only {
-        return Err(boxed_error(format!(
-            "{} declares local_only={}, expected {} from the benchmark corpus registry",
-            path.display(),
-            descriptor.local_only,
-            registered.local_only
-        )));
-    }
-    Ok(descriptor)
+    read_tracked_corpus_descriptor(corpus)
 }
 
 pub(crate) fn read_tracked_corpus_descriptor(
@@ -276,7 +209,11 @@ pub(crate) fn read_tracked_corpus_descriptor(
 
 pub(crate) fn read_source_lock(corpus: &str) -> Result<SourceLock, Box<dyn Error>> {
     let path = corpus_root(corpus).join("sources.lock.json");
-    let text = fs::read_to_string(&path)
+    read_source_lock_path(&path)
+}
+
+pub(crate) fn read_source_lock_path(path: &Path) -> Result<SourceLock, Box<dyn Error>> {
+    let text = fs::read_to_string(path)
         .map_err(|error| boxed_error(format!("{} is unavailable: {error}", path.display())))?;
     serde_json::from_str(&text).map_err(|error| boxed_error(format!("{}: {error}", path.display())))
 }
@@ -357,20 +294,36 @@ pub(crate) fn check_corpus_artifacts(
     build_command: &str,
 ) -> Result<(), Box<dyn Error>> {
     let root = corpus_root(corpus);
-    let features_dir = root.join("features");
-    if !features_dir.exists() {
+    let manifest_dir = root.join("features");
+    if !manifest_dir.exists() {
         return Err(boxed_error(format!(
-            "{} has no feature manifests",
+            "{} has no benchmark manifests",
             root.display()
         )));
     }
     let mut golden_paths = Vec::new();
-    for entry in fs::read_dir(&features_dir)? {
+    for entry in fs::read_dir(&manifest_dir)? {
         let path = entry?.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
             continue;
         }
         let manifest = read_benchmark_manifest(&path)?;
+        let benchmark_id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| {
+                boxed_error(format!(
+                    "{} has a non-UTF-8 benchmark manifest name",
+                    path.display()
+                ))
+            })?;
+        if manifest.benchmark_id != benchmark_id {
+            return Err(boxed_error(format!(
+                "{} declares legacy feature_id `{}`, expected benchmark ID `{benchmark_id}`",
+                path.display(),
+                manifest.benchmark_id
+            )));
+        }
         if manifest.corpus_id != corpus {
             return Err(boxed_error(format!(
                 "{} declares corpus `{}`",
@@ -381,7 +334,7 @@ pub(crate) fn check_corpus_artifacts(
         for fixture in &manifest.fixtures {
             let golden = root
                 .join("golden")
-                .join(&manifest.feature_id)
+                .join(benchmark_id)
                 .join(format!("{}.json.gz", slugify_fixture(fixture)));
             if !golden.exists() {
                 return Err(boxed_error(format!(
@@ -395,9 +348,6 @@ pub(crate) fn check_corpus_artifacts(
     }
     golden_paths.sort();
     validate_gzip_json_files(&golden_paths)?;
-    if benchmark_results_path(corpus).exists() {
-        read_corpus_results(&benchmark_results_path(corpus))?;
-    }
     if !require_data {
         return Ok(());
     }

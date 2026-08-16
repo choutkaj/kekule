@@ -1,8 +1,0 @@
-id = "stereo.representation"
-title = "Stereochemistry representation"
-area = "stereo"
-domains = ["small-molecule"]
-version = 17
-status = "supported"
-description = "Store canonical stereo elements, exact stable relation-group slot layouts, derived descriptor vocabulary, and transient source bond marks that normalization consumes after canonical assembly."
-depends_on = ["core.graph", "core.atom-bond"]

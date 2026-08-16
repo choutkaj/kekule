@@ -1,8 +1,0 @@
-id = "algo.rings.fast"
-title = "Fast ring membership detection"
-area = "algorithms"
-domains = ["small-molecule"]
-version = 12
-status = "supported"
-description = "Detect cycle membership in connected molecular graphs without computing a canonical ring basis."
-depends_on = ["core.graph"]
