@@ -856,7 +856,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
         });
     }
     let candidates = stereo::detect_stereo_candidates(record.molecule.graph());
-    let result = stereo::perceive_stereo(record.molecule.graph_mut());
+    let result = stereo::materialize_coordinate_stereo(record.molecule.graph_mut());
     let mol = record.molecule.graph();
     match result {
         Ok(report) => json!({
@@ -895,14 +895,7 @@ pub(crate) fn stereo_cip_record_json(
     if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
         return None;
     }
-    let perception_result = stereo::perceive_stereo_with_options(
-        record.molecule.graph_mut(),
-        stereo::StereoPerceptionOptions {
-            assign_coordinates: false,
-            ..stereo::StereoPerceptionOptions::default()
-        },
-    );
-    if perception_result.is_err() {
+    if stereo::validate_stereo(record.molecule.graph()).is_err() {
         return None;
     }
     stereo::assign_cip_descriptors(record.molecule.graph_mut()).ok()?;
@@ -1964,7 +1957,9 @@ pub(crate) fn bond_direction_json(
     }
 }
 
-pub(crate) fn stereo_perception_report_json(report: &StereoPerceptionReport) -> Value {
+pub(crate) fn stereo_perception_report_json(
+    report: &CoordinateStereoMaterializationReport,
+) -> Value {
     json!({
         "created_element_indices": report
             .created_elements
@@ -2013,14 +2008,28 @@ pub(crate) fn stereo_candidate_json(candidate: &StereoCandidate) -> Value {
     }
 }
 
-pub(crate) fn stereo_perception_error_json(error: &StereoPerceptionError) -> Value {
-    json!({
-        "issues": error
+pub(crate) fn stereo_perception_error_json(error: &CoordinateStereoError) -> Value {
+    let issues = match error {
+        CoordinateStereoError::InvalidStereo(error) => error
             .issues
             .iter()
-            .map(stereo_perception_issue_json)
+            .map(|issue| {
+                json!({
+                    "type": "invalid_stereo",
+                    "issue": stereo_validation_issue_json(issue),
+                })
+            })
             .collect::<Vec<_>>(),
-    })
+        CoordinateStereoError::CouldNotCreateElement(error) => vec![json!({
+            "type": "could_not_create_element",
+            "error": format!("{error:?}"),
+        })],
+        _ => vec![json!({
+            "type": "coordinate_stereo_error",
+            "error": format!("{error:?}"),
+        })],
+    };
+    json!({ "issues": issues })
 }
 
 pub(crate) fn normalization_warning_json(warning: &NormalizationWarning) -> Value {
@@ -2029,19 +2038,6 @@ pub(crate) fn normalization_warning_json(warning: &NormalizationWarning) -> Valu
             "type": "ambiguous_tetrahedral_wedge_marks",
             "center_atom_index": center.raw(),
             "mark_count": mark_count,
-        }),
-    }
-}
-
-pub(crate) fn stereo_perception_issue_json(issue: &StereoPerceptionIssue) -> Value {
-    match issue {
-        StereoPerceptionIssue::InvalidStereo(issue) => json!({
-            "type": "invalid_stereo",
-            "issue": stereo_validation_issue_json(issue),
-        }),
-        StereoPerceptionIssue::CouldNotCreateElement(error) => json!({
-            "type": "could_not_create_element",
-            "error": format!("{error:?}"),
         }),
     }
 }

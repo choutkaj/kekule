@@ -4,23 +4,23 @@ use std::fmt;
 
 use super::RingMembership;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StereoPerceptionOptions {
-    pub assign_coordinates: bool,
-    pub assign_coordinate_axes: bool,
+/// Options for read-only coordinate-derived stereo inference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CoordinateStereoOptions {
+    /// Infer the conservative coordinate-axis subset in addition to
+    /// tetrahedral and double-bond stereo.
+    pub infer_axes: bool,
 }
 
-impl Default for StereoPerceptionOptions {
-    fn default() -> Self {
-        Self {
-            assign_coordinates: true,
-            assign_coordinate_axes: false,
-        }
-    }
-}
-
+/// Detached coordinate-derived stereo proposed for represented materialization.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct StereoPerceptionReport {
+pub struct CoordinateStereoResult {
+    pub elements: Vec<StereoElement>,
+}
+
+/// Stereo elements created by an explicit coordinate-stereo materialization.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CoordinateStereoMaterializationReport {
     pub created_elements: Vec<StereoElementId>,
 }
 
@@ -129,38 +129,40 @@ impl fmt::Display for StereoValidationError {
 
 impl std::error::Error for StereoValidationError {}
 
+/// Failure while inferring or explicitly materializing coordinate stereo.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StereoPerceptionIssue {
-    InvalidStereo(StereoValidationIssue),
+pub enum CoordinateStereoError {
+    InvalidStereo(StereoValidationError),
     CouldNotCreateElement(MoleculeError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StereoPerceptionError {
-    pub issues: Vec<StereoPerceptionIssue>,
-}
-
-impl fmt::Display for StereoPerceptionError {
+impl fmt::Display for CoordinateStereoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "stereo perception reported {} issue(s)",
-            self.issues.len()
-        )
+        match self {
+            Self::InvalidStereo(error) => write!(formatter, "{error}"),
+            Self::CouldNotCreateElement(error) => {
+                write!(
+                    formatter,
+                    "could not materialize coordinate stereo: {error}"
+                )
+            }
+        }
     }
 }
 
-impl std::error::Error for StereoPerceptionError {}
-
-impl From<StereoValidationError> for StereoPerceptionError {
-    fn from(error: StereoValidationError) -> Self {
-        Self {
-            issues: error
-                .issues
-                .into_iter()
-                .map(StereoPerceptionIssue::InvalidStereo)
-                .collect(),
+impl std::error::Error for CoordinateStereoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidStereo(error) => Some(error),
+            Self::CouldNotCreateElement(error) => Some(error),
         }
+    }
+}
+
+impl From<StereoValidationError> for CoordinateStereoError {
+    fn from(error: StereoValidationError) -> Self {
+        Self::InvalidStereo(error)
     }
 }
 
@@ -180,39 +182,48 @@ pub fn detect_stereo_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     candidates
 }
 
-pub fn perceive_stereo(
-    mol: &mut Molecule,
-) -> std::result::Result<StereoPerceptionReport, StereoPerceptionError> {
-    perceive_stereo_with_options(mol, StereoPerceptionOptions::default())
+/// Infer coordinate-derived stereo without changing the molecule.
+pub fn infer_coordinate_stereo(
+    mol: &Molecule,
+) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
+    infer_coordinate_stereo_with_options(mol, CoordinateStereoOptions::default())
 }
 
-pub fn perceive_stereo_with_options(
-    mol: &mut Molecule,
-    options: StereoPerceptionOptions,
-) -> std::result::Result<StereoPerceptionReport, StereoPerceptionError> {
+/// Infer coordinate-derived stereo with an explicit axis policy.
+pub fn infer_coordinate_stereo_with_options(
+    mol: &Molecule,
+    options: CoordinateStereoOptions,
+) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
     validate_stereo(mol)?;
+    Ok(CoordinateStereoResult {
+        elements: infer_coordinate_stereo_elements(mol, options.infer_axes),
+    })
+}
 
-    let planned_elements = if options.assign_coordinates {
-        assign_coordinate_stereo(mol, &[], options.assign_coordinate_axes)
-    } else {
-        Vec::new()
-    };
+/// Materialize inferred coordinate stereo as represented chemistry.
+pub fn materialize_coordinate_stereo(
+    mol: &mut Molecule,
+) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
+    materialize_coordinate_stereo_with_options(mol, CoordinateStereoOptions::default())
+}
 
+/// Materialize inferred coordinate stereo with an explicit axis policy.
+pub fn materialize_coordinate_stereo_with_options(
+    mol: &mut Molecule,
+    options: CoordinateStereoOptions,
+) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
+    let inferred = infer_coordinate_stereo_with_options(mol, options)?;
     let mut staged = mol.clone();
-    let mut created_elements = Vec::with_capacity(planned_elements.len());
-    for element in planned_elements {
-        match staged.add_stereo_element(element) {
-            Ok(id) => created_elements.push(id),
-            Err(error) => {
-                return Err(StereoPerceptionError {
-                    issues: vec![StereoPerceptionIssue::CouldNotCreateElement(error)],
-                });
-            }
-        }
+    let mut created_elements = Vec::with_capacity(inferred.elements.len());
+    for element in inferred.elements {
+        let id = staged
+            .add_stereo_element(element)
+            .map_err(CoordinateStereoError::CouldNotCreateElement)?;
+        created_elements.push(id);
     }
     validate_stereo(&staged)?;
     *mol = staged;
-    Ok(StereoPerceptionReport { created_elements })
+    Ok(CoordinateStereoMaterializationReport { created_elements })
 }
 
 fn validate_existing_elements(mol: &Molecule, issues: &mut Vec<StereoValidationIssue>) {
@@ -584,46 +595,26 @@ fn atom_is_atropisomeric_sp2_endpoint(
         })
 }
 
-fn assign_coordinate_stereo(
-    mol: &Molecule,
-    planned_elements: &[StereoElement],
-    assign_axes: bool,
-) -> Vec<StereoElement> {
+fn infer_coordinate_stereo_elements(mol: &Molecule, infer_axes: bool) -> Vec<StereoElement> {
     let Some((_, conformer)) = mol.first_conformer() else {
         return Vec::new();
     };
     let mut assigned = Vec::new();
-    assigned.extend(assign_coordinate_tetrahedral(
-        mol,
-        conformer,
-        planned_elements,
-    ));
-    assigned.extend(assign_coordinate_double_bonds(
-        mol,
-        conformer,
-        planned_elements,
-    ));
-    if assign_axes {
-        assigned.extend(assign_coordinate_axes(mol, conformer, planned_elements));
+    assigned.extend(infer_coordinate_tetrahedral(mol, conformer));
+    assigned.extend(infer_coordinate_double_bonds(mol, conformer));
+    if infer_axes {
+        assigned.extend(infer_coordinate_axes(mol, conformer));
     }
     assigned
 }
 
-fn assign_coordinate_tetrahedral(
-    mol: &Molecule,
-    conformer: &Conformer,
-    planned_elements: &[StereoElement],
-) -> Vec<StereoElement> {
+fn infer_coordinate_tetrahedral(mol: &Molecule, conformer: &Conformer) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
     for candidate in tetrahedral_candidates(mol) {
         let StereoCandidate::Tetrahedral { center, carriers } = candidate else {
             continue;
         };
-        if has_tetrahedral_element(mol, center)
-            || planned_elements
-                .iter()
-                .any(|element| planned_tetrahedral_center(element) == Some(center))
-        {
+        if has_tetrahedral_element(mol, center) {
             continue;
         }
         let atom_carriers = carriers
@@ -654,11 +645,7 @@ fn assign_coordinate_tetrahedral(
     assigned
 }
 
-fn assign_coordinate_double_bonds(
-    mol: &Molecule,
-    conformer: &Conformer,
-    planned_elements: &[StereoElement],
-) -> Vec<StereoElement> {
+fn infer_coordinate_double_bonds(mol: &Molecule, conformer: &Conformer) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
     for candidate in double_bond_candidates(mol) {
         let StereoCandidate::DoubleBond {
@@ -671,11 +658,7 @@ fn assign_coordinate_double_bonds(
         else {
             continue;
         };
-        if has_double_bond_element(mol, bond)
-            || planned_elements
-                .iter()
-                .any(|element| planned_double_bond(element) == Some(bond))
-        {
+        if has_double_bond_element(mol, bond) {
             continue;
         }
         let Some(left_carrier) = only_atom_carrier(&left_carriers) else {
@@ -706,23 +689,14 @@ fn assign_coordinate_double_bonds(
     assigned
 }
 
-fn assign_coordinate_axes(
-    mol: &Molecule,
-    conformer: &Conformer,
-    planned_elements: &[StereoElement],
-) -> Vec<StereoElement> {
+fn infer_coordinate_axes(mol: &Molecule, conformer: &Conformer) -> Vec<StereoElement> {
     let ring_membership = mol
         .ring_membership()
         .cloned()
         .unwrap_or_else(|| super::rings::compute_ring_membership(mol));
     let mut assigned = Vec::new();
     for (axis, bond) in mol.bonds() {
-        if bond.order != BondOrder::Single
-            || has_axis_element(mol, axis)
-            || planned_elements
-                .iter()
-                .any(|element| planned_axis(element) == Some(axis))
-        {
+        if bond.order != BondOrder::Single || has_axis_element(mol, axis) {
             continue;
         }
         let (left, right) = bond.endpoints();
@@ -760,27 +734,6 @@ fn assign_coordinate_axes(
         ));
     }
     assigned
-}
-
-fn planned_tetrahedral_center(element: &StereoElement) -> Option<AtomId> {
-    match &element.kind {
-        StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
-        _ => None,
-    }
-}
-
-fn planned_double_bond(element: &StereoElement) -> Option<BondId> {
-    match &element.kind {
-        StereoElementKind::DoubleBond(stereo) => Some(stereo.bond),
-        _ => None,
-    }
-}
-
-fn planned_axis(element: &StereoElement) -> Option<BondId> {
-    match &element.kind {
-        StereoElementKind::Axis(stereo) => Some(stereo.axis),
-        _ => None,
-    }
 }
 
 fn only_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {

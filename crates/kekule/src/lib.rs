@@ -278,11 +278,12 @@ pub mod perception {
     pub mod stereo {
         pub use crate::algorithms::{
             assign_cip_descriptors, assign_cip_descriptors_with_options, detect_stereo_candidates,
-            perceive_stereo, perceive_stereo_with_options, validate_stereo, CipAssignment,
-            CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions, CipAssignmentReport,
-            CipSkipped, CipSkippedReason, StereoCandidate, StereoPerceptionError,
-            StereoPerceptionIssue, StereoPerceptionOptions, StereoPerceptionReport,
-            StereoValidationError, StereoValidationIssue,
+            infer_coordinate_stereo, infer_coordinate_stereo_with_options,
+            materialize_coordinate_stereo, materialize_coordinate_stereo_with_options,
+            validate_stereo, CipAssignment, CipAssignmentError, CipAssignmentIssue,
+            CipAssignmentOptions, CipAssignmentReport, CipSkipped, CipSkippedReason,
+            CoordinateStereoError, CoordinateStereoMaterializationReport, CoordinateStereoOptions,
+            CoordinateStereoResult, StereoCandidate, StereoValidationError, StereoValidationIssue,
         };
     }
 

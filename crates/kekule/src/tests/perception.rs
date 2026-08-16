@@ -296,6 +296,153 @@ fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
 }
 
 #[test]
+fn normalize_and_perceive_succeeds_for_simple_molecule() {
+    let mut molecule = read_smiles("CCO").expect("ethanol should parse");
+
+    let report = molecule
+        .normalize_and_perceive()
+        .expect("ethanol should normalize and perceive");
+
+    assert!(report.warnings.is_empty());
+    assert!(report.created_stereo_elements.is_empty());
+    assert!(molecule.graph().perception().has_valence());
+    assert!(molecule.graph().perception().has_rings());
+    assert!(molecule.graph().perception().has_aromaticity());
+}
+
+#[test]
+fn normalize_and_perceive_matches_explicit_aromatic_source_stereo_workflow() {
+    let mut combined =
+        read_smiles("F/C=C/c1ccccc1").expect("aromatic directional SMILES should parse");
+    let mut explicit = combined.clone();
+
+    let combined_report = combined
+        .normalize_and_perceive()
+        .expect("combined workflow should succeed");
+    let explicit_report = explicit.normalize().expect("explicit normalization");
+    explicit.perceive().expect("explicit default perception");
+
+    assert_eq!(combined_report, explicit_report);
+    assert_eq!(combined, explicit);
+    assert_eq!(combined_report.created_stereo_elements.len(), 1);
+    assert!(combined.graph().stereo_bond_marks().next().is_none());
+    assert!(combined
+        .graph()
+        .bonds()
+        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+    assert!(combined.graph().perception().has_valence());
+    assert!(combined.graph().perception().has_rings());
+    assert!(combined.graph().perception().has_aromaticity());
+    assert!(!combined.graph().perception().has_cip_descriptors());
+}
+
+#[test]
+fn normalize_and_perceive_does_not_infer_or_materialize_coordinate_stereo() {
+    let (mut graph, center, carriers, _) = tetrahedral_marked_graph();
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    for (atom, point) in
+        std::iter::once((center, Point3::new(0.0, 0.0, 0.0))).chain(carriers.iter().copied().zip([
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+            Point3::new(0.0, 0.0, -1.0),
+        ]))
+    {
+        conformer
+            .set_position(
+                atom,
+                crate::units::Quantity::new(point, crate::units::ANGSTROM),
+            )
+            .unwrap();
+    }
+    graph.add_conformer(conformer).expect("complete conformer");
+    let mut molecule = SmallMolecule::from_graph(graph);
+
+    molecule
+        .normalize_and_perceive()
+        .expect("ordinary workflow should succeed");
+
+    assert!(molecule.graph().stereo_elements().next().is_none());
+    assert_eq!(
+        stereo_api::infer_coordinate_stereo(molecule.graph())
+            .expect("separate coordinate inference")
+            .elements
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn normalize_and_perceive_rolls_back_normalization_failure() {
+    let mut graph = Molecule::new();
+    let a = graph.add_atom(carbon()).expect("atom identifier capacity");
+    let b = graph.add_atom(carbon()).expect("atom identifier capacity");
+    let bond = graph.add_bond(a, b, BondOrder::Single).expect("bond");
+    graph
+        .set_stereo_bond_mark(StereoBondMark {
+            bond,
+            kind: StereoBondMarkKind::WedgeEither,
+            source: StereoSource::MolfileV2000,
+        })
+        .expect("source mark");
+    let mut molecule = SmallMolecule::from_graph(graph);
+    let before = molecule.clone();
+
+    let error = molecule
+        .normalize_and_perceive()
+        .expect_err("invalid source stereo must fail normalization");
+
+    assert!(matches!(
+        error,
+        NormalizeAndPerceiveError::Normalization(NormalizationError::SourceStereo(_))
+    ));
+    assert_eq!(molecule, before);
+}
+
+#[test]
+fn normalize_and_perceive_rolls_back_perception_after_effective_normalization() {
+    let mut graph = Molecule::new();
+    let chlorine = graph
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let oxo = graph.add_atom(oxygen()).expect("atom identifier capacity");
+    let hydroxyl = graph.add_atom(oxygen()).expect("atom identifier capacity");
+    let carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
+    graph
+        .add_bond(chlorine, oxo, BondOrder::Double)
+        .expect("oxo bond");
+    graph
+        .add_bond(chlorine, hydroxyl, BondOrder::Single)
+        .expect("hydroxyl bond");
+    graph
+        .add_bond(chlorine, carbon, BondOrder::Single)
+        .expect("connecting bond");
+    for symbol in ["F", "F", "F", "F"] {
+        let fluorine = graph
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
+        graph
+            .add_bond(carbon, fluorine, BondOrder::Single)
+            .expect("pentavalent carbon bond");
+    }
+    let mut molecule = SmallMolecule::from_graph(graph);
+    let before = molecule.clone();
+    let mut normalized = molecule.clone();
+    normalized
+        .normalize()
+        .expect("representation normalization should succeed");
+    assert_ne!(normalized, before);
+    assert!(normalized.perceive().is_err());
+
+    let error = molecule
+        .normalize_and_perceive()
+        .expect_err("default perception should reject pentavalent carbon");
+
+    assert!(matches!(error, NormalizeAndPerceiveError::Perception(_)));
+    assert_eq!(molecule, before);
+}
+
+#[test]
 fn aromaticity_evaluates_larger_simple_rings_like_rdkit() {
     let alternating_ten = [
         BondOrder::Double,
@@ -1303,7 +1450,7 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
 }
 
 #[test]
-fn stereo_perception_assigns_tetrahedral_from_3d_coordinates() {
+fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo() {
     let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
@@ -1337,15 +1484,16 @@ fn stereo_perception_assigns_tetrahedral_from_3d_coordinates() {
         )
         .unwrap();
     mol.add_conformer(conformer).expect("valid conformer");
+    mark_all_fresh(&mut mol);
+    let before = mol.clone();
 
-    let report =
-        stereo_api::perceive_stereo(&mut mol).expect("3D tetrahedral stereo should assign");
-    assert_eq!(report.created_elements.len(), 1);
-    let element = mol
-        .stereo_element(report.created_elements[0])
-        .expect("created stereo element");
-    assert_eq!(element.source, StereoSource::Coordinates3D);
-    match &element.kind {
+    let inferred = stereo_api::infer_coordinate_stereo(&mol)
+        .expect("3D tetrahedral stereo should be inferred");
+    assert_eq!(mol, before);
+    assert_eq!(inferred.elements.len(), 1);
+    let proposed = &inferred.elements[0];
+    assert_eq!(proposed.source, StereoSource::Coordinates3D);
+    match &proposed.kind {
         StereoElementKind::Tetrahedral(stereo) => {
             assert_eq!(stereo.center, center);
             assert_eq!(
@@ -1360,10 +1508,18 @@ fn stereo_perception_assigns_tetrahedral_from_3d_coordinates() {
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
+
+    let report = stereo_api::materialize_coordinate_stereo(&mut mol)
+        .expect("3D tetrahedral stereo should materialize");
+    assert_eq!(report.created_elements.len(), 1);
+    let element = mol
+        .stereo_element(report.created_elements[0])
+        .expect("created stereo element");
+    assert_eq!(element, proposed);
 }
 
 #[test]
-fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
+fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo() {
     let mut mol = Molecule::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -1404,15 +1560,15 @@ fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
         )
         .unwrap();
     mol.add_conformer(conformer).expect("valid conformer");
+    let before = mol.clone();
 
-    let report =
-        stereo_api::perceive_stereo(&mut mol).expect("2D double-bond stereo should assign");
-    assert_eq!(report.created_elements.len(), 1);
-    let element = mol
-        .stereo_element(report.created_elements[0])
-        .expect("created stereo element");
-    assert_eq!(element.source, StereoSource::Coordinates2D);
-    match &element.kind {
+    let inferred = stereo_api::infer_coordinate_stereo(&mol)
+        .expect("2D double-bond stereo should be inferred");
+    assert_eq!(mol, before);
+    assert_eq!(inferred.elements.len(), 1);
+    let proposed = &inferred.elements[0];
+    assert_eq!(proposed.source, StereoSource::Coordinates2D);
+    match &proposed.kind {
         StereoElementKind::DoubleBond(stereo) => {
             assert_eq!(stereo.bond, double_bond);
             assert_eq!(stereo.left, left);
@@ -1423,24 +1579,32 @@ fn stereo_perception_assigns_double_bond_from_2d_coordinates() {
         }
         other => panic!("expected double-bond stereo, found {other:?}"),
     }
-}
 
-#[test]
-fn stereo_perception_assigns_axis_from_3d_coordinates() {
-    let (mut mol, axis) = coordinate_axis_graph(true);
-
-    let report = stereo_api::perceive_stereo_with_options(
-        &mut mol,
-        StereoPerceptionOptions {
-            assign_coordinate_axes: true,
-            ..StereoPerceptionOptions::default()
-        },
-    )
-    .expect("3D axis stereo should assign");
+    let report = stereo_api::materialize_coordinate_stereo(&mut mol)
+        .expect("2D double-bond stereo should materialize");
     assert_eq!(report.created_elements.len(), 1);
     let element = mol
         .stereo_element(report.created_elements[0])
         .expect("created stereo element");
+    assert_eq!(element, proposed);
+}
+
+#[test]
+fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
+    let (mol, axis) = coordinate_axis_graph(true);
+    let before = mol.clone();
+
+    let default = stereo_api::infer_coordinate_stereo(&mol)
+        .expect("default coordinate-stereo inference should succeed");
+    assert!(default.elements.is_empty());
+    let inferred = stereo_api::infer_coordinate_stereo_with_options(
+        &mol,
+        CoordinateStereoOptions { infer_axes: true },
+    )
+    .expect("3D axis stereo should be inferred");
+    assert_eq!(mol, before);
+    assert_eq!(inferred.elements.len(), 1);
+    let element = &inferred.elements[0];
     assert_eq!(element.source, StereoSource::Coordinates3D);
     match &element.kind {
         StereoElementKind::Axis(stereo) => {
@@ -1459,29 +1623,80 @@ fn stereo_perception_assigns_axis_from_3d_coordinates() {
 }
 
 #[test]
-fn stereo_perception_skips_coordinate_axis_without_3d_handedness() {
-    let (mut mol, _axis) = coordinate_axis_graph(false);
+fn coordinate_stereo_inference_skips_axis_without_3d_handedness() {
+    let (mol, _axis) = coordinate_axis_graph(false);
 
-    let report = stereo_api::perceive_stereo_with_options(
-        &mut mol,
-        StereoPerceptionOptions {
-            assign_coordinate_axes: true,
-            ..StereoPerceptionOptions::default()
-        },
+    let result = stereo_api::infer_coordinate_stereo_with_options(
+        &mol,
+        CoordinateStereoOptions { infer_axes: true },
     )
     .expect("flat coordinates should be a successful non-assignment");
-    assert!(report.created_elements.is_empty());
+    assert!(result.elements.is_empty());
     assert!(mol.stereo_elements().next().is_none());
 }
 
 #[test]
-fn stereo_perception_leaves_coordinate_axes_opt_in_by_default() {
-    let (mut mol, _axis) = coordinate_axis_graph(true);
+fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
+    let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
+    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
+    for (atom, point) in
+        std::iter::once((center, Point3::new(0.0, 0.0, 0.0))).chain(carriers.iter().copied().zip([
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+            Point3::new(0.0, 0.0, -1.0),
+        ]))
+    {
+        conformer
+            .set_position(
+                atom,
+                crate::units::Quantity::new(point, crate::units::ANGSTROM),
+            )
+            .unwrap();
+    }
+    mol.add_conformer(conformer).expect("valid conformer");
+    mol.add_stereo_element(StereoElement::specified(
+        StereoElementKind::Tetrahedral(TetrahedralStereo {
+            center,
+            carriers: carriers.iter().copied().map(StereoCarrier::Atom).collect(),
+            orientation: TetrahedralOrientation::CounterClockwise,
+        }),
+        StereoSource::MolfileV2000,
+    ))
+    .expect("represented source stereo");
 
-    let report = stereo_api::perceive_stereo(&mut mol)
-        .expect("default coordinate-axis perception should succeed");
+    let inferred = stereo_api::infer_coordinate_stereo(&mol)
+        .expect("represented stereo should make coordinate inference a no-op");
+    assert!(inferred.elements.is_empty());
+    let report = stereo_api::materialize_coordinate_stereo(&mut mol)
+        .expect("represented stereo should make materialization a no-op");
     assert!(report.created_elements.is_empty());
-    assert!(mol.stereo_elements().next().is_none());
+    assert_eq!(mol.stereo_elements().count(), 1);
+}
+
+#[test]
+fn coordinate_stereo_materialization_is_transactional_on_invalid_representation() {
+    let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
+    mol.add_stereo_element(StereoElement::specified(
+        StereoElementKind::Tetrahedral(TetrahedralStereo {
+            center,
+            carriers: vec![
+                StereoCarrier::Atom(carriers[0]),
+                StereoCarrier::Atom(carriers[0]),
+                StereoCarrier::Atom(carriers[1]),
+            ],
+            orientation: TetrahedralOrientation::Clockwise,
+        }),
+        StereoSource::User,
+    ))
+    .expect("reference-valid but structurally invalid stereo");
+    let before = mol.clone();
+
+    let error = stereo_api::materialize_coordinate_stereo(&mut mol)
+        .expect_err("invalid represented stereo must reject materialization");
+
+    assert!(matches!(error, CoordinateStereoError::InvalidStereo(_)));
+    assert_eq!(mol, before);
 }
 
 #[test]
@@ -1498,15 +1713,9 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
         })
         .expect("mark");
 
-    let perception_report = stereo_api::perceive_stereo_with_options(
-        &mut marked,
-        StereoPerceptionOptions {
-            assign_coordinates: false,
-            ..StereoPerceptionOptions::default()
-        },
-    )
-    .expect("stereo perception must ignore source marks");
-    assert!(perception_report.created_elements.is_empty());
+    let coordinate_result = stereo_api::infer_coordinate_stereo(&marked)
+        .expect("coordinate inference must ignore source marks");
+    assert!(coordinate_result.elements.is_empty());
     assert!(marked.stereo_bond_mark(bond).is_some());
 
     let marked_error = normalization_api::normalize(&mut marked)

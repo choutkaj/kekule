@@ -53,8 +53,7 @@ pub(super) fn read_smiles_component(
 pub(super) fn normalize_and_perceive(
     molecule: &mut SmallMolecule,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    molecule.normalize()?;
-    molecule.perceive()?;
+    molecule.normalize_and_perceive()?;
     Ok(())
 }
 
