@@ -22,7 +22,7 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
   sole authoritative coordinate set. This permits direct analysis of models,
   ensemble members, trajectory frames, and frame buffers. DSSP does not parse
   files, choose an mmCIF model or alternate location, infer molecular
-  boundaries, sanitize chemistry, or repair hierarchy data.
+  boundaries, normalize or perceive chemistry, or repair hierarchy data.
 - All macro-molecule instances are considered together so hydrogen bonds and
   beta-sheet topology may cross chain and molecule-instance boundaries. Small
   molecules and non-peptide residues are ignored and counted in the report.
@@ -157,7 +157,7 @@ installs secondary-structure labels into `Molecule`, `MacroMolecule`,
 - Mutating or caching derived assignments in `SmcraHierarchy`, `Model`, atom
   properties, or residue properties.
 - Automatic model/alternate-location selection, hierarchy repair, missing-atom
-  construction, template connectivity, sanitization, or preparation.
+  construction, template connectivity, chemical normalization/perception, or preparation.
 - Trajectory-wide, ensemble, or consensus secondary-structure analysis.
 - Runtime dependencies on `mkdssp`, `libdssp`, Biopython, or other reference
   implementations.

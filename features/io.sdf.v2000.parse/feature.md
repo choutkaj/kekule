@@ -35,7 +35,7 @@ per-record reports.
 - Nonblank text after the Molfile block must be a data-field header, and every
   field must end at a blank line or record delimiter; malformed post-CTAB
   content is rejected rather than discarded.
-- Parsing and interpretation never sanitize or run chemical perception.
+- Parsing and interpretation never normalize or run chemical perception.
 - Molfile chemistry translation failures remain interpretation errors qualified
   with the SDF record index and source location.
 
@@ -55,7 +55,7 @@ per-record reports.
 
 ## Out Of Scope
 
-- Sanitization, canonicalization, and automatic promotion of data fields to
+- Automatic normalization/perception, canonicalization, and promotion of data fields to
   molecule properties.
 
 ## Revision Notes

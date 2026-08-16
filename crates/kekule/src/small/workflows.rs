@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::algorithms::{
     add_hydrogens_to_molecule, remove_hydrogens_from_molecule, AddHydrogensOptions,
-    AddHydrogensReport, HydrogenNormalizationError, RemoveHydrogensReport,
+    AddHydrogensReport, HydrogenTransformError, RemoveHydrogensReport,
 };
 use crate::chemistry::{
     normalize_molecule, perceive_molecule, NormalizationError, NormalizationReport, PerceptionError,
@@ -54,7 +54,7 @@ impl SmallMolecule {
     }
 
     /// Materialize stored and perceived hydrogens as graph atoms.
-    pub fn add_hydrogens(&mut self) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
+    pub fn add_hydrogens(&mut self) -> Result<AddHydrogensReport, HydrogenTransformError> {
         self.add_hydrogens_with_options(AddHydrogensOptions::default())
     }
 
@@ -62,14 +62,12 @@ impl SmallMolecule {
     pub fn add_hydrogens_with_options(
         &mut self,
         options: AddHydrogensOptions,
-    ) -> Result<AddHydrogensReport, HydrogenNormalizationError> {
+    ) -> Result<AddHydrogensReport, HydrogenTransformError> {
         add_hydrogens_to_molecule(self.graph_mut_raw(), options)
     }
 
     /// Collapse ordinary graph hydrogens and report retained protected atoms.
-    pub fn remove_hydrogens(
-        &mut self,
-    ) -> Result<RemoveHydrogensReport, HydrogenNormalizationError> {
+    pub fn remove_hydrogens(&mut self) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
         remove_hydrogens_from_molecule(self.graph_mut_raw())
     }
 

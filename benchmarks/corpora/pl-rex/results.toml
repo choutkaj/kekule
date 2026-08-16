@@ -76,7 +76,7 @@ input_count = 93
 benchmarked_at_unix = 1784357811
 legacy_source = "validation-status-v2"
 
-[features."chem.hydrogen-normalization"]
+[features."chem.hydrogen-transforms"]
 outcome = "match"
 scope = "full"
 fixture_count = 2

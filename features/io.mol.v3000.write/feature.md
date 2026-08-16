@@ -15,7 +15,7 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 - Successful output is accepted by `molfile::parse_str` then
   `molfile::interpret`.
 - Rejects stored stereo elements, perceived E/Z bond stereo, bond `CFG` source marks incompatible with the bond order, enhanced stereo, and quadruple bonds with structured writer errors.
-- Does not canonicalize, sanitize, or perceive chemistry before writing.
+- Does not canonicalize, normalize, or perceive chemistry before writing.
 
 ## Implementation Notes
 
@@ -46,7 +46,7 @@ Write deterministic Molfile V3000 CTAB output for the supported raw graph subset
 - Benchmark observations are informational and never determine this feature's release status or repository health.
 
 ## Out Of Scope
-SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom stereochemistry, enhanced stereochemistry collections, full MDL property coverage, sanitization, and runtime RDKit.
+SDF V3000 writing, canonical atom ordering, query atom/bond semantics, atom stereochemistry, enhanced stereochemistry collections, full MDL property coverage, automatic normalization/perception, and runtime RDKit.
 
 ## Revision Notes
 

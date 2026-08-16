@@ -368,7 +368,7 @@ workflow convenience may compose parsing, interpretation, normalization, and a
 default perception profile when that is the useful ordinary path, while expert
 APIs keep every stage separately callable. Convenience naming must document the
 resulting state clearly but need not collapse the conceptual stages into one
-"sanitization" concept.
+opaque preparation concept.
 
 The physical wrapper type remains dependency-light. I/O, normalization,
 perception, modelling, and workflow facades may depend on it; lower layers do
@@ -1418,8 +1418,11 @@ normalization
     normalization for molecules
 
 perception
-    model-dependent derived valence, ring, aromaticity, and geometry-derived
-    chemical views; explicit specialized stereo/CIP derivations
+    default and focused model-dependent valence, ring, and aromaticity state
+
+stereo
+    represented-stereo validation, read-only coordinate inference, explicit
+    coordinate-stereo materialization, and opt-in CIP assignment
 
 hydrogens
     explicit hydrogen topology transformations

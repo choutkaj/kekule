@@ -1,4 +1,4 @@
-# Stereochemistry Perception
+# Stereo Inference and Materialization
 
 ## Summary
 
@@ -8,7 +8,7 @@ explicit representation transform.
 
 ## Behavior/API
 
-- Exposes focused operations under `perception::stereo` for
+- Exposes focused operations under top-level `stereo` for
   `validate_stereo`, `detect_stereo_candidates`, read-only
   `infer_coordinate_stereo*`, and explicit
   `materialize_coordinate_stereo*`.
@@ -169,3 +169,6 @@ reconstruction, stereo enumeration, and reaction stereo transfer.
 - v27: Replace mutating coordinate-stereo perception with detached read-only
   inference results and a separately named transactional materialization
   transform.
+- v28: Move the complete stereo-domain public surface to the top-level
+  `stereo` facade and remove the mixed-responsibility `perception::stereo`
+  namespace.

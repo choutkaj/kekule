@@ -22,16 +22,16 @@ use kekule::{
     normalization::{NormalizationReport, NormalizationWarning},
     perception::{
         rings,
-        stereo::{
-            self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,
-            StereoValidationIssue,
-        },
         valence::{self, ValenceModel, ValenceOptions},
     },
     query,
     sdf::{self, SdfDataField, SdfParseOptions, SdfRecord},
     small::SmallMolecule,
     smiles::{self, CanonicalSmilesWriteOptions, SmilesWriteOptions},
+    stereo::{
+        self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,
+        StereoValidationIssue,
+    },
     substructure,
 };
 use serde::{Deserialize, Serialize};
