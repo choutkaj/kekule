@@ -6,7 +6,6 @@ mod mmcif_write;
 mod molfile_connected;
 mod sdf_document;
 mod smiles;
-mod smiles_components;
 mod structure_documents;
 mod v2000;
 mod v3000;
@@ -25,11 +24,12 @@ pub use mmcif_write::*;
 pub use molfile_connected::interpret_molfile_document;
 pub use sdf_document::*;
 pub use smiles::{
-    parse_smiles_document, parse_smiles_document_with_options, write_canonical_smiles,
-    write_isomeric_smiles, write_smiles, SmilesDocument, SmilesDocumentToken,
-    SmilesDocumentTokenKind, SmilesParseError, SmilesParseOptions,
+    interpret_smiles_document, parse_smiles_document, parse_smiles_document_with_options,
+    write_canonical_smiles, write_isomeric_smiles, write_smiles, SmilesAtomMapping,
+    SmilesBondMapping, SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind,
+    SmilesInterpretError, SmilesInterpretation, SmilesInterpretationReport, SmilesParseError,
+    SmilesParseOptions,
 };
-pub use smiles_components::*;
 pub use structure_documents::{
     parse_molfile_document, parse_molfile_document_with_options, MolfileAtomMapping,
     MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
