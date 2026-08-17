@@ -1,10 +1,18 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
 
-use crate::core::{AtomId, BondId};
+use crate::core::{
+    Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind,
+    StereoCarrier, StereoElement, StereoElementKind, StereoSource, TetrahedralOrientation,
+    TetrahedralStereo,
+};
 use crate::small::model::SmallMolecule;
 
-use super::smiles::{self, SmilesDocument};
+use super::parse::{
+    PendingStereoCarrier, PendingTetrahedral, SmilesAtomSyntax, SmilesBondToken,
+    SmilesChiralityToken, SmilesDirectionToken, SmilesDocument, SmilesProgram, SmilesStereoCarrier,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesInterpretError {
@@ -224,13 +232,12 @@ pub fn interpret_smiles_document(
     let mut components = Vec::with_capacity(document.component_token_ranges().len());
     for (component_index, token_range) in document.component_token_ranges().iter().enumerate() {
         let source_span = component_source_span(document, token_range.clone())?;
-        let local =
-            smiles::interpret_smiles_component(document, component_index).map_err(|error| {
-                SmilesInterpretError {
-                    offset: error.offset(),
-                    message: error.message().to_owned(),
-                }
-            })?;
+        let local = interpret_smiles_component(document, component_index).map_err(|error| {
+            SmilesInterpretError {
+                offset: error.offset(),
+                message: error.message().to_owned(),
+            }
+        })?;
         let (molecule, report) = local.into_parts();
         molecule
             .graph()
@@ -296,13 +303,257 @@ fn component_source_span(
     Ok(first.span().start..last.span().end)
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct SmilesProgramInterpretation {
+    molecule: SmallMolecule,
+    report: SmilesInterpretationReport,
+}
+
+impl SmilesProgramInterpretation {
+    fn into_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
+        (self.molecule, self.report)
+    }
+}
+
+fn interpret_smiles_component(
+    document: &SmilesDocument,
+    component: usize,
+) -> std::result::Result<SmilesProgramInterpretation, SmilesInterpretError> {
+    interpret_smiles_program_component(&document.program, component, document.source().len())
+}
+
+fn interpret_smiles_program_component(
+    program: &SmilesProgram,
+    component: usize,
+    end_offset: usize,
+) -> std::result::Result<SmilesProgramInterpretation, SmilesInterpretError> {
+    let mut mol = Molecule::new();
+    let mut source_to_atom = BTreeMap::<usize, AtomId>::new();
+    let mut atom_mappings = Vec::new();
+    for (index, record) in program.atoms.iter().enumerate() {
+        if record.component != component {
+            continue;
+        }
+        if record.syntax.aromatic != program.imported_aromatic_atoms.contains(&index) {
+            return Err(SmilesInterpretError {
+                offset: record.span.start,
+                message: "inconsistent aromatic atom syntax state".to_owned(),
+            });
+        }
+        let atom = interpret_smiles_atom(&record.syntax, record.span.start)?;
+        let atom_id = mol.add_atom(atom).map_err(|error| SmilesInterpretError {
+            offset: record.span.start,
+            message: format!("invalid represented atom: {error}"),
+        })?;
+        source_to_atom.insert(index, atom_id);
+        atom_mappings.push(SmilesAtomMapping {
+            atom: atom_id,
+            source_span: record.span.clone(),
+        });
+    }
+    let mut bond_mappings = Vec::new();
+    for bond in &program.bonds {
+        if bond.component != component {
+            continue;
+        }
+        let left = source_to_atom
+            .get(&bond.left)
+            .copied()
+            .ok_or_else(|| SmilesInterpretError {
+                offset: bond.offset,
+                message: "bond left endpoint is outside its SMILES component".to_owned(),
+            })?;
+        let right =
+            source_to_atom
+                .get(&bond.right)
+                .copied()
+                .ok_or_else(|| SmilesInterpretError {
+                    offset: bond.offset,
+                    message: "bond right endpoint is outside its SMILES component".to_owned(),
+                })?;
+        let bond_id = add_smiles_bond(
+            &mut mol,
+            left,
+            right,
+            interpret_smiles_bond_token(bond.token),
+            bond.direction.map(interpret_smiles_direction),
+            bond.offset,
+        )?;
+        bond_mappings.push(SmilesBondMapping {
+            bond: bond_id,
+            source_offset: bond.offset,
+        });
+    }
+
+    add_smiles_tetrahedral_elements(
+        &mut mol,
+        &source_to_atom,
+        &program.tetrahedral,
+        &program.tetrahedral_carriers,
+        end_offset,
+    )?;
+    Ok(SmilesProgramInterpretation {
+        molecule: SmallMolecule::from_graph(mol),
+        report: SmilesInterpretationReport {
+            atom_mappings,
+            bond_mappings,
+        },
+    })
+}
+
+fn interpret_smiles_atom(
+    syntax: &SmilesAtomSyntax,
+    offset: usize,
+) -> std::result::Result<Atom, SmilesInterpretError> {
+    let element = Element::from_symbol(&syntax.symbol).ok_or_else(|| SmilesInterpretError {
+        offset,
+        message: format!("unsupported element symbol `{}`", syntax.symbol),
+    })?;
+    let mut atom = Atom::new(element);
+    atom.isotope = syntax.isotope;
+    atom.formal_charge = syntax.formal_charge;
+    atom.explicit_hydrogens = syntax.explicit_hydrogens;
+    atom.no_implicit_hydrogens = syntax.bracketed;
+    atom.atom_map = syntax.atom_map;
+    Ok(atom)
+}
+
+const fn interpret_smiles_bond_token(token: SmilesBondToken) -> BondOrder {
+    match token {
+        SmilesBondToken::Single => BondOrder::Single,
+        SmilesBondToken::Double => BondOrder::Double,
+        SmilesBondToken::Triple => BondOrder::Triple,
+        SmilesBondToken::Aromatic => BondOrder::Aromatic,
+    }
+}
+
+const fn interpret_smiles_direction(direction: SmilesDirectionToken) -> StereoBondMarkKind {
+    match direction {
+        SmilesDirectionToken::Up => StereoBondMarkKind::DirectionalUp,
+        SmilesDirectionToken::Down => StereoBondMarkKind::DirectionalDown,
+    }
+}
+
+fn add_smiles_bond(
+    mol: &mut Molecule,
+    left: AtomId,
+    right: AtomId,
+    order: BondOrder,
+    stereo: Option<StereoBondMarkKind>,
+    offset: usize,
+) -> std::result::Result<BondId, SmilesInterpretError> {
+    let bond_id = mol
+        .add_bond(left, right, order)
+        .map_err(|error| SmilesInterpretError {
+            offset,
+            message: error.to_string(),
+        })?;
+    if let Some(kind) = stereo {
+        mol.set_stereo_bond_mark(StereoBondMark {
+            bond: bond_id,
+            kind,
+            source: StereoSource::Smiles,
+        })
+        .map_err(|error| SmilesInterpretError {
+            offset,
+            message: error.to_string(),
+        })?;
+    }
+    Ok(bond_id)
+}
+
+fn add_smiles_tetrahedral_elements(
+    mol: &mut Molecule,
+    source_to_atom: &BTreeMap<usize, AtomId>,
+    centers: &[PendingTetrahedral],
+    carriers_by_center: &BTreeMap<usize, Vec<PendingStereoCarrier>>,
+    offset: usize,
+) -> std::result::Result<(), SmilesInterpretError> {
+    for pending in centers {
+        let Some(&center) = source_to_atom.get(&pending.center) else {
+            continue;
+        };
+        let carriers = resolve_smiles_tetrahedral_carriers(
+            mol,
+            center,
+            source_to_atom,
+            carriers_by_center
+                .get(&pending.center)
+                .cloned()
+                .unwrap_or_default(),
+            offset,
+        )?;
+        mol.add_stereo_element(StereoElement::specified(
+            StereoElementKind::Tetrahedral(TetrahedralStereo {
+                center,
+                carriers,
+                orientation: match pending.orientation {
+                    SmilesChiralityToken::At => TetrahedralOrientation::Clockwise,
+                    SmilesChiralityToken::AtAt => TetrahedralOrientation::CounterClockwise,
+                },
+            }),
+            StereoSource::Smiles,
+        ))
+        .map_err(|error| SmilesInterpretError {
+            offset,
+            message: error.to_string(),
+        })?;
+    }
+    Ok(())
+}
+
+fn resolve_smiles_tetrahedral_carriers(
+    mol: &Molecule,
+    center: AtomId,
+    source_to_atom: &BTreeMap<usize, AtomId>,
+    carriers: Vec<PendingStereoCarrier>,
+    offset: usize,
+) -> std::result::Result<Vec<StereoCarrier>, SmilesInterpretError> {
+    let mut carriers = carriers
+        .into_iter()
+        .map(|carrier| match carrier {
+            PendingStereoCarrier::Resolved(SmilesStereoCarrier::Atom(source)) => source_to_atom
+                .get(&source)
+                .copied()
+                .map(StereoCarrier::Atom)
+                .ok_or_else(|| SmilesInterpretError {
+                    offset,
+                    message: "tetrahedral carrier is outside its SMILES component".to_owned(),
+                }),
+            PendingStereoCarrier::Resolved(SmilesStereoCarrier::ImplicitHydrogen) => {
+                Ok(StereoCarrier::ImplicitHydrogen)
+            }
+            PendingStereoCarrier::Ring { .. } => Err(SmilesInterpretError {
+                offset,
+                message: "unresolved tetrahedral ring carrier".to_owned(),
+            }),
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if carriers.len() == 3 && smiles_tetrahedral_center_can_have_lone_pair(mol, center) {
+        carriers.push(StereoCarrier::ImplicitLonePair);
+    }
+    Ok(carriers)
+}
+
+fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) -> bool {
+    mol.atom(center)
+        .map(|atom| {
+            matches!(
+                atom.element.symbol(),
+                "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
+            ) && atom.explicit_hydrogens == 0
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::parse::parse_smiles_document;
     use super::*;
 
     #[test]
     fn dot_smiles_interprets_as_connected_molecules() {
-        let document = smiles::parse_smiles_document("CC(=O)[O-].[Na+]").expect("valid salt");
+        let document = parse_smiles_document("CC(=O)[O-].[Na+]").expect("valid salt");
         let interpretation = interpret_smiles_document(&document).expect("interpret salt");
         assert_eq!(interpretation.components().len(), 2);
         assert!(interpretation
@@ -314,7 +565,7 @@ mod tests {
 
     #[test]
     fn component_mappings_retain_document_offsets() {
-        let document = smiles::parse_smiles_document("C.[Na+]").expect("valid components");
+        let document = parse_smiles_document("C.[Na+]").expect("valid components");
         let interpretation = interpret_smiles_document(&document).expect("interpret components");
         assert_eq!(
             interpretation.components()[1].report().atom_mappings()[0].source_span(),
@@ -324,7 +575,7 @@ mod tests {
 
     #[test]
     fn single_component_convenience_rejects_dot_smiles_without_panicking() {
-        let document = smiles::parse_smiles_document("C.O").expect("valid components");
+        let document = parse_smiles_document("C.O").expect("valid components");
         let error = interpret_smiles_document(&document)
             .expect("interpret components")
             .into_molecule()

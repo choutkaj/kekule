@@ -314,7 +314,7 @@ fn smiles_document_parser_rejects_incomplete_grammar_before_interpretation() {
     for input in ["C=", "C(", "C1", "C..C"] {
         let error = smiles_api::parse_str(input)
             .expect_err("incomplete grammar must fail document parsing");
-        assert!(!error.message.is_empty(), "message for `{input}`");
+        assert!(!error.message().is_empty(), "message for `{input}`");
     }
 }
 
@@ -510,7 +510,7 @@ fn canonical_smiles_preserves_aromatic_high_order_bonds() {
 
 #[test]
 fn canonical_smiles_implementation_avoids_perception_feedback() {
-    let source = include_str!("../io/smiles.rs");
+    let source = include_str!("../io/smiles/canonical.rs");
 
     assert!(!source.contains("canonical_smiles_semantic_signature"));
     assert!(!source.contains("KekuleWhenStored"));
