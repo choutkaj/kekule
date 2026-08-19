@@ -168,6 +168,16 @@ impl MacroMoleculeEditor<'_> {
         &mut self.graph
     }
 
+    /// Returns mutable represented atom state in this checked working copy.
+    pub fn atom_mut(&mut self, atom: AtomId) -> crate::core::Result<AtomMut<'_>> {
+        self.graph.atom_mut(atom)
+    }
+
+    /// Returns mutable represented bond state in this checked working copy.
+    pub fn bond_mut(&mut self, bond: BondId) -> crate::core::Result<BondMut<'_>> {
+        self.graph.bond_mut(bond)
+    }
+
     pub fn hierarchy(&self) -> &SmcraHierarchy {
         &self.hierarchy
     }

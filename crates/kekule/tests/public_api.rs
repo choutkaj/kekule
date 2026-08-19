@@ -303,6 +303,31 @@ fn low_level_graph_api() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn checked_editor_canonicalizes_represented_chemistry_atomically(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = Molecule::builder();
+    let chlorine = builder.add_atom(Atom::new(Element::from_symbol("Cl").unwrap()))?;
+    let anchor = builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+    let oxo = builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
+    builder.add_bond(chlorine, anchor, BondOrder::Single)?;
+    let edited_bond = builder.add_bond(chlorine, oxo, BondOrder::Single)?;
+    let mut molecule = builder.build()?;
+
+    let mut editor = molecule.edit();
+    editor.bond_mut(edited_bond)?.order = BondOrder::Double;
+    editor.commit()?;
+
+    assert_eq!(molecule.atom(chlorine)?.formal_charge, 1);
+    assert_eq!(molecule.atom(oxo)?.formal_charge, -1);
+    assert_eq!(molecule.bond(edited_bond)?.order, BondOrder::Single);
+    assert_eq!(
+        molecule.perception(),
+        &kekule::core::PerceptionState::default()
+    );
+    Ok(())
+}
+
+#[test]
 fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = MacroMolecule::builder();
     let atom = builder.add_atom(Atom::new(
@@ -375,48 +400,6 @@ HETATM 1 C C1 LIG L 1 0.0 0.0 0.0 1
         assert_explicit_perception_preserves_representation(definition.graph())?;
     }
     Ok(())
-}
-
-#[test]
-fn checked_macro_publication_rejects_source_only_stereo_marks() {
-    use kekule::bio::{MacroValidateError, SmcraAtomSiteMetadata};
-    use kekule::core::{StereoBondMark, StereoBondMarkKind, StereoSource};
-
-    let mut builder = MacroMolecule::builder();
-    let first = builder
-        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
-        .unwrap();
-    let (second, bond) = builder
-        .add_atom_bonded_to(
-            first,
-            Atom::new(Element::from_symbol("C").unwrap()),
-            BondOrder::Single,
-        )
-        .unwrap();
-    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
-    let residue = builder
-        .hierarchy_mut()
-        .add_residue(chain, "LIG", Some(1), None, None)
-        .unwrap();
-    builder
-        .add_atom_site(residue, first, SmcraAtomSiteMetadata::default())
-        .unwrap();
-    builder
-        .add_atom_site(residue, second, SmcraAtomSiteMetadata::default())
-        .unwrap();
-    builder
-        .graph_mut()
-        .set_stereo_bond_mark(StereoBondMark {
-            bond,
-            kind: StereoBondMarkKind::WedgeUp,
-            source: StereoSource::User,
-        })
-        .unwrap();
-
-    assert!(matches!(
-        builder.build(),
-        Err(MacroValidateError::SourceStereoBondMark { bond: rejected }) if rejected == bond
-    ));
 }
 
 #[test]

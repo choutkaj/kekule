@@ -169,15 +169,13 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     );
     molecule
         .graph_mut()
-        .atom_mut(annotated_atom)
+        .atom_props_mut(annotated_atom)
         .expect("fixture atom")
-        .props
         .insert("atom_note".to_owned(), PropValue::Bool(true));
     molecule
         .graph_mut()
-        .bond_mut(annotated_bond)
+        .bond_props_mut(annotated_bond)
         .expect("fixture bond")
-        .props
         .insert("bond_note".to_owned(), PropValue::Int(7));
 
     let stereo_element = molecule

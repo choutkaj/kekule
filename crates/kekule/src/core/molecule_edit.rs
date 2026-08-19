@@ -84,6 +84,58 @@ impl Molecule {
     /// The working copy may be temporarily disconnected. [`MoleculeEditor::commit`]
     /// publishes it only when the final graph is connected and representable in
     /// canonical form; otherwise the original molecule is left unchanged.
+    /// Canonicality-sensitive atom, bond, and topology mutation is available on
+    /// the editor rather than directly on a published molecule.
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{Atom, BondOrder, Element, Molecule};
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let chlorine = builder.add_atom(Atom::new(Element::from_symbol("Cl").unwrap())).unwrap();
+    /// let oxygen = builder.add_atom(Atom::new(Element::from_symbol("O").unwrap())).unwrap();
+    /// let bond = builder.add_bond(chlorine, oxygen, BondOrder::Single).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.bond_mut(bond).unwrap().order = BondOrder::Double;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{Atom, Element, Molecule};
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let carbon = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.atom_mut(carbon).unwrap().formal_charge = 1;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{Atom, BondOrder, Element, Molecule};
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let first = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let middle = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let last = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// builder.add_bond(first, middle, BondOrder::Single).unwrap();
+    /// builder.add_bond(middle, last, BondOrder::Single).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.add_bond(first, last, BondOrder::Single).unwrap();
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{
+    ///     Atom, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind, StereoSource,
+    /// };
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let first = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let second = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let bond = builder.add_bond(first, second, BondOrder::Single).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.set_stereo_bond_mark(StereoBondMark {
+    ///     bond,
+    ///     kind: StereoBondMarkKind::WedgeUp,
+    ///     source: StereoSource::User,
+    /// }).unwrap();
+    /// ```
     pub fn edit(&mut self) -> MoleculeEditor<'_> {
         MoleculeEditor {
             working: self.clone(),
@@ -194,6 +246,16 @@ pub struct MoleculeEditor<'a> {
 }
 
 impl MoleculeEditor<'_> {
+    /// Returns mutable represented atom state in this private working copy.
+    pub fn atom_mut(&mut self, atom: AtomId) -> Result<super::AtomMut<'_>> {
+        self.working.atom_mut(atom)
+    }
+
+    /// Returns mutable represented bond state in this private working copy.
+    pub fn bond_mut(&mut self, bond: BondId) -> Result<super::BondMut<'_>> {
+        self.working.bond_mut(bond)
+    }
+
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
         self.working.add_atom(atom)
     }
@@ -450,6 +512,61 @@ mod tests {
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
         let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap().unwrap();
         assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
+    }
+
+    #[test]
+    fn editor_canonicalizes_direct_bond_order_changes_before_publication() {
+        let mut builder = Molecule::builder();
+        let chlorine = builder.add_atom(atom("Cl")).unwrap();
+        let anchor = builder.add_atom(atom("O")).unwrap();
+        let oxo = builder.add_atom(atom("O")).unwrap();
+        builder
+            .add_bond(chlorine, anchor, BondOrder::Single)
+            .unwrap();
+        let oxo_bond = builder.add_bond(chlorine, oxo, BondOrder::Single).unwrap();
+        let mut molecule = builder.build().unwrap();
+
+        let mut editor = molecule.edit();
+        editor.bond_mut(oxo_bond).unwrap().order = BondOrder::Double;
+        editor.commit().expect("canonical edit publication");
+
+        assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
+        assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
+        assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
+    }
+
+    #[test]
+    fn failed_editor_canonicalization_leaves_the_published_molecule_unchanged() {
+        let mut builder = Molecule::builder();
+        let chlorine = builder.add_atom(atom("Cl")).unwrap();
+        let anchor = builder.add_atom(atom("O")).unwrap();
+        builder
+            .add_bond(chlorine, anchor, BondOrder::Single)
+            .unwrap();
+        let mut oxo_bonds = Vec::new();
+        for _ in 0..128 {
+            let oxygen = builder.add_atom(atom("O")).unwrap();
+            oxo_bonds.push(
+                builder
+                    .add_bond(chlorine, oxygen, BondOrder::Single)
+                    .unwrap(),
+            );
+        }
+        let mut molecule = builder.build().unwrap();
+        let before = molecule.clone();
+
+        let mut editor = molecule.edit();
+        for bond in oxo_bonds {
+            editor.bond_mut(bond).unwrap().order = BondOrder::Double;
+        }
+        assert_eq!(
+            editor.commit(),
+            Err(MoleculePublicationError::FormalChargeOutOfRange {
+                atom: chlorine,
+                charge: 128,
+            })
+        );
+        assert_eq!(molecule, before);
     }
 
     #[test]
