@@ -16,7 +16,7 @@ const MAX_AROMATIC_LOCALIZATION_MATCHING_STATES: usize = 100_000;
 pub enum NormalizationError {
     /// A meaning-preserving representation rewrite requires an unsupported charge.
     FormalChargeOutOfRange { atom: AtomId, charge: usize },
-    /// Imported aromatic bond orders cannot be localized under the fixed rules.
+    /// Source-aromatic bonds cannot be localized under the fixed rules.
     InvalidAromaticRepresentation(AtomId),
     /// Imported aromatic localization exhausted its deterministic search budget.
     AromaticLocalizationLimit {
@@ -128,7 +128,6 @@ pub(crate) fn normalize_molecule_in_place(
     molecule: &mut Molecule,
 ) -> Result<NormalizationReport, NormalizationError> {
     normalize_hypervalent_oxo_halides(molecule)?;
-    localize_imported_aromatic_bonds(molecule)?;
     // Source-stereo normalization must not observe arbitrary installed
     // perception. Representation rewrites above already invalidate it
     // conceptually, so clear it before decoding any source marks.
@@ -140,11 +139,20 @@ pub(crate) fn normalize_molecule_in_place(
     Ok(report)
 }
 
-fn localize_imported_aromatic_bonds(molecule: &mut Molecule) -> Result<(), NormalizationError> {
-    for component in imported_aromatic_bond_components(molecule) {
+/// Localize source-aromatic bonds before an interpreter publishes a molecule.
+///
+/// Interpreters stage each source-aromatic edge as a single bond and identify
+/// it here by ID. This keeps source syntax outside [`BondOrder`] while reusing
+/// the deterministic representation-localization rules.
+pub(crate) fn localize_source_aromatic_bonds(
+    molecule: &mut Molecule,
+    aromatic_bonds: &BTreeSet<BondId>,
+) -> Result<(), NormalizationError> {
+    for component in source_aromatic_bond_components(molecule, aromatic_bonds) {
         if !try_localize_aromatic_component_with_limit(
             molecule,
             &component,
+            aromatic_bonds,
             MAX_AROMATIC_LOCALIZATION_MATCHING_STATES,
         )? {
             return Err(NormalizationError::InvalidAromaticRepresentation(
@@ -152,9 +160,9 @@ fn localize_imported_aromatic_bonds(molecule: &mut Molecule) -> Result<(), Norma
             ));
         }
     }
-    debug_assert!(molecule
-        .bonds()
-        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+    debug_assert!(aromatic_bonds.iter().all(|bond_id| molecule
+        .bond(*bond_id)
+        .is_ok_and(|bond| matches!(bond.order, BondOrder::Single | BondOrder::Double))));
     Ok(())
 }
 
@@ -167,15 +175,13 @@ fn localize_imported_aromatic_bonds(molecule: &mut Molecule) -> Result<(), Norma
 fn try_localize_aromatic_component_with_limit(
     molecule: &mut Molecule,
     component: &[AtomId],
+    aromatic_bonds: &BTreeSet<BondId>,
     max_matching_states: usize,
 ) -> Result<bool, NormalizationError> {
     let component_atoms = component.iter().copied().collect::<BTreeSet<_>>();
     let mut demand = BTreeSet::new();
     for atom_id in component {
         let Ok(atom) = molecule.atom(*atom_id) else {
-            return Ok(false);
-        };
-        let Some(target_valence) = aromatic_localization_target_valence(atom) else {
             return Ok(false);
         };
         let baseline_bond_valence = molecule
@@ -185,6 +191,11 @@ fn try_localize_aromatic_component_with_limit(
             .flatten()
             .map(|(_, bond)| represented_bond_valence(bond.order))
             .sum::<usize>();
+        let Some(target_valence) =
+            aromatic_localization_target_valence(atom, baseline_bond_valence)
+        else {
+            return Ok(false);
+        };
         let explicit_valence =
             baseline_bond_valence.saturating_add(usize::from(atom.explicit_hydrogens));
         let implicit_hydrogens = source_aromatic_implicit_hydrogens(atom, explicit_valence);
@@ -207,8 +218,8 @@ fn try_localize_aromatic_component_with_limit(
     }
 
     let mut adjacency = BTreeMap::<AtomId, Vec<(AtomId, BondId)>>::new();
-    for (bond_id, bond) in molecule.bonds().filter(|(_, bond)| {
-        bond.order == BondOrder::Aromatic
+    for (bond_id, bond) in molecule.bonds().filter(|(bond_id, bond)| {
+        aromatic_bonds.contains(bond_id)
             && component_atoms.contains(&bond.a())
             && component_atoms.contains(&bond.b())
     }) {
@@ -279,7 +290,7 @@ fn try_localize_aromatic_component_with_limit(
         .zip(molecule.bonds.iter_mut())
         .filter_map(|(raw, bond)| bond.as_mut().map(|bond| (BondId::new(raw), bond)))
     {
-        if bond.order == BondOrder::Aromatic
+        if aromatic_bonds.contains(&bond_id)
             && component_atoms.contains(&bond.a())
             && component_atoms.contains(&bond.b())
         {
@@ -293,11 +304,14 @@ fn try_localize_aromatic_component_with_limit(
     Ok(true)
 }
 
-fn imported_aromatic_bond_components(molecule: &Molecule) -> Vec<Vec<AtomId>> {
+fn source_aromatic_bond_components(
+    molecule: &Molecule,
+    aromatic_bonds: &BTreeSet<BondId>,
+) -> Vec<Vec<AtomId>> {
     let mut adjacency = BTreeMap::<AtomId, Vec<AtomId>>::new();
     for (_, bond) in molecule
         .bonds()
-        .filter(|(_, bond)| bond.order == BondOrder::Aromatic)
+        .filter(|(bond_id, _)| aromatic_bonds.contains(bond_id))
     {
         adjacency.entry(bond.a()).or_default().push(bond.b());
         adjacency.entry(bond.b()).or_default().push(bond.a());
@@ -333,7 +347,7 @@ fn imported_aromatic_bond_components(molecule: &Molecule) -> Vec<Vec<AtomId>> {
 fn represented_bond_valence(order: BondOrder) -> usize {
     match order {
         BondOrder::Zero | BondOrder::Dative => 0,
-        BondOrder::Single | BondOrder::Aromatic => 1,
+        BondOrder::Single => 1,
         BondOrder::Double => 2,
         BondOrder::Triple => 3,
         BondOrder::Quadruple => 4,
@@ -359,12 +373,22 @@ fn source_aromatic_implicit_hydrogens(atom: &Atom, explicit_valence: usize) -> u
     target.saturating_sub(explicit_valence)
 }
 
-fn aromatic_localization_target_valence(atom: &Atom) -> Option<usize> {
+fn aromatic_localization_target_valence(
+    atom: &Atom,
+    baseline_bond_valence: usize,
+) -> Option<usize> {
     let target = match (atom.element.symbol(), atom.formal_charge) {
         ("B", -1) => 4,
         ("B", 0) => 3,
         ("B", 1) => 2,
         ("C", -1 | 1) => 3,
+        ("C", 0)
+            if atom.no_implicit_hydrogens
+                && atom.explicit_hydrogens == 0
+                && baseline_bond_valence == 2 =>
+        {
+            3
+        }
         ("C", 0) => 4,
         ("N" | "P", -1) => 2,
         ("N" | "P", 0) => 3,
@@ -463,16 +487,34 @@ mod tests {
 
     #[test]
     fn aromatic_localization_limit_is_structured_and_transactional() {
-        let mut molecule =
-            crate::small::SmallMolecule::from_smiles("c1ccccc1").expect("aromatic benzene parses");
-        let component = imported_aromatic_bond_components(molecule.graph())
+        let mut molecule = Molecule::new();
+        let atoms = (0..6)
+            .map(|_| {
+                molecule
+                    .add_atom(Atom::new(crate::core::Element::from_symbol("C").unwrap()))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let aromatic_bonds = (0..6)
+            .map(|index| {
+                molecule
+                    .add_bond(atoms[index], atoms[(index + 1) % 6], BondOrder::Single)
+                    .unwrap()
+            })
+            .collect::<BTreeSet<_>>();
+        let component = source_aromatic_bond_components(&molecule, &aromatic_bonds)
             .into_iter()
             .next()
             .expect("imported aromatic component");
-        let before = molecule.graph().clone();
+        let before = molecule.clone();
 
-        let error = try_localize_aromatic_component_with_limit(molecule.graph_mut(), &component, 0)
-            .expect_err("zero matching budget should fail structurally");
+        let error = try_localize_aromatic_component_with_limit(
+            &mut molecule,
+            &component,
+            &aromatic_bonds,
+            0,
+        )
+        .expect_err("zero matching budget should fail structurally");
 
         assert!(matches!(
             error,
@@ -482,6 +524,6 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(molecule.graph(), &before);
+        assert_eq!(molecule, before);
     }
 }

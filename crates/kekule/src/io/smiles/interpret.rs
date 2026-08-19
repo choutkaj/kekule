@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
 
+use crate::chemistry::localize_source_aromatic_bonds;
 use crate::core::{
     Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind,
     StereoCarrier, StereoElement, StereoElementKind, StereoSource, TetrahedralOrientation,
@@ -352,6 +353,8 @@ fn interpret_smiles_program_component(
         });
     }
     let mut bond_mappings = Vec::new();
+    let mut source_aromatic_bonds = BTreeSet::new();
+    let mut first_aromatic_offset = None;
     for bond in &program.bonds {
         if bond.component != component {
             continue;
@@ -371,19 +374,30 @@ fn interpret_smiles_program_component(
                     offset: bond.offset,
                     message: "bond right endpoint is outside its SMILES component".to_owned(),
                 })?;
+        let (order, source_aromatic) = interpret_smiles_bond_token(bond.token);
         let bond_id = add_smiles_bond(
             &mut mol,
             left,
             right,
-            interpret_smiles_bond_token(bond.token),
+            order,
             bond.direction.map(interpret_smiles_direction),
             bond.offset,
         )?;
+        if source_aromatic {
+            source_aromatic_bonds.insert(bond_id);
+            first_aromatic_offset.get_or_insert(bond.offset);
+        }
         bond_mappings.push(SmilesBondMapping {
             bond: bond_id,
             source_offset: bond.offset,
         });
     }
+    localize_source_aromatic_bonds(&mut mol, &source_aromatic_bonds).map_err(|error| {
+        SmilesInterpretError {
+            offset: first_aromatic_offset.unwrap_or(end_offset),
+            message: error.to_string(),
+        }
+    })?;
 
     add_smiles_tetrahedral_elements(
         &mut mol,
@@ -418,12 +432,12 @@ fn interpret_smiles_atom(
     Ok(atom)
 }
 
-const fn interpret_smiles_bond_token(token: SmilesBondToken) -> BondOrder {
+const fn interpret_smiles_bond_token(token: SmilesBondToken) -> (BondOrder, bool) {
     match token {
-        SmilesBondToken::Single => BondOrder::Single,
-        SmilesBondToken::Double => BondOrder::Double,
-        SmilesBondToken::Triple => BondOrder::Triple,
-        SmilesBondToken::Aromatic => BondOrder::Aromatic,
+        SmilesBondToken::Single => (BondOrder::Single, false),
+        SmilesBondToken::Double => (BondOrder::Double, false),
+        SmilesBondToken::Triple => (BondOrder::Triple, false),
+        SmilesBondToken::Aromatic => (BondOrder::Single, true),
     }
 }
 

@@ -368,7 +368,7 @@ fn v2000_malformed_structural_fields_return_errors_without_panicking() {
 }
 
 #[test]
-fn sdf_v2000_parse_does_not_perceive_chemistry() {
+fn sdf_v2000_aromatic_source_is_localized_without_perception() {
     let input = "\
 Benzene-ish
   kekule
@@ -387,7 +387,7 @@ $$$$
     assert_all_stale(mol);
     assert_eq!(
         mol.bond(BondId::new(0)).expect("bond exists").order,
-        BondOrder::Aromatic
+        BondOrder::Double
     );
 }
 

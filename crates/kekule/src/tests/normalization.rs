@@ -188,21 +188,27 @@ fn ambiguous_directional_source_marks_roll_back_complete_state() {
 }
 
 #[test]
-fn aromatic_smiles_normalizes_then_perceives_semantic_aromaticity() {
+fn aromatic_smiles_is_localized_during_interpretation_then_perceived() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
     assert!(!molecule.graph().perception().has_aromaticity());
     assert!(molecule
         .graph()
         .bonds()
-        .all(|(_, bond)| bond.order == BondOrder::Aromatic));
+        .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
+    assert_eq!(
+        molecule
+            .graph()
+            .bonds()
+            .filter(|(_, bond)| bond.order == BondOrder::Double)
+            .count(),
+        3
+    );
+    let localized = molecule.graph().clone();
 
     molecule.normalize().expect("benzene should normalize");
 
     assert_eq!(molecule.graph().perception(), &PerceptionState::default());
-    assert!(molecule
-        .graph()
-        .bonds()
-        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+    assert_eq!(molecule.graph(), &localized);
     assert_eq!(
         molecule
             .graph()
@@ -234,39 +240,32 @@ fn aromatic_smiles_normalizes_then_perceives_semantic_aromaticity() {
 }
 
 #[test]
-fn aromatic_localization_is_idempotent() {
+fn normalization_preserves_already_localized_aromatic_input() {
     let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene should parse");
 
     molecule
         .normalize()
-        .expect("first aromatic localization should succeed");
+        .expect("first normalization should succeed");
     let once = molecule.clone();
     molecule
         .normalize()
-        .expect("second aromatic localization should succeed");
+        .expect("second normalization should succeed");
 
     assert_eq!(molecule, once);
     assert!(molecule
         .graph()
         .bonds()
-        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+        .all(|(_, bond)| { matches!(bond.order, BondOrder::Single | BondOrder::Double) }));
 }
 
 #[test]
-fn invalid_aromatic_localization_is_transactional() {
-    let mut molecule = read_smiles("c1cccc1").expect("source syntax should parse");
-    mark_all_fresh(molecule.graph_mut());
-    let before = molecule.clone();
+fn invalid_aromatic_localization_fails_during_interpretation() {
+    let error = read_smiles("c1cccc1")
+        .expect_err("unlocalizable aromatic source must not publish a molecule");
 
-    let error = molecule
-        .normalize()
-        .expect_err("odd aromatic demand should fail localization");
-
-    assert!(matches!(
-        error,
-        crate::normalization::NormalizationError::InvalidAromaticRepresentation(_)
-    ));
-    assert_eq!(molecule, before);
+    assert!(error
+        .to_string()
+        .contains("invalid imported aromatic representation"));
 }
 
 #[test]

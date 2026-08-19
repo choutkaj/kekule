@@ -152,7 +152,7 @@ M  END
 }
 
 #[test]
-fn mol_v3000_line_continuations_and_aromatic_bonds_parse_without_perception() {
+fn mol_v3000_line_continuations_and_aromatic_bonds_localize_without_perception() {
     let input = "\
 benzene-ish
 kekule
@@ -177,7 +177,7 @@ M  END
 
     assert_eq!(
         mol.bond(BondId::new(0)).expect("bond").order,
-        BondOrder::Aromatic
+        BondOrder::Double
     );
     assert_all_stale(mol);
 }

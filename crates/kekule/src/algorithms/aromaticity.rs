@@ -12,7 +12,6 @@ const LARGE_FUSED_RING_SYSTEM_SEARCH_LIMIT: usize = 300;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AromaticityError {
     UnsupportedElement(AtomId),
-    UnsupportedBondOrder(BondId),
     RingPerception(RingPerceptionError),
 }
 
@@ -51,10 +50,6 @@ impl fmt::Display for AromaticityError {
             Self::UnsupportedElement(id) => {
                 write!(f, "unsupported aromaticity element at atom {id}")
             }
-            Self::UnsupportedBondOrder(id) => write!(
-                f,
-                "unsupported represented bond order for aromaticity perception at bond {id}"
-            ),
             Self::RingPerception(error) => write!(f, "{error}"),
         }
     }
@@ -104,12 +99,6 @@ fn perceive_rdkit_like_aromaticity(
     mol: &mut Molecule,
     ring_options: RingPerceptionOptions,
 ) -> std::result::Result<(), AromaticityError> {
-    if let Some((bond_id, _)) = mol
-        .bonds()
-        .find(|(_, bond)| bond.order == BondOrder::Aromatic)
-    {
-        return Err(AromaticityError::UnsupportedBondOrder(bond_id));
-    }
     let ring_set = match mol.ring_set() {
         Some(ring_set) => ring_set.clone(),
         None => perceive_ring_set_with_options(mol, ring_options)
@@ -656,29 +645,24 @@ mod tests {
 
     #[test]
     fn fused_ten_electron_perimeter_preserves_explicit_aromatic_fusion_single() {
-        let mut molecule =
-            crate::small::SmallMolecule::from_smiles("On2c1-c(ccc2)ccn1").expect("parses");
-        let protected_single = molecule
-            .graph()
-            .bonds()
-            .find_map(|(bond_id, bond)| {
-                (bond.order == BondOrder::Single
-                    && molecule
-                        .graph()
-                        .incident_bonds(bond.a())
-                        .is_ok_and(|mut bonds| {
-                            bonds.any(|(_, bond)| bond.order == BondOrder::Aromatic)
-                        })
-                    && molecule
-                        .graph()
-                        .incident_bonds(bond.b())
-                        .is_ok_and(|mut bonds| {
-                            bonds.any(|(_, bond)| bond.order == BondOrder::Aromatic)
-                        }))
-                .then_some(bond_id)
-            })
-            .expect("explicit aromatic fusion single");
-        molecule.normalize().expect("source aromaticity normalizes");
+        let source = "On2c1-c(ccc2)ccn1";
+        let document = crate::io::parse_smiles_document(source).expect("parses");
+        let (mut molecule, report) = crate::io::interpret_smiles_document(&document)
+            .expect("interprets")
+            .into_parts()
+            .expect("one component");
+        let explicit_single_offset = source.find('-').expect("explicit single marker") + 1;
+        let protected_single = report
+            .bond_mappings()
+            .iter()
+            .find(|mapping| mapping.source_offset() == explicit_single_offset)
+            .map(|mapping| mapping.bond())
+            .expect("explicit aromatic fusion single mapping");
+        assert_eq!(
+            molecule.graph().bond(protected_single).unwrap().order,
+            BondOrder::Single
+        );
+        molecule.normalize().expect("normalization succeeds");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
         perceive_ring_set(molecule.graph_mut()).expect("rings");
@@ -712,7 +696,7 @@ mod tests {
     fn normalized_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::small::SmallMolecule::from_smiles(input).expect("dye parses");
-        molecule.normalize().expect("source aromaticity normalizes");
+        molecule.normalize().expect("normalization succeeds");
         assert!(!molecule.graph().perception().has_aromaticity());
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");

@@ -176,10 +176,7 @@ fn source_tetrahedral_carriers(molecule: &Molecule, center: AtomId) -> Option<Ve
     }
     let mut carriers = Vec::new();
     for (_, bond) in molecule.incident_bonds(center).ok()? {
-        if matches!(
-            bond.order,
-            BondOrder::Zero | BondOrder::Aromatic | BondOrder::Dative
-        ) {
+        if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
             return None;
         }
         carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
