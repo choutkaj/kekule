@@ -63,7 +63,6 @@ fn normalization_preserves_unknown_double_bond_stereo() {
         bond: double_bond,
         from: molecule.graph().bond(double_bond).expect("double bond").a(),
         kind: SourceStereoBondMarkKind::DoubleBondEither,
-        source: StereoSource::MolfileV2000,
     }];
 
     let report = molecule
@@ -76,10 +75,10 @@ fn normalization_preserves_unknown_double_bond_stereo() {
         .stereo_elements()
         .next()
         .expect("unknown stereo element");
-    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
     assert!(matches!(
         &element.kind,
-        StereoElementKind::DoubleBond(stereo) if stereo.bond == double_bond
+        StereoElementKind::DoubleBond(stereo)
+            if stereo.bond == double_bond && stereo.orientation.is_none()
     ));
 }
 
@@ -154,7 +153,6 @@ fn failed_source_stereo_normalization_is_transactional() {
         bond,
         from: a,
         kind: SourceStereoBondMarkKind::WedgeEither,
-        source: StereoSource::MolfileV2000,
     }];
     let mut molecule = SmallMolecule::from_graph(mol);
     let before = molecule.clone();
@@ -199,7 +197,6 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
             } else {
                 SourceStereoBondMarkKind::WedgeDown
             },
-            source: StereoSource::MolfileV2000,
         })
         .collect::<Vec<_>>();
     let mut molecule = SmallMolecule::from_graph(mol);

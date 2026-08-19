@@ -203,9 +203,9 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
         ));
     }
     for (_, element) in mol.stereo_elements() {
-        if element.specifiedness != StereoSpecifiedness::Specified {
+        if !element.is_specified() {
             return Err(MolWriteError::new(
-                "isomeric SMILES writer cannot encode unspecified or unknown stereo",
+                "isomeric SMILES writer cannot encode explicitly unknown stereo",
             ));
         }
         match &element.kind {
@@ -453,12 +453,17 @@ impl SmilesStereoWriteContext {
         for (_, element) in mol.stereo_elements() {
             match &element.kind {
                 StereoElementKind::Tetrahedral(stereo) => {
+                    let Some(orientation) = stereo.orientation else {
+                        return Err(MolWriteError::new(
+                            "isomeric SMILES writer cannot encode explicitly unknown tetrahedral stereo",
+                        ));
+                    };
                     if tetrahedral
                         .insert(
                             stereo.center,
                             TetrahedralSmilesState {
                                 carriers: stereo.carriers.clone(),
-                                orientation: stereo.orientation,
+                                orientation,
                             },
                         )
                         .is_some()
@@ -534,6 +539,11 @@ fn add_double_bond_directional_constraints(
     stereo: &DoubleBondStereo,
     directional: &mut BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
 ) -> std::result::Result<(), MolWriteError> {
+    let Some(orientation) = stereo.orientation else {
+        return Err(MolWriteError::new(
+            "isomeric SMILES writer cannot encode explicitly unknown double-bond stereo",
+        ));
+    };
     let left_carrier_bond = double_bond_printable_carrier_bond(
         mol,
         stereo.left,
@@ -549,7 +559,7 @@ fn add_double_bond_directional_constraints(
         stereo.right_carrier,
     )?;
     let left_direction = SmilesDirectionToken::Up;
-    let right_direction = match stereo.orientation {
+    let right_direction = match orientation {
         DoubleBondOrientation::Together => left_direction,
         DoubleBondOrientation::Opposite => invert_directional_mark(left_direction),
     };

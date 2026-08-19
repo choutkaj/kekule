@@ -554,11 +554,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
     for (declaration_fields, expected_hydrogens) in
         [("0  0  0  2  0  0", 1), ("0  0  0  0  0  4", 1)]
     {
-        for (stereo_code, expected_specifiedness) in [
-            (1, StereoSpecifiedness::Specified),
-            (6, StereoSpecifiedness::Specified),
-            (4, StereoSpecifiedness::Unknown),
-        ] {
+        for (stereo_code, expected_specified) in [(1, true), (6, true), (4, false)] {
             let input = format!(
                 "declared stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   {declaration_fields}\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  {stereo_code}  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
             );
@@ -582,8 +578,8 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
                     .next()
                     .expect("canonical stereo element")
                     .1
-                    .specifiedness,
-                expected_specifiedness
+                    .is_specified(),
+                expected_specified
             );
 
             let written = molfile::write_v2000(&molecule).expect("canonical stereo should project");
@@ -598,8 +594,8 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
                     .next()
                     .expect("reparsed canonical stereo element")
                     .1
-                    .specifiedness,
-                expected_specifiedness
+                    .is_specified(),
+                expected_specified
             );
         }
     }
@@ -648,17 +644,16 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         .expect("bond");
     molecule
         .graph_mut()
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond,
                 left: a,
                 right: b,
                 left_carrier: StereoCarrier::Atom(a),
                 right_carrier: StereoCarrier::Atom(b),
-                orientation: DoubleBondOrientation::Opposite,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Opposite),
+            },
+        )))
         .expect("double-bond stereo");
     assert!(molfile::write_v2000(&molecule)
         .expect_err("invalid stereo element should be rejected")

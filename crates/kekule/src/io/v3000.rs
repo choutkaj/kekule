@@ -62,8 +62,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
     let program = "kekule";
     let comment = "";
     let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
-    let projected_stereo = project_molfile_stereo_bond_marks(mol, StereoSource::MolfileV3000)
-        .map_err(MolWriteError::new)?;
+    let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
 
     let mut out = String::new();
     out.push_str(&format!("{title}\n{program}\n{comment}\n"));
@@ -406,7 +405,6 @@ pub(super) fn interpret_v3000_syntax(
                 bond: bond_id,
                 from: a,
                 kind,
-                source: StereoSource::MolfileV3000,
             });
         }
     }
