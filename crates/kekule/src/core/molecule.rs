@@ -667,7 +667,7 @@ impl Molecule {
     }
 
     pub(crate) fn invalidate_stereo(&mut self) {
-        self.perception.cip_descriptors.clear();
+        self.perception.stereo = None;
     }
 
     pub(crate) fn install_valence(
@@ -680,7 +680,7 @@ impl Molecule {
             implicit_hydrogens,
         });
         self.perception.aromaticity = None;
-        self.perception.cip_descriptors.clear();
+        self.perception.stereo = None;
     }
 
     pub(crate) fn set_implicit_hydrogens(&mut self, atom: AtomId, count: u8) {
@@ -697,14 +697,19 @@ impl Molecule {
     pub(crate) fn install_ring_membership(&mut self, membership: RingMembership) {
         self.perception.rings = Some(RingPerceptionState {
             membership,
-            rings: None,
+            basis: None,
         });
     }
 
-    pub(crate) fn install_rings(&mut self, membership: RingMembership, rings: RingSet) {
+    pub(crate) fn install_ring_basis(
+        &mut self,
+        membership: RingMembership,
+        model: RingBasisModel,
+        rings: RingSet,
+    ) {
         self.perception.rings = Some(RingPerceptionState {
             membership,
-            rings: Some(rings),
+            basis: Some(RingBasisState::new(Some(model), rings)),
         });
     }
 
@@ -714,7 +719,7 @@ impl Molecule {
             atoms: BTreeSet::new(),
             bonds: BTreeSet::new(),
         });
-        self.perception.cip_descriptors.clear();
+        self.perception.stereo = None;
     }
 
     pub(crate) fn set_atom_aromatic(&mut self, atom: AtomId, aromatic: bool) {
@@ -744,14 +749,18 @@ impl Molecule {
         element: StereoElementId,
         descriptor: StereoDescriptor,
     ) {
-        self.perception.cip_descriptors.insert(element, descriptor);
+        self.perception
+            .stereo
+            .get_or_insert_default()
+            .cip_descriptors
+            .insert(element, descriptor);
     }
 
-    pub(crate) fn replace_cip_descriptors(
+    pub(crate) fn replace_stereo_perception(
         &mut self,
-        descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
-    ) -> BTreeMap<StereoElementId, StereoDescriptor> {
-        std::mem::replace(&mut self.perception.cip_descriptors, descriptors)
+        state: Option<StereoPerceptionState>,
+    ) -> Option<StereoPerceptionState> {
+        std::mem::replace(&mut self.perception.stereo, state)
     }
 
     pub(crate) fn without_conformers(mut self) -> Self {

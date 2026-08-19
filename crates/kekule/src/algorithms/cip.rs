@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::rc::Rc;
 
@@ -105,7 +105,7 @@ pub fn assign_cip_descriptors_with_options(
         });
     }
 
-    let previous_descriptors = mol.replace_cip_descriptors(BTreeMap::new());
+    let previous_stereo = mol.replace_stereo_perception(Some(StereoPerceptionState::default()));
     let mut report = CipAssignmentReport::default();
     let mut issues = Vec::new();
 
@@ -197,7 +197,7 @@ pub fn assign_cip_descriptors_with_options(
     if issues.is_empty() {
         Ok(report)
     } else {
-        drop(mol.replace_cip_descriptors(previous_descriptors));
+        drop(mol.replace_stereo_perception(previous_stereo));
         Err(CipAssignmentError { issues })
     }
 }

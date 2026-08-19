@@ -353,7 +353,7 @@ fn interpretation_canonicalizes_source_stereo_before_perception() {
     assert!(molecule.graph().perception().has_valence());
     assert!(molecule.graph().perception().has_rings());
     assert!(molecule.graph().perception().has_aromaticity());
-    assert!(!molecule.graph().perception().has_cip_descriptors());
+    assert!(!molecule.graph().perception().has_stereo());
 }
 
 #[test]
