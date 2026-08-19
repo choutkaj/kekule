@@ -11,9 +11,9 @@ use kekule::{
     canon,
     core::{
         Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondId, BondOrder, DoubleBondOrientation,
-        Molecule, StereoBondMark, StereoBondMarkKind, StereoCarrier, StereoDescriptor,
-        StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
-        StereoSource, StereoSpecifiedness, TetrahedralOrientation,
+        Molecule, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
+        StereoElementKind, StereoGroup, StereoGroupKind, StereoSource, StereoSpecifiedness,
+        TetrahedralOrientation,
     },
     dssp, hydrogens,
     mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions},

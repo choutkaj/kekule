@@ -447,7 +447,7 @@ pub fn parse_molfile_document_with_options(
 pub fn interpret_molfile_document(
     document: &MolfileDocument,
 ) -> Result<MolfileInterpretation, MolfileInterpretError> {
-    let (mut molecule, atom_lines, bond_lines) = match &document.syntax {
+    let ((mut molecule, source_stereo), atom_lines, bond_lines) = match &document.syntax {
         MolfileSyntax::V2000(syntax) => (
             interpret_v2000_syntax(syntax)?,
             syntax
@@ -476,12 +476,12 @@ pub fn interpret_molfile_document(
         ),
     };
     let publication_report =
-        canonicalize_molecule_for_publication(molecule.graph_mut()).map_err(|error| {
-            MolfileInterpretError {
+        canonicalize_molecule_for_publication(molecule.graph_mut(), &source_stereo).map_err(
+            |error| MolfileInterpretError {
                 line: canonicalization_error_line(&error, &atom_lines, &bond_lines),
                 message: format!("could not publish canonical molecule: {error}"),
-            }
-        })?;
+            },
+        )?;
     let warnings = publication_report
         .warnings
         .into_iter()

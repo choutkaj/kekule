@@ -36,7 +36,7 @@ fn oxo_halide(oxo_count: usize) -> (SmallMolecule, AtomId, Vec<AtomId>, Vec<Bond
 fn normalization_rewrites_hypervalent_oxo_halide_representation() {
     let (mut molecule, chlorine, oxygens, bonds) = oxo_halide(2);
 
-    canonicalize_molecule_for_publication(molecule.graph_mut())
+    canonicalize_molecule_for_publication(molecule.graph_mut(), &[])
         .expect("normalization should succeed");
 
     assert_eq!(molecule.graph().atom(chlorine).unwrap().formal_charge, 2);
@@ -73,7 +73,6 @@ fn source_stereo_is_canonicalized_once_during_interpretation() {
         read_smiles_with_report("C/C=C\\F").expect("directional SMILES should interpret");
 
     assert_eq!(interpretation.created_stereo_elements().len(), 1);
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     let once = molecule.clone();
 
     let second = molecule
@@ -96,7 +95,6 @@ fn direct_smiles_tetrahedral_stereo_is_preserved_without_duplication() {
 
         assert!(report.created_stereo_elements.is_empty());
         assert_eq!(molecule.graph().stereo_elements().count(), 1);
-        assert!(molecule.graph().stereo_bond_marks().next().is_none());
     }
 }
 
@@ -130,7 +128,6 @@ fn publication_canonicalization_clears_preinstalled_perception() {
             .map(|(_, element)| element.clone())
             .collect::<Vec<_>>()
     );
-    assert!(installed_state.graph().stereo_bond_marks().next().is_none());
     assert_eq!(
         installed_state.graph().perception(),
         &PerceptionState::default()
@@ -157,19 +154,18 @@ fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
     let right_mark = graph
         .add_bond(right, right_a, BondOrder::Single)
         .expect("right carrier bond");
-    for bond in [left_mark_a, left_mark_b, right_mark] {
-        graph
-            .set_stereo_bond_mark(StereoBondMark {
-                bond,
-                kind: StereoBondMarkKind::DirectionalUp,
-                source: StereoSource::Smiles,
-            })
-            .expect("directional mark");
-    }
+    let source_stereo = [left_mark_a, left_mark_b, right_mark]
+        .into_iter()
+        .map(|bond| SourceStereoBondMark {
+            bond,
+            kind: SourceStereoBondMarkKind::DirectionalUp,
+            source: StereoSource::Smiles,
+        })
+        .collect::<Vec<_>>();
     mark_all_fresh(&mut graph);
     let mut molecule = SmallMolecule::from_graph(graph);
     let error = molecule
-        .canonicalize_fixture()
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect_err("same-direction marks on both left carriers are ambiguous");
 
     assert!(matches!(
@@ -304,7 +300,6 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
         .add_conformer(conformer)
         .expect("valid conformer");
     assert!(molecule.graph().stereo_elements().next().is_some());
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     assert!(molecule.graph().conformers().next().is_some());
     valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
         .expect("valence perception");

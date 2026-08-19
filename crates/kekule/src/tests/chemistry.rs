@@ -44,7 +44,6 @@ fn interpretation_owns_source_stereo_before_default_perception() {
 
     assert_eq!(report.created_stereo_elements().len(), 1);
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
 
     molecule.perceive().expect("directional perception");
 
@@ -60,17 +59,14 @@ fn normalization_preserves_unknown_double_bond_stereo() {
         .bonds()
         .find_map(|(bond_id, bond)| (bond.order == BondOrder::Double).then_some(bond_id))
         .expect("double bond");
-    molecule
-        .graph_mut()
-        .set_stereo_bond_mark(StereoBondMark {
-            bond: double_bond,
-            kind: StereoBondMarkKind::DoubleBondEither,
-            source: StereoSource::MolfileV2000,
-        })
-        .expect("double bond either mark");
+    let source_stereo = [SourceStereoBondMark {
+        bond: double_bond,
+        kind: SourceStereoBondMarkKind::DoubleBondEither,
+        source: StereoSource::MolfileV2000,
+    }];
 
     let report = molecule
-        .canonicalize_fixture()
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect("unknown double-bond stereo should normalize");
 
     assert_eq!(report.created_stereo_elements.len(), 1);
@@ -153,17 +149,16 @@ fn failed_source_stereo_normalization_is_transactional() {
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
-    mol.set_stereo_bond_mark(StereoBondMark {
+    let source_stereo = [SourceStereoBondMark {
         bond,
-        kind: StereoBondMarkKind::WedgeEither,
+        kind: SourceStereoBondMarkKind::WedgeEither,
         source: StereoSource::MolfileV2000,
-    })
-    .expect("wedge mark");
+    }];
     let mut molecule = SmallMolecule::from_graph(mol);
     let before = molecule.clone();
 
     let error = molecule
-        .canonicalize_fixture()
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect_err("unassembled stereo mark should fail normalization");
 
     assert!(matches!(
@@ -171,7 +166,7 @@ fn failed_source_stereo_normalization_is_transactional() {
         NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
             if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
             bond,
-            kind: StereoBondMarkKind::WedgeEither,
+            kind: SourceStereoBondMarkKind::WedgeEither,
         })
     ));
     assert_eq!(molecule, before);
@@ -191,22 +186,23 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
                 .expect("carrier bond"),
         );
     }
-    for (index, bond) in marked_bonds.into_iter().enumerate() {
-        mol.set_stereo_bond_mark(StereoBondMark {
+    let source_stereo = marked_bonds
+        .into_iter()
+        .enumerate()
+        .map(|(index, bond)| SourceStereoBondMark {
             bond,
             kind: if index % 2 == 0 {
-                StereoBondMarkKind::WedgeUp
+                SourceStereoBondMarkKind::WedgeUp
             } else {
-                StereoBondMarkKind::WedgeDown
+                SourceStereoBondMarkKind::WedgeDown
             },
             source: StereoSource::MolfileV2000,
         })
-        .expect("wedge mark");
-    }
+        .collect::<Vec<_>>();
     let mut molecule = SmallMolecule::from_graph(mol);
 
     let report = molecule
-        .canonicalize_fixture()
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect("ambiguous drawing wedges should not reject valid chemistry");
     assert!(report
         .warnings
@@ -731,7 +727,6 @@ $$$$
         .next()
         .expect("one molecule");
 
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
     let element = molecule
         .graph()
@@ -767,7 +762,6 @@ $$$$
         .next()
         .expect("one molecule");
 
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
     let element = molecule
         .graph()

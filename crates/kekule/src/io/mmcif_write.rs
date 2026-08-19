@@ -434,10 +434,7 @@ fn validate_graph_chemistry(
     definition: &MoleculeDefinition,
 ) -> Result<(), MmcifWriteError> {
     let graph = definition.graph();
-    if graph.stereo_elements().next().is_some()
-        || graph.stereo_groups().next().is_some()
-        || graph.stereo_bond_marks().next().is_some()
-    {
+    if graph.stereo_elements().next().is_some() || graph.stereo_groups().next().is_some() {
         return Err(MmcifWriteError::UnsupportedStereo(molecule.id()));
     }
     for (atom_id, atom) in graph.atoms() {

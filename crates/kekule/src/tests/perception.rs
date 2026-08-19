@@ -226,7 +226,6 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     assert!(molecule.graph().perception().has_aromaticity());
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
     assert_eq!(molecule.graph().stereo_groups().count(), 1);
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
 }
 
 #[test]
@@ -331,7 +330,6 @@ fn interpretation_canonicalizes_source_stereo_before_perception() {
     let (mut molecule, report) = interpretation.into_parts().expect("one component");
 
     assert_eq!(report.created_stereo_elements().len(), 1);
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     assert!(molecule
         .graph()
         .bonds()
@@ -1213,7 +1211,6 @@ fn interpretation_assembles_paired_directional_marks_into_double_bond_element() 
         read_smiles_with_report("C/C=C\\F").expect("directional smiles should interpret");
     assert_eq!(report.created_stereo_elements().len(), 1);
     assert!(molecule.graph().stereo_elements().next().is_some());
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     let element = molecule
         .graph()
         .stereo_element(report.created_stereo_elements()[0])
@@ -1232,10 +1229,33 @@ fn interpretation_assembles_paired_directional_marks_into_double_bond_element() 
 }
 
 #[test]
+fn equivalent_smiles_direction_tokens_publish_equivalent_canonical_stereo() {
+    for (first, second) in [("C/C=C/C", r"C\C=C\C"), (r"C/C=C\C", r"C\C=C/C")] {
+        let first = read_smiles(first).expect("first directional spelling should interpret");
+        let second = read_smiles(second).expect("second directional spelling should interpret");
+        let first = first
+            .graph()
+            .stereo_elements()
+            .map(|(_, element)| element.clone())
+            .collect::<Vec<_>>();
+        let second = second
+            .graph()
+            .stereo_elements()
+            .map(|(_, element)| element.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 1);
+    }
+}
+
+#[test]
 fn interpretation_enforces_small_ring_double_bond_boundary() {
-    let error = read_smiles(r"C1/C=C\CCC1")
+    let document = smiles_api::parse_str(r"C1/C=C\CCC1").expect("source syntax should parse");
+    let error = smiles_api::interpret(&document)
         .expect_err("excluded small-ring directional marks must reject interpretation");
-    assert!(error.to_string().contains("UnpairedDirectionalBondMark"));
+    assert_eq!(error.offset(), 2);
+    assert!(error.message().contains("UnpairedDirectionalBondMark"));
 
     let (cyclooctene, report) =
         read_smiles_with_report(r"C1/C=C\CCCCC1").expect("marked cyclooctene interprets");
@@ -1268,7 +1288,6 @@ M  END
     let (molecule, report) =
         read_molfile_with_report(input).expect("wedge molfile should interpret");
     assert_eq!(report.created_stereo_elements().len(), 1);
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     let element = molecule
         .graph()
         .stereo_element(report.created_stereo_elements()[0])
@@ -1323,14 +1342,13 @@ fn interpretation_uses_source_declared_h_for_molfile_wedge_geometry() {
 #[test]
 fn normalization_assembles_wedge_either_as_explicit_unknown() {
     let (mut mol, center, carriers, marked_bond) = tetrahedral_marked_graph();
-    mol.set_stereo_bond_mark(StereoBondMark {
+    let source_stereo = [SourceStereoBondMark {
         bond: marked_bond,
-        kind: StereoBondMarkKind::WedgeEither,
+        kind: SourceStereoBondMarkKind::WedgeEither,
         source: StereoSource::MolfileV2000,
-    })
-    .expect("wedge mark");
+    }];
 
-    let report = canonicalize_molecule_for_publication(&mut mol)
+    let report = canonicalize_molecule_for_publication(&mut mol, &source_stereo)
         .expect("wedge/either should assemble as unknown stereo");
     assert_eq!(report.created_stereo_elements.len(), 1);
     let element = mol
@@ -1350,20 +1368,20 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
 fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
     let (mut mol, center, _carriers, first_bond) = tetrahedral_marked_graph();
     let second_bond = BondId::new(1);
-    mol.set_stereo_bond_mark(StereoBondMark {
-        bond: first_bond,
-        kind: StereoBondMarkKind::WedgeUp,
-        source: StereoSource::MolfileV2000,
-    })
-    .expect("first wedge mark");
-    mol.set_stereo_bond_mark(StereoBondMark {
-        bond: second_bond,
-        kind: StereoBondMarkKind::WedgeDown,
-        source: StereoSource::MolfileV2000,
-    })
-    .expect("second wedge mark");
+    let source_stereo = [
+        SourceStereoBondMark {
+            bond: first_bond,
+            kind: SourceStereoBondMarkKind::WedgeUp,
+            source: StereoSource::MolfileV2000,
+        },
+        SourceStereoBondMark {
+            bond: second_bond,
+            kind: SourceStereoBondMarkKind::WedgeDown,
+            source: StereoSource::MolfileV2000,
+        },
+    ];
 
-    let report = canonicalize_molecule_for_publication(&mut mol)
+    let report = canonicalize_molecule_for_publication(&mut mol, &source_stereo)
         .expect("ambiguous wedges should warn without failing");
 
     assert!(report
@@ -1374,7 +1392,6 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
         }));
     assert!(report.created_stereo_elements.is_empty());
     assert!(mol.stereo_elements().next().is_none());
-    assert!(mol.stereo_bond_marks().next().is_none());
 }
 
 #[test]
@@ -1628,36 +1645,34 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
 }
 
 #[test]
-fn normalization_reports_unassembled_marks_and_preserves_absence() {
+fn normalization_reports_unassembled_detached_marks_and_preserves_absence() {
     let mut marked = Molecule::new();
     let a = marked.add_atom(carbon()).expect("atom identifier capacity");
     let b = marked.add_atom(carbon()).expect("atom identifier capacity");
     let bond = marked.add_bond(a, b, BondOrder::Single).expect("bond");
-    marked
-        .set_stereo_bond_mark(StereoBondMark {
-            bond,
-            kind: StereoBondMarkKind::WedgeEither,
-            source: StereoSource::MolfileV2000,
-        })
-        .expect("mark");
+    let marked_source = [SourceStereoBondMark {
+        bond,
+        kind: SourceStereoBondMarkKind::WedgeEither,
+        source: StereoSource::MolfileV2000,
+    }];
 
     let coordinate_result = stereo_api::infer_coordinate_stereo(&marked)
-        .expect("coordinate inference must ignore source marks");
+        .expect("coordinate inference is independent of detached source marks");
     assert!(coordinate_result.elements.is_empty());
-    assert!(marked.stereo_bond_mark(bond).is_some());
+    let marked_before = marked.clone();
 
-    let marked_error = canonicalize_molecule_for_publication(&mut marked)
+    let marked_error = canonicalize_molecule_for_publication(&mut marked, &marked_source)
         .expect_err("unassembled tetrahedral mark should fail");
     assert!(matches!(
         marked_error,
         NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
             if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
             bond,
-            kind: StereoBondMarkKind::WedgeEither,
+            kind: SourceStereoBondMarkKind::WedgeEither,
         })
     ));
     assert!(marked.stereo_elements().next().is_none());
-    assert!(marked.stereo_bond_mark(bond).is_some());
+    assert_eq!(marked, marked_before);
 
     let mut unsupported = Molecule::new();
     let c = unsupported
@@ -1667,21 +1682,20 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let double_bond = unsupported.add_bond(c, d, BondOrder::Double).expect("bond");
-    unsupported
-        .set_stereo_bond_mark(StereoBondMark {
-            bond: double_bond,
-            kind: StereoBondMarkKind::DoubleBondEither,
-            source: StereoSource::MolfileV2000,
-        })
-        .expect("double bond either mark");
-    let unsupported_error = canonicalize_molecule_for_publication(&mut unsupported)
-        .expect_err("unsupported double-bond mark should fail");
+    let unsupported_source = [SourceStereoBondMark {
+        bond: double_bond,
+        kind: SourceStereoBondMarkKind::DoubleBondEither,
+        source: StereoSource::MolfileV2000,
+    }];
+    let unsupported_error =
+        canonicalize_molecule_for_publication(&mut unsupported, &unsupported_source)
+            .expect_err("unsupported double-bond mark should fail");
     assert!(matches!(
         unsupported_error,
         NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
             if issues.contains(&SourceStereoNormalizationIssue::UnsupportedSourceBondMark {
             bond: double_bond,
-            kind: StereoBondMarkKind::DoubleBondEither,
+            kind: SourceStereoBondMarkKind::DoubleBondEither,
         })
     ));
 
@@ -1707,18 +1721,15 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
     unknown
         .add_bond(right, right_carrier, BondOrder::Single)
         .expect("right carrier");
-    unknown
-        .set_stereo_bond_mark(StereoBondMark {
-            bond: unknown_bond,
-            kind: StereoBondMarkKind::DoubleBondEither,
-            source: StereoSource::MolfileV2000,
-        })
-        .expect("double bond either mark");
+    let unknown_source = [SourceStereoBondMark {
+        bond: unknown_bond,
+        kind: SourceStereoBondMarkKind::DoubleBondEither,
+        source: StereoSource::MolfileV2000,
+    }];
 
-    let unknown_report = canonicalize_molecule_for_publication(&mut unknown)
+    let unknown_report = canonicalize_molecule_for_publication(&mut unknown, &unknown_source)
         .expect("double-bond either should assemble as unknown stereo");
     assert_eq!(unknown_report.created_stereo_elements.len(), 1);
-    assert!(unknown.stereo_bond_mark(unknown_bond).is_none());
     let (_, element) = unknown.stereo_elements().next().expect("unknown element");
     assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
     assert!(matches!(
@@ -1730,11 +1741,10 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
     let x = absent.add_atom(carbon()).expect("atom identifier capacity");
     let y = absent.add_atom(carbon()).expect("atom identifier capacity");
     absent.add_bond(x, y, BondOrder::Single).expect("bond");
-    let absent_report = canonicalize_molecule_for_publication(&mut absent)
+    let absent_report = canonicalize_molecule_for_publication(&mut absent, &[])
         .expect("unmarked molecule should normalize");
     assert!(absent_report.created_stereo_elements.is_empty());
     assert!(absent.stereo_elements().next().is_none());
-    assert!(absent.stereo_bond_marks().next().is_none());
 }
 
 #[test]
@@ -1742,21 +1752,17 @@ fn failed_source_stereo_canonicalization_reports_the_unpaired_mark() {
     let mut molecule = read_smiles("F[C@](Cl)(Br)I").expect("stereo SMILES should parse");
     perceive(&mut molecule).expect("stored stereo should prepare");
     let marked_bond = molecule.graph().bond_ids().next().expect("single bond");
-    molecule
-        .graph_mut()
-        .set_stereo_bond_mark(StereoBondMark {
-            bond: marked_bond,
-            kind: StereoBondMarkKind::DirectionalUp,
-            source: StereoSource::Smiles,
-        })
-        .expect("directional source mark");
+    let source_stereo = [SourceStereoBondMark {
+        bond: marked_bond,
+        kind: SourceStereoBondMarkKind::DirectionalUp,
+        source: StereoSource::Smiles,
+    }];
     let cip = stereo_api::assign_cip_descriptors(molecule.graph_mut())
         .expect("CIP assignment should succeed");
     assert_eq!(cip.assigned.len(), 1);
-    stereo_api::validate_stereo(molecule.graph())
-        .expect("stored-state validation must ignore source marks");
+    stereo_api::validate_stereo(molecule.graph()).expect("stored-state validation should succeed");
     let error = molecule
-        .canonicalize_fixture()
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect_err("unpaired directional mark should fail canonicalization");
 
     assert!(matches!(
@@ -1875,7 +1881,6 @@ fn molfile_writers_project_canonical_axis_stereo_without_mutating_the_molecule()
             .expect("reparsed axis element");
         assert_eq!(actual.kind, expected.kind);
         assert_eq!(actual.specifiedness, expected.specifiedness);
-        assert!(reparsed.graph().stereo_bond_marks().next().is_none());
     }
     assert_eq!(molecule, before);
 }

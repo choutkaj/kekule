@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::explicit_valence;
-use crate::chemistry::{localize_source_aromatic_bonds, project_molfile_stereo_bond_marks};
+use crate::chemistry::{
+    localize_source_aromatic_bonds, project_molfile_stereo_bond_marks, SourceStereoBondMark,
+    SourceStereoBondMarkKind,
+};
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::io::{MolWriteError, MolfileParseOptions, SdfParseError};
@@ -121,10 +124,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
         let order_code = v3000_bond_code(bond.order)?;
         out.push_str(&format!("M  V30 {serial} {order_code} {a} {b}"));
-        let stereo = mol
-            .stereo_bond_mark(*bond_id)
-            .map(|mark| mark.kind)
-            .or_else(|| projected_stereo.get(bond_id).copied());
+        let stereo = projected_stereo.get(bond_id).copied();
         if let Some(cfg) = v3000_bond_cfg(bond.order, stereo)? {
             out.push_str(&format!(" CFG={cfg}"));
         }
@@ -345,7 +345,7 @@ pub(super) fn parse_v3000_syntax(
 
 pub(super) fn interpret_v3000_syntax(
     syntax: &V3000Syntax,
-) -> std::result::Result<SmallMolecule, SdfParseError> {
+) -> std::result::Result<(SmallMolecule, Vec<SourceStereoBondMark>), SdfParseError> {
     let mut mol = Molecule::new();
     let mut atom_ids = BTreeMap::<usize, AtomId>::new();
     let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
@@ -371,6 +371,7 @@ pub(super) fn interpret_v3000_syntax(
         atom_ids.insert(record.index, atom_id);
     }
     let mut source_aromatic_bonds = BTreeSet::new();
+    let mut source_stereo = Vec::new();
     let mut first_aromatic_line = None;
     for record in &syntax.bonds {
         let a = *atom_ids.get(&record.a).ok_or_else(|| {
@@ -397,12 +398,11 @@ pub(super) fn interpret_v3000_syntax(
         if let Some(kind) =
             interpret_v3000_bond_stereo(order, source_aromatic, record.stereo_code, record.line)?
         {
-            mol.set_stereo_bond_mark(StereoBondMark {
+            source_stereo.push(SourceStereoBondMark {
                 bond: bond_id,
                 kind,
                 source: StereoSource::MolfileV3000,
-            })
-            .expect("newly added bond should accept a stereo mark");
+            });
         }
     }
 
@@ -419,7 +419,10 @@ pub(super) fn interpret_v3000_syntax(
         mol.add_conformer(conformer)
             .expect("parsed coordinates reference live atoms");
     }
-    Ok(SmallMolecule::from_graph_unchecked_connectedness(mol))
+    Ok((
+        SmallMolecule::from_graph_unchecked_connectedness(mol),
+        source_stereo,
+    ))
 }
 
 fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
@@ -479,7 +482,7 @@ fn interpret_v3000_bond_stereo(
     source_aromatic: bool,
     code: Option<u8>,
     line: usize,
-) -> std::result::Result<Option<StereoBondMarkKind>, SdfParseError> {
+) -> std::result::Result<Option<SourceStereoBondMarkKind>, SdfParseError> {
     let Some(code) = code else {
         return Ok(None);
     };
@@ -897,13 +900,13 @@ fn v3000_bond_order(code: u8) -> Option<BondOrder> {
     }
 }
 
-fn v3000_bond_stereo(order: BondOrder, value: &str) -> Option<Option<StereoBondMarkKind>> {
+fn v3000_bond_stereo(order: BondOrder, value: &str) -> Option<Option<SourceStereoBondMarkKind>> {
     match (order, value) {
         (_, "0") => Some(None),
-        (BondOrder::Single, "1") => Some(Some(StereoBondMarkKind::WedgeUp)),
-        (BondOrder::Single, "2") => Some(Some(StereoBondMarkKind::WedgeEither)),
-        (BondOrder::Single, "3") => Some(Some(StereoBondMarkKind::WedgeDown)),
-        (BondOrder::Double, "2") => Some(Some(StereoBondMarkKind::DoubleBondEither)),
+        (BondOrder::Single, "1") => Some(Some(SourceStereoBondMarkKind::WedgeUp)),
+        (BondOrder::Single, "2") => Some(Some(SourceStereoBondMarkKind::WedgeEither)),
+        (BondOrder::Single, "3") => Some(Some(SourceStereoBondMarkKind::WedgeDown)),
+        (BondOrder::Double, "2") => Some(Some(SourceStereoBondMarkKind::DoubleBondEither)),
         _ => None,
     }
 }
@@ -923,14 +926,14 @@ fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 
 fn v3000_bond_cfg(
     order: BondOrder,
-    stereo: Option<StereoBondMarkKind>,
+    stereo: Option<SourceStereoBondMarkKind>,
 ) -> std::result::Result<Option<u8>, MolWriteError> {
     match (order, stereo) {
         (_, None) => Ok(None),
-        (BondOrder::Single, Some(StereoBondMarkKind::WedgeUp)) => Ok(Some(1)),
-        (BondOrder::Single, Some(StereoBondMarkKind::WedgeEither)) => Ok(Some(2)),
-        (BondOrder::Single, Some(StereoBondMarkKind::WedgeDown)) => Ok(Some(3)),
-        (BondOrder::Double, Some(StereoBondMarkKind::DoubleBondEither)) => Ok(Some(2)),
+        (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeUp)) => Ok(Some(1)),
+        (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(Some(2)),
+        (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(Some(3)),
+        (BondOrder::Double, Some(SourceStereoBondMarkKind::DoubleBondEither)) => Ok(Some(2)),
         _ => Err(MolWriteError::new(
             "V3000 bond CFG is incompatible with the bond order",
         )),
