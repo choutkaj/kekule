@@ -64,7 +64,8 @@ fn perceive_rdkit_like_valence(
     let mut assignments = Vec::<(AtomId, u8)>::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
-        let explicit = explicit_valence(mol, atom_id) + usize::from(atom.explicit_hydrogens);
+        let explicit =
+            explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.explicit_count());
         let radical_electrons = atom
             .radical
             .map_or(0, |radical| usize::from(radical.unpaired_electron_count()));
@@ -138,7 +139,7 @@ fn perceive_rdkit_like_valence(
             continue;
         }
 
-        let implicit = if atom.no_implicit_hydrogens {
+        let implicit = if !atom.hydrogens.allows_implicit() {
             0
         } else if let Some(target) = target_rule
             .fixed

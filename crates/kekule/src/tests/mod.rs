@@ -148,7 +148,7 @@ pub(super) fn element_atom(symbol: &str) -> Atom {
 
 pub(super) fn aromatic_carbon_no_hydrogens() -> Atom {
     let mut atom = carbon();
-    atom.no_implicit_hydrogens = true;
+    atom.hydrogens = HydrogenDeclaration::Fixed(0);
     atom
 }
 
@@ -291,8 +291,7 @@ struct RepresentedAtomSnapshot {
     isotope: Option<u16>,
     formal_charge: i8,
     radical: Option<AtomRadical>,
-    explicit_hydrogens: u8,
-    no_implicit_hydrogens: bool,
+    hydrogens: HydrogenDeclaration,
     atom_map: Option<u32>,
     props: PropMap,
 }
@@ -334,8 +333,7 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
                     isotope: atom.isotope,
                     formal_charge: atom.formal_charge,
                     radical: atom.radical,
-                    explicit_hydrogens: atom.explicit_hydrogens,
-                    no_implicit_hydrogens: atom.no_implicit_hydrogens,
+                    hydrogens: atom.hydrogens,
                     atom_map: atom.atom_map,
                     props: atom.props.clone(),
                 })

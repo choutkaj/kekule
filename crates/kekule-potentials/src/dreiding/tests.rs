@@ -1,5 +1,5 @@
 use kekule::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
-use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
+use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element, HydrogenDeclaration, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
 use kekule::small::SmallMolecule;
@@ -11,7 +11,7 @@ use super::{DreidingPotential, DreidingPrepareError, DreidingPrepareOptions, Qeq
 
 fn explicit_atom(symbol: &str) -> Atom {
     let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
-    atom.no_implicit_hydrogens = true;
+    atom.hydrogens = HydrogenDeclaration::Fixed(0);
     atom
 }
 
@@ -356,8 +356,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             if atom == InstanceAtomId::new(MoleculeInstanceId::new(0), id)
     ));
 
-    atom.no_implicit_hydrogens = true;
-    atom.explicit_hydrogens = 1;
+    atom.hydrogens = HydrogenDeclaration::Fixed(1);
     let mut graph = Molecule::builder();
     let id = graph.add_atom(atom).expect("atom identifier capacity");
     let mut conformer = Conformer::new(kekule::units::ANGSTROM).unwrap();

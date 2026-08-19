@@ -7,8 +7,8 @@ use crate::chemistry::{
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoCarrier, StereoElement,
-    StereoElementId, StereoElementKind, TetrahedralOrientation, TetrahedralStereo,
+    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, StereoCarrier,
+    StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation, TetrahedralStereo,
 };
 use crate::small::model::SmallMolecule;
 
@@ -556,8 +556,13 @@ fn interpret_smiles_atom(
     let mut atom = Atom::new(element);
     atom.isotope = syntax.isotope;
     atom.formal_charge = syntax.formal_charge;
-    atom.explicit_hydrogens = syntax.explicit_hydrogens;
-    atom.no_implicit_hydrogens = syntax.bracketed;
+    atom.hydrogens = if syntax.bracketed {
+        HydrogenDeclaration::Fixed(syntax.explicit_hydrogens)
+    } else {
+        HydrogenDeclaration::Infer {
+            explicit: syntax.explicit_hydrogens,
+        }
+    };
     atom.atom_map = syntax.atom_map;
     Ok(atom)
 }
@@ -670,7 +675,7 @@ fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) 
             matches!(
                 atom.element.symbol(),
                 "N" | "P" | "As" | "Sb" | "O" | "S" | "Se" | "Te"
-            ) && atom.explicit_hydrogens == 0
+            ) && atom.hydrogens.explicit_count() == 0
         })
         .unwrap_or(false)
 }

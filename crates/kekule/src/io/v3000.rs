@@ -102,10 +102,21 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
         if let Some(radical) = atom.radical {
             out.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
-        if atom.explicit_hydrogens > 0 {
-            out.push_str(&format!(" HCOUNT={}", atom.explicit_hydrogens));
-        } else if atom.no_implicit_hydrogens {
-            out.push_str(&format!(" VAL={}", explicit_valence(mol, *atom_id)));
+        match atom.hydrogens {
+            HydrogenDeclaration::Infer { explicit: 0 } => {}
+            HydrogenDeclaration::Infer { .. } => {
+                return Err(MolWriteError::new(format!(
+                    "V3000 cannot encode represented hydrogens while leaving implicit-H inference enabled for atom {}",
+                    atom_id.index()
+                )));
+            }
+            HydrogenDeclaration::Fixed(explicit) => {
+                if explicit > 0 {
+                    out.push_str(&format!(" HCOUNT={explicit}"));
+                } else {
+                    out.push_str(&format!(" VAL={}", explicit_valence(mol, *atom_id)));
+                }
+            }
         }
         out.push('\n');
     }
@@ -458,10 +469,13 @@ fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, S
         V3000RadicalSyntax::Doublet => AtomRadical::Doublet,
         V3000RadicalSyntax::Triplet => AtomRadical::Triplet,
     });
-    atom.explicit_hydrogens =
-        interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
-            .unwrap_or(0);
-    atom.no_implicit_hydrogens = record.hydrogen_count.is_some() || record.valence.is_some();
+    let explicit = interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
+        .unwrap_or(0);
+    atom.hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
+        HydrogenDeclaration::Fixed(explicit)
+    } else {
+        HydrogenDeclaration::Infer { explicit }
+    };
     atom.atom_map = record.atom_map;
     Ok(atom)
 }
@@ -554,7 +568,8 @@ fn apply_v3000_declared_hydrogens(
             let explicit = molecule
                 .atom(atom_id)
                 .expect("interpreted V3000 atom remains live")
-                .explicit_hydrogens;
+                .hydrogens
+                .explicit_count();
             if declared_hydrogens != usize::from(explicit) {
                 return Err(SdfParseError::new(
                     1,
@@ -570,7 +585,7 @@ fn apply_v3000_declared_hydrogens(
         molecule
             .atom_mut(atom_id)
             .expect("interpreted V3000 atom remains live")
-            .explicit_hydrogens = explicit;
+            .hydrogens = HydrogenDeclaration::Fixed(explicit);
     }
     Ok(())
 }
