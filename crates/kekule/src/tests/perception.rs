@@ -550,8 +550,7 @@ fn aromaticity_supports_explicit_nitrogen_lone_pair_donor_ring() {
         let mut nitrogen = pyrrole_like
             .atom_mut(atoms[0])
             .expect("ring nitrogen should exist");
-        nitrogen.explicit_hydrogens = 1;
-        nitrogen.no_implicit_hydrogens = true;
+        nitrogen.hydrogens = HydrogenDeclaration::Fixed(1);
     }
     pyrrole_like.set_implicit_hydrogens(atoms[0], 0);
 
@@ -729,8 +728,7 @@ fn aromaticity_rejects_protonated_saturated_ring_nitrogen_donor() {
     {
         let mut nitrogen = mol.atom_mut(atoms[0]).expect("ring atom exists");
         nitrogen.formal_charge = 1;
-        nitrogen.explicit_hydrogens = 1;
-        nitrogen.no_implicit_hydrogens = true;
+        nitrogen.hydrogens = HydrogenDeclaration::Fixed(1);
     }
     mol.set_implicit_hydrogens(atoms[0], 0);
 
@@ -750,8 +748,7 @@ fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
     {
         let mut cation = mol.atom_mut(atoms[0]).expect("ring atom exists");
         cation.formal_charge = 1;
-        cation.explicit_hydrogens = 1;
-        cation.no_implicit_hydrogens = true;
+        cation.hydrogens = HydrogenDeclaration::Fixed(1);
     }
     mol.set_implicit_hydrogens(atoms[0], 0);
 
@@ -777,8 +774,7 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
     );
     {
         let mut saturated = mol.atom_mut(atoms[0]).expect("ring atom exists");
-        saturated.explicit_hydrogens = 2;
-        saturated.no_implicit_hydrogens = true;
+        saturated.hydrogens = HydrogenDeclaration::Fixed(2);
     }
     mol.set_implicit_hydrogens(atoms[0], 0);
 

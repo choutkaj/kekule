@@ -76,8 +76,7 @@ fn atom_new_sets_chemically_general_defaults() {
     assert_eq!(atom.isotope, None);
     assert_eq!(atom.formal_charge, 0);
     assert_eq!(atom.radical, None);
-    assert_eq!(atom.explicit_hydrogens, 0);
-    assert!(!atom.no_implicit_hydrogens);
+    assert_eq!(atom.hydrogens, HydrogenDeclaration::Infer { explicit: 0 });
     assert_eq!(atom.atom_map, None);
     assert!(atom.props.is_empty());
 }
@@ -88,8 +87,7 @@ fn atom_payload_fields_can_be_set_and_read() {
     atom.isotope = Some(13);
     atom.formal_charge = -1;
     atom.radical = Some(AtomRadical::Doublet);
-    atom.explicit_hydrogens = 3;
-    atom.no_implicit_hydrogens = true;
+    atom.hydrogens = HydrogenDeclaration::Fixed(3);
     atom.atom_map = Some(7);
     atom.props
         .insert("label".to_owned(), PropValue::String("alpha".to_owned()));
@@ -97,13 +95,33 @@ fn atom_payload_fields_can_be_set_and_read() {
     assert_eq!(atom.isotope, Some(13));
     assert_eq!(atom.formal_charge, -1);
     assert_eq!(atom.radical, Some(AtomRadical::Doublet));
-    assert_eq!(atom.explicit_hydrogens, 3);
-    assert!(atom.no_implicit_hydrogens);
+    assert_eq!(atom.hydrogens, HydrogenDeclaration::Fixed(3));
     assert_eq!(atom.atom_map, Some(7));
     assert_eq!(
         atom.props.get("label"),
         Some(&PropValue::String("alpha".to_owned()))
     );
+}
+
+#[test]
+fn hydrogen_declaration_expresses_each_canonical_policy_without_overlap() {
+    for (declaration, explicit, allows_implicit) in [
+        (HydrogenDeclaration::Infer { explicit: 0 }, 0, true),
+        (HydrogenDeclaration::Infer { explicit: 2 }, 2, true),
+        (HydrogenDeclaration::Fixed(0), 0, false),
+        (HydrogenDeclaration::Fixed(3), 3, false),
+    ] {
+        assert_eq!(declaration.explicit_count(), explicit);
+        assert_eq!(declaration.allows_implicit(), allows_implicit);
+        assert_eq!(
+            declaration.with_explicit_count(7),
+            if allows_implicit {
+                HydrogenDeclaration::Infer { explicit: 7 }
+            } else {
+                HydrogenDeclaration::Fixed(7)
+            }
+        );
+    }
 }
 
 #[test]
