@@ -141,13 +141,13 @@ fn bond_payload_fields_can_be_set_and_read() {
 }
 
 #[test]
-fn stereo_elements_groups_and_bond_marks_live_on_molecule() {
+fn stereo_elements_and_groups_live_on_molecule() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
-    let bond = mol.add_bond(center, a, BondOrder::Single).expect("bond");
+    mol.add_bond(center, a, BondOrder::Single).expect("bond");
     mol.add_bond(center, b, BondOrder::Single).expect("bond");
     mol.add_bond(center, c, BondOrder::Single).expect("bond");
     mark_all_fresh(&mut mol);
@@ -186,17 +186,6 @@ fn stereo_elements_groups_and_bond_marks_live_on_molecule() {
     assert_eq!(
         mol.stereo_group(group).expect("group").members,
         vec![element]
-    );
-
-    mol.set_stereo_bond_mark(StereoBondMark {
-        bond,
-        kind: StereoBondMarkKind::WedgeUp,
-        source: StereoSource::MolfileV2000,
-    })
-    .expect("bond mark should be stored");
-    assert_eq!(
-        mol.stereo_bond_mark(bond).expect("mark").kind,
-        StereoBondMarkKind::WedgeUp
     );
 }
 
@@ -354,21 +343,13 @@ fn topology_deletions_prune_referencing_stereo_state() {
         members: vec![element],
     })
     .expect("group");
-    mol.set_stereo_bond_mark(StereoBondMark {
-        bond: ac,
-        kind: StereoBondMarkKind::WedgeDown,
-        source: StereoSource::MolfileV3000,
-    })
-    .expect("mark");
-
     mol.delete_bond(ab).expect("delete double bond");
     assert!(mol.stereo_element(element).is_err());
     assert!(mol
         .stereo_groups()
         .all(|(_, group)| group.members.is_empty()));
 
-    mol.delete_bond(ac).expect("delete marked bond");
-    assert!(mol.stereo_bond_mark(ac).is_none());
+    mol.delete_bond(ac).expect("delete bond");
 
     let atom_element = mol
         .add_stereo_element(StereoElement::specified(

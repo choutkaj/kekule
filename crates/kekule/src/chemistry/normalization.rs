@@ -4,10 +4,12 @@ use std::fmt;
 use crate::algorithms::StereoValidationIssue;
 use crate::core::{
     canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, Molecule, MoleculeError,
-    StereoBondMarkKind, StereoElementId,
+    StereoElementId,
 };
 
-use super::source_stereo::normalize_source_stereo;
+use super::source_stereo::{
+    normalize_source_stereo, SourceStereoBondMark, SourceStereoBondMarkKind,
+};
 
 const MAX_AROMATIC_LOCALIZATION_MATCHING_STATES: usize = 100_000;
 
@@ -47,9 +49,16 @@ pub enum NormalizationWarning {
 /// One concrete source-stereo normalization issue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceStereoNormalizationIssue {
+    MissingSourceBondMark {
+        bond: BondId,
+    },
+    InvalidSourceBondMarkEndpoint {
+        bond: BondId,
+        from: AtomId,
+    },
     UnassembledTetrahedralBondMark {
         bond: BondId,
-        kind: StereoBondMarkKind,
+        kind: SourceStereoBondMarkKind,
     },
     AmbiguousDirectionalBondMarks {
         double_bond: BondId,
@@ -61,11 +70,10 @@ pub enum SourceStereoNormalizationIssue {
     },
     UnsupportedSourceBondMark {
         bond: BondId,
-        kind: StereoBondMarkKind,
+        kind: SourceStereoBondMarkKind,
     },
     InvalidStereo(StereoValidationIssue),
     CouldNotCreateStereoElement(MoleculeError),
-    CouldNotConsumeSourceBondMark(MoleculeError),
 }
 
 /// Collected failure to canonicalize source-declared stereochemistry.
@@ -133,6 +141,9 @@ impl NormalizationError {
 impl SourceStereoNormalizationError {
     fn atom_location_hint(&self) -> Option<AtomId> {
         self.issues.iter().find_map(|issue| match issue {
+            SourceStereoNormalizationIssue::InvalidSourceBondMarkEndpoint { from, .. } => {
+                Some(*from)
+            }
             SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks { endpoint, .. } => {
                 Some(*endpoint)
             }
@@ -151,7 +162,9 @@ impl SourceStereoNormalizationError {
 
     fn bond_location_hint(&self) -> Option<BondId> {
         self.issues.iter().find_map(|issue| match issue {
-            SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark { bond, .. }
+            SourceStereoNormalizationIssue::MissingSourceBondMark { bond }
+            | SourceStereoNormalizationIssue::InvalidSourceBondMarkEndpoint { bond, .. }
+            | SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark { bond, .. }
             | SourceStereoNormalizationIssue::UnpairedDirectionalBondMark { bond }
             | SourceStereoNormalizationIssue::UnsupportedSourceBondMark { bond, .. } => Some(*bond),
             SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks {
@@ -178,6 +191,7 @@ impl SourceStereoNormalizationError {
 /// publishes represented chemistry only.
 pub(crate) fn canonicalize_molecule_for_publication(
     molecule: &mut Molecule,
+    source_stereo: &[SourceStereoBondMark],
 ) -> Result<NormalizationReport, NormalizationError> {
     canonicalize_represented_chemistry(molecule).map_err(|error| {
         NormalizationError::FormalChargeOutOfRange {
@@ -189,7 +203,8 @@ pub(crate) fn canonicalize_molecule_for_publication(
     // perception. Representation rewrites above already invalidate it
     // conceptually, so clear it before decoding any source marks.
     molecule.invalidate_topology();
-    let report = normalize_source_stereo(molecule).map_err(NormalizationError::SourceStereo)?;
+    let report = normalize_source_stereo(molecule, source_stereo)
+        .map_err(NormalizationError::SourceStereo)?;
     // Adding represented stereo invalidates only stereo-derived state. The
     // publication contract clears the complete perception state.
     molecule.invalidate_topology();

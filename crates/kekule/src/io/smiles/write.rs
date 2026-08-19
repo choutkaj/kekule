@@ -1,12 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::algorithms::{
-    double_bond_between_aromatic_atoms, double_bond_endpoint_carriers,
-    double_bond_has_noncarbon_endpoint, double_bond_is_in_ring, ordered_atom_pair,
-};
+use crate::algorithms::ordered_atom_pair;
 use crate::core::*;
 use crate::io::MolWriteError;
 use crate::small::model::SmallMolecule;
+
+use super::parse::SmilesDirectionToken;
 
 pub fn write_smiles(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
@@ -171,12 +170,7 @@ pub(super) fn validate_smiles_writeable(
     match stereo {
         StereoWriteMode::Reject if mol.stereo_elements().next().is_some() => {
             return Err(MolWriteError::new(
-                "SMILES writer cannot encode atom stereochemistry",
-            ));
-        }
-        StereoWriteMode::Reject if mol.stereo_bond_marks().next().is_some() => {
-            return Err(MolWriteError::new(
-                "SMILES writer cannot encode bond stereochemistry",
+                "SMILES writer cannot encode stereochemistry",
             ));
         }
         StereoWriteMode::Encode => validate_isomeric_smiles_stereo(mol)?,
@@ -449,7 +443,7 @@ struct ChiralAtomWriteState {
 #[derive(Debug, Clone, Copy)]
 struct DirectionalSmilesConstraint {
     endpoint: AtomId,
-    direction_at_endpoint: StereoBondMarkKind,
+    direction_at_endpoint: SmilesDirectionToken,
 }
 
 impl SmilesStereoWriteContext {
@@ -480,7 +474,6 @@ impl SmilesStereoWriteContext {
                 StereoElementKind::Axis(_) => {}
             }
         }
-        validate_isomeric_source_marks(mol, &directional)?;
         Ok(Self {
             tetrahedral,
             directional,
@@ -510,7 +503,7 @@ impl SmilesStereoWriteContext {
         bond: BondId,
         left: AtomId,
         right: AtomId,
-    ) -> std::result::Result<Option<StereoBondMarkKind>, MolWriteError> {
+    ) -> std::result::Result<Option<SmilesDirectionToken>, MolWriteError> {
         let Some(constraints) = self.directional.get(&bond) else {
             return Ok(None);
         };
@@ -536,81 +529,6 @@ impl SmilesStereoWriteContext {
     }
 }
 
-fn validate_isomeric_source_marks(
-    mol: &Molecule,
-    directional: &BTreeMap<BondId, Vec<DirectionalSmilesConstraint>>,
-) -> std::result::Result<(), MolWriteError> {
-    for mark in mol.stereo_bond_marks() {
-        if !matches!(
-            mark.kind,
-            StereoBondMarkKind::DirectionalUp | StereoBondMarkKind::DirectionalDown
-        ) {
-            return Err(MolWriteError::new(
-                "isomeric SMILES writer cannot encode non-directional source bond marks",
-            ));
-        }
-        if !directional.contains_key(&mark.bond) {
-            if !source_directional_mark_needs_perceived_stereo(mol, mark)? {
-                continue;
-            }
-            return Err(MolWriteError::new(
-                "isomeric SMILES writer requires perceived double-bond stereo elements for source bond marks",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn source_directional_mark_needs_perceived_stereo(
-    mol: &Molecule,
-    mark: &StereoBondMark,
-) -> std::result::Result<bool, MolWriteError> {
-    let marked_bond = mol
-        .bond(mark.bond)
-        .map_err(|error| MolWriteError::new(error.to_string()))?;
-    let (left, right) = marked_bond.endpoints();
-    for endpoint in [left, right] {
-        let incident = mol
-            .incident_bonds(endpoint)
-            .map_err(|error| MolWriteError::new(error.to_string()))?;
-        for (bond_id, bond) in incident {
-            if bond_id == mark.bond || smiles_has_double_bond_element(mol, bond_id) {
-                continue;
-            }
-            if double_bond_stereo_candidate_is_supported(mol, bond_id, bond)
-                && !double_bond_endpoint_carriers(mol, bond.a(), bond.b(), bond_id).is_empty()
-                && !double_bond_endpoint_carriers(mol, bond.b(), bond.a(), bond_id).is_empty()
-            {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
-fn double_bond_stereo_candidate_is_supported(mol: &Molecule, bond_id: BondId, bond: &Bond) -> bool {
-    if bond.order != BondOrder::Double || mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
-    {
-        return false;
-    }
-    if double_bond_between_aromatic_atoms(mol, bond) {
-        return false;
-    }
-    if double_bond_is_in_ring(mol, bond_id) && double_bond_has_noncarbon_endpoint(mol, bond) {
-        return false;
-    }
-    true
-}
-
-fn smiles_has_double_bond_element(mol: &Molecule, bond: BondId) -> bool {
-    mol.stereo_elements().any(|(_, element)| {
-        matches!(
-            &element.kind,
-            StereoElementKind::DoubleBond(stereo) if stereo.bond == bond
-        )
-    })
-}
-
 fn add_double_bond_directional_constraints(
     mol: &Molecule,
     stereo: &DoubleBondStereo,
@@ -630,7 +548,7 @@ fn add_double_bond_directional_constraints(
         stereo.bond,
         stereo.right_carrier,
     )?;
-    let left_direction = StereoBondMarkKind::DirectionalUp;
+    let left_direction = SmilesDirectionToken::Up;
     let right_direction = match stereo.orientation {
         DoubleBondOrientation::Together => left_direction,
         DoubleBondOrientation::Opposite => invert_directional_mark(left_direction),
@@ -736,11 +654,11 @@ fn implicit_double_bond_printable_carrier_bond(
 }
 
 fn directional_mark_for_emitted_bond(
-    direction_at_endpoint: StereoBondMarkKind,
+    direction_at_endpoint: SmilesDirectionToken,
     endpoint: AtomId,
     left: AtomId,
     right: AtomId,
-) -> std::result::Result<StereoBondMarkKind, MolWriteError> {
+) -> std::result::Result<SmilesDirectionToken, MolWriteError> {
     if endpoint == left {
         Ok(direction_at_endpoint)
     } else if endpoint == right {
@@ -752,11 +670,10 @@ fn directional_mark_for_emitted_bond(
     }
 }
 
-fn invert_directional_mark(kind: StereoBondMarkKind) -> StereoBondMarkKind {
+fn invert_directional_mark(kind: SmilesDirectionToken) -> SmilesDirectionToken {
     match kind {
-        StereoBondMarkKind::DirectionalUp => StereoBondMarkKind::DirectionalDown,
-        StereoBondMarkKind::DirectionalDown => StereoBondMarkKind::DirectionalUp,
-        _ => kind,
+        SmilesDirectionToken::Up => SmilesDirectionToken::Down,
+        SmilesDirectionToken::Down => SmilesDirectionToken::Up,
     }
 }
 
@@ -1094,7 +1011,7 @@ fn smiles_bond_between_with_direction(
     order: SmilesBondOrder,
     left: AtomId,
     right: AtomId,
-    directional: Option<StereoBondMarkKind>,
+    directional: Option<SmilesDirectionToken>,
 ) -> std::result::Result<&'static str, MolWriteError> {
     if let Some(directional) = directional {
         if order != SmilesBondOrder::Single {
@@ -1103,11 +1020,8 @@ fn smiles_bond_between_with_direction(
             ));
         }
         return match directional {
-            StereoBondMarkKind::DirectionalUp => Ok("/"),
-            StereoBondMarkKind::DirectionalDown => Ok("\\"),
-            _ => Err(MolWriteError::new(
-                "isomeric SMILES writer received a non-directional stereo mark",
-            )),
+            SmilesDirectionToken::Up => Ok("/"),
+            SmilesDirectionToken::Down => Ok("\\"),
         };
     }
     smiles_bond_between(mol, order, left, right)

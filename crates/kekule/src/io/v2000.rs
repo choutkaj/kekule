@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::algorithms::explicit_valence;
-use crate::chemistry::{localize_source_aromatic_bonds, project_molfile_stereo_bond_marks};
+use crate::chemistry::{
+    localize_source_aromatic_bonds, project_molfile_stereo_bond_marks, SourceStereoBondMark,
+    SourceStereoBondMarkKind,
+};
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::small::model::SmallMolecule;
@@ -273,7 +276,7 @@ pub(super) fn parse_v2000_syntax(
 
 pub(super) fn interpret_v2000_syntax(
     syntax: &V2000Syntax,
-) -> std::result::Result<SmallMolecule, SdfParseError> {
+) -> std::result::Result<(SmallMolecule, Vec<SourceStereoBondMark>), SdfParseError> {
     let mut mol = Molecule::new();
     let mut atom_ids = Vec::with_capacity(syntax.atoms.len());
     let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
@@ -299,6 +302,7 @@ pub(super) fn interpret_v2000_syntax(
         atom_ids.push(atom_id);
     }
     let mut source_aromatic_bonds = BTreeSet::new();
+    let mut source_stereo = Vec::new();
     let mut first_aromatic_line = None;
     for bond in &syntax.bonds {
         let a = atom_ids.get(bond.a).copied().ok_or_else(|| {
@@ -318,12 +322,12 @@ pub(super) fn interpret_v2000_syntax(
         if let Some(kind) =
             interpret_v2000_bond_stereo(order, source_aromatic, bond.stereo_code, bond.line)?
         {
-            mol.set_stereo_bond_mark(StereoBondMark {
+            source_stereo.push(SourceStereoBondMark {
                 bond: bond_id,
+                from: a,
                 kind,
                 source: StereoSource::MolfileV2000,
-            })
-            .expect("newly added bond should accept a stereo mark");
+            });
         }
     }
 
@@ -340,7 +344,10 @@ pub(super) fn interpret_v2000_syntax(
             .expect("parsed coordinates reference live atoms");
     }
 
-    Ok(SmallMolecule::from_graph_unchecked_connectedness(mol))
+    Ok((
+        SmallMolecule::from_graph_unchecked_connectedness(mol),
+        source_stereo,
+    ))
 }
 
 fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
@@ -396,7 +403,7 @@ fn interpret_v2000_bond_stereo(
     source_aromatic: bool,
     code: u8,
     line: usize,
-) -> std::result::Result<Option<StereoBondMarkKind>, SdfParseError> {
+) -> std::result::Result<Option<SourceStereoBondMarkKind>, SdfParseError> {
     if source_aromatic && code != 0 {
         return Err(SdfParseError::new(
             1,
@@ -406,10 +413,10 @@ fn interpret_v2000_bond_stereo(
     }
     match (order, code) {
         (_, 0) => Ok(None),
-        (BondOrder::Single, 1) => Ok(Some(StereoBondMarkKind::WedgeUp)),
-        (BondOrder::Single, 4) => Ok(Some(StereoBondMarkKind::WedgeEither)),
-        (BondOrder::Single, 6) => Ok(Some(StereoBondMarkKind::WedgeDown)),
-        (BondOrder::Double, 3) => Ok(Some(StereoBondMarkKind::DoubleBondEither)),
+        (BondOrder::Single, 1) => Ok(Some(SourceStereoBondMarkKind::WedgeUp)),
+        (BondOrder::Single, 4) => Ok(Some(SourceStereoBondMarkKind::WedgeEither)),
+        (BondOrder::Single, 6) => Ok(Some(SourceStereoBondMarkKind::WedgeDown)),
+        (BondOrder::Double, 3) => Ok(Some(SourceStereoBondMarkKind::DoubleBondEither)),
         _ => Err(SdfParseError::new(
             1,
             line,
@@ -830,17 +837,18 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
         let bond = mol
             .bond(*bond_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
+        let projection = projected_stereo.get(bond_id).copied();
+        let (from, to) = projection
+            .map(|projection| (projection.from, bond.other_atom(projection.from)))
+            .unwrap_or_else(|| bond.endpoints());
         let a = atom_index
-            .get(&bond.a())
+            .get(&from)
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
         let b = atom_index
-            .get(&bond.b())
+            .get(&to)
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
         let order_code = v2000_bond_code(bond.order)?;
-        let stereo = mol
-            .stereo_bond_mark(*bond_id)
-            .map(|mark| mark.kind)
-            .or_else(|| projected_stereo.get(bond_id).copied());
+        let stereo = projection.map(|projection| projection.kind);
         let stereo_code = v2000_bond_stereo_code(bond.order, stereo)?;
         out.push_str(&format!(
             "{:>3}{:>3}{:>3}{:>3}  0  0  0\n",
@@ -999,14 +1007,14 @@ fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 
 fn v2000_bond_stereo_code(
     order: BondOrder,
-    stereo: Option<StereoBondMarkKind>,
+    stereo: Option<SourceStereoBondMarkKind>,
 ) -> std::result::Result<u8, MolWriteError> {
     match (order, stereo) {
         (_, None) => Ok(0),
-        (BondOrder::Single, Some(StereoBondMarkKind::WedgeUp)) => Ok(1),
-        (BondOrder::Single, Some(StereoBondMarkKind::WedgeEither)) => Ok(4),
-        (BondOrder::Single, Some(StereoBondMarkKind::WedgeDown)) => Ok(6),
-        (BondOrder::Double, Some(StereoBondMarkKind::DoubleBondEither)) => Ok(3),
+        (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeUp)) => Ok(1),
+        (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeEither)) => Ok(4),
+        (BondOrder::Single, Some(SourceStereoBondMarkKind::WedgeDown)) => Ok(6),
+        (BondOrder::Double, Some(SourceStereoBondMarkKind::DoubleBondEither)) => Ok(3),
         _ => Err(MolWriteError::new(
             "V2000 bond stereo is incompatible with the bond order",
         )),

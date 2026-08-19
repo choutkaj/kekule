@@ -71,7 +71,6 @@ pub enum RetainedHydrogenReason {
     HydrogenNeighbor,
     NonSingleBond,
     BondProperties,
-    StereoBondMark,
     UnsupportedStereoRole,
 }
 
@@ -261,21 +260,15 @@ pub(crate) fn remove_hydrogens_from_molecule(
         .map(|(hydrogen, _, _)| *hydrogen)
         .collect::<BTreeSet<_>>();
     let mut removable = BTreeSet::new();
-    for (hydrogen, parent, bond) in &candidates {
+    for (hydrogen, parent, _) in &candidates {
         let stereo_is_collapsible =
             stereo_hydrogen_is_collapsible(molecule, *hydrogen, *parent, &candidate_ids);
-        let source_mark_is_safe = molecule.stereo_bond_mark(*bond).is_none()
-            || stereo_hydrogen_has_collapsible_role(molecule, *hydrogen, *parent);
-        if stereo_is_collapsible && source_mark_is_safe {
+        if stereo_is_collapsible {
             removable.insert(*hydrogen);
         } else {
             report.retained.push(RetainedHydrogen {
                 hydrogen: *hydrogen,
-                reason: if source_mark_is_safe {
-                    RetainedHydrogenReason::UnsupportedStereoRole
-                } else {
-                    RetainedHydrogenReason::StereoBondMark
-                },
+                reason: RetainedHydrogenReason::UnsupportedStereoRole,
             });
         }
     }
@@ -499,26 +492,6 @@ fn removable_hydrogen(
         return Ok(Err(RetainedHydrogenReason::BondProperties));
     }
     Ok(Ok((parent, bond_id)))
-}
-
-fn stereo_hydrogen_has_collapsible_role(
-    molecule: &Molecule,
-    hydrogen: AtomId,
-    parent: AtomId,
-) -> bool {
-    molecule
-        .stereo_elements()
-        .any(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) => {
-                stereo.center == parent && stereo.carriers.contains(&StereoCarrier::Atom(hydrogen))
-            }
-            StereoElementKind::DoubleBond(stereo) => {
-                (stereo.left == parent && stereo.left_carrier == StereoCarrier::Atom(hydrogen))
-                    || (stereo.right == parent
-                        && stereo.right_carrier == StereoCarrier::Atom(hydrogen))
-            }
-            StereoElementKind::Axis(_) => false,
-        })
 }
 
 fn stereo_hydrogen_is_collapsible(

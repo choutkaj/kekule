@@ -1,7 +1,6 @@
 use super::*;
 use crate::hydrogens::{
-    AddHydrogensOptions, AddedHydrogenOrigin, HydrogenTransformError, RetainedHydrogen,
-    RetainedHydrogenReason,
+    AddHydrogensOptions, AddedHydrogenOrigin, HydrogenTransformError, RetainedHydrogenReason,
 };
 
 fn perceived_smiles(input: &str) -> SmallMolecule {
@@ -398,38 +397,4 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
         }
         _ => panic!("expected double-bond stereo"),
     }
-}
-
-#[test]
-fn remove_hydrogens_retains_source_marked_bonds() {
-    let mut graph = Molecule::new();
-    let parent = graph.add_atom(carbon()).expect("atom identifier capacity");
-    let hydrogen = graph
-        .add_atom(element_atom("H"))
-        .expect("atom identifier capacity");
-    let bond = graph
-        .add_bond(parent, hydrogen, BondOrder::Single)
-        .expect("hydrogen bond");
-    graph
-        .set_stereo_bond_mark(StereoBondMark {
-            bond,
-            kind: StereoBondMarkKind::WedgeUp,
-            source: StereoSource::MolfileV2000,
-        })
-        .expect("source mark");
-    let _ = valence_api::perceive_valence(&mut graph, ValenceModel::RdkitLike);
-    let mut molecule = SmallMolecule::from_graph(graph);
-
-    let report = molecule.remove_hydrogens().expect("conservative removal");
-
-    assert!(report.removed.is_empty());
-    assert_eq!(
-        report.retained,
-        vec![RetainedHydrogen {
-            hydrogen,
-            reason: RetainedHydrogenReason::StereoBondMark,
-        }]
-    );
-    assert!(molecule.graph().atom(hydrogen).is_ok());
-    assert!(molecule.graph().stereo_bond_mark(bond).is_some());
 }
