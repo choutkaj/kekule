@@ -2661,7 +2661,7 @@ fn bond_duplicate_atomic_number(
 
 fn cip_bond_order(order: BondOrder) -> u8 {
     match order {
-        BondOrder::Single | BondOrder::Aromatic => 1,
+        BondOrder::Single => 1,
         BondOrder::Double => 2,
         BondOrder::Triple => 3,
         BondOrder::Quadruple => 4,

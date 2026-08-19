@@ -746,11 +746,11 @@ fn benchmark_run_does_not_rewrite_dashboard_or_results_metadata() {
 
 #[test]
 fn stereo_perception_benchmark_records_reference_preparation_errors_per_record() {
-    let molecule =
-        SmallMolecule::from_smiles("c1cccc1").expect("invalid aromatic molecule should parse");
+    let molecule = SmallMolecule::from_smiles("C(C)(C)(C)(C)C")
+        .expect("pentavalent neutral carbon should remain an interpretation-valid graph");
     let mut record = IndexedSmallRecord {
         record_index: 0,
-        title: "invalid aromatic representation".to_owned(),
+        title: "invalid neutral-carbon valence".to_owned(),
         molecule,
         sdf_fields: BTreeMap::new(),
     };
@@ -1110,13 +1110,25 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         explicit_valence_json(fused_triazine.graph(), tricoordinate_aromatic_nitrogen),
         3
     );
-    assert!(smiles_perceived_bonds_json(aromatic.graph())
-        .iter()
-        .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == false));
+    let localized_bonds = smiles_perceived_bonds_json(aromatic.graph());
+    assert_eq!(
+        localized_bonds
+            .iter()
+            .filter(|bond| bond["bond_type"] == "SINGLE" && bond["is_aromatic"] == false)
+            .count(),
+        3
+    );
+    assert_eq!(
+        localized_bonds
+            .iter()
+            .filter(|bond| bond["bond_type"] == "DOUBLE" && bond["is_aromatic"] == false)
+            .count(),
+        3
+    );
     assert!(perceived_aromatic
         .graph()
         .bonds()
-        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+        .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
     assert!(smiles_perceived_bonds_json(perceived_aromatic.graph())
         .iter()
         .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));

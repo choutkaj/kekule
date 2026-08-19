@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::algorithms::explicit_valence;
+use crate::chemistry::localize_source_aromatic_bonds;
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::small::model::SmallMolecule;
@@ -297,6 +298,8 @@ pub(super) fn interpret_v2000_syntax(
             .expect("matching coordinate units");
         atom_ids.push(atom_id);
     }
+    let mut source_aromatic_bonds = BTreeSet::new();
+    let mut first_aromatic_line = None;
     for bond in &syntax.bonds {
         let a = atom_ids.get(bond.a).copied().ok_or_else(|| {
             SdfParseError::new(1, bond.line, "bond endpoint outside parsed atom records")
@@ -304,11 +307,17 @@ pub(super) fn interpret_v2000_syntax(
         let b = atom_ids.get(bond.b).copied().ok_or_else(|| {
             SdfParseError::new(1, bond.line, "bond endpoint outside parsed atom records")
         })?;
-        let order = interpret_v2000_bond_order(bond.order_code, bond.line)?;
+        let (order, source_aromatic) = interpret_v2000_bond_order(bond.order_code, bond.line)?;
         let bond_id = mol.add_bond(a, b, order).map_err(|error| {
             SdfParseError::new(1, bond.line, format!("invalid graph bond: {error}"))
         })?;
-        if let Some(kind) = interpret_v2000_bond_stereo(order, bond.stereo_code, bond.line)? {
+        if source_aromatic {
+            source_aromatic_bonds.insert(bond_id);
+            first_aromatic_line.get_or_insert(bond.line);
+        }
+        if let Some(kind) =
+            interpret_v2000_bond_stereo(order, source_aromatic, bond.stereo_code, bond.line)?
+        {
             mol.set_stereo_bond_mark(StereoBondMark {
                 bond: bond_id,
                 kind,
@@ -318,7 +327,14 @@ pub(super) fn interpret_v2000_syntax(
         }
     }
 
-    apply_v2000_declared_hydrogens(&mut mol, syntax, &atom_ids)?;
+    apply_v2000_declared_hydrogens(&mut mol, syntax, &atom_ids, &source_aromatic_bonds)?;
+    localize_source_aromatic_bonds(&mut mol, &source_aromatic_bonds).map_err(|error| {
+        SdfParseError::new(
+            1,
+            first_aromatic_line.unwrap_or(1),
+            format!("aromatic bond localization failed: {error}"),
+        )
+    })?;
     if conformer.positions().next().is_some() {
         mol.add_conformer(conformer)
             .expect("parsed coordinates reference live atoms");
@@ -359,14 +375,14 @@ fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, S
 fn interpret_v2000_bond_order(
     code: u8,
     line: usize,
-) -> std::result::Result<BondOrder, SdfParseError> {
+) -> std::result::Result<(BondOrder, bool), SdfParseError> {
     match code {
-        0 => Ok(BondOrder::Zero),
-        1 => Ok(BondOrder::Single),
-        2 => Ok(BondOrder::Double),
-        3 => Ok(BondOrder::Triple),
-        4 => Ok(BondOrder::Aromatic),
-        9 => Ok(BondOrder::Dative),
+        0 => Ok((BondOrder::Zero, false)),
+        1 => Ok((BondOrder::Single, false)),
+        2 => Ok((BondOrder::Double, false)),
+        3 => Ok((BondOrder::Triple, false)),
+        4 => Ok((BondOrder::Single, true)),
+        9 => Ok((BondOrder::Dative, false)),
         _ => Err(SdfParseError::new(
             1,
             line,
@@ -377,9 +393,17 @@ fn interpret_v2000_bond_order(
 
 fn interpret_v2000_bond_stereo(
     order: BondOrder,
+    source_aromatic: bool,
     code: u8,
     line: usize,
 ) -> std::result::Result<Option<StereoBondMarkKind>, SdfParseError> {
+    if source_aromatic && code != 0 {
+        return Err(SdfParseError::new(
+            1,
+            line,
+            format!("V2000 stereo code {code} is unsupported for an aromatic source bond"),
+        ));
+    }
     match (order, code) {
         (_, 0) => Ok(None),
         (BondOrder::Single, 1) => Ok(Some(StereoBondMarkKind::WedgeUp)),
@@ -398,6 +422,7 @@ fn apply_v2000_declared_hydrogens(
     molecule: &mut Molecule,
     syntax: &V2000Syntax,
     atom_ids: &[AtomId],
+    source_aromatic_bonds: &BTreeSet<BondId>,
 ) -> std::result::Result<(), SdfParseError> {
     for (record, atom_id) in syntax.atoms.iter().zip(atom_ids.iter().copied()) {
         let Some(declared_valence) = record.valence else {
@@ -406,20 +431,26 @@ fn apply_v2000_declared_hydrogens(
         let represented_valence = molecule
             .incident_bonds(atom_id)
             .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?
-            .try_fold(0usize, |total, (_, bond)| {
-                let contribution = match bond.order {
-                    BondOrder::Single => 1,
-                    BondOrder::Double => 2,
-                    BondOrder::Triple => 3,
-                    BondOrder::Zero | BondOrder::Dative => 0,
-                    BondOrder::Aromatic | BondOrder::Quadruple => {
-                        return Err(SdfParseError::new(
+            .try_fold(0usize, |total, (bond_id, bond)| {
+                if source_aromatic_bonds.contains(&bond_id) {
+                    return Err(SdfParseError::new(
+                        1,
+                        record.line,
+                        "declared V2000 valence cannot determine hydrogens for this bond order",
+                    ));
+                }
+                let contribution =
+                    match bond.order {
+                        BondOrder::Single => 1,
+                        BondOrder::Double => 2,
+                        BondOrder::Triple => 3,
+                        BondOrder::Zero | BondOrder::Dative => 0,
+                        BondOrder::Quadruple => return Err(SdfParseError::new(
                             1,
                             record.line,
                             "declared V2000 valence cannot determine hydrogens for this bond order",
-                        ))
-                    }
-                };
+                        )),
+                    };
                 Ok(total + contribution)
             })?;
         let declared_hydrogens = usize::from(declared_valence)
@@ -958,7 +989,6 @@ fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
         BondOrder::Single => Ok(1),
         BondOrder::Double => Ok(2),
         BondOrder::Triple => Ok(3),
-        BondOrder::Aromatic => Ok(4),
         BondOrder::Dative => Ok(9),
         BondOrder::Quadruple => Err(MolWriteError::new(
             "V2000 writer does not support quadruple bonds",

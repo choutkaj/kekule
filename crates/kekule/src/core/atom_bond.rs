@@ -91,6 +91,9 @@ impl Bond {
     }
 }
 
+/// A canonical localized bond order stored in a [`Molecule`](super::Molecule).
+///
+/// Aromaticity is perceived state, not a represented bond order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BondOrder {
     Zero,
@@ -98,6 +101,5 @@ pub enum BondOrder {
     Double,
     Triple,
     Quadruple,
-    Aromatic,
     Dative,
 }

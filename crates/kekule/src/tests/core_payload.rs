@@ -120,14 +120,14 @@ fn bond_new_sets_endpoints_and_order() {
     let a = AtomId::new(3);
     let b = AtomId::new(4);
     let single = Bond::new(a, b, BondOrder::Single);
-    let aromatic = Bond::new(a, b, BondOrder::Aromatic);
+    let double = Bond::new(a, b, BondOrder::Double);
 
     assert_eq!(single.a(), a);
     assert_eq!(single.b(), b);
     assert_eq!(single.endpoints(), (a, b));
     assert_eq!(single.order, BondOrder::Single);
     assert!(single.props.is_empty());
-    assert_eq!(aromatic.order, BondOrder::Aromatic);
+    assert_eq!(double.order, BondOrder::Double);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::chemistry::localize_source_aromatic_bonds;
 use crate::core::{AtomId, BondOrder, Molecule};
 use crate::structure::{AtomData, Ensemble, EnsembleMember, Model, ModelBuilder, Positions};
 use crate::topology::{InstanceAtomId, Topology};
@@ -129,7 +130,22 @@ pub fn interpret_mmcif_ensemble(
 struct ComponentBond {
     atom_1: String,
     atom_2: String,
-    order: BondOrder,
+    order: ComponentBondOrder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComponentBondOrder {
+    Localized(BondOrder),
+    Aromatic,
+}
+
+impl ComponentBondOrder {
+    const fn staged_order(self) -> BondOrder {
+        match self {
+            Self::Localized(order) => order,
+            Self::Aromatic => BondOrder::Single,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -148,7 +164,7 @@ struct BranchLink {
     atom_1: String,
     number_2: i32,
     atom_2: String,
-    order: BondOrder,
+    order: ComponentBondOrder,
 }
 
 #[derive(Debug, Default)]
@@ -303,11 +319,18 @@ fn rebuild_model_with_connectivity(
 
         let new_instance = if let Some(molecule) = definition.macro_molecule() {
             let mut molecule = molecule.clone();
+            let mut source_aromatic_bonds = BTreeSet::new();
             apply_instance_connectivity(
                 molecule.graph_mut_unchecked_connectedness(),
                 provenance,
                 &catalog,
+                &mut source_aromatic_bonds,
             )?;
+            localize_source_aromatic_bonds(
+                molecule.graph_mut_unchecked_connectedness(),
+                &source_aromatic_bonds,
+            )
+            .map_err(interpret_error)?;
             let connected = molecule.graph().is_connected();
             if molecule.graph().atom_count() > 1 && !connected {
                 pending += 1;
@@ -324,7 +347,15 @@ fn rebuild_model_with_connectivity(
                 .map_err(interpret_error)?
         } else if let Some(molecule) = definition.small_molecule() {
             let mut molecule = molecule.clone();
-            apply_instance_connectivity(molecule.graph_mut(), provenance, &catalog)?;
+            let mut source_aromatic_bonds = BTreeSet::new();
+            apply_instance_connectivity(
+                molecule.graph_mut(),
+                provenance,
+                &catalog,
+                &mut source_aromatic_bonds,
+            )?;
+            localize_source_aromatic_bonds(molecule.graph_mut(), &source_aromatic_bonds)
+                .map_err(interpret_error)?;
             if molecule.graph().atom_count() > 1 && !molecule.graph().is_connected() {
                 pending += 1;
             }
@@ -366,6 +397,7 @@ fn apply_instance_connectivity(
     graph: &mut Molecule,
     provenance: &raw::MmcifInstanceProvenance,
     catalog: &ConnectivityCatalog,
+    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
 ) -> Result<(), raw::MmcifInterpretError> {
     let residues = residue_atoms(provenance);
     for residue in residues.values() {
@@ -380,12 +412,12 @@ fn apply_instance_connectivity(
                 ) else {
                     continue;
                 };
-                add_bond_if_missing(graph, left, right, bond.order)?;
+                add_bond_if_missing(graph, left, right, bond.order, source_aromatic_bonds)?;
             }
         }
     }
-    apply_branch_links(graph, &residues, catalog)?;
-    apply_polymer_links(graph, &residues, catalog)
+    apply_branch_links(graph, &residues, catalog, source_aromatic_bonds)?;
+    apply_polymer_links(graph, &residues, catalog, source_aromatic_bonds)
 }
 
 fn residue_atoms(provenance: &raw::MmcifInstanceProvenance) -> BTreeMap<ResidueKey, ResidueAtoms> {
@@ -416,6 +448,7 @@ fn apply_branch_links(
     graph: &mut Molecule,
     residues: &BTreeMap<ResidueKey, ResidueAtoms>,
     catalog: &ConnectivityCatalog,
+    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
 ) -> Result<(), raw::MmcifInterpretError> {
     for link in &catalog.branch_links {
         let left = resolve_branch_residue(residues, catalog, &link.entity_id, link.number_1);
@@ -428,7 +461,13 @@ fn apply_branch_links(
         else {
             continue;
         };
-        add_bond_if_missing(graph, left_atom, right_atom, link.order)?;
+        add_bond_if_missing(
+            graph,
+            left_atom,
+            right_atom,
+            link.order,
+            source_aromatic_bonds,
+        )?;
     }
     Ok(())
 }
@@ -459,6 +498,7 @@ fn apply_polymer_links(
     graph: &mut Molecule,
     residues: &BTreeMap<ResidueKey, ResidueAtoms>,
     catalog: &ConnectivityCatalog,
+    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
 ) -> Result<(), raw::MmcifInterpretError> {
     let mut chains = BTreeMap::<(String, String), Vec<&ResidueAtoms>>::new();
     for residue in residues.values() {
@@ -501,12 +541,24 @@ fn apply_polymer_links(
                 if let (Some(&carbonyl), Some(&nitrogen)) =
                     (left.atoms.get("C"), right.atoms.get("N"))
                 {
-                    add_bond_if_missing(graph, carbonyl, nitrogen, BondOrder::Single)?;
+                    add_bond_if_missing(
+                        graph,
+                        carbonyl,
+                        nitrogen,
+                        ComponentBondOrder::Localized(BondOrder::Single),
+                        source_aromatic_bonds,
+                    )?;
                 }
             } else if is_nucleic_acid(polymer_type) {
                 let oxygen = left.atoms.get("O3'").or_else(|| left.atoms.get("O3*"));
                 if let (Some(&oxygen), Some(&phosphorus)) = (oxygen, right.atoms.get("P")) {
-                    add_bond_if_missing(graph, oxygen, phosphorus, BondOrder::Single)?;
+                    add_bond_if_missing(
+                        graph,
+                        oxygen,
+                        phosphorus,
+                        ComponentBondOrder::Localized(BondOrder::Single),
+                        source_aromatic_bonds,
+                    )?;
                 }
             }
         }
@@ -518,19 +570,33 @@ fn add_bond_if_missing(
     graph: &mut Molecule,
     left: AtomId,
     right: AtomId,
-    order: BondOrder,
+    source_order: ComponentBondOrder,
+    source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
 ) -> Result<(), raw::MmcifInterpretError> {
     let existing = graph.bond_between(left, right).map_err(interpret_error)?;
     let Some(existing) = existing else {
-        graph
-            .add_bond(left, right, order)
+        let bond = graph
+            .add_bond(left, right, source_order.staged_order())
             .map_err(interpret_error)?;
+        if source_order == ComponentBondOrder::Aromatic {
+            source_aromatic_bonds.insert(bond);
+        }
         return Ok(());
     };
     let existing_order = graph.bond(existing).map_err(interpret_error)?.order;
-    if existing_order != order {
+    let consistent = match source_order {
+        ComponentBondOrder::Aromatic => source_aromatic_bonds.contains(&existing),
+        ComponentBondOrder::Localized(order) => {
+            !source_aromatic_bonds.contains(&existing) && existing_order == order
+        }
+    };
+    if !consistent {
+        let source_order = match source_order {
+            ComponentBondOrder::Localized(order) => format!("{order:?}"),
+            ComponentBondOrder::Aromatic => "Aromatic".to_owned(),
+        };
         return Err(interpret_error(format!(
-            "conflicting authoritative mmCIF bond evidence for one atom pair: {existing_order:?} versus {order:?}"
+            "conflicting authoritative mmCIF bond evidence for one atom pair: {existing_order:?} versus {source_order}"
         )));
     }
     Ok(())
@@ -553,13 +619,13 @@ fn component_bond_order(
     value: &str,
     table: &MmcifLoopTable,
     row: usize,
-) -> Result<BondOrder, raw::MmcifInterpretError> {
+) -> Result<ComponentBondOrder, raw::MmcifInterpretError> {
     match value.to_ascii_lowercase().as_str() {
-        "sing" | "poly" => Ok(BondOrder::Single),
-        "doub" | "pi" => Ok(BondOrder::Double),
-        "trip" => Ok(BondOrder::Triple),
-        "quad" => Ok(BondOrder::Quadruple),
-        "arom" | "delo" => Ok(BondOrder::Aromatic),
+        "sing" | "poly" => Ok(ComponentBondOrder::Localized(BondOrder::Single)),
+        "doub" | "pi" => Ok(ComponentBondOrder::Localized(BondOrder::Double)),
+        "trip" => Ok(ComponentBondOrder::Localized(BondOrder::Triple)),
+        "quad" => Ok(ComponentBondOrder::Localized(BondOrder::Quadruple)),
+        "arom" | "delo" => Ok(ComponentBondOrder::Aromatic),
         other => Err(row_error(
             table,
             row,
