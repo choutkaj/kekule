@@ -33,7 +33,10 @@ pub struct StereoElement {
 }
 
 impl StereoElement {
-    /// Creates an ungrouped canonical stereo assertion.
+    /// Creates an ungrouped stereo assertion for checked molecule insertion.
+    ///
+    /// [`Molecule::add_stereo_element`] canonicalizes carrier and endpoint
+    /// conventions before storing it.
     pub fn new(kind: StereoElementKind) -> Self {
         Self { kind, group: None }
     }

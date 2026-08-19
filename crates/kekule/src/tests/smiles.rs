@@ -3056,9 +3056,9 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
                 tetrahedral.carriers,
                 vec![
                     StereoCarrier::Atom(AtomId::new(0)),
-                    StereoCarrier::ImplicitHydrogen,
                     StereoCarrier::Atom(AtomId::new(2)),
                     StereoCarrier::Atom(AtomId::new(3)),
+                    StereoCarrier::ImplicitHydrogen,
                 ]
             );
         }
