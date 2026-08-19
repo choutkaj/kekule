@@ -9,6 +9,26 @@ fn installed_cip_descriptors(mol: &Molecule) -> Vec<(StereoElementId, StereoDesc
 }
 
 #[test]
+fn successful_cip_with_no_assignments_installs_empty_stereo_section() {
+    let mut mol = Molecule::new();
+    mol.add_atom(carbon()).expect("single carbon");
+    assert!(!mol.perception().has_stereo());
+
+    let report = assign_cip(&mut mol);
+
+    assert!(report.assigned.is_empty());
+    assert!(report.skipped.is_empty());
+    assert!(mol.perception().has_stereo());
+    assert!(mol
+        .perception()
+        .stereo_state()
+        .expect("installed stereo section")
+        .cip_descriptors()
+        .next()
+        .is_none());
+}
+
+#[test]
 fn cip_assigns_tetrahedral_descriptors_from_stored_local_stereo() {
     let mut s_alanine = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
     perceive(&mut s_alanine).expect("alanine perceives");
@@ -1694,12 +1714,13 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
 }
 
 #[test]
-fn failed_cip_resource_limit_restores_previous_descriptors() {
+fn failed_cip_resource_limit_restores_previous_stereo_section() {
     let mut molecule = read_smiles("C[C@@H](C(=O)O)N").expect("alanine parses");
     perceive(&mut molecule).expect("alanine perceives");
     let report = assign_cip(molecule.graph_mut());
     assert_eq!(report.assigned.len(), 1);
     let before = installed_cip_descriptors(molecule.graph());
+    let before_state = molecule.graph().perception().stereo_state().cloned();
 
     let error = stereo_api::assign_cip_descriptors_with_options(
         molecule.graph_mut(),
@@ -1719,12 +1740,34 @@ fn failed_cip_resource_limit_restores_previous_descriptors() {
     );
     assert_eq!(installed_cip_descriptors(molecule.graph()), before);
     assert_eq!(
+        molecule.graph().perception().stereo_state(),
+        before_state.as_ref()
+    );
+    assert_eq!(
         molecule
             .graph()
             .cip_descriptor(StereoElementId::new(0))
             .expect("stereo element"),
         Some(StereoDescriptor::S)
     );
+
+    let present_empty = PerceptionState::builder()
+        .with_cip_descriptors(Vec::new())
+        .expect("empty stereo section")
+        .build();
+    molecule
+        .graph_mut()
+        .install_perception_state(present_empty.clone())
+        .expect("present-empty baseline");
+    stereo_api::assign_cip_descriptors_with_options(
+        molecule.graph_mut(),
+        CipAssignmentOptions {
+            max_nodes: 1,
+            ..CipAssignmentOptions::default()
+        },
+    )
+    .expect_err("the constrained reassignment should still fail");
+    assert_eq!(molecule.graph().perception(), &present_empty);
 }
 
 #[test]
@@ -1763,6 +1806,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
         }]
     );
     assert!(installed_cip_descriptors(molecule.graph()).is_empty());
+    assert!(!molecule.graph().perception().has_stereo());
     assert!(molecule
         .graph()
         .stereo_elements()
@@ -1770,7 +1814,7 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
 }
 
 #[test]
-fn failed_cip_validation_preserves_previous_descriptors() {
+fn failed_cip_validation_preserves_previous_stereo_section() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let adjacent = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -1808,6 +1852,17 @@ fn failed_cip_validation_preserves_previous_descriptors() {
         mol.cip_descriptor(element).expect("stereo element"),
         Some(StereoDescriptor::R)
     );
+
+    let present_empty = PerceptionState::builder()
+        .with_cip_descriptors(Vec::new())
+        .expect("empty stereo section")
+        .build();
+    mol.install_perception_state(present_empty.clone())
+        .expect("valid empty stereo section");
+    stereo_api::assign_cip_descriptors(&mut mol)
+        .expect_err("invalid stored stereo should still reject CIP assignment");
+    assert_eq!(mol.perception(), &present_empty);
+    assert!(mol.perception().has_stereo());
 }
 
 #[test]

@@ -222,19 +222,27 @@ focused on fundamental derived chemistry:
 
 ```text
 PerceptionState
-  |- ValenceState
+  |- optional ValencePerceptionState
   |    |- model/provenance
   |    `- implicit-hydrogen assignments
-  |- RingState
+  |- optional RingPerceptionState
   |    |- graph cycle membership
-  |    `- optional deterministic ring basis + basis provenance/model
-  |- AromaticityState
+  |    `- optional RingBasisState
+  |         |- model/provenance
+  |         `- deterministic ring set
+  |- optional AromaticityPerceptionState
   |    |- model
   |    |- aromatic atoms
   |    `- aromatic bonds
-  `- StereoPerceptionState
+  `- optional StereoPerceptionState
        `- CIP descriptor assignments
 ```
+
+Section presence means that derivation is installed. It is independent of a
+named model and of whether the installed result contains any positive
+assignments: model-neutral valence is still present, zero aromatic atoms still
+form a present aromaticity section, and a successful CIP run with no assigned
+descriptors installs a present, empty `StereoPerceptionState`.
 
 Not every calculated molecular property belongs in `PerceptionState`.
 Descriptors, force-field atom types, partial charges, rotatable-bond labels,
@@ -245,7 +253,9 @@ requirements shared by core chemistry algorithms.
 Graph cycle membership and a chosen ring basis are distinct concepts. Membership
 is a graph property; a stored ring basis is an algorithmic choice and should
 carry sufficient provenance to identify how it was constructed when that choice
-matters downstream.
+matters downstream. The built-in deterministic Figueras/SSSR-like selection is
+identified by `RingBasisModel::FiguerasSssrLike`; exact reconstruction may use a
+model-neutral `RingBasisState` when the originating algorithm is unknown.
 
 Perception invalidation should remain simple and dependency-safe. Broad
 chemistry edits may clear the complete state. Narrow edits may clear only

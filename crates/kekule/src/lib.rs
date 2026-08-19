@@ -223,7 +223,7 @@ pub mod perception {
             perceive_ring_membership, perceive_ring_set, perceive_ring_set_with_options,
             RingPerceptionError, RingPerceptionOptions,
         };
-        pub use crate::core::{Ring, RingMembership, RingSet};
+        pub use crate::core::{Ring, RingBasisModel, RingBasisState, RingMembership, RingSet};
     }
 
     pub mod aromaticity {
