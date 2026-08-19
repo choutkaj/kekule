@@ -4,8 +4,8 @@ use super::*;
 fn happy_path_small_molecule_api_matches_architecture() {
     let mut molecule = SmallMolecule::from_smiles("c1ccccc1O").expect("phenol parses");
 
-    let normalization = molecule.normalize().expect("phenol normalizes");
-    assert!(normalization.warnings.is_empty());
+    assert_eq!(molecule.graph().perception(), &PerceptionState::default());
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     molecule.perceive().expect("phenol perceives");
     assert_eq!(
         molecule
@@ -35,7 +35,7 @@ fn namespaced_small_molecule_api_keeps_pipeline_stages_separate() {
     let mut molecule = read_smiles("CC(=O)O").expect("acetic acid parses");
     assert!(!molecule.graph().perception().has_valence());
 
-    normalize_and_perceive(&mut molecule).expect("acetic acid normalizes_and_perceives");
+    perceive(&mut molecule).expect("acetic acid perceives");
     assert!(molecule.graph().perception().has_valence());
 
     let canonical = smiles_api::write_canonical(&molecule).expect("canonical SMILES writes");

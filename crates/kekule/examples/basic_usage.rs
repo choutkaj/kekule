@@ -3,9 +3,8 @@ use std::error::Error;
 use kekule::{small::SmallMolecule, stereo};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse a chiral amino acid, normalize its representation, and perceive chemistry.
+    // Interpret a chiral amino acid canonically, then perceive chemistry.
     let mut molecule = SmallMolecule::from_smiles("C[C@@H](C(=O)O)N")?;
-    molecule.normalize()?;
     molecule.perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.

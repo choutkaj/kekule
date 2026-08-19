@@ -21,7 +21,7 @@ The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md). Option
 
 ## Concept
 
-The `Molecule` type is the raw graph kernel for one connected molecular graph. `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`. `SmallMolecule` handles ordinary cheminformatics workflows, while `MacroMolecule` pairs one connected graph with a `SmcraHierarchy`.
+The `Molecule` type is the canonical represented graph for one connected molecule. `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`. `SmallMolecule` handles ordinary cheminformatics workflows, while `MacroMolecule` pairs one connected graph with a `SmcraHierarchy`.
 
 ```text
 Molecule (one connected graph)
@@ -44,12 +44,11 @@ Topology = reusable definitions + explicit instances + dense ordering
 Kekule separates the basic chemistry pipeline into clear stages:
 
 - **Parse** reads source syntax into a format-specific `*Document`.
-- **Interpret** translates only source-asserted chemistry into a format-independent `Molecule`.
-- **Normalize** deterministically rewrites the same chemistry into Kekule's canonical internal representation.
+- **Interpret** translates source-asserted chemistry and publishes a canonical, format-independent `Molecule`.
 - **Perceive** derives model-dependent chemical interpretation such as valence, rings, and aromaticity.
 - **CIP** optionally derives stereochemical descriptors such as `R`/`S` and `E`/`Z`.
 
-Normalization changes representation, not chemical meaning. Chemistry-changing standardization such as tautomer or protonation-state selection is a separate future concern. High-level APIs may compose these stages while lower-level APIs keep them individually accessible.
+Interpretation performs deterministic, meaning-preserving representation canonicalization before a molecule becomes observable. Chemistry-changing standardization such as tautomer or protonation-state selection is a separate future concern. High-level APIs may compose parsing and interpretation while perception remains explicit.
 
 Expert workflows can keep every stage explicit:
 
@@ -61,7 +60,6 @@ use kekule::{smiles, small::SmallMolecule};
 fn load_explicitly(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
     let mut molecule = smiles::interpret(&document)?.into_molecule()?;
-    molecule.normalize()?;
     molecule.perceive()?;
     Ok(molecule)
 }
@@ -78,9 +76,9 @@ use std::error::Error;
 use kekule::{small::SmallMolecule, stereo};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse a chiral amino acid, then atomically normalize and perceive it.
+    // Parse and canonically interpret a chiral amino acid, then perceive it.
     let mut molecule = SmallMolecule::from_smiles("C[C@@H](C(=O)O)N")?;
-    molecule.normalize_and_perceive()?;
+    molecule.perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
     let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut())?;
@@ -116,7 +114,7 @@ use kekule::{
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse and interpret one SDF record without normalizing or perceiving it.
+    // Parse and canonically interpret one SDF record without perceiving it.
     let input = fs::read_to_string("examples/ligand.sdf")?;
     let document = sdf::parse_str(&input, SdfParseOptions::default())?;
     let mut records = sdf::interpret(&document)?.into_records();
@@ -127,10 +125,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let title = record.title().to_owned();
     let data_fields = record.data_fields().to_vec();
     let mut ligand = record.into_molecule();
-    ligand.normalize()?;
     ligand.perceive()?;
 
-    // Inspect the normalized, perceived ligand before modeling it.
+    // Inspect the canonical, perceived ligand before modeling it.
     println!("atoms: {}", ligand.atom_count());
     println!("bonds: {}", ligand.bond_count());
     println!("formal charge: {}", ligand.graph().formal_charge());

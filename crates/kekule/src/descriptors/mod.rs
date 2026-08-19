@@ -1,6 +1,6 @@
 //! Read-only small-molecule formula and mass descriptors.
 //!
-//! Descriptor calculation never mutates, normalizes, or perceives the input.
+//! Descriptor calculation never mutates or perceives the input.
 //! Callers select explicitly whether installed implicit-hydrogen state is part
 //! of the calculation.
 
@@ -365,7 +365,6 @@ mod tests {
             })
         );
 
-        molecule.normalize().expect("methane normalizes");
         molecule.perceive().expect("methane perceives");
         assert_eq!(
             molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)
@@ -468,7 +467,6 @@ mod tests {
     #[test]
     fn average_and_monoisotopic_mass_use_pinned_tables() {
         let mut water = SmallMolecule::from_smiles("O").expect("water parses");
-        water.normalize().expect("water normalizes");
         water.perceive().expect("water perceives");
         let average = mass_value(
             average_mass(&water, HydrogenCountPolicy::IncludePerceived).expect("average mass"),

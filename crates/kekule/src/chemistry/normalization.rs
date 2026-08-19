@@ -3,7 +3,8 @@ use std::fmt;
 
 use crate::algorithms::StereoValidationIssue;
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Molecule, MoleculeError, StereoBondMarkKind, StereoElementId,
+    canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, Molecule, MoleculeError,
+    StereoBondMarkKind, StereoElementId,
 };
 
 use super::source_stereo::normalize_source_stereo;
@@ -77,8 +78,9 @@ impl fmt::Display for SourceStereoNormalizationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "source-stereo normalization reported {} issue(s)",
-            self.issues.len()
+            "source-stereo canonicalization reported {} issue(s): {:?}",
+            self.issues.len(),
+            self.issues
         )
     }
 }
@@ -110,31 +112,86 @@ impl fmt::Display for NormalizationError {
 
 impl std::error::Error for NormalizationError {}
 
-/// Deterministically normalize represented chemistry into Kekule's canonical form.
-///
-/// Normalization is transactional and idempotent. A successful call clears the
-/// complete installed perception state, including when the primary
-/// representation was already normalized.
-pub fn normalize_molecule(
-    molecule: &mut Molecule,
-) -> Result<NormalizationReport, NormalizationError> {
-    let mut staged = molecule.clone();
-    let report = normalize_molecule_in_place(&mut staged)?;
-    *molecule = staged;
-    Ok(report)
+impl NormalizationError {
+    pub(crate) fn atom_location_hint(&self) -> Option<AtomId> {
+        match self {
+            Self::FormalChargeOutOfRange { atom, .. }
+            | Self::InvalidAromaticRepresentation(atom)
+            | Self::AromaticLocalizationLimit { atom, .. } => Some(*atom),
+            Self::SourceStereo(error) => error.atom_location_hint(),
+        }
+    }
+
+    pub(crate) fn bond_location_hint(&self) -> Option<BondId> {
+        match self {
+            Self::SourceStereo(error) => error.bond_location_hint(),
+            _ => None,
+        }
+    }
 }
 
-pub(crate) fn normalize_molecule_in_place(
+impl SourceStereoNormalizationError {
+    fn atom_location_hint(&self) -> Option<AtomId> {
+        self.issues.iter().find_map(|issue| match issue {
+            SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks { endpoint, .. } => {
+                Some(*endpoint)
+            }
+            SourceStereoNormalizationIssue::InvalidStereo(
+                StereoValidationIssue::MissingStereoAtom { atom, .. }
+                | StereoValidationIssue::InvalidTetrahedralCarrierCount { center: atom, .. }
+                | StereoValidationIssue::DuplicateTetrahedralCarrier { center: atom, .. }
+                | StereoValidationIssue::TetrahedralCarrierNotAdjacent { center: atom, .. }
+                | StereoValidationIssue::DoubleBondCarrierIsFocusAtom { endpoint: atom, .. }
+                | StereoValidationIssue::DoubleBondCarrierNotAdjacent { endpoint: atom, .. }
+                | StereoValidationIssue::UnsupportedDoubleBondCarrier { endpoint: atom, .. },
+            ) => Some(*atom),
+            _ => None,
+        })
+    }
+
+    fn bond_location_hint(&self) -> Option<BondId> {
+        self.issues.iter().find_map(|issue| match issue {
+            SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark { bond, .. }
+            | SourceStereoNormalizationIssue::UnpairedDirectionalBondMark { bond }
+            | SourceStereoNormalizationIssue::UnsupportedSourceBondMark { bond, .. } => Some(*bond),
+            SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks {
+                double_bond, ..
+            } => Some(*double_bond),
+            SourceStereoNormalizationIssue::InvalidStereo(
+                StereoValidationIssue::MissingStereoBond { bond, .. }
+                | StereoValidationIssue::InvalidDoubleBondOrder { bond, .. }
+                | StereoValidationIssue::DoubleBondFocusMismatch { bond, .. }
+                | StereoValidationIssue::InvalidAxisCarrierCount { axis: bond, .. }
+                | StereoValidationIssue::AxisCarrierIsFocusAtom { axis: bond, .. }
+                | StereoValidationIssue::AxisCarrierNotAdjacent { axis: bond, .. }
+                | StereoValidationIssue::UnsupportedAxisCarrier { axis: bond, .. },
+            ) => Some(*bond),
+            _ => None,
+        })
+    }
+}
+
+/// Canonicalize an interpreter-owned staging graph before publication.
+///
+/// Callers must discard the staging graph on failure. Successful
+/// canonicalization clears all derived perception state so interpretation
+/// publishes represented chemistry only.
+pub(crate) fn canonicalize_molecule_for_publication(
     molecule: &mut Molecule,
 ) -> Result<NormalizationReport, NormalizationError> {
-    normalize_hypervalent_oxo_halides(molecule)?;
+    canonicalize_represented_chemistry(molecule).map_err(|error| {
+        NormalizationError::FormalChargeOutOfRange {
+            atom: error.atom,
+            charge: error.charge,
+        }
+    })?;
     // Source-stereo normalization must not observe arbitrary installed
     // perception. Representation rewrites above already invalidate it
     // conceptually, so clear it before decoding any source marks.
     molecule.invalidate_topology();
     let report = normalize_source_stereo(molecule).map_err(NormalizationError::SourceStereo)?;
     // Adding represented stereo invalidates only stereo-derived state. The
-    // normalization publication contract clears the complete perception state.
+    // publication contract clears the complete perception state.
     molecule.invalidate_topology();
     Ok(report)
 }
@@ -399,86 +456,6 @@ fn aromatic_localization_target_valence(
         _ => return None,
     };
     Some(target)
-}
-
-fn normalize_hypervalent_oxo_halides(molecule: &mut Molecule) -> Result<(), NormalizationError> {
-    let halogens = molecule
-        .atoms()
-        .filter_map(|(atom_id, atom)| {
-            (atom.formal_charge == 0
-                && matches!(atom.element.symbol(), "Cl" | "Br" | "I")
-                && has_terminal_single_bond_oxygen_neighbor(molecule, atom_id))
-            .then_some(atom_id)
-        })
-        .collect::<Vec<_>>();
-
-    for atom_id in halogens {
-        let oxo_bonds = oxo_bonds_to_neutral_oxygen(molecule, atom_id);
-        if oxo_bonds.is_empty() {
-            continue;
-        }
-        let charge = oxo_bonds.len();
-        let formal_charge =
-            i8::try_from(charge).map_err(|_| NormalizationError::FormalChargeOutOfRange {
-                atom: atom_id,
-                charge,
-            })?;
-
-        if let Some(atom) = molecule.atoms[atom_id.index()].as_mut() {
-            atom.formal_charge = formal_charge;
-        }
-        for (oxygen_id, bond_id) in oxo_bonds {
-            if let Some(atom) = molecule.atoms[oxygen_id.index()].as_mut() {
-                atom.formal_charge = -1;
-            }
-            if let Some(bond) = molecule.bonds[bond_id.index()].as_mut() {
-                bond.order = BondOrder::Single;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn has_terminal_single_bond_oxygen_neighbor(molecule: &Molecule, atom_id: AtomId) -> bool {
-    molecule
-        .incident_bonds(atom_id)
-        .ok()
-        .into_iter()
-        .flatten()
-        .any(|(_, bond)| {
-            let oxygen_id = bond.other_atom(atom_id);
-            bond.order == BondOrder::Single
-                && molecule
-                    .atom(oxygen_id)
-                    .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
-                && molecule.incident_bonds(oxygen_id).is_ok_and(|mut bonds| {
-                    bonds.all(|(_, oxygen_bond)| {
-                        let neighbor_id = oxygen_bond.other_atom(oxygen_id);
-                        neighbor_id == atom_id
-                            || molecule
-                                .atom(neighbor_id)
-                                .is_ok_and(|neighbor| neighbor.element.symbol() == "H")
-                    })
-                })
-        })
-}
-
-fn oxo_bonds_to_neutral_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {
-    molecule
-        .incident_bonds(atom_id)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|(bond_id, bond)| {
-            if bond.order != BondOrder::Double {
-                return None;
-            }
-            let oxygen_id = bond.other_atom(atom_id);
-            let oxygen = molecule.atom(oxygen_id).ok()?;
-            (oxygen.element.symbol() == "O" && oxygen.formal_charge == 0)
-                .then_some((oxygen_id, bond_id))
-        })
-        .collect()
 }
 
 #[cfg(test)]

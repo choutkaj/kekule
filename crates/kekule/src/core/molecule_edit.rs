@@ -29,12 +29,52 @@ impl fmt::Display for MoleculeConnectivityError {
 
 impl std::error::Error for MoleculeConnectivityError {}
 
+/// Failure to publish checked molecule construction or editing state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MoleculePublicationError {
+    DisconnectedGraph(MoleculeConnectivityError),
+    SourceStereoBondMark { bond: BondId },
+    FormalChargeOutOfRange { atom: AtomId, charge: usize },
+}
+
+impl fmt::Display for MoleculePublicationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DisconnectedGraph(error) => write!(formatter, "{error}"),
+            Self::SourceStereoBondMark { bond } => write!(
+                formatter,
+                "cannot publish molecule with source-only stereo mark on bond {bond}"
+            ),
+            Self::FormalChargeOutOfRange { atom, charge } => write!(
+                formatter,
+                "publishing atom {atom} requires formal charge +{charge}, which is outside the supported range"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MoleculePublicationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::DisconnectedGraph(error) => Some(error),
+            Self::SourceStereoBondMark { .. } | Self::FormalChargeOutOfRange { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CanonicalRepresentationError {
+    pub(crate) atom: AtomId,
+    pub(crate) charge: usize,
+}
+
 impl Molecule {
     /// Starts construction of one molecule.
     ///
     /// The builder may be temporarily disconnected. [`MoleculeBuilder::build`]
-    /// validates the final connectedness invariant before returning a public
-    /// `Molecule`.
+    /// validates connectedness and canonicalizes represented chemistry before
+    /// returning a public `Molecule`.
     pub fn builder() -> MoleculeBuilder {
         MoleculeBuilder::new()
     }
@@ -42,8 +82,60 @@ impl Molecule {
     /// Starts a transactional topology edit.
     ///
     /// The working copy may be temporarily disconnected. [`MoleculeEditor::commit`]
-    /// publishes it only when the final graph is connected, otherwise the
-    /// original molecule is left unchanged.
+    /// publishes it only when the final graph is connected and representable in
+    /// canonical form; otherwise the original molecule is left unchanged.
+    /// Canonicality-sensitive atom, bond, and topology mutation is available on
+    /// the editor rather than directly on a published molecule.
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{Atom, BondOrder, Element, Molecule};
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let chlorine = builder.add_atom(Atom::new(Element::from_symbol("Cl").unwrap())).unwrap();
+    /// let oxygen = builder.add_atom(Atom::new(Element::from_symbol("O").unwrap())).unwrap();
+    /// let bond = builder.add_bond(chlorine, oxygen, BondOrder::Single).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.bond_mut(bond).unwrap().order = BondOrder::Double;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{Atom, Element, Molecule};
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let carbon = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.atom_mut(carbon).unwrap().formal_charge = 1;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{Atom, BondOrder, Element, Molecule};
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let first = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let middle = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let last = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// builder.add_bond(first, middle, BondOrder::Single).unwrap();
+    /// builder.add_bond(middle, last, BondOrder::Single).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.add_bond(first, last, BondOrder::Single).unwrap();
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use kekule::core::{
+    ///     Atom, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind, StereoSource,
+    /// };
+    ///
+    /// let mut builder = Molecule::builder();
+    /// let first = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let second = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
+    /// let bond = builder.add_bond(first, second, BondOrder::Single).unwrap();
+    /// let mut molecule = builder.build().unwrap();
+    /// molecule.set_stereo_bond_mark(StereoBondMark {
+    ///     bond,
+    ///     kind: StereoBondMarkKind::WedgeUp,
+    ///     source: StereoSource::User,
+    /// }).unwrap();
+    /// ```
     pub fn edit(&mut self) -> MoleculeEditor<'_> {
         MoleculeEditor {
             working: self.clone(),
@@ -72,8 +164,9 @@ impl Molecule {
 
 /// Mutable construction state for one final connected [`Molecule`].
 ///
-/// Connectivity is intentionally checked only by [`Self::build`], allowing
-/// ordinary graph construction such as adding all atoms before adding bonds.
+/// Connectivity and canonical representation are checked only by
+/// [`Self::build`], allowing ordinary graph construction such as adding all
+/// atoms before adding bonds.
 /// The staging graph is not publicly borrowable, so even a cloned or replaced
 /// builder must pass through `build` before yielding a `Molecule`.
 ///
@@ -112,9 +205,19 @@ impl MoleculeBuilder {
         self.molecule.delete_bond(bond)
     }
 
-    pub fn build(self) -> std::result::Result<Molecule, MoleculeConnectivityError> {
-        self.molecule.validate_connected()?;
-        Ok(self.molecule)
+    pub fn build(self) -> std::result::Result<Molecule, MoleculePublicationError> {
+        let mut molecule = self.molecule;
+        reject_source_stereo_marks(&molecule)?;
+        molecule
+            .validate_connected()
+            .map_err(MoleculePublicationError::DisconnectedGraph)?;
+        canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
+            MoleculePublicationError::FormalChargeOutOfRange {
+                atom: error.atom,
+                charge: error.charge,
+            }
+        })?;
+        Ok(molecule)
     }
 }
 
@@ -143,6 +246,16 @@ pub struct MoleculeEditor<'a> {
 }
 
 impl MoleculeEditor<'_> {
+    /// Returns mutable represented atom state in this private working copy.
+    pub fn atom_mut(&mut self, atom: AtomId) -> Result<super::AtomMut<'_>> {
+        self.working.atom_mut(atom)
+    }
+
+    /// Returns mutable represented bond state in this private working copy.
+    pub fn bond_mut(&mut self, bond: BondId) -> Result<super::BondMut<'_>> {
+        self.working.bond_mut(bond)
+    }
+
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
         self.working.add_atom(atom)
     }
@@ -159,11 +272,116 @@ impl MoleculeEditor<'_> {
         self.working.delete_bond(bond)
     }
 
-    pub fn commit(self) -> std::result::Result<(), MoleculeConnectivityError> {
-        self.working.validate_connected()?;
-        *self.target = self.working;
+    pub fn commit(self) -> std::result::Result<(), MoleculePublicationError> {
+        let mut working = self.working;
+        reject_source_stereo_marks(&working)?;
+        working
+            .validate_connected()
+            .map_err(MoleculePublicationError::DisconnectedGraph)?;
+        canonicalize_represented_chemistry(&mut working).map_err(|error| {
+            MoleculePublicationError::FormalChargeOutOfRange {
+                atom: error.atom,
+                charge: error.charge,
+            }
+        })?;
+        *self.target = working;
         Ok(())
     }
+}
+
+pub(crate) fn canonicalize_represented_chemistry(
+    molecule: &mut Molecule,
+) -> std::result::Result<(), CanonicalRepresentationError> {
+    let halogens = molecule
+        .atoms()
+        .filter_map(|(atom_id, atom)| {
+            (atom.formal_charge == 0
+                && matches!(atom.element.symbol(), "Cl" | "Br" | "I")
+                && has_terminal_single_bond_oxygen_neighbor(molecule, atom_id))
+            .then_some(atom_id)
+        })
+        .collect::<Vec<_>>();
+
+    let mut rewritten = false;
+    for atom_id in halogens {
+        let oxo_bonds = oxo_bonds_to_neutral_oxygen(molecule, atom_id);
+        if oxo_bonds.is_empty() {
+            continue;
+        }
+        rewritten = true;
+        let charge = oxo_bonds.len();
+        let formal_charge = i8::try_from(charge).map_err(|_| CanonicalRepresentationError {
+            atom: atom_id,
+            charge,
+        })?;
+
+        if let Some(atom) = molecule.atoms[atom_id.index()].as_mut() {
+            atom.formal_charge = formal_charge;
+        }
+        for (oxygen_id, bond_id) in oxo_bonds {
+            if let Some(atom) = molecule.atoms[oxygen_id.index()].as_mut() {
+                atom.formal_charge = -1;
+            }
+            if let Some(bond) = molecule.bonds[bond_id.index()].as_mut() {
+                bond.order = BondOrder::Single;
+            }
+        }
+    }
+    if rewritten {
+        molecule.invalidate_topology();
+    }
+    Ok(())
+}
+
+fn reject_source_stereo_marks(
+    molecule: &Molecule,
+) -> std::result::Result<(), MoleculePublicationError> {
+    match molecule.stereo_bond_marks().next() {
+        Some(mark) => Err(MoleculePublicationError::SourceStereoBondMark { bond: mark.bond }),
+        None => Ok(()),
+    }
+}
+
+fn has_terminal_single_bond_oxygen_neighbor(molecule: &Molecule, atom_id: AtomId) -> bool {
+    molecule
+        .incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .any(|(_, bond)| {
+            let oxygen_id = bond.other_atom(atom_id);
+            bond.order == BondOrder::Single
+                && molecule
+                    .atom(oxygen_id)
+                    .is_ok_and(|neighbor| neighbor.element.symbol() == "O")
+                && molecule.incident_bonds(oxygen_id).is_ok_and(|mut bonds| {
+                    bonds.all(|(_, oxygen_bond)| {
+                        let neighbor_id = oxygen_bond.other_atom(oxygen_id);
+                        neighbor_id == atom_id
+                            || molecule
+                                .atom(neighbor_id)
+                                .is_ok_and(|neighbor| neighbor.element.symbol() == "H")
+                    })
+                })
+        })
+}
+
+fn oxo_bonds_to_neutral_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {
+    molecule
+        .incident_bonds(atom_id)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|(bond_id, bond)| {
+            if bond.order != BondOrder::Double {
+                return None;
+            }
+            let oxygen_id = bond.other_atom(atom_id);
+            let oxygen = molecule.atom(oxygen_id).ok()?;
+            (oxygen.element.symbol() == "O" && oxygen.formal_charge == 0)
+                .then_some((oxygen_id, bond_id))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -175,6 +393,10 @@ mod tests {
         Atom::new(Element::from_atomic_number(6).expect("carbon"))
     }
 
+    fn atom(symbol: &str) -> Atom {
+        Atom::new(Element::from_symbol(symbol).expect("fixture element"))
+    }
+
     #[test]
     fn builder_rejects_disconnected_final_graph() {
         let mut builder = Molecule::builder();
@@ -182,7 +404,9 @@ mod tests {
         builder.add_atom(carbon()).expect("second atom");
         assert_eq!(
             builder.build(),
-            Err(MoleculeConnectivityError { components: 2 })
+            Err(MoleculePublicationError::DisconnectedGraph(
+                MoleculeConnectivityError { components: 2 }
+            ))
         );
     }
 
@@ -195,6 +419,31 @@ mod tests {
             .add_bond(a, b, BondOrder::Single)
             .expect("connecting bond");
         assert!(builder.build().expect("connected molecule").is_connected());
+    }
+
+    #[test]
+    fn builder_publishes_canonical_hypervalent_representation() {
+        let mut builder = Molecule::builder();
+        let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
+        let oxo = builder.add_atom(atom("O")).expect("oxo oxygen");
+        let hydroxyl = builder.add_atom(atom("O")).expect("hydroxyl oxygen");
+        builder
+            .add_bond(chlorine, oxo, BondOrder::Double)
+            .expect("source-convention oxo bond");
+        builder
+            .add_bond(chlorine, hydroxyl, BondOrder::Single)
+            .expect("hydroxyl bond");
+
+        let molecule = builder.build().expect("canonical publication");
+
+        assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
+        assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
+        let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap().unwrap();
+        assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
+        assert_eq!(
+            molecule.perception(),
+            &super::super::PerceptionState::default()
+        );
     }
 
     #[test]
@@ -212,7 +461,9 @@ mod tests {
         editor.delete_bond(bond).expect("delete in working copy");
         assert_eq!(
             editor.commit(),
-            Err(MoleculeConnectivityError { components: 2 })
+            Err(MoleculePublicationError::DisconnectedGraph(
+                MoleculeConnectivityError { components: 2 }
+            ))
         );
         assert_eq!(molecule, before);
     }
@@ -238,5 +489,106 @@ mod tests {
             .expect("reconnect through another edge");
         editor.commit().expect("connected final graph");
         assert!(molecule.is_connected());
+    }
+
+    #[test]
+    fn editor_canonicalizes_before_transactional_publication() {
+        let mut builder = Molecule::builder();
+        let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
+        let hydroxyl = builder.add_atom(atom("O")).expect("hydroxyl oxygen");
+        builder
+            .add_bond(chlorine, hydroxyl, BondOrder::Single)
+            .expect("initial bond");
+        let mut molecule = builder.build().expect("initial molecule");
+
+        let mut editor = molecule.edit();
+        let oxo = editor.add_atom(atom("O")).expect("oxo oxygen");
+        editor
+            .add_bond(chlorine, oxo, BondOrder::Double)
+            .expect("source-convention oxo bond");
+        editor.commit().expect("canonical edit publication");
+
+        assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
+        assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
+        let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap().unwrap();
+        assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
+    }
+
+    #[test]
+    fn editor_canonicalizes_direct_bond_order_changes_before_publication() {
+        let mut builder = Molecule::builder();
+        let chlorine = builder.add_atom(atom("Cl")).unwrap();
+        let anchor = builder.add_atom(atom("O")).unwrap();
+        let oxo = builder.add_atom(atom("O")).unwrap();
+        builder
+            .add_bond(chlorine, anchor, BondOrder::Single)
+            .unwrap();
+        let oxo_bond = builder.add_bond(chlorine, oxo, BondOrder::Single).unwrap();
+        let mut molecule = builder.build().unwrap();
+
+        let mut editor = molecule.edit();
+        editor.bond_mut(oxo_bond).unwrap().order = BondOrder::Double;
+        editor.commit().expect("canonical edit publication");
+
+        assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
+        assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
+        assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
+    }
+
+    #[test]
+    fn failed_editor_canonicalization_leaves_the_published_molecule_unchanged() {
+        let mut builder = Molecule::builder();
+        let chlorine = builder.add_atom(atom("Cl")).unwrap();
+        let anchor = builder.add_atom(atom("O")).unwrap();
+        builder
+            .add_bond(chlorine, anchor, BondOrder::Single)
+            .unwrap();
+        let mut oxo_bonds = Vec::new();
+        for _ in 0..128 {
+            let oxygen = builder.add_atom(atom("O")).unwrap();
+            oxo_bonds.push(
+                builder
+                    .add_bond(chlorine, oxygen, BondOrder::Single)
+                    .unwrap(),
+            );
+        }
+        let mut molecule = builder.build().unwrap();
+        let before = molecule.clone();
+
+        let mut editor = molecule.edit();
+        for bond in oxo_bonds {
+            editor.bond_mut(bond).unwrap().order = BondOrder::Double;
+        }
+        assert_eq!(
+            editor.commit(),
+            Err(MoleculePublicationError::FormalChargeOutOfRange {
+                atom: chlorine,
+                charge: 128,
+            })
+        );
+        assert_eq!(molecule, before);
+    }
+
+    #[test]
+    fn editor_rejects_source_only_stereo_state_transactionally() {
+        let mut builder = Molecule::builder();
+        let left = builder.add_atom(carbon()).unwrap();
+        let right = builder.add_atom(carbon()).unwrap();
+        let bond = builder.add_bond(left, right, BondOrder::Single).unwrap();
+        let mut molecule = builder.build().unwrap();
+        molecule
+            .set_stereo_bond_mark(super::super::StereoBondMark {
+                bond,
+                kind: super::super::StereoBondMarkKind::WedgeUp,
+                source: super::super::StereoSource::User,
+            })
+            .unwrap();
+        let before = molecule.clone();
+
+        assert_eq!(
+            molecule.edit().commit(),
+            Err(MoleculePublicationError::SourceStereoBondMark { bond })
+        );
+        assert_eq!(molecule, before);
     }
 }

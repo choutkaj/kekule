@@ -33,8 +33,8 @@ pub use smiles::{
 pub use structure_documents::{
     parse_molfile_document, parse_molfile_document_with_options, MolfileAtomMapping,
     MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
-    MolfileInterpretation, MolfileInterpretationReport, MolfileLine, MolfileParseError,
-    MolfileParseOptions, MolfileVersion,
+    MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine,
+    MolfileParseError, MolfileParseOptions, MolfileVersion,
 };
 pub use v2000::*;
 pub use v3000::*;

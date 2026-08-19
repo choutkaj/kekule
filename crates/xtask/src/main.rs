@@ -12,13 +12,12 @@ use kekule::{
     core::{
         Atom, AtomId, AtomRadical, AxisOrientation, Bond, BondId, BondOrder, DoubleBondOrientation,
         Molecule, StereoBondMark, StereoBondMarkKind, StereoCarrier, StereoDescriptor,
-        StereoElement, StereoElementKind, StereoGroup, StereoGroupKind, StereoSource,
-        StereoSpecifiedness, TetrahedralOrientation,
+        StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
+        StereoSource, StereoSpecifiedness, TetrahedralOrientation,
     },
     dssp, hydrogens,
     mmcif::{self, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions},
     molfile,
-    normalization::{NormalizationReport, NormalizationWarning},
     perception::{
         rings,
         valence::{self, ValenceModel, ValenceOptions},

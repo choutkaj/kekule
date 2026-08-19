@@ -4,10 +4,7 @@ use crate::algorithms::{
     add_hydrogens_to_molecule, remove_hydrogens_from_molecule, AddHydrogensOptions,
     AddHydrogensReport, HydrogenTransformError, RemoveHydrogensReport,
 };
-use crate::chemistry::{
-    normalize_molecule, normalize_molecule_in_place, perceive_molecule, perceive_molecule_in_place,
-    NormalizationError, NormalizationReport, PerceptionError,
-};
+use crate::chemistry::{perceive_molecule, PerceptionError};
 use crate::io::{
     interpret_smiles_document, parse_smiles_document, write_canonical_smiles,
     write_isomeric_smiles, write_smiles, MolWriteError, SmilesInterpretError, SmilesParseError,
@@ -25,33 +22,26 @@ impl SmallMolecule {
             })
     }
 
-    /// Normalize represented chemistry and source stereo into canonical form.
-    pub fn normalize(&mut self) -> Result<NormalizationReport, NormalizationError> {
-        normalize_molecule(self.graph_mut())
-    }
-
     /// Install the transactional default valence, ring-set, and aromaticity profile.
     ///
-    /// Call [`Self::normalize`] first when the molecule came from source
-    /// representation that has not yet been normalized.
+    /// This derives perception from the canonical represented chemistry and
+    /// never rewrites atoms, bonds, or represented stereochemistry.
+    ///
+    /// There is no public normalization step between interpretation and
+    /// perception:
+    ///
+    /// ```compile_fail
+    /// use kekule::small::SmallMolecule;
+    /// let mut molecule = SmallMolecule::from_smiles("CC").unwrap();
+    /// molecule.normalize().unwrap();
+    /// ```
+    ///
+    /// ```compile_fail
+    /// let mut molecule = kekule::core::Molecule::new();
+    /// kekule::normalization::normalize(&mut molecule).unwrap();
+    /// ```
     pub fn perceive(&mut self) -> Result<(), PerceptionError> {
         perceive_molecule(self.graph_mut())
-    }
-
-    /// Normalize represented chemistry and install the default perception profile.
-    ///
-    /// The complete composition is transactional. Coordinate-derived stereo
-    /// and CIP assignment remain separate explicit operations.
-    pub fn normalize_and_perceive(
-        &mut self,
-    ) -> Result<NormalizationReport, NormalizeAndPerceiveError> {
-        let mut staged = self.clone();
-        let report = normalize_molecule_in_place(staged.graph_mut())
-            .map_err(NormalizeAndPerceiveError::Normalization)?;
-        perceive_molecule_in_place(staged.graph_mut())
-            .map_err(NormalizeAndPerceiveError::Perception)?;
-        *self = staged;
-        Ok(report)
     }
 
     /// Materialize stored and perceived hydrogens as graph atoms.
@@ -120,31 +110,5 @@ impl From<SmilesParseError> for SmallMoleculeReadError {
 impl From<SmilesInterpretError> for SmallMoleculeReadError {
     fn from(error: SmilesInterpretError) -> Self {
         Self::Interpret(error)
-    }
-}
-
-/// Failure from the ordinary normalization plus default-perception workflow.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum NormalizeAndPerceiveError {
-    Normalization(NormalizationError),
-    Perception(PerceptionError),
-}
-
-impl fmt::Display for NormalizeAndPerceiveError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Normalization(error) => write!(f, "{error}"),
-            Self::Perception(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for NormalizeAndPerceiveError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Normalization(error) => Some(error),
-            Self::Perception(error) => Some(error),
-        }
     }
 }

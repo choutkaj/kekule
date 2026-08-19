@@ -1,5 +1,9 @@
 use std::fmt;
 
+use crate::chemistry::{
+    canonicalize_molecule_for_publication, NormalizationError, NormalizationWarning,
+};
+use crate::core::{AtomId, StereoElementId};
 use crate::small::model::SmallMolecule;
 
 use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax, V2000Syntax};
@@ -230,6 +234,8 @@ pub struct MolfileInterpretationReport {
     atom_mappings: Vec<MolfileAtomMapping>,
     bond_mappings: Vec<MolfileBondMapping>,
     ignored_record_lines: Vec<usize>,
+    created_stereo_elements: Vec<StereoElementId>,
+    warnings: Vec<MolfileInterpretationWarning>,
 }
 
 impl MolfileInterpretationReport {
@@ -244,6 +250,25 @@ impl MolfileInterpretationReport {
     pub fn ignored_record_lines(&self) -> &[usize] {
         &self.ignored_record_lines
     }
+
+    /// Canonical stereo elements decoded from source bond marks.
+    pub fn created_stereo_elements(&self) -> &[StereoElementId] {
+        &self.created_stereo_elements
+    }
+
+    pub fn warnings(&self) -> &[MolfileInterpretationWarning] {
+        &self.warnings
+    }
+}
+
+/// Nonfatal source-representation diagnostic produced during interpretation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MolfileInterpretationWarning {
+    AmbiguousTetrahedralWedgeMarks {
+        center: AtomId,
+        source_line: usize,
+        mark_count: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -422,7 +447,7 @@ pub fn parse_molfile_document_with_options(
 pub fn interpret_molfile_document(
     document: &MolfileDocument,
 ) -> Result<MolfileInterpretation, MolfileInterpretError> {
-    let (molecule, atom_lines, bond_lines) = match &document.syntax {
+    let (mut molecule, atom_lines, bond_lines) = match &document.syntax {
         MolfileSyntax::V2000(syntax) => (
             interpret_v2000_syntax(syntax)?,
             syntax
@@ -450,6 +475,26 @@ pub fn interpret_molfile_document(
                 .collect::<Vec<_>>(),
         ),
     };
+    let publication_report =
+        canonicalize_molecule_for_publication(molecule.graph_mut()).map_err(|error| {
+            MolfileInterpretError {
+                line: canonicalization_error_line(&error, &atom_lines, &bond_lines),
+                message: format!("could not publish canonical molecule: {error}"),
+            }
+        })?;
+    let warnings = publication_report
+        .warnings
+        .into_iter()
+        .map(|warning| match warning {
+            NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => {
+                MolfileInterpretationWarning::AmbiguousTetrahedralWedgeMarks {
+                    center,
+                    source_line: atom_lines.get(center.index()).copied().unwrap_or(1),
+                    mark_count,
+                }
+            }
+        })
+        .collect();
     let atom_mappings = atom_lines
         .into_iter()
         .zip(molecule.graph().atom_ids())
@@ -479,6 +524,26 @@ pub fn interpret_molfile_document(
             atom_mappings,
             bond_mappings,
             ignored_record_lines,
+            created_stereo_elements: publication_report.created_stereo_elements,
+            warnings,
         },
     })
+}
+
+fn canonicalization_error_line(
+    error: &NormalizationError,
+    atom_lines: &[usize],
+    bond_lines: &[usize],
+) -> usize {
+    error
+        .bond_location_hint()
+        .and_then(|bond| bond_lines.get(bond.index()).copied())
+        .or_else(|| {
+            error
+                .atom_location_hint()
+                .and_then(|atom| atom_lines.get(atom.index()).copied())
+        })
+        .or_else(|| bond_lines.first().copied())
+        .or_else(|| atom_lines.first().copied())
+        .unwrap_or(1)
 }
