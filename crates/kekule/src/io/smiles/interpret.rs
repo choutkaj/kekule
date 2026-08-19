@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
 
+use crate::chemistry::localize_source_aromatic_bonds;
 use crate::core::{
     Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind,
     StereoCarrier, StereoElement, StereoElementKind, StereoSource, TetrahedralOrientation,
@@ -319,26 +320,23 @@ fn interpret_smiles_component(
     document: &SmilesDocument,
     component: usize,
 ) -> std::result::Result<SmilesProgramInterpretation, SmilesInterpretError> {
-    interpret_smiles_program_component(&document.program, component, document.source().len())
+    interpret_smiles_program_component(&document.program, component, document.source())
 }
 
 fn interpret_smiles_program_component(
     program: &SmilesProgram,
     component: usize,
-    end_offset: usize,
+    source: &str,
 ) -> std::result::Result<SmilesProgramInterpretation, SmilesInterpretError> {
+    validate_smiles_source_aromaticity(program, component, source)?;
+    let end_offset = source.len();
+
     let mut mol = Molecule::new();
     let mut source_to_atom = BTreeMap::<usize, AtomId>::new();
     let mut atom_mappings = Vec::new();
     for (index, record) in program.atoms.iter().enumerate() {
         if record.component != component {
             continue;
-        }
-        if record.syntax.aromatic != program.imported_aromatic_atoms.contains(&index) {
-            return Err(SmilesInterpretError {
-                offset: record.span.start,
-                message: "inconsistent aromatic atom syntax state".to_owned(),
-            });
         }
         let atom = interpret_smiles_atom(&record.syntax, record.span.start)?;
         let atom_id = mol.add_atom(atom).map_err(|error| SmilesInterpretError {
@@ -352,6 +350,8 @@ fn interpret_smiles_program_component(
         });
     }
     let mut bond_mappings = Vec::new();
+    let mut source_aromatic_bonds = BTreeSet::new();
+    let mut first_aromatic_offset = None;
     for bond in &program.bonds {
         if bond.component != component {
             continue;
@@ -371,19 +371,30 @@ fn interpret_smiles_program_component(
                     offset: bond.offset,
                     message: "bond right endpoint is outside its SMILES component".to_owned(),
                 })?;
+        let (order, source_aromatic) = interpret_smiles_bond_token(bond.token);
         let bond_id = add_smiles_bond(
             &mut mol,
             left,
             right,
-            interpret_smiles_bond_token(bond.token),
+            order,
             bond.direction.map(interpret_smiles_direction),
             bond.offset,
         )?;
+        if source_aromatic {
+            source_aromatic_bonds.insert(bond_id);
+            first_aromatic_offset.get_or_insert(bond.offset);
+        }
         bond_mappings.push(SmilesBondMapping {
             bond: bond_id,
             source_offset: bond.offset,
         });
     }
+    localize_source_aromatic_bonds(&mut mol, &source_aromatic_bonds).map_err(|error| {
+        SmilesInterpretError {
+            offset: first_aromatic_offset.unwrap_or(end_offset),
+            message: error.to_string(),
+        }
+    })?;
 
     add_smiles_tetrahedral_elements(
         &mut mol,
@@ -399,6 +410,73 @@ fn interpret_smiles_program_component(
             bond_mappings,
         },
     })
+}
+
+/// Require atom- and bond-level source aromaticity assertions to cover the
+/// same staged subgraph before any canonical molecule is constructed.
+fn validate_smiles_source_aromaticity(
+    program: &SmilesProgram,
+    component: usize,
+    source: &str,
+) -> std::result::Result<(), SmilesInterpretError> {
+    let mut source_aromatic_atoms = BTreeSet::new();
+    for (index, record) in program.atoms.iter().enumerate() {
+        if record.component != component {
+            continue;
+        }
+        let imported = program.imported_aromatic_atoms.contains(&index);
+        if record.syntax.aromatic != imported {
+            return Err(SmilesInterpretError {
+                offset: record.span.start,
+                message: "inconsistent aromatic atom syntax state".to_owned(),
+            });
+        }
+        if imported {
+            source_aromatic_atoms.insert(index);
+        }
+    }
+
+    let mut atoms_with_source_aromatic_bonds = BTreeSet::new();
+    for bond in program
+        .bonds
+        .iter()
+        .filter(|bond| bond.component == component && bond.token == SmilesBondToken::Aromatic)
+    {
+        if !source_aromatic_atoms.contains(&bond.left)
+            || !source_aromatic_atoms.contains(&bond.right)
+        {
+            return Err(SmilesInterpretError {
+                offset: explicit_aromatic_bond_offset(source, bond.offset),
+                message:
+                    "source-aromatic bond requires source-aromatic atom syntax at both endpoints"
+                        .to_owned(),
+            });
+        }
+        atoms_with_source_aromatic_bonds.insert(bond.left);
+        atoms_with_source_aromatic_bonds.insert(bond.right);
+    }
+
+    if let Some(index) = source_aromatic_atoms
+        .difference(&atoms_with_source_aromatic_bonds)
+        .next()
+        .copied()
+    {
+        let record = &program.atoms[index];
+        return Err(SmilesInterpretError {
+            offset: record.span.start,
+            message: "source-aromatic atom is not part of a source-aromatic bond".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+fn explicit_aromatic_bond_offset(source: &str, fallback: usize) -> usize {
+    source
+        .get(..fallback)
+        .and_then(|prefix| prefix.char_indices().next_back())
+        .filter(|(_, token)| *token == ':')
+        .map_or(fallback, |(offset, _)| offset)
 }
 
 fn interpret_smiles_atom(
@@ -418,12 +496,12 @@ fn interpret_smiles_atom(
     Ok(atom)
 }
 
-const fn interpret_smiles_bond_token(token: SmilesBondToken) -> BondOrder {
+const fn interpret_smiles_bond_token(token: SmilesBondToken) -> (BondOrder, bool) {
     match token {
-        SmilesBondToken::Single => BondOrder::Single,
-        SmilesBondToken::Double => BondOrder::Double,
-        SmilesBondToken::Triple => BondOrder::Triple,
-        SmilesBondToken::Aromatic => BondOrder::Aromatic,
+        SmilesBondToken::Single => (BondOrder::Single, false),
+        SmilesBondToken::Double => (BondOrder::Double, false),
+        SmilesBondToken::Triple => (BondOrder::Triple, false),
+        SmilesBondToken::Aromatic => (BondOrder::Single, true),
     }
 }
 

@@ -159,7 +159,6 @@ fn bond_code(mol: &Molecule, bond_id: BondId, bond: &Bond) -> (u8, bool) {
         BondOrder::Double => 2,
         BondOrder::Triple => 3,
         BondOrder::Quadruple => 4,
-        BondOrder::Aromatic => 5,
         BondOrder::Dative => 6,
     };
     (order, false)

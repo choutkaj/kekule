@@ -253,7 +253,7 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
 }
 
 #[test]
-fn aromatic_chalcogen_bracket_atoms_parse_without_normalizing_or_perceiving() {
+fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
     let components = read_smiles_components("[se]1cccc1.[te]1cccc1")
         .expect("aromatic selenium and tellurium bracket atoms should parse");
 
@@ -273,7 +273,7 @@ fn aromatic_chalcogen_bracket_atoms_parse_without_normalizing_or_perceiving() {
     assert!(components.iter().all(|molecule| molecule
         .graph()
         .bonds()
-        .all(|(_, bond)| bond.order == BondOrder::Aromatic)));
+        .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double))));
 }
 
 #[test]
@@ -519,10 +519,14 @@ fn canonical_smiles_implementation_avoids_perception_feedback() {
 #[test]
 fn aromatic_smiles_omitted_bonds_normalize_and_perceive_with_expected_hydrogens() {
     let mut benzene = read_smiles("c1ccccc1").expect("benzene should parse");
-    assert!(benzene
-        .graph()
-        .bonds()
-        .all(|(_, bond)| bond.order == BondOrder::Aromatic));
+    assert_eq!(
+        benzene
+            .graph()
+            .bonds()
+            .filter(|(_, bond)| bond.order == BondOrder::Double)
+            .count(),
+        3
+    );
     normalize_and_perceive(&mut benzene).expect("benzene should normalize_and_perceive");
     for atom_id in benzene.graph().atom_ids() {
         assert_eq!(implicit_hydrogens(&benzene, atom_id), Some(1));
@@ -583,16 +587,87 @@ fn aromatic_smiles_omitted_bonds_normalize_and_perceive_with_expected_hydrogens(
 #[test]
 fn invalid_lowercase_aromatic_ring_returns_structured_error() {
     for smiles in ["c1cccc1", "c1ccccc1.c1cccc1"] {
-        let mut components = read_smiles_components(smiles).expect("raw syntax should parse");
-        let errors = components
-            .iter_mut()
-            .filter_map(|molecule| molecule.normalize().err())
-            .collect::<Vec<_>>();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            crate::normalization::NormalizationError::InvalidAromaticRepresentation(_)
-        ));
+        let error = read_smiles_components(smiles)
+            .expect_err("unlocalizable aromatic source must fail interpretation");
+        assert!(error
+            .to_string()
+            .contains("invalid imported aromatic representation"));
+    }
+}
+
+#[test]
+fn smiles_interpretation_rejects_inconsistent_source_aromaticity() {
+    let cases = [
+        (
+            "c",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "c-C",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "c-c",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "c=C",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "C:C",
+            1,
+            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+        ),
+        (
+            "c:C",
+            1,
+            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+        ),
+        (
+            "C:c",
+            1,
+            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+        ),
+    ];
+
+    for (source, offset, message) in cases {
+        let document = smiles_api::parse_str(source)
+            .unwrap_or_else(|_| panic!("source syntax should parse: {source}"));
+        let error = match smiles_api::interpret(&document) {
+            Ok(_) => panic!("inconsistent source aromaticity should fail: {source}"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.offset(), offset, "{source}: {error}");
+        assert_eq!(error.message(), message, "{source}: {error}");
+    }
+}
+
+#[test]
+fn smiles_source_aromaticity_validation_preserves_supported_forms() {
+    for source in [
+        "cc",
+        "c:c",
+        "c1:c:c:c:c:c:1",
+        "n1ccccc1",
+        "c1ccoc1",
+        "c1ccc2ccccc2c1",
+        "c1ccccc1-C",
+        "c1ccccc1-c1ccccc1",
+    ] {
+        let molecule = read_smiles(source)
+            .unwrap_or_else(|_| panic!("consistent source aromaticity should publish: {source}"));
+
+        assert!(molecule
+            .graph()
+            .bonds()
+            .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
+        assert!(!molecule.graph().perception().has_aromaticity());
     }
 }
 
@@ -2942,7 +3017,7 @@ fn test_atom_state_signature_ignoring_halogen_no_implicit(
 
 fn test_semantic_bond_order_code(mol: &Molecule, bond_id: BondId, bond: &Bond) -> u8 {
     if mol.bond_is_aromatic(bond_id) == Ok(Some(true)) {
-        test_bond_order_code(BondOrder::Aromatic)
+        5
     } else {
         test_bond_order_code(bond.order)
     }
@@ -2955,7 +3030,6 @@ fn test_bond_order_code(order: BondOrder) -> u8 {
         BondOrder::Double => 2,
         BondOrder::Triple => 3,
         BondOrder::Quadruple => 4,
-        BondOrder::Aromatic => 5,
         BondOrder::Dative => 6,
     }
 }

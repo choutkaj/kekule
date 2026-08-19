@@ -250,32 +250,26 @@ fn failed_default_valence_perception_is_transactional() {
 }
 
 #[test]
-fn failed_aromatic_source_normalization_is_transactional() {
-    let mut molecule = read_smiles("c1cccc1").expect("raw invalid aromatic representation parses");
-    let before = molecule.clone();
+fn invalid_aromatic_source_is_rejected_before_publication() {
+    let error = read_smiles("c1cccc1")
+        .expect_err("unmatchable aromatic representation must fail interpretation");
 
-    let error = molecule
-        .normalize()
-        .expect_err("unmatchable aromatic representation should fail normalization");
-
-    assert!(matches!(
-        error,
-        NormalizationError::InvalidAromaticRepresentation(_)
-    ));
-    assert_eq!(molecule, before);
+    assert!(error
+        .to_string()
+        .contains("invalid imported aromatic representation"));
 }
 
 #[test]
-fn failed_direct_aromaticity_perception_is_transactional() {
-    let mut molecule = read_smiles("c1ccccc1").expect("raw aromatic representation parses");
-    let before = molecule.graph().clone();
+fn direct_aromaticity_perception_accepts_localized_aromatic_input() {
+    let mut molecule = read_smiles("c1ccccc1").expect("aromatic representation localizes");
 
-    let error =
-        aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
-            .expect_err("unnormalized aromatic representation should fail");
+    aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        .expect("localized aromatic representation should be perceived");
 
-    assert!(matches!(error, AromaticityError::UnsupportedBondOrder(_)));
-    assert_eq!(molecule.graph(), &before);
+    assert!(molecule
+        .graph()
+        .bond_ids()
+        .all(|bond| molecule.graph().bond_is_aromatic(bond) == Ok(Some(true))));
 }
 
 #[test]

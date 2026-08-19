@@ -591,7 +591,7 @@ fn atom_is_atropisomeric_sp2_endpoint(
         || mol.atom_is_aromatic(atom_id).ok().flatten() == Some(true)
         || incident.iter().any(|(bond_id, bond)| {
             mol.bond_is_aromatic(*bond_id).ok().flatten() == Some(true)
-                || matches!(bond.order, BondOrder::Double | BondOrder::Aromatic)
+                || bond.order == BondOrder::Double
         })
 }
 

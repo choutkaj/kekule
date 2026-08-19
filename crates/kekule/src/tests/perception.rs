@@ -267,28 +267,15 @@ fn molecule_perception_queries_read_the_installed_state_directly() {
 }
 
 #[test]
-fn default_perception_rejects_unnormalized_aromatic_source_transactionally() {
+fn default_perception_accepts_aromatic_source_localized_by_interpretation() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
-    let first_atom = molecule.graph().atom_ids().next().expect("benzene atom");
-    molecule.graph_mut().set_implicit_hydrogens(first_atom, 2);
-    molecule
-        .graph_mut()
-        .begin_aromaticity(AromaticityModel::RdkitLike);
-    molecule.graph_mut().set_atom_aromatic(first_atom, true);
-    let original = molecule.clone();
 
-    let error = perception_api::perceive(molecule.graph_mut())
-        .expect_err("raw aromatic source must be normalized explicitly");
+    perception_api::perceive(molecule.graph_mut())
+        .expect("localized aromatic source should perceive directly");
 
-    assert!(matches!(
-        error,
-        perception_api::PerceptionError::Valence(ValenceError { issues })
-            if !issues.is_empty() && issues.iter().all(|issue| matches!(
-                issue,
-                ValenceIssue::UnsupportedBondOrder(_)
-            ))
-    ));
-    assert_eq!(molecule, original);
+    assert!(molecule.graph().perception().has_valence());
+    assert!(molecule.graph().perception().has_rings());
+    assert!(molecule.graph().perception().has_aromaticity());
 }
 
 #[test]
@@ -365,7 +352,7 @@ fn normalize_and_perceive_matches_explicit_aromatic_source_stereo_workflow() {
     assert!(combined
         .graph()
         .bonds()
-        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+        .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
     assert!(combined.graph().perception().has_valence());
     assert!(combined.graph().perception().has_rings());
     assert!(combined.graph().perception().has_aromaticity());

@@ -201,7 +201,9 @@ pub enum AtomPredicate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum BondPredicate {
+    /// Matches a canonical localized represented order.
     Order(BondOrder),
+    /// Matches perceived aromatic bond membership.
     Aromatic(bool),
     RingMembership(bool),
 }

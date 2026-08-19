@@ -92,7 +92,7 @@ impl fmt::Display for DreidingPrepareError {
             }
             Self::InconsistentAromaticBond { bond } => write!(
                 f,
-                "bond {bond} has inconsistent aromatic flag and aromatic bond order"
+                "bond {bond} has aromatic perception incompatible with its localized bond order"
             ),
             Self::UnsupportedElement { atom, symbol } => {
                 write!(

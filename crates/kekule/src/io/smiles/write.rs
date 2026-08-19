@@ -34,10 +34,12 @@ pub fn write_isomeric_smiles(
     let component_styles = smiles_connected_components(mol)?
         .into_iter()
         .map(|component| {
-            let style = isomeric_component_atom_style(mol, &component)?;
-            Ok((component.into_iter().collect::<BTreeSet<_>>(), style))
+            (
+                component.into_iter().collect::<BTreeSet<_>>(),
+                CanonicalAtomStyle::StoredKekule,
+            )
         })
-        .collect::<std::result::Result<Vec<_>, MolWriteError>>()?;
+        .collect::<Vec<_>>();
     let mut parts = Vec::new();
     for start in &plan.roots {
         let atom_style = component_styles
@@ -62,40 +64,6 @@ pub(super) enum CanonicalAtomStyle {
     StoredKekule,
 }
 
-fn isomeric_component_atom_style(
-    mol: &Molecule,
-    atom_ids: &[AtomId],
-) -> std::result::Result<CanonicalAtomStyle, MolWriteError> {
-    if canonical_component_has_stored_kekule_orders(mol, atom_ids)? {
-        Ok(CanonicalAtomStyle::StoredKekule)
-    } else {
-        Ok(CanonicalAtomStyle::Aromatic)
-    }
-}
-
-pub(super) fn canonical_component_has_stored_kekule_orders(
-    mol: &Molecule,
-    atom_ids: &[AtomId],
-) -> std::result::Result<bool, MolWriteError> {
-    let atom_set = atom_ids.iter().copied().collect::<BTreeSet<_>>();
-    for atom_id in atom_ids {
-        for (bond_id, bond) in mol
-            .incident_bonds(*atom_id)
-            .map_err(|error| MolWriteError::new(error.to_string()))?
-        {
-            let neighbor_id = bond.other_atom(*atom_id);
-            if *atom_id < neighbor_id
-                && atom_set.contains(&neighbor_id)
-                && mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
-                && matches!(bond.order, BondOrder::Aromatic)
-            {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct SmilesWritePlan {
     pub(super) roots: Vec<AtomId>,
@@ -108,8 +76,17 @@ pub(super) struct SmilesWritePlan {
 pub(super) struct SmilesRingClosure {
     pub(super) bond: BondId,
     pub(super) number: u64,
-    pub(super) order: BondOrder,
+    pub(super) order: SmilesBondOrder,
     pub(super) other: AtomId,
+}
+
+/// A format-local bond representation used while emitting SMILES.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SmilesBondOrder {
+    Single,
+    Double,
+    Triple,
+    Aromatic,
 }
 
 fn plan_smiles_write(
@@ -120,7 +97,7 @@ fn plan_smiles_write(
     let mut roots = Vec::new();
     let mut visited = BTreeSet::<AtomId>::new();
     let mut tree_bonds = BTreeSet::<BondId>::new();
-    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, BondOrder)>::new();
+    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, SmilesBondOrder)>::new();
 
     for start in mol.atom_ids() {
         if visited.contains(&start) {
@@ -214,7 +191,7 @@ pub(super) fn validate_smiles_writeable(
     }
     for (_, bond) in mol.bonds() {
         match bond.order {
-            BondOrder::Single | BondOrder::Double | BondOrder::Triple | BondOrder::Aromatic => {}
+            BondOrder::Single | BondOrder::Double | BondOrder::Triple => {}
             BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => {
                 return Err(MolWriteError::new(
                     "SMILES writer cannot encode zero, dative, or quadruple bonds",
@@ -369,11 +346,11 @@ fn collect_smiles_tree(
     parent_bond: Option<BondId>,
     visited: &mut BTreeSet<AtomId>,
     tree_bonds: &mut BTreeSet<BondId>,
-    ring_bonds: &mut BTreeMap<BondId, (AtomId, AtomId, BondOrder)>,
+    ring_bonds: &mut BTreeMap<BondId, (AtomId, AtomId, SmilesBondOrder)>,
 ) -> std::result::Result<(), MolWriteError> {
     struct Frame {
         parent_bond: Option<BondId>,
-        incident: Vec<(BondId, BondOrder, AtomId)>,
+        incident: Vec<(BondId, SmilesBondOrder, AtomId)>,
         next_edge: usize,
     }
 
@@ -515,7 +492,7 @@ impl SmilesStereoWriteContext {
         atom: AtomId,
         parent: Option<AtomId>,
         closures: Option<&[SmilesRingClosure]>,
-        children: &[(BondId, BondOrder, AtomId)],
+        children: &[(BondId, SmilesBondOrder, AtomId)],
         main_child_index: Option<usize>,
     ) -> Option<std::result::Result<ChiralAtomWriteState, MolWriteError>> {
         let stereo = self.tetrahedral.get(&atom)?;
@@ -787,7 +764,7 @@ fn tetrahedral_chirality_for_smiles_order(
     stereo: &TetrahedralSmilesState,
     parent: Option<AtomId>,
     closures: Option<&[SmilesRingClosure]>,
-    children: &[(BondId, BondOrder, AtomId)],
+    children: &[(BondId, SmilesBondOrder, AtomId)],
     main_child_index: Option<usize>,
 ) -> std::result::Result<ChiralAtomWriteState, MolWriteError> {
     let force_hydrogen = stereo
@@ -895,7 +872,7 @@ fn write_smiles_component(
         },
         Bond {
             bond: BondId,
-            order: BondOrder,
+            order: SmilesBondOrder,
             left: AtomId,
             right: AtomId,
         },
@@ -967,11 +944,11 @@ fn write_smiles_component(
                     for closure in closures {
                         let closure_order = match atom_style {
                             CanonicalAtomStyle::Aromatic => closure.order,
-                            CanonicalAtomStyle::StoredKekule => {
+                            CanonicalAtomStyle::StoredKekule => smiles_bond_order(
                                 mol.bond(closure.bond)
                                     .map_err(|error| MolWriteError::new(error.to_string()))?
-                                    .order
-                            }
+                                    .order,
+                            )?,
                         };
                         let directional = stereo
                             .map(|context| {
@@ -1029,7 +1006,7 @@ fn write_smiles_component(
 fn smiles_incident_bonds(
     mol: &Molecule,
     atom_id: AtomId,
-) -> std::result::Result<Vec<(BondId, BondOrder, AtomId)>, MolWriteError> {
+) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError> {
     smiles_incident_bonds_for_style(mol, atom_id, CanonicalAtomStyle::Aromatic)
 }
 
@@ -1037,7 +1014,7 @@ pub(super) fn smiles_incident_bonds_for_style(
     mol: &Molecule,
     atom_id: AtomId,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<Vec<(BondId, BondOrder, AtomId)>, MolWriteError> {
+) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError> {
     let mut incident = Vec::new();
     for (bond_id, bond) in mol
         .incident_bonds(atom_id)
@@ -1048,9 +1025,11 @@ pub(super) fn smiles_incident_bonds_for_style(
                 if mol.bond_is_aromatic(bond_id).ok().flatten() == Some(true)
                     && !matches!(bond.order, BondOrder::Triple | BondOrder::Quadruple) =>
             {
-                BondOrder::Aromatic
+                SmilesBondOrder::Aromatic
             }
-            CanonicalAtomStyle::Aromatic | CanonicalAtomStyle::StoredKekule => bond.order,
+            CanonicalAtomStyle::Aromatic | CanonicalAtomStyle::StoredKekule => {
+                smiles_bond_order(bond.order)?
+            }
         };
         incident.push((bond_id, order, bond.other_atom(atom_id)));
     }
@@ -1066,23 +1045,33 @@ pub(super) fn smiles_ring_number(number: u64) -> String {
     }
 }
 
-fn smiles_bond(order: BondOrder) -> &'static str {
+fn smiles_bond_order(order: BondOrder) -> std::result::Result<SmilesBondOrder, MolWriteError> {
     match order {
-        BondOrder::Single => "",
-        BondOrder::Double => "=",
-        BondOrder::Triple => "#",
-        BondOrder::Aromatic => ":",
-        BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => "-",
+        BondOrder::Single => Ok(SmilesBondOrder::Single),
+        BondOrder::Double => Ok(SmilesBondOrder::Double),
+        BondOrder::Triple => Ok(SmilesBondOrder::Triple),
+        BondOrder::Zero | BondOrder::Dative | BondOrder::Quadruple => Err(MolWriteError::new(
+            "SMILES writer cannot encode zero, dative, or quadruple bonds",
+        )),
+    }
+}
+
+fn smiles_bond(order: SmilesBondOrder) -> &'static str {
+    match order {
+        SmilesBondOrder::Single => "",
+        SmilesBondOrder::Double => "=",
+        SmilesBondOrder::Triple => "#",
+        SmilesBondOrder::Aromatic => ":",
     }
 }
 
 pub(super) fn smiles_bond_between(
     mol: &Molecule,
-    order: BondOrder,
+    order: SmilesBondOrder,
     left: AtomId,
     right: AtomId,
 ) -> std::result::Result<&'static str, MolWriteError> {
-    if matches!(order, BondOrder::Single | BondOrder::Aromatic) {
+    if matches!(order, SmilesBondOrder::Single | SmilesBondOrder::Aromatic) {
         mol.atom(left)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
         mol.atom(right)
@@ -1090,7 +1079,11 @@ pub(super) fn smiles_bond_between(
         if mol.atom_is_aromatic(left).ok().flatten() == Some(true)
             && mol.atom_is_aromatic(right).ok().flatten() == Some(true)
         {
-            return Ok(if order == BondOrder::Single { "-" } else { "" });
+            return Ok(if order == SmilesBondOrder::Single {
+                "-"
+            } else {
+                ""
+            });
         }
     }
     Ok(smiles_bond(order))
@@ -1098,13 +1091,13 @@ pub(super) fn smiles_bond_between(
 
 fn smiles_bond_between_with_direction(
     mol: &Molecule,
-    order: BondOrder,
+    order: SmilesBondOrder,
     left: AtomId,
     right: AtomId,
     directional: Option<StereoBondMarkKind>,
 ) -> std::result::Result<&'static str, MolWriteError> {
     if let Some(directional) = directional {
-        if order != BondOrder::Single {
+        if order != SmilesBondOrder::Single {
             return Err(MolWriteError::new(
                 "isomeric SMILES writer cannot place directional stereo on a non-single bond",
             ));

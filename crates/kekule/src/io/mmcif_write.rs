@@ -702,7 +702,7 @@ fn supported_bond_order(
         BondOrder::Single | BondOrder::Double | BondOrder::Triple | BondOrder::Quadruple => {
             Ok(order)
         }
-        BondOrder::Zero | BondOrder::Aromatic | BondOrder::Dative => {
+        BondOrder::Zero | BondOrder::Dative => {
             Err(MmcifWriteError::UnsupportedBondOrder { bond, order })
         }
     }
@@ -1024,7 +1024,7 @@ fn bond_order_code(order: BondOrder) -> &'static str {
         BondOrder::Double => "doub",
         BondOrder::Triple => "trip",
         BondOrder::Quadruple => "quad",
-        BondOrder::Zero | BondOrder::Aromatic | BondOrder::Dative => {
+        BondOrder::Zero | BondOrder::Dative => {
             unreachable!("unsupported bond order was rejected")
         }
     }
