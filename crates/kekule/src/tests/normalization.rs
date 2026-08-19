@@ -154,14 +154,19 @@ fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
     let right_mark = graph
         .add_bond(right, right_a, BondOrder::Single)
         .expect("right carrier bond");
-    let source_stereo = [left_mark_a, left_mark_b, right_mark]
-        .into_iter()
-        .map(|bond| SourceStereoBondMark {
-            bond,
-            kind: SourceStereoBondMarkKind::DirectionalUp,
-            source: StereoSource::Smiles,
-        })
-        .collect::<Vec<_>>();
+    let source_stereo = [
+        (left_mark_a, left),
+        (left_mark_b, left),
+        (right_mark, right),
+    ]
+    .into_iter()
+    .map(|(bond, from)| SourceStereoBondMark {
+        bond,
+        from,
+        kind: SourceStereoBondMarkKind::DirectionalUp,
+        source: StereoSource::Smiles,
+    })
+    .collect::<Vec<_>>();
     mark_all_fresh(&mut graph);
     let mut molecule = SmallMolecule::from_graph(graph);
     let error = molecule

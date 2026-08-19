@@ -49,6 +49,13 @@ pub enum NormalizationWarning {
 /// One concrete source-stereo normalization issue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceStereoNormalizationIssue {
+    MissingSourceBondMark {
+        bond: BondId,
+    },
+    InvalidSourceBondMarkEndpoint {
+        bond: BondId,
+        from: AtomId,
+    },
     UnassembledTetrahedralBondMark {
         bond: BondId,
         kind: SourceStereoBondMarkKind,
@@ -134,6 +141,9 @@ impl NormalizationError {
 impl SourceStereoNormalizationError {
     fn atom_location_hint(&self) -> Option<AtomId> {
         self.issues.iter().find_map(|issue| match issue {
+            SourceStereoNormalizationIssue::InvalidSourceBondMarkEndpoint { from, .. } => {
+                Some(*from)
+            }
             SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks { endpoint, .. } => {
                 Some(*endpoint)
             }
@@ -152,7 +162,9 @@ impl SourceStereoNormalizationError {
 
     fn bond_location_hint(&self) -> Option<BondId> {
         self.issues.iter().find_map(|issue| match issue {
-            SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark { bond, .. }
+            SourceStereoNormalizationIssue::MissingSourceBondMark { bond }
+            | SourceStereoNormalizationIssue::InvalidSourceBondMarkEndpoint { bond, .. }
+            | SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark { bond, .. }
             | SourceStereoNormalizationIssue::UnpairedDirectionalBondMark { bond }
             | SourceStereoNormalizationIssue::UnsupportedSourceBondMark { bond, .. } => Some(*bond),
             SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks {

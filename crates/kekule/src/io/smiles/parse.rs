@@ -57,6 +57,7 @@ pub(super) struct SmilesProgramBond {
     pub(super) right: usize,
     pub(super) token: SmilesBondToken,
     pub(super) direction: Option<SmilesDirectionToken>,
+    pub(super) direction_from: Option<usize>,
     pub(super) direction_offset: Option<usize>,
     pub(super) offset: usize,
     pub(super) component: usize,
@@ -298,7 +299,7 @@ fn parse_smiles_program(
         usize,
         (
             usize,
-            Option<(SmilesBondToken, Option<SmilesDirectionToken>, usize)>,
+            Option<(SmilesBondToken, Option<SmilesDirectionToken>, usize, usize)>,
             usize,
         ),
     >::new();
@@ -397,7 +398,11 @@ fn parse_smiles_program(
                 let atom = current
                     .ok_or_else(|| SmilesParseError::new(offset, "ring closure without atom"))?;
                 let (label, next_cursor) = parse_smiles_ring_label(chars, cursor)?;
-                let close_bond = pending_bond.take();
+                let close_bond = pending_bond
+                    .take()
+                    .map(|(token, direction, source_offset)| {
+                        (token, direction, source_offset, atom)
+                    });
                 if let Some((other, open_bond, open_component)) = rings.remove(&label) {
                     if open_component != component {
                         return Err(SmilesParseError::new(
@@ -407,30 +412,35 @@ fn parse_smiles_program(
                     }
                     if open_bond.is_some()
                         && close_bond.is_some()
-                        && open_bond.map(|(token, direction, _)| (token, direction))
-                            != close_bond.map(|(token, direction, _)| (token, direction))
+                        && open_bond.map(|(token, direction, _, _)| (token, direction))
+                            != close_bond.map(|(token, direction, _, _)| (token, direction))
                     {
                         return Err(SmilesParseError::new(
                             offset,
                             "conflicting ring bond symbols",
                         ));
                     }
-                    let (token, direction, direction_offset) = match close_bond.or(open_bond) {
-                        Some((token, direction, source_offset)) => {
-                            (token, direction, direction.map(|_| source_offset))
-                        }
-                        None => (
-                            default_smiles_bond_order(&imported_aromatic_atoms, other, atom),
-                            None,
-                            None,
-                        ),
-                    };
+                    let (token, direction, direction_from, direction_offset) =
+                        match close_bond.or(open_bond) {
+                            Some((token, direction, source_offset, source_from)) => (
+                                token,
+                                direction,
+                                direction.map(|_| source_from),
+                                direction.map(|_| source_offset),
+                            ),
+                            None => (
+                                default_smiles_bond_order(&imported_aromatic_atoms, other, atom),
+                                None,
+                                None,
+                                None,
+                            ),
+                        };
                     add_smiles_program_bond(
                         &mut bonds,
                         (other, atom),
                         token,
                         direction,
-                        (offset, direction_offset),
+                        (offset, direction_from, direction_offset),
                         component,
                         options.max_bonds,
                     )?;
@@ -485,12 +495,18 @@ fn parse_smiles_program(
                     );
                 }
                 if let Some(previous) = current {
-                    let (token, direction, direction_offset) = match pending_bond.take() {
-                        Some((token, direction, source_offset)) => {
-                            (token, direction, direction.map(|_| source_offset))
-                        }
+                    let (token, direction, direction_from, direction_offset) = match pending_bond
+                        .take()
+                    {
+                        Some((token, direction, source_offset)) => (
+                            token,
+                            direction,
+                            direction.map(|_| previous),
+                            direction.map(|_| source_offset),
+                        ),
                         None => (
                             default_smiles_bond_order(&imported_aromatic_atoms, previous, atom_id),
+                            None,
                             None,
                             None,
                         ),
@@ -500,7 +516,7 @@ fn parse_smiles_program(
                         (previous, atom_id),
                         token,
                         direction,
-                        (offset, direction_offset),
+                        (offset, direction_from, direction_offset),
                         component,
                         options.max_bonds,
                     )?;
@@ -538,12 +554,18 @@ fn parse_smiles_program(
                     imported_aromatic_atoms.insert(atom_id);
                 }
                 if let Some(previous) = current {
-                    let (token, direction, direction_offset) = match pending_bond.take() {
-                        Some((token, direction, source_offset)) => {
-                            (token, direction, direction.map(|_| source_offset))
-                        }
+                    let (token, direction, direction_from, direction_offset) = match pending_bond
+                        .take()
+                    {
+                        Some((token, direction, source_offset)) => (
+                            token,
+                            direction,
+                            direction.map(|_| previous),
+                            direction.map(|_| source_offset),
+                        ),
                         None => (
                             default_smiles_bond_order(&imported_aromatic_atoms, previous, atom_id),
+                            None,
                             None,
                             None,
                         ),
@@ -553,7 +575,7 @@ fn parse_smiles_program(
                         (previous, atom_id),
                         token,
                         direction,
-                        (offset, direction_offset),
+                        (offset, direction_from, direction_offset),
                         component,
                         options.max_bonds,
                     )?;
@@ -617,11 +639,11 @@ fn add_smiles_program_bond(
     endpoints: (usize, usize),
     token: SmilesBondToken,
     direction: Option<SmilesDirectionToken>,
-    source_offsets: (usize, Option<usize>),
+    source_offsets: (usize, Option<usize>, Option<usize>),
     component: usize,
     max_bonds: usize,
 ) -> std::result::Result<(), SmilesParseError> {
-    let (offset, direction_offset) = source_offsets;
+    let (offset, direction_from, direction_offset) = source_offsets;
     let (left, right) = endpoints;
     if bonds.len() >= max_bonds {
         return Err(SmilesParseError::new(
@@ -652,6 +674,7 @@ fn add_smiles_program_bond(
         right,
         token,
         direction,
+        direction_from,
         direction_offset,
         offset,
         component,
