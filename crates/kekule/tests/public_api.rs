@@ -155,7 +155,7 @@ fn interpretation_publishes_canonical_unperceived_molecules(
     let interpretation = kekule::smiles::interpret(&document)?;
     assert_eq!(interpretation.report()?.created_stereo_elements().len(), 1);
     let directional = interpretation.into_molecule()?;
-    assert!(directional.graph().stereo_bond_marks().next().is_none());
+    assert_eq!(directional.graph().stereo_elements().count(), 1);
 
     let mut perceived = perceived_smiles("CCO")?;
     assert!(perceived.graph().perception().has_valence());

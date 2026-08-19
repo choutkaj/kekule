@@ -70,13 +70,25 @@ pub(super) trait CanonicalizeFixture {
     fn canonicalize_fixture(
         &mut self,
     ) -> std::result::Result<NormalizationReport, NormalizationError>;
+
+    fn canonicalize_fixture_with_source_stereo(
+        &mut self,
+        source_stereo: &[SourceStereoBondMark],
+    ) -> std::result::Result<NormalizationReport, NormalizationError>;
 }
 
 impl CanonicalizeFixture for SmallMolecule {
     fn canonicalize_fixture(
         &mut self,
     ) -> std::result::Result<NormalizationReport, NormalizationError> {
-        canonicalize_molecule_for_publication(self.graph_mut())
+        canonicalize_molecule_for_publication(self.graph_mut(), &[])
+    }
+
+    fn canonicalize_fixture_with_source_stereo(
+        &mut self,
+        source_stereo: &[SourceStereoBondMark],
+    ) -> std::result::Result<NormalizationReport, NormalizationError> {
+        canonicalize_molecule_for_publication(self.graph_mut(), source_stereo)
     }
 }
 
@@ -310,7 +322,6 @@ pub(super) struct RepresentedMoleculeSnapshot {
     conformers: Vec<Option<Conformer>>,
     stereo_elements: Vec<Option<RepresentedStereoElementSnapshot>>,
     stereo_groups: Vec<Option<StereoGroup>>,
-    stereo_bond_marks: Vec<StereoBondMark>,
     props: PropMap,
 }
 
@@ -361,7 +372,6 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
             })
             .collect(),
         stereo_groups: molecule.stereo_groups.clone(),
-        stereo_bond_marks: molecule.stereo_bond_marks.clone(),
         props: molecule.props.clone(),
     }
 }

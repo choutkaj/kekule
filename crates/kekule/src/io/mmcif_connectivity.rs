@@ -331,13 +331,15 @@ fn rebuild_model_with_connectivity(
                 &source_aromatic_bonds,
             )
             .map_err(interpret_error)?;
-            let publication_report =
-                canonicalize_molecule_for_publication(molecule.graph_mut_unchecked_connectedness())
-                    .map_err(|error| {
-                        interpret_error(format!(
+            let publication_report = canonicalize_molecule_for_publication(
+                molecule.graph_mut_unchecked_connectedness(),
+                &[],
+            )
+            .map_err(|error| {
+                interpret_error(format!(
                     "could not publish canonical mmCIF molecule instance {instance_id}: {error}"
                 ))
-                    })?;
+            })?;
             debug_assert!(publication_report.warnings.is_empty());
             let connected = molecule.graph().is_connected();
             if molecule.graph().atom_count() > 1 && !connected {
@@ -364,12 +366,14 @@ fn rebuild_model_with_connectivity(
             )?;
             localize_source_aromatic_bonds(molecule.graph_mut(), &source_aromatic_bonds)
                 .map_err(interpret_error)?;
-            let publication_report = canonicalize_molecule_for_publication(molecule.graph_mut())
-                .map_err(|error| {
-                    interpret_error(format!(
+            let publication_report =
+                canonicalize_molecule_for_publication(molecule.graph_mut(), &[]).map_err(
+                    |error| {
+                        interpret_error(format!(
                         "could not publish canonical mmCIF molecule instance {instance_id}: {error}"
                     ))
-                })?;
+                    },
+                )?;
             debug_assert!(publication_report.warnings.is_empty());
             if molecule.graph().atom_count() > 1 && !molecule.graph().is_connected() {
                 pending += 1;

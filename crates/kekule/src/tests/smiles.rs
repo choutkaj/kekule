@@ -166,7 +166,6 @@ fn smiles_interpretation_canonicalizes_directional_bond_markers() {
 
     assert_eq!(small.graph().atom_count(), 4);
     assert_eq!(small.graph().bond_count(), 3);
-    assert!(small.graph().stereo_bond_marks().next().is_none());
     assert_eq!(small.graph().stereo_elements().count(), 1);
     let canonical = smiles_api::write_canonical(&small)
         .expect("non-isomeric canonical SMILES should write canonical stereo");
@@ -400,7 +399,7 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
     assert!(smiles_api::write(&molecule)
         .expect_err("ordinary writer should reject lossy atom stereo")
         .message
-        .contains("atom stereochemistry"));
+        .contains("stereochemistry"));
 
     let written = smiles_api::write_canonical(&molecule)
         .expect("non-isomeric canonical SMILES should ignore atom stereo");
@@ -2954,23 +2953,6 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Single;
     molecule
         .graph_mut()
-        .set_stereo_bond_mark(StereoBondMark {
-            bond,
-            kind: StereoBondMarkKind::DirectionalUp,
-            source: StereoSource::Smiles,
-        })
-        .expect("stereo mark");
-    assert!(smiles_api::write(&molecule)
-        .expect_err("stereo should be rejected")
-        .message
-        .contains("stereochemistry"));
-
-    molecule
-        .graph_mut()
-        .clear_stereo_bond_mark(bond)
-        .expect("clear mark");
-    molecule
-        .graph_mut()
         .add_stereo_element(StereoElement::specified(
             StereoElementKind::Tetrahedral(TetrahedralStereo {
                 center: a,
@@ -2983,7 +2965,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     assert!(smiles_api::write(&molecule)
         .expect_err("atom chirality should be rejected")
         .message
-        .contains("atom stereochemistry"));
+        .contains("stereochemistry"));
 
     let element = molecule
         .graph()

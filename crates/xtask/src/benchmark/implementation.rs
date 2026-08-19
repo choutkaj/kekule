@@ -875,7 +875,6 @@ pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
         "bond_count": mol.bond_count(),
         "stereo_elements": stereo_elements_json(mol),
         "stereo_groups": stereo_groups_json(mol),
-        "stereo_bond_marks": stereo_bond_marks_json(mol),
     })
 }
 
@@ -914,7 +913,6 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             ),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
-            "stereo_bond_marks": stereo_bond_marks_json(mol),
         }),
         Err(error) => json!({
             "record_index": record.record_index,
@@ -930,7 +928,6 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "error": coordinate_stereo_error_json(&error),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
-            "stereo_bond_marks": stereo_bond_marks_json(mol),
         }),
     }
 }
@@ -959,7 +956,6 @@ pub(crate) fn stereo_perception_group_record_json(
     let mut issues = Vec::new();
     let mut stereo_elements = Vec::new();
     let mut stereo_groups = Vec::new();
-    let mut stereo_bond_marks = Vec::new();
 
     for component in &record.components {
         let mut component_record = IndexedSmallRecord {
@@ -1051,12 +1047,6 @@ pub(crate) fn stereo_perception_group_record_json(
         let component_group_count = component_groups.len() as u64;
         stereo_groups.extend(component_groups);
 
-        let mut component_marks = take_array(object, "stereo_bond_marks");
-        for mark in &mut component_marks {
-            offset_stereo_references(mark, atom_count, bond_count, element_count, group_count);
-        }
-        stereo_bond_marks.extend(component_marks);
-
         atom_count += component_atom_count;
         bond_count += component_bond_count;
         element_count += component_element_count;
@@ -1098,7 +1088,6 @@ pub(crate) fn stereo_perception_group_record_json(
         },
         "stereo_elements": stereo_elements,
         "stereo_groups": stereo_groups,
-        "stereo_bond_marks": stereo_bond_marks,
     })
 }
 
@@ -2175,61 +2164,37 @@ fn aromatic_bond_valence_twice(
 
 pub(crate) fn bonds_json(mol: &Molecule) -> Vec<Value> {
     mol.bonds()
-        .map(|(id, bond)| bond_json(mol, id, bond, mol.stereo_bond_mark(id)))
+        .map(|(id, bond)| bond_json(mol, id, bond))
         .collect::<Vec<_>>()
 }
 
-pub(crate) fn bond_json(
-    mol: &Molecule,
-    id: BondId,
-    bond: &Bond,
-    stereo: Option<&StereoBondMark>,
-) -> Value {
+pub(crate) fn bond_json(mol: &Molecule, id: BondId, bond: &Bond) -> Value {
     json!({
         "index": id.raw(),
         "begin_atom_index": bond.a().raw(),
         "end_atom_index": bond.b().raw(),
         "bond_type": bond_order_json(bond.order),
         "is_aromatic": mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false),
-        "stereo": bond_stereo_json(bond.order, stereo),
-        "bond_direction": bond_direction_json(bond.order, stereo),
+        "stereo": "STEREONONE",
+        "bond_direction": "NONE",
     })
 }
 
 pub(crate) fn basic_bonds_json(mol: &Molecule) -> Vec<Value> {
     mol.bonds()
-        .map(|(id, bond)| basic_bond_json(mol, id, bond, mol.stereo_bond_mark(id)))
+        .map(|(id, bond)| basic_bond_json(mol, id, bond))
         .collect::<Vec<_>>()
 }
 
-pub(crate) fn basic_bond_json(
-    mol: &Molecule,
-    id: BondId,
-    bond: &Bond,
-    stereo: Option<&StereoBondMark>,
-) -> Value {
+pub(crate) fn basic_bond_json(mol: &Molecule, id: BondId, bond: &Bond) -> Value {
     json!({
         "index": id.raw(),
         "begin_atom_index": bond.a().raw(),
         "end_atom_index": bond.b().raw(),
         "bond_type": bond_order_json(bond.order),
         "is_aromatic": mol.bond_is_aromatic(id).ok().flatten().unwrap_or(false),
-        "stereo": legacy_bond_stereo_json(stereo),
+        "stereo": "STEREONONE",
     })
-}
-
-pub(crate) fn legacy_bond_stereo_json(stereo: Option<&StereoBondMark>) -> &'static str {
-    match stereo.map(|mark| mark.kind) {
-        None => "STEREONONE",
-        Some(
-            StereoBondMarkKind::DirectionalUp
-            | StereoBondMarkKind::DirectionalDown
-            | StereoBondMarkKind::WedgeUp
-            | StereoBondMarkKind::WedgeDown
-            | StereoBondMarkKind::WedgeEither
-            | StereoBondMarkKind::DoubleBondEither,
-        ) => "STEREOANY",
-    }
 }
 
 pub(crate) fn radical_json(radical: AtomRadical) -> &'static str {
@@ -2250,32 +2215,6 @@ pub(crate) fn bond_order_json(order: BondOrder) -> &'static str {
         BondOrder::Triple => "TRIPLE",
         BondOrder::Quadruple => "QUADRUPLE",
         BondOrder::Dative => "DATIVE",
-    }
-}
-
-pub(crate) fn bond_stereo_json(order: BondOrder, stereo: Option<&StereoBondMark>) -> &'static str {
-    match (order, stereo.map(|mark| mark.kind)) {
-        (_, None) => "STEREONONE",
-        (BondOrder::Double, Some(StereoBondMarkKind::DoubleBondEither)) => "STEREOANY",
-        _ => "STEREONONE",
-    }
-}
-
-pub(crate) fn bond_direction_json(
-    order: BondOrder,
-    stereo: Option<&StereoBondMark>,
-) -> &'static str {
-    match (order, stereo.map(|mark| mark.kind)) {
-        (
-            BondOrder::Single,
-            Some(StereoBondMarkKind::DirectionalUp | StereoBondMarkKind::WedgeUp),
-        ) => "BEGINWEDGE",
-        (
-            BondOrder::Single,
-            Some(StereoBondMarkKind::DirectionalDown | StereoBondMarkKind::WedgeDown),
-        ) => "BEGINDASH",
-        (BondOrder::Single, Some(StereoBondMarkKind::WedgeEither)) => "UNKNOWN",
-        _ => "NONE",
     }
 }
 
@@ -2655,26 +2594,6 @@ pub(crate) fn stereo_group_json(index: u32, group: &StereoGroup) -> Value {
     })
 }
 
-pub(crate) fn stereo_bond_marks_json(mol: &Molecule) -> Vec<Value> {
-    let mut marks = mol
-        .stereo_bond_marks()
-        .map(|mark| {
-            json!({
-                "bond_index": mark.bond.raw(),
-                "kind": stereo_bond_mark_kind_json(mark.kind),
-                "source": stereo_source_json(mark.source),
-            })
-        })
-        .collect::<Vec<_>>();
-    marks.sort_by_key(|value| {
-        value
-            .get("bond_index")
-            .and_then(Value::as_u64)
-            .unwrap_or(u64::MAX)
-    });
-    marks
-}
-
 pub(crate) fn stereo_carrier_json(carrier: &StereoCarrier) -> Value {
     match carrier {
         StereoCarrier::Atom(atom) => json!({ "atom_index": atom.raw() }),
@@ -2749,16 +2668,5 @@ pub(crate) fn axis_orientation_json(orientation: AxisOrientation) -> &'static st
     match orientation {
         AxisOrientation::Clockwise => "clockwise",
         AxisOrientation::CounterClockwise => "counter_clockwise",
-    }
-}
-
-pub(crate) fn stereo_bond_mark_kind_json(kind: StereoBondMarkKind) -> &'static str {
-    match kind {
-        StereoBondMarkKind::DirectionalUp => "directional_up",
-        StereoBondMarkKind::DirectionalDown => "directional_down",
-        StereoBondMarkKind::WedgeUp => "wedge_up",
-        StereoBondMarkKind::WedgeDown => "wedge_down",
-        StereoBondMarkKind::WedgeEither => "wedge_either",
-        StereoBondMarkKind::DoubleBondEither => "double_bond_either",
     }
 }

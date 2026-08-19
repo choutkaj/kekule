@@ -4,11 +4,11 @@ use std::ops::Range;
 
 use crate::chemistry::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
+    SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind,
-    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoSource,
-    TetrahedralOrientation, TetrahedralStereo,
+    Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoCarrier, StereoElement,
+    StereoElementId, StereoElementKind, StereoSource, TetrahedralOrientation, TetrahedralStereo,
 };
 use crate::small::model::SmallMolecule;
 
@@ -361,6 +361,7 @@ fn interpret_smiles_program_component(
     }
     let mut bond_mappings = Vec::new();
     let mut source_aromatic_bonds = BTreeSet::new();
+    let mut source_stereo = Vec::new();
     let mut first_aromatic_offset = None;
     for bond in &program.bonds {
         if bond.component != component {
@@ -382,21 +383,21 @@ fn interpret_smiles_program_component(
                     message: "bond right endpoint is outside its SMILES component".to_owned(),
                 })?;
         let (order, source_aromatic) = interpret_smiles_bond_token(bond.token);
-        let bond_id = add_smiles_bond(
-            &mut mol,
-            left,
-            right,
-            order,
-            bond.direction.map(interpret_smiles_direction),
-            bond.offset,
-        )?;
+        let bond_id = add_smiles_bond(&mut mol, left, right, order, bond.offset)?;
+        if let Some(direction) = bond.direction {
+            source_stereo.push(SourceStereoBondMark {
+                bond: bond_id,
+                kind: interpret_smiles_direction(direction),
+                source: StereoSource::Smiles,
+            });
+        }
         if source_aromatic {
             source_aromatic_bonds.insert(bond_id);
             first_aromatic_offset.get_or_insert(bond.offset);
         }
         bond_mappings.push(SmilesBondMapping {
             bond: bond_id,
-            source_offset: bond.offset,
+            source_offset: bond.direction_offset.unwrap_or(bond.offset),
         });
     }
     localize_source_aromatic_bonds(&mut mol, &source_aromatic_bonds).map_err(|error| {
@@ -413,8 +414,8 @@ fn interpret_smiles_program_component(
         &program.tetrahedral_carriers,
         end_offset,
     )?;
-    let publication_report =
-        canonicalize_molecule_for_publication(&mut mol).map_err(|error| SmilesInterpretError {
+    let publication_report = canonicalize_molecule_for_publication(&mut mol, &source_stereo)
+        .map_err(|error| SmilesInterpretError {
             offset: canonicalization_error_offset(
                 &error,
                 &atom_mappings,
@@ -557,10 +558,10 @@ const fn interpret_smiles_bond_token(token: SmilesBondToken) -> (BondOrder, bool
     }
 }
 
-const fn interpret_smiles_direction(direction: SmilesDirectionToken) -> StereoBondMarkKind {
+const fn interpret_smiles_direction(direction: SmilesDirectionToken) -> SourceStereoBondMarkKind {
     match direction {
-        SmilesDirectionToken::Up => StereoBondMarkKind::DirectionalUp,
-        SmilesDirectionToken::Down => StereoBondMarkKind::DirectionalDown,
+        SmilesDirectionToken::Up => SourceStereoBondMarkKind::DirectionalUp,
+        SmilesDirectionToken::Down => SourceStereoBondMarkKind::DirectionalDown,
     }
 }
 
@@ -569,27 +570,13 @@ fn add_smiles_bond(
     left: AtomId,
     right: AtomId,
     order: BondOrder,
-    stereo: Option<StereoBondMarkKind>,
     offset: usize,
 ) -> std::result::Result<BondId, SmilesInterpretError> {
-    let bond_id = mol
-        .add_bond(left, right, order)
+    mol.add_bond(left, right, order)
         .map_err(|error| SmilesInterpretError {
             offset,
             message: error.to_string(),
-        })?;
-    if let Some(kind) = stereo {
-        mol.set_stereo_bond_mark(StereoBondMark {
-            bond: bond_id,
-            kind,
-            source: StereoSource::Smiles,
         })
-        .map_err(|error| SmilesInterpretError {
-            offset,
-            message: error.to_string(),
-        })?;
-    }
-    Ok(bond_id)
 }
 
 fn add_smiles_tetrahedral_elements(
