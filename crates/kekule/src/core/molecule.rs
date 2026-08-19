@@ -692,6 +692,8 @@ impl Molecule {
             })
             .implicit_hydrogens
             .insert(atom, count);
+        self.perception.aromaticity = None;
+        self.perception.stereo = None;
     }
 
     pub(crate) fn install_ring_membership(&mut self, membership: RingMembership) {
@@ -699,6 +701,8 @@ impl Molecule {
             membership,
             basis: None,
         });
+        self.perception.aromaticity = None;
+        self.perception.stereo = None;
     }
 
     pub(crate) fn install_ring_basis(
@@ -711,6 +715,8 @@ impl Molecule {
             membership,
             basis: Some(RingBasisState::new(Some(model), rings)),
         });
+        self.perception.aromaticity = None;
+        self.perception.stereo = None;
     }
 
     pub(crate) fn begin_aromaticity(&mut self, model: AromaticityModel) {
