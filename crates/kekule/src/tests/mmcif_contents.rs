@@ -1435,11 +1435,11 @@ covale A N 1 A CA 1 doub
 
 #[test]
 fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
-    let aromatic = small_model_with_bond(BondOrder::Aromatic);
+    let dative = small_model_with_bond(BondOrder::Dative);
     assert!(matches!(
-        mmcif::write(&aromatic, MmcifWriteOptions::default()),
+        mmcif::write(&dative, MmcifWriteOptions::default()),
         Err(MmcifWriteError::UnsupportedBondOrder {
-            order: BondOrder::Aromatic,
+            order: BondOrder::Dative,
             ..
         })
     ));

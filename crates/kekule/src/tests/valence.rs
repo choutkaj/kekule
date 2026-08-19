@@ -1,27 +1,27 @@
 use super::*;
 
 #[test]
-fn valence_rejects_all_unnormalized_aromatic_bonds_before_assigning_hydrogens() {
+fn valence_accepts_aromatic_input_localized_during_interpretation() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should interpret");
-    let expected_issues = molecule
-        .graph()
-        .bond_ids()
-        .map(ValenceIssue::UnsupportedBondOrder)
-        .collect::<Vec<_>>();
+    assert_eq!(
+        molecule
+            .graph()
+            .bonds()
+            .filter(|(_, bond)| bond.order == BondOrder::Double)
+            .count(),
+        3
+    );
+    assert_eq!(
+        molecule
+            .graph()
+            .bonds()
+            .filter(|(_, bond)| bond.order == BondOrder::Single)
+            .count(),
+        3
+    );
 
-    let error = valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
-        .expect_err("unnormalized aromatic bonds must be rejected");
-
-    assert_eq!(error.issues, expected_issues);
-    assert_eq!(molecule.graph().perception(), &PerceptionState::default());
-    assert!(molecule
-        .graph()
-        .atom_ids()
-        .all(|atom| molecule.graph().implicit_hydrogens(atom) == Ok(None)));
-
-    molecule.normalize().expect("benzene should normalize");
     valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
-        .expect("normalized benzene valence should succeed");
+        .expect("localized benzene valence should succeed");
     assert!(molecule
         .graph()
         .atom_ids()
@@ -29,15 +29,10 @@ fn valence_rejects_all_unnormalized_aromatic_bonds_before_assigning_hydrogens() 
 }
 
 #[test]
-fn unnormalized_aromatic_valence_failure_preserves_complete_previous_perception() {
+fn localized_aromatic_valence_replaces_previous_valence_transactionally() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should interpret");
     let atom_ids = molecule.graph().atom_ids().collect::<Vec<_>>();
     let bond_ids = molecule.graph().bond_ids().collect::<Vec<_>>();
-    let expected_issues = bond_ids
-        .iter()
-        .copied()
-        .map(ValenceIssue::UnsupportedBondOrder)
-        .collect::<Vec<_>>();
     let previous = PerceptionState::builder()
         .with_valence(
             Some(ValenceModel::RdkitLike),
@@ -55,18 +50,19 @@ fn unnormalized_aromatic_valence_failure_preserves_complete_previous_perception(
         .graph_mut()
         .install_perception_state(previous.clone())
         .expect("valid previous perception");
-    let before = molecule.clone();
-
-    let error = valence_api::perceive_valence_with_options(
+    valence_api::perceive_valence_with_options(
         molecule.graph_mut(),
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
     )
-    .expect_err("normalization preflight cannot be made permissive");
+    .expect("localized aromatic valence can be recomputed");
 
-    assert_eq!(error.issues, expected_issues);
-    assert_eq!(molecule.graph().perception(), &previous);
-    assert_eq!(molecule, before);
+    assert!(molecule
+        .graph()
+        .atom_ids()
+        .all(|atom| molecule.graph().implicit_hydrogens(atom) == Ok(Some(1))));
+    assert!(molecule.graph().perception().has_rings());
+    assert!(!molecule.graph().perception().has_aromaticity());
 }
 
 fn assert_aromatic_valence_pipeline(
@@ -99,7 +95,7 @@ fn assert_aromatic_valence_pipeline_for_molecule(
     assert!(molecule
         .graph()
         .bonds()
-        .all(|(_, bond)| bond.order != BondOrder::Aromatic));
+        .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
     assert_eq!(
         molecule.graph().perception(),
         &PerceptionState::default(),

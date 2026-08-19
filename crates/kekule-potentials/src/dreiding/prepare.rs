@@ -337,12 +337,8 @@ fn forge_bond_order(
         (_, order @ (BondOrder::Zero | BondOrder::Quadruple | BondOrder::Dative)) => {
             Err(DreidingPrepareError::UnsupportedBondOrder { bond, order })
         }
-        (false, BondOrder::Aromatic) | (true, BondOrder::Triple) => {
-            Err(DreidingPrepareError::InconsistentAromaticBond { bond })
-        }
-        (true, BondOrder::Single | BondOrder::Double | BondOrder::Aromatic) => {
-            Ok(ForgeBondOrder::Aromatic)
-        }
+        (true, BondOrder::Triple) => Err(DreidingPrepareError::InconsistentAromaticBond { bond }),
+        (true, BondOrder::Single | BondOrder::Double) => Ok(ForgeBondOrder::Aromatic),
         (false, BondOrder::Single) => Ok(ForgeBondOrder::Single),
         (false, BondOrder::Double) => Ok(ForgeBondOrder::Double),
         (false, BondOrder::Triple) => Ok(ForgeBondOrder::Triple),

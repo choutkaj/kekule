@@ -9,10 +9,9 @@ use crate::io::MolWriteError;
 use crate::small::model::SmallMolecule;
 
 use super::write::{
-    canonical_component_has_stored_kekule_orders, smiles_atom, smiles_bond_between,
-    smiles_connected_components, smiles_incident_bonds_for_style, smiles_ring_number,
-    validate_smiles_writeable, CanonicalAtomStyle, SmilesRingClosure, SmilesWritePlan,
-    StereoWriteMode,
+    smiles_atom, smiles_bond_between, smiles_connected_components, smiles_incident_bonds_for_style,
+    smiles_ring_number, validate_smiles_writeable, CanonicalAtomStyle, SmilesBondOrder,
+    SmilesRingClosure, SmilesWritePlan, StereoWriteMode,
 };
 
 pub fn write_canonical_smiles(
@@ -103,7 +102,7 @@ enum CanonicalBondTraversal {
 }
 
 impl CanonicalBondTraversal {
-    fn order_key(self, order: BondOrder) -> u8 {
+    fn order_key(self, order: SmilesBondOrder) -> u8 {
         match self {
             Self::HighOrderFirst => reverse_bond_order_code(order),
             Self::LowOrderFirst => bond_order_code(order),
@@ -115,9 +114,7 @@ fn canonical_component_atom_style(
     mol: &Molecule,
     atom_ids: &[AtomId],
 ) -> std::result::Result<CanonicalAtomStyle, MolWriteError> {
-    if canonical_component_has_aromatic_shorthand_sensitive_atom(mol, atom_ids)?
-        && canonical_component_has_stored_kekule_orders(mol, atom_ids)?
-    {
+    if canonical_component_has_aromatic_shorthand_sensitive_atom(mol, atom_ids)? {
         Ok(CanonicalAtomStyle::StoredKekule)
     } else {
         Ok(CanonicalAtomStyle::Aromatic)
@@ -296,13 +293,13 @@ fn plan_canonical_smiles_component(
 ) -> std::result::Result<SmilesWritePlan, MolWriteError> {
     struct Frame {
         parent_bond: Option<BondId>,
-        incident: Vec<(BondId, BondOrder, AtomId)>,
+        incident: Vec<(BondId, SmilesBondOrder, AtomId)>,
         next_edge: usize,
     }
 
     let mut visited = BTreeSet::<AtomId>::new();
     let mut tree_bonds = BTreeSet::<BondId>::new();
-    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, BondOrder)>::new();
+    let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, SmilesBondOrder)>::new();
     visited.insert(root);
     let mut stack = vec![Frame {
         parent_bond: None,
@@ -412,7 +409,7 @@ fn write_canonical_smiles_component_with_plan(
             parent: Option<AtomId>,
         },
         Bond {
-            order: BondOrder,
+            order: SmilesBondOrder,
             left: AtomId,
             right: AtomId,
         },
@@ -504,9 +501,9 @@ fn canonical_smiles_aromatic_continuation(
     mol: &Molecule,
     left: AtomId,
     right: AtomId,
-    order: BondOrder,
+    order: SmilesBondOrder,
 ) -> bool {
-    matches!(order, BondOrder::Aromatic)
+    order == SmilesBondOrder::Aromatic
         && mol.atom_is_aromatic(left).ok().flatten() == Some(true)
         && mol.atom_is_aromatic(right).ok().flatten() == Some(true)
 }
@@ -517,7 +514,7 @@ fn canonical_smiles_incident_bonds(
     ranking: &CanonicalAtomRanking,
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<Vec<(BondId, BondOrder, AtomId)>, MolWriteError> {
+) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError> {
     let mut incident = smiles_incident_bonds_for_style(mol, atom_id, atom_style)?;
     incident.sort_by_key(|(bond_id, order, atom)| {
         (
@@ -537,19 +534,16 @@ fn canonical_rank(ranking: &CanonicalAtomRanking, atom: AtomId) -> u32 {
         .expect("canonical ranking should cover every live atom")
 }
 
-fn bond_order_code(order: BondOrder) -> u8 {
+fn bond_order_code(order: SmilesBondOrder) -> u8 {
     match order {
-        BondOrder::Zero => 0,
-        BondOrder::Single => 1,
-        BondOrder::Double => 2,
-        BondOrder::Triple => 3,
-        BondOrder::Quadruple => 4,
-        BondOrder::Aromatic => 5,
-        BondOrder::Dative => 6,
+        SmilesBondOrder::Single => 1,
+        SmilesBondOrder::Double => 2,
+        SmilesBondOrder::Triple => 3,
+        SmilesBondOrder::Aromatic => 5,
     }
 }
 
-fn reverse_bond_order_code(order: BondOrder) -> u8 {
+fn reverse_bond_order_code(order: SmilesBondOrder) -> u8 {
     u8::MAX - bond_order_code(order)
 }
 
@@ -852,7 +846,7 @@ fn smiles_bond_valence_sum(
             }
             Ok(match bond.order {
                 BondOrder::Zero | BondOrder::Dative => 0,
-                BondOrder::Single | BondOrder::Aromatic => 1,
+                BondOrder::Single => 1,
                 BondOrder::Double => 2,
                 BondOrder::Triple => 3,
                 BondOrder::Quadruple => 4,

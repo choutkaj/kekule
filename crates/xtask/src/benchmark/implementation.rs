@@ -2126,7 +2126,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
             }
             match bond.order {
                 BondOrder::Zero | BondOrder::Dative => 0,
-                BondOrder::Single | BondOrder::Aromatic => 2,
+                BondOrder::Single => 2,
                 BondOrder::Double => 4,
                 BondOrder::Triple => 6,
                 BondOrder::Quadruple => 8,
@@ -2250,7 +2250,6 @@ pub(crate) fn bond_order_json(order: BondOrder) -> &'static str {
         BondOrder::Double => "DOUBLE",
         BondOrder::Triple => "TRIPLE",
         BondOrder::Quadruple => "QUADRUPLE",
-        BondOrder::Aromatic => "AROMATIC",
         BondOrder::Dative => "DATIVE",
     }
 }
