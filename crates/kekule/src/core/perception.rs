@@ -5,6 +5,8 @@ use super::{
     checked_fixed_id_collection_len, AtomId, BondId, Molecule, StereoDescriptor, StereoElementId,
 };
 
+static EMPTY_CIP_DESCRIPTORS: BTreeMap<StereoElementId, StereoDescriptor> = BTreeMap::new();
+
 /// The valence model used to produce installed valence state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValenceModel {
@@ -15,6 +17,13 @@ pub enum ValenceModel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AromaticityModel {
     RdkitLike,
+}
+
+/// The algorithm used to select an installed ring basis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RingBasisModel {
+    /// Kekule's deterministic Figueras/SSSR-like basis selection.
+    FiguerasSssrLike,
 }
 
 /// Cycle membership over the stable atom and bond slots of a molecule.
@@ -102,6 +111,13 @@ impl RingSet {
     }
 }
 
+/// One installed ring basis and its optional algorithm provenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RingBasisState {
+    pub(super) model: Option<RingBasisModel>,
+    pub(super) rings: RingSet,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValencePerceptionState {
     pub(super) model: Option<ValenceModel>,
@@ -111,7 +127,7 @@ pub struct ValencePerceptionState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RingPerceptionState {
     pub(super) membership: RingMembership,
-    pub(super) rings: Option<RingSet>,
+    pub(super) basis: Option<RingBasisState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,12 +137,21 @@ pub struct AromaticityPerceptionState {
     pub(super) bonds: BTreeSet<BondId>,
 }
 
+/// Installed stereo-derived perception, currently CIP descriptor assignments.
+///
+/// Presence of this section records that CIP derivation completed successfully,
+/// including when no descriptors were assigned.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StereoPerceptionState {
+    pub(super) cip_descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PerceptionState {
     pub(super) valence: Option<ValencePerceptionState>,
     pub(super) rings: Option<RingPerceptionState>,
     pub(super) aromaticity: Option<AromaticityPerceptionState>,
-    pub(super) cip_descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
+    pub(super) stereo: Option<StereoPerceptionState>,
 }
 
 impl ValencePerceptionState {
@@ -151,9 +176,34 @@ impl RingPerceptionState {
         &self.membership
     }
 
+    /// Returns the selected ring basis and its provenance, when installed.
+    pub const fn basis(&self) -> Option<&RingBasisState> {
+        self.basis.as_ref()
+    }
+
     /// Returns the installed deterministic ring basis, when present.
     pub const fn ring_set(&self) -> Option<&RingSet> {
-        self.rings.as_ref()
+        match &self.basis {
+            Some(basis) => Some(&basis.rings),
+            None => None,
+        }
+    }
+}
+
+impl RingBasisState {
+    /// Constructs a detached ring basis with optional algorithm provenance.
+    pub const fn new(model: Option<RingBasisModel>, rings: RingSet) -> Self {
+        Self { model, rings }
+    }
+
+    /// Returns the named basis-selection model, if provenance is known.
+    pub const fn model(&self) -> Option<RingBasisModel> {
+        self.model
+    }
+
+    /// Returns the selected deterministic ring set.
+    pub const fn ring_set(&self) -> &RingSet {
+        &self.rings
     }
 }
 
@@ -171,6 +221,23 @@ impl AromaticityPerceptionState {
     /// Iterates every installed aromatic bond.
     pub fn bonds(&self) -> impl ExactSizeIterator<Item = BondId> + DoubleEndedIterator + '_ {
         self.bonds.iter().copied()
+    }
+}
+
+impl StereoPerceptionState {
+    /// Iterates every installed CIP descriptor assignment.
+    pub fn cip_descriptors(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (StereoElementId, StereoDescriptor)> + DoubleEndedIterator + '_
+    {
+        self.cip_descriptors
+            .iter()
+            .map(|(element, descriptor)| (*element, *descriptor))
+    }
+
+    /// Returns the installed descriptor for one stereo element, when assigned.
+    pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
+        self.cip_descriptors.get(&element).copied()
     }
 }
 
@@ -195,20 +262,26 @@ impl PerceptionState {
         self.aromaticity.as_ref()
     }
 
+    /// Returns the exact installed stereo-perception section.
+    pub const fn stereo_state(&self) -> Option<&StereoPerceptionState> {
+        self.stereo.as_ref()
+    }
+
     /// Iterates every installed CIP descriptor assignment.
     pub fn cip_descriptors(
         &self,
     ) -> impl ExactSizeIterator<Item = (StereoElementId, StereoDescriptor)> + DoubleEndedIterator + '_
     {
-        self.cip_descriptors
+        self.stereo
+            .as_ref()
+            .map(|state| &state.cip_descriptors)
+            .unwrap_or(&EMPTY_CIP_DESCRIPTORS)
             .iter()
             .map(|(element, descriptor)| (*element, *descriptor))
     }
 
     pub fn has_valence(&self) -> bool {
-        self.valence
-            .as_ref()
-            .is_some_and(|state| state.model.is_some())
+        self.valence.is_some()
     }
 
     pub fn has_rings(&self) -> bool {
@@ -219,10 +292,26 @@ impl PerceptionState {
         self.aromaticity.is_some()
     }
 
-    pub fn has_cip_descriptors(&self) -> bool {
-        !self.cip_descriptors.is_empty()
+    /// Returns whether stereo perception, including an empty CIP result, is installed.
+    pub fn has_stereo(&self) -> bool {
+        self.stereo.is_some()
     }
 
+    /// Returns whether the installed stereo section contains any CIP assignments.
+    ///
+    /// This is a payload query, not a section-presence query. Use
+    /// [`Self::has_stereo`] to distinguish an absent section from a successful
+    /// CIP derivation with no assignments.
+    pub fn has_cip_descriptors(&self) -> bool {
+        self.stereo
+            .as_ref()
+            .is_some_and(|state| !state.cip_descriptors.is_empty())
+    }
+
+    /// Returns the named valence model, if the installed section has provenance.
+    ///
+    /// Use [`Self::has_valence`] or [`Self::valence_state`] to distinguish an
+    /// absent section from installed model-neutral valence.
     pub fn valence_model(&self) -> Option<ValenceModel> {
         self.valence.as_ref().and_then(|state| state.model)
     }
@@ -238,7 +327,19 @@ impl PerceptionState {
     }
 
     pub fn ring_set(&self) -> Option<&RingSet> {
-        self.rings.as_ref().and_then(|state| state.rings.as_ref())
+        self.rings.as_ref().and_then(RingPerceptionState::ring_set)
+    }
+
+    /// Returns the named ring-basis model, if a named basis is installed.
+    ///
+    /// Use [`Self::ring_state`] and [`RingPerceptionState::basis`] to
+    /// distinguish absent ring perception, membership-only state, and an
+    /// installed model-neutral basis.
+    pub fn ring_basis_model(&self) -> Option<RingBasisModel> {
+        self.rings
+            .as_ref()
+            .and_then(RingPerceptionState::basis)
+            .and_then(RingBasisState::model)
     }
 
     pub fn aromaticity_model(&self) -> Option<AromaticityModel> {
@@ -258,7 +359,9 @@ impl PerceptionState {
     }
 
     pub fn cip_descriptor(&self, element: StereoElementId) -> Option<StereoDescriptor> {
-        self.cip_descriptors.get(&element).copied()
+        self.stereo
+            .as_ref()
+            .and_then(|state| state.cip_descriptor(element))
     }
 }
 
@@ -293,8 +396,8 @@ impl PerceptionStateBuilder {
     }
 
     /// Installs exact ring membership and an optional deterministic ring basis.
-    pub fn with_rings(mut self, membership: RingMembership, rings: Option<RingSet>) -> Self {
-        self.state.rings = Some(RingPerceptionState { membership, rings });
+    pub fn with_rings(mut self, membership: RingMembership, basis: Option<RingBasisState>) -> Self {
+        self.state.rings = Some(RingPerceptionState { membership, basis });
         self
     }
 
@@ -327,7 +430,10 @@ impl PerceptionStateBuilder {
         Ok(self)
     }
 
-    /// Installs the complete CIP descriptor assignment map.
+    /// Installs the complete stereo-perception section.
+    ///
+    /// An empty assignment list intentionally installs a present, empty
+    /// section, recording that CIP derivation completed without assignments.
     pub fn with_cip_descriptors(
         mut self,
         assignments: Vec<(StereoElementId, StereoDescriptor)>,
@@ -342,7 +448,9 @@ impl PerceptionStateBuilder {
                 return Err(PerceptionStateBuildError::DuplicateCipDescriptor(element));
             }
         }
-        self.state.cip_descriptors = descriptors;
+        self.state.stereo = Some(StereoPerceptionState {
+            cip_descriptors: descriptors,
+        });
         Ok(self)
     }
 
@@ -627,14 +735,16 @@ pub(super) fn validate_perception_state(
         }
     }
 
-    for element in state.cip_descriptors.keys().copied() {
-        if molecule
-            .stereo_elements
-            .get(element.index())
-            .and_then(Option::as_ref)
-            .is_none()
-        {
-            return Err(PerceptionStateInstallError::InvalidStereoElementId(element));
+    if let Some(stereo) = &state.stereo {
+        for element in stereo.cip_descriptors.keys().copied() {
+            if molecule
+                .stereo_elements
+                .get(element.index())
+                .and_then(Option::as_ref)
+                .is_none()
+            {
+                return Err(PerceptionStateInstallError::InvalidStereoElementId(element));
+            }
         }
     }
     Ok(())
@@ -684,9 +794,10 @@ fn validate_ring_state(
         }
     }
 
-    let Some(ring_set) = &state.rings else {
+    let Some(basis) = &state.basis else {
         return Ok(());
     };
+    let ring_set = &basis.rings;
     check_install_component_capacity(ring_set.rings().len(), PerceptionStateComponent::Rings)?;
 
     let mut covered_atoms = BTreeSet::new();

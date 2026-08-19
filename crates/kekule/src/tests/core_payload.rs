@@ -184,7 +184,7 @@ fn stereo_elements_and_groups_live_on_molecule() {
             },
         )))
         .expect("stereo element should be stored");
-    assert!(!mol.perception().has_cip_descriptors());
+    assert!(!mol.perception().has_stereo());
 
     let stored = mol.stereo_element(element).expect("stored element");
     assert!(stored.is_specified());
@@ -707,7 +707,7 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     assert!(methane.perception().has_valence());
     assert!(methane.perception().has_rings());
     assert!(!methane.perception().has_aromaticity());
-    assert!(!methane.perception().has_cip_descriptors());
+    assert!(!methane.perception().has_stereo());
 
     let (mut benzene, _, _) = ring_molecule(
         &["C", "C", "C", "C", "C", "C"],
@@ -728,5 +728,5 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     assert!(benzene.perception().has_valence());
     assert!(benzene.perception().has_rings());
     assert!(benzene.perception().has_aromaticity());
-    assert!(!benzene.perception().has_cip_descriptors());
+    assert!(!benzene.perception().has_stereo());
 }

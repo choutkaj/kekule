@@ -238,7 +238,11 @@ pub fn perceive_ring_set_with_options(
         }
     }
     let ring_set = RingSet::from_rings(rings);
-    mol.install_rings(membership, ring_set.clone());
+    mol.install_ring_basis(
+        membership,
+        RingBasisModel::FiguerasSssrLike,
+        ring_set.clone(),
+    );
     Ok(ring_set)
 }
 

@@ -355,7 +355,7 @@ fn absent_perception_remains_absent_after_topology_mutation() {
     assert!(!mol.perception().has_valence());
     assert!(!mol.perception().has_rings());
     assert!(!mol.perception().has_aromaticity());
-    assert!(!mol.perception().has_cip_descriptors());
+    assert!(!mol.perception().has_stereo());
 }
 
 #[test]
