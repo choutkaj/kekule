@@ -271,10 +271,9 @@ coordinate text are not hierarchy topology. They belong to interpretation
 provenance or model-level data.
 
 Experimental source identity may span several represented molecule instances.
-If an observed polymer has a genuine unresolved gap, Kekule does not fabricate
-a bond across it: residual connected fragments become separate
-`MacroMolecule` instances while shared source entity/chain provenance is
-retained.
+If an observed polymer has a genuine unresolved gap, Kekule does not fabricate a
+bond across it: residual connected fragments become separate `MacroMolecule`
+instances while shared source entity/chain provenance is retained.
 
 ### Local conformers
 
