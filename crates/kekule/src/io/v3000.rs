@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::chemistry::localize_source_aromatic_bonds;
+use crate::algorithms::explicit_valence;
+use crate::chemistry::{localize_source_aromatic_bonds, project_molfile_stereo_bond_marks};
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::io::{MolWriteError, MolfileParseOptions, SdfParseError};
@@ -58,6 +59,8 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
     let program = "kekule";
     let comment = "";
     let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
+    let projected_stereo = project_molfile_stereo_bond_marks(mol, StereoSource::MolfileV3000)
+        .map_err(MolWriteError::new)?;
 
     let mut out = String::new();
     out.push_str(&format!("{title}\n{program}\n{comment}\n"));
@@ -69,11 +72,6 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
         bonds.len()
     ));
     out.push_str("M  V30 BEGIN ATOM\n");
-    if mol.stereo_elements().next().is_some() {
-        return Err(MolWriteError::new(
-            "V3000 writer does not support stereo elements",
-        ));
-    }
     for atom_id in &atoms {
         let atom = mol
             .atom(*atom_id)
@@ -102,6 +100,11 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
         if let Some(radical) = atom.radical {
             out.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
+        if atom.explicit_hydrogens > 0 {
+            out.push_str(&format!(" HCOUNT={}", atom.explicit_hydrogens));
+        } else if atom.no_implicit_hydrogens {
+            out.push_str(&format!(" VAL={}", explicit_valence(mol, *atom_id)));
+        }
         out.push('\n');
     }
     out.push_str("M  V30 END ATOM\n");
@@ -118,7 +121,11 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
         let order_code = v3000_bond_code(bond.order)?;
         out.push_str(&format!("M  V30 {serial} {order_code} {a} {b}"));
-        if let Some(cfg) = v3000_bond_cfg(bond.order, mol.stereo_bond_mark(*bond_id))? {
+        let stereo = mol
+            .stereo_bond_mark(*bond_id)
+            .map(|mark| mark.kind)
+            .or_else(|| projected_stereo.get(bond_id).copied());
+        if let Some(cfg) = v3000_bond_cfg(bond.order, stereo)? {
             out.push_str(&format!(" CFG={cfg}"));
         }
         out.push('\n');
@@ -916,9 +923,9 @@ fn v3000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 
 fn v3000_bond_cfg(
     order: BondOrder,
-    stereo: Option<&StereoBondMark>,
+    stereo: Option<StereoBondMarkKind>,
 ) -> std::result::Result<Option<u8>, MolWriteError> {
-    match (order, stereo.map(|mark| mark.kind)) {
+    match (order, stereo) {
         (_, None) => Ok(None),
         (BondOrder::Single, Some(StereoBondMarkKind::WedgeUp)) => Ok(Some(1)),
         (BondOrder::Single, Some(StereoBondMarkKind::WedgeEither)) => Ok(Some(2)),

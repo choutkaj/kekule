@@ -662,7 +662,6 @@ mod tests {
             molecule.graph().bond(protected_single).unwrap().order,
             BondOrder::Single
         );
-        molecule.normalize().expect("normalization succeeds");
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
         perceive_ring_set(molecule.graph_mut()).expect("rings");
@@ -693,10 +692,9 @@ mod tests {
     }
 
     #[test]
-    fn normalized_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
+    fn canonical_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::small::SmallMolecule::from_smiles(input).expect("dye parses");
-        molecule.normalize().expect("normalization succeeds");
         assert!(!molecule.graph().perception().has_aromaticity());
         let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
@@ -780,7 +778,6 @@ mod tests {
         for smiles in ["C1=C[C+]=CC(=C1)N", "C1=C[C+]=CC(=C1)C=O"] {
             let mut molecule =
                 crate::small::SmallMolecule::from_smiles(smiles).expect("carbocation parses");
-            molecule.normalize().expect("carbocation normalizes");
             molecule.perceive().expect("carbocation perceives");
             assert!(
                 molecule.graph().atom_ids().all(|atom_id| {

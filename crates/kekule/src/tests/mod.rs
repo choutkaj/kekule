@@ -1,8 +1,7 @@
 use crate::bio::*;
+use crate::chemistry::*;
 use crate::core::*;
 use crate::geometry::Point3;
-use crate::normalization as normalization_api;
-use crate::normalization::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
     valence as valence_api, valence::*,
@@ -53,21 +52,32 @@ pub(super) fn read_smiles_component(
         })
 }
 
-pub(super) fn normalize_and_perceive(
+pub(super) fn perceive(
     molecule: &mut SmallMolecule,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    molecule.normalize_and_perceive()?;
+    molecule.perceive()?;
     Ok(())
 }
 
-pub(super) fn declare_explicit_fixture_hydrogen(molecule: &mut SmallMolecule, atom_id: AtomId) {
-    let mut atom = molecule
-        .graph_mut()
-        .atom_mut(atom_id)
-        .expect("fixture atom should be live");
-    assert_eq!(atom.explicit_hydrogens, 0);
-    atom.explicit_hydrogens = 1;
-    atom.no_implicit_hydrogens = true;
+pub(super) fn read_smiles_with_report(
+    input: &str,
+) -> std::result::Result<(SmallMolecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
+    let document = smiles_api::parse_str(input)?;
+    Ok(smiles_api::interpret(&document)?.into_parts()?)
+}
+
+pub(super) trait CanonicalizeFixture {
+    fn canonicalize_fixture(
+        &mut self,
+    ) -> std::result::Result<NormalizationReport, NormalizationError>;
+}
+
+impl CanonicalizeFixture for SmallMolecule {
+    fn canonicalize_fixture(
+        &mut self,
+    ) -> std::result::Result<NormalizationReport, NormalizationError> {
+        canonicalize_molecule_for_publication(self.graph_mut())
+    }
 }
 
 pub(super) fn read_molfile(
@@ -75,6 +85,16 @@ pub(super) fn read_molfile(
 ) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
     let document = molfile::parse_str(input)?;
     Ok(molfile::interpret(&document)?.into_molecule())
+}
+
+pub(super) fn read_molfile_with_report(
+    input: &str,
+) -> std::result::Result<
+    (SmallMolecule, molfile::MolfileInterpretationReport),
+    Box<dyn std::error::Error>,
+> {
+    let document = molfile::parse_str(input)?;
+    Ok(molfile::interpret(&document)?.into_parts())
 }
 
 pub(super) fn read_sdf_records(

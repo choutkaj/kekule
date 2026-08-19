@@ -1,7 +1,6 @@
 use super::*;
 
-fn normalize_and_perceive(molecule: &mut SmallMolecule) {
-    molecule.normalize().expect("molecule should normalize");
+fn perceive(molecule: &mut SmallMolecule) {
     molecule.perceive().expect("molecule should be perceived");
 }
 
@@ -759,7 +758,7 @@ fn stereo_perception_benchmark_records_reference_preparation_errors_per_record()
 
     assert_eq!(
         value.get("status").and_then(Value::as_str),
-        Some("normalization_or_perception_error")
+        Some("perception_error")
     );
     assert!(value.get("report").is_none());
 }
@@ -845,7 +844,9 @@ fn smiles_component_benchmarks_preserve_source_record_cardinality() {
     assert_eq!(stereo["records"][0]["atom_count"], 4);
     assert_eq!(stereo["records"][0]["bond_count"], 1);
     assert!(stereo["records"][0]["report"].get("candidates").is_some());
-    assert!(stereo["records"][0].get("normalization_report").is_none());
+    assert!(stereo["records"][0]
+        .get("source_stereo_element_indices")
+        .is_none());
 
     let stereo_fixture = root.join("stereo.smi");
     fs::write(&stereo_fixture, "F/C=C/F.F/C=C/F directional\n")
@@ -928,14 +929,14 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
 
     let aromatic = SmallMolecule::from_smiles("c1ccccc1").expect("benzene should parse");
     let mut perceived_aromatic = aromatic.clone();
-    normalize_and_perceive(&mut perceived_aromatic);
+    perceive(&mut perceived_aromatic);
     assert_eq!(
         explicit_valence_json(perceived_aromatic.graph(), AtomId::new(0)),
         3
     );
     let mut aromatic_cyclohexyne =
         SmallMolecule::from_smiles("C1=CC#CC=C1").expect("cyclohexyne parses");
-    normalize_and_perceive(&mut aromatic_cyclohexyne);
+    perceive(&mut aromatic_cyclohexyne);
     let alkyne_atoms = aromatic_cyclohexyne
         .graph()
         .bonds()
@@ -959,7 +960,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         4
     );
     let mut thiophene = SmallMolecule::from_smiles("c1ccsc1").expect("thiophene parses");
-    normalize_and_perceive(&mut thiophene);
+    perceive(&mut thiophene);
     let sulfur_id = thiophene
         .graph()
         .atoms()
@@ -969,7 +970,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     let mut phosphorus_ring =
         SmallMolecule::from_smiles("C(F)(F)(F)P1P(P(P(P1C(F)(F)F)C(F)(F)F)C(F)(F)F)C(F)(F)F")
             .expect("phosphorus ring parses");
-    normalize_and_perceive(&mut phosphorus_ring);
+    perceive(&mut phosphorus_ring);
     for (phosphorus_id, _phosphorus) in phosphorus_ring
         .graph()
         .atoms()
@@ -988,7 +989,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         );
     }
     let mut phosphinine = SmallMolecule::from_smiles("C1=CC=PC=C1").expect("phosphinine parses");
-    normalize_and_perceive(&mut phosphinine);
+    perceive(&mut phosphinine);
     let phosphinine_phosphorus = phosphinine
         .graph()
         .atoms()
@@ -1004,7 +1005,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .expect("anionic macrocycle mixture interprets")
         .into_molecules()
         .swap_remove(1);
-    normalize_and_perceive(&mut anionic_macrocycle);
+    perceive(&mut anionic_macrocycle);
     let anionic_nitrogen = anionic_macrocycle
         .graph()
         .atoms()
@@ -1026,7 +1027,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
     let mut cyclopentadienyl = SmallMolecule::from_smiles("[CH-]1[C-]=[C-][C-]=[C-]1")
         .expect("cyclopentadienyl anion parses");
-    normalize_and_perceive(&mut cyclopentadienyl);
+    perceive(&mut cyclopentadienyl);
     let anionic_carbon_with_h = cyclopentadienyl
         .graph()
         .atoms()
@@ -1049,7 +1050,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
     );
     let mut substituted_cyclopentadienyl = SmallMolecule::from_smiles("C[C-]1[C-]=[C-][C-]=[C-]1")
         .expect("substituted cyclopentadienyl parses");
-    normalize_and_perceive(&mut substituted_cyclopentadienyl);
+    perceive(&mut substituted_cyclopentadienyl);
     let substituted_anionic_carbon = substituted_cyclopentadienyl
         .graph()
         .atoms()
@@ -1082,7 +1083,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
     )
     .expect("fused triazine should parse");
-    normalize_and_perceive(&mut fused_triazine);
+    perceive(&mut fused_triazine);
     let tricoordinate_aromatic_nitrogen = fused_triazine
         .graph()
         .atoms()
@@ -1157,7 +1158,7 @@ fn canonical_smiles_records_do_not_prefilter_unsupported_categories() {
 }
 
 #[test]
-fn canonical_smiles_benchmark_normalizes_and_perceives_before_writing() {
+fn canonical_smiles_benchmark_perceives_before_writing() {
     let root = temp_workspace_root("canonical-perceive-before-write");
     let fixture = root.join("fixture.smi");
     fs::write(&fixture, "C1=CC=CC=C1 CID:benzene\n").expect("fixture should write");

@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::algorithms::{
     compute_graph_ring_membership, graph_bond_in_ring_smaller_than, validate_stereo,
     RingMembership, StereoValidationError,
@@ -70,6 +72,115 @@ pub(super) fn normalize_source_stereo(
         created_stereo_elements,
         warnings,
     })
+}
+
+/// Project canonical stereo elements into format-local Molfile bond marks.
+///
+/// The marks are detached writer state and are never stored back on the
+/// canonical molecule. Candidate projections are verified by decoding them
+/// with the same source-stereo kernel used during interpretation.
+pub(crate) fn project_molfile_stereo_bond_marks(
+    molecule: &Molecule,
+    source: StereoSource,
+) -> std::result::Result<BTreeMap<BondId, StereoBondMarkKind>, String> {
+    if molecule.stereo_elements().next().is_none() {
+        return Ok(BTreeMap::new());
+    }
+    if molecule.stereo_bond_marks().next().is_some() {
+        return Err(
+            "Molfile writer cannot mix canonical stereo elements with source bond marks".to_owned(),
+        );
+    }
+    if molecule.stereo_groups().next().is_some() {
+        return Err("Molfile writer does not support stereo groups".to_owned());
+    }
+
+    let mut projected = BTreeMap::new();
+    let mut occupied = BTreeSet::new();
+    for (_, target) in molecule.stereo_elements() {
+        let candidates = molfile_projection_candidates(molecule, target)?;
+        let mut selected = None;
+        for (bond, kind) in candidates {
+            if occupied.contains(&bond) {
+                continue;
+            }
+            let mut staged = molecule.clone();
+            staged.stereo_elements.clear();
+            staged.stereo_groups.clear();
+            staged.stereo_bond_marks.clear();
+            staged.perception = PerceptionState::default();
+            staged
+                .set_stereo_bond_mark(StereoBondMark { bond, kind, source })
+                .map_err(|error| error.to_string())?;
+            let Ok(report) = normalize_source_stereo(&mut staged) else {
+                continue;
+            };
+            if !report.warnings.is_empty() || report.created_stereo_elements.len() != 1 {
+                continue;
+            }
+            let Ok(decoded) = staged.stereo_element(report.created_stereo_elements[0]) else {
+                continue;
+            };
+            if decoded.kind == target.kind && decoded.specifiedness == target.specifiedness {
+                selected = Some((bond, kind));
+                break;
+            }
+        }
+        let Some((bond, kind)) = selected else {
+            return Err(format!(
+                "Molfile writer cannot encode canonical stereo element {:?}",
+                target.kind
+            ));
+        };
+        occupied.insert(bond);
+        projected.insert(bond, kind);
+    }
+    Ok(projected)
+}
+
+fn molfile_projection_candidates(
+    molecule: &Molecule,
+    element: &StereoElement,
+) -> std::result::Result<Vec<(BondId, StereoBondMarkKind)>, String> {
+    let kinds = match element.specifiedness {
+        StereoSpecifiedness::Specified => {
+            vec![StereoBondMarkKind::WedgeUp, StereoBondMarkKind::WedgeDown]
+        }
+        StereoSpecifiedness::Unknown => vec![StereoBondMarkKind::WedgeEither],
+        StereoSpecifiedness::Unspecified | StereoSpecifiedness::InvalidCleared => {
+            return Err("Molfile writer cannot encode unspecified or cleared stereo".to_owned());
+        }
+    };
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => Ok(molecule
+            .incident_bonds(stereo.center)
+            .map_err(|error| error.to_string())?
+            .filter(|(_, bond)| bond.order == BondOrder::Single)
+            .flat_map(|(bond, _)| kinds.iter().copied().map(move |kind| (bond, kind)))
+            .collect()),
+        StereoElementKind::Axis(stereo) => {
+            if element.specifiedness != StereoSpecifiedness::Specified {
+                return Err("Molfile writer cannot encode unknown axis stereo".to_owned());
+            }
+            let axis = molecule
+                .bond(stereo.axis)
+                .map_err(|error| error.to_string())?;
+            Ok([axis.a(), axis.b()]
+                .into_iter()
+                .flat_map(|endpoint| molecule.incident_bonds(endpoint).ok().into_iter().flatten())
+                .filter(|(bond, value)| *bond != stereo.axis && value.order == BondOrder::Single)
+                .flat_map(|(bond, _)| kinds.iter().copied().map(move |kind| (bond, kind)))
+                .collect())
+        }
+        StereoElementKind::DoubleBond(stereo)
+            if element.specifiedness == StereoSpecifiedness::Unknown =>
+        {
+            Ok(vec![(stereo.bond, StereoBondMarkKind::DoubleBondEither)])
+        }
+        StereoElementKind::DoubleBond(_) => {
+            Err("Molfile writer cannot encode specified double-bond stereo".to_owned())
+        }
+    }
 }
 
 fn source_validation_error(error: StereoValidationError) -> SourceStereoNormalizationError {
