@@ -191,8 +191,10 @@ transformation and invalidates dependent perception.
 ### Stereo representation versus stereo perception
 
 Canonical stereochemical representation belongs to `Molecule`. Local stereo
-focus, carriers, orientation, specifiedness where semantically required, and
-stereo-group relationships are represented chemistry.
+focus, carriers, a concrete or explicitly unknown configuration, and
+stereo-group relationships are represented chemistry. Absence of a stereo
+element means stereo was not asserted; a present element without an orientation
+means its configuration was explicitly asserted as unknown.
 
 CIP descriptors are derived chemistry and belong to `PerceptionState`. They are
 not stored as fundamental atom/bond/stereo-element identity because descriptors
@@ -202,9 +204,8 @@ local represented stereo orientation.
 Source stereo marks such as molfile wedges or SMILES directional bonds are
 interpretation inputs, not canonical `Molecule` state. Interpretation converts
 them into canonical `StereoElement` state or reports a failure/diagnostic before
-publication. Source-format provenance similarly belongs to mappings/reports or
-annotations, not to the canonical stereo element unless it is itself chemically
-meaningful.
+publication. Source-format provenance similarly belongs to mappings, reports,
+or local operation context, never to the canonical stereo element.
 
 ### `PerceptionState`
 

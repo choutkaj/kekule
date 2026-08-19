@@ -2504,14 +2504,6 @@ pub(crate) fn stereo_element_json(
 ) -> Value {
     let mut object = serde_json::Map::new();
     object.insert("index".to_owned(), json!(index));
-    object.insert(
-        "specifiedness".to_owned(),
-        json!(stereo_specifiedness_json(element.specifiedness)),
-    );
-    object.insert(
-        "source".to_owned(),
-        json!(stereo_source_json(element.source)),
-    );
     if let Some(group) = element.group {
         object.insert("group_index".to_owned(), json!(group.raw()));
     }
@@ -2537,7 +2529,7 @@ pub(crate) fn stereo_element_json(
             );
             object.insert(
                 "orientation".to_owned(),
-                json!(tetrahedral_orientation_json(stereo.orientation)),
+                json!(stereo.orientation.map(tetrahedral_orientation_json)),
             );
         }
         StereoElementKind::DoubleBond(stereo) => {
@@ -2555,7 +2547,7 @@ pub(crate) fn stereo_element_json(
             );
             object.insert(
                 "orientation".to_owned(),
-                json!(double_bond_orientation_json(stereo.orientation)),
+                json!(stereo.orientation.map(double_bond_orientation_json)),
             );
         }
         StereoElementKind::Axis(stereo) => {
@@ -2573,7 +2565,7 @@ pub(crate) fn stereo_element_json(
             );
             object.insert(
                 "orientation".to_owned(),
-                json!(axis_orientation_json(stereo.orientation)),
+                json!(stereo.orientation.map(axis_orientation_json)),
             );
         }
     }
@@ -2599,27 +2591,6 @@ pub(crate) fn stereo_carrier_json(carrier: &StereoCarrier) -> Value {
         StereoCarrier::Atom(atom) => json!({ "atom_index": atom.raw() }),
         StereoCarrier::ImplicitHydrogen => json!({ "implicit_hydrogen": true }),
         StereoCarrier::ImplicitLonePair => json!({ "implicit_lone_pair": true }),
-    }
-}
-
-pub(crate) fn stereo_specifiedness_json(specifiedness: StereoSpecifiedness) -> &'static str {
-    match specifiedness {
-        StereoSpecifiedness::Specified => "specified",
-        StereoSpecifiedness::Unknown => "unknown",
-        StereoSpecifiedness::Unspecified => "unspecified",
-        StereoSpecifiedness::InvalidCleared => "invalid_cleared",
-    }
-}
-
-pub(crate) fn stereo_source_json(source: StereoSource) -> &'static str {
-    match source {
-        StereoSource::Smiles => "smiles",
-        StereoSource::MolfileV2000 => "molfile_v2000",
-        StereoSource::MolfileV3000 => "molfile_v3000",
-        StereoSource::Coordinates2D => "coordinates_2d",
-        StereoSource::Coordinates3D => "coordinates_3d",
-        StereoSource::Reaction => "reaction",
-        StereoSource::User => "user",
     }
 }
 

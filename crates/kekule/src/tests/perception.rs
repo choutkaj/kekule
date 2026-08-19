@@ -1026,10 +1026,8 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
                     StereoCarrier::Atom(a),
                     StereoCarrier::Atom(b),
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
+                orientation: None,
             }),
-            specifiedness: StereoSpecifiedness::Unknown,
-            source: StereoSource::User,
             group: None,
         })
         .expect("stereo element");
@@ -1059,9 +1057,10 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
             center,
             carrier: StereoCarrier::Atom(b),
         }));
-    assert!(
-        mol.stereo_element(element).expect("element").specifiedness == StereoSpecifiedness::Unknown
-    );
+    assert!(mol
+        .stereo_element(element)
+        .expect("element")
+        .is_explicitly_unknown());
 }
 
 #[test]
@@ -1083,14 +1082,13 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
     let mut carriers = atom_carriers.clone();
     carriers.push(StereoCarrier::ImplicitHydrogen);
     let hydrogen_element = tetrahedral
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers,
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("tetrahedral stereo element");
 
     stereo_api::validate_stereo(&tetrahedral)
@@ -1101,14 +1099,13 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         .expect("remove hydrogen-carrier element");
     atom_carriers.push(StereoCarrier::ImplicitLonePair);
     tetrahedral
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: atom_carriers,
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("tetrahedral stereo element");
     stereo_api::validate_stereo(&tetrahedral)
         .expect("implicit lone-pair availability is chemically interpretive");
@@ -1124,17 +1121,16 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         .add_bond(left, right, BondOrder::Double)
         .expect("double bond");
     let double_element = double_bond
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond,
                 left,
                 right,
                 left_carrier: StereoCarrier::ImplicitHydrogen,
                 right_carrier: StereoCarrier::ImplicitLonePair,
-                orientation: DoubleBondOrientation::Together,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Together),
+            },
+        )))
         .expect("double-bond stereo element");
 
     let error = stereo_api::validate_stereo(&double_bond)
@@ -1155,17 +1151,14 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         .add_bond(axis_left, axis_right, BondOrder::Single)
         .expect("axis bond");
     let axis_element = axis
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis: axis_bond,
-                carriers: vec![
-                    StereoCarrier::ImplicitHydrogen,
-                    StereoCarrier::ImplicitLonePair,
-                ],
-                orientation: AxisOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis: axis_bond,
+            carriers: vec![
+                StereoCarrier::ImplicitHydrogen,
+                StereoCarrier::ImplicitLonePair,
+            ],
+            orientation: Some(AxisOrientation::Clockwise),
+        })))
         .expect("axis stereo element");
 
     let error = stereo_api::validate_stereo(&axis)
@@ -1222,7 +1215,7 @@ fn interpretation_assembles_paired_directional_marks_into_double_bond_element() 
             assert_eq!(stereo.right, AtomId::new(2));
             assert_eq!(stereo.left_carrier, StereoCarrier::Atom(AtomId::new(0)));
             assert_eq!(stereo.right_carrier, StereoCarrier::Atom(AtomId::new(3)));
-            assert_eq!(stereo.orientation, DoubleBondOrientation::Together);
+            assert_eq!(stereo.orientation, Some(DoubleBondOrientation::Together));
         }
         other => panic!("expected double-bond stereo, found {other:?}"),
     }
@@ -1313,8 +1306,7 @@ M  END
         .graph()
         .stereo_element(report.created_stereo_elements()[0])
         .expect("created stereo element");
-    assert_eq!(element.specifiedness, StereoSpecifiedness::Specified);
-    assert_eq!(element.source, StereoSource::MolfileV2000);
+    assert!(element.is_specified());
     match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => {
             assert_eq!(stereo.center, AtomId::new(0));
@@ -1327,10 +1319,74 @@ M  END
                     StereoCarrier::Atom(AtomId::new(4)),
                 ]
             );
-            assert_eq!(stereo.orientation, TetrahedralOrientation::CounterClockwise);
+            assert_eq!(
+                stereo.orientation,
+                Some(TetrahedralOrientation::CounterClockwise)
+            );
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
+}
+
+#[test]
+fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_sources() {
+    let smiles = read_smiles("F[C@](Cl)(Br)I").expect("tetrahedral SMILES should interpret");
+    let expected = smiles
+        .graph()
+        .stereo_elements()
+        .next()
+        .expect("SMILES should create canonical tetrahedral stereo")
+        .1
+        .clone();
+
+    for written in [
+        molfile::write_v2000(&smiles).expect("canonical stereo should project to V2000"),
+        molfile::write_v3000(&smiles).expect("canonical stereo should project to V3000"),
+    ] {
+        let interpreted = read_molfile(&written).expect("projected Molfile should interpret");
+        let actual = interpreted
+            .graph()
+            .stereo_elements()
+            .next()
+            .expect("Molfile should recreate canonical tetrahedral stereo")
+            .1;
+        assert_eq!(actual, &expected);
+    }
+
+    let mut manual = Molecule::new();
+    let fluorine = manual
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let center = manual.add_atom(carbon()).expect("atom identifier capacity");
+    let chlorine = manual
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let bromine = manual
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
+    let iodine = manual
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
+    for carrier in [fluorine, chlorine, bromine, iodine] {
+        manual
+            .add_bond(center, carrier, BondOrder::Single)
+            .expect("tetrahedral carrier bond");
+    }
+    let manual_id = manual
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(fluorine),
+                    StereoCarrier::Atom(chlorine),
+                    StereoCarrier::Atom(bromine),
+                    StereoCarrier::Atom(iodine),
+                ],
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
+        .expect("manual canonical stereo element");
+    assert_eq!(manual.stereo_element(manual_id).unwrap(), &expected);
 }
 
 #[test]
@@ -1354,7 +1410,10 @@ fn interpretation_uses_source_declared_h_for_molfile_wedge_geometry() {
                     StereoCarrier::ImplicitHydrogen,
                 ]
             );
-            assert_eq!(stereo.orientation, TetrahedralOrientation::CounterClockwise);
+            assert_eq!(
+                stereo.orientation,
+                Some(TetrahedralOrientation::CounterClockwise)
+            );
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
@@ -1367,7 +1426,6 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
         bond: marked_bond,
         from: center,
         kind: SourceStereoBondMarkKind::WedgeEither,
-        source: StereoSource::MolfileV2000,
     }];
 
     let report = canonicalize_molecule_for_publication(&mut mol, &source_stereo)
@@ -1376,11 +1434,12 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
     let element = mol
         .stereo_element(report.created_stereo_elements[0])
         .expect("created stereo element");
-    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
+    assert!(element.is_explicitly_unknown());
     match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => {
             assert_eq!(stereo.center, center);
             assert_eq!(stereo.carriers[0], StereoCarrier::Atom(carriers[0]));
+            assert_eq!(stereo.orientation, None);
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
@@ -1405,7 +1464,6 @@ fn source_stereo_rejects_an_origin_outside_the_marked_bond() {
         bond,
         from: outside,
         kind: SourceStereoBondMarkKind::WedgeUp,
-        source: StereoSource::MolfileV2000,
     }];
 
     let error = canonicalize_molecule_for_publication(&mut molecule, &source_stereo)
@@ -1430,13 +1488,11 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
             bond: first_bond,
             from: center,
             kind: SourceStereoBondMarkKind::WedgeUp,
-            source: StereoSource::MolfileV2000,
         },
         SourceStereoBondMark {
             bond: second_bond,
             from: center,
             kind: SourceStereoBondMarkKind::WedgeDown,
-            source: StereoSource::MolfileV2000,
         },
     ];
 
@@ -1496,7 +1552,6 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
     let proposed = &inferred.elements[0];
-    assert_eq!(proposed.source, StereoSource::Coordinates3D);
     match &proposed.kind {
         StereoElementKind::Tetrahedral(stereo) => {
             assert_eq!(stereo.center, center);
@@ -1508,7 +1563,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
                     .map(StereoCarrier::Atom)
                     .collect::<Vec<_>>()
             );
-            assert_eq!(stereo.orientation, TetrahedralOrientation::Clockwise);
+            assert_eq!(stereo.orientation, Some(TetrahedralOrientation::Clockwise));
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
@@ -1571,7 +1626,6 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
     let proposed = &inferred.elements[0];
-    assert_eq!(proposed.source, StereoSource::Coordinates2D);
     match &proposed.kind {
         StereoElementKind::DoubleBond(stereo) => {
             assert_eq!(stereo.bond, double_bond);
@@ -1579,7 +1633,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
             assert_eq!(stereo.right, right);
             assert_eq!(stereo.left_carrier, StereoCarrier::Atom(left_carrier));
             assert_eq!(stereo.right_carrier, StereoCarrier::Atom(right_carrier));
-            assert_eq!(stereo.orientation, DoubleBondOrientation::Opposite);
+            assert_eq!(stereo.orientation, Some(DoubleBondOrientation::Opposite));
         }
         other => panic!("expected double-bond stereo, found {other:?}"),
     }
@@ -1609,7 +1663,6 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
     let element = &inferred.elements[0];
-    assert_eq!(element.source, StereoSource::Coordinates3D);
     match &element.kind {
         StereoElementKind::Axis(stereo) => {
             assert_eq!(stereo.axis, axis);
@@ -1620,7 +1673,7 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
                     StereoCarrier::Atom(AtomId::new(4)),
                 ]
             );
-            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+            assert_eq!(stereo.orientation, Some(AxisOrientation::Clockwise));
         }
         other => panic!("expected axis stereo, found {other:?}"),
     }
@@ -1659,14 +1712,13 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
             .unwrap();
     }
     mol.add_conformer(conformer).expect("valid conformer");
-    mol.add_stereo_element(StereoElement::specified(
-        StereoElementKind::Tetrahedral(TetrahedralStereo {
+    mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+        TetrahedralStereo {
             center,
             carriers: carriers.iter().copied().map(StereoCarrier::Atom).collect(),
-            orientation: TetrahedralOrientation::CounterClockwise,
-        }),
-        StereoSource::MolfileV2000,
-    ))
+            orientation: Some(TetrahedralOrientation::CounterClockwise),
+        },
+    )))
     .expect("represented source stereo");
 
     let inferred = stereo_api::infer_coordinate_stereo(&mol)
@@ -1681,18 +1733,17 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
 #[test]
 fn coordinate_stereo_materialization_is_transactional_on_invalid_representation() {
     let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
-    mol.add_stereo_element(StereoElement::specified(
-        StereoElementKind::Tetrahedral(TetrahedralStereo {
+    mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+        TetrahedralStereo {
             center,
             carriers: vec![
                 StereoCarrier::Atom(carriers[0]),
                 StereoCarrier::Atom(carriers[0]),
                 StereoCarrier::Atom(carriers[1]),
             ],
-            orientation: TetrahedralOrientation::Clockwise,
-        }),
-        StereoSource::User,
-    ))
+            orientation: Some(TetrahedralOrientation::Clockwise),
+        },
+    )))
     .expect("reference-valid but structurally invalid stereo");
     let before = mol.clone();
 
@@ -1704,7 +1755,7 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
 }
 
 #[test]
-fn normalization_reports_unassembled_detached_marks_and_preserves_absence() {
+fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_element() {
     let mut marked = Molecule::new();
     let a = marked.add_atom(carbon()).expect("atom identifier capacity");
     let b = marked.add_atom(carbon()).expect("atom identifier capacity");
@@ -1713,7 +1764,6 @@ fn normalization_reports_unassembled_detached_marks_and_preserves_absence() {
         bond,
         from: a,
         kind: SourceStereoBondMarkKind::WedgeEither,
-        source: StereoSource::MolfileV2000,
     }];
 
     let coordinate_result = stereo_api::infer_coordinate_stereo(&marked)
@@ -1746,7 +1796,6 @@ fn normalization_reports_unassembled_detached_marks_and_preserves_absence() {
         bond: double_bond,
         from: c,
         kind: SourceStereoBondMarkKind::DoubleBondEither,
-        source: StereoSource::MolfileV2000,
     }];
     let unsupported_error =
         canonicalize_molecule_for_publication(&mut unsupported, &unsupported_source)
@@ -1786,17 +1835,16 @@ fn normalization_reports_unassembled_detached_marks_and_preserves_absence() {
         bond: unknown_bond,
         from: left,
         kind: SourceStereoBondMarkKind::DoubleBondEither,
-        source: StereoSource::MolfileV2000,
     }];
 
     let unknown_report = canonicalize_molecule_for_publication(&mut unknown, &unknown_source)
         .expect("double-bond either should assemble as unknown stereo");
     assert_eq!(unknown_report.created_stereo_elements.len(), 1);
     let (_, element) = unknown.stereo_elements().next().expect("unknown element");
-    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
     assert!(matches!(
         &element.kind,
-        StereoElementKind::DoubleBond(stereo) if stereo.bond == unknown_bond
+        StereoElementKind::DoubleBond(stereo)
+            if stereo.bond == unknown_bond && stereo.orientation.is_none()
     ));
 
     let mut absent = Molecule::new();
@@ -1818,7 +1866,6 @@ fn failed_source_stereo_canonicalization_reports_the_unpaired_mark() {
         bond: marked_bond,
         from: molecule.graph().bond(marked_bond).expect("marked bond").a(),
         kind: SourceStereoBondMarkKind::DirectionalUp,
-        source: StereoSource::Smiles,
     }];
     let cip = stereo_api::assign_cip_descriptors(molecule.graph_mut())
         .expect("CIP assignment should succeed");
@@ -1854,17 +1901,14 @@ fn stereo_validation_accepts_structural_axis_elements() {
     mol.add_bond(right, right_carrier, BondOrder::Single)
         .expect("right carrier");
     let valid_axis = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis,
-                carriers: vec![
-                    StereoCarrier::Atom(left_carrier),
-                    StereoCarrier::Atom(right_carrier),
-                ],
-                orientation: AxisOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![
+                StereoCarrier::Atom(left_carrier),
+                StereoCarrier::Atom(right_carrier),
+            ],
+            orientation: Some(AxisOrientation::CounterClockwise),
+        })))
         .expect("axis element");
 
     stereo_api::validate_stereo(&mol).expect("axis should be structurally valid");
@@ -1872,14 +1916,11 @@ fn stereo_validation_accepts_structural_axis_elements() {
     mol.remove_stereo_element(valid_axis)
         .expect("remove valid axis");
     let invalid_axis = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis,
-                carriers: vec![StereoCarrier::Atom(left_carrier)],
-                orientation: AxisOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![StereoCarrier::Atom(left_carrier)],
+            orientation: Some(AxisOrientation::CounterClockwise),
+        })))
         .expect("invalid axis element refs are still structurally present");
 
     let error = stereo_api::validate_stereo(&mol).expect_err("axis should be invalid");
@@ -1903,7 +1944,6 @@ fn interpretation_assembles_molfile_atropisomeric_axis() {
         .graph()
         .stereo_element(report.created_stereo_elements()[0])
         .expect("created axis element");
-    assert_eq!(element.source, StereoSource::MolfileV2000);
     match &element.kind {
         StereoElementKind::Axis(stereo) => {
             assert_eq!(stereo.axis, BondId::new(3));
@@ -1914,7 +1954,7 @@ fn interpretation_assembles_molfile_atropisomeric_axis() {
                     StereoCarrier::Atom(AtomId::new(11)),
                 ]
             );
-            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+            assert_eq!(stereo.orientation, Some(AxisOrientation::Clockwise));
         }
         other => panic!("expected axis stereo, found {other:?}"),
     }
@@ -1946,7 +1986,6 @@ fn molfile_writers_project_tetrahedral_stereo_independent_of_bond_endpoint_stora
                 .stereo_element(report.created_stereo_elements()[0])
                 .expect("reparsed tetrahedral element");
             assert_eq!(actual.kind, expected.kind);
-            assert_eq!(actual.specifiedness, expected.specifiedness);
         }
         assert_eq!(*molecule, before);
     }
@@ -1981,7 +2020,6 @@ fn molfile_writers_project_canonical_axis_stereo_without_mutating_the_molecule()
                 .stereo_element(report.created_stereo_elements()[0])
                 .expect("reparsed axis element");
             assert_eq!(actual.kind, expected.kind);
-            assert_eq!(actual.specifiedness, expected.specifiedness);
         }
         assert_eq!(*molecule, before);
     }
@@ -2006,7 +2044,7 @@ fn interpretation_prefers_exocyclic_molfile_atropisomeric_axis() {
                     StereoCarrier::Atom(AtomId::new(11)),
                 ]
             );
-            assert_eq!(stereo.orientation, AxisOrientation::Clockwise);
+            assert_eq!(stereo.orientation, Some(AxisOrientation::Clockwise));
         }
         other => panic!("expected axis stereo, found {other:?}"),
     }
@@ -2067,14 +2105,13 @@ fn tetrahedral_marked_graph() -> (Molecule, AtomId, Vec<AtomId>, BondId) {
 fn canonical_tetrahedral_molecule() -> SmallMolecule {
     let (mut molecule, center, carriers, _) = tetrahedral_marked_graph();
     molecule
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
-                orientation: TetrahedralOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::CounterClockwise),
+            },
+        )))
         .expect("canonical tetrahedral element");
     SmallMolecule::from_graph(molecule)
 }

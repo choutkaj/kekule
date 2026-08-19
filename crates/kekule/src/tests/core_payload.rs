@@ -153,8 +153,8 @@ fn stereo_elements_and_groups_live_on_molecule() {
     mark_all_fresh(&mut mol);
 
     let element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(a),
@@ -162,16 +162,14 @@ fn stereo_elements_and_groups_live_on_molecule() {
                     StereoCarrier::Atom(c),
                     StereoCarrier::ImplicitHydrogen,
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("stereo element should be stored");
     assert!(!mol.perception().has_cip_descriptors());
 
     let stored = mol.stereo_element(element).expect("stored element");
-    assert_eq!(stored.source, StereoSource::User);
-    assert_eq!(stored.specifiedness, StereoSpecifiedness::Specified);
+    assert!(stored.is_specified());
 
     let group = mol
         .add_stereo_group(StereoGroup {
@@ -197,8 +195,8 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(a),
@@ -206,10 +204,9 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
                     StereoCarrier::Atom(c),
                     StereoCarrier::ImplicitHydrogen,
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("valid stereo element");
     let before = mol.stereo_element(element).expect("element").clone();
     let mut invalid = before.clone();
@@ -250,8 +247,8 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
     let element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(a),
@@ -259,10 +256,9 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
                     StereoCarrier::Atom(c),
                     StereoCarrier::ImplicitHydrogen,
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("stereo element");
     let group = mol
         .add_stereo_group(StereoGroup {
@@ -326,17 +322,16 @@ fn topology_deletions_prune_referencing_stereo_state() {
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("single bond");
 
     let element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond: ab,
                 left: a,
                 right: b,
                 left_carrier: StereoCarrier::Atom(c),
                 right_carrier: StereoCarrier::Atom(c),
-                orientation: DoubleBondOrientation::Opposite,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Opposite),
+            },
+        )))
         .expect("double-bond element");
     mol.add_stereo_group(StereoGroup {
         kind: StereoGroupKind::Relative,
@@ -352,14 +347,13 @@ fn topology_deletions_prune_referencing_stereo_state() {
     mol.delete_bond(ac).expect("delete bond");
 
     let atom_element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center: c,
                 carriers: vec![StereoCarrier::Atom(b), StereoCarrier::ImplicitHydrogen],
-                orientation: TetrahedralOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::CounterClockwise),
+            },
+        )))
         .expect("atom element");
     mol.delete_atom(c).expect("delete atom");
     assert!(mol.stereo_element(atom_element).is_err());

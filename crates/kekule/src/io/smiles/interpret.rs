@@ -8,7 +8,7 @@ use crate::chemistry::{
 };
 use crate::core::{
     Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoCarrier, StereoElement,
-    StereoElementId, StereoElementKind, StereoSource, TetrahedralOrientation, TetrahedralStereo,
+    StereoElementId, StereoElementKind, TetrahedralOrientation, TetrahedralStereo,
 };
 use crate::small::model::SmallMolecule;
 
@@ -402,7 +402,6 @@ fn interpret_smiles_program_component(
                 bond: bond_id,
                 from,
                 kind: interpret_smiles_direction(direction),
-                source: StereoSource::Smiles,
             });
         }
         if source_aromatic {
@@ -614,17 +613,16 @@ fn add_smiles_tetrahedral_elements(
                 .unwrap_or_default(),
             offset,
         )?;
-        mol.add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers,
-                orientation: match pending.orientation {
+                orientation: Some(match pending.orientation {
                     SmilesChiralityToken::At => TetrahedralOrientation::Clockwise,
                     SmilesChiralityToken::AtAt => TetrahedralOrientation::CounterClockwise,
-                },
-            }),
-            StereoSource::Smiles,
-        ))
+                }),
+            },
+        )))
         .map_err(|error| SmilesInterpretError {
             offset,
             message: error.to_string(),
