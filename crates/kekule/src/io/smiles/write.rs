@@ -182,6 +182,11 @@ pub(super) fn validate_smiles_writeable(
                 "SMILES writer cannot encode radicals without an explicit radical token",
             ));
         }
+        if matches!(atom.hydrogens, HydrogenDeclaration::Infer { explicit } if explicit > 0) {
+            return Err(MolWriteError::new(
+                "SMILES cannot encode represented hydrogens while leaving implicit-H inference enabled",
+            ));
+        }
     }
     for (_, bond) in mol.bonds() {
         match bond.order {
@@ -280,7 +285,8 @@ fn validate_isomeric_double_bond_endpoint(
                 .atom(endpoint)
                 .map_err(|error| MolWriteError::new(error.to_string()))?;
             let hydrogens = atom
-                .explicit_hydrogens
+                .hydrogens
+                .explicit_count()
                 .saturating_add(mol.implicit_hydrogens(endpoint).ok().flatten().unwrap_or(0));
             if hydrogens == 0 {
                 return Err(MolWriteError::new(
@@ -1056,7 +1062,7 @@ fn smiles_atom_with_chirality(
     let organic = atom.isotope.is_none()
         && atom.formal_charge == 0
         && explicit_hydrogens == 0
-        && !atom.no_implicit_hydrogens
+        && atom.hydrogens.allows_implicit()
         && atom.atom_map.is_none()
         && chirality.is_none()
         && matches!(
@@ -1129,10 +1135,12 @@ fn smiles_atom_with_style_and_chirality(
         normalized.isotope = None;
         let mut normalized_implicit = implicit_hydrogens;
         if !matches!(atom.element.symbol(), "B" | "C") && implicit_hydrogens > 0 {
-            normalized.explicit_hydrogens =
-                atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
+            normalized.hydrogens = HydrogenDeclaration::Fixed(
+                atom.hydrogens
+                    .explicit_count()
+                    .saturating_add(implicit_hydrogens),
+            );
             normalized_implicit = 0;
-            normalized.no_implicit_hydrogens = true;
         }
         return Ok(smiles_atom_with_chirality(
             &normalized,
@@ -1154,11 +1162,11 @@ fn smiles_atom_with_style_and_chirality(
 fn smiles_atom_explicit_hydrogens(atom: &Atom, aromatic: bool, implicit_hydrogens: u8) -> u8 {
     if atom.element.symbol() == "N"
         && aromatic
-        && atom.explicit_hydrogens == 0
+        && atom.hydrogens.explicit_count() == 0
         && implicit_hydrogens == 1
     {
         1
     } else {
-        atom.explicit_hydrogens
+        atom.hydrogens.explicit_count()
     }
 }

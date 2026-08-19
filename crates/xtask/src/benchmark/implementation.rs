@@ -1278,7 +1278,7 @@ pub(crate) fn conformer_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Va
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
         "isotope": atom.isotope,
-        "explicit_hydrogens": atom.explicit_hydrogens,
+        "explicit_hydrogens": atom.hydrogens.explicit_count(),
         "atom_map": atom.atom_map,
         "aromatic": mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false),
     })
@@ -1772,7 +1772,7 @@ pub(crate) fn hydrogen_transform_semantic_json(mut molecule: SmallMolecule) -> V
                 "formal_charge": atom.formal_charge,
                 "isotope": atom.isotope,
                 "atom_map": atom.atom_map,
-                "encoded_hydrogens": usize::from(atom.explicit_hydrogens)
+                "encoded_hydrogens": usize::from(atom.hydrogens.explicit_count())
                     + usize::from(mol.implicit_hydrogens(id).ok().flatten().unwrap_or(0)),
                 "neighbors": neighbors,
             })
@@ -1979,12 +1979,12 @@ pub(crate) fn smiles_effective_hydrogens(mol: &Molecule, id: AtomId, atom: &Atom
     // retains the represented explicit/perceived implicit split.
     if atom.element.symbol() == "N"
         && mol.atom_is_aromatic(id).ok().flatten() == Some(true)
-        && atom.explicit_hydrogens == 0
+        && atom.hydrogens.explicit_count() == 0
         && implicit == 1
     {
         (1, 0)
     } else {
-        (atom.explicit_hydrogens, implicit)
+        (atom.hydrogens.explicit_count(), implicit)
     }
 }
 
@@ -1996,11 +1996,12 @@ pub(crate) fn smiles_effective_no_implicit_hydrogens(
     if atom.element.symbol() == "N"
         && mol.atom_is_aromatic(id).ok().flatten() == Some(true)
         && atom.formal_charge == 0
-        && (atom.explicit_hydrogens > 0 || mol.implicit_hydrogens(id).ok().flatten() == Some(1))
+        && (atom.hydrogens.explicit_count() > 0
+            || mol.implicit_hydrogens(id).ok().flatten() == Some(1))
     {
         false
     } else {
-        atom.no_implicit_hydrogens
+        !atom.hydrogens.allows_implicit()
     }
 }
 
@@ -2017,7 +2018,7 @@ pub(crate) fn atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
         "isotope": atom.isotope,
-        "explicit_hydrogens": atom.explicit_hydrogens,
+        "explicit_hydrogens": atom.hydrogens.explicit_count(),
         "atom_map": atom.atom_map,
         "radical": atom.radical.map(radical_json),
         "unpaired_electrons": atom.radical.map(AtomRadical::unpaired_electron_count).unwrap_or(0),
@@ -2038,7 +2039,7 @@ pub(crate) fn basic_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value 
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
         "isotope": atom.isotope,
-        "explicit_hydrogens": atom.explicit_hydrogens,
+        "explicit_hydrogens": atom.hydrogens.explicit_count(),
         "atom_map": atom.atom_map,
         "aromatic": mol.atom_is_aromatic(id).ok().flatten().unwrap_or(false),
     })
@@ -2050,9 +2051,9 @@ pub(crate) fn valence_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Valu
         "atomic_number": atom.element.atomic_number(),
         "symbol": atom.element.symbol(),
         "formal_charge": atom.formal_charge,
-        "explicit_hydrogens": atom.explicit_hydrogens,
+        "explicit_hydrogens": atom.hydrogens.explicit_count(),
         "implicit_hydrogens": mol.implicit_hydrogens(id).ok().flatten().unwrap_or(0),
-        "explicit_valence": explicit_valence_json(mol, id) + atom.explicit_hydrogens,
+        "explicit_valence": explicit_valence_json(mol, id) + atom.hydrogens.explicit_count(),
     })
 }
 
@@ -2089,7 +2090,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
         atom_record.element.symbol() == "N"
             && atom_record.formal_charge == 0
             && mol.atom_is_aromatic(atom).ok().flatten() == Some(true)
-            && (atom_record.explicit_hydrogens > 0
+            && (atom_record.hydrogens.explicit_count() > 0
                 || mol.implicit_hydrogens(atom).ok().flatten() == Some(1))
     });
     let doubled: u8 = bonds
@@ -2140,7 +2141,7 @@ fn aromatic_bond_valence_twice(
     }
     match atom.element.symbol() {
         "C" if atom.formal_charge < 0
-            && (atom.explicit_hydrogens > 0
+            && (atom.hydrogens.explicit_count() > 0
                 || has_non_aromatic_bond
                 || aromatic_bond_count >= 3) =>
         {
@@ -2148,12 +2149,16 @@ fn aromatic_bond_valence_twice(
         }
         "P" | "As" | "Sb"
             if atom.formal_charge == 0
-                && atom.explicit_hydrogens == 0
+                && atom.hydrogens.explicit_count() == 0
                 && (has_non_aromatic_bond || aromatic_bond_count >= 3) =>
         {
             2
         }
-        "O" | "S" | "Se" | "Te" if atom.formal_charge == 0 && atom.explicit_hydrogens == 0 => 2,
+        "O" | "S" | "Se" | "Te"
+            if atom.formal_charge == 0 && atom.hydrogens.explicit_count() == 0 =>
+        {
+            2
+        }
         "N" if atom.formal_charge < 0 => 2,
         "N" if atom.formal_charge == 0 && has_aromatic_nitrogen_hydrogen => 2,
         "N" if atom.formal_charge == 0 && has_non_aromatic_bond => 2,

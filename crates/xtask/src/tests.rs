@@ -1035,7 +1035,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
             (atom.element.symbol() == "C"
                 && atom.formal_charge < 0
                 && cyclopentadienyl.graph().atom_is_aromatic(id).ok().flatten() == Some(true)
-                && atom.explicit_hydrogens > 0)
+                && atom.hydrogens.explicit_count() > 0)
                 .then_some(id)
         })
         .expect("anionic aromatic carbon with explicit hydrogen");
@@ -1045,7 +1045,7 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .expect("anionic carbon should exist");
     assert_eq!(
         explicit_valence_json(cyclopentadienyl.graph(), anionic_carbon_with_h)
-            + anionic_carbon.explicit_hydrogens,
+            + anionic_carbon.hydrogens.explicit_count(),
         3
     );
     let mut substituted_cyclopentadienyl = SmallMolecule::from_smiles("C[C-]1[C-]=[C-][C-]=[C-]1")

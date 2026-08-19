@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Element, Molecule, MoleculeError, StereoCarrier,
-    StereoElementId, StereoElementKind,
+    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeError,
+    StereoCarrier, StereoElementId, StereoElementKind,
 };
 
 use super::{perceive_valence_with_options, ValenceModel, ValenceOptions};
@@ -184,7 +184,7 @@ pub(crate) fn add_hydrogens_to_molecule(
     let plan = molecule
         .atoms()
         .map(|(parent, atom)| {
-            let explicit = usize::from(atom.explicit_hydrogens);
+            let explicit = usize::from(atom.hydrogens.explicit_count());
             let implicit = if options.explicit_only {
                 0
             } else {
@@ -216,7 +216,7 @@ pub(crate) fn add_hydrogens_to_molecule(
             .chain(std::iter::repeat_n(AddedHydrogenOrigin::Implicit, implicit))
         {
             let mut atom = Atom::new(hydrogen);
-            atom.no_implicit_hydrogens = true;
+            atom.hydrogens = HydrogenDeclaration::Fixed(0);
             let hydrogen_id = staged.add_atom(atom)?;
             staged.add_bond(parent, hydrogen_id, BondOrder::Single)?;
             added_by_parent.entry(parent).or_default().push(hydrogen_id);
@@ -227,7 +227,8 @@ pub(crate) fn add_hydrogens_to_molecule(
             });
         }
         if explicit > 0 {
-            staged.atom_mut(parent)?.explicit_hydrogens = 0;
+            let mut atom = staged.atom_mut(parent)?;
+            atom.hydrogens = atom.hydrogens.with_explicit_count(0);
         }
     }
 
@@ -286,7 +287,7 @@ pub(crate) fn remove_hydrogens_from_molecule(
         let implicit = usize::from(molecule.implicit_hydrogens(*parent)?.unwrap_or(0));
         expected_totals.insert(
             *parent,
-            usize::from(atom.explicit_hydrogens) + implicit + hydrogens.len(),
+            usize::from(atom.hydrogens.explicit_count()) + implicit + hydrogens.len(),
         );
     }
 
@@ -467,7 +468,7 @@ fn removable_hydrogen(
     if atom.radical.is_some() {
         return Ok(Err(RetainedHydrogenReason::Radical));
     }
-    if atom.explicit_hydrogens != 0 {
+    if atom.hydrogens.explicit_count() != 0 {
         return Ok(Err(RetainedHydrogenReason::EncodedHydrogenCount));
     }
     if !atom.props.is_empty() {
@@ -632,10 +633,11 @@ fn adjust_collapsed_hydrogen_counts(
                     count: *expected,
                 }
             })?;
-            molecule.atom_mut(*parent)?.explicit_hydrogens = adjusted;
+            let mut atom = molecule.atom_mut(*parent)?;
+            atom.hydrogens = atom.hydrogens.with_explicit_count(adjusted);
             continue;
         }
-        let explicit = usize::from(molecule.atom(*parent)?.explicit_hydrogens);
+        let explicit = usize::from(molecule.atom(*parent)?.hydrogens.explicit_count());
         let implicit = usize::from(probe.implicit_hydrogens(*parent)?.unwrap_or(0));
         let actual = explicit + implicit;
         if actual < *expected {
@@ -646,7 +648,8 @@ fn adjust_collapsed_hydrogen_counts(
                     count: adjusted,
                 }
             })?;
-            molecule.atom_mut(*parent)?.explicit_hydrogens = adjusted;
+            let mut atom = molecule.atom_mut(*parent)?;
+            atom.hydrogens = atom.hydrogens.with_explicit_count(adjusted);
         } else if actual > *expected {
             let adjusted = u8::try_from(*expected).map_err(|_| {
                 HydrogenTransformError::HydrogenCountOverflow {
@@ -655,8 +658,7 @@ fn adjust_collapsed_hydrogen_counts(
                 }
             })?;
             let mut atom = molecule.atom_mut(*parent)?;
-            atom.explicit_hydrogens = adjusted;
-            atom.no_implicit_hydrogens = true;
+            atom.hydrogens = HydrogenDeclaration::Fixed(adjusted);
         }
         debug_assert!(!by_parent[parent].is_empty());
     }
@@ -676,7 +678,7 @@ fn verify_collapsed_hydrogen_counts(
     );
     let mut adjustments = Vec::new();
     for (parent, expected) in expected_totals {
-        let explicit = molecule.atom(*parent)?.explicit_hydrogens;
+        let explicit = molecule.atom(*parent)?.hydrogens.explicit_count();
         let implicit = probe.implicit_hydrogens(*parent)?.unwrap_or(0);
         let actual = usize::from(explicit) + usize::from(implicit);
         if actual != *expected {

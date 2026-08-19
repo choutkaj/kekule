@@ -185,6 +185,13 @@ represented hydrogen declaration -> Molecule / Atom
 inferred implicit hydrogen count  -> PerceptionState / valence state
 ```
 
+`Atom::hydrogens` uses `HydrogenDeclaration` to make the complete represented
+statement explicit. `Infer { explicit }` stores that many represented
+non-graph hydrogens while allowing valence perception to infer additional
+hydrogens. `Fixed(count)` stores an exact non-graph hydrogen count and forbids
+additional implicit-H inference. Graph hydrogen atoms are separate from both
+forms.
+
 Materializing or collapsing graph hydrogen atoms is an explicit topology
 transformation and invalidates dependent perception.
 

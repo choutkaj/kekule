@@ -85,15 +85,8 @@ M  END
                 .graph()
                 .atom(AtomId::new(0))
                 .expect("stereo center")
-                .explicit_hydrogens,
-            1
-        );
-        assert!(
-            parsed
-                .graph()
-                .atom(AtomId::new(0))
-                .expect("stereo center")
-                .no_implicit_hydrogens
+                .hydrogens,
+            HydrogenDeclaration::Fixed(1)
         );
         assert!(!parsed.graph().perception().has_valence());
         assert_eq!(report.created_stereo_elements().len(), 1);
@@ -198,8 +191,7 @@ M  END
         .expect("VAL can be interpreted from source semantics")
         .into_molecule();
     let carbon = molecule.graph().atom(AtomId::new(0)).expect("carbon");
-    assert_eq!(carbon.explicit_hydrogens, 4);
-    assert!(carbon.no_implicit_hydrogens);
+    assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(4));
     assert!(!molecule.graph().perception().has_valence());
 
     let zero_declarations = valence.replace("VAL=4", "HCOUNT=-1 VAL=-1");
@@ -209,8 +201,21 @@ M  END
         .expect("zero-count sentinels have exact source semantics")
         .into_molecule();
     let carbon = molecule.graph().atom(AtomId::new(0)).expect("carbon");
-    assert_eq!(carbon.explicit_hydrogens, 0);
-    assert!(carbon.no_implicit_hydrogens);
+    assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(0));
+
+    let undeclared = valence.replace(" VAL=4", "");
+    let document = molfile::parse_str(&undeclared).expect("undeclared atom is valid syntax");
+    let molecule = molfile::interpret(&document)
+        .expect("undeclared hydrogen policy interprets")
+        .into_molecule();
+    assert_eq!(
+        molecule
+            .graph()
+            .atom(AtomId::new(0))
+            .expect("carbon")
+            .hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
 
     let unsupported = valence.replace("1 C 0 0 0 0 VAL=4", "1 Xx 0 0 0 0");
     let document = molfile::parse_str(&unsupported).expect("unknown symbol remains valid syntax");

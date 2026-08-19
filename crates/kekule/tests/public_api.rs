@@ -255,6 +255,10 @@ fn parser_resource_options_are_public() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn hydrogen_transforms_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut molecule = perceived_smiles("C")?;
+    assert_eq!(
+        molecule.graph().atom(AtomId::new(0))?.hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
     let added: Result<
         kekule::hydrogens::AddHydrogensReport,
         kekule::hydrogens::HydrogenTransformError,
@@ -266,6 +270,31 @@ fn hydrogen_transforms_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let removed = molecule.remove_hydrogens()?;
     assert_eq!(removed.removed.len(), 4);
     assert_eq!(molecule.atom_count(), 1);
+    Ok(())
+}
+
+#[test]
+fn writers_reject_unrepresentable_hydrogen_inference_policy(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut atom = Atom::new(Element::from_symbol("C").expect("carbon"));
+    atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
+    let mut builder = Molecule::builder();
+    builder.add_atom(atom)?;
+    let molecule = SmallMolecule::from_graph(builder.build()?);
+
+    for error in [
+        kekule::smiles::write(&molecule).expect_err("SMILES cannot preserve the declaration"),
+        kekule::smiles::write_canonical(&molecule)
+            .expect_err("canonical SMILES cannot preserve the declaration"),
+        kekule::molfile::write_v2000(&molecule).expect_err("V2000 cannot preserve the declaration"),
+        kekule::molfile::write_v3000(&molecule).expect_err("V3000 cannot preserve the declaration"),
+    ] {
+        assert!(error.message().contains("implicit-H inference enabled"));
+    }
+    assert_eq!(
+        molecule.graph().atom(AtomId::new(0))?.hydrogens,
+        HydrogenDeclaration::Infer { explicit: 1 }
+    );
     Ok(())
 }
 

@@ -314,7 +314,9 @@ pub mod hydrogens {
 
 pub mod prelude {
     pub use crate::bio::{MacroMolecule, SmcraHierarchy};
-    pub use crate::core::{Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, Molecule};
+    pub use crate::core::{
+        Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, HydrogenDeclaration, Molecule,
+    };
     pub use crate::small::SmallMolecule;
 }
 

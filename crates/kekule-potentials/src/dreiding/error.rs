@@ -68,7 +68,7 @@ impl fmt::Display for DreidingPrepareError {
             }
             Self::UnresolvedImplicitHydrogens { atom } => write!(
                 f,
-                "atom {atom} has an unresolved implicit-hydrogen count; DREIDING preparation requires an explicit zero count or no-implicit-hydrogens assertion"
+                "atom {atom} has an unresolved implicit-hydrogen count; DREIDING preparation requires perception or a fixed hydrogen declaration"
             ),
             Self::CountedHydrogens {
                 atom,
