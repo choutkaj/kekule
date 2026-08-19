@@ -4,11 +4,12 @@ use std::ops::{Deref, DerefMut};
 
 use super::*;
 
-/// One completed connected molecular graph.
+/// One completed connected canonical molecular graph.
 ///
 /// Empty and single-atom values are valid boundary cases. Build nontrivial
 /// graphs with [`Molecule::builder`] and change topology transactionally with
-/// [`Molecule::edit`], both of which enforce connectedness before publication.
+/// [`Molecule::edit`], both of which enforce canonical representation and
+/// connectedness before publication.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Molecule {
     pub(crate) atoms: Vec<Option<Atom>>,
@@ -194,7 +195,7 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidAtomId(id))
     }
 
-    pub fn atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
+    pub(crate) fn atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
         let original = AtomChemistry::from(self.atom(id)?);
         Ok(AtomMut {
             molecule: self,
@@ -213,11 +214,18 @@ impl Molecule {
         self.atoms().map(|(id, _)| id)
     }
 
-    /// Inserts a bond after validating its endpoints and identifier capacity.
-    ///
-    /// Adding a bond cannot disconnect a valid molecule, so it remains a safe
-    /// direct public topology mutation. Every failure leaves the molecule unchanged.
-    pub fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
+    /// Returns mutable generic annotations without changing represented chemistry.
+    pub fn atom_props_mut(&mut self, id: AtomId) -> Result<&mut PropMap> {
+        Ok(&mut self
+            .atoms
+            .get_mut(id.index())
+            .and_then(Option::as_mut)
+            .ok_or(MoleculeError::InvalidAtomId(id))?
+            .props)
+    }
+
+    /// Inserts a bond into crate-private construction or editing staging.
+    pub(crate) fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
         self.atom(a)?;
         self.atom(b)?;
         if a == b {
@@ -255,7 +263,7 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidBondId(id))
     }
 
-    pub fn bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
+    pub(crate) fn bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
         let original = BondChemistry::from(self.bond(id)?);
         Ok(BondMut {
             molecule: self,
@@ -272,6 +280,16 @@ impl Molecule {
 
     pub fn bond_ids(&self) -> impl Iterator<Item = BondId> + '_ {
         self.bonds().map(|(id, _)| id)
+    }
+
+    /// Returns mutable generic annotations without changing represented chemistry.
+    pub fn bond_props_mut(&mut self, id: BondId) -> Result<&mut PropMap> {
+        Ok(&mut self
+            .bonds
+            .get_mut(id.index())
+            .and_then(Option::as_mut)
+            .ok_or(MoleculeError::InvalidBondId(id))?
+            .props)
     }
 
     pub fn neighbors(&self, id: AtomId) -> Result<impl Iterator<Item = AtomId> + '_> {
@@ -625,7 +643,7 @@ impl Molecule {
         Ok(id)
     }
 
-    pub fn set_stereo_bond_mark(&mut self, mark: StereoBondMark) -> Result<()> {
+    pub(crate) fn set_stereo_bond_mark(&mut self, mark: StereoBondMark) -> Result<()> {
         self.bond(mark.bond)?;
         if let Some(existing) = self
             .stereo_bond_marks
@@ -640,7 +658,10 @@ impl Molecule {
         Ok(())
     }
 
-    pub fn clear_stereo_bond_mark(&mut self, bond: BondId) -> Result<Option<StereoBondMark>> {
+    pub(crate) fn clear_stereo_bond_mark(
+        &mut self,
+        bond: BondId,
+    ) -> Result<Option<StereoBondMark>> {
         self.bond(bond)?;
         let Some(index) = self
             .stereo_bond_marks

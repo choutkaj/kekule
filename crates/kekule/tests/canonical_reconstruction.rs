@@ -353,9 +353,8 @@ fn installed_perception_follows_normal_invalidation_rules() {
         .install_perception_state(state.clone())
         .expect("install");
     molecule
-        .atom_mut(AtomId::new(0))
+        .atom_props_mut(AtomId::new(0))
         .unwrap()
-        .props
         .insert("note".into(), PropValue::Bool(true));
     assert_eq!(molecule.perception(), &state);
 
@@ -367,7 +366,9 @@ fn installed_perception_follows_normal_invalidation_rules() {
     assert!(molecule.perception().valence_state().is_some());
     assert!(!molecule.perception().has_cip_descriptors());
 
-    molecule.atom_mut(AtomId::new(0)).unwrap().formal_charge = 1;
+    let mut editor = molecule.edit();
+    editor.atom_mut(AtomId::new(0)).unwrap().formal_charge = 1;
+    editor.commit().expect("canonical chemistry edit");
     assert_eq!(molecule.perception(), &PerceptionState::default());
 }
 
