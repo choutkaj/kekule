@@ -5,7 +5,6 @@ fn happy_path_small_molecule_api_matches_architecture() {
     let mut molecule = SmallMolecule::from_smiles("c1ccccc1O").expect("phenol parses");
 
     assert_eq!(molecule.graph().perception(), &PerceptionState::default());
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     molecule.perceive().expect("phenol perceives");
     assert_eq!(
         molecule

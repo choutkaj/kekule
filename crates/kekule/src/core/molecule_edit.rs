@@ -34,7 +34,6 @@ impl std::error::Error for MoleculeConnectivityError {}
 #[non_exhaustive]
 pub enum MoleculePublicationError {
     DisconnectedGraph(MoleculeConnectivityError),
-    SourceStereoBondMark { bond: BondId },
     FormalChargeOutOfRange { atom: AtomId, charge: usize },
 }
 
@@ -42,10 +41,6 @@ impl fmt::Display for MoleculePublicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DisconnectedGraph(error) => write!(formatter, "{error}"),
-            Self::SourceStereoBondMark { bond } => write!(
-                formatter,
-                "cannot publish molecule with source-only stereo mark on bond {bond}"
-            ),
             Self::FormalChargeOutOfRange { atom, charge } => write!(
                 formatter,
                 "publishing atom {atom} requires formal charge +{charge}, which is outside the supported range"
@@ -58,7 +53,7 @@ impl std::error::Error for MoleculePublicationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::DisconnectedGraph(error) => Some(error),
-            Self::SourceStereoBondMark { .. } | Self::FormalChargeOutOfRange { .. } => None,
+            Self::FormalChargeOutOfRange { .. } => None,
         }
     }
 }
@@ -118,23 +113,6 @@ impl Molecule {
     /// builder.add_bond(middle, last, BondOrder::Single).unwrap();
     /// let mut molecule = builder.build().unwrap();
     /// molecule.add_bond(first, last, BondOrder::Single).unwrap();
-    /// ```
-    ///
-    /// ```compile_fail
-    /// use kekule::core::{
-    ///     Atom, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind, StereoSource,
-    /// };
-    ///
-    /// let mut builder = Molecule::builder();
-    /// let first = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
-    /// let second = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
-    /// let bond = builder.add_bond(first, second, BondOrder::Single).unwrap();
-    /// let mut molecule = builder.build().unwrap();
-    /// molecule.set_stereo_bond_mark(StereoBondMark {
-    ///     bond,
-    ///     kind: StereoBondMarkKind::WedgeUp,
-    ///     source: StereoSource::User,
-    /// }).unwrap();
     /// ```
     pub fn edit(&mut self) -> MoleculeEditor<'_> {
         MoleculeEditor {
@@ -207,7 +185,6 @@ impl MoleculeBuilder {
 
     pub fn build(self) -> std::result::Result<Molecule, MoleculePublicationError> {
         let mut molecule = self.molecule;
-        reject_source_stereo_marks(&molecule)?;
         molecule
             .validate_connected()
             .map_err(MoleculePublicationError::DisconnectedGraph)?;
@@ -274,7 +251,6 @@ impl MoleculeEditor<'_> {
 
     pub fn commit(self) -> std::result::Result<(), MoleculePublicationError> {
         let mut working = self.working;
-        reject_source_stereo_marks(&working)?;
         working
             .validate_connected()
             .map_err(MoleculePublicationError::DisconnectedGraph)?;
@@ -331,15 +307,6 @@ pub(crate) fn canonicalize_represented_chemistry(
         molecule.invalidate_topology();
     }
     Ok(())
-}
-
-fn reject_source_stereo_marks(
-    molecule: &Molecule,
-) -> std::result::Result<(), MoleculePublicationError> {
-    match molecule.stereo_bond_marks().next() {
-        Some(mark) => Err(MoleculePublicationError::SourceStereoBondMark { bond: mark.bond }),
-        None => Ok(()),
-    }
 }
 
 fn has_terminal_single_bond_oxygen_neighbor(molecule: &Molecule, atom_id: AtomId) -> bool {
@@ -565,29 +532,6 @@ mod tests {
                 atom: chlorine,
                 charge: 128,
             })
-        );
-        assert_eq!(molecule, before);
-    }
-
-    #[test]
-    fn editor_rejects_source_only_stereo_state_transactionally() {
-        let mut builder = Molecule::builder();
-        let left = builder.add_atom(carbon()).unwrap();
-        let right = builder.add_atom(carbon()).unwrap();
-        let bond = builder.add_bond(left, right, BondOrder::Single).unwrap();
-        let mut molecule = builder.build().unwrap();
-        molecule
-            .set_stereo_bond_mark(super::super::StereoBondMark {
-                bond,
-                kind: super::super::StereoBondMarkKind::WedgeUp,
-                source: super::super::StereoSource::User,
-            })
-            .unwrap();
-        let before = molecule.clone();
-
-        assert_eq!(
-            molecule.edit().commit(),
-            Err(MoleculePublicationError::SourceStereoBondMark { bond })
         );
         assert_eq!(molecule, before);
     }

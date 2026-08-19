@@ -168,20 +168,3 @@ pub enum StereoGroupKind {
     And,
     Or,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StereoBondMark {
-    pub bond: BondId,
-    pub kind: StereoBondMarkKind,
-    pub source: StereoSource,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StereoBondMarkKind {
-    DirectionalUp,
-    DirectionalDown,
-    WedgeUp,
-    WedgeDown,
-    WedgeEither,
-    DoubleBondEither,
-}

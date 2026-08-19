@@ -40,7 +40,6 @@ M  END
     let bond0 = mol.bond(BondId::new(0)).expect("bond exists");
     let bond1 = mol.bond(BondId::new(1)).expect("bond exists");
     assert_eq!(bond0.order, BondOrder::Single);
-    assert!(mol.stereo_bond_marks().next().is_none());
     assert_eq!(bond1.order, BondOrder::Double);
     let (_, conformer) = mol.first_conformer().expect("conformer exists");
     assert_eq!(
@@ -54,7 +53,13 @@ M  END
 
 #[test]
 fn v3000_preserves_source_declared_tetrahedral_hydrogen_carrier() {
-    let input = "\
+    for (cfg, expected_specifiedness) in [
+        (1, StereoSpecifiedness::Specified),
+        (3, StereoSpecifiedness::Specified),
+        (2, StereoSpecifiedness::Unknown),
+    ] {
+        let input = format!(
+            "\
 stereo hydrogen
 kekule
 
@@ -68,42 +73,105 @@ M  V30 3 Cl -1 0 0 0
 M  V30 4 Br 0 1 0 0
 M  V30 END ATOM
 M  V30 BEGIN BOND
-M  V30 1 1 1 2 CFG=1
+M  V30 1 1 1 2 CFG={cfg}
 M  V30 2 1 1 3
 M  V30 3 1 1 4
 M  V30 END BOND
 M  V30 END CTAB
 M  END
+"
+        );
+
+        let (parsed, report) = read_molfile_with_report(&input).expect("V3000 should interpret");
+
+        assert_eq!(
+            parsed
+                .graph()
+                .atom(AtomId::new(0))
+                .expect("stereo center")
+                .explicit_hydrogens,
+            1
+        );
+        assert!(
+            parsed
+                .graph()
+                .atom(AtomId::new(0))
+                .expect("stereo center")
+                .no_implicit_hydrogens
+        );
+        assert!(!parsed.graph().perception().has_valence());
+        assert_eq!(report.created_stereo_elements().len(), 1);
+        assert_eq!(parsed.graph().stereo_elements().count(), 1);
+        assert_eq!(
+            parsed
+                .graph()
+                .stereo_elements()
+                .next()
+                .expect("canonical stereo element")
+                .1
+                .specifiedness,
+            expected_specifiedness
+        );
+
+        let written = molfile::write_v3000(&parsed).expect("canonical stereo should project");
+        let (reparsed, report) =
+            read_molfile_with_report(&written).expect("projected V3000 stereo should re-interpret");
+        assert_eq!(report.created_stereo_elements().len(), 1);
+        assert_eq!(reparsed.graph().stereo_elements().count(), 1);
+        assert_eq!(
+            reparsed
+                .graph()
+                .stereo_elements()
+                .next()
+                .expect("reparsed canonical stereo element")
+                .1
+                .specifiedness,
+            expected_specifiedness
+        );
+    }
+}
+
+#[test]
+fn v3000_either_double_bond_publishes_unknown_canonical_stereo() {
+    let input = "\
+unknown double bond
+kekule
+
+  0  0  0  0  0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 4 3 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 F 0 0 0 0
+M  V30 2 C 1 0 0 0
+M  V30 3 C 2 0 0 0
+M  V30 4 Cl 3 0 0 0
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 1 2
+M  V30 2 2 2 3 CFG=2
+M  V30 3 1 3 4
+M  V30 END BOND
+M  V30 END CTAB
+M  END
 ";
 
-    let (parsed, report) = read_molfile_with_report(input).expect("V3000 should interpret");
-
-    assert_eq!(
-        parsed
-            .graph()
-            .atom(AtomId::new(0))
-            .expect("stereo center")
-            .explicit_hydrogens,
-        1
-    );
-    assert!(
-        parsed
-            .graph()
-            .atom(AtomId::new(0))
-            .expect("stereo center")
-            .no_implicit_hydrogens
-    );
-    assert!(!parsed.graph().perception().has_valence());
+    let (molecule, report) =
+        read_molfile_with_report(input).expect("V3000 either bond should interpret");
     assert_eq!(report.created_stereo_elements().len(), 1);
-    assert!(parsed.graph().stereo_bond_marks().next().is_none());
-    assert_eq!(parsed.graph().stereo_elements().count(), 1);
+    let element = molecule
+        .graph()
+        .stereo_element(report.created_stereo_elements()[0])
+        .expect("canonical double-bond stereo element");
+    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
+    assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
 
-    let written = molfile::write_v3000(&parsed).expect("canonical stereo should project");
-    let (reparsed, report) =
-        read_molfile_with_report(&written).expect("projected V3000 stereo should re-interpret");
-    assert_eq!(report.created_stereo_elements().len(), 1);
-    assert!(reparsed.graph().stereo_bond_marks().next().is_none());
-    assert_eq!(reparsed.graph().stereo_elements().count(), 1);
+    let written = molfile::write_v3000(&molecule).expect("unknown stereo should project");
+    assert!(written.contains("CFG=2"));
+    let reparsed = read_molfile(&written).expect("projected unknown stereo should interpret");
+    assert!(reparsed.graph().stereo_elements().any(|(_, element)| {
+        element.specifiedness == StereoSpecifiedness::Unknown
+            && matches!(element.kind, StereoElementKind::DoubleBond(_))
+    }));
 }
 
 #[test]
@@ -451,7 +519,6 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         reparsed.graph().atom(AtomId::new(1)).expect("atom").isotope,
         Some(13)
     );
-    assert!(reparsed.graph().stereo_bond_marks().next().is_none());
     let (_, conformer) = reparsed.graph().first_conformer().expect("conformer");
     assert_eq!(
         conformer.position(AtomId::new(2)),
@@ -526,23 +593,6 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .graph_mut()
         .remove_stereo_element(element)
         .expect("remove stereo element");
-    molecule
-        .graph_mut()
-        .set_stereo_bond_mark(StereoBondMark {
-            bond,
-            kind: StereoBondMarkKind::WedgeUp,
-            source: StereoSource::MolfileV3000,
-        })
-        .expect("stereo mark");
-    assert!(molfile::write_v3000(&molecule)
-        .expect_err("double wedge should be rejected")
-        .message
-        .contains("incompatible"));
-
-    molecule
-        .graph_mut()
-        .clear_stereo_bond_mark(bond)
-        .expect("clear mark");
     molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
     assert!(molfile::write_v3000(&molecule)
         .expect_err("quadruple should be rejected")

@@ -9,7 +9,16 @@ use super::*;
 /// Empty and single-atom values are valid boundary cases. Build nontrivial
 /// graphs with [`Molecule::builder`] and change topology transactionally with
 /// [`Molecule::edit`], both of which enforce canonical representation and
-/// connectedness before publication.
+/// connectedness before publication. Source-format stereo marks are resolved
+/// into canonical stereo elements during interpretation and are never stored
+/// in this payload.
+///
+/// ```compile_fail
+/// use kekule::core::Molecule;
+///
+/// let molecule = Molecule::default();
+/// let _ = molecule.stereo_bond_marks();
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Molecule {
     pub(crate) atoms: Vec<Option<Atom>>,
@@ -18,7 +27,6 @@ pub struct Molecule {
     pub(crate) conformers: Vec<Option<Conformer>>,
     pub(crate) stereo_elements: Vec<Option<StereoElement>>,
     pub(crate) stereo_groups: Vec<Option<StereoGroup>>,
-    pub(crate) stereo_bond_marks: Vec<StereoBondMark>,
     pub(crate) props: PropMap,
     pub(crate) perception: PerceptionState,
 }
@@ -643,45 +651,6 @@ impl Molecule {
         Ok(id)
     }
 
-    pub(crate) fn set_stereo_bond_mark(&mut self, mark: StereoBondMark) -> Result<()> {
-        self.bond(mark.bond)?;
-        if let Some(existing) = self
-            .stereo_bond_marks
-            .iter_mut()
-            .find(|existing| existing.bond == mark.bond)
-        {
-            *existing = mark;
-        } else {
-            self.stereo_bond_marks.push(mark);
-        }
-        self.invalidate_stereo();
-        Ok(())
-    }
-
-    pub(crate) fn clear_stereo_bond_mark(
-        &mut self,
-        bond: BondId,
-    ) -> Result<Option<StereoBondMark>> {
-        self.bond(bond)?;
-        let Some(index) = self
-            .stereo_bond_marks
-            .iter()
-            .position(|mark| mark.bond == bond)
-        else {
-            return Ok(None);
-        };
-        self.invalidate_stereo();
-        Ok(Some(self.stereo_bond_marks.remove(index)))
-    }
-
-    pub fn stereo_bond_mark(&self, bond: BondId) -> Option<&StereoBondMark> {
-        self.stereo_bond_marks.iter().find(|mark| mark.bond == bond)
-    }
-
-    pub fn stereo_bond_marks(&self) -> impl Iterator<Item = &StereoBondMark> {
-        self.stereo_bond_marks.iter()
-    }
-
     pub fn invalidate_topology(&mut self) {
         self.perception = PerceptionState::default();
     }
@@ -794,7 +763,6 @@ impl Molecule {
             conformers: Vec::new(),
             stereo_elements: self.stereo_elements.clone(),
             stereo_groups: self.stereo_groups.clone(),
-            stereo_bond_marks: self.stereo_bond_marks.clone(),
             props: self.props.clone(),
             perception: self.perception.clone(),
         }
@@ -853,7 +821,6 @@ impl Molecule {
             self.stereo_elements[id.index()] = None;
             self.remove_stereo_element_from_groups(id);
         }
-        self.stereo_bond_marks.retain(|mark| mark.bond != bond);
         self.invalidate_stereo();
     }
 
