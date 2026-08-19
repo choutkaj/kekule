@@ -884,7 +884,8 @@ pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
         return 0;
     };
     payload
-        .explicit_hydrogens
+        .hydrogens
+        .explicit_count()
         .saturating_add(mol.implicit_hydrogens(atom).ok().flatten().unwrap_or(0))
 }
 

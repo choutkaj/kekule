@@ -341,7 +341,7 @@ fn total_hydrogens(target: &Molecule, target_atom: AtomId) -> usize {
                 .is_ok_and(|atom| atom.element.atomic_number() == 1)
         })
         .count();
-    usize::from(atom.explicit_hydrogens)
+    usize::from(atom.hydrogens.explicit_count())
         + usize::from(
             target
                 .implicit_hydrogens(target_atom)

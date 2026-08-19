@@ -372,8 +372,12 @@ fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, S
         V2000RadicalSyntax::Doublet => AtomRadical::Doublet,
         V2000RadicalSyntax::Triplet => AtomRadical::Triplet,
     });
-    atom.explicit_hydrogens = record.hydrogen_count.unwrap_or(0);
-    atom.no_implicit_hydrogens = record.hydrogen_count.is_some() || record.valence.is_some();
+    let explicit = record.hydrogen_count.unwrap_or(0);
+    atom.hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
+        HydrogenDeclaration::Fixed(explicit)
+    } else {
+        HydrogenDeclaration::Infer { explicit }
+    };
     atom.atom_map = record.atom_map;
     Ok(atom)
 }
@@ -484,7 +488,7 @@ fn apply_v2000_declared_hydrogens(
         molecule
             .atom_mut(atom_id)
             .expect("interpreted V2000 atom remains live")
-            .explicit_hydrogens = explicit;
+            .hydrogens = HydrogenDeclaration::Fixed(explicit);
     }
     Ok(())
 }
@@ -976,10 +980,17 @@ fn v2000_valence_code(
     atom_id: AtomId,
     atom: &Atom,
 ) -> std::result::Result<u8, MolWriteError> {
-    if !atom.no_implicit_hydrogens {
-        return Ok(0);
-    }
-    let valence = explicit_valence(mol, atom_id) + usize::from(atom.explicit_hydrogens);
+    let explicit_hydrogens = match atom.hydrogens {
+        HydrogenDeclaration::Infer { explicit: 0 } => return Ok(0),
+        HydrogenDeclaration::Infer { .. } => {
+            return Err(MolWriteError::new(format!(
+                "V2000 cannot encode represented hydrogens while leaving implicit-H inference enabled for atom {}",
+                atom_id.index()
+            )));
+        }
+        HydrogenDeclaration::Fixed(explicit) => explicit,
+    };
+    let valence = explicit_valence(mol, atom_id) + usize::from(explicit_hydrogens);
     match valence {
         0 => Ok(15),
         1..=14 => Ok(u8::try_from(valence).expect("range checked")),

@@ -18,8 +18,7 @@ pub struct Atom {
     pub isotope: Option<u16>,
     pub formal_charge: i8,
     pub radical: Option<AtomRadical>,
-    pub explicit_hydrogens: u8,
-    pub no_implicit_hydrogens: bool,
+    pub hydrogens: HydrogenDeclaration,
     pub atom_map: Option<u32>,
     pub props: PropMap,
 }
@@ -31,11 +30,50 @@ impl Atom {
             isotope: None,
             formal_charge: 0,
             radical: None,
-            explicit_hydrogens: 0,
-            no_implicit_hydrogens: false,
+            hydrogens: HydrogenDeclaration::default(),
             atom_map: None,
             props: PropMap::new(),
         }
+    }
+}
+
+/// The complete non-graph hydrogen statement represented on an atom.
+///
+/// Graph hydrogen atoms are separate atoms and are not counted here. Hydrogens
+/// inferred by valence perception are stored in [`PerceptionState`] rather
+/// than this declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HydrogenDeclaration {
+    /// The represented count is present and valence perception may infer
+    /// additional implicit hydrogens.
+    Infer { explicit: u8 },
+    /// Exactly this many non-graph hydrogens are represented.
+    Fixed(u8),
+}
+
+impl HydrogenDeclaration {
+    pub const fn explicit_count(self) -> u8 {
+        match self {
+            Self::Infer { explicit } | Self::Fixed(explicit) => explicit,
+        }
+    }
+
+    pub const fn allows_implicit(self) -> bool {
+        matches!(self, Self::Infer { .. })
+    }
+
+    /// Returns the same inference policy with a different represented count.
+    pub const fn with_explicit_count(self, explicit: u8) -> Self {
+        match self {
+            Self::Infer { .. } => Self::Infer { explicit },
+            Self::Fixed(_) => Self::Fixed(explicit),
+        }
+    }
+}
+
+impl Default for HydrogenDeclaration {
+    fn default() -> Self {
+        Self::Infer { explicit: 0 }
     }
 }
 

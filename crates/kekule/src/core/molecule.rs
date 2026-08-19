@@ -101,8 +101,7 @@ struct AtomChemistry {
     isotope: Option<u16>,
     formal_charge: i8,
     radical: Option<AtomRadical>,
-    explicit_hydrogens: u8,
-    no_implicit_hydrogens: bool,
+    hydrogens: HydrogenDeclaration,
 }
 
 impl From<&Atom> for AtomChemistry {
@@ -112,8 +111,7 @@ impl From<&Atom> for AtomChemistry {
             isotope: atom.isotope,
             formal_charge: atom.formal_charge,
             radical: atom.radical,
-            explicit_hydrogens: atom.explicit_hydrogens,
-            no_implicit_hydrogens: atom.no_implicit_hydrogens,
+            hydrogens: atom.hydrogens,
         }
     }
 }

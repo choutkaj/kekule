@@ -83,7 +83,9 @@ fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, 
             .get_mut(parent.index())
             .and_then(Option::as_mut)
             .ok_or_else(|| MolWriteError::new(format!("invalid hydrogen parent atom {parent}")))?;
-        parent_atom.no_implicit_hydrogens = false;
+        parent_atom.hydrogens = HydrogenDeclaration::Infer {
+            explicit: parent_atom.hydrogens.explicit_count(),
+        };
         normalized
             .delete_atom(hydrogen)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
@@ -560,10 +562,10 @@ fn canonical_smiles_atom(
         .map_err(|error| MolWriteError::new(error.to_string()))?
         .unwrap_or(0);
     normalized.isotope = None;
-    if atom.isotope.is_some() && atom.explicit_hydrogens > 0 {
-        implicit_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
-        normalized.explicit_hydrogens = 0;
-        normalized.no_implicit_hydrogens = false;
+    let represented_hydrogens = atom.hydrogens.explicit_count();
+    if atom.isotope.is_some() && represented_hydrogens > 0 {
+        implicit_hydrogens = represented_hydrogens.saturating_add(implicit_hydrogens);
+        normalized.hydrogens = HydrogenDeclaration::Infer { explicit: 0 };
     }
     canonical_smiles_atom_normalized(
         mol,
@@ -591,8 +593,11 @@ fn canonical_smiles_atom_normalized(
         implicit_hydrogens,
     )? {
         let mut normalized = atom.clone();
-        normalized.explicit_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
-        normalized.no_implicit_hydrogens = true;
+        normalized.hydrogens = HydrogenDeclaration::Fixed(
+            atom.hydrogens
+                .explicit_count()
+                .saturating_add(implicit_hydrogens),
+        );
         return Ok(smiles_atom(&normalized, aromatic, 0));
     }
     if canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
@@ -602,7 +607,7 @@ fn canonical_smiles_atom_normalized(
         implicit_hydrogens,
     )? {
         let mut normalized = atom.clone();
-        normalized.no_implicit_hydrogens = true;
+        normalized.hydrogens = HydrogenDeclaration::Fixed(atom.hydrogens.explicit_count());
         return Ok(smiles_atom(&normalized, aromatic, 0));
     }
     if canonical_smiles_can_use_organic_form(
@@ -614,14 +619,16 @@ fn canonical_smiles_atom_normalized(
         stored_kekule,
     )? {
         let mut normalized = atom.clone();
-        normalized.explicit_hydrogens = 0;
-        normalized.no_implicit_hydrogens = false;
+        normalized.hydrogens = HydrogenDeclaration::Infer { explicit: 0 };
         return Ok(smiles_atom(&normalized, aromatic, implicit_hydrogens));
     }
     let mut normalized = atom.clone();
     if implicit_hydrogens > 0 {
-        normalized.explicit_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
-        normalized.no_implicit_hydrogens = true;
+        normalized.hydrogens = HydrogenDeclaration::Fixed(
+            atom.hydrogens
+                .explicit_count()
+                .saturating_add(implicit_hydrogens),
+        );
     }
     Ok(smiles_atom(&normalized, aromatic, 0))
 }
@@ -637,8 +644,8 @@ fn canonical_smiles_should_bracket_metal_bound_hydrogens(
         && atom.radical.is_none()
         && atom.atom_map.is_none()
         && !aromatic
-        && !atom.no_implicit_hydrogens
-        && atom.explicit_hydrogens == 0
+        && atom.hydrogens.allows_implicit()
+        && atom.hydrogens.explicit_count() == 0
         && implicit_hydrogens > 0
         && matches!(atom.element.symbol(), "B" | "C" | "N" | "O" | "P" | "S")
         && atom_has_metal_neighbor(mol, atom_id)?)
@@ -653,7 +660,7 @@ fn canonical_smiles_should_bracket_metal_bound_zero_hydrogens(
     Ok(atom.formal_charge == 0
         && atom.radical.is_none()
         && atom.atom_map.is_none()
-        && atom.explicit_hydrogens == 0
+        && atom.hydrogens.explicit_count() == 0
         && implicit_hydrogens == 0
         && matches!(
             atom.element.symbol(),
@@ -685,7 +692,7 @@ fn canonical_smiles_can_use_organic_form(
     if atom.formal_charge != 0
         || atom.radical.is_some()
         || atom.atom_map.is_some()
-        || (aromatic && atom.explicit_hydrogens > 0)
+        || (aromatic && atom.hydrogens.explicit_count() > 0)
     {
         return Ok(false);
     }
@@ -695,7 +702,7 @@ fn canonical_smiles_can_use_organic_form(
     ) {
         return Ok(false);
     }
-    if (atom.no_implicit_hydrogens || implicit_hydrogens == 0)
+    if (!atom.hydrogens.allows_implicit() || implicit_hydrogens == 0)
         && atom_has_metal_neighbor(mol, atom_id)?
     {
         return Ok(false);
@@ -705,10 +712,16 @@ fn canonical_smiles_can_use_organic_form(
         let Some(target) = canonical_organic_valence_target(atom, true) else {
             return Ok(false);
         };
-        let total_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
+        let total_hydrogens = atom
+            .hydrogens
+            .explicit_count()
+            .saturating_add(implicit_hydrogens);
         return Ok(bond_valence.saturating_add(total_hydrogens) == target);
     }
-    let total_hydrogens = atom.explicit_hydrogens.saturating_add(implicit_hydrogens);
+    let total_hydrogens = atom
+        .hydrogens
+        .explicit_count()
+        .saturating_add(implicit_hydrogens);
     let occupied_valence = bond_valence.saturating_add(total_hydrogens);
     Ok(
         allowed_valences(atom).is_some_and(|allowed| allowed.contains(&occupied_valence))

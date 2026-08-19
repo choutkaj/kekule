@@ -567,8 +567,10 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
                 .graph()
                 .atom(AtomId::new(0))
                 .expect("stereo center");
-            assert_eq!(center.explicit_hydrogens, expected_hydrogens);
-            assert!(center.no_implicit_hydrogens);
+            assert_eq!(
+                center.hydrogens,
+                HydrogenDeclaration::Fixed(expected_hydrogens)
+            );
             assert!(!molecule.graph().perception().has_valence());
             assert_eq!(molecule.graph().stereo_elements().count(), 1);
             assert_eq!(
@@ -590,6 +592,14 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             assert_eq!(
                 reparsed
                     .graph()
+                    .atom(AtomId::new(0))
+                    .expect("reparsed center")
+                    .hydrogens,
+                HydrogenDeclaration::Fixed(expected_hydrogens)
+            );
+            assert_eq!(
+                reparsed
+                    .graph()
                     .stereo_elements()
                     .next()
                     .expect("reparsed canonical stereo element")
@@ -599,6 +609,17 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             );
         }
     }
+
+    let undeclared = "undeclared hydrogen policy\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
+    let molecule = read_molfile(undeclared).expect("undeclared V2000 atom interprets");
+    assert_eq!(
+        molecule
+            .graph()
+            .atom(AtomId::new(0))
+            .expect("carbon")
+            .hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
 }
 
 #[test]

@@ -249,14 +249,15 @@ fn validate_atoms(topology: &Topology) -> Result<(), DreidingPrepareError> {
         let implicit = topology
             .implicit_hydrogens(atom_id)
             .expect("topology atom perception lookup");
-        if atom.explicit_hydrogens != 0 || implicit.is_some_and(|count| count != 0) {
+        let explicit = atom.hydrogens.explicit_count();
+        if explicit != 0 || implicit.is_some_and(|count| count != 0) {
             return Err(DreidingPrepareError::CountedHydrogens {
                 atom: atom_id,
-                explicit: atom.explicit_hydrogens,
+                explicit,
                 implicit: implicit.unwrap_or(0),
             });
         }
-        if implicit.is_none() && !atom.no_implicit_hydrogens {
+        if implicit.is_none() && atom.hydrogens.allows_implicit() {
             return Err(DreidingPrepareError::UnresolvedImplicitHydrogens { atom: atom_id });
         }
         if atom.radical.is_some() {

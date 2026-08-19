@@ -2,9 +2,9 @@ use kekule::bio::{
     MacroMolecule, SmcraAtomSiteMetadata, SmcraChainId, SmcraHierarchy, SmcraResidueId,
 };
 use kekule::core::{
-    AromaticityModel, Atom, AtomId, BondOrder, DoubleBondStereo, Element, Molecule,
-    PerceptionState, PerceptionStateBuildError, PerceptionStateInstallError, PropValue, Ring,
-    RingMembership, RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
+    AromaticityModel, Atom, AtomId, BondOrder, DoubleBondStereo, Element, HydrogenDeclaration,
+    Molecule, PerceptionState, PerceptionStateBuildError, PerceptionStateInstallError, PropValue,
+    Ring, RingMembership, RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
     StereoElementKind, StereoGroup, StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
     ValenceModel,
 };
@@ -168,6 +168,45 @@ fn topology_reconstruction_preserves_explicit_unknown_stereo_exactly() {
         panic!("expected double-bond stereo");
     };
     assert_eq!(stereo.orientation, None);
+}
+
+#[test]
+fn topology_reconstruction_preserves_hydrogen_declarations_exactly() {
+    let declarations = [
+        HydrogenDeclaration::Infer { explicit: 0 },
+        HydrogenDeclaration::Infer { explicit: 1 },
+        HydrogenDeclaration::Fixed(0),
+        HydrogenDeclaration::Fixed(2),
+    ];
+    let mut builder = Molecule::builder();
+    let atoms = declarations.map(|hydrogens| {
+        let mut atom = carbon();
+        atom.hydrogens = hydrogens;
+        builder.add_atom(atom).expect("atom")
+    });
+    for pair in atoms.windows(2) {
+        builder
+            .add_bond(pair[0], pair[1], BondOrder::Single)
+            .expect("chain bond");
+    }
+    let source = SmallMolecule::from_graph(builder.build().expect("connected graph"));
+    let topology = build_small_topology(&source);
+    let reconstructed = topology
+        .definitions()
+        .next()
+        .expect("definition")
+        .1
+        .payload()
+        .graph();
+
+    assert_eq!(
+        reconstructed
+            .atoms()
+            .map(|(_, atom)| atom.hydrogens)
+            .collect::<Vec<_>>(),
+        declarations
+    );
+    assert!(topology.same_layout(&build_small_topology(&source)));
 }
 
 #[test]

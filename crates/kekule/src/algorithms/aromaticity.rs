@@ -458,7 +458,7 @@ fn atom_aromatic_candidate_degree(mol: &Molecule, atom_id: AtomId, atom: &Atom) 
         .filter(|(_, bond)| !matches!(bond.order, BondOrder::Zero | BondOrder::Dative))
         .count();
     bonded_degree
-        .saturating_add(usize::from(atom.explicit_hydrogens))
+        .saturating_add(usize::from(atom.hydrogens.explicit_count()))
         .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
 }
 
@@ -466,20 +466,20 @@ fn aromaticity_implicit_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &A
     if let Some(hydrogens) = mol.implicit_hydrogens(atom_id).ok().flatten() {
         return usize::from(hydrogens);
     }
-    if atom.no_implicit_hydrogens {
+    if !atom.hydrogens.allows_implicit() {
         return 0;
     }
     let Some(target) = aromaticity_valence_target(mol, atom_id, atom) else {
         return 0;
     };
     usize::from(target).saturating_sub(
-        explicit_valence(mol, atom_id).saturating_add(usize::from(atom.explicit_hydrogens)),
+        explicit_valence(mol, atom_id).saturating_add(usize::from(atom.hydrogens.explicit_count())),
     )
 }
 
 fn atom_rdkit_aromatic_total_valence(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> usize {
     explicit_valence(mol, atom_id)
-        .saturating_add(usize::from(atom.explicit_hydrogens))
+        .saturating_add(usize::from(atom.hydrogens.explicit_count()))
         .saturating_add(aromaticity_implicit_hydrogen_count(mol, atom_id, atom))
 }
 
@@ -488,7 +488,7 @@ fn aromaticity_valence_target(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> O
         return match atom.element.symbol() {
             "B" | "C" => Some(3),
             "N" => {
-                if atom.explicit_hydrogens > 0 {
+                if atom.hydrogens.explicit_count() > 0 {
                     Some(3)
                 } else {
                     Some(2)

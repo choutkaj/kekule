@@ -101,6 +101,25 @@ fn canonical_ranking_uses_isotope_hydrogens_and_atom_maps() {
 }
 
 #[test]
+fn canonical_ranking_distinguishes_hydrogen_declaration_policy() {
+    let mut builder = Molecule::builder();
+    let mut fixed = carbon();
+    fixed.hydrogens = HydrogenDeclaration::Fixed(3);
+    let fixed = builder.add_atom(fixed).expect("fixed carbon");
+    let inferred = builder.add_atom(carbon()).expect("inferred carbon");
+    builder
+        .add_bond(fixed, inferred, BondOrder::Single)
+        .expect("bond");
+    let mut molecule = SmallMolecule::from_graph(builder.build().expect("connected graph"));
+    perceive(&mut molecule).expect("ethane-like graph perceives");
+
+    assert_eq!(molecule.graph().implicit_hydrogens(fixed), Ok(Some(0)));
+    assert_eq!(molecule.graph().implicit_hydrogens(inferred), Ok(Some(3)));
+    let ranking = canon::atom_ranking(molecule.graph());
+    assert_ne!(ranking.rank_of(fixed), ranking.rank_of(inferred));
+}
+
+#[test]
 fn canonical_ranking_ignores_kekule_choice_for_perceived_aromatic_bonds() {
     let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene parses");
     perceive(&mut molecule).expect("naphthalene perceives");

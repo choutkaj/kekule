@@ -159,7 +159,7 @@ fn normalized_aromatic_systems_perceive_valence_before_rings_and_aromaticity() {
             .atom_mut(AtomId::new(0))
             .expect("radical carbon");
         radical_carbon.radical = Some(AtomRadical::Doublet);
-        radical_carbon.no_implicit_hydrogens = true;
+        radical_carbon.hydrogens = HydrogenDeclaration::Fixed(0);
     }
     assert_aromatic_valence_pipeline_for_molecule(
         "explicitly represented phenyl radical",
@@ -189,15 +189,8 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
         .graph()
         .atom(AtomId::new(0))
         .expect("pyrrole nitrogen");
-    assert_eq!(nitrogen.explicit_hydrogens, 1);
-    assert_eq!(
-        nitrogen.explicit_hydrogens,
-        represented_nitrogen.explicit_hydrogens
-    );
-    assert_eq!(
-        nitrogen.no_implicit_hydrogens,
-        represented_nitrogen.no_implicit_hydrogens
-    );
+    assert_eq!(nitrogen.hydrogens, HydrogenDeclaration::Fixed(1));
+    assert_eq!(nitrogen.hydrogens, represented_nitrogen.hydrogens);
     assert_eq!(
         molecule
             .graph()
@@ -225,7 +218,7 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
         .graph()
         .atoms()
         .map(|(atom_id, atom)| {
-            usize::from(atom.explicit_hydrogens)
+            usize::from(atom.hydrogens.explicit_count())
                 + usize::from(
                     molecule
                         .graph()

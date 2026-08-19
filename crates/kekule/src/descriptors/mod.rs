@@ -270,10 +270,13 @@ fn visit_constituents(
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a supported element");
     for (atom_id, atom) in graph.atoms() {
         visit(atom_id, atom.element, atom.isotope, 1)?;
-        if atom.explicit_hydrogens != 0 {
-            visit(atom_id, hydrogen, None, u64::from(atom.explicit_hydrogens))?;
+        let explicit_hydrogens = atom.hydrogens.explicit_count();
+        if explicit_hydrogens != 0 {
+            visit(atom_id, hydrogen, None, u64::from(explicit_hydrogens))?;
         }
-        if hydrogen_policy == HydrogenCountPolicy::IncludePerceived && !atom.no_implicit_hydrogens {
+        if hydrogen_policy == HydrogenCountPolicy::IncludePerceived
+            && atom.hydrogens.allows_implicit()
+        {
             let implicit = graph
                 .implicit_hydrogens(atom_id)
                 .expect("a live atom identifier remains valid during read-only traversal")
@@ -339,7 +342,7 @@ fn molecular_mass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, AtomRadical, BondOrder, Molecule};
+    use crate::core::{Atom, AtomRadical, BondOrder, HydrogenDeclaration, Molecule};
 
     fn element(symbol: &str) -> Element {
         Element::from_symbol(symbol).expect("test element")
@@ -371,6 +374,37 @@ mod tests {
                 .expect("perceived formula")
                 .to_string(),
             "CH4"
+        );
+    }
+
+    #[test]
+    fn represented_hydrogens_can_coexist_with_perceived_hydrogens() {
+        let mut atom = Atom::new(element("C"));
+        atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
+        let mut graph = Molecule::builder();
+        graph.add_atom(atom).expect("carbon");
+        let mut molecule = SmallMolecule::from_graph(graph.build().expect("single atom"));
+
+        assert_eq!(
+            molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
+                .expect("stored formula")
+                .to_string(),
+            "CH"
+        );
+        molecule.perceive().expect("carbon perceives");
+        assert_eq!(
+            molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)
+                .expect("complete formula")
+                .to_string(),
+            "CH4"
+        );
+        assert_eq!(
+            molecule
+                .graph()
+                .atom(AtomId::new(0))
+                .expect("carbon")
+                .hydrogens,
+            HydrogenDeclaration::Infer { explicit: 1 }
         );
     }
 

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 use crate::bio::{MacroValidateOptions, SmcraAtomSite, SmcraHierarchy};
-use crate::core::{AtomId, BondOrder};
+use crate::core::{AtomId, BondOrder, HydrogenDeclaration};
 use crate::geometry::Point3;
 use crate::structure::Model;
 use crate::topology::{
@@ -451,16 +451,10 @@ fn validate_graph_chemistry(
                 field: "radical",
             });
         }
-        if atom.explicit_hydrogens != 0 {
+        if atom.hydrogens != HydrogenDeclaration::default() {
             return Err(MmcifWriteError::UnsupportedAtomField {
                 atom: atom_id,
-                field: "explicit_hydrogens",
-            });
-        }
-        if atom.no_implicit_hydrogens {
-            return Err(MmcifWriteError::UnsupportedAtomField {
-                atom: atom_id,
-                field: "no_implicit_hydrogens",
+                field: "hydrogens",
             });
         }
         if atom.atom_map.is_some() {

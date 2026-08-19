@@ -89,13 +89,55 @@ fn explicit_only_materializes_bracket_counts_without_implicit_hydrogens() {
         .iter()
         .all(|entry| entry.origin == AddedHydrogenOrigin::ExplicitCount));
     assert_eq!(
-        molecule
-            .graph()
-            .atom(carbon)
-            .expect("carbon")
-            .explicit_hydrogens,
-        0
+        molecule.graph().atom(carbon).expect("carbon").hydrogens,
+        HydrogenDeclaration::Fixed(0)
     );
+
+    perceive(&mut molecule).expect("materialized fixed hydrogens perceive");
+    molecule
+        .remove_hydrogens()
+        .expect("fixed graph hydrogens collapse");
+    assert_eq!(
+        molecule.graph().atom(carbon).expect("carbon").hydrogens,
+        HydrogenDeclaration::Fixed(3)
+    );
+}
+
+#[test]
+fn materializing_inferred_declaration_preserves_inference_policy() {
+    let mut graph = Molecule::builder();
+    let mut carbon_atom = carbon();
+    carbon_atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
+    let carbon = graph.add_atom(carbon_atom).expect("carbon");
+    let graph = graph.build().expect("single atom graph");
+    let mut molecule = SmallMolecule::from_graph(graph);
+    perceive(&mut molecule).expect("represented-plus-inferred carbon perceives");
+    assert_eq!(molecule.graph().implicit_hydrogens(carbon), Ok(Some(3)));
+
+    let report = molecule
+        .add_hydrogens_with_options(AddHydrogensOptions {
+            explicit_only: true,
+            ..AddHydrogensOptions::default()
+        })
+        .expect("represented hydrogen materializes");
+    assert_eq!(report.added.len(), 1);
+    assert_eq!(report.added[0].origin, AddedHydrogenOrigin::ExplicitCount);
+    assert_eq!(
+        molecule.graph().atom(carbon).expect("carbon").hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
+
+    perceive(&mut molecule).expect("materialized inference policy perceives");
+    assert_eq!(molecule.graph().implicit_hydrogens(carbon), Ok(Some(3)));
+    molecule
+        .remove_hydrogens()
+        .expect("materialized hydrogen collapses");
+    assert_eq!(
+        molecule.graph().atom(carbon).expect("carbon").hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
+    perceive(&mut molecule).expect("collapsed inference policy perceives");
+    assert_eq!(molecule.graph().implicit_hydrogens(carbon), Ok(Some(4)));
 }
 
 #[test]
@@ -122,6 +164,33 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
         .all(|entry| molecule.graph().atom(entry.hydrogen).is_err()));
     perceive(&mut molecule).expect("re-perceive collapsed methane");
     assert_eq!(molecule.to_canonical_smiles().expect("canonical"), "C");
+}
+
+#[test]
+fn remove_and_add_hydrogens_round_trip_graph_methane() {
+    let mut molecule = perceived_smiles("[H]C([H])([H])[H]");
+    let carbon = molecule
+        .graph()
+        .atoms()
+        .find_map(|(id, atom)| (atom.element.symbol() == "C").then_some(id))
+        .expect("carbon");
+
+    let removed = molecule.remove_hydrogens().expect("collapse graph methane");
+    assert_eq!(removed.removed.len(), 4);
+    assert_eq!(
+        molecule.graph().atom(carbon).expect("carbon").hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
+
+    perceive(&mut molecule).expect("collapsed methane perceives");
+    let added = molecule.add_hydrogens().expect("methane materializes");
+    assert_eq!(added.added.len(), 4);
+    assert_eq!(molecule.atom_count(), 5);
+    assert_eq!(molecule.bond_count(), 4);
+    assert_eq!(
+        molecule.graph().atom(carbon).expect("carbon").hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
 }
 
 #[test]
@@ -152,7 +221,8 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
             .graph()
             .atom(nitrogen)
             .expect("nitrogen")
-            .explicit_hydrogens,
+            .hydrogens
+            .explicit_count(),
         1
     );
 }
@@ -303,8 +373,7 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
 fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
     let mut graph = Molecule::new();
     let mut parent = carbon();
-    parent.explicit_hydrogens = u8::MAX;
-    parent.no_implicit_hydrogens = true;
+    parent.hydrogens = HydrogenDeclaration::Fixed(u8::MAX);
     let parent = graph.add_atom(parent).expect("atom identifier capacity");
     let hydrogen = graph
         .add_atom(element_atom("H"))
