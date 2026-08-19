@@ -6,7 +6,7 @@ use crate::hydrogens::{
 
 fn perceived_smiles(input: &str) -> SmallMolecule {
     let mut molecule = SmallMolecule::from_smiles(input).expect("SMILES should parse");
-    normalize_and_perceive(&mut molecule).expect("molecule should normalize_and_perceive");
+    perceive(&mut molecule).expect("molecule should perceive");
     molecule
 }
 
@@ -104,7 +104,7 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
     let mut molecule = perceived_smiles("C");
     let carbon = molecule.graph().atom_ids().next().expect("carbon");
     let added = molecule.add_hydrogens().expect("add hydrogens");
-    normalize_and_perceive(&mut molecule).expect("re-perceive explicit methane");
+    perceive(&mut molecule).expect("re-perceive explicit methane");
 
     let removed = molecule.remove_hydrogens().expect("remove hydrogens");
 
@@ -121,7 +121,7 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
         .added
         .iter()
         .all(|entry| molecule.graph().atom(entry.hydrogen).is_err()));
-    normalize_and_perceive(&mut molecule).expect("re-perceive collapsed methane");
+    perceive(&mut molecule).expect("re-perceive collapsed methane");
     assert_eq!(molecule.to_canonical_smiles().expect("canonical"), "C");
 }
 
@@ -140,7 +140,7 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
         .expect("materialize bracket hydrogen");
     assert_eq!(added.added.len(), 1);
     assert_eq!(added.added[0].parent, nitrogen);
-    normalize_and_perceive(&mut molecule).expect("re-perceive explicit pyrrole");
+    perceive(&mut molecule).expect("re-perceive explicit pyrrole");
 
     let removed = molecule.remove_hydrogens().expect("collapse hydrogen");
 
@@ -190,7 +190,7 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
         }
         _ => panic!("expected tetrahedral stereo"),
     }
-    normalize_and_perceive(&mut molecule).expect("re-perceive explicit hydrogen");
+    perceive(&mut molecule).expect("re-perceive explicit hydrogen");
 
     let removed = molecule.remove_hydrogens().expect("collapse hydrogen");
     assert_eq!(removed.adjustments[0].explicit_hydrogens, 1);

@@ -497,10 +497,10 @@ fn smarts_query_records_json(path: &Path) -> Result<Vec<Value>, Box<dyn Error>> 
 }
 
 fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
+    if record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
             "queries": [],
         });
@@ -510,7 +510,7 @@ fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
         let graph =
             query::parse_smarts(smarts).expect("checked-in bounded benchmark SMARTS must parse");
         let matches = substructure::find_substructure_matches(record.molecule.graph(), &graph)
-            .expect("normalized and perceived benchmark molecule must satisfy query prerequisites");
+            .expect("perceived benchmark molecule must satisfy query prerequisites");
         let mut atom_sets = matches
             .into_iter()
             .map(|query_match| {
@@ -805,10 +805,10 @@ pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
+    if record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
         });
     }
@@ -880,21 +880,17 @@ pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let Ok(normalization_report) = record.molecule.normalize() else {
-        let mol = record.molecule.graph();
-        return json!({
-            "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
-            "title": record.title,
-            "atom_count": mol.atom_count(),
-            "bond_count": mol.bond_count(),
-        });
-    };
+    let source_stereo_elements = record
+        .molecule
+        .graph()
+        .stereo_elements()
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
     if record.molecule.perceive().is_err() {
         let mol = record.molecule.graph();
         return json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
@@ -912,7 +908,7 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "bond_count": mol.bond_count(),
             "report": stereo_perception_benchmark_report_json(
                 mol,
-                &normalization_report,
+                &source_stereo_elements,
                 &candidates,
                 &report,
             ),
@@ -927,7 +923,10 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "atom_count": mol.atom_count(),
             "bond_count": mol.bond_count(),
             "candidates": candidates.iter().map(stereo_candidate_json).collect::<Vec<_>>(),
-            "normalization_report": normalization_report_json(&normalization_report),
+            "source_stereo_element_indices": source_stereo_elements
+                .iter()
+                .map(|id| id.raw())
+                .collect::<Vec<_>>(),
             "error": coordinate_stereo_error_json(&error),
             "stereo_elements": stereo_elements_json(mol),
             "stereo_groups": stereo_groups_json(mol),
@@ -1107,7 +1106,7 @@ pub(crate) fn stereo_cip_record_json(
     record: &mut IndexedSmallRecord,
     remove_plain_hydrogens: bool,
 ) -> Option<Value> {
-    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
+    if record.molecule.perceive().is_err() {
         return None;
     }
     if stereo::validate_stereo(record.molecule.graph()).is_err() {
@@ -1329,7 +1328,7 @@ pub(crate) fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn default_perception_atom_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if record.molecule.normalize().is_ok() && record.molecule.perceive().is_ok() {
+    if record.molecule.perceive().is_ok() {
         json!({
             "record_index": record.record_index,
             "status": "ok",
@@ -1339,7 +1338,7 @@ pub(crate) fn default_perception_atom_record_json(record: &mut IndexedSmallRecor
     } else {
         json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
         })
     }
@@ -1372,10 +1371,10 @@ pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn hydrogen_transform_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
+    if record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
         });
     }
@@ -1427,10 +1426,10 @@ pub(crate) fn hydrogen_transform_record_json(record: &mut IndexedSmallRecord) ->
 }
 
 pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
+    if record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
         });
     }
@@ -1445,10 +1444,10 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
 }
 
 pub(crate) fn canonical_ranking_record_json(record: &mut IndexedSmallRecord) -> Value {
-    if record.molecule.normalize().is_err() || record.molecule.perceive().is_err() {
+    if record.molecule.perceive().is_err() {
         return json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
         });
     }
@@ -1516,7 +1515,7 @@ pub(crate) fn canonical_smiles_record_json(
         return Ok(smiles_error_record_json(record));
     };
     let mut molecule = molecule.clone();
-    if molecule.normalize().is_err() || molecule.perceive().is_err() {
+    if molecule.perceive().is_err() {
         return Ok(json!({
             "record_index": record.record_index,
             "status": "parse_error",
@@ -1557,10 +1556,10 @@ pub(crate) fn isomeric_smiles_record_json(
         return Ok(smiles_error_record_json(record));
     };
     let mut molecule = molecule.clone();
-    if molecule.normalize().is_err() || molecule.perceive().is_err() {
+    if molecule.perceive().is_err() {
         return Ok(json!({
             "record_index": record.record_index,
-            "status": "normalization_or_perception_error",
+            "status": "perception_error",
             "title": record.title,
             "input_smiles": record.input_smiles,
         }));
@@ -1609,7 +1608,7 @@ pub(crate) fn isomeric_smiles_record_is_stereo_bearing(record: &IndexedSmilesRec
         return false;
     };
     let mut molecule = molecule.clone();
-    molecule.normalize().is_ok() && molecule.perceive().is_ok()
+    molecule.perceive().is_ok()
 }
 
 pub(crate) fn smiles_parse_record_json(record: &IndexedSmilesRecord) -> Value {
@@ -1708,8 +1707,8 @@ fn offset_object_u64(value: &mut Value, key: &str, offset: u64) {
 }
 
 pub(crate) fn smiles_perceived_semantic_json(mut molecule: SmallMolecule) -> Value {
-    if molecule.normalize().is_err() || molecule.perceive().is_err() {
-        return json!({ "status": "normalization_or_perception_error" });
+    if molecule.perceive().is_err() {
+        return json!({ "status": "perception_error" });
     }
     let mol = molecule.graph();
     json!({
@@ -1725,9 +1724,9 @@ pub(crate) fn smiles_components_perceived_semantic_json(components: &[SmallMolec
     let mut molecules = components.to_vec();
     if molecules
         .iter_mut()
-        .any(|molecule| molecule.normalize().is_err() || molecule.perceive().is_err())
+        .any(|molecule| molecule.perceive().is_err())
     {
-        return json!({ "status": "normalization_or_perception_error" });
+        return json!({ "status": "perception_error" });
     }
     let atom_count = molecules
         .iter()
@@ -1799,8 +1798,8 @@ pub(crate) fn hydrogen_transform_semantic_json(mut molecule: SmallMolecule) -> V
 }
 
 pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) -> Value {
-    if molecule.normalize().is_err() || molecule.perceive().is_err() {
-        return json!({ "status": "normalization_or_perception_error" });
+    if molecule.perceive().is_err() {
+        return json!({ "status": "perception_error" });
     }
     if stereo::assign_cip_descriptors(molecule.graph_mut()).is_err() {
         return json!({ "status": "cip_error" });
@@ -2282,18 +2281,16 @@ pub(crate) fn bond_direction_json(
 
 pub(crate) fn stereo_perception_benchmark_report_json(
     mol: &Molecule,
-    normalization_report: &NormalizationReport,
+    source_stereo_elements: &[StereoElementId],
     candidates: &[StereoCandidate],
     report: &CoordinateStereoMaterializationReport,
 ) -> Value {
-    let assembled_elements = normalization_report
-        .created_stereo_elements
+    let assembled_elements = source_stereo_elements
         .iter()
-        .enumerate()
-        .filter_map(|(index, id)| {
+        .filter_map(|id| {
             mol.stereo_element(*id)
                 .ok()
-                .map(|element| stereo_element_json(index as u64, element, None))
+                .map(|element| stereo_element_json(u64::from(id.raw()), element, None))
         })
         .collect::<Vec<_>>();
     json!({
@@ -2303,21 +2300,6 @@ pub(crate) fn stereo_perception_benchmark_report_json(
         "assembled_elements": assembled_elements,
         "created_element_indices": report
             .created_elements
-            .iter()
-            .map(|id| id.raw())
-            .collect::<Vec<_>>(),
-    })
-}
-
-pub(crate) fn normalization_report_json(report: &NormalizationReport) -> Value {
-    json!({
-        "warnings": report
-            .warnings
-            .iter()
-            .map(normalization_warning_json)
-            .collect::<Vec<_>>(),
-        "created_stereo_element_indices": report
-            .created_stereo_elements
             .iter()
             .map(|id| id.raw())
             .collect::<Vec<_>>(),
@@ -2425,16 +2407,6 @@ pub(crate) fn coordinate_stereo_error_json(error: &CoordinateStereoError) -> Val
         })],
     };
     json!({ "issues": issues })
-}
-
-pub(crate) fn normalization_warning_json(warning: &NormalizationWarning) -> Value {
-    match warning {
-        NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => json!({
-            "type": "ambiguous_tetrahedral_wedge_marks",
-            "center_atom_index": center.raw(),
-            "mark_count": mark_count,
-        }),
-    }
 }
 
 pub(crate) fn stereo_validation_issue_json(issue: &StereoValidationIssue) -> Value {

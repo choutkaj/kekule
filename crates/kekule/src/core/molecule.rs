@@ -136,7 +136,7 @@ impl Molecule {
 
     /// Returns the sum of the asserted formal charges on all live atoms.
     ///
-    /// This aggregate does not require normalization or perception.
+    /// This aggregate does not require perception.
     pub fn formal_charge(&self) -> i64 {
         self.atoms()
             .map(|(_, atom)| i64::from(atom.formal_charge))

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::algorithms::explicit_valence;
-use crate::chemistry::localize_source_aromatic_bonds;
+use crate::chemistry::{localize_source_aromatic_bonds, project_molfile_stereo_bond_marks};
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::small::model::SmallMolecule;
@@ -778,11 +778,8 @@ impl std::error::Error for MolWriteError {}
 
 pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
-    if mol.stereo_elements().next().is_some() {
-        return Err(MolWriteError::new(
-            "V2000 writer does not support stereo elements",
-        ));
-    }
+    let projected_stereo = project_molfile_stereo_bond_marks(mol, StereoSource::MolfileV2000)
+        .map_err(MolWriteError::new)?;
     if mol.atom_count() > 999 || mol.bond_count() > 999 {
         return Err(MolWriteError::new(
             "V2000 writer supports at most 999 atoms and 999 bonds",
@@ -840,7 +837,11 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
             .get(&bond.b())
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from atom table"))?;
         let order_code = v2000_bond_code(bond.order)?;
-        let stereo_code = v2000_bond_stereo_code(bond.order, mol.stereo_bond_mark(*bond_id))?;
+        let stereo = mol
+            .stereo_bond_mark(*bond_id)
+            .map(|mark| mark.kind)
+            .or_else(|| projected_stereo.get(bond_id).copied());
+        let stereo_code = v2000_bond_stereo_code(bond.order, stereo)?;
         out.push_str(&format!(
             "{:>3}{:>3}{:>3}{:>3}  0  0  0\n",
             a, b, order_code, stereo_code
@@ -998,9 +999,9 @@ fn v2000_bond_code(order: BondOrder) -> std::result::Result<u8, MolWriteError> {
 
 fn v2000_bond_stereo_code(
     order: BondOrder,
-    stereo: Option<&StereoBondMark>,
+    stereo: Option<StereoBondMarkKind>,
 ) -> std::result::Result<u8, MolWriteError> {
-    match (order, stereo.map(|mark| mark.kind)) {
+    match (order, stereo) {
         (_, None) => Ok(0),
         (BondOrder::Single, Some(StereoBondMarkKind::WedgeUp)) => Ok(1),
         (BondOrder::Single, Some(StereoBondMarkKind::WedgeEither)) => Ok(4),

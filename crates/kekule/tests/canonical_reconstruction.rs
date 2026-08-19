@@ -93,7 +93,6 @@ fn stereo_fixture() -> (Molecule, Vec<StereoElementId>) {
 #[test]
 fn full_installed_perception_round_trips_through_public_api() {
     let mut source = SmallMolecule::from_smiles("c1ccccc1[C@H](F)Cl").expect("interpreted source");
-    source.normalize().expect("normalized source");
     source.perceive().expect("perceived source");
     kekule::stereo::assign_cip_descriptors(source.graph_mut())
         .expect("CIP assignment should succeed");

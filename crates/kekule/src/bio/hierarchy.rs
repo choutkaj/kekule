@@ -20,9 +20,18 @@ impl MacroMolecule {
     }
 
     pub fn try_from_parts(
-        graph: Molecule,
+        mut graph: Molecule,
         hierarchy: SmcraHierarchy,
     ) -> std::result::Result<Self, MacroValidateError> {
+        if let Some(mark) = graph.stereo_bond_marks().next() {
+            return Err(MacroValidateError::SourceStereoBondMark { bond: mark.bond });
+        }
+        canonicalize_represented_chemistry(&mut graph).map_err(|error| {
+            MacroValidateError::CanonicalRepresentation {
+                atom: error.atom,
+                charge: error.charge,
+            }
+        })?;
         let molecule = Self { graph, hierarchy };
         molecule.validate()?;
         Ok(molecule)
@@ -212,6 +221,13 @@ pub struct MacroValidateReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MacroValidateError {
     DisconnectedGraph(MoleculeConnectivityError),
+    SourceStereoBondMark {
+        bond: BondId,
+    },
+    CanonicalRepresentation {
+        atom: AtomId,
+        charge: usize,
+    },
     InvalidResidueChain {
         residue: SmcraResidueId,
         chain: SmcraChainId,
@@ -241,6 +257,14 @@ impl fmt::Display for MacroValidateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DisconnectedGraph(error) => write!(f, "invalid macromolecule graph: {error}"),
+            Self::SourceStereoBondMark { bond } => write!(
+                f,
+                "cannot publish macromolecule with source-only stereo mark on bond {bond}"
+            ),
+            Self::CanonicalRepresentation { atom, charge } => write!(
+                f,
+                "publishing macromolecule atom {atom} requires formal charge +{charge}, which is outside the supported range"
+            ),
             Self::InvalidResidueChain { residue, chain } => write!(
                 f,
                 "residue {} references invalid chain {}",

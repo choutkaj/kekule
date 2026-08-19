@@ -511,55 +511,16 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
 }
 
 #[test]
-fn v2000_supported_bond_stereo_codes_round_trip_exactly() {
-    for (order_code, stereo_code, order, expected) in [
-        (1, 1, BondOrder::Single, StereoBondMarkKind::WedgeUp),
-        (1, 4, BondOrder::Single, StereoBondMarkKind::WedgeEither),
-        (1, 6, BondOrder::Single, StereoBondMarkKind::WedgeDown),
-        (
-            2,
-            3,
-            BondOrder::Double,
-            StereoBondMarkKind::DoubleBondEither,
-        ),
-    ] {
+fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
+    for (order_code, stereo_code) in [(1, 1), (1, 4), (1, 6), (2, 3)] {
         let input = format!(
                 "stereo\nkekule\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
             );
-        let parsed = read_molfile(&input).expect("stereo record should parse");
-        let bond = parsed.graph().bond(BondId::new(0)).expect("bond");
-        assert_eq!(bond.order, order);
-        assert_eq!(
-            parsed
-                .graph()
-                .stereo_bond_mark(BondId::new(0))
-                .expect("stereo mark")
-                .kind,
-            expected
-        );
-
-        let written = molfile::write_v2000(&parsed).expect("stereo record should write");
-        let reparsed = read_molfile(&written).expect("written stereo record should parse");
-        assert_eq!(
-            reparsed
-                .graph()
-                .stereo_bond_mark(BondId::new(0))
-                .expect("stereo mark")
-                .kind,
-            expected
-        );
-        assert_eq!(
-            reparsed
-                .graph()
-                .first_conformer()
-                .expect("conformer")
-                .1
-                .position(AtomId::new(0)),
-            Some(crate::units::Quantity::new(
-                Point3::new(-1.25, 0.0, 0.0),
-                crate::units::ANGSTROM,
-            ))
-        );
+        let document = molfile::parse_str(&input).expect("bond stereo syntax should parse");
+        let error = molfile::interpret(&document)
+            .expect_err("under-specified stereo must not publish a molecule");
+        assert_eq!(error.line(), 7);
+        assert!(error.message().contains("source-stereo canonicalization"));
     }
 }
 
@@ -570,31 +531,20 @@ fn v2000_does_not_infer_tetrahedral_hydrogens_without_a_source_declaration() {
             "stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  0  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
         );
 
-        let mut parsed = read_molfile(&input).expect("stereo record should parse");
-
-        assert_eq!(
-            parsed
-                .graph()
-                .atom(AtomId::new(0))
-                .expect("stereo center")
-                .explicit_hydrogens,
-            0,
-            "{symbol}"
-        );
-        assert!(
-            !parsed
-                .graph()
-                .atom(AtomId::new(0))
-                .expect("stereo center")
-                .no_implicit_hydrogens
-        );
-        if symbol == "C" {
-            let before = parsed.graph().clone();
-            assert!(matches!(
-                parsed.normalize(),
-                Err(NormalizationError::SourceStereo(_))
-            ));
-            assert_eq!(parsed.graph(), &before);
+        if symbol == "S" {
+            let molecule = read_molfile(&input).expect("sulfur lone-pair stereo interprets");
+            assert_eq!(molecule.graph().stereo_elements().count(), 1);
+            assert!(molecule.graph().stereo_elements().any(|(_, element)| {
+                matches!(
+                    &element.kind,
+                    StereoElementKind::Tetrahedral(stereo)
+                        if stereo.carriers.contains(&StereoCarrier::ImplicitLonePair)
+                )
+            }));
+        } else {
+            let error = read_molfile(&input)
+                .expect_err("wedge without a declared fourth carrier must fail");
+            assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
         }
     }
 }
@@ -610,7 +560,8 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
 
         let document = molfile::parse_str(&input).expect("source syntax parses");
         let interpreted = molfile::interpret(&document).expect("source declaration interprets");
-        let mut molecule = interpreted.into_molecule();
+        assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
+        let molecule = interpreted.into_molecule();
         let center = molecule
             .graph()
             .atom(AtomId::new(0))
@@ -618,11 +569,15 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
         assert_eq!(center.explicit_hydrogens, expected_hydrogens);
         assert!(center.no_implicit_hydrogens);
         assert!(!molecule.graph().perception().has_valence());
-        assert!(molecule.graph().stereo_bond_marks().next().is_some());
-
-        molecule.normalize().expect("declared carrier normalizes");
         assert!(molecule.graph().stereo_bond_marks().next().is_none());
         assert_eq!(molecule.graph().stereo_elements().count(), 1);
+
+        let written = molfile::write_v2000(&molecule).expect("canonical stereo should project");
+        let (reparsed, report) =
+            read_molfile_with_report(&written).expect("projected stereo should re-interpret");
+        assert_eq!(report.created_stereo_elements().len(), 1);
+        assert!(reparsed.graph().stereo_bond_marks().next().is_none());
+        assert_eq!(reparsed.graph().stereo_elements().count(), 1);
     }
 }
 
@@ -682,9 +637,9 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         ))
         .expect("double-bond stereo");
     assert!(molfile::write_v2000(&molecule)
-        .expect_err("stereo elements should be rejected")
+        .expect_err("invalid stereo element should be rejected")
         .message
-        .contains("stereo elements"));
+        .contains("cannot encode"));
 
     let element = molecule
         .graph()
