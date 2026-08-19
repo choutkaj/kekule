@@ -26,6 +26,10 @@ fn default_perception_installs_one_ring_basis_for_aromaticity() {
 
     let ring_set = molecule.graph().ring_set().expect("installed ring basis");
     assert_eq!(ring_set.len(), 1);
+    assert_eq!(
+        molecule.graph().perception().ring_basis_model(),
+        Some(RingBasisModel::FiguerasSssrLike)
+    );
     assert!(molecule.graph().perception().has_aromaticity());
     assert_eq!(
         molecule
@@ -48,7 +52,8 @@ fn interpretation_owns_source_stereo_before_default_perception() {
     molecule.perceive().expect("directional perception");
 
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
-    assert!(!molecule.graph().perception().has_cip_descriptors());
+    assert!(!molecule.graph().perception().has_stereo());
+    assert!(molecule.graph().perception().stereo_state().is_none());
 }
 
 #[test]

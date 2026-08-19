@@ -4,9 +4,9 @@ use kekule::bio::{
 use kekule::core::{
     AromaticityModel, Atom, AtomId, BondOrder, DoubleBondStereo, Element, HydrogenDeclaration,
     Molecule, PerceptionState, PerceptionStateBuildError, PerceptionStateInstallError, PropValue,
-    Ring, RingMembership, RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
-    StereoElementKind, StereoGroup, StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
-    ValenceModel,
+    Ring, RingBasisModel, RingBasisState, RingMembership, RingSet, StereoCarrier, StereoDescriptor,
+    StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
+    TetrahedralOrientation, TetrahedralStereo, ValenceModel,
 };
 use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
@@ -27,10 +27,13 @@ fn export_perception(
             rings.membership().atom_slot_flags().to_vec(),
             rings.membership().bond_slot_flags().to_vec(),
         );
-        let ring_set = rings
-            .ring_set()
-            .map(|set| RingSet::from_rings(set.rings().to_vec()));
-        builder = builder.with_rings(membership, ring_set);
+        let basis = rings.basis().map(|basis| {
+            RingBasisState::new(
+                basis.model(),
+                RingSet::from_rings(basis.ring_set().rings().to_vec()),
+            )
+        });
+        builder = builder.with_rings(membership, basis);
     }
     if let Some(aromaticity) = source.aromaticity_state() {
         builder = builder.with_aromaticity(
@@ -39,7 +42,9 @@ fn export_perception(
             aromaticity.bonds().collect(),
         )?;
     }
-    builder = builder.with_cip_descriptors(source.cip_descriptors().collect())?;
+    if let Some(stereo) = source.stereo_state() {
+        builder = builder.with_cip_descriptors(stereo.cip_descriptors().collect())?;
+    }
     Ok(builder.build())
 }
 
@@ -88,6 +93,20 @@ fn stereo_fixture() -> (Molecule, Vec<StereoElementId>) {
 }
 
 #[test]
+fn default_perception_has_no_installed_sections() {
+    let state = PerceptionState::default();
+
+    assert!(!state.has_valence());
+    assert!(!state.has_rings());
+    assert!(!state.has_aromaticity());
+    assert!(!state.has_stereo());
+    assert!(state.valence_state().is_none());
+    assert!(state.ring_state().is_none());
+    assert!(state.aromaticity_state().is_none());
+    assert!(state.stereo_state().is_none());
+}
+
+#[test]
 fn full_installed_perception_round_trips_through_public_api() {
     let mut source = SmallMolecule::from_smiles("c1ccccc1[C@H](F)Cl").expect("interpreted source");
     source.perceive().expect("perceived source");
@@ -102,10 +121,16 @@ fn full_installed_perception_round_trips_through_public_api() {
         .ring_state()
         .is_some_and(|state| state.ring_set().is_some()));
     assert_eq!(
+        perception.ring_basis_model(),
+        Some(RingBasisModel::FiguerasSssrLike)
+    );
+    assert_eq!(
         perception.aromaticity_state().map(|state| state.model()),
         Some(AromaticityModel::RdkitLike)
     );
     assert!(perception.cip_descriptors().next().is_some());
+    assert!(perception.has_stereo());
+    assert!(perception.has_cip_descriptors());
 
     let detached = export_perception(perception).expect("public export");
     assert_eq!(&detached, perception);
@@ -222,7 +247,9 @@ fn exact_section_presence_and_model_round_trip() {
     molecule
         .install_perception_state(model_neutral.clone())
         .expect("install");
-    assert!(!molecule.perception().has_valence());
+    assert!(molecule.perception().has_valence());
+    assert_eq!(molecule.perception().valence_model(), None);
+    assert_eq!(molecule.implicit_hydrogens(atom), Ok(Some(4)));
     assert_eq!(
         molecule
             .perception()
@@ -237,17 +264,39 @@ fn exact_section_presence_and_model_round_trip() {
     );
 
     let state = PerceptionState::builder()
-        .with_aromaticity(AromaticityModel::RdkitLike, vec![atom], Vec::new())
+        .with_aromaticity(AromaticityModel::RdkitLike, Vec::new(), Vec::new())
         .expect("aromaticity")
         .build();
     molecule
         .install_perception_state(state.clone())
         .expect("install");
+    assert!(molecule.perception().has_aromaticity());
     assert_eq!(export_perception(molecule.perception()).unwrap(), state);
+
+    let present_empty_stereo = PerceptionState::builder()
+        .with_cip_descriptors(Vec::new())
+        .expect("empty stereo section")
+        .build();
+    molecule
+        .install_perception_state(present_empty_stereo.clone())
+        .expect("empty stereo install");
+    assert!(molecule.perception().has_stereo());
+    assert!(!molecule.perception().has_cip_descriptors());
+    assert!(molecule
+        .perception()
+        .stereo_state()
+        .expect("present stereo")
+        .cip_descriptors()
+        .next()
+        .is_none());
+    assert_eq!(
+        export_perception(molecule.perception()).unwrap(),
+        present_empty_stereo
+    );
 }
 
 #[test]
-fn ring_membership_round_trips_with_and_without_ring_set() {
+fn ring_membership_and_basis_provenance_round_trip_exactly() {
     let mut molecule = Molecule::builder();
     let atoms = [
         molecule.add_atom(carbon()).unwrap(),
@@ -274,39 +323,71 @@ fn ring_membership_round_trips_with_and_without_ring_set() {
     molecule
         .install_perception_state(membership_only.clone())
         .expect("membership-only install");
+    assert!(molecule.perception().has_rings());
     assert!(molecule
         .perception()
         .ring_state()
-        .is_some_and(|state| state.ring_set().is_none()));
+        .is_some_and(|state| state.basis().is_none() && state.ring_set().is_none()));
     assert_eq!(
         export_perception(molecule.perception()).unwrap(),
         membership_only
     );
 
-    let with_basis = PerceptionState::builder()
+    let model_neutral_basis = PerceptionState::builder()
         .with_rings(
             membership(),
-            Some(RingSet::from_rings(vec![Ring {
-                atoms: atoms.to_vec(),
-                bonds: bonds.to_vec(),
-            }])),
+            Some(RingBasisState::new(
+                None,
+                RingSet::from_rings(vec![Ring {
+                    atoms: atoms.to_vec(),
+                    bonds: bonds.to_vec(),
+                }]),
+            )),
         )
         .build();
     molecule
-        .install_perception_state(with_basis.clone())
+        .install_perception_state(model_neutral_basis.clone())
         .expect("basis install");
+    assert_eq!(molecule.perception().ring_basis_model(), None);
     assert_eq!(
         export_perception(molecule.perception()).unwrap(),
-        with_basis
+        model_neutral_basis
+    );
+
+    let named_basis = PerceptionState::builder()
+        .with_rings(
+            membership(),
+            Some(RingBasisState::new(
+                Some(RingBasisModel::FiguerasSssrLike),
+                RingSet::from_rings(vec![Ring {
+                    atoms: atoms.to_vec(),
+                    bonds: bonds.to_vec(),
+                }]),
+            )),
+        )
+        .build();
+    molecule
+        .install_perception_state(named_basis.clone())
+        .expect("named basis install");
+    assert_eq!(
+        molecule.perception().ring_basis_model(),
+        Some(RingBasisModel::FiguerasSssrLike)
+    );
+    assert_eq!(
+        export_perception(molecule.perception()).unwrap(),
+        named_basis
     );
 
     let inconsistent = PerceptionState::builder()
         .with_rings(
             RingMembership::from_slot_flags(vec![false, true, true], vec![true; 3]),
-            Some(RingSet::from_rings(vec![Ring {
-                atoms: atoms.to_vec(),
-                bonds: bonds.to_vec(),
-            }])),
+            Some(RingBasisState::new(
+                None,
+                RingSet::from_rings(vec![Ring {
+                    atoms: atoms.to_vec(),
+                    bonds: bonds.to_vec(),
+                }]),
+            )),
         )
         .build();
     assert_eq!(
@@ -315,7 +396,7 @@ fn ring_membership_round_trips_with_and_without_ring_set() {
             atoms[0]
         ))
     );
-    assert_eq!(molecule.perception(), &with_basis);
+    assert_eq!(molecule.perception(), &named_basis);
 }
 
 #[test]
@@ -406,10 +487,13 @@ fn malformed_ring_and_stereo_references_are_rejected() {
     let malformed = PerceptionState::builder()
         .with_rings(
             membership,
-            Some(RingSet::from_rings(vec![Ring {
-                atoms: vec![AtomId::new(0), AtomId::new(1)],
-                bonds: Vec::new(),
-            }])),
+            Some(RingBasisState::new(
+                None,
+                RingSet::from_rings(vec![Ring {
+                    atoms: vec![AtomId::new(0), AtomId::new(1)],
+                    bonds: Vec::new(),
+                }]),
+            )),
         )
         .build();
     let error = molecule
@@ -449,7 +533,8 @@ fn installed_perception_follows_normal_invalidation_rules() {
         .replace_stereo_element(elements[0], replacement)
         .unwrap();
     assert!(molecule.perception().valence_state().is_some());
-    assert!(!molecule.perception().has_cip_descriptors());
+    assert!(!molecule.perception().has_stereo());
+    assert!(molecule.perception().stereo_state().is_none());
 
     let mut editor = molecule.edit();
     editor.atom_mut(AtomId::new(0)).unwrap().formal_charge = 1;

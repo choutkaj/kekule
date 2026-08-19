@@ -401,7 +401,7 @@ pub(super) fn assert_all_stale(mol: &Molecule) {
     assert!(!mol.perception().has_valence());
     assert!(!mol.perception().has_rings());
     assert!(!mol.perception().has_aromaticity());
-    assert!(!mol.perception().has_cip_descriptors());
+    assert!(!mol.perception().has_stereo());
 }
 
 pub(super) fn implicit_h_wedge_geometry_molblock() -> &'static str {
