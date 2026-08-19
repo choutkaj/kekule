@@ -1243,6 +1243,119 @@ fn equivalent_smiles_direction_tokens_publish_equivalent_canonical_stereo() {
 }
 
 #[test]
+fn alternate_directional_source_carriers_publish_identical_double_bond_stereo() {
+    let source_graph = || {
+        let mut molecule = Molecule::new();
+        let left = molecule
+            .add_atom(carbon())
+            .expect("atom identifier capacity");
+        let right = molecule
+            .add_atom(carbon())
+            .expect("atom identifier capacity");
+        let left_reference = molecule
+            .add_atom(element_atom("F"))
+            .expect("atom identifier capacity");
+        let left_alternative = molecule
+            .add_atom(element_atom("Cl"))
+            .expect("atom identifier capacity");
+        let right_reference = molecule
+            .add_atom(element_atom("Br"))
+            .expect("atom identifier capacity");
+        let right_alternative = molecule
+            .add_atom(element_atom("I"))
+            .expect("atom identifier capacity");
+        molecule
+            .add_bond(left, right, BondOrder::Double)
+            .expect("double bond");
+        let left_reference_bond = molecule
+            .add_bond(left, left_reference, BondOrder::Single)
+            .expect("left reference bond");
+        let left_alternative_bond = molecule
+            .add_bond(left, left_alternative, BondOrder::Single)
+            .expect("left alternative bond");
+        let right_reference_bond = molecule
+            .add_bond(right, right_reference, BondOrder::Single)
+            .expect("right reference bond");
+        let right_alternative_bond = molecule
+            .add_bond(right, right_alternative, BondOrder::Single)
+            .expect("right alternative bond");
+        (
+            molecule,
+            left,
+            right,
+            left_reference_bond,
+            left_alternative_bond,
+            right_reference_bond,
+            right_alternative_bond,
+        )
+    };
+
+    let canonicalize = |mut molecule: Molecule, marks: &[SourceStereoBondMark]| {
+        let report = canonicalize_molecule_for_publication(&mut molecule, marks)
+            .expect("paired directional source marks should canonicalize");
+        assert_eq!(report.created_stereo_elements.len(), 1);
+        molecule
+            .stereo_element(report.created_stereo_elements[0])
+            .expect("created double-bond element")
+            .clone()
+    };
+
+    let (molecule, left, right, left_reference, _, right_reference, _) = source_graph();
+    let expected = canonicalize(
+        molecule,
+        &[
+            SourceStereoBondMark {
+                bond: left_reference,
+                from: left,
+                kind: SourceStereoBondMarkKind::DirectionalUp,
+            },
+            SourceStereoBondMark {
+                bond: right_reference,
+                from: right,
+                kind: SourceStereoBondMarkKind::DirectionalUp,
+            },
+        ],
+    );
+
+    let (molecule, left, right, _, left_alternative, right_reference, _) = source_graph();
+    let alternate_left = canonicalize(
+        molecule,
+        &[
+            SourceStereoBondMark {
+                bond: left_alternative,
+                from: left,
+                kind: SourceStereoBondMarkKind::DirectionalUp,
+            },
+            SourceStereoBondMark {
+                bond: right_reference,
+                from: right,
+                kind: SourceStereoBondMarkKind::DirectionalDown,
+            },
+        ],
+    );
+
+    let (molecule, left, right, _, left_alternative, _, right_alternative) = source_graph();
+    let both_alternatives = canonicalize(
+        molecule,
+        &[
+            SourceStereoBondMark {
+                bond: left_alternative,
+                from: left,
+                kind: SourceStereoBondMarkKind::DirectionalUp,
+            },
+            SourceStereoBondMark {
+                bond: right_alternative,
+                from: right,
+                kind: SourceStereoBondMarkKind::DirectionalUp,
+            },
+        ],
+    );
+
+    assert_eq!(alternate_left, expected);
+    assert_eq!(both_alternatives, expected);
+}
+
+#[test]
 fn smiles_ring_direction_preserves_the_textual_origin_endpoint() {
     let marked_when_opened =
         read_smiles(r"F/C=C/1CCCCC1").expect("opening ring direction should interpret");
@@ -1443,6 +1556,36 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
+}
+
+#[test]
+fn alternate_tetrahedral_wedge_carriers_publish_identical_canonical_stereo() {
+    let canonicalize = |kind, bond| {
+        let (mut molecule, center, _, _) = tetrahedral_marked_graph();
+        let report = canonicalize_molecule_for_publication(
+            &mut molecule,
+            &[SourceStereoBondMark {
+                bond,
+                from: center,
+                kind,
+            }],
+        )
+        .expect("tetrahedral source wedge should canonicalize");
+        assert_eq!(report.created_stereo_elements.len(), 1);
+        molecule
+            .stereo_element(report.created_stereo_elements[0])
+            .expect("created tetrahedral element")
+            .clone()
+    };
+
+    let wedge_on_first = canonicalize(SourceStereoBondMarkKind::WedgeUp, BondId::new(0));
+    let wedge_on_second = canonicalize(SourceStereoBondMarkKind::WedgeDown, BondId::new(1));
+    assert_eq!(wedge_on_second, wedge_on_first);
+
+    let unknown_on_first = canonicalize(SourceStereoBondMarkKind::WedgeEither, BondId::new(0));
+    let unknown_on_second = canonicalize(SourceStereoBondMarkKind::WedgeEither, BondId::new(1));
+    assert_eq!(unknown_on_second, unknown_on_first);
+    assert!(unknown_on_first.is_explicitly_unknown());
 }
 
 #[test]

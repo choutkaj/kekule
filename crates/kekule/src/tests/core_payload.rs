@@ -240,6 +240,292 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
 }
 
 #[test]
+fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
+    let mut mol = Molecule::new();
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let carriers = ["F", "Cl", "Br", "I"]
+        .into_iter()
+        .map(element_atom)
+        .map(|atom| mol.add_atom(atom).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
+    for carrier in &carriers {
+        mol.add_bond(center, *carrier, BondOrder::Single)
+            .expect("tetrahedral carrier bond");
+    }
+    let canonical_carriers = carriers
+        .iter()
+        .copied()
+        .map(StereoCarrier::Atom)
+        .collect::<Vec<_>>();
+
+    let canonical = mol
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers: canonical_carriers.clone(),
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
+        .expect("canonical tetrahedral element");
+    let permuted = mol
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers: vec![
+                    canonical_carriers[1],
+                    canonical_carriers[0],
+                    canonical_carriers[2],
+                    canonical_carriers[3],
+                ],
+                orientation: Some(TetrahedralOrientation::CounterClockwise),
+            },
+        )))
+        .expect("equivalent permuted tetrahedral element");
+    assert_eq!(
+        mol.stereo_element(canonical).unwrap(),
+        mol.stereo_element(permuted).unwrap()
+    );
+
+    let unknown = mol
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers: canonical_carriers.clone(),
+                orientation: None,
+            },
+        )))
+        .expect("canonical unknown tetrahedral element");
+    let unknown_permuted = mol
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers: vec![
+                    canonical_carriers[3],
+                    canonical_carriers[1],
+                    canonical_carriers[0],
+                    canonical_carriers[2],
+                ],
+                orientation: None,
+            },
+        )))
+        .expect("permuted unknown tetrahedral element");
+    assert_eq!(
+        mol.stereo_element(unknown).unwrap(),
+        mol.stereo_element(unknown_permuted).unwrap()
+    );
+
+    let replacement = StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
+        center,
+        carriers: vec![
+            canonical_carriers[2],
+            canonical_carriers[1],
+            canonical_carriers[0],
+            canonical_carriers[3],
+        ],
+        orientation: Some(TetrahedralOrientation::CounterClockwise),
+    }));
+    mol.replace_stereo_element(permuted, replacement)
+        .expect("replacement should use the same canonical storage boundary");
+    assert_eq!(
+        mol.stereo_element(canonical).unwrap(),
+        mol.stereo_element(permuted).unwrap()
+    );
+}
+
+#[test]
+fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_reference = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let left_alternative = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let right_reference = mol
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
+    let right_alternative = mol
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
+    let double_bond = mol
+        .add_bond(left, right, BondOrder::Double)
+        .expect("double bond");
+    for (endpoint, carrier) in [
+        (left, left_reference),
+        (left, left_alternative),
+        (right, right_reference),
+        (right, right_alternative),
+    ] {
+        mol.add_bond(endpoint, carrier, BondOrder::Single)
+            .expect("substituent bond");
+    }
+
+    let add = |mol: &mut Molecule,
+               left_endpoint,
+               right_endpoint,
+               left_carrier,
+               right_carrier,
+               orientation| {
+        mol.add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
+                bond: double_bond,
+                left: left_endpoint,
+                right: right_endpoint,
+                left_carrier: StereoCarrier::Atom(left_carrier),
+                right_carrier: StereoCarrier::Atom(right_carrier),
+                orientation,
+            },
+        )))
+        .expect("double-bond stereo element")
+    };
+    let canonical = add(
+        &mut mol,
+        left,
+        right,
+        left_reference,
+        right_reference,
+        Some(DoubleBondOrientation::Together),
+    );
+    let alternate_left = add(
+        &mut mol,
+        left,
+        right,
+        left_alternative,
+        right_reference,
+        Some(DoubleBondOrientation::Opposite),
+    );
+    let reversed_and_alternate = add(
+        &mut mol,
+        right,
+        left,
+        right_alternative,
+        left_alternative,
+        Some(DoubleBondOrientation::Together),
+    );
+    for equivalent in [alternate_left, reversed_and_alternate] {
+        assert_eq!(
+            mol.stereo_element(canonical).unwrap(),
+            mol.stereo_element(equivalent).unwrap()
+        );
+    }
+
+    let unknown = add(&mut mol, left, right, left_reference, right_reference, None);
+    let unknown_alternatives = add(
+        &mut mol,
+        right,
+        left,
+        right_alternative,
+        left_alternative,
+        None,
+    );
+    assert_eq!(
+        mol.stereo_element(unknown).unwrap(),
+        mol.stereo_element(unknown_alternatives).unwrap()
+    );
+}
+
+#[test]
+fn axis_stereo_storage_canonicalizes_reference_carriers() {
+    let mut mol = Molecule::new();
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_reference = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let left_alternative = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    let right_reference = mol
+        .add_atom(element_atom("Br"))
+        .expect("atom identifier capacity");
+    let right_alternative = mol
+        .add_atom(element_atom("I"))
+        .expect("atom identifier capacity");
+    let axis = mol
+        .add_bond(left, right, BondOrder::Single)
+        .expect("axis bond");
+    for (endpoint, carrier) in [
+        (left, left_reference),
+        (left, left_alternative),
+        (right, right_reference),
+        (right, right_alternative),
+    ] {
+        mol.add_bond(endpoint, carrier, BondOrder::Single)
+            .expect("axis substituent bond");
+    }
+
+    let add = |mol: &mut Molecule, carriers, orientation| {
+        mol.add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers,
+            orientation,
+        })))
+        .expect("axis stereo element")
+    };
+    let canonical = add(
+        &mut mol,
+        vec![
+            StereoCarrier::Atom(left_reference),
+            StereoCarrier::Atom(right_reference),
+        ],
+        Some(AxisOrientation::Clockwise),
+    );
+    let reversed = add(
+        &mut mol,
+        vec![
+            StereoCarrier::Atom(right_reference),
+            StereoCarrier::Atom(left_reference),
+        ],
+        Some(AxisOrientation::Clockwise),
+    );
+    let alternate_left = add(
+        &mut mol,
+        vec![
+            StereoCarrier::Atom(left_alternative),
+            StereoCarrier::Atom(right_reference),
+        ],
+        Some(AxisOrientation::CounterClockwise),
+    );
+    let both_alternatives = add(
+        &mut mol,
+        vec![
+            StereoCarrier::Atom(right_alternative),
+            StereoCarrier::Atom(left_alternative),
+        ],
+        Some(AxisOrientation::Clockwise),
+    );
+    for equivalent in [reversed, alternate_left, both_alternatives] {
+        assert_eq!(
+            mol.stereo_element(canonical).unwrap(),
+            mol.stereo_element(equivalent).unwrap()
+        );
+    }
+
+    let unknown = add(
+        &mut mol,
+        vec![
+            StereoCarrier::Atom(left_reference),
+            StereoCarrier::Atom(right_reference),
+        ],
+        None,
+    );
+    let unknown_alternatives = add(
+        &mut mol,
+        vec![
+            StereoCarrier::Atom(right_alternative),
+            StereoCarrier::Atom(left_alternative),
+        ],
+        None,
+    );
+    assert_eq!(
+        mol.stereo_element(unknown).unwrap(),
+        mol.stereo_element(unknown_alternatives).unwrap()
+    );
+}
+
+#[test]
 fn stereo_element_group_membership_is_transactional_and_relation_owned() {
     let mut mol = Molecule::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
