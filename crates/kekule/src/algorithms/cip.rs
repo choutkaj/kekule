@@ -67,7 +67,7 @@ pub struct CipSkipped {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CipSkippedReason {
-    NotSpecified,
+    UnknownConfiguration,
     NotStereogenic,
 }
 
@@ -219,8 +219,8 @@ fn assign_cip_element(
     element: &StereoElement,
     options: CipAssignmentOptions,
 ) -> CipElementAssignment {
-    if element.specifiedness != StereoSpecifiedness::Specified {
-        return CipElementAssignment::Skipped(CipSkippedReason::NotSpecified);
+    if !element.is_specified() {
+        return CipElementAssignment::Skipped(CipSkippedReason::UnknownConfiguration);
     }
     let assignment = match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => {
@@ -278,12 +278,15 @@ fn assign_tetrahedral_descriptor_with_deferred_rule6(
     options: CipAssignmentOptions,
     allow_single_ring_tied_pair_rule6: bool,
 ) -> CipResult<StereoDescriptor> {
+    let orientation = stereo
+        .orientation
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let ranked = ranked_tetrahedral_carriers(
         mol,
         element,
         stereo.center,
         &stereo.carriers,
-        stereo.orientation,
+        orientation,
         options,
         allow_single_ring_tied_pair_rule6,
     )?;
@@ -295,6 +298,9 @@ fn tetrahedral_descriptor_from_ranked(
     stereo: &TetrahedralStereo,
     ranked: &RankedCarriers,
 ) -> CipResult<StereoDescriptor> {
+    let orientation = stereo
+        .orientation
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let mut priority_positions = Vec::new();
     for carrier in &ranked.carriers {
         let Some(position) = stereo
@@ -307,7 +313,7 @@ fn tetrahedral_descriptor_from_ranked(
         priority_positions.push(position);
     }
     let even = permutation_is_even(&priority_positions);
-    let descriptor_is_r = matches!(stereo.orientation, TetrahedralOrientation::Clockwise) != even;
+    let descriptor_is_r = matches!(orientation, TetrahedralOrientation::Clockwise) != even;
     let descriptor = match (descriptor_is_r, ranked.pseudo_asymmetric_ordering) {
         (true, true) => StereoDescriptor::LowerR,
         (false, true) => StereoDescriptor::LowerS,
@@ -323,6 +329,9 @@ fn assign_double_bond_descriptor(
     stereo: &DoubleBondStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<StereoDescriptor> {
+    let orientation = stereo
+        .orientation
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     if bond_in_ring_smaller_than(mol, stereo.bond, 8) {
         return Err(CipAssignmentIssue::UnresolvedPriority { element });
     }
@@ -357,7 +366,7 @@ fn assign_double_bond_descriptor(
         .copied()
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
 
-    let mut top_relation = stereo.orientation;
+    let mut top_relation = orientation;
     if stereo.left_carrier != left_top {
         top_relation = invert_double_bond_orientation(top_relation);
     }
@@ -380,6 +389,9 @@ fn assign_axis_descriptor(
     stereo: &AxisStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<StereoDescriptor> {
+    let orientation = stereo
+        .orientation
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let bond = mol
         .bond(stereo.axis)
         .map_err(|_| CipAssignmentIssue::UnresolvedPriority { element })?;
@@ -414,7 +426,7 @@ fn assign_axis_descriptor(
         .first()
         .copied()
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
-    let mut top_orientation = stereo.orientation;
+    let mut top_orientation = orientation;
     if left_reference != left_top {
         top_orientation = invert_axis_orientation(top_orientation);
     }
@@ -559,7 +571,7 @@ fn assign_deferred_tetrahedral_rule6(
         let StereoElementKind::Tetrahedral(stereo) = &element.kind else {
             continue;
         };
-        if element.specifiedness != StereoSpecifiedness::Specified {
+        if !element.is_specified() {
             continue;
         }
         match assign_tetrahedral_descriptor_with_deferred_rule6(mol, *id, stereo, options, true) {
@@ -577,7 +589,7 @@ fn element_is_finally_nonstereogenic(
     stereo_element: &StereoElement,
     options: CipAssignmentOptions,
 ) -> CipResult<bool> {
-    if stereo_element.specifiedness != StereoSpecifiedness::Specified {
+    if !stereo_element.is_specified() {
         return Ok(false);
     }
     match &stereo_element.kind {
@@ -599,6 +611,9 @@ fn tetrahedral_final_tie_is_nonstereogenic(
     stereo: &TetrahedralStereo,
     options: CipAssignmentOptions,
 ) -> CipResult<bool> {
+    let orientation = stereo
+        .orientation
+        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let options = complete_final_tie_options(mol, stereo.center, options);
     let signatures = carrier_signatures(
         mol,
@@ -614,7 +629,7 @@ fn tetrahedral_final_tie_is_nonstereogenic(
         element,
         stereo.center,
         &signatures,
-        stereo.orientation,
+        orientation,
         true,
     ) {
         Ok(_) => Ok(false),
@@ -1014,9 +1029,7 @@ fn tetrahedral_orientation_for_center(
 ) -> Option<TetrahedralOrientation> {
     mol.stereo_elements()
         .find_map(|(_, element)| match &element.kind {
-            StereoElementKind::Tetrahedral(stereo) if stereo.center == center => {
-                Some(stereo.orientation)
-            }
+            StereoElementKind::Tetrahedral(stereo) if stereo.center == center => stereo.orientation,
             _ => None,
         })
 }
@@ -2865,6 +2878,7 @@ fn auxiliary_tetrahedral_descriptor_for_occurrence(
     };
     let signatures =
         auxiliary_tetrahedral_signatures(&aux_context, graph, occurrence.node, stereo).ok()?;
+    let orientation = stereo.orientation?;
     let ranked = match rank_carrier_signatures(occurrence.key.element, &signatures, None) {
         Ok(ranked) => ranked,
         Err(CipAssignmentIssue::UnresolvedPriority { .. }) if stereo.carriers.len() == 4 => {
@@ -2873,7 +2887,7 @@ fn auxiliary_tetrahedral_descriptor_for_occurrence(
                 occurrence.key.element,
                 stereo.center,
                 &signatures,
-                stereo.orientation,
+                orientation,
                 true,
             )
             .ok()?

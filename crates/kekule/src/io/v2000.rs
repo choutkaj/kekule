@@ -326,7 +326,6 @@ pub(super) fn interpret_v2000_syntax(
                 bond: bond_id,
                 from: a,
                 kind,
-                source: StereoSource::MolfileV2000,
             });
         }
     }
@@ -785,8 +784,7 @@ impl std::error::Error for MolWriteError {}
 
 pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
     let mol = molecule.graph();
-    let projected_stereo = project_molfile_stereo_bond_marks(mol, StereoSource::MolfileV2000)
-        .map_err(MolWriteError::new)?;
+    let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
     if mol.atom_count() > 999 || mol.bond_count() > 999 {
         return Err(MolWriteError::new(
             "V2000 writer supports at most 999 atoms and 999 bonds",

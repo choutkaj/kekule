@@ -633,14 +633,13 @@ fn infer_coordinate_tetrahedral(mol: &Molecule, conformer: &Conformer) -> Vec<St
         let Some(orientation) = tetrahedral_orientation_from_points(points) else {
             continue;
         };
-        assigned.push(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        assigned.push(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers,
-                orientation,
-            }),
-            StereoSource::Coordinates3D,
-        ));
+                orientation: Some(orientation),
+            },
+        )));
     }
     assigned
 }
@@ -674,17 +673,16 @@ fn infer_coordinate_double_bonds(mol: &Molecule, conformer: &Conformer) -> Vec<S
         let Some(orientation) = double_bond_orientation_from_points(points) else {
             continue;
         };
-        assigned.push(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        assigned.push(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond,
                 left,
                 right,
                 left_carrier: StereoCarrier::Atom(left_carrier),
                 right_carrier: StereoCarrier::Atom(right_carrier),
-                orientation,
-            }),
-            coordinate_source(&points),
-        ));
+                orientation: Some(orientation),
+            },
+        )));
     }
     assigned
 }
@@ -721,17 +719,14 @@ fn infer_coordinate_axes(mol: &Molecule, conformer: &Conformer) -> Vec<StereoEle
         else {
             continue;
         };
-        assigned.push(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis,
-                carriers: vec![
-                    StereoCarrier::Atom(left_reference),
-                    StereoCarrier::Atom(right_reference),
-                ],
-                orientation,
-            }),
-            StereoSource::Coordinates3D,
-        ));
+        assigned.push(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![
+                StereoCarrier::Atom(left_reference),
+                StereoCarrier::Atom(right_reference),
+            ],
+            orientation: Some(orientation),
+        })));
     }
     assigned
 }
@@ -822,7 +817,7 @@ fn axis_orientation_from_3d_coordinates(
         left_reference_point,
         right_reference_point,
     ];
-    if !matches!(coordinate_source(&points), StereoSource::Coordinates3D) {
+    if coordinates_are_planar(&points) {
         return None;
     }
     let axis = vector_between(left_point, right_point);
@@ -839,18 +834,13 @@ fn axis_orientation_from_3d_coordinates(
     })
 }
 
-fn coordinate_source(points: &[Point3]) -> StereoSource {
+fn coordinates_are_planar(points: &[Point3]) -> bool {
     let Some(first) = points.first() else {
-        return StereoSource::Coordinates3D;
+        return false;
     };
-    if points
+    points
         .iter()
         .all(|point| (point.z - first.z).abs() <= COORDINATE_EPSILON)
-    {
-        StereoSource::Coordinates2D
-    } else {
-        StereoSource::Coordinates3D
-    }
 }
 
 fn vector_between(origin: Point3, point: Point3) -> Point3 {

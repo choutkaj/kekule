@@ -308,8 +308,6 @@ struct RepresentedBondSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RepresentedStereoElementSnapshot {
     kind: StereoElementKind,
-    specifiedness: StereoSpecifiedness,
-    source: StereoSource,
     group: Option<StereoGroupId>,
 }
 
@@ -365,8 +363,6 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
                     .as_ref()
                     .map(|element| RepresentedStereoElementSnapshot {
                         kind: element.kind.clone(),
-                        specifiedness: element.specifiedness,
-                        source: element.source,
                         group: element.group,
                     })
             })

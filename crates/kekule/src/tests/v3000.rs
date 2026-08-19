@@ -53,11 +53,7 @@ M  END
 
 #[test]
 fn v3000_preserves_source_declared_tetrahedral_hydrogen_carrier() {
-    for (cfg, expected_specifiedness) in [
-        (1, StereoSpecifiedness::Specified),
-        (3, StereoSpecifiedness::Specified),
-        (2, StereoSpecifiedness::Unknown),
-    ] {
+    for (cfg, expected_specified) in [(1, true), (3, true), (2, false)] {
         let input = format!(
             "\
 stereo hydrogen
@@ -109,8 +105,8 @@ M  END
                 .next()
                 .expect("canonical stereo element")
                 .1
-                .specifiedness,
-            expected_specifiedness
+                .is_specified(),
+            expected_specified
         );
 
         let written = molfile::write_v3000(&parsed).expect("canonical stereo should project");
@@ -125,8 +121,8 @@ M  END
                 .next()
                 .expect("reparsed canonical stereo element")
                 .1
-                .specifiedness,
-            expected_specifiedness
+                .is_specified(),
+            expected_specified
         );
     }
 }
@@ -162,16 +158,22 @@ M  END
         .graph()
         .stereo_element(report.created_stereo_elements()[0])
         .expect("canonical double-bond stereo element");
-    assert_eq!(element.specifiedness, StereoSpecifiedness::Unknown);
-    assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
+    assert!(element.is_explicitly_unknown());
+    assert!(matches!(
+        &element.kind,
+        StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_none()
+    ));
 
     let written = molfile::write_v3000(&molecule).expect("unknown stereo should project");
     assert!(written.contains("CFG=2"));
     let reparsed = read_molfile(&written).expect("projected unknown stereo should interpret");
-    assert!(reparsed.graph().stereo_elements().any(|(_, element)| {
-        element.specifiedness == StereoSpecifiedness::Unknown
-            && matches!(element.kind, StereoElementKind::DoubleBond(_))
-    }));
+    assert!(reparsed
+        .graph()
+        .stereo_elements()
+        .any(|(_, element)| matches!(
+            &element.kind,
+            StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_none()
+        )));
 }
 
 #[test]
@@ -538,14 +540,13 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .expect("atom identifier capacity");
     molecule
         .graph_mut()
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center: a,
                 carriers: vec![StereoCarrier::ImplicitHydrogen],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("stereo element");
     assert!(molfile::write_v3000(&molecule)
         .expect_err("invalid stereo element should be rejected")
@@ -567,17 +568,16 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .expect("bond");
     molecule
         .graph_mut()
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond,
                 left: a,
                 right: b,
                 left_carrier: StereoCarrier::Atom(a),
                 right_carrier: StereoCarrier::Atom(b),
-                orientation: DoubleBondOrientation::Together,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Together),
+            },
+        )))
         .expect("double-bond stereo");
     assert!(molfile::write_v3000(&molecule)
         .expect_err("specified double-bond stereo should be rejected")

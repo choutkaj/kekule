@@ -150,7 +150,7 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
             assert_eq!(tetrahedral.center, AtomId::new(1));
             assert_eq!(
                 tetrahedral.orientation,
-                TetrahedralOrientation::CounterClockwise
+                Some(TetrahedralOrientation::CounterClockwise)
             );
             assert!(tetrahedral
                 .carriers
@@ -2953,14 +2953,13 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Single;
     molecule
         .graph_mut()
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center: a,
                 carriers: vec![StereoCarrier::Atom(b), StereoCarrier::ImplicitHydrogen],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("atom stereo");
     assert!(smiles_api::write(&molecule)
         .expect_err("atom chirality should be rejected")
@@ -3049,7 +3048,10 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
     match &stereo[0].kind {
         StereoElementKind::Tetrahedral(tetrahedral) => {
             assert_eq!(tetrahedral.center, AtomId::new(1));
-            assert_eq!(tetrahedral.orientation, TetrahedralOrientation::Clockwise);
+            assert_eq!(
+                tetrahedral.orientation,
+                Some(TetrahedralOrientation::Clockwise)
+            );
             assert_eq!(
                 tetrahedral.carriers,
                 vec![
@@ -3078,8 +3080,8 @@ fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
         .expect("remove parsed stereo");
     molecule
         .graph_mut()
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center: AtomId::new(1),
                 carriers: vec![
                     StereoCarrier::Atom(AtomId::new(0)),
@@ -3087,10 +3089,9 @@ fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
                     StereoCarrier::Atom(AtomId::new(3)),
                     StereoCarrier::Atom(AtomId::new(2)),
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("replacement stereo element");
 
     let written = smiles_api::write_isomeric(&molecule).expect("tetrahedral stereo should write");
@@ -3116,7 +3117,10 @@ fn isomeric_smiles_accepts_interpreted_source_stereo_and_rejects_unknown_stereo(
         .stereo_element(element)
         .expect("stereo element")
         .clone();
-    replacement.specifiedness = StereoSpecifiedness::Unknown;
+    match &mut replacement.kind {
+        StereoElementKind::Tetrahedral(stereo) => stereo.orientation = None,
+        other => panic!("expected tetrahedral stereo, found {other:?}"),
+    }
     unknown
         .graph_mut()
         .replace_stereo_element(element, replacement)
@@ -3151,7 +3155,7 @@ fn isomeric_smiles_writes_directional_double_bond_elements() {
             })
             .collect::<Vec<_>>();
         assert_eq!(stereo.len(), 1);
-        assert_eq!(stereo[0].orientation, expected_orientation);
+        assert_eq!(stereo[0].orientation, Some(expected_orientation));
     }
 }
 
@@ -3263,17 +3267,16 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
             .expect("right carrier bond");
         molecule
             .graph_mut()
-            .add_stereo_element(StereoElement::specified(
-                StereoElementKind::DoubleBond(DoubleBondStereo {
+            .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+                DoubleBondStereo {
                     bond: double_bond,
                     left,
                     right,
                     left_carrier,
                     right_carrier,
-                    orientation: stored_orientation,
-                }),
-                StereoSource::User,
-            ))
+                    orientation: Some(stored_orientation),
+                },
+            )))
             .expect("double-bond stereo");
         molecule.graph_mut().set_implicit_hydrogens(left, 1);
         molecule.graph_mut().set_implicit_hydrogens(right, 1);
@@ -3296,7 +3299,7 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
             })
             .collect::<Vec<_>>();
         assert_eq!(stereo.len(), 1);
-        assert_eq!(stereo[0].orientation, expected_orientation);
+        assert_eq!(stereo[0].orientation, Some(expected_orientation));
     }
 }
 

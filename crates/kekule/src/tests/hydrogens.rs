@@ -365,17 +365,16 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
         .expect("bromine bond");
     let _ = valence_api::perceive_valence(&mut graph, ValenceModel::RdkitLike);
     let stereo = graph
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond: double_bond,
                 left,
                 right,
                 left_carrier: StereoCarrier::Atom(hydrogen),
                 right_carrier: StereoCarrier::Atom(chlorine),
-                orientation: DoubleBondOrientation::Opposite,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Opposite),
+            },
+        )))
         .expect("double-bond stereo");
     let mut molecule = SmallMolecule::from_graph(graph);
 
@@ -393,7 +392,7 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
         StereoElementKind::DoubleBond(stereo) => {
             assert_eq!(stereo.left_carrier, StereoCarrier::ImplicitHydrogen);
             assert_eq!(stereo.right_carrier, StereoCarrier::Atom(chlorine));
-            assert_eq!(stereo.orientation, DoubleBondOrientation::Opposite);
+            assert_eq!(stereo.orientation, Some(DoubleBondOrientation::Opposite));
         }
         _ => panic!("expected double-bond stereo"),
     }

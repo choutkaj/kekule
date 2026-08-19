@@ -164,7 +164,6 @@ fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
         bond,
         from,
         kind: SourceStereoBondMarkKind::DirectionalUp,
-        source: StereoSource::Smiles,
     })
     .collect::<Vec<_>>();
     mark_all_fresh(&mut graph);
