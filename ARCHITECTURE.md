@@ -11,22 +11,22 @@ bioinformatics, molecular structure handling, and molecular modelling. It does
 not make a file-format record, a simulation-engine particle list, or one
 flattened graph the universal data model.
 
-The foundational chemical object is `Molecule`: one connected represented
-chemical entity. The foundational system object is `Topology`: one immutable,
-coordinate-free molecular system composed of one or more connected molecule
-instances.
+The foundational chemical object is `Molecule`: one connected canonical
+represented chemical entity. The foundational system object is `Topology`: one
+immutable, coordinate-free molecular system composed of one or more connected
+molecule instances.
 
 ## Canonical object model
 
 ```text
 source text / bytes
     -> format-specific Document or streaming decoder
-    -> explicit interpretation + provenance/report
-    -> represented connected molecular objects
+    -> interpretation + canonicalization + provenance/report
+    -> canonical represented connected molecular objects
        Molecule
          |- SmallMolecule
          `- MacroMolecule
-    -> optional normalization / perception / stereo derivation
+    -> optional perception / stereo derivation
     -> Topology
          |- Model      = Topology + Positions + optional cell + AtomData + BondData
          |- Ensemble   = Topology + finite non-temporal members
@@ -43,19 +43,19 @@ These boundaries are architectural requirements:
 
 - **Parsing** recognizes syntax and preserves format information. It does not
   infer chemistry.
-- **Interpretation** translates source-asserted semantics into Kekule domain
-  objects plus mappings/provenance. It does not run general chemical
-  perception or invent bonds merely to force connectedness.
-- **Normalization** deterministically rewrites represented chemistry into
-  Kekule's canonical equivalent representation. It is idempotent,
-  model-independent, and meaning-preserving.
-- **Perception** derives chemical meaning from normalized represented chemistry
+- **Interpretation** translates source-asserted semantics into Kekule's
+  canonical represented chemistry. It performs deterministic, model-independent,
+  meaning-preserving canonicalization needed to publish a valid `Molecule`,
+  including localization of source aromatic bond representations and conversion
+  of source stereo marks into canonical stereo elements. It does not run general
+  chemical perception or invent bonds merely to force connectedness.
+- **Perception** derives chemical meaning from canonical represented chemistry
   and installs a derived view without rewriting primary represented chemistry.
 - **CIP assignment** and coordinate-derived stereo are specialized explicit
-  derivations, not parsing, interpretation, or normalization.
+  derivations, not parsing or interpretation.
 - **Standardization**, if added, may choose among chemically distinct related
   states such as tautomers or protonation states and is therefore separate from
-  normalization and perception.
+  interpretation and perception.
 - **Topology construction** assembles already represented connected molecules
   into one coordinate-free system. It does not invent coordinates or
   force-field state.
@@ -81,20 +81,28 @@ graph. Every non-empty published `Molecule` has exactly one connected atom/bond
 component; a single atom is valid. Empty state is permitted as a construction
 boundary but is not a valid topology definition.
 
+A published `Molecule` is already expressed in Kekule's canonical represented
+chemistry. In particular, source-only representation artifacts do not survive
+this boundary: aromatic source bonds are localized to ordinary bond orders,
+source stereo marks are resolved into canonical stereo elements, and any other
+supported meaning-preserving representation rewrite required by Kekule has
+already been applied.
+
 A `Molecule` owns:
 
 - stable local `AtomId` and `BondId` values;
-- represented atoms, bonds, adjacency, stereo elements/groups, and source
-  stereo marks;
+- represented atoms, localized bonds, adjacency, and canonical stereo
+  elements/groups;
 - optional local source conformers;
 - scalar annotations;
 - installed derived `PerceptionState`.
 
-Temporary disconnection belongs only to checked construction/editing state.
-`MoleculeBuilder` and `MoleculeEditor` may work on incomplete candidates, but
-publication is transactional and enforces connectedness. Stable local IDs are
-not silently reused after deletion; fixed-width identifier capacity is checked
-before mutation.
+Temporary disconnection or source-specific representation belongs only to
+checked construction/interpreter staging. `MoleculeBuilder` and `MoleculeEditor`
+may work on incomplete candidates, but publication is transactional, enforces
+connectedness, and may only publish states expressible in canonical core types.
+Stable local IDs are not silently reused after deletion; fixed-width identifier
+capacity is checked before mutation.
 
 Disconnected chemistry is represented above this boundary. `[Na+].[Cl-]`, a
 protein-ligand complex, solvents, ion pairs, and other noncovalent assemblies
@@ -106,17 +114,23 @@ contributes to connectedness; spatial association does not.
 Primary represented chemistry is stored directly and includes, as applicable:
 
 ```text
-Atom: element, isotope, formal charge, radical, explicit-H declaration,
-      no-implicit-H declaration, atom map
-Bond: endpoints, represented BondOrder
-Stereo: local StereoElement state, groups, source stereo marks
+Atom: element, isotope, formal charge, radical, represented hydrogen
+      declaration, atom map
+Bond: endpoints, localized represented BondOrder
+Stereo: local StereoElement state and StereoGroup relations
 ```
 
-Derived chemistry is a view over that representation:
+Source-only syntax and provenance are not canonical molecular chemistry.
+Aromatic source bond kinds, wedge/dash or directional source marks, parser
+artifacts, source-format tags, and normalization diagnostics belong to the
+format-specific document, interpreter staging, mappings, or reports rather than
+the published `Molecule`.
+
+Derived chemistry is a view over the canonical representation:
 
 ```text
 valence / implicit hydrogens
-ring membership and ring basis
+cycle membership and ring basis
 aromaticity membership/model
 CIP descriptors
 ```
@@ -140,12 +154,105 @@ Exact external reconstruction of installed perception is supported. A detached
 implicit-H assignments, ring membership with or without a stored basis,
 aromaticity model/membership, and CIP assignments. Checked whole-state
 installation validates slot dimensions and live graph/stereo references before
-replacement; it does not normalize or re-perceive the molecule.
+replacement; it does not canonicalize or re-perceive the molecule.
+
+### Canonical bond representation
+
+Canonical `BondOrder` describes localized represented bonding only. Aromaticity
+is not a canonical bond order.
+
+Aromatic bond syntax may exist in source documents or private interpreter
+staging, but interpretation localizes it before publishing `Molecule`. A
+canonical aromatic ring is therefore represented by ordinary localized bond
+orders plus, after perception, aromatic atom/bond membership in
+`PerceptionState`.
+
+The same distinction applies to query semantics: an "aromatic bond" in a query
+is a query predicate, not a canonical `BondOrder` value.
+
+### Represented hydrogens versus perceived hydrogens
+
+Hydrogen declarations that are explicitly part of the represented chemical
+statement belong to `Atom`. Hydrogens inferred from valence rules belong to
+`PerceptionState`.
+
+The exact core API may use a dedicated represented-hydrogen type rather than
+multiple partially overlapping fields, but it must preserve this semantic
+boundary:
+
+```text
+represented hydrogen declaration -> Molecule / Atom
+inferred implicit hydrogen count  -> PerceptionState / valence state
+```
+
+Materializing or collapsing graph hydrogen atoms is an explicit topology
+transformation and invalidates dependent perception.
+
+### Stereo representation versus stereo perception
+
+Canonical stereochemical representation belongs to `Molecule`. Local stereo
+focus, carriers, orientation, specifiedness where semantically required, and
+stereo-group relationships are represented chemistry.
+
+CIP descriptors are derived chemistry and belong to `PerceptionState`. They are
+not stored as fundamental atom/bond/stereo-element identity because descriptors
+can change when graph-wide priority relationships change without changing the
+local represented stereo orientation.
+
+Source stereo marks such as molfile wedges or SMILES directional bonds are
+interpretation inputs, not canonical `Molecule` state. Interpretation converts
+them into canonical `StereoElement` state or reports a failure/diagnostic before
+publication. Source-format provenance similarly belongs to mappings/reports or
+annotations, not to the canonical stereo element unless it is itself chemically
+meaningful.
+
+### `PerceptionState`
+
+`PerceptionState` is the installed discrete derived interpretation of one exact
+canonical `Molecule` representation. It should remain sectional and narrowly
+focused on fundamental derived chemistry:
+
+```text
+PerceptionState
+  |- ValenceState
+  |    |- model/provenance
+  |    `- implicit-hydrogen assignments
+  |- RingState
+  |    |- graph cycle membership
+  |    `- optional deterministic ring basis + basis provenance/model
+  |- AromaticityState
+  |    |- model
+  |    |- aromatic atoms
+  |    `- aromatic bonds
+  `- StereoPerceptionState
+       `- CIP descriptor assignments
+```
+
+Not every calculated molecular property belongs in `PerceptionState`.
+Descriptors, force-field atom types, partial charges, rotatable-bond labels,
+functional-group matches, H-bond feature labels, and similar task-specific
+results should remain separate derived objects unless they become foundational
+requirements shared by core chemistry algorithms.
+
+Graph cycle membership and a chosen ring basis are distinct concepts. Membership
+is a graph property; a stored ring basis is an algorithmic choice and should
+carry sufficient provenance to identify how it was constructed when that choice
+matters downstream.
+
+Perception invalidation should remain simple and dependency-safe. Broad
+chemistry edits may clear the complete state. Narrow edits may clear only
+provably downstream sections, but Kekule should prefer robust invalidation over
+a complex generic dirty-state engine.
+
+Public chemistry accessors should hide physical storage details. Callers may
+use molecule-level convenience methods or future molecule-aware atom/bond views
+for operations such as aromaticity, ring membership, implicit hydrogens, and CIP
+without requiring those values to be duplicated into `Atom` or `Bond`.
 
 ### `SmallMolecule`
 
 `SmallMolecule` is the ordinary cheminformatics wrapper around one connected
-`Molecule`. It may provide ergonomic parse/normalize/perceive workflows, but it
+`Molecule`. It may provide ergonomic parse/interpret/perceive workflows, but it
 never represents several disconnected salt or mixture components.
 
 ### `MacroMolecule` and SMCRA
@@ -193,30 +300,40 @@ source
   -> parse
   -> format-specific Document
   -> interpret
-  -> represented Molecule
-  -> normalize
-  -> normalized Molecule
+       |- decode source semantics
+       |- perform deterministic canonical representation rewrites
+       |- localize source aromatic bonds
+       `- resolve source stereo into canonical StereoElements
+  -> canonical Molecule
   -> perceive
   -> derived PerceptionState
   -> optional coordinate-stereo materialization / CIP assignment
 ```
 
-Interpretation answers **what the source asserted**. Normalization answers
-**how Kekule canonically represents that assertion**. Perception answers
-**what chemical interpretation Kekule derives from the normalized graph**.
+Parsing answers **what syntax is present**. Interpretation answers **what
+canonical chemical representation Kekule publishes for what the source
+asserted**. Perception answers **what chemical interpretation Kekule derives
+from that canonical graph**.
 
-Normalization has a deliberately narrow contract. A normalized molecule has:
+There is no separate public "unnormalized Molecule" lifecycle state and no
+required `MoleculeDraft` domain object. Format-specific `Document` values and
+private interpreter/builder staging already provide the necessary source-side
+workspace. Canonicalization may remain factored into reusable internal helper
+algorithms, but it is a responsibility of interpretation or checked molecule
+publication rather than a distinct public chemistry stage.
 
-- ordinary localized represented bond orders; no remaining
-  `BondOrder::Aromatic` source representation;
-- no source `StereoBondMark` state that still needs conversion;
+A published canonical molecule has:
+
+- ordinary localized represented bond orders; aromaticity is not a core bond
+  order;
+- no unresolved source `StereoBondMark`-style state;
 - canonical represented local `StereoElement` state;
 - canonical represented charge/hydrogen declarations;
-- empty/default derived `PerceptionState`.
+- no requirement that derived `PerceptionState` be present.
 
-Normalization always clears derived perception because it rewrites represented
-state. It does not choose an aromaticity model, tautomer, protonation state, or
-salt/fragment policy.
+Interpretation does not choose an aromaticity model, tautomer, protonation
+state, salt/fragment policy, force-field typing scheme, or other chemically
+non-equivalent standardization.
 
 The default discrete perception order is:
 
@@ -234,11 +351,13 @@ Kekule owns invariant-preserving reconstruction of Kekule runtime objects;
 persistence consumers own their versioned archive DTOs. Runtime domain objects
 are not a generic serialization schema.
 
-Reconstruction builds represented graph/hierarchy/stereo state first and
-installs derived perception last. Stable stereo-group slot layout, including
+Reconstruction builds canonical represented graph/hierarchy/stereo state first
+and installs derived perception last. Stable stereo-group slot layout, including
 tombstones, is reconstructible without dummy chemistry. Loading must not
-normalize, re-perceive, renumber, or silently coerce malformed historical
-state.
+re-perceive, renumber, or silently coerce malformed historical state. If a
+persistence format stores a legacy noncanonical source representation, its
+loader must interpret/canonicalize that representation before publishing a
+`Molecule` rather than weakening the runtime invariant.
 
 If persisted data describes several disconnected graph components, it must be
 explicitly partitioned or rejected before publication as canonical
@@ -258,391 +377,54 @@ allocations.
 - molecule instances referencing those definitions;
 - instance-qualified atoms and bonds;
 - static chemistry, hierarchy, roles, and instance annotations;
-- one authoritative dense atom ordering and one dense bond ordering;
-- mappings between semantic identities and dense indices.
 
-It does **not** own positions, cells, velocities, forces, time, occupancy,
-B-factors, coordinate-derived analyses, force-field parameters, virtual sites,
-Drude particles, constraints, backend particles, or execution-engine state.
+`Topology` does not own coordinates, velocities, forces, cell vectors, energies,
+trajectory state, or prepared backend objects.
 
-Raw `Topology` is not cloned as an ordinary value. Shared owners store
-`Arc<Topology>`.
+A `Topology` definition may contain one `Molecule` once and instantiate it many
+times. Definition-local IDs remain stable within the definition; system-level
+access qualifies them by molecule instance.
 
-### Definitions and instances
+### `Model`, `Ensemble`, and `Trajectory`
 
-Topology separates reusable molecular identity from one occurrence in a system:
+`Model` is one exact coordinate state over one shared `Topology` allocation.
+`Ensemble` is a finite set of non-temporal models sharing one topology.
+`Trajectory` is an ordered frame source sharing one topology and may be memory-
+or file-backed.
 
-```text
-MoleculeDefinition
-    SmallMolecule | MacroMolecule
+These types do not duplicate chemistry perception per coordinate frame merely
+because positions change. Coordinate-dependent analyses or future
+position-dependent perception are separate derived objects unless and until an
+explicit architecture extends this contract.
 
-MoleculeInstance
-    MoleculeInstanceId
-    -> MoleculeDefinitionId
-    + roles / static instance metadata
-```
+## Mutation and transformations
 
-Definitions are connected and conformer-free. Definition reuse is explicit; a
-single water definition may be referenced by many instances. Kekule does not
-automatically merge definitions merely because their graphs look equal.
+Mutating canonical represented chemistry is allowed only through invariant-
+preserving APIs. Any operation that can transiently violate connectedness or
+other publication invariants uses checked staging and transactional publication.
 
-Every topology atom belongs to exactly one molecule instance. Asserted covalent
-connectivity belongs within one resulting connected instance. Noncovalent
-association does not merge instances.
+Topology-changing operations such as deleting atoms, changing connectivity,
+adding/removing materialized hydrogens, reaction transforms, or future
+connectivity perception return or publish a new canonical molecular/topological
+state and explicit mappings where identity transfer matters.
 
-### Semantic identity and dense order
+Coordinate-only operations do not mutate canonical chemistry or its discrete
+perception state.
 
-Local chemical identity remains `AtomId` / `BondId`. System identity is
-qualified:
+## Design rule
 
-```text
-MoleculeDefinitionId
-MoleculeInstanceId
-InstanceAtomId      = molecule instance + local AtomId
-InstanceBondId      = molecule instance + local BondId
-InstanceChainId     = molecule instance + local chain ID
-InstanceResidueId   = molecule instance + local residue ID
-InstanceAtomSiteId  = molecule instance + local atom-site ID
-```
+When deciding where new state belongs, apply this order:
 
-Dense storage uses separate numerical indices:
+1. Is it syntax/source representation? Keep it in the format document or
+   interpreter provenance/staging.
+2. Is it part of Kekule's canonical represented chemical statement? Store it in
+   `Molecule`.
+3. Is it fundamental chemistry derived algorithmically from that exact
+   representation? Store it in an appropriate `PerceptionState` section.
+4. Is it task-specific analysis, typing, scoring, or parameterization? Keep it
+   in a separate derived object.
+5. Is it coordinate state? Keep it outside `Topology` and canonical molecular
+   chemistry.
 
-```text
-TopologyAtomIndex
-TopologyBondIndex
-```
-
-Semantic IDs answer **what object is this?** Dense indices answer **where is its
-state stored?** The dense order is authoritative and immutable for the lifetime
-of a topology. Dense arrays contain live atoms/bonds only; local stable IDs may
-retain tombstone positions.
-
-### Compatibility and layout equality
-
-Exact shared-allocation identity is the compatibility criterion for
-Topology-bound state:
-
-```rust
-Arc::ptr_eq(&a, &b)
-```
-
-Clones of one `Arc<Topology>` are compatible. Independently constructed
-Topologies are not automatically compatible even when chemically equivalent.
-
-`Topology::same_layout` is a separate explicit static-layout comparison. It may
-compare chemistry, hierarchy, definition/instance partitioning, metadata,
-semantic IDs, dense order, and index maps, but it does not establish shared
-allocation or silently authorize reuse of topology-bound arrays.
-
-Transfer between independent topologies requires an explicit validated mapping.
-General order-independent structural equivalence/isomorphism may be added
-separately; ambiguous mappings must not be chosen silently.
-
-### Topology transformations
-
-A built topology is immutable. Connectivity- or membership-changing operations
-return a new `Arc<Topology>` plus explicit `TopologyMapping` lineage.
-
-Examples include adding/removing hydrogens, deleting atoms or bonds, changing
-asserted bond order, merging/splitting molecule instances, solvation, and
-chemical reactions. A transformation that disconnects a molecule must either
-produce several connected molecule instances or reject the edit.
-
-Existing models, ensembles, trajectories, selections, and prepared systems are
-never mutated by a topology edit. Coordinate/data remapping is an explicit
-separate operation and cannot invent state for unmapped added atoms.
-
-Any backend workflow that may make or break bonds must likewise publish a new
-Topology after explicit connectivity inference rather than mutating the old
-one in place.
-
-### Construction, roles, and provenance
-
-`TopologyBuilder` constructs topology without coordinates and supports explicit
-definition reuse. It validates connected non-empty definitions, hierarchy
-consistency, instance references, identifier capacity, and static metadata.
-
-Instance roles such as `Polymer`, `Branched`, `NonPolymer`, `Solvent`, `Ion`,
-`Ligand`, and `Cofactor` are conservative semantic annotations, not hidden
-molecular boundaries.
-
-Source provenance belongs in format documents, interpretation reports, or
-focused provenance objects. A single source entity may map to several connected
-molecule instances.
-
-## Geometry, units, and coordinate state
-
-General 3D primitives (`Point3`, `Vector3`, matrices, `PeriodicCell`,
-`RigidTransform`) live in dependency-light geometry code. A periodic cell is
-dynamic coordinate state, not topology, and may vary between frames.
-
-Physical values cross public boundaries as `Quantity<T>` with explicit `Unit`
-values. Numerical kernels may use canonical raw values only after checked
-conversion.
-
-### `Positions`
-
-`Positions` is one complete finite Cartesian array in authoritative
-`TopologyAtomIndex` order and retains the exact shared `Arc<Topology>`.
-Construction/replacement validates topology compatibility, exact atom count,
-units, and finite coordinates.
-
-Matching atom count does not make a `Positions` value compatible with a
-different topology.
-
-### `AtomData` and `BondData`
-
-`AtomData` and `BondData` are topology-bound model-level dense data. `AtomData`
-has canonical occupancy and isotropic B-factor fields; both types may carry
-conservative unit-aware scalar custom columns. Custom properties are
-annotations, not topology, represented chemistry, or perception state.
-
-Format provenance such as altloc labels, source model IDs, and raw atom-row IDs
-is not generalized into these property containers.
-
-## Structural realizations
-
-### `Model`
-
-`Model` is one concrete realization of one topology:
-
-```text
-Model
-  Arc<Topology>
-  Positions
-  Option<PeriodicCell>
-  AtomData
-  BondData
-```
-
-It is also the ordinary application-facing navigation object. Common atom,
-bond, molecule-instance, and qualified SMCRA accessors are thin forwards to the
-shared topology. Replacing topology-bound state requires the same shared
-Topology allocation.
-
-Cloning a model shares topology and copies mutable structural state.
-
-### `Ensemble`
-
-`Ensemble` is one shared topology plus a finite stable-order collection of
-non-temporal members. Members carry complete positions and may carry cell,
-atom/bond data, weight, and annotations.
-
-Ensemble order has no inherent temporal meaning. Missing/inconsistent atoms are
-handled by explicit reconciliation or structured error rather than sparse dense
-coordinate arrays.
-
-### `ModelView`
-
-Coordinate-dependent kernels consume `ModelView` (or a narrower equivalent): a
-borrowed topology, positions, optional cell, atom data, and bond data. Models,
-ensemble members, trajectory frames, and reusable trajectory buffers can expose
-the same zero-copy view.
-
-Read-only analyses should operate on this view where practical. A view does not
-imply that every algorithm supports every dynamic field; unsupported periodic
-or other state is reported explicitly.
-
-### Topology-bound selections
-
-Compiled selections retain the exact shared `Arc<Topology>` and store dense
-indices. Selection syntax, semantic resolution, and compiled topology-bound
-selection are separate layers. Qualified chain/residue IDs ensure that selecting
-one occurrence of a reused definition never implicitly selects another.
-
-## Trajectories
-
-Ordered trajectory state belongs to the one-way `kekule-traj` companion:
-
-```text
-kekule <- kekule-traj <- applications
-```
-
-A `Trajectory` is an ordered sequence of complete frames sharing one immutable
-Topology. It is not an ensemble or a molecule conformer collection. Frames may
-vary positions, cell, atom/bond data, velocities, forces, time, step, and frame
-metadata as supported.
-
-Trajectory I/O is streaming-first. Reusable `FrameBuffer` storage avoids
-materializing entire large files; sequential and seekable reader capabilities
-remain distinct. Topology-free formats require an explicit atom-order contract
-and never infer identity from atom count alone.
-
-Ordinary trajectories have fixed topology. Reactive data is represented as
-fixed-topology segments linked by explicit topology-changing events and
-mappings rather than by weakening the fixed-topology invariant.
-
-Codec-specific dialects, byte layouts, indexing rules, and safety limits belong
-in `kekule-traj` documentation and tests, not in this core architecture file.
-
-## Format I/O and interpretation
-
-There is no universal text `Document` trait. Each format owns the
-loss-preserving representation appropriate to its grammar.
-
-- **SMILES** preserves source syntax and component separators. Component-aware
-  interpretation yields one connected `SmallMolecule` per disconnected source
-  component.
-- **Molfile** preserves V2000/V3000 syntax. The current single-molecule
-  interpretation contract requires one connected CTAB graph.
-- **SDF** preserves ordered records and raw data fields; record metadata is not
-  indiscriminately injected into molecular properties.
-- **mmCIF** preserves blocks, items, loops, missing-value markers, unknown
-  categories, and source locations.
-
-mmCIF intentionally uses several semantic layers:
-
-```text
-MmcifDocument
-  -> atom-site/source interpretation
-     - explicit model selection
-     - explicit altloc selection
-     - explicit/special covalent _struct_conn handling
-  -> authoritative connectivity completion
-     - supplied _chem_comp_bond
-     - evidence-backed standard polymer links
-     - evidence-backed branched links
-  -> residual connected-component partition
-  -> Topology + Model / Ensemble + provenance/report
-```
-
-Only evidence-backed covalent links establish connectivity. Missing atoms are
-not synthesized, sequence gaps are not bridged, and coordinate-distance bond
-candidates remain diagnostic only. Residual observed fragments become separate
-connected molecule instances while shared source entity/chain identity remains
-in provenance.
-
-Multi-model mmCIF interpretation may form an `Ensemble` only after proving
-consistent final topology, atom identity, and dense order across selected
-models. Alternate-location choice is coordinate-row provenance, not a new atom
-identity.
-
-Text writers operate on canonical objects and reject semantics they cannot
-represent faithfully.
-
-## Perception, analysis, and transformations
-
-Perception algorithms primarily operate on local connected `Molecule`
-definitions. Topology construction preserves installed coordinate-independent
-perception and does not normalize or perceive implicitly.
-
-Coordinate-derived analyses return snapshot results; changing positions does
-not mutate prior analysis output. Rigid alignment, DSSP, RMSD, contacts, and
-similar analyses are read-only unless a separate transformation API explicitly
-publishes modified coordinates.
-
-Hydrogen addition/removal and other chemistry-changing operations are explicit
-molecule/topology transformations. Topology variants return new topology plus
-lineage; newly materialized atoms receive no invented geometry.
-
-## Prepared systems and potentials
-
-Force-field parameters, virtual sites, Drude particles, constraints, mechanical
-particles, neighbor-list caches, electronic state, and backend execution state
-do not belong in `Topology`, `Model`, `Ensemble`, or `Trajectory`.
-
-A prepared system:
-
-- is created explicitly from one Topology;
-- retains that exact shared `Arc<Topology>`;
-- maps backend particles to topology identities/indices;
-- may contain backend-only particles such as virtual sites;
-- does not mutate canonical topology or structural state;
-- may evaluate compatible `ModelView` values.
-
-The dependency-light potential contract remains in `kekule`; concrete
-implementations may live in one-way companion or adapter crates, for example:
-
-```text
-kekule <- kekule-potentials <- applications
-```
-
-Preparation may assign implementation-specific parameters, atom types, or
-charges. Evaluation must not implicitly normalize, perceive, change topology,
-or silently update chemical state.
-
-## Module responsibilities
-
-The public architecture is organized by responsibility rather than by one
-universal object:
-
-```text
-core         connected Molecule graph, represented chemistry, local IDs,
-             perception-state domain model, checked construction/editing
-small        SmallMolecule workflows
-bio          MacroMolecule and coordinate-independent SMCRA hierarchy
-topology     immutable system topology, definitions/instances, qualified IDs,
-             dense indices, topology mappings and transforms
-structure    Positions, AtomData, BondData, Model, Ensemble, ModelView
-geometry     3D primitives, cells, rigid transforms
-units        Unit and Quantity
-descriptors  read-only molecular descriptors
-query        syntax-neutral chemical query representation
-substructure query matching algorithms
-dssp         read-only secondary-structure assignment
-alignment    rigid structural alignment
-modeling     potential/prepared-system and numerical workflow contracts
-format facades / io
-             format documents, interpretation, reports/provenance, writers
-```
-
-Implementation modules may be more granular, but dependency direction must
-respect these ownership boundaries. Heavy trajectory codecs and potential
-implementations belong in one-way companion crates rather than forcing their
-dependencies into foundational `kekule`.
-
-## Public API policy
-
-During the `0.x` line, deliberate breaking public API changes require a minor
-version increment. The architecture is the contract; pre-1.0 compatibility
-shims are not architectural requirements and should not survive without a real
-external compatibility need.
-
-Invariant-bearing state is private behind checked constructors and accessors.
-Public fields are reserved for deliberate value/options/report payloads.
-Extensible public error enums should be `#[non_exhaustive]`.
-
-Parsing, interpretation, normalization, perception, specialized stereo/CIP
-derivation, topology construction, coordinate construction, preparation,
-analysis, transformation, and writing remain visibly distinct in naming and
-documentation even when convenience APIs compose them.
-
-## Architectural invariants
-
-1. Every non-empty canonical `Molecule` is exactly one connected represented
-   atom/bond graph.
-2. Disconnected chemistry and unresolved experimental fragments are represented
-   as multiple molecule instances, with source relationships retained as
-   provenance rather than fake bonds.
-3. Primary represented chemistry and derived perception are distinct.
-4. Interpretation does not infer general chemistry; normalization changes
-   representation without changing represented chemical meaning; perception
-   derives meaning without rewriting primary representation.
-5. Normalization is deterministic, idempotent, model-independent, and separate
-   from chemistry-changing standardization.
-6. `Topology` is one immutable coordinate-free system of connected molecule
-   definitions and instances.
-7. Definition identity and instance identity are separate; explicit definition
-   reuse is supported.
-8. Semantic identities and dense numerical indices are separate, and one
-   Topology has one authoritative immutable dense order.
-9. Topology-bound state is compatible by exact shared `Arc<Topology>`
-   allocation; layout equality alone does not establish compatibility.
-10. `Model` is Topology plus one complete structural realization; `Ensemble` is
-    finite non-temporal state; `Trajectory` is ordered temporal/sequential state.
-11. Periodic cells, atom/bond data, velocities, forces, and time are dynamic
-    state, not topology.
-12. Topology-changing operations return a new topology and explicit mapping and
-    never publish a disconnected molecule definition.
-13. Reactive workflows use explicit topology changes rather than mutable
-    topology hidden inside coordinate state.
-14. Exact persistence reconstruction preserves represented chemistry,
-    hierarchy/stereo slot layout, and installed perception without silently
-    normalizing or re-perceiving.
-15. Only evidence-backed source chemistry establishes topology connectivity;
-    geometric connectivity guesses remain explicit diagnostics or explicit
-    future perception, never hidden interpretation behavior.
-16. Prepared systems and compiled selections retain one exact shared topology
-    allocation and do not mutate canonical state.
-17. Backend-specific mechanical/execution state never becomes canonical
-    chemistry or structure merely because a backend needs it.
+This boundary is preferred over duplicating derived flags into atoms/bonds or
+creating multiple public half-canonical molecule lifecycle states.
