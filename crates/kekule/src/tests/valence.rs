@@ -90,7 +90,7 @@ fn assert_aromatic_valence_pipeline_for_molecule(
     assert!(!molecule.graph().perception().has_aromaticity(), "{smiles}");
 
     molecule
-        .normalize()
+        .canonicalize_fixture()
         .unwrap_or_else(|error| panic!("aromatic fixture should normalize: {smiles}: {error}"));
     assert!(molecule
         .graph()
@@ -172,7 +172,9 @@ fn normalized_aromatic_systems_perceive_valence_before_rings_and_aromaticity() {
 #[test]
 fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
     let mut molecule = read_smiles("[nH]1cccc1").expect("pyrrole should parse");
-    molecule.normalize().expect("pyrrole should normalize");
+    molecule
+        .canonicalize_fixture()
+        .expect("pyrrole should normalize");
     let represented = represented_molecule_snapshot(molecule.graph());
     let represented_nitrogen = molecule
         .graph()
@@ -243,7 +245,7 @@ fn normalized_pyrrole_retains_represented_hydrogen_before_valence() {
 fn valence_ignores_preinstalled_semantic_aromaticity() {
     let mut without_aromaticity = read_smiles("c1ccccc1").expect("benzene should parse");
     without_aromaticity
-        .normalize()
+        .canonicalize_fixture()
         .expect("benzene should normalize");
     let mut with_aromaticity = without_aromaticity.clone();
     let aromatic_atoms = with_aromaticity.graph().atom_ids().collect::<Vec<_>>();
@@ -279,7 +281,9 @@ fn valence_ignores_preinstalled_semantic_aromaticity() {
 #[test]
 fn fused_aromatic_valence_comes_from_localized_bond_orders() {
     let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene should parse");
-    molecule.normalize().expect("naphthalene should normalize");
+    molecule
+        .canonicalize_fixture()
+        .expect("naphthalene should normalize");
 
     valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
         .expect("naphthalene valence should run first");

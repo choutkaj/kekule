@@ -2,9 +2,9 @@
 //! modelling foundations.
 //!
 //! The supported public surface is organized into focused facade modules.
-//! Parsing produces format documents, interpretation produces represented
-//! domain objects plus reports, normalization publishes canonical
-//! representation, and perception or modelling preparation remains explicit.
+//! Parsing produces format documents, interpretation publishes canonical
+//! represented domain objects plus reports, and perception or modelling
+//! preparation remains explicit.
 //!
 //! System structure is coordinate-free and immutable in [`topology`].
 //! Dynamic structure follows three explicit relationships:
@@ -52,7 +52,7 @@ pub mod units;
 /// Syntax-independent substructure matching algorithms.
 ///
 /// Matching consumes `query::QueryGraph` and current target perception state;
-/// it never invokes parsing, normalization, or perception implicitly.
+/// it never invokes parsing, interpretation, or perception implicitly.
 pub mod substructure {
     pub use crate::algorithms::{
         find_substructure_match, find_substructure_matches, find_substructure_matches_with_options,
@@ -102,8 +102,9 @@ pub mod smiles {
 pub mod molfile {
     pub use crate::io::{
         MolWriteError, MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader,
-        MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport, MolfileLine,
-        MolfileParseError, MolfileParseOptions, MolfileVersion,
+        MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
+        MolfileInterpretationWarning, MolfileLine, MolfileParseError, MolfileParseOptions,
+        MolfileVersion,
     };
 
     use crate::small::SmallMolecule;
@@ -197,35 +198,12 @@ pub mod mmcif {
     }
 }
 
-/// Deterministic small-molecule representation normalization.
-///
-/// Normalization changes only how already-asserted chemistry is represented.
-/// It is transactional, model-independent, and idempotent, and successful
-/// normalization clears installed derived perception state. Source-aromatic
-/// bonds are localized during format interpretation before this API is reached;
-/// normalization converts supported source stereo marks into canonical
-/// represented stereo elements.
-pub mod normalization {
-    pub use crate::chemistry::{
-        NormalizationError, NormalizationReport, NormalizationWarning,
-        SourceStereoNormalizationError, SourceStereoNormalizationIssue,
-    };
-
-    use crate::core::Molecule;
-
-    /// Normalize one represented molecule into Kekule's canonical form and
-    /// return created source-stereo elements plus concrete warnings.
-    pub fn normalize(molecule: &mut Molecule) -> Result<NormalizationReport, NormalizationError> {
-        crate::chemistry::normalize_molecule(molecule)
-    }
-}
-
 pub mod perception {
     pub use crate::chemistry::PerceptionError;
 
     use crate::core::Molecule;
 
-    /// Expert valence perception for normalized represented chemistry.
+    /// Expert valence perception for canonical represented chemistry.
     ///
     /// The RDKit-like model derives complete implicit-hydrogen assignments
     /// from ordinary localized bond orders and represented atom state. It does
@@ -257,8 +235,8 @@ pub mod perception {
 
     /// Install the transactional default valence, ring-set, and aromaticity profile.
     ///
-    /// The represented molecule must already be normalized. This operation
-    /// does not normalize source chemistry or perform stereo or CIP work.
+    /// The represented molecule must already be canonical. This operation
+    /// never rewrites represented chemistry or performs stereo or CIP work.
     pub fn perceive(molecule: &mut Molecule) -> Result<(), PerceptionError> {
         crate::chemistry::perceive_molecule(molecule)
     }
@@ -293,7 +271,7 @@ pub mod canon {
 
 /// Explicit small-molecule hydrogen topology transforms.
 ///
-/// These functions never normalize or perceive chemistry implicitly. Addition
+/// These functions never interpret or perceive chemistry implicitly. Addition
 /// consumes current valence assignments unless `explicit_only` is selected,
 /// and removal requires current valence assignments. Successful topology
 /// changes invalidate perception state.

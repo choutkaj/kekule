@@ -322,7 +322,7 @@ fn extract_connected_graph(
     }
     let mut graph = builder.build().map_err(interpret_error)?;
     for (target_bond, props) in bond_props {
-        graph.bond_mut(target_bond).map_err(interpret_error)?.props = props;
+        *graph.bond_props_mut(target_bond).map_err(interpret_error)? = props;
     }
     graph.props_mut().clone_from(source.props());
     Ok(ExtractedConnectedGraph {

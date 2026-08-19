@@ -2508,7 +2508,6 @@ mod tests {
 
     fn perceived_small_molecule(smiles: &str) -> SmallMolecule {
         let mut molecule = SmallMolecule::from_smiles(smiles).expect("SMILES should parse");
-        molecule.normalize().expect("molecule should normalize");
         molecule.perceive().expect("molecule should perceive");
         molecule
     }

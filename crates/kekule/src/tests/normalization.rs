@@ -36,7 +36,8 @@ fn oxo_halide(oxo_count: usize) -> (SmallMolecule, AtomId, Vec<AtomId>, Vec<Bond
 fn normalization_rewrites_hypervalent_oxo_halide_representation() {
     let (mut molecule, chlorine, oxygens, bonds) = oxo_halide(2);
 
-    normalization_api::normalize(molecule.graph_mut()).expect("normalization should succeed");
+    canonicalize_molecule_for_publication(molecule.graph_mut())
+        .expect("normalization should succeed");
 
     assert_eq!(molecule.graph().atom(chlorine).unwrap().formal_charge, 2);
     for oxygen in oxygens {
@@ -56,29 +57,27 @@ fn normalization_is_idempotent() {
     let (mut molecule, ..) = oxo_halide(2);
 
     molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect("first normalization should succeed");
     let once = molecule.clone();
     molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect("second normalization should succeed");
 
     assert_eq!(molecule, once);
 }
 
 #[test]
-fn source_stereo_normalization_is_idempotent_and_consumes_marks() {
-    let mut molecule = read_smiles("C/C=C\\F").expect("directional SMILES should parse");
+fn source_stereo_is_canonicalized_once_during_interpretation() {
+    let (mut molecule, interpretation) =
+        read_smiles_with_report("C/C=C\\F").expect("directional SMILES should interpret");
 
-    let first = molecule
-        .normalize()
-        .expect("first source-stereo normalization should succeed");
-    assert_eq!(first.created_stereo_elements.len(), 1);
+    assert_eq!(interpretation.created_stereo_elements().len(), 1);
     assert!(molecule.graph().stereo_bond_marks().next().is_none());
     let once = molecule.clone();
 
     let second = molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect("second source-stereo normalization should succeed");
     assert!(second.created_stereo_elements.is_empty());
     assert!(second.warnings.is_empty());
@@ -92,7 +91,7 @@ fn direct_smiles_tetrahedral_stereo_is_preserved_without_duplication() {
         assert_eq!(molecule.graph().stereo_elements().count(), 1);
 
         let report = molecule
-            .normalize()
+            .canonicalize_fixture()
             .expect("direct stereo should normalize");
 
         assert!(report.created_stereo_elements.is_empty());
@@ -102,7 +101,7 @@ fn direct_smiles_tetrahedral_stereo_is_preserved_without_duplication() {
 }
 
 #[test]
-fn installed_perception_does_not_affect_source_stereo_normalization() {
+fn publication_canonicalization_clears_preinstalled_perception() {
     let mut empty_state = read_smiles("C/C=C\\F").expect("directional SMILES should parse");
     let mut installed_state = empty_state.clone();
     mark_all_fresh(installed_state.graph_mut());
@@ -112,10 +111,10 @@ fn installed_perception_does_not_affect_source_stereo_normalization() {
     );
 
     let empty_report = empty_state
-        .normalize()
+        .canonicalize_fixture()
         .expect("empty-state normalization should succeed");
     let installed_report = installed_state
-        .normalize()
+        .canonicalize_fixture()
         .expect("installed-state normalization should succeed");
 
     assert_eq!(installed_report, empty_report);
@@ -139,7 +138,7 @@ fn installed_perception_does_not_affect_source_stereo_normalization() {
 }
 
 #[test]
-fn ambiguous_directional_source_marks_roll_back_complete_state() {
+fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
     let mut graph = Molecule::new();
     let left = graph.add_atom(carbon()).expect("left endpoint");
     let right = graph.add_atom(carbon()).expect("right endpoint");
@@ -169,10 +168,8 @@ fn ambiguous_directional_source_marks_roll_back_complete_state() {
     }
     mark_all_fresh(&mut graph);
     let mut molecule = SmallMolecule::from_graph(graph);
-    let before = molecule.clone();
-
     let error = molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect_err("same-direction marks on both left carriers are ambiguous");
 
     assert!(matches!(
@@ -184,7 +181,6 @@ fn ambiguous_directional_source_marks_roll_back_complete_state() {
                 mark_count: 2,
             })
     ));
-    assert_eq!(molecule, before);
 }
 
 #[test]
@@ -205,7 +201,9 @@ fn aromatic_smiles_is_localized_during_interpretation_then_perceived() {
     );
     let localized = molecule.graph().clone();
 
-    molecule.normalize().expect("benzene should normalize");
+    molecule
+        .canonicalize_fixture()
+        .expect("benzene should normalize");
 
     assert_eq!(molecule.graph().perception(), &PerceptionState::default());
     assert_eq!(molecule.graph(), &localized);
@@ -244,11 +242,11 @@ fn normalization_preserves_already_localized_aromatic_input() {
     let mut molecule = read_smiles("c1ccc2ccccc2c1").expect("naphthalene should parse");
 
     molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect("first normalization should succeed");
     let once = molecule.clone();
     molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect("second normalization should succeed");
 
     assert_eq!(molecule, once);
@@ -306,7 +304,7 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
         .add_conformer(conformer)
         .expect("valid conformer");
     assert!(molecule.graph().stereo_elements().next().is_some());
-    assert!(molecule.graph().stereo_bond_marks().next().is_some());
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
     assert!(molecule.graph().conformers().next().is_some());
     valence_api::perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike)
         .expect("valence perception");
@@ -334,7 +332,9 @@ fn successful_normalization_clears_installed_perception() {
     mark_all_fresh(molecule.graph_mut());
     assert_ne!(molecule.graph().perception(), &PerceptionState::default());
 
-    molecule.normalize().expect("normalization should succeed");
+    molecule
+        .canonicalize_fixture()
+        .expect("normalization should succeed");
 
     assert_eq!(molecule.graph().perception(), &PerceptionState::default());
     assert_all_stale(molecule.graph());
@@ -347,12 +347,12 @@ fn failed_normalization_is_transactional() {
     let before = molecule.clone();
 
     let error = molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect_err("unrepresentable formal charge should fail");
 
     assert_eq!(
         error,
-        crate::normalization::NormalizationError::FormalChargeOutOfRange {
+        NormalizationError::FormalChargeOutOfRange {
             atom: chlorine,
             charge: 128,
         }

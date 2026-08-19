@@ -5,7 +5,7 @@ use super::*;
 
 fn perceived(input: &str) -> SmallMolecule {
     let mut molecule = SmallMolecule::from_smiles(input).expect("test target should parse");
-    normalize_and_perceive(&mut molecule).expect("test target should normalize_and_perceive");
+    perceive(&mut molecule).expect("test target should perceive");
     molecule
 }
 
@@ -146,7 +146,7 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
 
     let mut methane = perceived("C");
     crate::hydrogens::add_hydrogens(&mut methane).unwrap();
-    normalize_and_perceive(&mut methane).unwrap();
+    perceive(&mut methane).unwrap();
     let elemental_hydrogen = parse_smarts("[H]").unwrap();
     assert_eq!(
         substructure::find_substructure_matches(methane.graph(), &elemental_hydrogen)

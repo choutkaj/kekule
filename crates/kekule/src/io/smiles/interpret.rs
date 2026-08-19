@@ -2,11 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
 
-use crate::chemistry::localize_source_aromatic_bonds;
+use crate::chemistry::{
+    canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
+};
 use crate::core::{
     Atom, AtomId, BondId, BondOrder, Element, Molecule, StereoBondMark, StereoBondMarkKind,
-    StereoCarrier, StereoElement, StereoElementKind, StereoSource, TetrahedralOrientation,
-    TetrahedralStereo,
+    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, StereoSource,
+    TetrahedralOrientation, TetrahedralStereo,
 };
 use crate::small::model::SmallMolecule;
 
@@ -103,6 +105,7 @@ impl SmilesBondMapping {
 pub struct SmilesInterpretationReport {
     atom_mappings: Vec<SmilesAtomMapping>,
     bond_mappings: Vec<SmilesBondMapping>,
+    created_stereo_elements: Vec<StereoElementId>,
 }
 
 impl SmilesInterpretationReport {
@@ -112,6 +115,11 @@ impl SmilesInterpretationReport {
 
     pub fn bond_mappings(&self) -> &[SmilesBondMapping] {
         &self.bond_mappings
+    }
+
+    /// Canonical stereo elements decoded from directional source bond syntax.
+    pub fn created_stereo_elements(&self) -> &[StereoElementId] {
+        &self.created_stereo_elements
     }
 }
 
@@ -264,6 +272,7 @@ pub fn interpret_smiles_document(
                 source_offset: mapping.source_offset(),
             })
             .collect();
+        let created_stereo_elements = report.created_stereo_elements().to_vec();
 
         components.push(SmilesComponentInterpretation {
             source_span,
@@ -271,6 +280,7 @@ pub fn interpret_smiles_document(
             report: SmilesInterpretationReport {
                 atom_mappings,
                 bond_mappings,
+                created_stereo_elements,
             },
         });
     }
@@ -403,13 +413,55 @@ fn interpret_smiles_program_component(
         &program.tetrahedral_carriers,
         end_offset,
     )?;
+    let publication_report =
+        canonicalize_molecule_for_publication(&mut mol).map_err(|error| SmilesInterpretError {
+            offset: canonicalization_error_offset(
+                &error,
+                &atom_mappings,
+                &bond_mappings,
+                end_offset,
+            ),
+            message: format!("could not publish canonical molecule: {error}"),
+        })?;
+    debug_assert!(publication_report.warnings.is_empty());
     Ok(SmilesProgramInterpretation {
         molecule: SmallMolecule::from_graph(mol),
         report: SmilesInterpretationReport {
             atom_mappings,
             bond_mappings,
+            created_stereo_elements: publication_report.created_stereo_elements,
         },
     })
+}
+
+fn canonicalization_error_offset(
+    error: &NormalizationError,
+    atom_mappings: &[SmilesAtomMapping],
+    bond_mappings: &[SmilesBondMapping],
+    fallback: usize,
+) -> usize {
+    error
+        .bond_location_hint()
+        .and_then(|bond| {
+            bond_mappings
+                .iter()
+                .find(|mapping| mapping.bond == bond)
+                .map(|mapping| mapping.source_offset)
+        })
+        .or_else(|| {
+            error.atom_location_hint().and_then(|atom| {
+                atom_mappings
+                    .iter()
+                    .find(|mapping| mapping.atom == atom)
+                    .map(|mapping| mapping.source_span.start)
+            })
+        })
+        .or_else(|| {
+            atom_mappings
+                .first()
+                .map(|mapping| mapping.source_span.start)
+        })
+        .unwrap_or(fallback)
 }
 
 /// Require atom- and bond-level source aromaticity assertions to cover the

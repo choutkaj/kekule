@@ -15,7 +15,7 @@ M  V30 2 C 1.4000 0.0000 0.0000 0 MASS=13
 M  V30 3 O 2.5000 0.0000 0.0000 0 CHG=-1
 M  V30 END ATOM
 M  V30 BEGIN BOND
-M  V30 1 1 1 2 CFG=1
+M  V30 1 1 1 2
 M  V30 2 2 2 3
 M  V30 END BOND
 M  V30 END CTAB
@@ -40,12 +40,7 @@ M  END
     let bond0 = mol.bond(BondId::new(0)).expect("bond exists");
     let bond1 = mol.bond(BondId::new(1)).expect("bond exists");
     assert_eq!(bond0.order, BondOrder::Single);
-    assert_eq!(
-        mol.stereo_bond_mark(BondId::new(0))
-            .expect("stereo mark")
-            .kind,
-        StereoBondMarkKind::WedgeUp
-    );
+    assert!(mol.stereo_bond_marks().next().is_none());
     assert_eq!(bond1.order, BondOrder::Double);
     let (_, conformer) = mol.first_conformer().expect("conformer exists");
     assert_eq!(
@@ -81,7 +76,7 @@ M  V30 END CTAB
 M  END
 ";
 
-    let mut parsed = read_molfile(input).expect("V3000 should parse");
+    let (parsed, report) = read_molfile_with_report(input).expect("V3000 should interpret");
 
     assert_eq!(
         parsed
@@ -99,12 +94,16 @@ M  END
             .no_implicit_hydrogens
     );
     assert!(!parsed.graph().perception().has_valence());
-    assert!(parsed.graph().stereo_bond_marks().next().is_some());
-    parsed
-        .normalize()
-        .expect("source-declared carrier normalizes");
+    assert_eq!(report.created_stereo_elements().len(), 1);
     assert!(parsed.graph().stereo_bond_marks().next().is_none());
     assert_eq!(parsed.graph().stereo_elements().count(), 1);
+
+    let written = molfile::write_v3000(&parsed).expect("canonical stereo should project");
+    let (reparsed, report) =
+        read_molfile_with_report(&written).expect("projected V3000 stereo should re-interpret");
+    assert_eq!(report.created_stereo_elements().len(), 1);
+    assert!(reparsed.graph().stereo_bond_marks().next().is_none());
+    assert_eq!(reparsed.graph().stereo_elements().count(), 1);
 }
 
 #[test]
@@ -386,18 +385,10 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         .add_atom(oxygen)
         .expect("atom identifier capacity");
 
-    let wedge = molecule
+    molecule
         .graph_mut()
         .add_bond(n, c, BondOrder::Single)
         .expect("single bond");
-    molecule
-        .graph_mut()
-        .set_stereo_bond_mark(StereoBondMark {
-            bond: wedge,
-            kind: StereoBondMarkKind::WedgeUp,
-            source: StereoSource::MolfileV3000,
-        })
-        .expect("stereo mark");
     molecule
         .graph_mut()
         .add_bond(c, o, BondOrder::Double)
@@ -433,7 +424,6 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     assert!(written.contains("CHG=1"));
     assert!(written.contains("MASS=13"));
     assert!(written.contains("RAD=2"));
-    assert!(written.contains("CFG=1"));
 
     let reparsed = read_molfile(&written).expect("written V3000 should parse");
     assert!(reparsed.graph().props().get("sdf.title").is_none());
@@ -461,14 +451,7 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         reparsed.graph().atom(AtomId::new(1)).expect("atom").isotope,
         Some(13)
     );
-    assert_eq!(
-        reparsed
-            .graph()
-            .stereo_bond_mark(BondId::new(0))
-            .expect("stereo mark")
-            .kind,
-        StereoBondMarkKind::WedgeUp
-    );
+    assert!(reparsed.graph().stereo_bond_marks().next().is_none());
     let (_, conformer) = reparsed.graph().first_conformer().expect("conformer");
     assert_eq!(
         conformer.position(AtomId::new(2)),
@@ -498,9 +481,9 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         ))
         .expect("stereo element");
     assert!(molfile::write_v3000(&molecule)
-        .expect_err("stereo elements should be rejected")
+        .expect_err("invalid stereo element should be rejected")
         .message
-        .contains("stereo elements"));
+        .contains("cannot encode"));
 
     let mut molecule = SmallMolecule::default();
     let a = molecule
@@ -530,9 +513,9 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         ))
         .expect("double-bond stereo");
     assert!(molfile::write_v3000(&molecule)
-        .expect_err("stereo elements should be rejected")
+        .expect_err("specified double-bond stereo should be rejected")
         .message
-        .contains("stereo elements"));
+        .contains("specified double-bond stereo"));
 
     let element = molecule
         .graph()

@@ -159,9 +159,6 @@ fn aromaticity_marks_benzene_like_ring() {
 fn discrete_chemical_perception_changes_only_perception_state() {
     let mut molecule =
         read_smiles("F[C@](Cl)(Br)c1cc[nH]c1").expect("heteroaromatic stereo fixture should parse");
-    molecule
-        .normalize()
-        .expect("heteroaromatic stereo fixture should normalize");
 
     let atom_ids = molecule.graph().atom_ids().collect::<Vec<_>>();
     let annotated_atom = atom_ids[0];
@@ -172,15 +169,13 @@ fn discrete_chemical_perception_changes_only_perception_state() {
     );
     molecule
         .graph_mut()
-        .atom_mut(annotated_atom)
+        .atom_props_mut(annotated_atom)
         .expect("fixture atom")
-        .props
         .insert("atom_note".to_owned(), PropValue::Bool(true));
     molecule
         .graph_mut()
-        .bond_mut(annotated_bond)
+        .bond_props_mut(annotated_bond)
         .expect("fixture bond")
-        .props
         .insert("bond_note".to_owned(), PropValue::Int(7));
 
     let stereo_element = molecule
@@ -238,7 +233,7 @@ fn discrete_chemical_perception_changes_only_perception_state() {
 fn molecule_perception_queries_read_the_installed_state_directly() {
     let mut molecule =
         read_smiles("F[C@](Cl)(Br)c1cc[nH]c1").expect("stereo aromatic fixture should parse");
-    normalize_and_perceive(&mut molecule).expect("fixture should normalize_and_perceive");
+    perceive(&mut molecule).expect("fixture should perceive");
     stereo_api::assign_cip_descriptors(molecule.graph_mut()).expect("CIP assignment");
 
     let graph = molecule.graph();
@@ -319,48 +314,52 @@ fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
 }
 
 #[test]
-fn normalize_and_perceive_succeeds_for_simple_molecule() {
+fn perceive_succeeds_for_simple_molecule() {
     let mut molecule = read_smiles("CCO").expect("ethanol should parse");
 
-    let report = molecule
-        .normalize_and_perceive()
-        .expect("ethanol should normalize and perceive");
+    molecule.perceive().expect("ethanol should perceive");
 
-    assert!(report.warnings.is_empty());
-    assert!(report.created_stereo_elements.is_empty());
     assert!(molecule.graph().perception().has_valence());
     assert!(molecule.graph().perception().has_rings());
     assert!(molecule.graph().perception().has_aromaticity());
 }
 
 #[test]
-fn normalize_and_perceive_matches_explicit_aromatic_source_stereo_workflow() {
-    let mut combined =
-        read_smiles("F/C=C/c1ccccc1").expect("aromatic directional SMILES should parse");
-    let mut explicit = combined.clone();
+fn interpretation_canonicalizes_source_stereo_before_perception() {
+    let document = smiles_api::parse_str("F/C=C/c1ccccc1").expect("SMILES parses");
+    let interpretation = smiles_api::interpret(&document).expect("SMILES interprets");
+    let (mut molecule, report) = interpretation.into_parts().expect("one component");
 
-    let combined_report = combined
-        .normalize_and_perceive()
-        .expect("combined workflow should succeed");
-    let explicit_report = explicit.normalize().expect("explicit normalization");
-    explicit.perceive().expect("explicit default perception");
-
-    assert_eq!(combined_report, explicit_report);
-    assert_eq!(combined, explicit);
-    assert_eq!(combined_report.created_stereo_elements.len(), 1);
-    assert!(combined.graph().stereo_bond_marks().next().is_none());
-    assert!(combined
+    assert_eq!(report.created_stereo_elements().len(), 1);
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
+    assert!(molecule
         .graph()
         .bonds()
         .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
-    assert!(combined.graph().perception().has_valence());
-    assert!(combined.graph().perception().has_rings());
-    assert!(combined.graph().perception().has_aromaticity());
-    assert!(!combined.graph().perception().has_cip_descriptors());
+    assert_eq!(molecule.graph().perception(), &PerceptionState::default());
+
+    let represented_before = molecule.graph().clone();
+    molecule.perceive().expect("default perception succeeds");
+    assert_eq!(
+        molecule.graph().atoms().collect::<Vec<_>>(),
+        represented_before.atoms().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        molecule.graph().bonds().collect::<Vec<_>>(),
+        represented_before.bonds().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        molecule.graph().stereo_elements().collect::<Vec<_>>(),
+        represented_before.stereo_elements().collect::<Vec<_>>()
+    );
+    assert!(molecule.graph().perception().has_valence());
+    assert!(molecule.graph().perception().has_rings());
+    assert!(molecule.graph().perception().has_aromaticity());
+    assert!(!molecule.graph().perception().has_cip_descriptors());
 }
 
 #[test]
-fn normalize_and_perceive_does_not_infer_or_materialize_coordinate_stereo() {
+fn perceive_does_not_infer_or_materialize_coordinate_stereo() {
     let (mut graph, center, carriers, _) = tetrahedral_marked_graph();
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     for (atom, point) in
@@ -382,7 +381,7 @@ fn normalize_and_perceive_does_not_infer_or_materialize_coordinate_stereo() {
     let mut molecule = SmallMolecule::from_graph(graph);
 
     molecule
-        .normalize_and_perceive()
+        .perceive()
         .expect("ordinary workflow should succeed");
 
     assert!(molecule.graph().stereo_elements().next().is_none());
@@ -396,34 +395,7 @@ fn normalize_and_perceive_does_not_infer_or_materialize_coordinate_stereo() {
 }
 
 #[test]
-fn normalize_and_perceive_rolls_back_normalization_failure() {
-    let mut graph = Molecule::new();
-    let a = graph.add_atom(carbon()).expect("atom identifier capacity");
-    let b = graph.add_atom(carbon()).expect("atom identifier capacity");
-    let bond = graph.add_bond(a, b, BondOrder::Single).expect("bond");
-    graph
-        .set_stereo_bond_mark(StereoBondMark {
-            bond,
-            kind: StereoBondMarkKind::WedgeEither,
-            source: StereoSource::MolfileV2000,
-        })
-        .expect("source mark");
-    let mut molecule = SmallMolecule::from_graph(graph);
-    let before = molecule.clone();
-
-    let error = molecule
-        .normalize_and_perceive()
-        .expect_err("invalid source stereo must fail normalization");
-
-    assert!(matches!(
-        error,
-        NormalizeAndPerceiveError::Normalization(NormalizationError::SourceStereo(_))
-    ));
-    assert_eq!(molecule, before);
-}
-
-#[test]
-fn normalize_and_perceive_rolls_back_perception_after_effective_normalization() {
+fn perceive_rolls_back_failure_without_rewriting_canonical_representation() {
     let mut graph = Molecule::new();
     let chlorine = graph
         .add_atom(element_atom("Cl"))
@@ -449,19 +421,16 @@ fn normalize_and_perceive_rolls_back_perception_after_effective_normalization() 
             .expect("pentavalent carbon bond");
     }
     let mut molecule = SmallMolecule::from_graph(graph);
+    molecule
+        .canonicalize_fixture()
+        .expect("fixture canonicalization should succeed");
     let before = molecule.clone();
-    let mut normalized = molecule.clone();
-    normalized
-        .normalize()
-        .expect("representation normalization should succeed");
-    assert_ne!(normalized, before);
-    assert!(normalized.perceive().is_err());
 
     let error = molecule
-        .normalize_and_perceive()
+        .perceive()
         .expect_err("default perception should reject pentavalent carbon");
 
-    assert!(matches!(error, NormalizeAndPerceiveError::Perception(_)));
+    assert!(matches!(error, perception_api::PerceptionError::Valence(_)));
     assert_eq!(molecule, before);
 }
 
@@ -1223,7 +1192,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
 #[test]
 fn stereo_candidates_use_normalized_and_perceived_hydrogen_state_without_cip_assignment() {
     let mut molecule = read_smiles("CC(F)(Cl)Br").expect("smiles should parse");
-    normalize_and_perceive(&mut molecule).expect("molecule should normalize_and_perceive");
+    perceive(&mut molecule).expect("molecule should perceive");
 
     stereo_api::validate_stereo(molecule.graph()).expect("stored stereo should be valid");
     let candidates = stereo_api::detect_stereo_candidates(molecule.graph());
@@ -1239,17 +1208,15 @@ fn stereo_candidates_use_normalized_and_perceived_hydrogen_state_without_cip_ass
 }
 
 #[test]
-fn normalization_assembles_paired_directional_marks_into_double_bond_element() {
-    let mut molecule = read_smiles("C/C=C\\F").expect("directional smiles should parse");
-    let report = molecule
-        .normalize()
-        .expect("directional marks should assemble");
-    assert_eq!(report.created_stereo_elements.len(), 1);
+fn interpretation_assembles_paired_directional_marks_into_double_bond_element() {
+    let (molecule, report) =
+        read_smiles_with_report("C/C=C\\F").expect("directional smiles should interpret");
+    assert_eq!(report.created_stereo_elements().len(), 1);
     assert!(molecule.graph().stereo_elements().next().is_some());
     assert!(molecule.graph().stereo_bond_marks().next().is_none());
     let element = molecule
         .graph()
-        .stereo_element(report.created_stereo_elements[0])
+        .stereo_element(report.created_stereo_elements()[0])
         .expect("created stereo element");
     match &element.kind {
         StereoElementKind::DoubleBond(stereo) => {
@@ -1265,35 +1232,23 @@ fn normalization_assembles_paired_directional_marks_into_double_bond_element() {
 }
 
 #[test]
-fn source_stereo_normalization_keeps_small_ring_double_bond_boundary() {
-    let mut cyclohexene = read_smiles(r"C1/C=C\CCC1").expect("marked cyclohexene parses");
-    let error = cyclohexene
-        .normalize()
-        .expect_err("excluded small-ring directional marks remain unpaired");
-    let NormalizationError::SourceStereo(SourceStereoNormalizationError { issues }) = error else {
-        panic!("expected source-stereo normalization error");
-    };
-    assert_eq!(issues.len(), 2);
-    assert!(issues.iter().all(|issue| matches!(
-        issue,
-        SourceStereoNormalizationIssue::UnpairedDirectionalBondMark { .. }
-    )));
-    assert!(cyclohexene.graph().stereo_elements().next().is_none());
+fn interpretation_enforces_small_ring_double_bond_boundary() {
+    let error = read_smiles(r"C1/C=C\CCC1")
+        .expect_err("excluded small-ring directional marks must reject interpretation");
+    assert!(error.to_string().contains("UnpairedDirectionalBondMark"));
 
-    let mut cyclooctene = read_smiles(r"C1/C=C\CCCCC1").expect("marked cyclooctene parses");
-    let report = cyclooctene
-        .normalize()
-        .expect("cyclooctene stereo should assemble");
-    assert_eq!(report.created_stereo_elements.len(), 1);
+    let (cyclooctene, report) =
+        read_smiles_with_report(r"C1/C=C\CCCCC1").expect("marked cyclooctene interprets");
+    assert_eq!(report.created_stereo_elements().len(), 1);
     let element = cyclooctene
         .graph()
-        .stereo_element(report.created_stereo_elements[0])
+        .stereo_element(report.created_stereo_elements()[0])
         .expect("created stereo element");
     assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
 }
 
 #[test]
-fn normalization_assembles_molfile_wedge_into_tetrahedral_element() {
+fn interpretation_assembles_molfile_wedge_into_tetrahedral_element() {
     let input = "\
 wedge
 kekule
@@ -1310,14 +1265,13 @@ kekule
   1  5  1  0  0  0  0
 M  END
 ";
-    let mut molecule = read_molfile(input).expect("wedge molfile should parse");
-
-    let report = molecule.normalize().expect("Molfile wedge should assemble");
-    assert_eq!(report.created_stereo_elements.len(), 1);
+    let (molecule, report) =
+        read_molfile_with_report(input).expect("wedge molfile should interpret");
+    assert_eq!(report.created_stereo_elements().len(), 1);
     assert!(molecule.graph().stereo_bond_marks().next().is_none());
     let element = molecule
         .graph()
-        .stereo_element(report.created_stereo_elements[0])
+        .stereo_element(report.created_stereo_elements()[0])
         .expect("created stereo element");
     assert_eq!(element.specifiedness, StereoSpecifiedness::Specified);
     assert_eq!(element.source, StereoSource::MolfileV2000);
@@ -1340,16 +1294,13 @@ M  END
 }
 
 #[test]
-fn normalization_uses_source_declared_h_for_molfile_wedge_geometry() {
-    let mut molecule = read_molfile(implicit_h_wedge_geometry_molblock())
-        .expect("implicit-H wedge molfile should parse");
-    let report = molecule
-        .normalize()
-        .expect("implicit-H wedge should assemble");
-    assert_eq!(report.created_stereo_elements.len(), 1);
+fn interpretation_uses_source_declared_h_for_molfile_wedge_geometry() {
+    let (molecule, report) = read_molfile_with_report(implicit_h_wedge_geometry_molblock())
+        .expect("implicit-H wedge molfile should interpret");
+    assert_eq!(report.created_stereo_elements().len(), 1);
     let element = molecule
         .graph()
-        .stereo_element(report.created_stereo_elements[0])
+        .stereo_element(report.created_stereo_elements()[0])
         .expect("created stereo element");
     match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => {
@@ -1379,7 +1330,7 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
     })
     .expect("wedge mark");
 
-    let report = normalization_api::normalize(&mut mol)
+    let report = canonicalize_molecule_for_publication(&mut mol)
         .expect("wedge/either should assemble as unknown stereo");
     assert_eq!(report.created_stereo_elements.len(), 1);
     let element = mol
@@ -1412,7 +1363,7 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
     })
     .expect("second wedge mark");
 
-    let report = normalization_api::normalize(&mut mol)
+    let report = canonicalize_molecule_for_publication(&mut mol)
         .expect("ambiguous wedges should warn without failing");
 
     assert!(report
@@ -1695,7 +1646,7 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
     assert!(coordinate_result.elements.is_empty());
     assert!(marked.stereo_bond_mark(bond).is_some());
 
-    let marked_error = normalization_api::normalize(&mut marked)
+    let marked_error = canonicalize_molecule_for_publication(&mut marked)
         .expect_err("unassembled tetrahedral mark should fail");
     assert!(matches!(
         marked_error,
@@ -1723,7 +1674,7 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
             source: StereoSource::MolfileV2000,
         })
         .expect("double bond either mark");
-    let unsupported_error = normalization_api::normalize(&mut unsupported)
+    let unsupported_error = canonicalize_molecule_for_publication(&mut unsupported)
         .expect_err("unsupported double-bond mark should fail");
     assert!(matches!(
         unsupported_error,
@@ -1764,7 +1715,7 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
         })
         .expect("double bond either mark");
 
-    let unknown_report = normalization_api::normalize(&mut unknown)
+    let unknown_report = canonicalize_molecule_for_publication(&mut unknown)
         .expect("double-bond either should assemble as unknown stereo");
     assert_eq!(unknown_report.created_stereo_elements.len(), 1);
     assert!(unknown.stereo_bond_mark(unknown_bond).is_none());
@@ -1779,17 +1730,17 @@ fn normalization_reports_unassembled_marks_and_preserves_absence() {
     let x = absent.add_atom(carbon()).expect("atom identifier capacity");
     let y = absent.add_atom(carbon()).expect("atom identifier capacity");
     absent.add_bond(x, y, BondOrder::Single).expect("bond");
-    let absent_report =
-        normalization_api::normalize(&mut absent).expect("unmarked molecule should normalize");
+    let absent_report = canonicalize_molecule_for_publication(&mut absent)
+        .expect("unmarked molecule should normalize");
     assert!(absent_report.created_stereo_elements.is_empty());
     assert!(absent.stereo_elements().next().is_none());
     assert!(absent.stereo_bond_marks().next().is_none());
 }
 
 #[test]
-fn failed_source_stereo_normalization_preserves_complete_original_state() {
+fn failed_source_stereo_canonicalization_reports_the_unpaired_mark() {
     let mut molecule = read_smiles("F[C@](Cl)(Br)I").expect("stereo SMILES should parse");
-    normalize_and_perceive(&mut molecule).expect("stored stereo should prepare");
+    perceive(&mut molecule).expect("stored stereo should prepare");
     let marked_bond = molecule.graph().bond_ids().next().expect("single bond");
     molecule
         .graph_mut()
@@ -1804,11 +1755,9 @@ fn failed_source_stereo_normalization_preserves_complete_original_state() {
     assert_eq!(cip.assigned.len(), 1);
     stereo_api::validate_stereo(molecule.graph())
         .expect("stored-state validation must ignore source marks");
-    let before = molecule.clone();
-
     let error = molecule
-        .normalize()
-        .expect_err("unpaired directional mark should fail normalization");
+        .canonicalize_fixture()
+        .expect_err("unpaired directional mark should fail canonicalization");
 
     assert!(matches!(
         error,
@@ -1817,7 +1766,6 @@ fn failed_source_stereo_normalization_preserves_complete_original_state() {
                 bond: marked_bond,
             })
     ));
-    assert_eq!(molecule, before);
 }
 
 #[test]
@@ -1878,17 +1826,13 @@ fn stereo_validation_accepts_structural_axis_elements() {
 }
 
 #[test]
-fn normalization_assembles_molfile_atropisomeric_axis() {
-    let mut molecule =
-        read_molfile(rdkit_rp6306_atrop_molblock()).expect("RDKit atropisomer fixture parses");
-
-    let report = molecule
-        .normalize()
-        .expect("Molfile atrop axis should assemble");
-    assert_eq!(report.created_stereo_elements.len(), 1);
+fn interpretation_assembles_molfile_atropisomeric_axis() {
+    let (molecule, report) = read_molfile_with_report(rdkit_rp6306_atrop_molblock())
+        .expect("RDKit atropisomer fixture interprets");
+    assert_eq!(report.created_stereo_elements().len(), 1);
     let element = molecule
         .graph()
-        .stereo_element(report.created_stereo_elements[0])
+        .stereo_element(report.created_stereo_elements()[0])
         .expect("created axis element");
     assert_eq!(element.source, StereoSource::MolfileV2000);
     match &element.kind {
@@ -1908,17 +1852,42 @@ fn normalization_assembles_molfile_atropisomeric_axis() {
 }
 
 #[test]
-fn normalization_prefers_exocyclic_molfile_atropisomeric_axis() {
-    let mut molecule = read_molfile(rdkit_rp6306_atrop3_molblock())
-        .expect("RDKit alternate atropisomer fixture parses");
+fn molfile_writers_project_canonical_axis_stereo_without_mutating_the_molecule() {
+    let (molecule, report) = read_molfile_with_report(rdkit_rp6306_atrop_molblock())
+        .expect("RDKit atropisomer fixture interprets");
+    let expected = molecule
+        .graph()
+        .stereo_element(report.created_stereo_elements()[0])
+        .expect("canonical axis element")
+        .clone();
+    let before = molecule.clone();
 
-    let report = molecule
-        .normalize()
-        .expect("preferred exocyclic Molfile atrop axis should assemble");
-    assert_eq!(report.created_stereo_elements.len(), 1);
+    for written in [
+        molfile::write_v2000(&molecule).expect("V2000 projects axis stereo"),
+        molfile::write_v3000(&molecule).expect("V3000 projects axis stereo"),
+    ] {
+        let (reparsed, report) =
+            read_molfile_with_report(&written).expect("projected axis stereo reparses");
+        assert_eq!(report.created_stereo_elements().len(), 1);
+        let actual = reparsed
+            .graph()
+            .stereo_element(report.created_stereo_elements()[0])
+            .expect("reparsed axis element");
+        assert_eq!(actual.kind, expected.kind);
+        assert_eq!(actual.specifiedness, expected.specifiedness);
+        assert!(reparsed.graph().stereo_bond_marks().next().is_none());
+    }
+    assert_eq!(molecule, before);
+}
+
+#[test]
+fn interpretation_prefers_exocyclic_molfile_atropisomeric_axis() {
+    let (molecule, report) = read_molfile_with_report(rdkit_rp6306_atrop3_molblock())
+        .expect("RDKit alternate atropisomer fixture interprets");
+    assert_eq!(report.created_stereo_elements().len(), 1);
     let element = molecule
         .graph()
-        .stereo_element(report.created_stereo_elements[0])
+        .stereo_element(report.created_stereo_elements()[0])
         .expect("created axis element");
     match &element.kind {
         StereoElementKind::Axis(stereo) => {
@@ -1937,59 +1906,33 @@ fn normalization_prefers_exocyclic_molfile_atropisomeric_axis() {
 }
 
 #[test]
-fn normalization_consumes_redundant_molfile_atrop_wedges_before_tetrahedral_marks() {
-    let mut molecule = read_molfile(rdkit_bms986142_atrop5_molblock())
-        .expect("RDKit redundant atropisomer wedge fixture parses");
-    // The external fixture omits this tetrahedral carrier declaration. Keep
-    // normalization model-free by supplying the represented H explicitly.
-    declare_explicit_fixture_hydrogen(&mut molecule, AtomId::new(10));
-    let report = molecule
-        .normalize()
-        .expect("redundant Molfile atrop wedges should assemble");
-    assert_eq!(report.created_stereo_elements.len(), 2);
-    assert!(molecule.graph().stereo_bond_marks().next().is_none());
-    assert!(molecule.graph().stereo_elements().any(|(_, element)| {
-        matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(10))
-    }));
-    assert!(molecule.graph().stereo_elements().any(|(_, element)| {
-        matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(8))
-    }));
+fn interpretation_rejects_atrop_fixture_with_an_omitted_tetrahedral_carrier() {
+    let error = read_molfile(rdkit_bms986142_atrop5_molblock())
+        .expect_err("source stereo without its carrier declaration must not publish");
+    assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
 }
 
 #[test]
-fn normalization_assembles_molfile_atrop_axis_with_one_exocyclic_sp2_endpoint() {
+fn interpretation_rejects_one_ring_endpoint_atrop_fixtures_with_omitted_carriers() {
     for fixture in [
         rdkit_zm374979_atrop1_molblock(),
         rdkit_zm374979_atrop2_molblock(),
     ] {
-        let mut molecule =
-            read_molfile(fixture).expect("RDKit one-ring-endpoint atropisomer fixture parses");
-        declare_explicit_fixture_hydrogen(&mut molecule, AtomId::new(3));
-        let report = molecule
-            .normalize()
-            .expect("one-ring-endpoint Molfile atrop axis should assemble");
-        assert_eq!(report.created_stereo_elements.len(), 2);
-        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
-            matches!(&element.kind, StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(3))
-        }));
-        assert!(molecule.graph().stereo_elements().any(|(_, element)| {
-            matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(33))
-        }));
+        let error = read_molfile(fixture)
+            .expect_err("omitted tetrahedral carrier must reject interpretation");
+        assert!(error.to_string().contains("UnassembledTetrahedralBondMark"));
     }
 }
 
 #[test]
-fn normalization_assembles_ring_internal_molfile_atrop_axis() {
+fn interpretation_assembles_ring_internal_molfile_atrop_axis() {
     for fixture in [
         rdkit_macrocycle8_ortho_wedge_molblock(),
         rdkit_macrocycle8_ortho_hash_molblock(),
     ] {
-        let mut molecule =
-            read_molfile(fixture).expect("RDKit macrocyclic atropisomer fixture parses");
-        let report = molecule
-            .normalize()
-            .expect("ring-internal Molfile atrop axis should assemble");
-        assert_eq!(report.created_stereo_elements.len(), 1);
+        let (molecule, report) = read_molfile_with_report(fixture)
+            .expect("RDKit macrocyclic atropisomer fixture interprets");
+        assert_eq!(report.created_stereo_elements().len(), 1);
         assert!(molecule.graph().stereo_elements().any(|(_, element)| {
             matches!(&element.kind, StereoElementKind::Axis(stereo) if stereo.axis == BondId::new(15))
         }));

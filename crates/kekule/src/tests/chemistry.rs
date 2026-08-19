@@ -1,11 +1,10 @@
 use super::*;
 
 #[test]
-fn normalization_and_default_perception_are_explicit() {
+fn interpretation_and_default_perception_are_separate() {
     let mut small = read_smiles("CCO").expect("smiles should parse");
     assert!(!small.graph().perception().has_valence());
 
-    small.normalize().expect("ethanol normalization");
     small.perceive().expect("ethanol perception");
 
     assert!(small.graph().perception().has_valence());
@@ -23,8 +22,6 @@ fn normalization_and_default_perception_are_explicit() {
 #[test]
 fn default_perception_installs_one_ring_basis_for_aromaticity() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
-    molecule.normalize().expect("benzene normalization");
-
     molecule.perceive().expect("benzene perception");
 
     let ring_set = molecule.graph().ring_set().expect("installed ring basis");
@@ -41,12 +38,11 @@ fn default_perception_installs_one_ring_basis_for_aromaticity() {
 }
 
 #[test]
-fn normalization_owns_source_stereo_before_default_perception() {
-    let mut molecule = read_smiles("C/C=C\\F").expect("directional smiles should parse");
+fn interpretation_owns_source_stereo_before_default_perception() {
+    let (mut molecule, report) =
+        read_smiles_with_report("C/C=C\\F").expect("directional smiles should interpret");
 
-    let report = molecule.normalize().expect("directional normalization");
-
-    assert_eq!(report.created_stereo_elements.len(), 1);
+    assert_eq!(report.created_stereo_elements().len(), 1);
     assert_eq!(molecule.graph().stereo_elements().count(), 1);
     assert!(molecule.graph().stereo_bond_marks().next().is_none());
 
@@ -74,7 +70,7 @@ fn normalization_preserves_unknown_double_bond_stereo() {
         .expect("double bond either mark");
 
     let report = molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect("unknown double-bond stereo should normalize");
 
     assert_eq!(report.created_stereo_elements.len(), 1);
@@ -167,7 +163,7 @@ fn failed_source_stereo_normalization_is_transactional() {
     let before = molecule.clone();
 
     let error = molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect_err("unassembled stereo mark should fail normalization");
 
     assert!(matches!(
@@ -210,7 +206,7 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
     let mut molecule = SmallMolecule::from_graph(mol);
 
     let report = molecule
-        .normalize()
+        .canonicalize_fixture()
         .expect("ambiguous drawing wedges should not reject valid chemistry");
     assert!(report
         .warnings
@@ -275,7 +271,9 @@ fn direct_aromaticity_perception_accepts_localized_aromatic_input() {
 #[test]
 fn successful_default_perception_is_idempotent() {
     let mut molecule = read_smiles("CCO").expect("ethanol should parse");
-    molecule.normalize().expect("ethanol normalization");
+    molecule
+        .canonicalize_fixture()
+        .expect("ethanol normalization");
     molecule
         .perceive()
         .expect("first perception should succeed");
@@ -303,7 +301,9 @@ fn normalization_cleanup_invalidates_preexisting_perception() {
     mark_all_fresh(&mut mol);
     let mut molecule = SmallMolecule::from_graph(mol);
 
-    molecule.normalize().expect("representation cleanup");
+    molecule
+        .canonicalize_fixture()
+        .expect("representation cleanup");
 
     assert_all_stale(molecule.graph());
     assert_eq!(
@@ -725,22 +725,20 @@ fn molfile_wedge_assembles_tetrahedral_p_with_a_double_bond() {
 M  END
 $$$$
 "#;
-    let mut molecule = read_sdf_molecules(input)
+    let molecule = read_sdf_molecules(input)
         .expect("compact phosphorus regression parses")
         .into_iter()
         .next()
         .expect("one molecule");
 
-    let normalization = molecule
-        .normalize()
-        .expect("tetracoordinate phosphorus should normalize");
-
-    assert!(normalization.warnings.is_empty());
-    assert_eq!(normalization.created_stereo_elements.len(), 1);
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
+    assert_eq!(molecule.graph().stereo_elements().count(), 1);
     let element = molecule
         .graph()
-        .stereo_element(normalization.created_stereo_elements[0])
-        .expect("created tetrahedral element");
+        .stereo_elements()
+        .next()
+        .expect("created tetrahedral element")
+        .1;
     assert!(matches!(
         &element.kind,
         StereoElementKind::Tetrahedral(stereo) if stereo.center == AtomId::new(0)
@@ -763,22 +761,20 @@ fn molfile_wedge_assembles_pyramidal_s_with_a_lone_pair() {
 M  END
 $$$$
 "#;
-    let mut molecule = read_sdf_molecules(input)
+    let molecule = read_sdf_molecules(input)
         .expect("compact sulfur regression parses")
         .into_iter()
         .next()
         .expect("one molecule");
 
-    let normalization = molecule
-        .normalize()
-        .expect("pyramidal sulfur should normalize");
-
-    assert!(normalization.warnings.is_empty());
-    assert_eq!(normalization.created_stereo_elements.len(), 1);
+    assert!(molecule.graph().stereo_bond_marks().next().is_none());
+    assert_eq!(molecule.graph().stereo_elements().count(), 1);
     let element = molecule
         .graph()
-        .stereo_element(normalization.created_stereo_elements[0])
-        .expect("created tetrahedral element");
+        .stereo_elements()
+        .next()
+        .expect("created tetrahedral element")
+        .1;
     assert!(matches!(
         &element.kind,
         StereoElementKind::Tetrahedral(stereo)
