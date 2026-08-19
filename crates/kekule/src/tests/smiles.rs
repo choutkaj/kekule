@@ -596,6 +596,82 @@ fn invalid_lowercase_aromatic_ring_returns_structured_error() {
 }
 
 #[test]
+fn smiles_interpretation_rejects_inconsistent_source_aromaticity() {
+    let cases = [
+        (
+            "c",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "c-C",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "c-c",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "c=C",
+            0,
+            "source-aromatic atom is not part of a source-aromatic bond",
+        ),
+        (
+            "C:C",
+            1,
+            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+        ),
+        (
+            "c:C",
+            1,
+            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+        ),
+        (
+            "C:c",
+            1,
+            "source-aromatic bond requires source-aromatic atom syntax at both endpoints",
+        ),
+    ];
+
+    for (source, offset, message) in cases {
+        let document = smiles_api::parse_str(source)
+            .unwrap_or_else(|_| panic!("source syntax should parse: {source}"));
+        let error = match smiles_api::interpret(&document) {
+            Ok(_) => panic!("inconsistent source aromaticity should fail: {source}"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.offset(), offset, "{source}: {error}");
+        assert_eq!(error.message(), message, "{source}: {error}");
+    }
+}
+
+#[test]
+fn smiles_source_aromaticity_validation_preserves_supported_forms() {
+    for source in [
+        "cc",
+        "c:c",
+        "c1:c:c:c:c:c:1",
+        "n1ccccc1",
+        "c1ccoc1",
+        "c1ccc2ccccc2c1",
+        "c1ccccc1-C",
+        "c1ccccc1-c1ccccc1",
+    ] {
+        let molecule = read_smiles(source)
+            .unwrap_or_else(|_| panic!("consistent source aromaticity should publish: {source}"));
+
+        assert!(molecule
+            .graph()
+            .bonds()
+            .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
+        assert!(!molecule.graph().perception().has_aromaticity());
+    }
+}
+
+#[test]
 fn thiocarbonyl_chalcogen_ring_normalizes_and_perceives_aromatic_like_rdkit() {
     let mut molecule = read_smiles("CCN(CC)C1=NC(=S)N(C(=S)S1)C(=S)N(CC)CC")
         .expect("thiocarbonyl heterocycle should parse");

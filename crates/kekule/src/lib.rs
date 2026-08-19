@@ -201,8 +201,9 @@ pub mod mmcif {
 ///
 /// Normalization changes only how already-asserted chemistry is represented.
 /// It is transactional, model-independent, and idempotent, and successful
-/// normalization clears installed derived perception state. Imported aromatic
-/// orders are localized and supported source stereo marks become canonical
+/// normalization clears installed derived perception state. Source-aromatic
+/// bonds are localized during format interpretation before this API is reached;
+/// normalization converts supported source stereo marks into canonical
 /// represented stereo elements.
 pub mod normalization {
     pub use crate::chemistry::{
