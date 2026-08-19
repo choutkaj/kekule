@@ -3047,6 +3047,64 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
 }
 
 #[test]
+fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
+    for (source, expected) in [
+        ("C", HydrogenDeclaration::Infer { explicit: 0 }),
+        ("[C]", HydrogenDeclaration::Fixed(0)),
+        ("[CH]", HydrogenDeclaration::Fixed(1)),
+        ("[NH4+]", HydrogenDeclaration::Fixed(4)),
+    ] {
+        let molecule = read_smiles(source).unwrap_or_else(|error| panic!("{source}: {error}"));
+        for (writer, written) in [
+            ("regular", smiles_api::write(&molecule)),
+            ("canonical", smiles_api::write_canonical(&molecule)),
+            ("isomeric", smiles_api::write_isomeric(&molecule)),
+        ] {
+            let written = written
+                .unwrap_or_else(|error| panic!("{writer} writer rejected {source}: {error}"));
+            let reparsed = read_smiles(&written).unwrap_or_else(|error| {
+                panic!("{writer} output for {source} did not parse ({written}): {error}")
+            });
+            assert_eq!(
+                reparsed
+                    .graph()
+                    .atom(AtomId::new(0))
+                    .expect("single atom")
+                    .hydrogens,
+                expected,
+                "{writer} writer changed {source} through {written}"
+            );
+        }
+    }
+}
+
+#[test]
+fn all_smiles_writers_reject_represented_hydrogens_with_inference_enabled() {
+    let mut atom = carbon();
+    atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
+    let mut graph = Molecule::builder();
+    graph.add_atom(atom).expect("carbon");
+    let molecule = SmallMolecule::from_graph(graph.build().expect("single atom molecule"));
+
+    for (writer, result) in [
+        ("regular", smiles_api::write(&molecule)),
+        ("canonical", smiles_api::write_canonical(&molecule)),
+        ("isomeric", smiles_api::write_isomeric(&molecule)),
+    ] {
+        let error = match result {
+            Err(error) => error,
+            Ok(written) => panic!(
+                "{writer} writer must not coerce Infer {{ explicit: 1 }} to Fixed(1): {written}"
+            ),
+        };
+        assert!(
+            error.message().contains("implicit-H inference enabled"),
+            "{writer}: {error}"
+        );
+    }
+}
+
+#[test]
 fn bracket_atoms_do_not_infer_radicals_from_a_valence_model() {
     for (smiles, atom_index) in [
         ("[C]", 0),
@@ -3079,11 +3137,27 @@ fn bracket_atoms_do_not_infer_radicals_from_a_valence_model() {
 #[test]
 fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
     let molecule = read_smiles("F[C@H](Cl)Br").expect("tetrahedral SMILES should parse");
+    assert_eq!(
+        molecule
+            .graph()
+            .atom(AtomId::new(1))
+            .expect("stereo center")
+            .hydrogens,
+        HydrogenDeclaration::Fixed(1)
+    );
 
     let written = smiles_api::write_isomeric(&molecule).expect("tetrahedral stereo should write");
 
     assert_eq!(written, "F[C@H](Cl)Br");
     let reparsed = read_smiles(&written).expect("isomeric output should parse");
+    assert_eq!(
+        reparsed
+            .graph()
+            .atom(AtomId::new(1))
+            .expect("reparsed stereo center")
+            .hydrogens,
+        HydrogenDeclaration::Fixed(1)
+    );
     let stereo = reparsed
         .graph()
         .stereo_elements()
@@ -3109,6 +3183,46 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
         }
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
+}
+
+#[test]
+fn isomeric_smiles_rejects_tetrahedral_stereo_that_would_fix_inferred_hydrogen_policy() {
+    let mut molecule = read_smiles("FC(Cl)Br").expect("tetrahedral graph should parse");
+    perceive(&mut molecule).expect("tetrahedral graph should perceive");
+    let center = AtomId::new(1);
+    assert_eq!(
+        molecule.graph().atom(center).expect("center").hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
+    assert_eq!(molecule.graph().implicit_hydrogens(center), Ok(Some(1)));
+    molecule
+        .graph_mut()
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
+                center,
+                carriers: vec![
+                    StereoCarrier::Atom(AtomId::new(0)),
+                    StereoCarrier::Atom(AtomId::new(2)),
+                    StereoCarrier::Atom(AtomId::new(3)),
+                    StereoCarrier::ImplicitHydrogen,
+                ],
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
+        .expect("canonical tetrahedral element");
+
+    let error = smiles_api::write_isomeric(&molecule)
+        .expect_err("[C@H] would silently change Infer to Fixed");
+    assert!(
+        error
+            .message()
+            .contains("allows implicit-H inference without changing its hydrogen declaration"),
+        "{error}"
+    );
+    assert_eq!(
+        molecule.graph().atom(center).expect("center").hydrogens,
+        HydrogenDeclaration::Infer { explicit: 0 }
+    );
 }
 
 #[test]

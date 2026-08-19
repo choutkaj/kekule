@@ -220,6 +220,14 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
                         "isomeric SMILES writer cannot encode invalid tetrahedral stereo",
                     ));
                 }
+                let atom = mol
+                    .atom(stereo.center)
+                    .map_err(|error| MolWriteError::new(error.to_string()))?;
+                if atom.hydrogens.allows_implicit() {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES cannot encode tetrahedral stereo on an atom that allows implicit-H inference without changing its hydrogen declaration",
+                    ));
+                }
                 let hydrogen_count = stereo
                     .carriers
                     .iter()
@@ -228,6 +236,11 @@ fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), Mo
                 if hydrogen_count > 1 {
                     return Err(MolWriteError::new(
                         "isomeric SMILES writer cannot encode tetrahedral stereo with repeated implicit hydrogens",
+                    ));
+                }
+                if usize::from(atom.hydrogens.explicit_count()) != hydrogen_count {
+                    return Err(MolWriteError::new(
+                        "isomeric SMILES cannot encode tetrahedral stereo whose implicit-hydrogen carriers disagree with its fixed hydrogen declaration",
                     ));
                 }
             }

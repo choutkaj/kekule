@@ -286,6 +286,8 @@ fn writers_reject_unrepresentable_hydrogen_inference_policy(
         kekule::smiles::write(&molecule).expect_err("SMILES cannot preserve the declaration"),
         kekule::smiles::write_canonical(&molecule)
             .expect_err("canonical SMILES cannot preserve the declaration"),
+        kekule::smiles::write_isomeric(&molecule)
+            .expect_err("isomeric SMILES cannot preserve the declaration"),
         kekule::molfile::write_v2000(&molecule).expect_err("V2000 cannot preserve the declaration"),
         kekule::molfile::write_v3000(&molecule).expect_err("V3000 cannot preserve the declaration"),
     ] {
