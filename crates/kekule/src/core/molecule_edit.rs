@@ -306,6 +306,7 @@ pub(crate) fn canonicalize_represented_chemistry(
     if rewritten {
         molecule.invalidate_topology();
     }
+    molecule.canonicalize_stored_stereo_elements();
     Ok(())
 }
 
@@ -354,7 +355,10 @@ fn oxo_bonds_to_neutral_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(Ato
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::Element;
+    use crate::core::{
+        DoubleBondOrientation, DoubleBondStereo, Element, StereoCarrier, StereoElement,
+        StereoElementKind,
+    };
 
     fn carbon() -> Atom {
         Atom::new(Element::from_atomic_number(6).expect("carbon"))
@@ -500,6 +504,48 @@ mod tests {
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
         assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
+    }
+
+    #[test]
+    fn editor_recanonicalizes_stereo_references_after_topology_changes() {
+        let mut builder = Molecule::builder();
+        let left = builder.add_atom(carbon()).unwrap();
+        let right = builder.add_atom(carbon()).unwrap();
+        let hydrogen = builder.add_atom(atom("H")).unwrap();
+        let chlorine = builder.add_atom(atom("Cl")).unwrap();
+        let bromine = builder.add_atom(atom("Br")).unwrap();
+        let double_bond = builder.add_bond(left, right, BondOrder::Double).unwrap();
+        builder.add_bond(left, hydrogen, BondOrder::Single).unwrap();
+        builder
+            .add_bond(right, chlorine, BondOrder::Single)
+            .unwrap();
+        builder.add_bond(right, bromine, BondOrder::Single).unwrap();
+        let mut molecule = builder.build().unwrap();
+        let element = molecule
+            .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+                DoubleBondStereo {
+                    bond: double_bond,
+                    left,
+                    right,
+                    left_carrier: StereoCarrier::Atom(hydrogen),
+                    right_carrier: StereoCarrier::Atom(chlorine),
+                    orientation: Some(DoubleBondOrientation::Together),
+                },
+            )))
+            .unwrap();
+
+        let mut editor = molecule.edit();
+        let fluorine = editor.add_atom(atom("F")).unwrap();
+        editor.add_bond(left, fluorine, BondOrder::Single).unwrap();
+        editor.commit().expect("canonical edit publication");
+
+        let StereoElementKind::DoubleBond(stereo) = &molecule.stereo_element(element).unwrap().kind
+        else {
+            panic!("expected double-bond stereo");
+        };
+        assert_eq!(stereo.left_carrier, StereoCarrier::Atom(fluorine));
+        assert_eq!(stereo.right_carrier, StereoCarrier::Atom(chlorine));
+        assert_eq!(stereo.orientation, Some(DoubleBondOrientation::Opposite));
     }
 
     #[test]

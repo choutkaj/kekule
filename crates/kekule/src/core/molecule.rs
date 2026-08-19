@@ -471,15 +471,19 @@ impl Molecule {
 
     /// Inserts an ungrouped validated stereo element without narrowing its collection slot.
     ///
+    /// Carrier order, double-bond endpoints, and reference carriers are
+    /// canonicalized from represented graph state before storage.
+    ///
     /// Group membership must be established separately through
     /// [`Self::add_stereo_group`]. A pre-grouped element is rejected before
     /// slot allocation or perception invalidation.
-    pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
+    pub fn add_stereo_element(&mut self, mut element: StereoElement) -> Result<StereoElementId> {
         if element.group.is_some() {
             return Err(MoleculeError::InvalidStereoReference(
                 "stereo element group membership must be established through add_stereo_group",
             ));
         }
+        self.canonicalize_stereo_element(&mut element);
         self.validate_stereo_element_refs(&element)?;
         let id = checked_molecule_id(
             self.stereo_elements.len(),
@@ -498,10 +502,12 @@ impl Molecule {
             .ok_or(MoleculeError::InvalidStereoElementId(id))
     }
 
+    /// Replaces an element through the same canonical storage boundary as
+    /// [`Self::add_stereo_element`].
     pub fn replace_stereo_element(
         &mut self,
         id: StereoElementId,
-        replacement: StereoElement,
+        mut replacement: StereoElement,
     ) -> Result<StereoElement> {
         let Some(current) = self
             .stereo_elements
@@ -515,6 +521,7 @@ impl Molecule {
                 "stereo group membership must be changed through stereo-group operations",
             ));
         }
+        self.canonicalize_stereo_element(&mut replacement);
         self.validate_stereo_element_refs(&replacement)?;
         let previous = std::mem::replace(
             self.stereo_elements[id.index()]
@@ -791,6 +798,195 @@ impl Molecule {
         Ok(())
     }
 
+    fn canonicalize_stereo_element(&self, element: &mut StereoElement) {
+        match &mut element.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                if sort_stereo_carriers(&mut stereo.carriers) {
+                    stereo.orientation = stereo.orientation.map(flip_tetrahedral_orientation);
+                }
+            }
+            StereoElementKind::DoubleBond(stereo) => self.canonicalize_double_bond_stereo(stereo),
+            StereoElementKind::Axis(stereo) => self.canonicalize_axis_stereo(stereo),
+        }
+    }
+
+    pub(crate) fn canonicalize_stored_stereo_elements(&mut self) {
+        let stored = self
+            .stereo_elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, element)| element.clone().map(|element| (index, element)))
+            .collect::<Vec<_>>();
+        let mut replacements = Vec::new();
+        for (index, mut element) in stored {
+            self.canonicalize_stereo_element(&mut element);
+            if self.stereo_elements[index].as_ref() != Some(&element) {
+                replacements.push((index, element));
+            }
+        }
+        if replacements.is_empty() {
+            return;
+        }
+        for (index, element) in replacements {
+            self.stereo_elements[index] = Some(element);
+        }
+        self.invalidate_stereo();
+    }
+
+    fn canonicalize_double_bond_stereo(&self, stereo: &mut DoubleBondStereo) {
+        let Ok(bond) = self.bond(stereo.bond) else {
+            return;
+        };
+        if !bond.connects(stereo.left, stereo.right) {
+            return;
+        }
+
+        let (left, right) = sorted_atom_pair(stereo.left, stereo.right);
+        // Exchanging both endpoint labels and their references preserves the
+        // together/opposite relation; only changing one reference flips it.
+        let (mut left_carrier, mut right_carrier) = if stereo.left == left {
+            (stereo.left_carrier, stereo.right_carrier)
+        } else {
+            (stereo.right_carrier, stereo.left_carrier)
+        };
+        let mut reference_changes = 0;
+        if let Some(canonical) =
+            self.canonical_endpoint_reference(left, right, stereo.bond, left_carrier)
+        {
+            reference_changes += usize::from(canonical != left_carrier);
+            left_carrier = canonical;
+        }
+        if let Some(canonical) =
+            self.canonical_endpoint_reference(right, left, stereo.bond, right_carrier)
+        {
+            reference_changes += usize::from(canonical != right_carrier);
+            right_carrier = canonical;
+        }
+
+        stereo.left = left;
+        stereo.right = right;
+        stereo.left_carrier = left_carrier;
+        stereo.right_carrier = right_carrier;
+        if reference_changes % 2 == 1 {
+            stereo.orientation = stereo.orientation.map(flip_double_bond_orientation);
+        }
+    }
+
+    fn canonical_endpoint_reference(
+        &self,
+        endpoint: AtomId,
+        other_endpoint: AtomId,
+        focus: BondId,
+        current: StereoCarrier,
+    ) -> Option<StereoCarrier> {
+        let atom_references = self.atom_stereo_references(endpoint, other_endpoint, focus);
+        match current {
+            StereoCarrier::Atom(atom) if atom_references.contains(&StereoCarrier::Atom(atom)) => {
+                atom_references.first().copied()
+            }
+            StereoCarrier::ImplicitHydrogen => atom_references
+                .first()
+                .copied()
+                .or(Some(StereoCarrier::ImplicitHydrogen)),
+            StereoCarrier::Atom(_) | StereoCarrier::ImplicitLonePair => None,
+        }
+    }
+
+    fn canonicalize_axis_stereo(&self, stereo: &mut AxisStereo) {
+        if stereo.carriers.len() != 2 {
+            return;
+        }
+        let Ok(axis) = self.bond(stereo.axis) else {
+            return;
+        };
+        // Reversing the axis exchanges both endpoint reference vectors as
+        // well, leaving the stored handedness unchanged.
+        let (left, right) = sorted_atom_pair(axis.a(), axis.b());
+        let Some(mut left_carrier) =
+            self.axis_reference_on_endpoint(left, right, stereo.axis, &stereo.carriers)
+        else {
+            return;
+        };
+        let Some(mut right_carrier) =
+            self.axis_reference_on_endpoint(right, left, stereo.axis, &stereo.carriers)
+        else {
+            return;
+        };
+
+        let mut reference_changes = 0;
+        if let Some(canonical) =
+            self.canonical_endpoint_reference(left, right, stereo.axis, left_carrier)
+        {
+            reference_changes += usize::from(canonical != left_carrier);
+            left_carrier = canonical;
+        }
+        if let Some(canonical) =
+            self.canonical_endpoint_reference(right, left, stereo.axis, right_carrier)
+        {
+            reference_changes += usize::from(canonical != right_carrier);
+            right_carrier = canonical;
+        }
+
+        stereo.carriers = vec![left_carrier, right_carrier];
+        if reference_changes % 2 == 1 {
+            stereo.orientation = stereo.orientation.map(flip_axis_orientation);
+        }
+    }
+
+    fn axis_reference_on_endpoint(
+        &self,
+        endpoint: AtomId,
+        other_endpoint: AtomId,
+        axis: BondId,
+        carriers: &[StereoCarrier],
+    ) -> Option<StereoCarrier> {
+        let references = self.atom_stereo_references(endpoint, other_endpoint, axis);
+        let matches = carriers
+            .iter()
+            .copied()
+            .filter(|carrier| references.contains(carrier))
+            .collect::<Vec<_>>();
+        if matches.len() == 1 {
+            Some(matches[0])
+        } else {
+            None
+        }
+    }
+
+    fn atom_stereo_references(
+        &self,
+        endpoint: AtomId,
+        other_endpoint: AtomId,
+        focus: BondId,
+    ) -> Vec<StereoCarrier> {
+        let mut references = self
+            .incident_bonds(endpoint)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|(bond_id, bond)| {
+                if bond_id == focus {
+                    return None;
+                }
+                let atom = bond.other_atom(endpoint);
+                (atom != other_endpoint).then_some(StereoCarrier::Atom(atom))
+            })
+            .collect::<Vec<_>>();
+        references.sort_by_key(|carrier| match carrier {
+            StereoCarrier::Atom(atom) => {
+                let is_hydrogen = self
+                    .atom(*atom)
+                    .is_ok_and(|atom| atom.element.atomic_number() == 1);
+                (u8::from(is_hydrogen), atom.raw())
+            }
+            StereoCarrier::ImplicitHydrogen | StereoCarrier::ImplicitLonePair => {
+                unreachable!("represented atom references contain only atom carriers")
+            }
+        });
+        references.dedup();
+        references
+    }
+
     fn validate_stereo_carriers(&self, carriers: &[StereoCarrier]) -> Result<()> {
         for carrier in carriers {
             if let StereoCarrier::Atom(atom) = carrier {
@@ -834,6 +1030,61 @@ impl Molecule {
                 *slot = None;
             }
         }
+    }
+}
+
+fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {
+    let mut indexed = carriers.iter().copied().enumerate().collect::<Vec<_>>();
+    indexed.sort_by_key(|(_, carrier)| stereo_carrier_key(carrier));
+
+    // The orientation changes sign exactly for an odd permutation from the
+    // caller's carrier order to the canonical order.
+    let mut odd_permutation = false;
+    for left in 0..indexed.len() {
+        for right in (left + 1)..indexed.len() {
+            if indexed[left].0 > indexed[right].0 {
+                odd_permutation = !odd_permutation;
+            }
+        }
+    }
+    *carriers = indexed.into_iter().map(|(_, carrier)| carrier).collect();
+    odd_permutation
+}
+
+fn stereo_carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
+    match carrier {
+        StereoCarrier::Atom(atom) => (0, atom.raw()),
+        StereoCarrier::ImplicitHydrogen => (1, 0),
+        StereoCarrier::ImplicitLonePair => (2, 0),
+    }
+}
+
+fn sorted_atom_pair(left: AtomId, right: AtomId) -> (AtomId, AtomId) {
+    if left <= right {
+        (left, right)
+    } else {
+        (right, left)
+    }
+}
+
+fn flip_tetrahedral_orientation(orientation: TetrahedralOrientation) -> TetrahedralOrientation {
+    match orientation {
+        TetrahedralOrientation::Clockwise => TetrahedralOrientation::CounterClockwise,
+        TetrahedralOrientation::CounterClockwise => TetrahedralOrientation::Clockwise,
+    }
+}
+
+fn flip_double_bond_orientation(orientation: DoubleBondOrientation) -> DoubleBondOrientation {
+    match orientation {
+        DoubleBondOrientation::Together => DoubleBondOrientation::Opposite,
+        DoubleBondOrientation::Opposite => DoubleBondOrientation::Together,
+    }
+}
+
+fn flip_axis_orientation(orientation: AxisOrientation) -> AxisOrientation {
+    match orientation {
+        AxisOrientation::Clockwise => AxisOrientation::CounterClockwise,
+        AxisOrientation::CounterClockwise => AxisOrientation::Clockwise,
     }
 }
 

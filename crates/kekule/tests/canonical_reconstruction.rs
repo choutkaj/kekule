@@ -2,10 +2,10 @@ use kekule::bio::{
     MacroMolecule, SmcraAtomSiteMetadata, SmcraChainId, SmcraHierarchy, SmcraResidueId,
 };
 use kekule::core::{
-    AromaticityModel, Atom, AtomId, BondOrder, Element, Molecule, PerceptionState,
-    PerceptionStateBuildError, PerceptionStateInstallError, PropValue, Ring, RingMembership,
-    RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId, StereoElementKind,
-    StereoGroup, StereoGroupKind, StereoSource, TetrahedralOrientation, TetrahedralStereo,
+    AromaticityModel, Atom, AtomId, BondOrder, DoubleBondStereo, Element, Molecule,
+    PerceptionState, PerceptionStateBuildError, PerceptionStateInstallError, PropValue, Ring,
+    RingMembership, RingSet, StereoCarrier, StereoDescriptor, StereoElement, StereoElementId,
+    StereoElementKind, StereoGroup, StereoGroupKind, TetrahedralOrientation, TetrahedralStereo,
     ValenceModel,
 };
 use kekule::small::SmallMolecule;
@@ -55,14 +55,11 @@ fn build_small_topology(molecule: &SmallMolecule) -> Topology {
 }
 
 fn tetrahedral_element(center: AtomId, carriers: [AtomId; 4]) -> StereoElement {
-    StereoElement::specified(
-        StereoElementKind::Tetrahedral(TetrahedralStereo {
-            center,
-            carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
-            orientation: TetrahedralOrientation::Clockwise,
-        }),
-        StereoSource::User,
-    )
+    StereoElement::new(StereoElementKind::Tetrahedral(TetrahedralStereo {
+        center,
+        carriers: carriers.into_iter().map(StereoCarrier::Atom).collect(),
+        orientation: Some(TetrahedralOrientation::Clockwise),
+    }))
 }
 
 fn stereo_fixture() -> (Molecule, Vec<StereoElementId>) {
@@ -125,6 +122,52 @@ fn full_installed_perception_round_trips_through_public_api() {
 
     let reconstructed = SmallMolecule::from_graph(reconstructed_graph);
     assert!(build_small_topology(&source).same_layout(&build_small_topology(&reconstructed)));
+}
+
+#[test]
+fn topology_reconstruction_preserves_explicit_unknown_stereo_exactly() {
+    let mut graph = Molecule::builder();
+    let fluorine = graph
+        .add_atom(Atom::new(Element::from_symbol("F").unwrap()))
+        .unwrap();
+    let left = graph.add_atom(carbon()).unwrap();
+    let right = graph.add_atom(carbon()).unwrap();
+    let chlorine = graph
+        .add_atom(Atom::new(Element::from_symbol("Cl").unwrap()))
+        .unwrap();
+    graph.add_bond(fluorine, left, BondOrder::Single).unwrap();
+    let focus = graph.add_bond(left, right, BondOrder::Double).unwrap();
+    graph.add_bond(right, chlorine, BondOrder::Single).unwrap();
+    let mut graph = graph.build().expect("connected canonical graph");
+    let element = graph
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
+                bond: focus,
+                left,
+                right,
+                left_carrier: StereoCarrier::Atom(fluorine),
+                right_carrier: StereoCarrier::Atom(chlorine),
+                orientation: None,
+            },
+        )))
+        .expect("explicit unknown stereo");
+    let source = SmallMolecule::from_graph(graph);
+    let expected = source.graph().stereo_element(element).unwrap().clone();
+    assert!(expected.is_explicitly_unknown());
+
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_small_molecule_definition(&source).unwrap();
+    builder
+        .add_instance(definition, MoleculeInstanceMetadata::default())
+        .unwrap();
+    let topology = builder.build().expect("topology reconstruction");
+    let reconstructed = topology.definition(definition).unwrap().payload().graph();
+
+    assert_eq!(reconstructed.stereo_element(element).unwrap(), &expected);
+    let StereoElementKind::DoubleBond(stereo) = &expected.kind else {
+        panic!("expected double-bond stereo");
+    };
+    assert_eq!(stereo.orientation, None);
 }
 
 #[test]
@@ -359,7 +402,10 @@ fn installed_perception_follows_normal_invalidation_rules() {
     assert_eq!(molecule.perception(), &state);
 
     let mut replacement = molecule.stereo_element(elements[0]).unwrap().clone();
-    replacement.source = StereoSource::Reaction;
+    let StereoElementKind::Tetrahedral(stereo) = &mut replacement.kind else {
+        panic!("fixture element should be tetrahedral");
+    };
+    stereo.orientation = Some(TetrahedralOrientation::CounterClockwise);
     molecule
         .replace_stereo_element(elements[0], replacement)
         .unwrap();

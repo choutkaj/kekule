@@ -151,14 +151,11 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
             .expect("right carrier bond");
     }
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis,
-                carriers: vec![StereoCarrier::Atom(left_high), StereoCarrier::Atom(right_a)],
-                orientation: AxisOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![StereoCarrier::Atom(left_high), StereoCarrier::Atom(right_a)],
+            orientation: Some(AxisOrientation::CounterClockwise),
+        })))
         .expect("axis stereo element");
 
     let report = assign_cip(&mut mol);
@@ -388,17 +385,14 @@ fn axis_stereo_graph(
         AxisReference::Low => right_low,
     };
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis,
-                carriers: vec![
-                    StereoCarrier::Atom(left_carrier),
-                    StereoCarrier::Atom(right_carrier),
-                ],
-                orientation,
-            }),
-            StereoSource::User,
-        ))
+        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![
+                StereoCarrier::Atom(left_carrier),
+                StereoCarrier::Atom(right_carrier),
+            ],
+            orientation: Some(orientation),
+        })))
         .expect("axis stereo element");
     (mol, stereo)
 }
@@ -539,17 +533,16 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
             .expect("ring bond");
     }
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond: double_bond,
                 left: atoms[0],
                 right: atoms[1],
                 left_carrier: StereoCarrier::Atom(atoms[5]),
                 right_carrier: StereoCarrier::Atom(atoms[2]),
-                orientation: DoubleBondOrientation::Together,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Together),
+            },
+        )))
         .expect("double-bond stereo element");
 
     let report = assign_cip(&mut mol);
@@ -590,17 +583,16 @@ fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
             .expect("right carrier bond");
     }
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond: double_bond,
                 left,
                 right,
                 left_carrier: StereoCarrier::Atom(fluorine),
                 right_carrier: StereoCarrier::Atom(methyl_a),
-                orientation: DoubleBondOrientation::Together,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Together),
+            },
+        )))
         .expect("double-bond stereo element");
 
     let report = assign_cip(&mut mol);
@@ -743,17 +735,16 @@ fn pseudoasymmetric_double_bond_graph(
             .expect("right carrier bond");
     }
     let double_bond_element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond: double_bond,
                 left,
                 right,
                 left_carrier: StereoCarrier::Atom(child_r),
                 right_carrier: StereoCarrier::Atom(chlorine),
-                orientation,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(orientation),
+            },
+        )))
         .expect("double-bond stereo element");
 
     (mol, double_bond_element)
@@ -778,14 +769,11 @@ fn pseudoasymmetric_axis_graph(orientation: AxisOrientation) -> (Molecule, Stere
     }
 
     let axis_element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis,
-                carriers: vec![StereoCarrier::Atom(child_r), StereoCarrier::Atom(chlorine)],
-                orientation,
-            }),
-            StereoSource::User,
-        ))
+        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![StereoCarrier::Atom(child_r), StereoCarrier::Atom(chlorine)],
+            orientation: Some(orientation),
+        })))
         .expect("axis stereo element");
 
     (mol, axis_element)
@@ -818,8 +806,8 @@ fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -
             .expect("child nitrogen bond");
     }
 
-    mol.add_stereo_element(StereoElement::specified(
-        StereoElementKind::Tetrahedral(TetrahedralStereo {
+    mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+        TetrahedralStereo {
             center: child_r,
             carriers: vec![
                 StereoCarrier::Atom(parent),
@@ -827,13 +815,12 @@ fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -
                 StereoCarrier::Atom(child_r_nitrogen),
                 StereoCarrier::ImplicitHydrogen,
             ],
-            orientation: TetrahedralOrientation::CounterClockwise,
-        }),
-        StereoSource::User,
-    ))
+            orientation: Some(TetrahedralOrientation::CounterClockwise),
+        },
+    )))
     .expect("R child stereo element");
-    mol.add_stereo_element(StereoElement::specified(
-        StereoElementKind::Tetrahedral(TetrahedralStereo {
+    mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+        TetrahedralStereo {
             center: child_s,
             carriers: vec![
                 StereoCarrier::Atom(parent),
@@ -841,10 +828,9 @@ fn add_enantiomorphic_tetrahedral_carriers(mol: &mut Molecule, parent: AtomId) -
                 StereoCarrier::Atom(child_s_nitrogen),
                 StereoCarrier::ImplicitHydrogen,
             ],
-            orientation: TetrahedralOrientation::Clockwise,
-        }),
-        StereoSource::User,
-    ))
+            orientation: Some(TetrahedralOrientation::Clockwise),
+        },
+    )))
     .expect("S child stereo element");
 
     mol.set_implicit_hydrogens(child_r, 1);
@@ -891,8 +877,8 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
     }
 
     let child_r_element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center: child_r,
                 carriers: vec![
                     StereoCarrier::Atom(center),
@@ -900,14 +886,13 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
                     StereoCarrier::Atom(child_r_nitrogen),
                     StereoCarrier::ImplicitHydrogen,
                 ],
-                orientation: TetrahedralOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::CounterClockwise),
+            },
+        )))
         .expect("R child stereo element");
     let child_s_element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center: child_s,
                 carriers: vec![
                     StereoCarrier::Atom(center),
@@ -915,14 +900,13 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
                     StereoCarrier::Atom(child_s_nitrogen),
                     StereoCarrier::ImplicitHydrogen,
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("S child stereo element");
     let parent_element = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(chlorine),
@@ -930,10 +914,9 @@ fn cip_assigns_pseudoasymmetric_lowercase_descriptor_from_enantiomorphic_ligands
                     StereoCarrier::Atom(child_r),
                     StereoCarrier::Atom(child_s),
                 ],
-                orientation: TetrahedralOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::CounterClockwise),
+            },
+        )))
         .expect("parent pseudoasymmetric stereo element");
 
     mol.set_implicit_hydrogens(center, 0);
@@ -1258,8 +1241,8 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
         .expect("substituent bond");
 
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(bromine),
@@ -1267,10 +1250,9 @@ fn cip_applies_recursive_rule1a_before_isotope_priority() {
                     StereoCarrier::Atom(substituted_carbon),
                     StereoCarrier::ImplicitHydrogen,
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("stereo element");
 
     mol.set_implicit_hydrogens(center, 1);
@@ -1462,8 +1444,8 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
             .expect("carrier bond");
     }
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(fluorine),
@@ -1471,10 +1453,9 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
                     StereoCarrier::Atom(methyl_a),
                     StereoCarrier::Atom(methyl_b),
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("stereo element");
 
     let report = assign_cip(&mut mol);
@@ -1518,8 +1499,8 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
     assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
 
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(fluorine),
@@ -1527,10 +1508,9 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
                     StereoCarrier::Atom(chain_a),
                     StereoCarrier::Atom(chain_b),
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("stereo element");
 
     let report = assign_cip(&mut mol);
@@ -1576,17 +1556,16 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
     assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
 
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::DoubleBond(DoubleBondStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+            DoubleBondStereo {
                 bond: double_bond,
                 left,
                 right,
                 left_carrier: StereoCarrier::Atom(fluorine),
                 right_carrier: StereoCarrier::Atom(chain_a),
-                orientation: DoubleBondOrientation::Together,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(DoubleBondOrientation::Together),
+            },
+        )))
         .expect("double-bond stereo element");
 
     let report = assign_cip(&mut mol);
@@ -1630,14 +1609,11 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
     assert!(mol.atom_count() > CipAssignmentOptions::default().max_depth);
 
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Axis(AxisStereo {
-                axis,
-                carriers: vec![StereoCarrier::Atom(iodine), StereoCarrier::Atom(chain_a)],
-                orientation: AxisOrientation::CounterClockwise,
-            }),
-            StereoSource::User,
-        ))
+        .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
+            axis,
+            carriers: vec![StereoCarrier::Atom(iodine), StereoCarrier::Atom(chain_a)],
+            orientation: Some(AxisOrientation::CounterClockwise),
+        })))
         .expect("axis stereo element");
 
     let report = assign_cip(&mut mol);
@@ -1690,8 +1666,8 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
         .expect("ring bond");
 
     let stereo = mol
-        .add_stereo_element(StereoElement::specified(
-            StereoElementKind::Tetrahedral(TetrahedralStereo {
+        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+            TetrahedralStereo {
                 center,
                 carriers: vec![
                     StereoCarrier::Atom(hydrogen),
@@ -1699,10 +1675,9 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
                     StereoCarrier::Atom(ring_a),
                     StereoCarrier::Atom(ring_b),
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
-            }),
-            StereoSource::User,
-        ))
+                orientation: Some(TetrahedralOrientation::Clockwise),
+            },
+        )))
         .expect("stereo element");
 
     let report = assign_cip(&mut mol);
@@ -1813,10 +1788,8 @@ fn failed_cip_validation_preserves_previous_descriptors() {
                     StereoCarrier::Atom(adjacent),
                     StereoCarrier::Atom(nonadjacent),
                 ],
-                orientation: TetrahedralOrientation::Clockwise,
+                orientation: None,
             }),
-            specifiedness: StereoSpecifiedness::Unknown,
-            source: StereoSource::User,
             group: None,
         })
         .expect("stored malformed stereo element");
@@ -1854,19 +1827,19 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
         StereoElementKind::Tetrahedral(TetrahedralStereo {
             center,
             carriers: carriers.iter().copied().map(StereoCarrier::Atom).collect(),
-            orientation: TetrahedralOrientation::Clockwise,
+            orientation: Some(TetrahedralOrientation::Clockwise),
         })
     };
     let specified = mol
-        .add_stereo_element(StereoElement::specified(kind(), StereoSource::User))
+        .add_stereo_element(StereoElement::new(kind()))
         .expect("specified stereo element");
+    let mut unknown_kind = kind();
+    let StereoElementKind::Tetrahedral(stereo) = &mut unknown_kind else {
+        unreachable!("test fixture is tetrahedral");
+    };
+    stereo.orientation = None;
     let unknown = mol
-        .add_stereo_element(StereoElement {
-            kind: kind(),
-            specifiedness: StereoSpecifiedness::Unknown,
-            source: StereoSource::User,
-            group: None,
-        })
+        .add_stereo_element(StereoElement::new(unknown_kind))
         .expect("unknown stereo element");
     mol.install_cip_descriptor(specified, StereoDescriptor::S);
     mol.install_cip_descriptor(unknown, StereoDescriptor::R);
@@ -1879,7 +1852,7 @@ fn successful_cip_reassignment_replaces_the_complete_descriptor_set() {
         report.skipped,
         vec![CipSkipped {
             element: unknown,
-            reason: CipSkippedReason::NotSpecified,
+            reason: CipSkippedReason::UnknownConfiguration,
         }]
     );
     assert_eq!(
