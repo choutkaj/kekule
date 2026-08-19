@@ -16,8 +16,16 @@ use super::normalization::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceStereoBondMark {
     pub(crate) bond: BondId,
+    pub(crate) from: AtomId,
     pub(crate) kind: SourceStereoBondMarkKind,
     pub(crate) source: StereoSource,
+}
+
+/// A format-local Molfile bond mark and the endpoint that must be emitted first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MolfileStereoBondProjection {
+    pub(crate) from: AtomId,
+    pub(crate) kind: SourceStereoBondMarkKind,
 }
 
 /// Source-format bond stereo syntax interpreted before molecule publication.
@@ -41,6 +49,7 @@ pub(super) fn normalize_source_stereo(
     source_marks: &[SourceStereoBondMark],
 ) -> std::result::Result<NormalizationReport, SourceStereoNormalizationError> {
     validate_stereo(molecule).map_err(source_validation_error)?;
+    validate_source_stereo_marks(molecule, source_marks)?;
 
     let ring_membership = compute_graph_ring_membership(molecule);
     let mut warnings = Vec::new();
@@ -97,7 +106,7 @@ pub(super) fn normalize_source_stereo(
 pub(crate) fn project_molfile_stereo_bond_marks(
     molecule: &Molecule,
     source: StereoSource,
-) -> std::result::Result<BTreeMap<BondId, SourceStereoBondMarkKind>, String> {
+) -> std::result::Result<BTreeMap<BondId, MolfileStereoBondProjection>, String> {
     if molecule.stereo_elements().next().is_none() {
         return Ok(BTreeMap::new());
     }
@@ -110,7 +119,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
     for (_, target) in molecule.stereo_elements() {
         let candidates = molfile_projection_candidates(molecule, target)?;
         let mut selected = None;
-        for (bond, kind) in candidates {
+        for (bond, projection) in candidates {
             if occupied.contains(&bond) {
                 continue;
             }
@@ -118,7 +127,12 @@ pub(crate) fn project_molfile_stereo_bond_marks(
             staged.stereo_elements.clear();
             staged.stereo_groups.clear();
             staged.perception = PerceptionState::default();
-            let source_marks = [SourceStereoBondMark { bond, kind, source }];
+            let source_marks = [SourceStereoBondMark {
+                bond,
+                from: projection.from,
+                kind: projection.kind,
+                source,
+            }];
             let Ok(report) = normalize_source_stereo(&mut staged, &source_marks) else {
                 continue;
             };
@@ -129,18 +143,18 @@ pub(crate) fn project_molfile_stereo_bond_marks(
                 continue;
             };
             if decoded.kind == target.kind && decoded.specifiedness == target.specifiedness {
-                selected = Some((bond, kind));
+                selected = Some((bond, projection));
                 break;
             }
         }
-        let Some((bond, kind)) = selected else {
+        let Some((bond, projection)) = selected else {
             return Err(format!(
                 "Molfile writer cannot encode canonical stereo element {:?}",
                 target.kind
             ));
         };
         occupied.insert(bond);
-        projected.insert(bond, kind);
+        projected.insert(bond, projection);
     }
     Ok(projected)
 }
@@ -148,7 +162,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
 fn molfile_projection_candidates(
     molecule: &Molecule,
     element: &StereoElement,
-) -> std::result::Result<Vec<(BondId, SourceStereoBondMarkKind)>, String> {
+) -> std::result::Result<Vec<(BondId, MolfileStereoBondProjection)>, String> {
     let kinds = match element.specifiedness {
         StereoSpecifiedness::Specified => {
             vec![
@@ -166,7 +180,17 @@ fn molfile_projection_candidates(
             .incident_bonds(stereo.center)
             .map_err(|error| error.to_string())?
             .filter(|(_, bond)| bond.order == BondOrder::Single)
-            .flat_map(|(bond, _)| kinds.iter().copied().map(move |kind| (bond, kind)))
+            .flat_map(|(bond, _)| {
+                kinds.iter().copied().map(move |kind| {
+                    (
+                        bond,
+                        MolfileStereoBondProjection {
+                            from: stereo.center,
+                            kind,
+                        },
+                    )
+                })
+            })
             .collect()),
         StereoElementKind::Axis(stereo) => {
             if element.specifiedness != StereoSpecifiedness::Specified {
@@ -177,9 +201,21 @@ fn molfile_projection_candidates(
                 .map_err(|error| error.to_string())?;
             Ok([axis.a(), axis.b()]
                 .into_iter()
-                .flat_map(|endpoint| molecule.incident_bonds(endpoint).ok().into_iter().flatten())
-                .filter(|(bond, value)| *bond != stereo.axis && value.order == BondOrder::Single)
-                .flat_map(|(bond, _)| kinds.iter().copied().map(move |kind| (bond, kind)))
+                .flat_map(|endpoint| {
+                    molecule
+                        .incident_bonds(endpoint)
+                        .ok()
+                        .into_iter()
+                        .flatten()
+                        .map(move |(bond, value)| (endpoint, bond, value))
+                })
+                .filter(|(_, bond, value)| *bond != stereo.axis && value.order == BondOrder::Single)
+                .flat_map(|(from, bond, _)| {
+                    kinds
+                        .iter()
+                        .copied()
+                        .map(move |kind| (bond, MolfileStereoBondProjection { from, kind }))
+                })
                 .collect())
         }
         StereoElementKind::DoubleBond(stereo)
@@ -187,12 +223,41 @@ fn molfile_projection_candidates(
         {
             Ok(vec![(
                 stereo.bond,
-                SourceStereoBondMarkKind::DoubleBondEither,
+                MolfileStereoBondProjection {
+                    from: stereo.left,
+                    kind: SourceStereoBondMarkKind::DoubleBondEither,
+                },
             )])
         }
         StereoElementKind::DoubleBond(_) => {
             Err("Molfile writer cannot encode specified double-bond stereo".to_owned())
         }
+    }
+}
+
+fn validate_source_stereo_marks(
+    molecule: &Molecule,
+    source_marks: &[SourceStereoBondMark],
+) -> std::result::Result<(), SourceStereoNormalizationError> {
+    let issues = source_marks
+        .iter()
+        .filter_map(|mark| match molecule.bond(mark.bond) {
+            Err(_) => {
+                Some(SourceStereoNormalizationIssue::MissingSourceBondMark { bond: mark.bond })
+            }
+            Ok(bond) if ![bond.a(), bond.b()].contains(&mark.from) => Some(
+                SourceStereoNormalizationIssue::InvalidSourceBondMarkEndpoint {
+                    bond: mark.bond,
+                    from: mark.from,
+                },
+            ),
+            Ok(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(SourceStereoNormalizationError { issues })
     }
 }
 
@@ -230,8 +295,8 @@ fn assemble_tetrahedral_wedges(
             continue;
         }
         marks.push(TetrahedralWedgeMark {
-            center: bond.a(),
-            carrier: bond.b(),
+            center: mark.from,
+            carrier: bond.other_atom(mark.from),
             mark,
         });
     }
@@ -510,8 +575,8 @@ fn atropisomeric_axis_candidates(
     if marked_bond.order != BondOrder::Single {
         return Vec::new();
     }
-    let near = marked_bond.a();
-    let marked_carrier = marked_bond.b();
+    let near = mark.from;
+    let marked_carrier = marked_bond.other_atom(mark.from);
     let mut candidates = molecule
         .incident_bonds(near)
         .ok()
@@ -1022,7 +1087,7 @@ fn directional_marks_for_endpoint<'a>(
                 bond: bond_id,
                 carrier: bond.other_atom(endpoint),
                 mark,
-                direction: directional_mark_at_endpoint(mark.kind, bond, endpoint),
+                direction: directional_mark_at_endpoint(mark.kind, mark.from, endpoint),
             });
         }
     }
@@ -1032,13 +1097,13 @@ fn directional_marks_for_endpoint<'a>(
 
 fn directional_mark_at_endpoint(
     kind: SourceStereoBondMarkKind,
-    bond: &Bond,
+    from: AtomId,
     endpoint: AtomId,
 ) -> SourceStereoBondMarkKind {
-    if bond.b() == endpoint {
-        invert_directional_mark(kind)
-    } else {
+    if from == endpoint {
         kind
+    } else {
+        invert_directional_mark(kind)
     }
 }
 

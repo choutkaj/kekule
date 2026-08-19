@@ -385,8 +385,22 @@ fn interpret_smiles_program_component(
         let (order, source_aromatic) = interpret_smiles_bond_token(bond.token);
         let bond_id = add_smiles_bond(&mut mol, left, right, order, bond.offset)?;
         if let Some(direction) = bond.direction {
+            let source_from = bond.direction_from.ok_or_else(|| SmilesInterpretError {
+                offset: bond.direction_offset.unwrap_or(bond.offset),
+                message: "directional bond is missing its textual origin endpoint".to_owned(),
+            })?;
+            let from =
+                source_to_atom
+                    .get(&source_from)
+                    .copied()
+                    .ok_or_else(|| SmilesInterpretError {
+                        offset: bond.direction_offset.unwrap_or(bond.offset),
+                        message: "directional bond origin is outside its SMILES component"
+                            .to_owned(),
+                    })?;
             source_stereo.push(SourceStereoBondMark {
                 bond: bond_id,
+                from,
                 kind: interpret_smiles_direction(direction),
                 source: StereoSource::Smiles,
             });

@@ -116,15 +116,19 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
         let bond = mol
             .bond(*bond_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
+        let projection = projected_stereo.get(bond_id).copied();
+        let (from, to) = projection
+            .map(|projection| (projection.from, bond.other_atom(projection.from)))
+            .unwrap_or_else(|| bond.endpoints());
         let a = atom_index
-            .get(&bond.a())
+            .get(&from)
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
         let b = atom_index
-            .get(&bond.b())
+            .get(&to)
             .ok_or_else(|| MolWriteError::new("bond endpoint missing from V3000 atom table"))?;
         let order_code = v3000_bond_code(bond.order)?;
         out.push_str(&format!("M  V30 {serial} {order_code} {a} {b}"));
-        let stereo = projected_stereo.get(bond_id).copied();
+        let stereo = projection.map(|projection| projection.kind);
         if let Some(cfg) = v3000_bond_cfg(bond.order, stereo)? {
             out.push_str(&format!(" CFG={cfg}"));
         }
@@ -400,6 +404,7 @@ pub(super) fn interpret_v3000_syntax(
         {
             source_stereo.push(SourceStereoBondMark {
                 bond: bond_id,
+                from: a,
                 kind,
                 source: StereoSource::MolfileV3000,
             });

@@ -61,6 +61,7 @@ fn normalization_preserves_unknown_double_bond_stereo() {
         .expect("double bond");
     let source_stereo = [SourceStereoBondMark {
         bond: double_bond,
+        from: molecule.graph().bond(double_bond).expect("double bond").a(),
         kind: SourceStereoBondMarkKind::DoubleBondEither,
         source: StereoSource::MolfileV2000,
     }];
@@ -151,6 +152,7 @@ fn failed_source_stereo_normalization_is_transactional() {
     let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
     let source_stereo = [SourceStereoBondMark {
         bond,
+        from: a,
         kind: SourceStereoBondMarkKind::WedgeEither,
         source: StereoSource::MolfileV2000,
     }];
@@ -191,6 +193,7 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
         .enumerate()
         .map(|(index, bond)| SourceStereoBondMark {
             bond,
+            from: center,
             kind: if index % 2 == 0 {
                 SourceStereoBondMarkKind::WedgeUp
             } else {
