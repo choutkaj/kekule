@@ -112,6 +112,26 @@ fn molecular_descriptor_public_api() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn rotatable_bond_public_api() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::rotatable_bonds::{self, RotatableBondOptions, RotatableBondSet};
+
+    let molecule = SmallMolecule::from_smiles("CCCC")?;
+    let detected: RotatableBondSet =
+        rotatable_bonds::detect(molecule.graph(), RotatableBondOptions::STRICT);
+    assert_eq!(detected.options(), RotatableBondOptions::STRICT);
+    assert_eq!(detected.bond_ids(), &[BondId::new(1)]);
+    assert!(detected.contains(BondId::new(1)));
+
+    let general = rotatable_bonds::detect(molecule.graph(), RotatableBondOptions::GENERAL);
+    assert_eq!(general.options(), RotatableBondOptions::GENERAL);
+    assert_eq!(
+        general.bond_ids(),
+        &[BondId::new(0), BondId::new(1), BondId::new(2)]
+    );
+    Ok(())
+}
+
+#[test]
 fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
     let document = kekule::smiles::parse_str("CC(=O)O")?;
     let interpreted = kekule::smiles::interpret(&document)?;

@@ -69,6 +69,29 @@ pub(crate) fn implementation_expected(
                     .collect::<Vec<_>>()
             }))
         }
+        "descriptor.rotatable-bonds.rdkit-strict" => {
+            if matches!(
+                fixture_path
+                    .extension()
+                    .and_then(|extension| extension.to_str()),
+                Some("smi" | "smiles" | "txt")
+            ) {
+                let records = read_smiles_records(fixture_path)?;
+                return Ok(json!({
+                    "records": records
+                        .iter()
+                        .map(rotatable_bond_smiles_record_json)
+                        .collect::<Vec<_>>()
+                }));
+            }
+            let records = read_small_records_by_suffix(fixture_path)?;
+            Ok(json!({
+                "records": records
+                    .iter()
+                    .map(rotatable_bond_record_json)
+                    .collect::<Vec<_>>()
+            }))
+        }
         "io.mol.v2000.write" => {
             let records = read_small_records_by_suffix(fixture_path)?;
             let records = records
@@ -850,6 +873,72 @@ pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) 
         },
         "average_mass_da": average_mass_da,
         "monoisotopic_mass_da": monoisotopic_mass_da,
+    })
+}
+
+pub(crate) fn rotatable_bond_record_json(record: &IndexedSmallRecord) -> Value {
+    let molecule = record.molecule.graph();
+    let detected = kekule::rotatable_bonds::detect(
+        molecule,
+        kekule::rotatable_bonds::RotatableBondOptions::STRICT,
+    );
+    let bonds = detected
+        .bond_ids()
+        .iter()
+        .copied()
+        .map(|bond_id| {
+            let bond = molecule
+                .bond(bond_id)
+                .expect("rotatable-bond detector returns live bond IDs");
+            json!({
+                "begin_atom_index": bond.a().raw(),
+                "end_atom_index": bond.b().raw(),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "count": detected.len(),
+        "bonds": bonds,
+    })
+}
+
+pub(crate) fn rotatable_bond_smiles_record_json(record: &IndexedSmilesRecord) -> Value {
+    if record.status != "ok" {
+        return json!({
+            "record_index": record.record_index,
+            "status": record.status,
+            "title": record.title,
+        });
+    }
+
+    let mut atom_offset = 0usize;
+    let mut bonds = Vec::new();
+    for component in &record.components {
+        let molecule = component.graph();
+        let detected = kekule::rotatable_bonds::detect(
+            molecule,
+            kekule::rotatable_bonds::RotatableBondOptions::STRICT,
+        );
+        bonds.extend(detected.bond_ids().iter().copied().map(|bond_id| {
+            let bond = molecule
+                .bond(bond_id)
+                .expect("rotatable-bond detector returns live bond IDs");
+            json!({
+                "begin_atom_index": atom_offset + bond.a().raw() as usize,
+                "end_atom_index": atom_offset + bond.b().raw() as usize,
+            })
+        }));
+        atom_offset += molecule.atom_count();
+    }
+    json!({
+        "record_index": record.record_index,
+        "status": "ok",
+        "title": record.title,
+        "count": bonds.len(),
+        "bonds": bonds,
     })
 }
 

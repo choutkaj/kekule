@@ -23,6 +23,7 @@ SUPPORTED_FEATURES = {
     "chem.perception.default",
     "core.conformers",
     "descriptor.molecular",
+    "descriptor.rotatable-bonds.rdkit-strict",
     "io.mol.v2000.parse",
     "io.mol.v2000.write",
     "io.mol.v3000.parse",
@@ -38,6 +39,18 @@ SUPPORTED_FEATURES = {
 }
 
 HYDROGEN_BENCHMARK_INDEX_PROPERTY = "_benchmarkOriginalIndex"
+
+RDKIT_STRICT_ROTATABLE_BOND_SMARTS = (
+    "[!$(*#*)&!D1&!$(C(F)(F)F)&!$(C(Cl)(Cl)Cl)&!$(C(Br)(Br)Br)"
+    "&!$(C([CH3])([CH3])[CH3])&!$([CH3])"
+    "&!$([CD3](=[N,O,S])-!@[#7,O,S!D1])"
+    "&!$([#7,O,S!D1]-!@[CD3]=[N,O,S])"
+    "&!$([CD3](=[N+])-!@[#7!D1])"
+    "&!$([#7!D1]-!@[CD3]=[N+])]"
+    "-,:;!@"
+    "[!$(*#*)&!D1&!$(C(F)(F)F)&!$(C(Cl)(Cl)Cl)&!$(C(Br)(Br)Br)"
+    "&!$(C([CH3])([CH3])[CH3])&!$([CH3])]"
+)
 
 BOUNDED_SUBSTRUCTURE_QUERIES = (
     "[#6]",
@@ -96,7 +109,7 @@ def main() -> int:
         return 0
 
     repo_root = args.repo_root.resolve()
-    corpus_dir = repo_root / "benchmark" / "corpora" / args.corpus
+    corpus_dir = repo_root / "benchmarks" / "corpora" / args.corpus
     manifest_path = corpus_dir / "features" / f"{args.feature}.toml"
     manifest = read_manifest(manifest_path)
     if manifest.get("corpus_id") != args.corpus:
@@ -122,14 +135,19 @@ def main() -> int:
 def import_rdkit() -> dict[str, Any]:
     try:
         from rdkit import Chem, RDLogger, rdBase
-        from rdkit.Chem import Descriptors
+        from rdkit.Chem import Descriptors, rdMolDescriptors
     except ImportError as error:
         raise SystemExit(
             "RDKit is not importable. Create the environment from "
             "benchmarks/reference/rdkit/environment.yml before generating goldens."
         ) from error
     RDLogger.DisableLog("rdApp.*")
-    return {"Chem": Chem, "Descriptors": Descriptors, "version": rdBase.rdkitVersion}
+    return {
+        "Chem": Chem,
+        "Descriptors": Descriptors,
+        "rdMolDescriptors": rdMolDescriptors,
+        "version": rdBase.rdkitVersion,
+    }
 
 
 def read_manifest(path: Path) -> dict[str, Any]:
@@ -210,6 +228,27 @@ def generate_document(
         expected = {
             "records": [
                 molecular_descriptor_record(record, rdkit["Chem"], rdkit["Descriptors"])
+                for record in records
+            ]
+        }
+    elif feature_id == "descriptor.rotatable-bonds.rdkit-strict":
+        if fixture_path.suffix.lower() in {".smi", ".smiles", ".txt"}:
+            records = read_canonical_smiles_records(
+                fixture_path, rdkit["Chem"], sanitize=False
+            )
+        else:
+            records = read_sdf_records(fixture_path, rdkit["Chem"])
+        query = rdkit["Chem"].MolFromSmarts(RDKIT_STRICT_ROTATABLE_BOND_SMARTS)
+        if query is None:
+            raise RuntimeError("RDKit strict rotatable-bond SMARTS did not parse")
+        expected = {
+            "records": [
+                rotatable_bond_record(
+                    record,
+                    rdkit["Chem"],
+                    rdkit["rdMolDescriptors"],
+                    query,
+                )
                 for record in records
             ]
         }
@@ -449,6 +488,70 @@ def molecular_descriptor_record(
         "average_mass_da": Descriptors.MolWt(mol) - charge * electron_mass_da,
         # RDKit ExactMolWt already applies its electron-mass correction.
         "monoisotopic_mass_da": Descriptors.ExactMolWt(mol),
+    }
+
+
+def rotatable_bond_record(
+    record: dict[str, Any], Chem: Any, rdMolDescriptors: Any, query: Any
+) -> dict[str, Any]:
+    if record["status"] != "ok" or record["mol"] is None:
+        return {
+            "record_index": record["record_index"],
+            "status": "parse_error",
+            "title": record["title"],
+        }
+
+    mol = Chem.Mol(record["mol"])
+    for atom in mol.GetAtoms():
+        atom.SetIntProp(HYDROGEN_BENCHMARK_INDEX_PROPERTY, atom.GetIdx())
+    editable = Chem.RWMol(mol)
+    hydrogen_indices = [
+        atom.GetIdx() for atom in editable.GetAtoms() if atom.GetAtomicNum() == 1
+    ]
+    for atom_index in reversed(hydrogen_indices):
+        editable.RemoveAtom(atom_index)
+    mol = editable.GetMol()
+    try:
+        Chem.SanitizeMol(mol)
+    except Exception:
+        return {
+            "record_index": record["record_index"],
+            "status": "normalization_or_perception_error",
+            "title": record["title"],
+        }
+
+    bond_endpoints = sorted(
+        {
+            tuple(
+                sorted(
+                    mol.GetAtomWithIdx(atom_index).GetIntProp(
+                        HYDROGEN_BENCHMARK_INDEX_PROPERTY
+                    )
+                    for atom_index in match
+                )
+            )
+            for match in mol.GetSubstructMatches(query, uniquify=True)
+        }
+    )
+    descriptor_count = rdMolDescriptors.CalcNumRotatableBonds(
+        mol, rdMolDescriptors.NumRotatableBondsOptions.Strict
+    )
+    if len(bond_endpoints) != descriptor_count:
+        raise RuntimeError(
+            "RDKit strict SMARTS/count disagreement for record "
+            f"{record['record_index']}: {len(bond_endpoints)} endpoints versus "
+            f"descriptor count {descriptor_count}"
+        )
+
+    return {
+        "record_index": record["record_index"],
+        "status": "ok",
+        "title": record["title"],
+        "count": descriptor_count,
+        "bonds": [
+            {"begin_atom_index": begin, "end_atom_index": end}
+            for begin, end in bond_endpoints
+        ],
     }
 
 
