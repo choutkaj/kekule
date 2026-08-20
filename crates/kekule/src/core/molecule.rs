@@ -670,6 +670,11 @@ impl Molecule {
         self.perception.stereo = None;
     }
 
+    fn invalidate_aromaticity(&mut self) {
+        self.perception.aromaticity = None;
+        self.invalidate_stereo();
+    }
+
     pub(crate) fn install_valence(
         &mut self,
         model: ValenceModel,
@@ -679,8 +684,7 @@ impl Molecule {
             model: Some(model),
             implicit_hydrogens,
         });
-        self.perception.aromaticity = None;
-        self.perception.stereo = None;
+        self.invalidate_aromaticity();
     }
 
     pub(crate) fn set_implicit_hydrogens(&mut self, atom: AtomId, count: u8) {
@@ -692,8 +696,7 @@ impl Molecule {
             })
             .implicit_hydrogens
             .insert(atom, count);
-        self.perception.aromaticity = None;
-        self.perception.stereo = None;
+        self.invalidate_aromaticity();
     }
 
     pub(crate) fn install_ring_membership(&mut self, membership: RingMembership) {
@@ -701,8 +704,7 @@ impl Molecule {
             membership,
             basis: None,
         });
-        self.perception.aromaticity = None;
-        self.perception.stereo = None;
+        self.invalidate_aromaticity();
     }
 
     pub(crate) fn install_ring_basis(
@@ -715,8 +717,7 @@ impl Molecule {
             membership,
             basis: Some(RingBasisState::new(Some(model), rings)),
         });
-        self.perception.aromaticity = None;
-        self.perception.stereo = None;
+        self.invalidate_aromaticity();
     }
 
     pub(crate) fn begin_aromaticity(&mut self, model: AromaticityModel) {
@@ -815,7 +816,7 @@ impl Molecule {
         match &mut element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
                 if sort_stereo_carriers(&mut stereo.carriers) {
-                    stereo.orientation = stereo.orientation.map(flip_tetrahedral_orientation);
+                    stereo.orientation = stereo.orientation.map(TetrahedralOrientation::inverted);
                 }
             }
             StereoElementKind::DoubleBond(stereo) => self.canonicalize_double_bond_stereo(stereo),
@@ -881,7 +882,7 @@ impl Molecule {
         stereo.left_carrier = left_carrier;
         stereo.right_carrier = right_carrier;
         if reference_changes % 2 == 1 {
-            stereo.orientation = stereo.orientation.map(flip_double_bond_orientation);
+            stereo.orientation = stereo.orientation.map(DoubleBondOrientation::inverted);
         }
     }
 
@@ -942,7 +943,7 @@ impl Molecule {
 
         stereo.carriers = vec![left_carrier, right_carrier];
         if reference_changes % 2 == 1 {
-            stereo.orientation = stereo.orientation.map(flip_axis_orientation);
+            stereo.orientation = stereo.orientation.map(AxisOrientation::inverted);
         }
     }
 
@@ -1048,7 +1049,7 @@ impl Molecule {
 
 fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {
     let mut indexed = carriers.iter().copied().enumerate().collect::<Vec<_>>();
-    indexed.sort_by_key(|(_, carrier)| stereo_carrier_key(carrier));
+    indexed.sort_by_key(|(_, carrier)| carrier.canonical_order_key());
 
     // The orientation changes sign exactly for an odd permutation from the
     // caller's carrier order to the canonical order.
@@ -1064,40 +1065,11 @@ fn sort_stereo_carriers(carriers: &mut Vec<StereoCarrier>) -> bool {
     odd_permutation
 }
 
-fn stereo_carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
-    match carrier {
-        StereoCarrier::Atom(atom) => (0, atom.raw()),
-        StereoCarrier::ImplicitHydrogen => (1, 0),
-        StereoCarrier::ImplicitLonePair => (2, 0),
-    }
-}
-
 fn sorted_atom_pair(left: AtomId, right: AtomId) -> (AtomId, AtomId) {
     if left <= right {
         (left, right)
     } else {
         (right, left)
-    }
-}
-
-fn flip_tetrahedral_orientation(orientation: TetrahedralOrientation) -> TetrahedralOrientation {
-    match orientation {
-        TetrahedralOrientation::Clockwise => TetrahedralOrientation::CounterClockwise,
-        TetrahedralOrientation::CounterClockwise => TetrahedralOrientation::Clockwise,
-    }
-}
-
-fn flip_double_bond_orientation(orientation: DoubleBondOrientation) -> DoubleBondOrientation {
-    match orientation {
-        DoubleBondOrientation::Together => DoubleBondOrientation::Opposite,
-        DoubleBondOrientation::Opposite => DoubleBondOrientation::Together,
-    }
-}
-
-fn flip_axis_orientation(orientation: AxisOrientation) -> AxisOrientation {
-    match orientation {
-        AxisOrientation::Clockwise => AxisOrientation::CounterClockwise,
-        AxisOrientation::CounterClockwise => AxisOrientation::Clockwise,
     }
 }
 

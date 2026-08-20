@@ -1,57 +1,22 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::small::SmallMolecule;
-use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::Topology;
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::xtc::{XtcMagic, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
-use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
-    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryError, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryError,
+    TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 mod support;
-use support::{buffer_snapshot, GuardedCursor, RestoreSeekFailure};
-
-fn topology(atom_count: usize) -> Arc<Topology> {
-    let mut graph = Molecule::builder();
-    let mut previous = None;
-    for _ in 0..atom_count {
-        let atom = graph
-            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
-            .unwrap();
-        if let Some(parent) = previous {
-            graph.add_bond(parent, atom, BondOrder::Single).unwrap();
-        }
-        previous = Some(atom);
-    }
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    Arc::new(builder.build().unwrap())
-}
-
-fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
-    TrajectoryTopologyBinding::new(
-        Arc::clone(topology),
-        AtomOrderAssertion::assert_file_uses_topology_order(topology),
-    )
-    .unwrap()
-}
-
-fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
-    match error {
-        TrajectoryError::Codec(context) => Some(context.kind()),
-        _ => None,
-    }
-}
+use support::{
+    binding, buffer_snapshot, codec_kind, linear_carbon_topology as topology,
+    x_coordinates as x_values, GuardedCursor, RestoreSeekFailure,
+};
 
 fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer {
     let mut frame = FrameBuffer::new(Arc::clone(topology));
@@ -87,16 +52,6 @@ fn source_frame(topology: &Arc<Topology>, shift: f64, step: u64) -> FrameBuffer 
         .unwrap();
     frame.set_step(Some(step));
     frame
-}
-
-fn x_values(buffer: &FrameBuffer) -> Vec<f64> {
-    buffer
-        .positions()
-        .values()
-        .value()
-        .iter()
-        .map(|point| point.x)
-        .collect()
 }
 
 fn assert_x_close(buffer: &FrameBuffer, expected: &[f64], tolerance: f64) {

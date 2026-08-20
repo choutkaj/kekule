@@ -59,6 +59,16 @@ pub(super) fn perceive(
     Ok(())
 }
 
+pub(super) fn canonical_smiles_round_trip(molecule: &SmallMolecule) -> (String, SmallMolecule) {
+    let written = smiles_api::write_canonical(molecule)
+        .unwrap_or_else(|error| panic!("canonical SMILES should write: {error}"));
+    let mut reparsed = read_smiles(&written)
+        .unwrap_or_else(|error| panic!("canonical output should parse: {written}: {error}"));
+    perceive(&mut reparsed)
+        .unwrap_or_else(|error| panic!("canonical output should perceive: {written}: {error}"));
+    (written, reparsed)
+}
+
 pub(super) fn read_smiles_with_report(
     input: &str,
 ) -> std::result::Result<(SmallMolecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {

@@ -126,17 +126,20 @@ impl Molecule {
     /// Empty and single-atom molecules are treated as valid connected boundary
     /// cases so `Default`/`new` remain useful lightweight values.
     pub fn is_connected(&self) -> bool {
-        self.atom_count() <= 1 || self.connected_components().len() == 1
+        self.validate_connected().is_ok()
     }
 
     /// Validates the public connectedness invariant.
     pub fn validate_connected(&self) -> std::result::Result<(), MoleculeConnectivityError> {
-        if self.is_connected() {
+        if self.atom_count() <= 1 {
             return Ok(());
         }
-        Err(MoleculeConnectivityError {
-            components: self.connected_components().len(),
-        })
+        let components = self.connected_components().len();
+        if components == 1 {
+            Ok(())
+        } else {
+            Err(MoleculeConnectivityError { components })
+        }
     }
 }
 
@@ -184,17 +187,7 @@ impl MoleculeBuilder {
     }
 
     pub fn build(self) -> std::result::Result<Molecule, MoleculePublicationError> {
-        let mut molecule = self.molecule;
-        molecule
-            .validate_connected()
-            .map_err(MoleculePublicationError::DisconnectedGraph)?;
-        canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
-            MoleculePublicationError::FormalChargeOutOfRange {
-                atom: error.atom,
-                charge: error.charge,
-            }
-        })?;
-        Ok(molecule)
+        publish_molecule(self.molecule)
     }
 }
 
@@ -250,19 +243,24 @@ impl MoleculeEditor<'_> {
     }
 
     pub fn commit(self) -> std::result::Result<(), MoleculePublicationError> {
-        let mut working = self.working;
-        working
-            .validate_connected()
-            .map_err(MoleculePublicationError::DisconnectedGraph)?;
-        canonicalize_represented_chemistry(&mut working).map_err(|error| {
-            MoleculePublicationError::FormalChargeOutOfRange {
-                atom: error.atom,
-                charge: error.charge,
-            }
-        })?;
-        *self.target = working;
+        *self.target = publish_molecule(self.working)?;
         Ok(())
     }
+}
+
+fn publish_molecule(
+    mut molecule: Molecule,
+) -> std::result::Result<Molecule, MoleculePublicationError> {
+    molecule
+        .validate_connected()
+        .map_err(MoleculePublicationError::DisconnectedGraph)?;
+    canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
+        MoleculePublicationError::FormalChargeOutOfRange {
+            atom: error.atom,
+            charge: error.charge,
+        }
+    })?;
+    Ok(molecule)
 }
 
 pub(crate) fn canonicalize_represented_chemistry(

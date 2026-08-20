@@ -3,37 +3,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::core::{Atom, Element, Molecule};
-use kekule::small::SmallMolecule;
-use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::Topology;
 use kekule_traj::io::{
     open_indexed_trajectory, open_trajectory, FieldAvailability, RandomAccessCapability,
-    TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryTopologyBinding,
+    TrajectoryFormatHint, TrajectoryOpenOptions,
 };
-use kekule_traj::{
-    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryReader,
-};
+use kekule_traj::{FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryReader};
+
+mod support;
+use support::{binding, topology as build_topology};
 
 fn topology() -> Arc<Topology> {
-    let mut graph = Molecule::builder();
-    graph
-        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
-        .unwrap();
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    Arc::new(builder.build().unwrap())
-}
-
-fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
-    TrajectoryTopologyBinding::new(
-        Arc::clone(topology),
-        AtomOrderAssertion::assert_file_uses_topology_order(topology),
-    )
-    .unwrap()
+    build_topology(&["C"], &[])
 }
 
 fn temporary_xyz() -> PathBuf {

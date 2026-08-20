@@ -9,9 +9,10 @@ use crate::io::MolWriteError;
 use crate::small::model::SmallMolecule;
 
 use super::write::{
-    smiles_atom, smiles_bond_between, smiles_connected_components, smiles_incident_bonds_for_style,
-    smiles_ring_number, validate_smiles_writeable, CanonicalAtomStyle, SmilesBondOrder,
-    SmilesRingClosure, SmilesWritePlan, StereoWriteMode,
+    collect_smiles_tree, smiles_atom, smiles_bond_between, smiles_connected_components,
+    smiles_incident_bonds_for_style, smiles_ring_closures, smiles_ring_number,
+    validate_smiles_writeable, CanonicalAtomStyle, SmilesBondOrder, SmilesWritePlan,
+    StereoWriteMode,
 };
 
 pub fn write_canonical_smiles(
@@ -293,52 +294,18 @@ fn plan_canonical_smiles_component(
     preference: CanonicalBondTraversal,
     atom_style: CanonicalAtomStyle,
 ) -> std::result::Result<SmilesWritePlan, MolWriteError> {
-    struct Frame {
-        parent_bond: Option<BondId>,
-        incident: Vec<(BondId, SmilesBondOrder, AtomId)>,
-        next_edge: usize,
-    }
-
     let mut visited = BTreeSet::<AtomId>::new();
     let mut tree_bonds = BTreeSet::<BondId>::new();
     let mut ring_bonds = BTreeMap::<BondId, (AtomId, AtomId, SmilesBondOrder)>::new();
-    visited.insert(root);
-    let mut stack = vec![Frame {
-        parent_bond: None,
-        incident: canonical_smiles_incident_bonds(mol, root, ranking, preference, atom_style)?,
-        next_edge: 0,
-    }];
-    while let Some(frame) = stack.last_mut() {
-        if frame.next_edge >= frame.incident.len() {
-            stack.pop();
-            continue;
-        }
-        let (bond_id, order, neighbor) = frame.incident[frame.next_edge];
-        frame.next_edge += 1;
-        if Some(bond_id) == frame.parent_bond {
-            continue;
-        }
-        if visited.contains(&neighbor) {
-            if !tree_bonds.contains(&bond_id) {
-                let bond = mol
-                    .bond(bond_id)
-                    .map_err(|error| MolWriteError::new(error.to_string()))?;
-                ring_bonds
-                    .entry(bond_id)
-                    .or_insert((bond.a(), bond.b(), order));
-            }
-            continue;
-        }
-        tree_bonds.insert(bond_id);
-        visited.insert(neighbor);
-        stack.push(Frame {
-            parent_bond: Some(bond_id),
-            incident: canonical_smiles_incident_bonds(
-                mol, neighbor, ranking, preference, atom_style,
-            )?,
-            next_edge: 0,
-        });
-    }
+    collect_smiles_tree(
+        mol,
+        root,
+        None,
+        &mut visited,
+        &mut tree_bonds,
+        &mut ring_bonds,
+        |atom| canonical_smiles_incident_bonds(mol, atom, ranking, preference, atom_style),
+    )?;
 
     let mut ring_bonds = ring_bonds
         .into_iter()
@@ -357,27 +324,7 @@ fn plan_canonical_smiles_component(
             *bond_id,
         )
     });
-    if ring_bonds.len() > 99 {
-        return Err(MolWriteError::new(
-            "SMILES writer supports at most 99 simultaneous ring closures",
-        ));
-    }
-
-    let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds) {
-        closures.entry(first).or_default().push(SmilesRingClosure {
-            bond: bond_id,
-            number,
-            order,
-            other: second,
-        });
-        closures.entry(second).or_default().push(SmilesRingClosure {
-            bond: bond_id,
-            number,
-            order,
-            other: first,
-        });
-    }
+    let mut closures = smiles_ring_closures(ring_bonds)?;
     for (atom, closures) in &mut closures {
         closures.sort_by_key(|closure| {
             (
