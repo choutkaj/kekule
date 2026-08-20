@@ -492,6 +492,7 @@ mod perception;
 mod public_api;
 mod query;
 mod ring_limits;
+mod rotatable_bonds;
 mod smiles;
 mod v2000;
 mod v3000;
