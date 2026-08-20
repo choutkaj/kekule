@@ -299,6 +299,22 @@ pub mod canon {
     }
 }
 
+/// Read-only rotatable-bond detection.
+///
+/// This facade identifies configurable represented single-bond axes in
+/// canonical chemistry. It does not mutate the molecule or install perception
+/// state.
+pub mod rotatable_bonds {
+    pub use crate::algorithms::{RotatableBondOptions, RotatableBondSet};
+
+    use crate::core::Molecule;
+
+    /// Detects rotatable bonds using the supplied options.
+    pub fn detect(molecule: &Molecule, options: RotatableBondOptions) -> RotatableBondSet {
+        crate::algorithms::detect_rotatable_bonds(molecule, options)
+    }
+}
+
 /// Explicit small-molecule hydrogen topology transforms.
 ///
 /// These functions never interpret or perceive chemistry implicitly. Addition

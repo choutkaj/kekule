@@ -4,6 +4,7 @@ mod cip;
 mod hydrogens;
 mod membership;
 mod rings;
+mod rotatable_bonds;
 mod stereo;
 mod substructure;
 mod valence;
@@ -15,6 +16,7 @@ pub use cip::*;
 pub use hydrogens::*;
 pub use membership::*;
 pub use rings::*;
+pub use rotatable_bonds::*;
 pub use stereo::*;
 pub(crate) use stereo::{
     atom_axis_carriers, atom_hydrogen_count, coordinates_are_planar,
