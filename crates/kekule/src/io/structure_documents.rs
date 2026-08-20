@@ -1,14 +1,128 @@
+use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::chemistry::{
     canonicalize_molecule_for_publication, NormalizationError, NormalizationWarning,
 };
-use crate::core::{AtomId, StereoElementId};
+use crate::core::{
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
+    StereoElementId,
+};
 use crate::small::model::SmallMolecule;
 
 use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax, V2000Syntax};
 use super::v3000::{interpret_v3000_syntax, parse_v3000_syntax, V3000Syntax};
 use super::SdfParseError;
+
+pub(super) fn checked_line_number(
+    record: usize,
+    start_line: usize,
+    offset: usize,
+) -> Result<usize, SdfParseError> {
+    start_line
+        .checked_add(offset)
+        .ok_or_else(|| SdfParseError::new(record, start_line, "line number overflow"))
+}
+
+pub(super) fn interpret_molfile_atom_fields(
+    symbol: &str,
+    formal_charge: i32,
+    isotope: Option<i32>,
+    radical: Option<AtomRadical>,
+    hydrogens: HydrogenDeclaration,
+    atom_map: Option<u32>,
+    line: usize,
+) -> Result<Atom, SdfParseError> {
+    let element = Element::from_symbol(symbol).ok_or_else(|| {
+        SdfParseError::new(1, line, format!("unsupported element symbol `{symbol}`"))
+    })?;
+    let mut atom = Atom::new(element);
+    atom.formal_charge = i8::try_from(formal_charge)
+        .map_err(|_| SdfParseError::new(1, line, "formal charge is outside i8 range"))?;
+    atom.isotope = match isotope {
+        Some(value) if value > 0 => Some(
+            u16::try_from(value)
+                .map_err(|_| SdfParseError::new(1, line, "isotope is outside u16 range"))?,
+        ),
+        _ => None,
+    };
+    atom.radical = radical;
+    atom.hydrogens = hydrogens;
+    atom.atom_map = atom_map;
+    Ok(atom)
+}
+
+pub(super) fn apply_molfile_declared_valence(
+    molecule: &mut Molecule,
+    atom: AtomId,
+    declared_valence: u8,
+    declared_hydrogens: Option<u8>,
+    source_aromatic_bonds: &BTreeSet<BondId>,
+    version: MolfileVersion,
+    line: usize,
+) -> Result<(), SdfParseError> {
+    let version_name = match version {
+        MolfileVersion::V2000 => "V2000",
+        MolfileVersion::V3000 => "V3000",
+    };
+    let unsupported_order = || {
+        SdfParseError::new(
+            1,
+            line,
+            format!(
+                "declared {version_name} valence cannot determine hydrogens for this bond order"
+            ),
+        )
+    };
+    let represented_valence = molecule
+        .incident_bonds(atom)
+        .map_err(|error| SdfParseError::new(1, line, error.to_string()))?
+        .try_fold(0usize, |total, (bond, value)| {
+            if source_aromatic_bonds.contains(&bond) {
+                return Err(unsupported_order());
+            }
+            let contribution = match value.order {
+                BondOrder::Single => 1,
+                BondOrder::Double => 2,
+                BondOrder::Triple => 3,
+                BondOrder::Zero | BondOrder::Dative => 0,
+                BondOrder::Quadruple => return Err(unsupported_order()),
+            };
+            Ok(total + contribution)
+        })?;
+    let inferred_hydrogens = usize::from(declared_valence)
+        .checked_sub(represented_valence)
+        .ok_or_else(|| {
+            SdfParseError::new(
+                1,
+                line,
+                format!("declared {version_name} valence is below represented bond valence"),
+            )
+        })?;
+    if let Some(declared_hydrogens) = declared_hydrogens {
+        if inferred_hydrogens != usize::from(declared_hydrogens) {
+            let message = match version {
+                MolfileVersion::V2000 => "V2000 hydrogen-count and valence declarations conflict",
+                MolfileVersion::V3000 => "V3000 HCOUNT and VAL declarations conflict",
+            };
+            return Err(SdfParseError::new(1, line, message));
+        }
+        return Ok(());
+    }
+
+    let explicit = u8::try_from(inferred_hydrogens).map_err(|_| {
+        SdfParseError::new(
+            1,
+            line,
+            format!("declared {version_name} hydrogen count exceeds u8"),
+        )
+    })?;
+    molecule
+        .atom_mut(atom)
+        .expect("interpreted Molfile atom remains live")
+        .hydrogens = HydrogenDeclaration::Fixed(explicit);
+    Ok(())
+}
 
 /// Resource limits shared by version-autodetected Molfile parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

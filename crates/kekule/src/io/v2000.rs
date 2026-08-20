@@ -12,6 +12,10 @@ use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::sdf_document::{SdfDataField, SdfRecord};
+use super::structure_documents::{
+    apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
+    MolfileVersion,
+};
 
 pub(super) const V2000_MAX_ATOMS: usize = 999;
 pub(super) const V2000_MAX_BONDS: usize = 999;
@@ -350,36 +354,26 @@ pub(super) fn interpret_v2000_syntax(
 }
 
 fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
-    let element = Element::from_symbol(&record.symbol).ok_or_else(|| {
-        SdfParseError::new(
-            1,
-            record.line,
-            format!("unsupported element symbol `{}`", record.symbol),
-        )
-    })?;
-    let mut atom = Atom::new(element);
-    atom.formal_charge = i8::try_from(record.formal_charge)
-        .map_err(|_| SdfParseError::new(1, record.line, "formal charge is outside i8 range"))?;
-    atom.isotope = match record.isotope {
-        Some(value) if value > 0 => Some(
-            u16::try_from(value)
-                .map_err(|_| SdfParseError::new(1, record.line, "isotope is outside u16 range"))?,
-        ),
-        _ => None,
-    };
-    atom.radical = record.radical.map(|radical| match radical {
+    let radical = record.radical.map(|radical| match radical {
         V2000RadicalSyntax::Singlet => AtomRadical::Singlet,
         V2000RadicalSyntax::Doublet => AtomRadical::Doublet,
         V2000RadicalSyntax::Triplet => AtomRadical::Triplet,
     });
     let explicit = record.hydrogen_count.unwrap_or(0);
-    atom.hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
+    let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
         HydrogenDeclaration::Fixed(explicit)
     } else {
         HydrogenDeclaration::Infer { explicit }
     };
-    atom.atom_map = record.atom_map;
-    Ok(atom)
+    interpret_molfile_atom_fields(
+        &record.symbol,
+        record.formal_charge,
+        record.isotope,
+        radical,
+        hydrogens,
+        record.atom_map,
+        record.line,
+    )
 }
 
 fn interpret_v2000_bond_order(
@@ -438,57 +432,15 @@ fn apply_v2000_declared_hydrogens(
         let Some(declared_valence) = record.valence else {
             continue;
         };
-        let represented_valence = molecule
-            .incident_bonds(atom_id)
-            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?
-            .try_fold(0usize, |total, (bond_id, bond)| {
-                if source_aromatic_bonds.contains(&bond_id) {
-                    return Err(SdfParseError::new(
-                        1,
-                        record.line,
-                        "declared V2000 valence cannot determine hydrogens for this bond order",
-                    ));
-                }
-                let contribution =
-                    match bond.order {
-                        BondOrder::Single => 1,
-                        BondOrder::Double => 2,
-                        BondOrder::Triple => 3,
-                        BondOrder::Zero | BondOrder::Dative => 0,
-                        BondOrder::Quadruple => return Err(SdfParseError::new(
-                            1,
-                            record.line,
-                            "declared V2000 valence cannot determine hydrogens for this bond order",
-                        )),
-                    };
-                Ok(total + contribution)
-            })?;
-        let declared_hydrogens = usize::from(declared_valence)
-            .checked_sub(represented_valence)
-            .ok_or_else(|| {
-                SdfParseError::new(
-                    1,
-                    record.line,
-                    "declared V2000 valence is below represented bond valence",
-                )
-            })?;
-        if let Some(explicit) = record.hydrogen_count {
-            if declared_hydrogens != usize::from(explicit) {
-                return Err(SdfParseError::new(
-                    1,
-                    record.line,
-                    "V2000 hydrogen-count and valence declarations conflict",
-                ));
-            }
-            continue;
-        }
-        let explicit = u8::try_from(declared_hydrogens).map_err(|_| {
-            SdfParseError::new(1, record.line, "declared V2000 hydrogen count exceeds u8")
-        })?;
-        molecule
-            .atom_mut(atom_id)
-            .expect("interpreted V2000 atom remains live")
-            .hydrogens = HydrogenDeclaration::Fixed(explicit);
+        apply_molfile_declared_valence(
+            molecule,
+            atom_id,
+            declared_valence,
+            record.hydrogen_count,
+            source_aromatic_bonds,
+            MolfileVersion::V2000,
+            record.line,
+        )?;
     }
     Ok(())
 }
@@ -648,16 +600,6 @@ fn parse_v2000_bond_line(line: &str) -> Option<(usize, usize, u8, u8)> {
 
 fn ascii_field(line: &str, start: usize, end: usize) -> Option<&str> {
     std::str::from_utf8(line.as_bytes().get(start..end)?).ok()
-}
-
-fn checked_line_number(
-    record: usize,
-    start_line: usize,
-    offset: usize,
-) -> std::result::Result<usize, SdfParseError> {
-    start_line
-        .checked_add(offset)
-        .ok_or_else(|| SdfParseError::new(record, start_line, "line number overflow"))
 }
 
 fn parse_m_records(

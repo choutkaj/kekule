@@ -1,25 +1,18 @@
-use kekule::core::{Atom, Element, Molecule};
+use std::sync::Arc;
+
 use kekule::geometry::Point3;
-use kekule::small::SmallMolecule;
-use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::{
     AtomOrderAssertion, FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryError,
     TrajectoryFrameView, TrajectoryReader, TrajectoryWriter,
 };
 
+mod support;
+use support::topology as build_topology;
+
 fn topology() -> Arc<Topology> {
-    let mut graph = Molecule::builder();
-    graph
-        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
-        .unwrap();
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    Arc::new(builder.build().unwrap())
+    build_topology(&["C"], &[])
 }
 
 struct CompanionSequential {
@@ -124,4 +117,3 @@ fn companion_crate_can_publish_frames_and_implement_all_streaming_traits() {
     assert_writer(&mut writer);
     writer.write_frame(buffer.frame_view()).unwrap();
 }
-use std::sync::Arc;

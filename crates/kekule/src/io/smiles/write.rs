@@ -110,6 +110,7 @@ fn plan_smiles_write(
             &mut visited,
             &mut tree_bonds,
             &mut ring_bonds,
+            |atom| smiles_incident_bonds(mol, atom),
         )?;
     }
 
@@ -121,27 +122,7 @@ fn plan_smiles_write(
         })
         .collect::<Vec<_>>();
     ring_bonds.sort_by_key(|(bond_id, first, second, _)| (*first, *second, *bond_id));
-    if ring_bonds.len() > 99 {
-        return Err(MolWriteError::new(
-            "SMILES writer supports at most 99 simultaneous ring closures",
-        ));
-    }
-
-    let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
-    for (number, (bond_id, first, second, order)) in (1u64..).zip(ring_bonds) {
-        closures.entry(first).or_default().push(SmilesRingClosure {
-            bond: bond_id,
-            number,
-            order,
-            other: second,
-        });
-        closures.entry(second).or_default().push(SmilesRingClosure {
-            bond: bond_id,
-            number,
-            order,
-            other: first,
-        });
-    }
+    let closures = smiles_ring_closures(ring_bonds)?;
 
     let mut subtree_sizes = BTreeMap::new();
     for root in &roots {
@@ -353,14 +334,18 @@ pub(super) fn smiles_connected_components(
     Ok(components)
 }
 
-fn collect_smiles_tree(
+pub(super) fn collect_smiles_tree<F>(
     mol: &Molecule,
     atom_id: AtomId,
     parent_bond: Option<BondId>,
     visited: &mut BTreeSet<AtomId>,
     tree_bonds: &mut BTreeSet<BondId>,
     ring_bonds: &mut BTreeMap<BondId, (AtomId, AtomId, SmilesBondOrder)>,
-) -> std::result::Result<(), MolWriteError> {
+    mut incident_bonds: F,
+) -> std::result::Result<(), MolWriteError>
+where
+    F: FnMut(AtomId) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, MolWriteError>,
+{
     struct Frame {
         parent_bond: Option<BondId>,
         incident: Vec<(BondId, SmilesBondOrder, AtomId)>,
@@ -370,7 +355,7 @@ fn collect_smiles_tree(
     visited.insert(atom_id);
     let mut stack = vec![Frame {
         parent_bond,
-        incident: smiles_incident_bonds(mol, atom_id)?,
+        incident: incident_bonds(atom_id)?,
         next_edge: 0,
     }];
     while let Some(frame) = stack.last_mut() {
@@ -398,11 +383,38 @@ fn collect_smiles_tree(
         visited.insert(neighbor);
         stack.push(Frame {
             parent_bond: Some(bond_id),
-            incident: smiles_incident_bonds(mol, neighbor)?,
+            incident: incident_bonds(neighbor)?,
             next_edge: 0,
         });
     }
     Ok(())
+}
+
+pub(super) fn smiles_ring_closures(
+    ring_bonds: Vec<(BondId, AtomId, AtomId, SmilesBondOrder)>,
+) -> std::result::Result<BTreeMap<AtomId, Vec<SmilesRingClosure>>, MolWriteError> {
+    if ring_bonds.len() > 99 {
+        return Err(MolWriteError::new(
+            "SMILES writer supports at most 99 simultaneous ring closures",
+        ));
+    }
+
+    let mut closures = BTreeMap::<AtomId, Vec<SmilesRingClosure>>::new();
+    for (number, (bond, first, second, order)) in (1u64..).zip(ring_bonds) {
+        closures.entry(first).or_default().push(SmilesRingClosure {
+            bond,
+            number,
+            order,
+            other: second,
+        });
+        closures.entry(second).or_default().push(SmilesRingClosure {
+            bond,
+            number,
+            order,
+            other: first,
+        });
+    }
+    Ok(closures)
 }
 
 fn compute_smiles_subtree_sizes(
@@ -756,7 +768,7 @@ fn tetrahedral_chirality_for_smiles_order(
         };
         Ok(ChiralAtomWriteState {
             orientation: if odd {
-                flip_tetrahedral_orientation(stereo.orientation)
+                stereo.orientation.inverted()
             } else {
                 stereo.orientation
             },
@@ -794,13 +806,6 @@ fn carrier_permutation_is_odd(from: &[StereoCarrier], to: &[StereoCarrier]) -> O
         }
     }
     Some(odd)
-}
-
-fn flip_tetrahedral_orientation(orientation: TetrahedralOrientation) -> TetrahedralOrientation {
-    match orientation {
-        TetrahedralOrientation::Clockwise => TetrahedralOrientation::CounterClockwise,
-        TetrahedralOrientation::CounterClockwise => TetrahedralOrientation::Clockwise,
-    }
 }
 
 fn write_smiles_component(

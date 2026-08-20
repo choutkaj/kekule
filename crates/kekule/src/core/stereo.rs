@@ -141,10 +141,29 @@ pub enum StereoCarrier {
     ImplicitLonePair,
 }
 
+impl StereoCarrier {
+    pub(crate) const fn canonical_order_key(self) -> (u8, u32) {
+        match self {
+            Self::Atom(atom) => (0, atom.raw()),
+            Self::ImplicitHydrogen => (1, 0),
+            Self::ImplicitLonePair => (2, 0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TetrahedralOrientation {
     Clockwise,
     CounterClockwise,
+}
+
+impl TetrahedralOrientation {
+    pub(crate) const fn inverted(self) -> Self {
+        match self {
+            Self::Clockwise => Self::CounterClockwise,
+            Self::CounterClockwise => Self::Clockwise,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -153,10 +172,55 @@ pub enum DoubleBondOrientation {
     Opposite,
 }
 
+impl DoubleBondOrientation {
+    pub(crate) const fn inverted(self) -> Self {
+        match self {
+            Self::Together => Self::Opposite,
+            Self::Opposite => Self::Together,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AxisOrientation {
     Clockwise,
     CounterClockwise,
+}
+
+impl AxisOrientation {
+    pub(crate) const fn inverted(self) -> Self {
+        match self {
+            Self::Clockwise => Self::CounterClockwise,
+            Self::CounterClockwise => Self::Clockwise,
+        }
+    }
+}
+
+pub(crate) fn has_tetrahedral_stereo(molecule: &Molecule, center: AtomId) -> bool {
+    molecule.stereo_elements().any(|(_, element)| {
+        matches!(
+            &element.kind,
+            StereoElementKind::Tetrahedral(stereo) if stereo.center == center
+        )
+    })
+}
+
+pub(crate) fn has_double_bond_stereo(molecule: &Molecule, bond: BondId) -> bool {
+    molecule.stereo_elements().any(|(_, element)| {
+        matches!(
+            &element.kind,
+            StereoElementKind::DoubleBond(stereo) if stereo.bond == bond
+        )
+    })
+}
+
+pub(crate) fn has_axis_stereo(molecule: &Molecule, axis: BondId) -> bool {
+    molecule.stereo_elements().any(|(_, element)| {
+        matches!(
+            &element.kind,
+            StereoElementKind::Axis(stereo) if stereo.axis == axis
+        )
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

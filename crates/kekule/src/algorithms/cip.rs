@@ -368,10 +368,10 @@ fn assign_double_bond_descriptor(
 
     let mut top_relation = orientation;
     if stereo.left_carrier != left_top {
-        top_relation = invert_double_bond_orientation(top_relation);
+        top_relation = top_relation.inverted();
     }
     if stereo.right_carrier != right_top {
-        top_relation = invert_double_bond_orientation(top_relation);
+        top_relation = top_relation.inverted();
     }
     let pseudo_sequence =
         left_ranked.pseudo_asymmetric_ordering != right_ranked.pseudo_asymmetric_ordering;
@@ -428,10 +428,10 @@ fn assign_axis_descriptor(
         .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
     let mut top_orientation = orientation;
     if left_reference != left_top {
-        top_orientation = invert_axis_orientation(top_orientation);
+        top_orientation = top_orientation.inverted();
     }
     if right_reference != right_top {
-        top_orientation = invert_axis_orientation(top_orientation);
+        top_orientation = top_orientation.inverted();
     }
     let pseudo_axis =
         left_ranked.pseudo_asymmetric_ordering || right_ranked.pseudo_asymmetric_ordering;
@@ -497,13 +497,6 @@ fn axis_endpoint_carriers(
         carriers.push(StereoCarrier::ImplicitHydrogen);
     }
     carriers
-}
-
-fn invert_axis_orientation(orientation: AxisOrientation) -> AxisOrientation {
-    match orientation {
-        AxisOrientation::Clockwise => AxisOrientation::CounterClockwise,
-        AxisOrientation::CounterClockwise => AxisOrientation::Clockwise,
-    }
 }
 
 fn ranked_carriers(
@@ -3091,13 +3084,6 @@ fn descriptor_ref(descriptor: StereoDescriptor) -> Option<DescriptorRef> {
         | StereoDescriptor::LowerP
         | StereoDescriptor::E
         | StereoDescriptor::Z => None,
-    }
-}
-
-fn invert_double_bond_orientation(orientation: DoubleBondOrientation) -> DoubleBondOrientation {
-    match orientation {
-        DoubleBondOrientation::Together => DoubleBondOrientation::Opposite,
-        DoubleBondOrientation::Opposite => DoubleBondOrientation::Together,
     }
 }
 

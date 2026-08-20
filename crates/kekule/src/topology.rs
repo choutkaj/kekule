@@ -17,37 +17,10 @@ use crate::core::{
 use crate::small::SmallMolecule;
 use crate::substructure::QueryMatch;
 
-macro_rules! fixed_id {
-    ($name:ident, $display:literal) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(u32);
-
-        impl $name {
-            pub const fn new(raw: u32) -> Self {
-                Self(raw)
-            }
-
-            pub const fn raw(self) -> u32 {
-                self.0
-            }
-
-            pub const fn index(self) -> usize {
-                self.0 as usize
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(formatter, concat!($display, "{}"), self.0)
-            }
-        }
-    };
-}
-
-fixed_id!(MoleculeDefinitionId, "definition");
-fixed_id!(MoleculeInstanceId, "molecule");
-fixed_id!(TopologyAtomIndex, "atom-index");
-fixed_id!(TopologyBondIndex, "bond-index");
+fixed_u32_id!(MoleculeDefinitionId, "definition");
+fixed_u32_id!(MoleculeInstanceId, "molecule");
+fixed_u32_id!(TopologyAtomIndex, "atom-index");
+fixed_u32_id!(TopologyBondIndex, "bond-index");
 
 /// The local atom of one explicit molecule instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

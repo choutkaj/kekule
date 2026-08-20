@@ -3,89 +3,36 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
+use kekule::core::PropValue;
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::small::SmallMolecule;
-use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, MODEL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
 use kekule_traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
 use kekule_traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
     FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
-    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryTopologyBinding, TrajectoryWriteOptions,
+    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule_traj::{
-    AtomOrderAssertion, FrameBuffer, FrameBufferData, SeekableTrajectoryReader,
-    TrajectoryCodecErrorKind, TrajectoryError, TrajectoryFormat, TrajectoryReader,
-    TrajectoryWriter,
+    FrameBuffer, FrameBufferData, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
+    TrajectoryError, TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 mod support;
-use support::GuardedCursor;
+use support::{
+    binding, codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor,
+};
 
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
 2\nsecond\nC 1.0 2.0 3.0\nH 4.0 5.0 6.0";
 
 fn topology() -> Arc<Topology> {
-    let mut graph = Molecule::builder();
-    let carbon = graph
-        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
-        .unwrap();
-    let hydrogen = graph
-        .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
-        .unwrap();
-    graph.add_bond(carbon, hydrogen, BondOrder::Single).unwrap();
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    Arc::new(builder.build().unwrap())
+    build_topology(&["C", "H"], &[(0, 1)])
 }
 
 fn water_topology() -> Arc<Topology> {
-    let mut graph = Molecule::builder();
-    let mut atoms = Vec::new();
-    for symbol in ["O", "H", "H"] {
-        atoms.push(
-            graph
-                .add_atom(Atom::new(Element::from_symbol(symbol).unwrap()))
-                .unwrap(),
-        );
-    }
-    graph
-        .add_bond(atoms[0], atoms[1], BondOrder::Single)
-        .unwrap();
-    graph
-        .add_bond(atoms[0], atoms[2], BondOrder::Single)
-        .unwrap();
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    Arc::new(builder.build().unwrap())
-}
-
-fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
-    TrajectoryTopologyBinding::new(
-        Arc::clone(topology),
-        AtomOrderAssertion::assert_file_uses_topology_order(topology),
-    )
-    .unwrap()
-}
-
-fn point_xs(buffer: &FrameBuffer) -> Vec<f64> {
-    buffer
-        .positions()
-        .values()
-        .value()
-        .iter()
-        .map(|point| point.x)
-        .collect()
+    build_topology(&["O", "H", "H"], &[(0, 1), (0, 2)])
 }
 
 fn temporary_path(extension: Option<&str>) -> PathBuf {
@@ -99,13 +46,6 @@ fn temporary_path(extension: Option<&str>) -> PathBuf {
         name.push_str(extension);
     }
     std::env::temp_dir().join(name)
-}
-
-fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
-    match error {
-        TrajectoryError::Codec(context) => Some(context.kind()),
-        _ => None,
-    }
 }
 
 struct FailingDetectionReader {

@@ -1,34 +1,20 @@
+use std::sync::Arc;
+
 use kekule::alignment::PeriodicAlignmentPolicy;
-use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::Point3;
-use kekule::small::SmallMolecule;
 use kekule::structure::Positions;
-use kekule::topology::{AtomSelection, MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::analysis::{
     AlignedRmsdOptions, PeriodicRmsdPolicy, RmsdOptions, SuperpositionOptions,
 };
 use kekule_traj::{Trajectory, TrajectoryFrame};
 
+mod support;
+use support::linear_carbon_topology;
+
 fn topology() -> Arc<Topology> {
-    let mut graph = Molecule::builder();
-    let mut previous = None;
-    for _ in 0..3 {
-        let atom = graph
-            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
-            .unwrap();
-        if let Some(previous) = previous {
-            graph.add_bond(previous, atom, BondOrder::Single).unwrap();
-        }
-        previous = Some(atom);
-    }
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    Arc::new(builder.build().unwrap())
+    linear_carbon_topology(3)
 }
 
 fn frame(topology: &Arc<Topology>, points: [Point3; 3]) -> TrajectoryFrame {
@@ -86,4 +72,3 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
     let measured = split.rmsd_to_frame(0, &selection).unwrap();
     assert!(measured.value()[1] < 1.0e-12);
 }
-use std::sync::Arc;

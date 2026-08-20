@@ -17,8 +17,10 @@ pub use membership::*;
 pub use rings::*;
 pub use stereo::*;
 pub(crate) use stereo::{
-    atom_hydrogen_count, double_bond_between_aromatic_atoms, double_bond_endpoint_carriers,
+    atom_axis_carriers, atom_hydrogen_count, coordinates_are_planar,
+    double_bond_between_aromatic_atoms, double_bond_endpoint_carriers,
     double_bond_has_noncarbon_endpoint, double_bond_is_in_ring,
+    tetrahedral_orientation_from_points, tetrahedral_points,
 };
 
 pub(crate) fn compute_graph_ring_membership(

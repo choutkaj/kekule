@@ -33,6 +33,36 @@
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
+macro_rules! fixed_u32_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(u32);
+
+        impl $name {
+            pub const fn new(raw: u32) -> Self {
+                Self(raw)
+            }
+
+            pub const fn raw(self) -> u32 {
+                self.0
+            }
+
+            pub const fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
+    };
+    ($name:ident, $display:literal) => {
+        fixed_u32_id!($name);
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, concat!($display, "{}"), self.0)
+            }
+        }
+    };
+}
+
 mod algorithms;
 pub mod alignment;
 pub mod bio;

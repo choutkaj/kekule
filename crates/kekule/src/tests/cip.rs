@@ -8,6 +8,27 @@ fn installed_cip_descriptors(mol: &Molecule) -> Vec<(StereoElementId, StereoDesc
     mol.perception().cip_descriptors().collect()
 }
 
+fn assigned_descriptors(report: &CipAssignmentReport) -> Vec<StereoDescriptor> {
+    report
+        .assigned
+        .iter()
+        .map(|assignment| assignment.descriptor)
+        .collect()
+}
+
+fn assert_cip_not_stereogenic(mol: &mut Molecule, element: StereoElementId) {
+    let report = assign_cip(mol);
+    assert!(report.assigned.is_empty());
+    assert_eq!(
+        report.skipped,
+        vec![CipSkipped {
+            element,
+            reason: CipSkippedReason::NotStereogenic,
+        }]
+    );
+    assert_eq!(mol.cip_descriptor(element).expect("stereo element"), None);
+}
+
 #[test]
 fn successful_cip_with_no_assignments_installs_empty_stereo_section() {
     let mut mol = Molecule::new();
@@ -178,17 +199,7 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         })))
         .expect("axis stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("axis element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 #[test]
@@ -283,14 +294,7 @@ fn cip_axis_ranking_is_stable_across_all_carbon_aromatic_source_kekule_variants(
 
     let report = assign_cip(molecule.graph_mut());
 
-    assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
-        vec![StereoDescriptor::P]
-    );
+    assert_eq!(assigned_descriptors(&report), vec![StereoDescriptor::P]);
 
     let error = read_molfile(rdkit_bms986142_atrop4_molblock())
         .expect_err("omitted tetrahedral carrier must reject interpretation");
@@ -355,11 +359,7 @@ fn cip_matches_rdkit_for_pubchem_start_atom_bracket_h_tetrahedral_centers() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![StereoDescriptor::R, StereoDescriptor::R]
     );
 }
@@ -444,11 +444,7 @@ fn cip_matches_rdkit_for_branch_preserving_sugar_ligand_ranking() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::R,
             StereoDescriptor::R,
@@ -468,11 +464,7 @@ fn cip_matches_rdkit_for_fused_ring_paired_breadth_first_ranking() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::S,
             StereoDescriptor::R,
@@ -494,11 +486,7 @@ fn cip_matches_rdkit_for_polyene_directional_double_bonds() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::E,
             StereoDescriptor::E,
@@ -523,14 +511,7 @@ fn cip_skips_small_ring_double_bond_stereo_but_assigns_cyclooctene() {
     perceive(&mut cyclooctene).expect("marked cyclooctene perceives");
     let cip_report = assign_cip(cyclooctene.graph_mut());
 
-    assert_eq!(
-        cip_report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
-        vec![StereoDescriptor::Z]
-    );
+    assert_eq!(assigned_descriptors(&cip_report), vec![StereoDescriptor::Z]);
 }
 
 #[test]
@@ -565,17 +546,7 @@ fn cip_skips_stored_nonstereogenic_small_ring_double_bond() {
         )))
         .expect("double-bond stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 #[test]
@@ -615,17 +586,7 @@ fn cip_skips_double_bond_with_equivalent_endpoint_ligands_as_nonstereogenic() {
         )))
         .expect("double-bond stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 #[test]
@@ -659,11 +620,7 @@ fn cip_matches_rdkit_for_large_fused_ring_with_many_centers() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::R,
             StereoDescriptor::S,
@@ -1298,11 +1255,7 @@ fn cip_matches_rdkit_for_pubchem_73056_recursive_rule_ordering() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::S,
             StereoDescriptor::S,
@@ -1328,11 +1281,7 @@ fn cip_matches_rdkit_for_pubchem_134556_recursive_rule_ordering() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::R,
             StereoDescriptor::S,
@@ -1351,11 +1300,7 @@ fn cip_matches_rdkit_for_pubchem_246236_phosphorus_centers() {
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![StereoDescriptor::R, StereoDescriptor::S]
     );
 }
@@ -1368,14 +1313,7 @@ fn cip_matches_rdkit_for_pubchem_359164_sulfur_lone_pair() {
 
     let report = assign_cip(molecule.graph_mut());
 
-    assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
-        vec![StereoDescriptor::R]
-    );
+    assert_eq!(assigned_descriptors(&report), vec![StereoDescriptor::R]);
 }
 
 #[test]
@@ -1388,11 +1326,7 @@ fn cip_matches_rdkit_for_pubchem_444295_with_spectators_interpreted_separately()
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::R,
             StereoDescriptor::R,
@@ -1412,11 +1346,7 @@ fn cip_matches_rdkit_for_pubchem_446291_with_unsupported_spectator_interpreted_s
     let report = assign_cip(molecule.graph_mut());
 
     assert_eq!(
-        report
-            .assigned
-            .iter()
-            .map(|assignment| assignment.descriptor)
-            .collect::<Vec<_>>(),
+        assigned_descriptors(&report),
         vec![
             StereoDescriptor::S,
             StereoDescriptor::R,
@@ -1478,17 +1408,7 @@ fn cip_skips_equivalent_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 #[test]
@@ -1533,17 +1453,7 @@ fn cip_skips_large_complete_equivalent_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 #[test]
@@ -1588,17 +1498,7 @@ fn cip_skips_large_complete_equivalent_double_bond_endpoint_as_nonstereogenic() 
         )))
         .expect("double-bond stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 #[test]
@@ -1636,17 +1536,7 @@ fn cip_skips_large_complete_equivalent_axis_endpoint_as_nonstereogenic() {
         })))
         .expect("axis stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 fn add_carbon_chain(mol: &mut Molecule, start: AtomId, length: usize) {
@@ -1700,17 +1590,7 @@ fn cip_skips_equivalent_ring_ligands_as_nonstereogenic() {
         )))
         .expect("stereo element");
 
-    let report = assign_cip(&mut mol);
-
-    assert!(report.assigned.is_empty());
-    assert_eq!(
-        report.skipped,
-        vec![CipSkipped {
-            element: stereo,
-            reason: CipSkippedReason::NotStereogenic,
-        }]
-    );
-    assert_eq!(mol.cip_descriptor(stereo).expect("element"), None);
+    assert_cip_not_stereogenic(&mut mol, stereo);
 }
 
 #[test]
