@@ -4,7 +4,69 @@ use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use kekule_traj::FrameBuffer;
+use kekule::core::{Atom, BondOrder, Element, Molecule};
+use kekule::small::SmallMolecule;
+use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule_traj::io::TrajectoryTopologyBinding;
+use kekule_traj::{AtomOrderAssertion, FrameBuffer, TrajectoryCodecErrorKind, TrajectoryError};
+
+pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
+    let mut graph = Molecule::builder();
+    let atoms = symbols
+        .iter()
+        .map(|symbol| {
+            graph
+                .add_atom(Atom::new(Element::from_symbol(symbol).unwrap()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for &(source, target) in bonds {
+        graph
+            .add_bond(atoms[source], atoms[target], BondOrder::Single)
+            .unwrap();
+    }
+
+    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+    let mut builder = TopologyBuilder::new();
+    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+    builder
+        .add_instance(definition, MoleculeInstanceMetadata::default())
+        .unwrap();
+    Arc::new(builder.build().unwrap())
+}
+
+pub fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
+    let symbols = vec!["C"; atom_count];
+    let bonds = (1..atom_count)
+        .map(|index| (index - 1, index))
+        .collect::<Vec<_>>();
+    topology(&symbols, &bonds)
+}
+
+pub fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
+    TrajectoryTopologyBinding::new(
+        Arc::clone(topology),
+        AtomOrderAssertion::assert_file_uses_topology_order(topology),
+    )
+    .unwrap()
+}
+
+pub fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
+    match error {
+        TrajectoryError::Codec(context) => Some(context.kind()),
+        _ => None,
+    }
+}
+
+pub fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {
+    buffer
+        .positions()
+        .values()
+        .value()
+        .iter()
+        .map(|point| point.x)
+        .collect()
+}
 
 pub fn buffer_snapshot(buffer: &FrameBuffer) -> String {
     format!("{buffer:#?}")

@@ -389,56 +389,9 @@ fn validate_macro_molecule_contents(
     Ok(report)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SmcraChainId(u32);
-
-impl SmcraChainId {
-    pub const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SmcraResidueId(u32);
-
-impl SmcraResidueId {
-    pub const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SmcraAtomSiteId(u32);
-
-impl SmcraAtomSiteId {
-    pub const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
+fixed_u32_id!(SmcraChainId);
+fixed_u32_id!(SmcraResidueId);
+fixed_u32_id!(SmcraAtomSiteId);
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SmcraHierarchy {
