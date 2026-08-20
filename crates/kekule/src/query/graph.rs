@@ -2,51 +2,8 @@ use std::fmt;
 
 use super::{AtomExpression, BondExpression};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct QueryAtomId(u32);
-
-impl QueryAtomId {
-    pub const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl fmt::Display for QueryAtomId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "qa{}", self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct QueryBondId(u32);
-
-impl QueryBondId {
-    pub const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
-
-    pub const fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl fmt::Display for QueryBondId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "qb{}", self.0)
-    }
-}
+fixed_u32_id!(QueryAtomId, "qa");
+fixed_u32_id!(QueryBondId, "qb");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueryAtom {

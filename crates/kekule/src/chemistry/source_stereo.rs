@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::{
-    compute_graph_ring_membership, graph_bond_in_ring_smaller_than, validate_stereo,
-    RingMembership, StereoValidationError,
+    atom_axis_carriers, compute_graph_ring_membership, coordinates_are_planar,
+    graph_bond_in_ring_smaller_than, tetrahedral_orientation_from_points, tetrahedral_points,
+    validate_stereo, RingMembership, StereoValidationError,
 };
 use crate::core::*;
-use crate::geometry::Point3;
+use crate::geometry::{Point3, Vector3};
 
 use super::normalization::{
     NormalizationReport, NormalizationWarning, SourceStereoNormalizationError,
@@ -305,7 +306,7 @@ fn assemble_tetrahedral_wedges(
             .position(|mark| mark.center != center)
             .map_or(marks.len(), |offset| start + offset);
         let center_marks = &marks[start..end];
-        if has_tetrahedral_element(molecule, center) {
+        if has_tetrahedral_stereo(molecule, center) {
             used_marks.extend(center_marks.iter().map(|mark| mark.mark.bond));
             start = end;
             continue;
@@ -365,7 +366,7 @@ fn source_tetrahedral_carriers(molecule: &Molecule, center: AtomId) -> Option<Ve
         }
         carriers.push(StereoCarrier::Atom(bond.other_atom(center)));
     }
-    carriers.sort_by_key(carrier_key);
+    carriers.sort_by_key(|carrier| carrier.canonical_order_key());
 
     // Only a primary explicit-H declaration can assert a virtual carrier here.
     // Installed implicit-H assignments are deliberately invisible to this
@@ -489,18 +490,11 @@ fn tetrahedral_points_with_virtual_declared_hydrogen(
         carrier_points[0].as_mut()?.z += out_of_plane;
     }
 
-    let mut vector_sum = Point3::new(0.0, 0.0, 0.0);
+    let mut vector_sum = Vector3::zero();
     for point in carrier_points.iter().filter_map(|point| *point) {
-        let vector = vector_between(center_point, point);
-        vector_sum.x += vector.x;
-        vector_sum.y += vector.y;
-        vector_sum.z += vector.z;
+        vector_sum += point - center_point;
     }
-    carrier_points[missing_hydrogen[0]] = Some(Point3::new(
-        center_point.x - vector_sum.x,
-        center_point.y - vector_sum.y,
-        center_point.z - vector_sum.z,
-    ));
+    carrier_points[missing_hydrogen[0]] = Some(center_point - vector_sum);
 
     Some([
         center_point,
@@ -600,7 +594,7 @@ fn atropisomeric_axis_candidate(
     near: AtomId,
     marked_carrier: AtomId,
 ) -> Option<StereoElement> {
-    if axis_bond.order != BondOrder::Single || has_axis_element(molecule, axis) {
+    if axis_bond.order != BondOrder::Single || has_axis_stereo(molecule, axis) {
         return None;
     }
     let other = axis_bond.other_atom(near);
@@ -673,17 +667,6 @@ fn source_atom_is_atropisomeric_sp2_endpoint(
             .any(|(_, bond)| bond.order == BondOrder::Double)
 }
 
-fn atom_axis_carriers(molecule: &Molecule, endpoint: AtomId, axis: BondId) -> Option<Vec<AtomId>> {
-    let mut carriers = Vec::new();
-    for (bond_id, bond) in molecule.incident_bonds(endpoint).ok()? {
-        if bond_id != axis {
-            carriers.push(bond.other_atom(endpoint));
-        }
-    }
-    carriers.sort_unstable();
-    Some(carriers)
-}
-
 fn axis_orientation_from_wedge(
     molecule: &Molecule,
     axis_bond: &Bond,
@@ -709,14 +692,14 @@ fn axis_orientation_from_wedge(
         marked_endpoint_point,
         marked_point,
     ];
-    let axis = vector_between(left_point, right_point);
+    let axis = right_point - left_point;
     if coordinates_are_planar(&coordinate_points) {
         let z_sign = match kind {
             SourceStereoBondMarkKind::WedgeUp => 1.0,
             SourceStereoBondMarkKind::WedgeDown => -1.0,
             _ => return None,
         };
-        let marked_side = planar_cross(axis, vector_between(marked_endpoint_point, marked_point));
+        let marked_side = planar_cross(axis, marked_point - marked_endpoint_point);
         if marked_side.abs() <= COORDINATE_EPSILON {
             return None;
         }
@@ -738,9 +721,9 @@ fn axis_orientation_from_wedge(
         )?;
     }
 
-    let left_vector = vector_between(left_point, left_reference_point);
-    let right_vector = vector_between(right_point, right_reference_point);
-    let handedness = dot(axis, cross(left_vector, right_vector));
+    let left_vector = left_reference_point - left_point;
+    let right_vector = right_reference_point - right_point;
+    let handedness = axis.dot(left_vector.cross(right_vector));
     if handedness.abs() <= COORDINATE_EPSILON {
         return None;
     }
@@ -752,14 +735,14 @@ fn axis_orientation_from_wedge(
 }
 
 fn axis_reference_z_offset(
-    axis: Point3,
+    axis: Vector3,
     endpoint_point: Point3,
     reference_point: Point3,
     same_endpoint_as_mark: bool,
     marked_side: f64,
     marked_z: f64,
 ) -> Option<f64> {
-    let side = planar_cross(axis, vector_between(endpoint_point, reference_point));
+    let side = planar_cross(axis, reference_point - endpoint_point);
     if side.abs() <= COORDINATE_EPSILON {
         return None;
     }
@@ -788,7 +771,7 @@ fn assemble_directional_double_bonds(
         let right = bond.b();
         let left_marks = directional_marks_for_endpoint(molecule, source_marks, left, bond_id);
         let right_marks = directional_marks_for_endpoint(molecule, source_marks, right, bond_id);
-        if has_double_bond_element(molecule, bond_id) {
+        if has_double_bond_stereo(molecule, bond_id) {
             used_marks.extend(left_marks.iter().map(|mark| mark.bond));
             used_marks.extend(right_marks.iter().map(|mark| mark.bond));
             continue;
@@ -840,7 +823,7 @@ fn assemble_unknown_double_bonds(
         if bond.order != BondOrder::Double {
             continue;
         }
-        if has_double_bond_element(molecule, mark.bond) {
+        if has_double_bond_stereo(molecule, mark.bond) {
             used_marks.push(mark.bond);
             continue;
         }
@@ -912,7 +895,7 @@ fn source_double_bond_endpoint_carriers(
             }
         }
     }
-    carriers.sort_by_key(carrier_key);
+    carriers.sort_by_key(|carrier| carrier.canonical_order_key());
     // A virtual endpoint carrier is accepted only when the represented atom
     // explicitly declares exactly one hydrogen.
     if molecule
@@ -1084,104 +1067,14 @@ fn invert_directional_mark(kind: SourceStereoBondMarkKind) -> SourceStereoBondMa
     }
 }
 
-fn has_double_bond_element(molecule: &Molecule, bond: BondId) -> bool {
-    molecule.stereo_elements().any(|(_, element)| {
-        matches!(
-            &element.kind,
-            StereoElementKind::DoubleBond(stereo) if stereo.bond == bond
-        )
-    })
-}
-
 fn source_marks_in_bond_order(source_marks: &[SourceStereoBondMark]) -> Vec<&SourceStereoBondMark> {
     let mut marks = source_marks.iter().collect::<Vec<_>>();
     marks.sort_by_key(|mark| mark.bond);
     marks
 }
 
-fn has_tetrahedral_element(molecule: &Molecule, center: AtomId) -> bool {
-    molecule.stereo_elements().any(|(_, element)| {
-        matches!(
-            &element.kind,
-            StereoElementKind::Tetrahedral(stereo) if stereo.center == center
-        )
-    })
-}
-
-fn has_axis_element(molecule: &Molecule, axis: BondId) -> bool {
-    molecule.stereo_elements().any(|(_, element)| {
-        matches!(
-            &element.kind,
-            StereoElementKind::Axis(stereo) if stereo.axis == axis
-        )
-    })
-}
-
-fn tetrahedral_points(
-    conformer: &Conformer,
-    center: AtomId,
-    carriers: &[AtomId],
-) -> Option<[Point3; 5]> {
-    (carriers.len() == 4).then_some(())?;
-    Some([
-        conformer.position_value(center)?,
-        conformer.position_value(carriers[0])?,
-        conformer.position_value(carriers[1])?,
-        conformer.position_value(carriers[2])?,
-        conformer.position_value(carriers[3])?,
-    ])
-}
-
-fn tetrahedral_orientation_from_points(points: [Point3; 5]) -> Option<TetrahedralOrientation> {
-    let a = vector_between(points[4], points[1]);
-    let b = vector_between(points[4], points[2]);
-    let c = vector_between(points[4], points[3]);
-    let volume = dot(cross(a, b), c);
-    if volume.abs() <= COORDINATE_EPSILON {
-        return None;
-    }
-    Some(if volume > 0.0 {
-        TetrahedralOrientation::Clockwise
-    } else {
-        TetrahedralOrientation::CounterClockwise
-    })
-}
-
-fn coordinates_are_planar(points: &[Point3]) -> bool {
-    let Some(first) = points.first() else {
-        return false;
-    };
-    points
-        .iter()
-        .all(|point| (point.z - first.z).abs() <= COORDINATE_EPSILON)
-}
-
-fn vector_between(origin: Point3, point: Point3) -> Point3 {
-    Point3::new(point.x - origin.x, point.y - origin.y, point.z - origin.z)
-}
-
-fn planar_cross(a: Point3, b: Point3) -> f64 {
+fn planar_cross(a: Vector3, b: Vector3) -> f64 {
     a.x * b.y - a.y * b.x
-}
-
-fn cross(a: Point3, b: Point3) -> Point3 {
-    Point3::new(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    )
-}
-
-fn dot(a: Point3, b: Point3) -> f64 {
-    a.x * b.x + a.y * b.y + a.z * b.z
-}
-
-fn carrier_key(carrier: &StereoCarrier) -> (u8, u32) {
-    match carrier {
-        StereoCarrier::Atom(atom) => (0, atom.raw()),
-        StereoCarrier::ImplicitHydrogen => (1, u32::MAX),
-        StereoCarrier::ImplicitLonePair => (2, u32::MAX),
-    }
 }
 
 const COORDINATE_EPSILON: f64 = 1.0e-8;

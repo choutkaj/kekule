@@ -1,72 +1,27 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::small::SmallMolecule;
-use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::Topology;
 use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
 use kekule_traj::io::dcd::{
     DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
 };
-use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
+use kekule_traj::io::TrajectoryIoLimits;
 use kekule_traj::{
-    AtomOrderAssertion, FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind,
-    TrajectoryError, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryCodecErrorKind, TrajectoryError,
+    TrajectoryReader, TrajectoryWriter,
 };
 use sha2::{Digest, Sha256};
 
 mod support;
-use support::{buffer_snapshot, GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure};
+use support::{
+    binding, buffer_snapshot, codec_kind, topology as build_topology, x_coordinates as xs,
+    GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure,
+};
 
 fn topology() -> Arc<Topology> {
-    let mut graph = Molecule::builder();
-    let mut atoms = Vec::new();
-    for symbol in ["C", "H", "O"] {
-        atoms.push(
-            graph
-                .add_atom(Atom::new(Element::from_symbol(symbol).unwrap()))
-                .unwrap(),
-        );
-    }
-    graph
-        .add_bond(atoms[0], atoms[1], BondOrder::Single)
-        .unwrap();
-    graph
-        .add_bond(atoms[0], atoms[2], BondOrder::Single)
-        .unwrap();
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
-    let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    Arc::new(builder.build().unwrap())
-}
-
-fn binding(topology: &Arc<Topology>) -> TrajectoryTopologyBinding {
-    TrajectoryTopologyBinding::new(
-        Arc::clone(topology),
-        AtomOrderAssertion::assert_file_uses_topology_order(topology),
-    )
-    .unwrap()
-}
-
-fn codec_kind(error: &TrajectoryError) -> Option<TrajectoryCodecErrorKind> {
-    match error {
-        TrajectoryError::Codec(context) => Some(context.kind()),
-        _ => None,
-    }
-}
-
-fn xs(buffer: &FrameBuffer) -> Vec<f64> {
-    buffer
-        .positions()
-        .values()
-        .value()
-        .iter()
-        .map(|point| point.x)
-        .collect()
+    build_topology(&["C", "H", "O"], &[(0, 1), (0, 2)])
 }
 
 fn set_frame(

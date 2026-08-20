@@ -7,9 +7,13 @@ use crate::chemistry::{
 };
 use crate::core::*;
 use crate::geometry::Point3;
-use crate::io::{MolWriteError, MolfileParseOptions, SdfParseError};
+use crate::io::{MolWriteError, MolfileParseOptions, MolfileVersion, SdfParseError};
 use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
+
+use super::structure_documents::{
+    apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct V3000Syntax {
@@ -447,37 +451,27 @@ fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, S
             format!("unsupported V3000 atom option `{option}`"),
         ));
     }
-    let element = Element::from_symbol(&record.symbol).ok_or_else(|| {
-        SdfParseError::new(
-            1,
-            record.line,
-            format!("unsupported element symbol `{}`", record.symbol),
-        )
-    })?;
-    let mut atom = Atom::new(element);
-    atom.formal_charge = i8::try_from(record.formal_charge)
-        .map_err(|_| SdfParseError::new(1, record.line, "formal charge is outside i8 range"))?;
-    atom.isotope = match record.isotope {
-        Some(value) if value > 0 => Some(
-            u16::try_from(value)
-                .map_err(|_| SdfParseError::new(1, record.line, "isotope is outside u16 range"))?,
-        ),
-        _ => None,
-    };
-    atom.radical = record.radical.map(|radical| match radical {
+    let radical = record.radical.map(|radical| match radical {
         V3000RadicalSyntax::Singlet => AtomRadical::Singlet,
         V3000RadicalSyntax::Doublet => AtomRadical::Doublet,
         V3000RadicalSyntax::Triplet => AtomRadical::Triplet,
     });
     let explicit = interpret_v3000_count_declaration(record.hydrogen_count, "HCOUNT", record.line)?
         .unwrap_or(0);
-    atom.hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
+    let hydrogens = if record.hydrogen_count.is_some() || record.valence.is_some() {
         HydrogenDeclaration::Fixed(explicit)
     } else {
         HydrogenDeclaration::Infer { explicit }
     };
-    atom.atom_map = record.atom_map;
-    Ok(atom)
+    interpret_molfile_atom_fields(
+        &record.symbol,
+        record.formal_charge,
+        record.isotope,
+        radical,
+        hydrogens,
+        record.atom_map,
+        record.line,
+    )
 }
 
 fn interpret_v3000_bond_order(
@@ -530,62 +524,22 @@ fn apply_v3000_declared_hydrogens(
         let atom_id = *atom_ids.get(&record.index).ok_or_else(|| {
             SdfParseError::new(1, record.line, "V3000 atom index was not interpreted")
         })?;
-        let represented_valence = molecule
-            .incident_bonds(atom_id)
-            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?
-            .try_fold(0usize, |total, (bond_id, bond)| {
-                if source_aromatic_bonds.contains(&bond_id) {
-                    return Err(SdfParseError::new(
-                        1,
-                        record.line,
-                        "declared V3000 valence cannot determine hydrogens for this bond order",
-                    ));
-                }
-                let contribution =
-                    match bond.order {
-                        BondOrder::Single => 1,
-                        BondOrder::Double => 2,
-                        BondOrder::Triple => 3,
-                        BondOrder::Zero | BondOrder::Dative => 0,
-                        BondOrder::Quadruple => return Err(SdfParseError::new(
-                            1,
-                            record.line,
-                            "declared V3000 valence cannot determine hydrogens for this bond order",
-                        )),
-                    };
-                Ok(total + contribution)
-            })?;
-        let declared_hydrogens = usize::from(declared_valence)
-            .checked_sub(represented_valence)
-            .ok_or_else(|| {
-                SdfParseError::new(
-                    1,
-                    record.line,
-                    "declared V3000 valence is below represented bond valence",
-                )
-            })?;
-        if record.hydrogen_count.is_some() {
-            let explicit = molecule
+        let declared_hydrogens = record.hydrogen_count.map(|_| {
+            molecule
                 .atom(atom_id)
                 .expect("interpreted V3000 atom remains live")
                 .hydrogens
-                .explicit_count();
-            if declared_hydrogens != usize::from(explicit) {
-                return Err(SdfParseError::new(
-                    1,
-                    record.line,
-                    "V3000 HCOUNT and VAL declarations conflict",
-                ));
-            }
-            continue;
-        }
-        let explicit = u8::try_from(declared_hydrogens).map_err(|_| {
-            SdfParseError::new(1, record.line, "declared V3000 hydrogen count exceeds u8")
-        })?;
-        molecule
-            .atom_mut(atom_id)
-            .expect("interpreted V3000 atom remains live")
-            .hydrogens = HydrogenDeclaration::Fixed(explicit);
+                .explicit_count()
+        });
+        apply_molfile_declared_valence(
+            molecule,
+            atom_id,
+            declared_valence,
+            declared_hydrogens,
+            source_aromatic_bonds,
+            MolfileVersion::V3000,
+            record.line,
+        )?;
     }
     Ok(())
 }
@@ -977,14 +931,4 @@ fn split_v3000_option(field: &str) -> Option<(&str, &str)> {
 fn parse_finite_f64(value: &str) -> Option<f64> {
     let parsed: f64 = value.parse().ok()?;
     parsed.is_finite().then_some(parsed)
-}
-
-fn checked_line_number(
-    record: usize,
-    start_line: usize,
-    offset: usize,
-) -> std::result::Result<usize, SdfParseError> {
-    start_line
-        .checked_add(offset)
-        .ok_or_else(|| SdfParseError::new(record, start_line, "line number overflow"))
 }
