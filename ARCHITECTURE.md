@@ -74,6 +74,86 @@ blur their meanings.
 
 ## Molecular chemistry
 
+### Core and domain-wrapper roles
+
+`Molecule`, `SmallMolecule`, and `MacroMolecule` are distinct semantic layers,
+not three interchangeable names for the same API surface:
+
+```text
+Molecule
+  canonical connected represented chemistry shared by every molecular domain
+
+SmallMolecule
+  Molecule + the ordinary small-molecule/cheminformatics workflow contract
+
+MacroMolecule
+  Molecule + one required, validated SMCRA hierarchy and its biological
+  structural-identity contract
+```
+
+`SmallMolecule` and `MacroMolecule` describe domain capabilities rather than an
+atom-count threshold. A large connected non-hierarchical chemical entity may
+remain a `SmallMolecule`; a `MacroMolecule` is distinguished by its validated
+hierarchical biological identity, not merely by size. `Molecule` remains a
+publicly usable chemistry kernel and is not a partially classified wrapper.
+
+The wrappers use composition to make their capabilities and invariants explicit.
+`Molecule` does not contain an optional SMCRA hierarchy or other optional state
+whose presence would determine at runtime which domain API is valid. Every
+published `MacroMolecule` has a hierarchy consistent with its graph, while a
+`SmallMolecule` neither carries nor implies SMCRA semantics. Conversion that
+removes wrapper-specific meaning is explicit and must not silently discard a
+macromolecular hierarchy.
+
+Public operations accept the narrowest semantic object that contains all state
+required to define them correctly:
+
+- operations determined solely by canonical represented chemistry or installed
+  fundamental perception operate on `Molecule`;
+- small-molecule conventions and workflows operate on `SmallMolecule` or in a
+  small-molecule module;
+- coordinate-independent hierarchy operations operate on `MacroMolecule` or in
+  a biological-structure module;
+- coordinate-dependent molecular analyses operate on `Model`/`ModelView` (or
+  the corresponding ensemble/trajectory abstraction), even when their subject
+  matter is specifically macromolecular;
+- operations over molecule instances or system-wide relationships operate on
+  `Topology` or a topology-bound structure.
+
+For example, formal charge, graph connectivity, represented stereochemistry,
+and fundamental perception are universal molecular chemistry. SMCRA traversal
+and coordinated residue/chain editing are macromolecular. DSSP assignment is
+macromolecular in subject matter but coordinate-dependent, so it consumes a
+model view and produces a separate result rather than becoming stored
+`MacroMolecule` state.
+
+Format parsing remains format-specific rather than a responsibility of the core
+graph. Domain-wrapper constructors may provide ergonomic composed workflows
+when their output domain, component cardinality, and interpretation policy are
+unambiguous. Thus a one-component SMILES convenience may construct a
+`SmallMolecule`, while lower-level SMILES parsing and interpretation retain
+their explicit document/component behavior. A future FASTA convenience belongs
+to the macromolecular workflow, but sequence-to-chemistry construction must
+still expose choices needed to publish an exact canonical graph, such as
+residue templates and terminal chemistry.
+
+The wrappers may forward a deliberately consistent set of common read-only
+inspection methods, such as atom count, bond count, and formal charge, for
+ordinary ergonomics. Complete core access remains explicit through the wrapped
+`Molecule`; the wrappers do not implicitly dereference to `Molecule`, because
+implicit method inheritance would obscure which semantic layer owns an
+operation. Mutation must preserve the invariant of the containing layer:
+small-molecule graph edits preserve the `Molecule` publication invariants,
+while macromolecular graph and hierarchy edits are coordinated and
+transactional.
+
+Domain-specific calculated products do not become wrapper attributes merely
+because they are commonly used in that domain. Fingerprints, descriptor sets,
+partial charges, force-field types, DSSP assignments, solvent accessibility,
+and similar task-specific results remain separate derived objects unless this
+architecture explicitly promotes one to foundational represented or perception
+state.
+
 ### `Molecule`
 
 `Molecule` is the canonical boundary for one connected represented chemical
@@ -397,6 +477,11 @@ allocations.
 
 `Topology` does not own coordinates, velocities, forces, cell vectors, energies,
 trajectory state, or prepared backend objects.
+
+A topology may contain exactly one molecule instance or many molecule
+instances. Its role is to provide the immutable system-level definition and
+instance-qualified identity; use of `Topology` does not imply a multi-molecule
+system.
 
 A `Topology` definition may contain one `Molecule` once and instantiate it many
 times. Definition-local IDs remain stable within the definition; system-level
