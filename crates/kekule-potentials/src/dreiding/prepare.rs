@@ -300,7 +300,7 @@ fn system_from_selection(
         let point = reference
             .position(atom_id)
             .expect("complete reference positions")
-            .into_value();
+            .to_value();
         system
             .atoms
             .push(ForgeAtom::new(element, [point.x, point.y, point.z]));

@@ -467,7 +467,7 @@ impl<R: Read + Seek> TrrReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryError> {
+    pub fn to_indexed(mut self) -> Result<IndexedTrrReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {
@@ -940,7 +940,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             let factor = MODEL_LENGTH_UNIT
                 .conversion_factor_to(NANOMETER)
                 .map_err(|error| writer_unit(&self.source_label, "cell", error))?;
-            Some((cell.vectors().into_value(), factor))
+            Some((cell.vectors().to_value(), factor))
         } else {
             None
         };

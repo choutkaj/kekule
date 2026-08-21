@@ -90,7 +90,7 @@ fn smcra_hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
 fn macro_molecule_validates_atom_site_atom_ids() {
     let mut builder = MacroMolecule::builder();
     let atom = builder
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let chain = builder
@@ -127,7 +127,7 @@ fn macro_molecule_validates_atom_site_atom_ids() {
 fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
     let mut builder = MacroMolecule::builder();
     let atom = builder
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
@@ -138,7 +138,7 @@ fn macro_molecule_with_valid_atom_site() -> (MacroMolecule, AtomId) {
         )
         .unwrap();
     builder
-        .graph_mut()
+        .as_molecule_mut()
         .add_conformer(conformer)
         .expect("valid conformer");
 
@@ -169,7 +169,7 @@ fn macro_molecule_validates_separately_from_small_molecule_chemistry() {
     assert_eq!(report.atom_sites_checked, 1);
     assert_eq!(report.conformers_checked, 1);
     assert_eq!(report.coordinates_checked, 1);
-    assert_eq!(macro_mol.graph().bond_count(), 0);
+    assert_eq!(macro_mol.as_molecule().bond_count(), 0);
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn macro_molecule_validation_rejects_cross_layer_inconsistency() {
         .add_atom_site(residue, AtomId::new(0), SmcraAtomSiteMetadata::default())
         .expect("hierarchy accepts graph-external atom ids");
     assert_eq!(
-        MacroMolecule::try_from_parts(graph, hierarchy).expect_err("graph-external atom fails"),
+        MacroMolecule::from_parts(graph, hierarchy).expect_err("graph-external atom fails"),
         MacroValidateError::InvalidAtomSiteAtom {
             site,
             atom: AtomId::new(0)
@@ -198,7 +198,7 @@ fn macro_molecule_editor_is_transactional() {
     let before = macro_mol.clone();
     let mut editor = macro_mol.edit();
     editor
-        .graph_mut()
+        .as_molecule_mut()
         .delete_atom(atom)
         .expect("staged graph atom exists");
     assert_eq!(
@@ -267,21 +267,21 @@ fn deterministic_parser_fuzz_smoke_is_panic_free() {
 fn wrappers_share_the_core_molecule_graph() {
     let mut small = SmallMolecule::default();
     let a = small
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let b = small
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(oxygen())
         .expect("atom identifier capacity");
     small
-        .graph_mut()
+        .as_molecule_mut()
         .add_bond(a, b, BondOrder::Single)
         .expect("small molecule graph should accept bonds");
 
     let mut builder = MacroMolecule::builder();
     let c = builder
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let chain = builder.hierarchy_mut().add_chain("A", None).expect("chain");
@@ -294,11 +294,11 @@ fn wrappers_share_the_core_molecule_graph() {
         .expect("site");
     let macro_mol = builder.build().expect("checked macro molecule");
 
-    assert_eq!(small.graph().atom_count(), 2);
-    assert_eq!(small.graph().bond_count(), 1);
+    assert_eq!(small.as_molecule().atom_count(), 2);
+    assert_eq!(small.as_molecule().bond_count(), 1);
     assert_eq!(
         macro_mol
-            .graph()
+            .as_molecule()
             .atom(c)
             .expect("macro atom exists")
             .element

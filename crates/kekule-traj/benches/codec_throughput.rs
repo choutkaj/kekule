@@ -106,7 +106,7 @@ fn benchmark_xyz(profile: Profile) -> Result<(), Box<dyn Error>> {
                 "bench.xyz",
             )
             .expect("benchmark XYZ reader")
-            .into_indexed()
+            .to_indexed()
             .expect("benchmark XYZ index")
         },
     )
@@ -145,7 +145,7 @@ fn benchmark_dcd(profile: Profile) -> Result<(), Box<dyn Error>> {
                 "bench.dcd",
             )
             .expect("benchmark DCD reader")
-            .into_indexed()
+            .to_indexed()
             .expect("benchmark DCD index")
         },
     )
@@ -184,7 +184,7 @@ fn benchmark_trr(profile: Profile) -> Result<(), Box<dyn Error>> {
                 "bench.trr",
             )
             .expect("benchmark TRR reader")
-            .into_indexed()
+            .to_indexed()
             .expect("benchmark TRR index")
         },
     )
@@ -223,7 +223,7 @@ fn benchmark_xtc(profile: Profile) -> Result<(), Box<dyn Error>> {
                 "bench.xtc",
             )
             .expect("benchmark XTC reader")
-            .into_indexed()
+            .to_indexed()
             .expect("benchmark XTC index")
         },
     )
@@ -307,7 +307,7 @@ fn topology(atom_count: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
         }
         previous = Some(atom);
     }
-    let molecule = SmallMolecule::from_graph(molecule.build()?);
+    let molecule = SmallMolecule::from_molecule(molecule.build()?);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;

@@ -22,6 +22,8 @@
 //! [`FrameBuffer::model_view`] without copying coordinates.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
+// Kekule consistently names owned conversions `to_*`, including consuming ones.
+#![allow(clippy::wrong_self_convention)]
 
 mod trajectory;
 

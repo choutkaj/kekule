@@ -287,7 +287,7 @@ impl<T> Quantity<T> {
         &mut self.value
     }
 
-    pub fn into_value(self) -> T {
+    pub fn to_value(self) -> T {
         self.value
     }
 
@@ -328,7 +328,7 @@ where
     }
 
     pub fn value_in(&self, unit: Unit) -> Result<T, UnitError> {
-        self.to(unit).map(Self::into_value)
+        self.to(unit).map(Self::to_value)
     }
 }
 
@@ -336,7 +336,7 @@ impl<T> Quantity<T>
 where
     T: ScaleValue,
 {
-    pub fn into_unit(self, unit: Unit) -> Result<Self, UnitError> {
+    pub fn to_unit(self, unit: Unit) -> Result<Self, UnitError> {
         let factor = self.unit.conversion_factor_to(unit)?;
         Ok(Self::new(self.value.scaled(factor), unit))
     }

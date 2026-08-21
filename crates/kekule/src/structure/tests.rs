@@ -12,7 +12,7 @@ fn one_atom_topology() -> Arc<Topology> {
     graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule).unwrap();
     builder
@@ -30,7 +30,7 @@ fn two_bond_instances_topology() -> (Arc<Topology>, MoleculeInstanceId, Molecule
         .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
         .unwrap();
     graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+    let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule).unwrap();
     let first = builder
@@ -119,7 +119,7 @@ fn model_requires_exact_topology_and_views_do_not_copy_coordinates() {
 fn model_and_view_share_qualified_hierarchy_navigation_without_copying() {
     let mut macro_builder = MacroMolecule::builder();
     let atom = macro_builder
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();
     let chain = macro_builder.hierarchy_mut().add_chain("A", None).unwrap();
@@ -800,7 +800,7 @@ fn ensemble_from_conformers_preserves_source_order_without_copying_conformers_to
         .set_position(atom, Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM))
         .unwrap();
     let second = graph.add_conformer(second).unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
 
     let ensemble = Ensemble::from_small_molecule_conformers(&molecule, [second, first]).unwrap();
     assert_eq!(

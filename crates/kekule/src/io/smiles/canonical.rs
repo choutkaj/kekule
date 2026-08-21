@@ -18,8 +18,8 @@ use super::write::{
 pub fn write_canonical_smiles(
     molecule: &SmallMolecule,
 ) -> std::result::Result<String, MolWriteError> {
-    validate_smiles_writeable(molecule.graph(), StereoWriteMode::Ignore)?;
-    let normalized = canonical_nonisomeric_graph(molecule.graph())?;
+    validate_smiles_writeable(molecule.as_molecule(), StereoWriteMode::Ignore)?;
+    let normalized = canonical_nonisomeric_graph(molecule.as_molecule())?;
     let mol = &normalized;
     let ranking = canonical_atom_ranking(mol);
     let mut components = Vec::new();

@@ -12,7 +12,7 @@ pub fn interpret_molfile_document(
     let interpretation = raw::interpret_molfile_document(document)?;
     interpretation
         .molecule()
-        .graph()
+        .as_molecule()
         .validate_connected()
         .map_err(|error| MolfileInterpretError {
             line: document

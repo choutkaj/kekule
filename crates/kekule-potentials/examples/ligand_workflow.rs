@@ -12,24 +12,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Parse and canonically interpret one SDF record without perceiving it.
     let input = fs::read_to_string("examples/ligand.sdf")?;
     let document = sdf::parse_str(&input, SdfParseOptions::default())?;
-    let mut records = sdf::interpret(&document)?.into_records();
+    let mut records = sdf::interpret(&document)?.to_records();
     assert_eq!(records.len(), 1, "expected one ligand record");
 
     // Preserve the record metadata while working on its molecule.
     let record = records.pop().expect("record count was checked");
     let title = record.title().to_owned();
     let data_fields = record.data_fields().to_vec();
-    let mut ligand = record.into_molecule();
+    let mut ligand = record.to_molecule();
     ligand.perceive()?;
 
     // Inspect the canonical, perceived ligand before modeling it.
     println!("atoms: {}", ligand.atom_count());
     println!("bonds: {}", ligand.bond_count());
-    println!("formal charge: {}", ligand.graph().formal_charge());
+    println!("formal charge: {}", ligand.formal_charge());
 
     // Build a fixed-topology model from the ligand's first conformer.
     let conformer = ligand
-        .graph()
+        .as_molecule()
         .first_conformer()
         .map(|(id, _)| id)
         .expect("the SDF record has 3D coordinates");
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Copy the optimized instance positions back to the source conformer.
     minimized
         .model
-        .instance_to_conformer(instance, ligand.graph_mut(), conformer)?;
+        .instance_to_conformer(instance, ligand.as_molecule_mut(), conformer)?;
 
     // Reassemble the original record metadata and write the optimized SDF.
     let output = sdf::write_v2000(&[SdfRecord::new(title, ligand, data_fields)])?;

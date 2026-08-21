@@ -649,7 +649,7 @@ mod tests {
         let document = crate::io::parse_smiles_document(source).expect("parses");
         let (mut molecule, report) = crate::io::interpret_smiles_document(&document)
             .expect("interprets")
-            .into_parts()
+            .to_parts()
             .expect("one component");
         let explicit_single_offset = source.find('-').expect("explicit single marker") + 1;
         let protected_single = report
@@ -659,32 +659,32 @@ mod tests {
             .map(|mapping| mapping.bond())
             .expect("explicit aromatic fusion single mapping");
         assert_eq!(
-            molecule.graph().bond(protected_single).unwrap().order,
+            molecule.as_molecule().bond(protected_single).unwrap().order,
             BondOrder::Single
         );
-        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
+        let valence = perceive_valence(molecule.as_molecule_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
-        perceive_ring_set(molecule.graph_mut()).expect("rings");
+        perceive_ring_set(molecule.as_molecule_mut()).expect("rings");
 
-        perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        perceive_aromaticity(molecule.as_molecule_mut(), AromaticityModel::RdkitLike)
             .expect("fused aromaticity");
 
         let protected = molecule
-            .graph()
+            .as_molecule()
             .bond(protected_single)
             .expect("protected fusion bond");
         assert_eq!(protected.order, BondOrder::Single);
         assert_eq!(
-            molecule.graph().bond_is_aromatic(protected_single),
+            molecule.as_molecule().bond_is_aromatic(protected_single),
             Ok(Some(false))
         );
         assert_eq!(
             molecule
-                .graph()
+                .as_molecule()
                 .atoms()
                 .filter(|(atom_id, atom)| {
                     atom.element.symbol() != "O"
-                        && molecule.graph().atom_is_aromatic(*atom_id) == Ok(Some(true))
+                        && molecule.as_molecule().atom_is_aromatic(*atom_id) == Ok(Some(true))
                 })
                 .count(),
             9
@@ -695,28 +695,28 @@ mod tests {
     fn canonical_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
         let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
         let mut molecule = crate::small::SmallMolecule::from_smiles(input).expect("dye parses");
-        assert!(!molecule.graph().perception().has_aromaticity());
-        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
+        assert!(!molecule.as_molecule().perception().has_aromaticity());
+        let valence = perceive_valence(molecule.as_molecule_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
         let valence_nitrogens = molecule
-            .graph()
+            .as_molecule()
             .atoms()
             .filter(|(_, atom)| atom.element.symbol() == "N")
-            .map(|(atom_id, _)| molecule.graph().implicit_hydrogens(atom_id))
+            .map(|(atom_id, _)| molecule.as_molecule().implicit_hydrogens(atom_id))
             .collect::<Vec<_>>();
         assert_eq!(valence_nitrogens, vec![Ok(Some(1)), Ok(Some(1))]);
-        assert!(!molecule.graph().perception().has_aromaticity());
-        perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        assert!(!molecule.as_molecule().perception().has_aromaticity());
+        perceive_aromaticity(molecule.as_molecule_mut(), AromaticityModel::RdkitLike)
             .expect("aromaticity");
 
         let nitrogens = molecule
-            .graph()
+            .as_molecule()
             .atoms()
             .filter(|(_, atom)| atom.element.symbol() == "N")
             .map(|(atom_id, _)| {
                 (
-                    molecule.graph().atom_is_aromatic(atom_id),
-                    molecule.graph().implicit_hydrogens(atom_id),
+                    molecule.as_molecule().atom_is_aromatic(atom_id),
+                    molecule.as_molecule().implicit_hydrogens(atom_id),
                 )
             })
             .collect::<Vec<_>>();
@@ -734,39 +734,39 @@ mod tests {
         let mut molecule = crate::small::SmallMolecule::from_smiles("C1=CC(=CC=[C]1)N")
             .expect("aminophenyl radical parses");
         molecule
-            .graph_mut()
+            .as_molecule_mut()
             .atom_mut(AtomId::new(5))
             .expect("source-selected radical carbon")
             .radical = Some(AtomRadical::Doublet);
-        let valence = perceive_valence(molecule.graph_mut(), ValenceModel::RdkitLike);
+        let valence = perceive_valence(molecule.as_molecule_mut(), ValenceModel::RdkitLike);
         assert!(valence.is_ok(), "{valence:#?}");
-        perceive_ring_set(molecule.graph_mut()).expect("ring perception");
+        perceive_ring_set(molecule.as_molecule_mut()).expect("ring perception");
         let radical = molecule
-            .graph()
+            .as_molecule()
             .atoms()
             .find_map(|(id, atom)| atom.radical.is_some().then_some(id))
             .expect("radical carbon");
-        let radical_atom = molecule.graph().atom(radical).expect("radical atom");
-        let donor = rdkit_localized_atom_donor_type(molecule.graph(), radical, radical_atom);
+        let radical_atom = molecule.as_molecule().atom(radical).expect("radical atom");
+        let donor = rdkit_localized_atom_donor_type(molecule.as_molecule(), radical, radical_atom);
         assert_eq!(donor, AromaticElectronDonorType::One);
         assert!(atom_is_rdkit_aromatic_candidate_for_donor(
-            molecule.graph(),
+            molecule.as_molecule(),
             radical,
             radical_atom,
             donor,
             RdkitAromaticCandidateOptions::default(),
         ));
 
-        perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+        perceive_aromaticity(molecule.as_molecule_mut(), AromaticityModel::RdkitLike)
             .expect("aromaticity perception");
 
         assert_eq!(
             molecule
-                .graph()
+                .as_molecule()
                 .atoms()
                 .filter(|(atom_id, atom)| {
                     atom.element.symbol() == "C"
-                        && molecule.graph().atom_is_aromatic(*atom_id) == Ok(Some(true))
+                        && molecule.as_molecule().atom_is_aromatic(*atom_id) == Ok(Some(true))
                 })
                 .count(),
             6
@@ -780,8 +780,8 @@ mod tests {
                 crate::small::SmallMolecule::from_smiles(smiles).expect("carbocation parses");
             molecule.perceive().expect("carbocation perceives");
             assert!(
-                molecule.graph().atom_ids().all(|atom_id| {
-                    molecule.graph().atom_is_aromatic(atom_id) == Ok(Some(false))
+                molecule.as_molecule().atom_ids().all(|atom_id| {
+                    molecule.as_molecule().atom_is_aromatic(atom_id) == Ok(Some(false))
                 }),
                 "{smiles}"
             );

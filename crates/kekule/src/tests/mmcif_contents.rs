@@ -1355,7 +1355,7 @@ covale A N 1 A CA 1 doub
         MmcifInterpretOptions::default(),
     )
     .unwrap()
-    .into_parts();
+    .to_parts();
     let topology = original.shared_topology();
     let first_atom = topology.atom_ids()[0];
     original
@@ -1462,7 +1462,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_incomplete_hierarchy() {
         .add_residue(chain, "GLY", Some(1), None, None)
         .unwrap();
     assert_eq!(
-        MacroMolecule::try_from_parts(graph, hierarchy)
+        MacroMolecule::from_parts(graph, hierarchy)
             .expect_err("incomplete hierarchy must not construct"),
         crate::bio::MacroValidateError::MissingAtomSiteForAtom { atom }
     );
@@ -1542,7 +1542,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
             )
             .unwrap();
     }
-    let macro_molecule = MacroMolecule::try_from_parts(graph, hierarchy).unwrap();
+    let macro_molecule = MacroMolecule::from_parts(graph, hierarchy).unwrap();
     let mut builder = ModelBuilder::new();
     builder
         .add_macro_molecule(&macro_molecule, conformer)
@@ -1587,7 +1587,7 @@ fn small_model_with_bond(order: BondOrder) -> Model {
         )
         .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let mut builder = ModelBuilder::new();
     builder.add_small_molecule(&molecule, conformer).unwrap();
     builder.build().unwrap()
@@ -1606,7 +1606,7 @@ fn small_model_with_metadata(metadata: MoleculeInstanceMetadata) -> Model {
         )
         .unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let mut builder = ModelBuilder::new();
     builder
         .add_small_molecule_with_metadata(&molecule, conformer, metadata)

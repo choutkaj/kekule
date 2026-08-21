@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         previous = Some(atom);
     }
-    let molecule = SmallMolecule::from_graph(molecule.build()?);
+    let molecule = SmallMolecule::from_molecule(molecule.build()?);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;

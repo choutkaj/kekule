@@ -43,7 +43,7 @@ fn molecule(
     }
     let mut graph = graph.build().expect("connected test molecule");
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    (SmallMolecule::from_graph(graph), conformer)
+    (SmallMolecule::from_molecule(graph), conformer)
 }
 
 fn water(offset: f64) -> (SmallMolecule, kekule::core::ConformerId) {
@@ -97,7 +97,7 @@ fn qeq_is_prepared_per_molecule_instance() {
                 potential
                     .partial_charge(InstanceAtomId::new(instance, AtomId::new(atom)))
                     .unwrap()
-                    .into_value()
+                    .to_value()
             })
             .sum::<f64>();
         assert!(total.abs() < 1.0e-8);
@@ -132,7 +132,7 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
 
     let energies = ensemble
         .views()
-        .map(|view| potential.evaluate(view).unwrap().energy().into_value())
+        .map(|view| potential.evaluate(view).unwrap().energy().to_value())
         .collect::<Vec<_>>();
     assert_eq!(energies.len(), 2);
     assert!(energies.iter().all(|energy| energy.is_finite()));
@@ -288,7 +288,7 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
         .unwrap();
     let mut graph = graph.build().expect("connected water");
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
 
     let potential = DreidingPotential::prepare(
@@ -308,12 +308,12 @@ fn eligible_macro_molecules_are_supported() {
     let residue = hierarchy
         .add_residue(chain, "HOH", None, None, None)
         .unwrap();
-    for atom in small.graph().atom_ids() {
+    for atom in small.as_molecule().atom_ids() {
         hierarchy
             .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
             .unwrap();
     }
-    let macromolecule = MacroMolecule::try_from_parts(small.graph().clone(), hierarchy).unwrap();
+    let macromolecule = MacroMolecule::from_parts(small.as_molecule().clone(), hierarchy).unwrap();
     let model = Model::from_macro_molecule(&macromolecule, conformer).unwrap();
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
@@ -344,7 +344,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
         .unwrap();
     let mut graph = graph.build().expect("single atom molecule");
     let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
@@ -368,7 +368,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
         .unwrap();
     let mut graph = graph.build().expect("single atom molecule");
     let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(

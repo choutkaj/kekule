@@ -326,10 +326,10 @@ impl Model {
     ///
     /// let mut ligand_builder = Molecule::builder();
     /// ligand_builder.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
-    /// let ligand = SmallMolecule::from_graph(ligand_builder.build()?);
+    /// let ligand = SmallMolecule::from_molecule(ligand_builder.build()?);
     /// let mut water_builder = Molecule::builder();
     /// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-    /// let water = SmallMolecule::from_graph(water_builder.build()?);
+    /// let water = SmallMolecule::from_molecule(water_builder.build()?);
     /// let mut builder = TopologyBuilder::new();
     /// let ligand_definition = builder.add_small_molecule_definition(&ligand)?;
     /// let water_definition = builder.add_small_molecule_definition(&water)?;
@@ -696,12 +696,12 @@ impl ModelBuilder {
         conformer: ConformerId,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.graph().atom_count() == 0 {
+        if molecule.as_molecule().atom_count() == 0 {
             return Err(ModelBuildError::Topology(
                 TopologyBuildError::EmptyMoleculeDefinition,
             ));
         }
-        let staged = stage_conformer_positions(molecule.graph(), conformer)?;
+        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
@@ -718,12 +718,12 @@ impl ModelBuilder {
         conformer: ConformerId,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.graph().atom_count() == 0 {
+        if molecule.as_molecule().atom_count() == 0 {
             return Err(ModelBuildError::Topology(
                 TopologyBuildError::EmptyMoleculeDefinition,
             ));
         }
-        let staged = stage_conformer_positions(molecule.graph(), conformer)?;
+        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
@@ -752,12 +752,12 @@ impl ModelBuilder {
         conformer: ConformerId,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.graph().atom_count() == 0 {
+        if molecule.as_molecule().atom_count() == 0 {
             return Err(ModelBuildError::Topology(
                 TopologyBuildError::EmptyMoleculeDefinition,
             ));
         }
-        let staged = stage_conformer_positions(molecule.graph(), conformer)?;
+        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
@@ -774,12 +774,12 @@ impl ModelBuilder {
         conformer: ConformerId,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.graph().atom_count() == 0 {
+        if molecule.as_molecule().atom_count() == 0 {
             return Err(ModelBuildError::Topology(
                 TopologyBuildError::EmptyMoleculeDefinition,
             ));
         }
-        let staged = stage_conformer_positions(molecule.graph(), conformer)?;
+        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
@@ -813,8 +813,8 @@ pub(super) fn stage_conformer_positions(
         let point = conformer
             .position(atom)
             .ok_or(ModelBuildError::MissingPosition { atom })?
-            .into_unit(MODEL_LENGTH_UNIT)?
-            .into_value();
+            .to_unit(MODEL_LENGTH_UNIT)?
+            .to_value();
         if !point.is_finite() {
             return Err(ModelBuildError::NonFinitePosition { atom });
         }

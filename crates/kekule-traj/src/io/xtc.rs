@@ -817,7 +817,7 @@ impl<R: Read + Seek> XtcReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedXtcReader<R>, TrajectoryError> {
+    pub fn to_indexed(mut self) -> Result<IndexedXtcReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
             if let Some(limit) = projected_index_limit(offsets.len(), &self.limits) {

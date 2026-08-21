@@ -110,7 +110,7 @@ where
 }
 
 fn converted_property_value(value: Quantity<f64>, stored_unit: Unit) -> Result<f64, UnitError> {
-    let value = value.into_unit(stored_unit)?.into_value();
+    let value = value.to_unit(stored_unit)?.to_value();
     Ok(value)
 }
 
