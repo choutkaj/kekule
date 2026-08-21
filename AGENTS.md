@@ -11,6 +11,7 @@ These rules apply to contributors and AI agents working in this repository.
 5. Use optional external-reference benchmarks only when they are scientifically useful. They are not routine CI or release gates.
 6. Do not modify `README.md` without the human's consent.
 
+
 ## Branches and commits
 
 - Do not push feature work directly to `main`; use a short-lived branch based on current `main`.
@@ -23,8 +24,6 @@ These rules apply to contributors and AI agents working in this repository.
 
 ## Scientific tooling
 
-- Keep parsing separate from interpretation, normalization, perception, validation, and preparation as defined by `ARCHITECTURE.md`.
 - RDKit, Biopython, DSSP, and similar tools are benchmark references only, never Rust runtime dependencies.
-- Benchmark fixtures must be externally supplied and provenance-pinned. Toy molecules belong only in focused unit regressions.
+- Benchmark fixtures must be externally supplied. Toy molecules belong only in focused unit regressions.
 - Do not weaken comparisons, remove asserted fields, or regenerate goldens merely to hide a mismatch.
-- Do not claim a check, benchmark, workflow, or repository setting was verified unless it was actually inspected or run.
