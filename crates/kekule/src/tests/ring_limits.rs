@@ -29,25 +29,22 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
 
 #[test]
 fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
-    let mut molecule = SmallMolecule::default();
+    let mut molecule = crate::core::MoleculeEditor::new();
     let mut previous = molecule
-        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     for _ in 1..20_000 {
         let atom = molecule
-            .as_molecule_mut()
             .add_atom(carbon())
             .expect("atom identifier capacity");
         molecule
-            .as_molecule_mut()
             .add_bond(previous, atom, BondOrder::Single)
             .expect("chain bond should be valid");
         previous = atom;
     }
 
-    let ring_set = rings_api::perceive_ring_set(molecule.as_molecule_mut())
-        .expect("long chain should perceive rings");
+    let ring_set =
+        rings_api::perceive_ring_set(&mut molecule).expect("long chain should perceive rings");
     assert!(ring_set.is_empty());
 
     let written = smiles_api::write(&molecule).expect("long chain should write");
@@ -115,7 +112,7 @@ fn ring_input_and_work_limits_return_actionable_errors() {
 
 #[test]
 fn symmetric_cage_returns_named_candidate_limit_error() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let left = (0..4)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
         .collect::<Vec<_>>();
@@ -150,7 +147,7 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
 
 #[test]
 fn theta_graph_with_acyclic_tail_is_deterministic() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     for _ in 0..3 {
@@ -178,7 +175,7 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
 
 #[test]
 fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let atoms = (0..9)
         .map(|_| mol.add_atom(carbon()).expect("atom identifier capacity"))
         .collect::<Vec<_>>();
@@ -249,18 +246,16 @@ fn cycle_size_limit_returns_structured_error() {
 
 #[test]
 fn focused_ring_resource_errors_are_transactional() {
-    let mut molecule = SmallMolecule::default();
+    let mut molecule = crate::core::MoleculeEditor::new();
     let atoms = (0..3)
         .map(|_| {
             molecule
-                .as_molecule_mut()
                 .add_atom(carbon())
                 .expect("atom identifier capacity")
         })
         .collect::<Vec<_>>();
     for (left, right) in [(0, 1), (1, 2), (2, 0)] {
         molecule
-            .as_molecule_mut()
             .add_bond(atoms[left], atoms[right], BondOrder::Single)
             .expect("triangle bond should be valid");
     }
@@ -269,7 +264,7 @@ fn focused_ring_resource_errors_are_transactional() {
         max_path_expansions: 0,
         ..RingPerceptionOptions::default()
     };
-    let error = rings_api::perceive_ring_set_with_options(molecule.as_molecule_mut(), ring_options)
+    let error = rings_api::perceive_ring_set_with_options(molecule.working_mut(), ring_options)
         .expect_err("ring limit should fail focused perception");
     assert!(matches!(error, RingPerceptionError::ResourceLimit { .. }));
     assert_eq!(molecule, original);
@@ -279,7 +274,7 @@ fn focused_ring_resource_errors_are_transactional() {
         .canonicalize_fixture()
         .expect("benzene should normalize");
     let error = aromaticity_api::perceive_aromaticity_with_ring_options(
-        aromatic.as_molecule_mut(),
+        &mut aromatic,
         AromaticityModel::RdkitLike,
         RingPerceptionOptions {
             max_atoms: 0,
@@ -293,13 +288,13 @@ fn focused_ring_resource_errors_are_transactional() {
 #[test]
 fn standalone_aromaticity_reuses_an_installed_ring_set() {
     let mut molecule = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
-    valence_api::perceive_valence(molecule.as_molecule_mut(), ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
         .expect("valence perception");
-    let installed = rings_api::perceive_ring_set(molecule.as_molecule_mut())
-        .expect("ring perception should succeed");
+    let installed =
+        rings_api::perceive_ring_set(&mut molecule).expect("ring perception should succeed");
 
     aromaticity_api::perceive_aromaticity_with_ring_options(
-        molecule.as_molecule_mut(),
+        &mut molecule,
         AromaticityModel::RdkitLike,
         RingPerceptionOptions {
             max_atoms: 0,
@@ -308,38 +303,28 @@ fn standalone_aromaticity_reuses_an_installed_ring_set() {
     )
     .expect("installed rings should bypass the impossible ring limit");
 
-    assert_eq!(molecule.as_molecule().ring_set(), Some(&installed));
-    assert!(molecule.as_molecule().perception().has_aromaticity());
+    assert_eq!(molecule.ring_set(), Some(&installed));
+    assert!(molecule.perception().has_aromaticity());
 }
 
 #[test]
 fn standalone_aromaticity_computes_a_missing_ring_set() {
     let mut baseline = read_smiles("C1=CC=CC=C1").expect("benzene should parse");
-    valence_api::perceive_valence(baseline.as_molecule_mut(), ValenceModel::RdkitLike)
+    valence_api::perceive_valence(&mut baseline, ValenceModel::RdkitLike)
         .expect("valence perception");
 
     for membership_only in [false, true] {
         let mut molecule = baseline.clone();
         if membership_only {
-            rings_api::perceive_ring_membership(molecule.as_molecule_mut());
-            assert!(molecule.as_molecule().ring_membership().is_some());
-            assert!(molecule.as_molecule().ring_set().is_none());
+            rings_api::perceive_ring_membership(&mut molecule);
+            assert!(molecule.ring_membership().is_some());
+            assert!(molecule.ring_set().is_none());
         }
 
-        aromaticity_api::perceive_aromaticity(
-            molecule.as_molecule_mut(),
-            AromaticityModel::RdkitLike,
-        )
-        .expect("aromaticity should compute a missing ring basis");
+        aromaticity_api::perceive_aromaticity(&mut molecule, AromaticityModel::RdkitLike)
+            .expect("aromaticity should compute a missing ring basis");
 
-        assert_eq!(
-            molecule
-                .as_molecule()
-                .ring_set()
-                .expect("computed ring basis")
-                .len(),
-            1
-        );
-        assert!(molecule.as_molecule().perception().has_aromaticity());
+        assert_eq!(molecule.ring_set().expect("computed ring basis").len(), 1);
+        assert!(molecule.perception().has_aromaticity());
     }
 }

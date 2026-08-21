@@ -105,7 +105,7 @@ pub fn assign_cip_descriptors_with_options(
         });
     }
 
-    let previous_stereo = mol.replace_stereo_perception(Some(StereoPerceptionState::default()));
+    let previous_stereo = mol.replace_stereo_perception(Some(StereoPerception::default()));
     let mut report = CipAssignmentReport::default();
     let mut issues = Vec::new();
 
@@ -2325,14 +2325,14 @@ struct CipBondOrders {
 
 impl CipBondOrders {
     fn new(mol: &Molecule, normalize_all_carbon_aromatic: bool) -> Self {
-        let mut orders = vec![0; mol.bonds.len()];
+        let mut orders = vec![0; mol.graph.bond_slot_count()];
         for (bond_id, bond) in mol.bonds() {
             orders[bond_id.index()] = cip_bond_order(bond.order);
         }
         let uniform_aromatic_duplicates = if normalize_all_carbon_aromatic {
             cip_uniform_aromatic_duplicate_bonds(mol)
         } else {
-            vec![false; mol.bonds.len()]
+            vec![false; mol.graph.bond_slot_count()]
         };
         Self {
             orders,
@@ -2359,7 +2359,7 @@ fn cip_atomic_number_fractions(
     mol: &Molecule,
     cip_bond_orders: &CipBondOrders,
 ) -> Vec<AtomicNumberFraction> {
-    let mut fractions = vec![AtomicNumberFraction::ZERO; mol.atoms.len()];
+    let mut fractions = vec![AtomicNumberFraction::ZERO; mol.graph.atom_slot_count()];
     for (atom_id, atom) in mol.atoms() {
         fractions[atom_id.index()] = AtomicNumberFraction::element(atom.element.atomic_number());
     }
@@ -2393,7 +2393,7 @@ fn seed_mancude_atom_types(
     ring_membership: &RingMembership,
     cip_bond_orders: &CipBondOrders,
 ) -> Vec<MancudeAtomType> {
-    let mut types = vec![MancudeAtomType::Other; mol.atoms.len()];
+    let mut types = vec![MancudeAtomType::Other; mol.graph.atom_slot_count()];
     for (atom_id, atom) in mol.atoms() {
         let mut bond_types = u32::from(atom_hydrogen_count(mol, atom_id));
         let mut in_ring = false;
@@ -2427,7 +2427,7 @@ fn seed_mancude_atom_types(
 }
 
 fn relax_mancude_atom_types(mol: &Molecule, types: &mut [MancudeAtomType]) {
-    let mut counts = vec![0usize; mol.atoms.len()];
+    let mut counts = vec![0usize; mol.graph.atom_slot_count()];
     let mut queue = Vec::new();
     for (atom_id, _) in mol.atoms() {
         for neighbor in atom_neighbors(mol, atom_id) {
@@ -2462,7 +2462,7 @@ fn mancude_parts(
     types: &[MancudeAtomType],
     ring_membership: &RingMembership,
 ) -> Vec<usize> {
-    let mut parts = vec![0usize; mol.atoms.len()];
+    let mut parts = vec![0usize; mol.graph.atom_slot_count()];
     let mut part = 0usize;
     for (atom_id, _) in mol.atoms() {
         if parts[atom_id.index()] != 0 || types[atom_id.index()] == MancudeAtomType::Other {
@@ -2530,7 +2530,7 @@ fn apply_mancude_neighbor_averages(
         let mut denominator = 0u32;
         for (raw, fraction) in (0..=u32::MAX)
             .zip(fractions.iter_mut())
-            .take(mol.atoms.len())
+            .take(mol.graph.atom_slot_count())
         {
             let atom_id = AtomId::new(raw);
             if parts.get(atom_id.index()).copied() != Some(part) {
@@ -2563,7 +2563,7 @@ struct AromaticBondComponent {
 }
 
 fn cip_uniform_aromatic_duplicate_bonds(mol: &Molecule) -> Vec<bool> {
-    let mut flags = vec![false; mol.bonds.len()];
+    let mut flags = vec![false; mol.graph.bond_slot_count()];
     for component in cip_aromatic_bond_components(mol) {
         let all_carbon = component.atoms.iter().all(|atom| {
             mol.atom(*atom)
@@ -2581,7 +2581,7 @@ fn cip_uniform_aromatic_duplicate_bonds(mol: &Molecule) -> Vec<bool> {
 }
 
 fn cip_aromatic_bond_components(mol: &Molecule) -> Vec<AromaticBondComponent> {
-    let mut seen_bonds = vec![false; mol.bonds.len()];
+    let mut seen_bonds = vec![false; mol.graph.bond_slot_count()];
     let mut components = Vec::new();
     for (start_bond, _bond) in mol.bonds() {
         if mol.bond_is_aromatic(start_bond).ok().flatten() != Some(true)
@@ -2591,7 +2591,7 @@ fn cip_aromatic_bond_components(mol: &Molecule) -> Vec<AromaticBondComponent> {
         }
 
         let mut atoms = Vec::new();
-        let mut atom_seen = vec![false; mol.atoms.len()];
+        let mut atom_seen = vec![false; mol.graph.atom_slot_count()];
         let mut bonds = Vec::new();
         let mut stack = vec![start_bond];
         seen_bonds[start_bond.index()] = true;
@@ -3425,7 +3425,7 @@ mod tests {
         ];
 
         let ranked = rank_tetrahedral_signatures_with_rule6(
-            &Molecule::new(),
+            &crate::core::MoleculeEditor::new(),
             StereoElementId::new(0),
             AtomId::new(0),
             &signatures,
@@ -3485,7 +3485,7 @@ mod tests {
         let element = StereoElementId::new(0);
 
         let issue = rank_tetrahedral_signatures_with_rule6(
-            &Molecule::new(),
+            &crate::core::MoleculeEditor::new(),
             element,
             AtomId::new(0),
             &signatures,
@@ -3537,7 +3537,7 @@ mod tests {
             s4_rule6_signatures([[0, 2, 0, 2], [2, 0, 2, 0], [1, 0, 2, 1], [0, 1, 1, 2]]);
 
         let ranked = rank_tetrahedral_signatures_with_rule6(
-            &Molecule::new(),
+            &crate::core::MoleculeEditor::new(),
             StereoElementId::new(0),
             AtomId::new(0),
             &signatures,
@@ -3565,7 +3565,7 @@ mod tests {
             s4_rule6_signatures([[0, 2, 1, 1], [2, 0, 0, 2], [1, 1, 2, 0], [0, 0, 2, 2]]);
 
         let issue = rank_tetrahedral_signatures_with_rule6(
-            &Molecule::new(),
+            &crate::core::MoleculeEditor::new(),
             element,
             AtomId::new(0),
             &signatures,
@@ -3653,7 +3653,7 @@ mod tests {
 
     #[test]
     fn duplicate_nodes_have_no_isotope_priority() {
-        let mut mol = Molecule::new();
+        let mut mol = crate::core::MoleculeEditor::new();
         let mut isotope = Atom::new(Element::from_symbol("C").expect("carbon"));
         isotope.isotope = Some(13);
         let atom = mol.add_atom(isotope).expect("atom identifier capacity");
@@ -3681,7 +3681,7 @@ mod tests {
 
     #[test]
     fn rule1a_uses_mancude_fractional_atomic_numbers_for_bond_duplicates() {
-        let mut mol = Molecule::new();
+        let mut mol = crate::core::MoleculeEditor::new();
         let atoms = (0..6)
             .map(|index| {
                 let symbol = if index == 3 { "N" } else { "C" };
@@ -3777,7 +3777,7 @@ mod tests {
 
     #[test]
     fn higher_order_bond_expansion_creates_terminal_duplicate_nodes() {
-        let mut mol = Molecule::new();
+        let mut mol = crate::core::MoleculeEditor::new();
         let root = mol
             .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
             .expect("atom identifier capacity");
@@ -3825,7 +3825,7 @@ mod tests {
 
     #[test]
     fn negative_fractional_atoms_create_duplicate_nodes() {
-        let mut mol = Molecule::new();
+        let mut mol = crate::core::MoleculeEditor::new();
         let atoms = (0..5)
             .map(|index| {
                 let mut atom = Atom::new(Element::from_symbol("C").expect("carbon"));
@@ -3849,7 +3849,7 @@ mod tests {
             mol.set_implicit_hydrogens(*atom, 1);
         }
 
-        let mut fractions = vec![AtomicNumberFraction::element(6); mol.atoms.len()];
+        let mut fractions = vec![AtomicNumberFraction::element(6); mol.graph.atom_slot_count()];
         fractions[atoms[2].index()] = AtomicNumberFraction::new(13, 2);
         let cip_bond_orders = CipBondOrders::new(&mol, false);
 

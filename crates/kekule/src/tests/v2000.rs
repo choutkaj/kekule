@@ -8,7 +8,7 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     assert_eq!(document.unsupported_records().len(), 1);
     let interpretation = molfile::interpret(&document).expect("Molfile interprets");
     let molecule = interpretation.molecule();
-    assert!(molecule.as_molecule().props().get("sdf.title").is_none());
+    assert!(molecule.props().get("sdf.title").is_none());
     assert_eq!(interpretation.report().atom_mappings().len(), 1);
     assert_eq!(interpretation.report().ignored_record_lines(), &[6]);
 
@@ -21,7 +21,6 @@ fn molfile_and_sdf_documents_preserve_record_metadata_before_interpretation() {
     assert_eq!(records[0].data_fields()[0].name(), "FIELD");
     assert!(records[0]
         .molecule()
-        .as_molecule()
         .props()
         .get("sdf.field.FIELD")
         .is_none());
@@ -97,7 +96,7 @@ $$$$
 ";
 
     let records = read_sdf_records(input).expect("record should parse");
-    let mol = records[0].molecule().as_molecule();
+    let mol = records[0].molecule();
 
     assert_eq!(records.len(), 1);
     assert_eq!(mol.atom_count(), 2);
@@ -143,7 +142,6 @@ $$$$
     assert_eq!(
         records[1]
             .molecule()
-            .as_molecule()
             .atom(AtomId::new(0))
             .expect("atom exists")
             .element
@@ -173,7 +171,7 @@ M  END
     .expect("record should parse");
 
     assert_eq!(molecules.len(), 1);
-    assert_eq!(molecules[0].as_molecule().atom_count(), 1);
+    assert_eq!(molecules[0].atom_count(), 1);
 }
 
 #[test]
@@ -382,7 +380,7 @@ $$$$
 ";
 
     let molecules = read_sdf_molecules(input).expect("record should parse");
-    let mol = &molecules[0].as_molecule();
+    let mol = &molecules[0];
 
     assert_all_stale(mol);
     assert_eq!(
@@ -408,29 +406,13 @@ M  END
 ";
 
     let small = read_molfile(input).expect("mol should parse");
-    let atom0 = small
-        .as_molecule()
-        .atom(AtomId::new(0))
-        .expect("atom exists");
-    let atom1 = small
-        .as_molecule()
-        .atom(AtomId::new(1))
-        .expect("atom exists");
+    let atom0 = small.atom(AtomId::new(0)).expect("atom exists");
+    let atom1 = small.atom(AtomId::new(1)).expect("atom exists");
     assert_eq!(atom0.formal_charge, 1);
     assert_eq!(atom0.radical, Some(AtomRadical::Doublet));
     assert_eq!(atom0.atom_map, Some(7));
     assert_eq!(atom1.isotope, Some(13));
-    let (_, conformer) = small
-        .as_molecule()
-        .first_conformer()
-        .expect("conformer exists");
-    assert_eq!(
-        conformer.position(AtomId::new(0)),
-        Some(crate::units::Quantity::new(
-            Point3::new(0.1, 0.2, 0.3),
-            crate::units::ANGSTROM,
-        ))
-    );
+    assert_eq!(small.atom_count(), 2);
 }
 
 #[test]
@@ -445,10 +427,7 @@ M  END
 ";
 
     let molecule = read_molfile(input).expect("atom-block doublet radical should parse");
-    let atom = molecule
-        .as_molecule()
-        .atom(AtomId::new(0))
-        .expect("radical atom");
+    let atom = molecule.atom(AtomId::new(0)).expect("radical atom");
     assert_eq!(atom.formal_charge, 0);
     assert_eq!(atom.radical, Some(AtomRadical::Doublet));
 }
@@ -458,7 +437,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
     let molecule = read_smiles("C").expect("methane parses");
     let record = SdfRecord::new(
         "safe title",
-        molecule.clone(),
+        vec![molecule.clone()],
         vec![SdfDataField::new("NOTES", "> leading marker\nsecond line")],
     );
     let written = sdf::write_v2000(&[record]).expect("representable field should write");
@@ -486,7 +465,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
             "record delimiter",
         ),
     ] {
-        let record = SdfRecord::new(title, molecule.clone(), vec![field]);
+        let record = SdfRecord::new(title, vec![molecule.clone()], vec![field]);
         let error =
             sdf::write_v2000(&[record]).expect_err("unrepresentable SDF metadata must fail");
         assert!(error.message().contains(expected), "{expected}: {error}");
@@ -505,11 +484,7 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
             );
         let parsed = read_molfile(&input).expect("radical record should parse");
         assert_eq!(
-            parsed
-                .as_molecule()
-                .atom(AtomId::new(0))
-                .expect("atom")
-                .radical,
+            parsed.atom(AtomId::new(0)).expect("atom").radical,
             Some(expected)
         );
 
@@ -520,11 +495,7 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
         );
         let reparsed = read_molfile(&written).expect("written radical record should parse");
         assert_eq!(
-            reparsed
-                .as_molecule()
-                .atom(AtomId::new(0))
-                .expect("atom")
-                .radical,
+            reparsed.atom(AtomId::new(0)).expect("atom").radical,
             Some(expected)
         );
     }
@@ -553,17 +524,14 @@ fn v2000_does_not_infer_tetrahedral_hydrogens_without_a_source_declaration() {
 
         if symbol == "S" {
             let molecule = read_molfile(&input).expect("sulfur lone-pair stereo interprets");
-            assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
-            assert!(molecule
-                .as_molecule()
-                .stereo_elements()
-                .any(|(_, element)| {
-                    matches!(
-                        &element.kind,
-                        StereoElementKind::Tetrahedral(stereo)
-                            if stereo.carriers.contains(&StereoCarrier::ImplicitLonePair)
-                    )
-                }));
+            assert_eq!(molecule.stereo_elements().count(), 1);
+            assert!(molecule.stereo_elements().any(|(_, element)| {
+                matches!(
+                    &element.kind,
+                    StereoElementKind::Tetrahedral(stereo)
+                        if stereo.carriers.contains(&StereoCarrier::ImplicitLonePair)
+                )
+            }));
         } else {
             let error = read_molfile(&input)
                 .expect_err("wedge without a declared fourth carrier must fail");
@@ -586,19 +554,15 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             let interpreted = molfile::interpret(&document).expect("source declaration interprets");
             assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
             let molecule = interpreted.to_molecule();
-            let center = molecule
-                .as_molecule()
-                .atom(AtomId::new(0))
-                .expect("stereo center");
+            let center = molecule.atom(AtomId::new(0)).expect("stereo center");
             assert_eq!(
                 center.hydrogens,
                 HydrogenDeclaration::Fixed(expected_hydrogens)
             );
-            assert!(!molecule.as_molecule().perception().has_valence());
-            assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
+            assert!(!molecule.perception().has_valence());
+            assert_eq!(molecule.stereo_elements().count(), 1);
             assert_eq!(
                 molecule
-                    .as_molecule()
                     .stereo_elements()
                     .next()
                     .expect("canonical stereo element")
@@ -611,10 +575,9 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             let (reparsed, report) =
                 read_molfile_with_report(&written).expect("projected stereo should re-interpret");
             assert_eq!(report.created_stereo_elements().len(), 1);
-            assert_eq!(reparsed.as_molecule().stereo_elements().count(), 1);
+            assert_eq!(reparsed.stereo_elements().count(), 1);
             assert_eq!(
                 reparsed
-                    .as_molecule()
                     .atom(AtomId::new(0))
                     .expect("reparsed center")
                     .hydrogens,
@@ -622,7 +585,6 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
             );
             assert_eq!(
                 reparsed
-                    .as_molecule()
                     .stereo_elements()
                     .next()
                     .expect("reparsed canonical stereo element")
@@ -636,11 +598,7 @@ fn v2000_source_hydrogen_and_valence_declarations_define_stereo_carriers() {
     let undeclared = "undeclared hydrogen policy\nkekule\n\n  1  0  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\nM  END\n";
     let molecule = read_molfile(undeclared).expect("undeclared V2000 atom interprets");
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(AtomId::new(0))
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
 }
@@ -673,21 +631,15 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         assert!(read_molfile(&input).is_err());
     }
 
-    let mut molecule = SmallMolecule::default();
+    let mut molecule = crate::core::MoleculeEditor::new();
     let a = molecule
-        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let b = molecule
-        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
-    let bond = molecule
-        .as_molecule_mut()
-        .add_bond(a, b, BondOrder::Double)
-        .expect("bond");
+    let bond = molecule.add_bond(a, b, BondOrder::Double).expect("bond");
     molecule
-        .as_molecule_mut()
         .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
             DoubleBondStereo {
                 bond,
@@ -705,19 +657,13 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         .contains("cannot encode"));
 
     let element = molecule
-        .as_molecule()
         .stereo_element_ids()
         .next()
         .expect("stereo element");
     molecule
-        .as_molecule_mut()
         .remove_stereo_element(element)
         .expect("remove stereo element");
-    molecule
-        .as_molecule_mut()
-        .bond_mut(bond)
-        .expect("bond")
-        .order = BondOrder::Quadruple;
+    molecule.bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
     assert!(molfile::write_v2000(&molecule)
         .expect_err("quadruple bond should be rejected")
         .message
@@ -755,7 +701,6 @@ $$$$
     assert_eq!(
         reparsed[0]
             .molecule()
-            .as_molecule()
             .atom(AtomId::new(0))
             .expect("atom")
             .formal_charge,
@@ -777,26 +722,18 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
             );
         let parsed = read_molfile(&input).expect("charge code should parse");
         assert_eq!(
-            parsed
-                .as_molecule()
-                .atom(AtomId::new(0))
-                .expect("atom")
-                .formal_charge,
+            parsed.atom(AtomId::new(0)).expect("atom").formal_charge,
             expected_charge
         );
         let written = molfile::write_v2000(&parsed).expect("charge should write");
         let reparsed = read_molfile(&written).expect("charge should reparse");
         assert_eq!(
-            reparsed
-                .as_molecule()
-                .atom(AtomId::new(0))
-                .expect("atom")
-                .formal_charge,
+            reparsed.atom(AtomId::new(0)).expect("atom").formal_charge,
             expected_charge
         );
     }
 
-    let mut graph_builder = Molecule::builder();
+    let mut graph_builder = crate::core::MoleculeEditor::new();
     let mut atom_ids = Vec::new();
     for index in 0..9u32 {
         let mut atom = carbon();
@@ -814,44 +751,25 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         }
         atom_ids.push(atom_id);
     }
-    let mut molecule = SmallMolecule::from_molecule(
-        graph_builder
-            .build()
-            .expect("metadata fixture should be connected"),
-    );
-    molecule.as_molecule_mut().props_mut().insert(
+    let mut molecule = graph_builder
+        .finish()
+        .expect("metadata fixture should be connected");
+    molecule.props_mut().insert(
         "sdf.title".to_owned(),
         PropValue::String("metadata title".to_owned()),
     );
-    molecule.as_molecule_mut().props_mut().insert(
+    molecule.props_mut().insert(
         "sdf.program".to_owned(),
         PropValue::String("metadata program".to_owned()),
     );
-    molecule.as_molecule_mut().props_mut().insert(
+    molecule.props_mut().insert(
         "sdf.comment".to_owned(),
         PropValue::String("metadata comment".to_owned()),
     );
-    molecule.as_molecule_mut().props_mut().insert(
+    molecule.props_mut().insert(
         "sdf.field.NOTES".to_owned(),
         PropValue::String("line one\nline two".to_owned()),
     );
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    for (index, atom_id) in atom_ids.into_iter().enumerate() {
-        conformer
-            .set_position(
-                atom_id,
-                crate::units::Quantity::new(
-                    Point3::new(-(index as f64), index as f64, 0.0),
-                    crate::units::ANGSTROM,
-                ),
-            )
-            .unwrap();
-    }
-    molecule
-        .as_molecule_mut()
-        .add_conformer(conformer)
-        .expect("valid conformer");
-
     let mol_text = molfile::write_v2000(&molecule).expect("metadata molecule should write");
     assert_eq!(mol_text.lines().nth(1), Some("kekule"));
     assert_eq!(mol_text.matches("M  CHG").count(), 2);
@@ -860,8 +778,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
 
     let fields = vec![SdfDataField::new("NOTES", "line one\nline two")];
     let records = vec![
-        SdfRecord::new("metadata title", molecule.clone(), fields.clone()),
-        SdfRecord::new("metadata title", molecule, fields),
+        SdfRecord::new("metadata title", vec![molecule.clone()], fields.clone()),
+        SdfRecord::new("metadata title", vec![molecule], fields),
     ];
     let sdf_text = sdf::write_v2000(&records).expect("two records should write");
     assert_eq!(sdf_text.lines().nth(1), Some("kekule"));
@@ -872,11 +790,7 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         assert_eq!(record.data_fields()[0].name(), "NOTES");
         assert_eq!(record.data_fields()[0].value(), "line one\nline two");
         for index in 0..9u32 {
-            let atom = record
-                .molecule()
-                .as_molecule()
-                .atom(AtomId::new(index))
-                .expect("atom");
+            let atom = record.molecule().atom(AtomId::new(index)).expect("atom");
             assert_eq!(atom.formal_charge, 1);
             assert_eq!(atom.isotope, Some(13 + index as u16));
             assert_eq!(atom.radical, Some(AtomRadical::Doublet));

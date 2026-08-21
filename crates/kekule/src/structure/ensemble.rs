@@ -1,9 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{ConformerId, PropMap};
+use crate::core::{Conformer, Molecule, PropMap};
 use crate::geometry::PeriodicCell;
-use crate::small::SmallMolecule;
 use crate::topology::{
     MoleculeInstanceMetadata, Topology, TopologyBuildError, TopologyBuilder, TopologyMapping,
 };
@@ -162,17 +161,17 @@ impl Ensemble {
         Ok(ensemble)
     }
 
-    pub fn from_small_molecule_conformers(
-        molecule: &SmallMolecule,
-        conformers: impl IntoIterator<Item = ConformerId>,
+    pub fn from_molecule_conformers(
+        molecule: &Molecule,
+        conformers: impl IntoIterator<Item = Conformer>,
     ) -> Result<Self, EnsembleError> {
         let mut topology_builder = TopologyBuilder::new();
-        let definition = topology_builder.add_small_molecule_definition(molecule)?;
+        let definition = topology_builder.add_molecule_definition(molecule)?;
         topology_builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
         let topology = Arc::new(topology_builder.build()?);
         let mut ensemble = Self::new(Arc::clone(&topology));
         for conformer in conformers {
-            let positions = stage_conformer_positions(molecule.as_molecule(), conformer)
+            let positions = stage_conformer_positions(molecule, &conformer)
                 .map_err(|error| EnsembleError::ModelBuild(Box::new(error)))?;
             let positions = Positions::new(&topology, Quantity::new(positions, MODEL_LENGTH_UNIT))?;
             ensemble.push(EnsembleMember::new(positions))?;

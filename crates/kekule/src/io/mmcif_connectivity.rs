@@ -1,14 +1,30 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::chemistry::{canonicalize_molecule_for_publication, localize_source_aromatic_bonds};
-use crate::core::{AtomId, BondOrder, Molecule};
-use crate::structure::{AtomData, Ensemble, EnsembleMember, Model, ModelBuilder, Positions};
-use crate::topology::{InstanceAtomId, Topology};
-use crate::units::{Quantity, ANGSTROM};
+use crate::chemistry::localize_source_aromatic_bonds;
+use crate::core::{AtomId, BondOrder, Molecule, MoleculeEditor};
+use crate::structure::{AtomData, Ensemble, EnsembleMember, Model, Positions};
+use crate::topology::Topology;
 use std::sync::Arc;
 
 use super::mmcif_interpret as raw;
 use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
+
+pub(crate) fn complete_editor_connectivity(
+    block: &MmcifDataBlock,
+    editor: &mut MoleculeEditor,
+    provenance: &raw::MmcifInstanceProvenance,
+) -> Result<(), raw::MmcifInterpretError> {
+    let catalog = ConnectivityCatalog::from_block(block)?;
+    let mut source_aromatic_bonds = BTreeSet::new();
+    apply_instance_connectivity(
+        editor.working_mut(),
+        provenance,
+        &catalog,
+        &mut source_aromatic_bonds,
+    )?;
+    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds)
+        .map_err(interpret_error)
+}
 
 /// Interpreted mmCIF model after authoritative component and polymer
 /// connectivity has been materialized into the canonical molecule graphs.
@@ -284,132 +300,11 @@ struct ResidueAtoms {
 }
 
 fn rebuild_model_with_connectivity(
-    document: &MmcifDocument,
+    _document: &MmcifDocument,
     source: Model,
-    report: &raw::MmcifInterpretationReport,
+    _report: &raw::MmcifInterpretationReport,
 ) -> Result<(Model, usize), raw::MmcifInterpretError> {
-    let block = document
-        .block(report.data_block())
-        .ok_or_else(|| interpret_error("interpreted mmCIF data block is unavailable"))?;
-    let catalog = ConnectivityCatalog::from_block(block)?;
-    let topology = source.topology();
-    let mut builder = ModelBuilder::new();
-    let mut pending = 0usize;
-
-    for (instance_id, instance) in topology.instances() {
-        let definition = topology
-            .definition_for_instance(instance_id)
-            .map_err(interpret_error)?;
-        let provenance = report
-            .instances()
-            .iter()
-            .find(|provenance| provenance.molecule() == instance_id)
-            .ok_or_else(|| interpret_error("mmCIF instance provenance is incomplete"))?;
-        let positions = definition
-            .graph()
-            .atom_ids()
-            .map(|atom| {
-                source
-                    .position(InstanceAtomId::new(instance_id, atom))
-                    .and_then(|position| position.to_unit(ANGSTROM).map_err(Into::into))
-                    .map(|position| position.to_value())
-                    .map_err(interpret_error)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let new_instance = if let Some(molecule) = definition.macro_molecule() {
-            let mut molecule = molecule.clone();
-            let mut source_aromatic_bonds = BTreeSet::new();
-            apply_instance_connectivity(
-                molecule.molecule_mut_unchecked_connectedness(),
-                provenance,
-                &catalog,
-                &mut source_aromatic_bonds,
-            )?;
-            localize_source_aromatic_bonds(
-                molecule.molecule_mut_unchecked_connectedness(),
-                &source_aromatic_bonds,
-            )
-            .map_err(interpret_error)?;
-            let publication_report = canonicalize_molecule_for_publication(
-                molecule.molecule_mut_unchecked_connectedness(),
-                &[],
-            )
-            .map_err(|error| {
-                interpret_error(format!(
-                    "could not publish canonical mmCIF molecule instance {instance_id}: {error}"
-                ))
-            })?;
-            debug_assert!(publication_report.warnings.is_empty());
-            let connected = molecule.as_molecule().is_connected();
-            if molecule.as_molecule().atom_count() > 1 && !connected {
-                pending += 1;
-            }
-            let definition = builder
-                .add_macro_molecule_definition_unchecked_connectedness(&molecule)
-                .map_err(interpret_error)?;
-            builder
-                .add_instance(
-                    definition,
-                    Quantity::new(positions, ANGSTROM),
-                    instance.metadata().clone(),
-                )
-                .map_err(interpret_error)?
-        } else if let Some(molecule) = definition.small_molecule() {
-            let mut molecule = molecule.clone();
-            let mut source_aromatic_bonds = BTreeSet::new();
-            apply_instance_connectivity(
-                molecule.as_molecule_mut(),
-                provenance,
-                &catalog,
-                &mut source_aromatic_bonds,
-            )?;
-            localize_source_aromatic_bonds(molecule.as_molecule_mut(), &source_aromatic_bonds)
-                .map_err(interpret_error)?;
-            let publication_report =
-                canonicalize_molecule_for_publication(molecule.as_molecule_mut(), &[]).map_err(
-                    |error| {
-                        interpret_error(format!(
-                        "could not publish canonical mmCIF molecule instance {instance_id}: {error}"
-                    ))
-                    },
-                )?;
-            debug_assert!(publication_report.warnings.is_empty());
-            if molecule.as_molecule().atom_count() > 1 && !molecule.as_molecule().is_connected() {
-                pending += 1;
-            }
-            let definition = builder
-                .add_small_molecule_definition_unchecked_connectedness(&molecule)
-                .map_err(interpret_error)?;
-            builder
-                .add_instance(
-                    definition,
-                    Quantity::new(positions, ANGSTROM),
-                    instance.metadata().clone(),
-                )
-                .map_err(interpret_error)?
-        } else {
-            return Err(interpret_error(
-                "mmCIF topology definition has no molecule payload",
-            ));
-        };
-
-        if new_instance != instance_id {
-            return Err(interpret_error(
-                "mmCIF connectivity rebuild changed molecule instance order",
-            ));
-        }
-    }
-
-    let mut model = builder.build().map_err(interpret_error)?;
-    model.set_cell(source.cell().copied());
-    model
-        .set_atom_data(rebound_atom_data(
-            source.atom_data(),
-            &model.shared_topology(),
-        )?)
-        .map_err(interpret_error)?;
-    Ok((model, pending))
+    Ok((source, 0))
 }
 
 fn apply_instance_connectivity(
@@ -889,12 +784,16 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         .expect("parse gapped peptide");
         let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
             .expect("interpret gapped peptide");
-        let graph = interpretation
+        assert_eq!(interpretation.topology().instance_count(), 2);
+        assert!(interpretation
             .topology()
-            .graph_for_instance(MoleculeInstanceId::new(0))
-            .expect("peptide instance");
-        assert_eq!(graph.connected_components().len(), 2);
-        assert_eq!(interpretation.report().template_bonds_pending(), 1);
+            .instances()
+            .all(|(instance, _)| interpretation
+                .topology()
+                .graph_for_instance(instance)
+                .expect("partitioned peptide instance")
+                .is_connected()));
+        assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
 
     #[test]

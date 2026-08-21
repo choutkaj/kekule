@@ -76,7 +76,6 @@ pub mod geometry;
 mod io;
 pub mod modeling;
 pub mod query;
-pub mod small;
 pub mod structure;
 pub mod topology;
 pub mod units;
@@ -94,12 +93,12 @@ pub mod substructure {
 }
 
 pub mod smiles {
+    use crate::core::Molecule;
     pub use crate::io::{
         MolWriteError, SmilesAtomMapping, SmilesBondMapping, SmilesDocument, SmilesDocumentToken,
         SmilesDocumentTokenKind, SmilesInterpretError, SmilesInterpretation,
         SmilesInterpretationReport, SmilesParseError, SmilesParseOptions,
     };
-    use crate::small::SmallMolecule;
 
     pub fn parse_str(input: &str) -> Result<SmilesDocument, SmilesParseError> {
         crate::io::parse_smiles_document(input)
@@ -118,15 +117,15 @@ pub mod smiles {
         crate::io::interpret_smiles_document(document)
     }
 
-    pub fn write(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
+    pub fn write(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_smiles(molecule)
     }
 
-    pub fn write_isomeric(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
+    pub fn write_isomeric(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_isomeric_smiles(molecule)
     }
 
-    pub fn write_canonical(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
+    pub fn write_canonical(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_canonical_smiles(molecule)
     }
 }
@@ -139,7 +138,7 @@ pub mod molfile {
         MolfileVersion,
     };
 
-    use crate::small::SmallMolecule;
+    use crate::core::Molecule;
 
     pub fn parse_str(input: &str) -> Result<MolfileDocument, MolfileParseError> {
         crate::io::parse_molfile_document(input)
@@ -158,11 +157,11 @@ pub mod molfile {
         crate::io::interpret_molfile_document(document)
     }
 
-    pub fn write_v2000(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
+    pub fn write_v2000(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v2000(molecule)
     }
 
-    pub fn write_v3000(molecule: &SmallMolecule) -> Result<String, MolWriteError> {
+    pub fn write_v3000(molecule: &Molecule) -> Result<String, MolWriteError> {
         crate::io::write_mol_v3000(molecule)
     }
 }
@@ -331,21 +330,21 @@ pub mod hydrogens {
     };
 
     use crate::algorithms::{add_hydrogens_to_molecule, remove_hydrogens_from_molecule};
-    use crate::small::SmallMolecule;
+    use crate::core::Molecule;
 
     /// Materialize stored explicit counts and perceived implicit hydrogens.
     pub fn add_hydrogens(
-        molecule: &mut SmallMolecule,
+        molecule: &mut Molecule,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {
         add_hydrogens_with_options(molecule, AddHydrogensOptions::default())
     }
 
     /// Materialize hydrogens with an explicit growth bound and count policy.
     pub fn add_hydrogens_with_options(
-        molecule: &mut SmallMolecule,
+        molecule: &mut Molecule,
         options: AddHydrogensOptions,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_to_molecule(molecule.as_molecule_mut(), options)
+        add_hydrogens_to_molecule(molecule, options)
     }
 
     /// Collapse ordinary degree-one hydrogens without discarding protected state.
@@ -354,18 +353,17 @@ pub mod hydrogens {
     /// non-losslessly representable hydrogens remain in the graph and are
     /// described by the returned report.
     pub fn remove_hydrogens(
-        molecule: &mut SmallMolecule,
+        molecule: &mut Molecule,
     ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-        remove_hydrogens_from_molecule(molecule.as_molecule_mut())
+        remove_hydrogens_from_molecule(molecule)
     }
 }
 
 pub mod prelude {
-    pub use crate::bio::{MacroMolecule, SmcraHierarchy};
+    pub use crate::bio::Hierarchy;
     pub use crate::core::{
-        Atom, AtomId, Bond, BondId, BondOrder, Conformer, Element, HydrogenDeclaration, Molecule,
+        Atom, AtomId, Bond, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
     };
-    pub use crate::small::SmallMolecule;
 }
 
 #[cfg(test)]

@@ -1,10 +1,12 @@
 use std::{error::Error, fs};
 
 use kekule::{
+    core::Conformer,
+    geometry::Point3,
     modeling::{minimize, MinimizeOptions},
     sdf::{self, SdfParseOptions, SdfRecord},
     structure::Model,
-    units::MODEL_GRADIENT_UNIT,
+    units::{Quantity, ANGSTROM, MODEL_GRADIENT_UNIT},
 };
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
@@ -19,7 +21,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let record = records.pop().expect("record count was checked");
     let title = record.title().to_owned();
     let data_fields = record.data_fields().to_vec();
-    let mut ligand = record.to_molecule();
+    let mut molecules = record.to_molecules();
+    assert_eq!(
+        molecules.len(),
+        1,
+        "expected one connected ligand component"
+    );
+    let mut ligand = molecules.pop().expect("component count was checked");
     ligand.perceive()?;
 
     // Inspect the canonical, perceived ligand before modeling it.
@@ -27,14 +35,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("bonds: {}", ligand.bond_count());
     println!("formal charge: {}", ligand.formal_charge());
 
-    // Build a fixed-topology model from the ligand's first conformer.
-    let conformer = ligand
-        .as_molecule()
-        .first_conformer()
-        .map(|(id, _)| id)
-        .expect("the SDF record has 3D coordinates");
+    // Geometry is detached from Molecule. Supply it explicitly when building a model.
+    let mut conformer = Conformer::new(ANGSTROM)?;
+    for atom in ligand.atom_ids() {
+        conformer.set_position(
+            atom,
+            Quantity::new(Point3::new(atom.index() as f64, 0.0, 0.0), ANGSTROM),
+        )?;
+    }
     let mut builder = Model::builder();
-    let instance = builder.add_small_molecule(&ligand, conformer)?;
+    builder.add_molecule(&ligand, &conformer)?;
     let model = builder.build()?;
 
     // DREIDING support is explicitly nonperiodic. This SDF-derived model has no
@@ -63,13 +73,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         minimized.final_energy.unit()
     );
 
-    // Copy the optimized instance positions back to the source conformer.
-    minimized
-        .model
-        .instance_to_conformer(instance, ligand.as_molecule_mut(), conformer)?;
-
-    // Reassemble the original record metadata and write the optimized SDF.
-    let output = sdf::write_v2000(&[SdfRecord::new(title, ligand, data_fields)])?;
+    // Reassemble the original record metadata. Molecule output is geometry-independent.
+    let output = sdf::write_v2000(&[SdfRecord::new(title, vec![ligand], data_fields)])?;
     fs::write("examples/ligand-minimized.sdf", output)?;
     Ok(())
 }

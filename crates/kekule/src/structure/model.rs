@@ -1,15 +1,13 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::bio::MacroMolecule;
-use crate::core::{Atom, AtomId, Bond, ConformerError, ConformerId, Molecule};
+use crate::core::{Atom, AtomId, Bond, Conformer, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
-use crate::small::SmallMolecule;
 use crate::topology::{
     InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
-    InstanceChainId, InstanceResidue, InstanceResidueId, InstanceSmcraHierarchy,
-    MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, MoleculeInstanceMetadata, Topology,
-    TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyError, TopologyMapping,
+    InstanceChainId, InstanceHierarchy, InstanceResidue, InstanceResidueId, MoleculeDefinitionId,
+    MoleculeInstance, MoleculeInstanceId, MoleculeInstanceMetadata, Topology, TopologyAtomIndex,
+    TopologyBuildError, TopologyBuilder, TopologyError, TopologyMapping,
 };
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
 
@@ -90,21 +88,12 @@ impl Model {
         ModelBuilder::new()
     }
 
-    pub fn from_small_molecule(
-        molecule: &SmallMolecule,
-        conformer: ConformerId,
+    pub fn from_molecule(
+        molecule: &Molecule,
+        conformer: &Conformer,
     ) -> Result<Self, ModelBuildError> {
         let mut builder = ModelBuilder::new();
-        builder.add_small_molecule(molecule, conformer)?;
-        builder.build()
-    }
-
-    pub fn from_macro_molecule(
-        molecule: &MacroMolecule,
-        conformer: ConformerId,
-    ) -> Result<Self, ModelBuildError> {
-        let mut builder = ModelBuilder::new();
-        builder.add_macro_molecule(molecule, conformer)?;
+        builder.add_molecule(molecule, conformer)?;
         builder.build()
     }
 
@@ -141,7 +130,7 @@ impl Model {
     pub fn hierarchy(
         &self,
         instance: MoleculeInstanceId,
-    ) -> Result<Option<InstanceSmcraHierarchy<'_>>, TopologyError> {
+    ) -> Result<Option<InstanceHierarchy<'_>>, TopologyError> {
         self.topology.hierarchy(instance)
     }
 
@@ -314,9 +303,8 @@ impl Model {
     /// # Examples
     ///
     /// ```
-    /// use kekule::core::{Atom, Element, Molecule};
+    /// use kekule::core::{Atom, Element, MoleculeEditor};
     /// use kekule::geometry::Point3;
-    /// use kekule::small::SmallMolecule;
     /// use kekule::structure::{Model, Positions};
     /// use kekule::topology::{
     ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
@@ -324,15 +312,15 @@ impl Model {
     /// use kekule::units::{Quantity, ANGSTROM};
     /// use std::sync::Arc;
     ///
-    /// let mut ligand_builder = Molecule::builder();
+    /// let mut ligand_builder = MoleculeEditor::new();
     /// ligand_builder.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
-    /// let ligand = SmallMolecule::from_molecule(ligand_builder.build()?);
-    /// let mut water_builder = Molecule::builder();
+    /// let ligand = ligand_builder.finish()?;
+    /// let mut water_builder = MoleculeEditor::new();
     /// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-    /// let water = SmallMolecule::from_molecule(water_builder.build()?);
+    /// let water = water_builder.finish()?;
     /// let mut builder = TopologyBuilder::new();
-    /// let ligand_definition = builder.add_small_molecule_definition(&ligand)?;
-    /// let water_definition = builder.add_small_molecule_definition(&water)?;
+    /// let ligand_definition = builder.add_molecule_definition(&ligand)?;
+    /// let water_definition = builder.add_molecule_definition(&water)?;
     /// builder.add_instance(ligand_definition, MoleculeInstanceMetadata::default())?;
     /// let mut solvent = MoleculeInstanceMetadata::default();
     /// solvent.insert_role(MoleculeRole::Solvent);
@@ -369,42 +357,6 @@ impl Model {
             atom_data,
             bond_data,
         })
-    }
-
-    /// Copies one instance's current positions to a compatible local conformer.
-    pub fn instance_to_conformer(
-        &self,
-        instance: MoleculeInstanceId,
-        target: &mut Molecule,
-        conformer: ConformerId,
-    ) -> Result<(), InstanceToConformerError> {
-        let source = self
-            .topology
-            .graph_for_instance(instance)
-            .map_err(|_| InstanceToConformerError::InvalidMoleculeInstanceId(instance))?;
-        let mut updated = target
-            .conformer(conformer)
-            .map_err(|_| InstanceToConformerError::InvalidConformerId(conformer))?
-            .clone();
-
-        for atom in source.atom_ids() {
-            if target.atom(atom).is_err() {
-                return Err(InstanceToConformerError::MissingTargetAtom(atom));
-            }
-        }
-        for atom in target.atom_ids() {
-            if source.atom(atom).is_err() {
-                return Err(InstanceToConformerError::UnexpectedTargetAtom(atom));
-            }
-        }
-        for atom in source.atom_ids() {
-            let qualified = InstanceAtomId::new(instance, atom);
-            updated.set_position(atom, self.position(qualified)?)?;
-        }
-        *target
-            .conformer_mut(conformer)
-            .expect("validated conformer remains live") = updated;
-        Ok(())
     }
 }
 
@@ -479,7 +431,7 @@ impl<'a> ModelView<'a> {
     pub fn hierarchy(
         self,
         instance: MoleculeInstanceId,
-    ) -> Result<Option<InstanceSmcraHierarchy<'a>>, TopologyError> {
+    ) -> Result<Option<InstanceHierarchy<'a>>, TopologyError> {
         self.topology.hierarchy(instance)
     }
 
@@ -609,9 +561,7 @@ impl std::error::Error for ModelError {}
 
 /// Convenience builder that assembles topology and one complete model.
 ///
-/// Macro-molecule insertion validates only the explicitly selected conformer
-/// while staging positions; topology insertion separately validates static
-/// graph/hierarchy consistency and ignores every unselected conformer.
+/// Geometry is supplied explicitly and remains outside the molecule.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelBuilder {
     topology: TopologyBuilder,
@@ -627,36 +577,11 @@ impl ModelBuilder {
         &self.topology
     }
 
-    pub fn add_small_molecule_definition(
+    pub fn add_molecule_definition(
         &mut self,
-        molecule: &SmallMolecule,
+        molecule: &Molecule,
     ) -> Result<MoleculeDefinitionId, ModelBuildError> {
-        Ok(self.topology.add_small_molecule_definition(molecule)?)
-    }
-
-    pub fn add_macro_molecule_definition(
-        &mut self,
-        molecule: &MacroMolecule,
-    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
-        Ok(self.topology.add_macro_molecule_definition(molecule)?)
-    }
-
-    pub(crate) fn add_small_molecule_definition_unchecked_connectedness(
-        &mut self,
-        molecule: &SmallMolecule,
-    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
-        Ok(self
-            .topology
-            .add_small_molecule_definition_unchecked_connectedness(molecule)?)
-    }
-
-    pub(crate) fn add_macro_molecule_definition_unchecked_connectedness(
-        &mut self,
-        molecule: &MacroMolecule,
-    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
-        Ok(self
-            .topology
-            .add_macro_molecule_definition_unchecked_connectedness(molecule)?)
+        Ok(self.topology.add_molecule_definition(molecule)?)
     }
 
     pub fn add_instance<T>(
@@ -678,114 +603,30 @@ impl ModelBuilder {
         Ok(instance)
     }
 
-    pub fn add_small_molecule(
+    pub fn add_molecule(
         &mut self,
-        molecule: &SmallMolecule,
-        conformer: ConformerId,
+        molecule: &Molecule,
+        conformer: &Conformer,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        self.add_small_molecule_with_metadata(
-            molecule,
-            conformer,
-            MoleculeInstanceMetadata::default(),
-        )
+        self.add_molecule_with_metadata(molecule, conformer, MoleculeInstanceMetadata::default())
     }
 
-    pub fn add_small_molecule_with_metadata(
+    pub fn add_molecule_with_metadata(
         &mut self,
-        molecule: &SmallMolecule,
-        conformer: ConformerId,
+        molecule: &Molecule,
+        conformer: &Conformer,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.as_molecule().atom_count() == 0 {
+        if molecule.atom_count() == 0 {
             return Err(ModelBuildError::Topology(
                 TopologyBuildError::EmptyMoleculeDefinition,
             ));
         }
-        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
+        let staged = stage_conformer_positions(molecule, conformer)?;
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
-        let (_, instance) = self
-            .topology
-            .add_small_molecule_instance(molecule, metadata)?;
-        self.positions.extend(staged);
-        Ok(instance)
-    }
-
-    pub(crate) fn add_small_molecule_with_metadata_unchecked_connectedness(
-        &mut self,
-        molecule: &SmallMolecule,
-        conformer: ConformerId,
-        metadata: MoleculeInstanceMetadata,
-    ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.as_molecule().atom_count() == 0 {
-            return Err(ModelBuildError::Topology(
-                TopologyBuildError::EmptyMoleculeDefinition,
-            ));
-        }
-        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
-        self.positions
-            .try_reserve(staged.len())
-            .map_err(|_| ModelBuildError::CapacityOverflow)?;
-        let (_, instance) = self
-            .topology
-            .add_small_molecule_instance_unchecked_connectedness(molecule, metadata)?;
-        self.positions.extend(staged);
-        Ok(instance)
-    }
-
-    pub fn add_macro_molecule(
-        &mut self,
-        molecule: &MacroMolecule,
-        conformer: ConformerId,
-    ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        self.add_macro_molecule_with_metadata(
-            molecule,
-            conformer,
-            MoleculeInstanceMetadata::default(),
-        )
-    }
-
-    pub fn add_macro_molecule_with_metadata(
-        &mut self,
-        molecule: &MacroMolecule,
-        conformer: ConformerId,
-        metadata: MoleculeInstanceMetadata,
-    ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.as_molecule().atom_count() == 0 {
-            return Err(ModelBuildError::Topology(
-                TopologyBuildError::EmptyMoleculeDefinition,
-            ));
-        }
-        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
-        self.positions
-            .try_reserve(staged.len())
-            .map_err(|_| ModelBuildError::CapacityOverflow)?;
-        let (_, instance) = self
-            .topology
-            .add_macro_molecule_instance(molecule, metadata)?;
-        self.positions.extend(staged);
-        Ok(instance)
-    }
-
-    pub(crate) fn add_macro_molecule_with_metadata_unchecked_connectedness(
-        &mut self,
-        molecule: &MacroMolecule,
-        conformer: ConformerId,
-        metadata: MoleculeInstanceMetadata,
-    ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        if molecule.as_molecule().atom_count() == 0 {
-            return Err(ModelBuildError::Topology(
-                TopologyBuildError::EmptyMoleculeDefinition,
-            ));
-        }
-        let staged = stage_conformer_positions(molecule.as_molecule(), conformer)?;
-        self.positions
-            .try_reserve(staged.len())
-            .map_err(|_| ModelBuildError::CapacityOverflow)?;
-        let (_, instance) = self
-            .topology
-            .add_macro_molecule_instance_unchecked_connectedness(molecule, metadata)?;
+        let (_, instance) = self.topology.add_molecule_instance(molecule, metadata)?;
         self.positions.extend(staged);
         Ok(instance)
     }
@@ -800,11 +641,8 @@ impl ModelBuilder {
 
 pub(super) fn stage_conformer_positions(
     graph: &Molecule,
-    conformer: ConformerId,
+    conformer: &Conformer,
 ) -> Result<Vec<Point3>, ModelBuildError> {
-    let conformer = graph
-        .conformer(conformer)
-        .map_err(|_| ModelBuildError::InvalidConformerId(conformer))?;
     let mut positions = Vec::new();
     positions
         .try_reserve_exact(graph.atom_count())
@@ -855,7 +693,6 @@ where
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelBuildError {
-    InvalidConformerId(ConformerId),
     MissingPosition { atom: AtomId },
     NonFinitePosition { atom: AtomId },
     InstancePositionCountMismatch { expected: usize, actual: usize },
@@ -868,7 +705,6 @@ pub enum ModelBuildError {
 impl fmt::Display for ModelBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidConformerId(id) => write!(formatter, "invalid source conformer: {id}"),
             Self::MissingPosition { atom } => {
                 write!(
                     formatter,
@@ -907,58 +743,6 @@ impl From<PositionError> for ModelBuildError {
 }
 
 impl From<UnitError> for ModelBuildError {
-    fn from(error: UnitError) -> Self {
-        Self::Unit(error)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum InstanceToConformerError {
-    InvalidMoleculeInstanceId(MoleculeInstanceId),
-    InvalidConformerId(ConformerId),
-    MissingTargetAtom(AtomId),
-    UnexpectedTargetAtom(AtomId),
-    Position(PositionError),
-    Conformer(ConformerError),
-    Unit(UnitError),
-}
-
-impl fmt::Display for InstanceToConformerError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidMoleculeInstanceId(id) => {
-                write!(formatter, "invalid molecule instance: {id}")
-            }
-            Self::InvalidConformerId(id) => write!(formatter, "invalid target conformer: {id}"),
-            Self::MissingTargetAtom(atom) => {
-                write!(formatter, "target molecule is missing source atom {atom}")
-            }
-            Self::UnexpectedTargetAtom(atom) => {
-                write!(formatter, "target molecule contains unexpected atom {atom}")
-            }
-            Self::Position(error) => write!(formatter, "cannot read model position: {error}"),
-            Self::Conformer(error) => write!(formatter, "cannot update target conformer: {error}"),
-            Self::Unit(error) => write!(formatter, "invalid target conformer unit: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for InstanceToConformerError {}
-
-impl From<PositionError> for InstanceToConformerError {
-    fn from(error: PositionError) -> Self {
-        Self::Position(error)
-    }
-}
-
-impl From<ConformerError> for InstanceToConformerError {
-    fn from(error: ConformerError) -> Self {
-        Self::Conformer(error)
-    }
-}
-
-impl From<UnitError> for InstanceToConformerError {
     fn from(error: UnitError) -> Self {
         Self::Unit(error)
     }

@@ -419,7 +419,7 @@ fn bond_is_in_fully_conjugated_five_or_six_member_cycle(
     {
         return false;
     }
-    let mut visited = vec![false; molecule.atoms.len()];
+    let mut visited = vec![false; molecule.graph.atom_slot_count()];
     visited[start.index()] = true;
     conjugated_ring_path_exists(
         molecule,

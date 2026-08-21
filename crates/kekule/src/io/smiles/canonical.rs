@@ -4,9 +4,9 @@ use crate::algorithms::{
     allowed_valences, canonical_atom_ranking, ordered_atom_pair, rdkit_default_valence,
     CanonicalAtomRanking,
 };
+use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MolWriteError;
-use crate::small::model::SmallMolecule;
 
 use super::write::{
     collect_smiles_tree, smiles_atom, smiles_bond_between, smiles_connected_components,
@@ -15,11 +15,9 @@ use super::write::{
     StereoWriteMode,
 };
 
-pub fn write_canonical_smiles(
-    molecule: &SmallMolecule,
-) -> std::result::Result<String, MolWriteError> {
-    validate_smiles_writeable(molecule.as_molecule(), StereoWriteMode::Ignore)?;
-    let normalized = canonical_nonisomeric_graph(molecule.as_molecule())?;
+pub fn write_canonical_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
+    validate_smiles_writeable(molecule, StereoWriteMode::Ignore)?;
+    let normalized = canonical_nonisomeric_graph(molecule)?;
     let mol = &normalized;
     let ranking = canonical_atom_ranking(mol);
     let mut components = Vec::new();
@@ -80,6 +78,7 @@ fn canonical_nonisomeric_graph(mol: &Molecule) -> std::result::Result<Molecule, 
         let count = implicit_by_parent.entry(parent).or_insert(implicit);
         *count = count.saturating_add(1);
         let parent_atom = normalized
+            .graph
             .atoms
             .get_mut(parent.index())
             .and_then(Option::as_mut)

@@ -10,16 +10,13 @@ use crate::io::{
     write_isomeric_smiles, write_smiles, MolWriteError, SmilesInterpretError, SmilesParseError,
 };
 
-use super::model::SmallMolecule;
+use super::Molecule;
 
-impl SmallMolecule {
-    pub fn from_smiles(input: &str) -> Result<Self, SmallMoleculeReadError> {
+impl Molecule {
+    /// Parses and interprets one SMILES record into source-ordered connected components.
+    pub fn from_smiles(input: &str) -> Result<Vec<Self>, MoleculeReadError> {
         let document = parse_smiles_document(input)?;
-        interpret_smiles_document(&document)?
-            .to_molecule()
-            .map_err(|error| SmallMoleculeReadError::ComponentCount {
-                actual: error.actual(),
-            })
+        Ok(interpret_smiles_document(&document)?.to_molecules())
     }
 
     /// Install the transactional default valence, ring-set, and aromaticity profile.
@@ -30,18 +27,8 @@ impl SmallMolecule {
     /// There is no public normalization step between interpretation and
     /// perception:
     ///
-    /// ```compile_fail
-    /// use kekule::small::SmallMolecule;
-    /// let mut molecule = SmallMolecule::from_smiles("CC").unwrap();
-    /// molecule.normalize().unwrap();
-    /// ```
-    ///
-    /// ```compile_fail
-    /// let mut molecule = kekule::core::Molecule::new();
-    /// kekule::normalization::normalize(&mut molecule).unwrap();
-    /// ```
     pub fn perceive(&mut self) -> Result<(), PerceptionError> {
-        perceive_molecule(self.as_molecule_mut())
+        perceive_molecule(self)
     }
 
     /// Materialize stored and perceived hydrogens as graph atoms.
@@ -54,12 +41,12 @@ impl SmallMolecule {
         &mut self,
         options: AddHydrogensOptions,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_to_molecule(self.as_molecule_mut(), options)
+        add_hydrogens_to_molecule(self, options)
     }
 
     /// Collapse ordinary graph hydrogens and report retained protected atoms.
     pub fn remove_hydrogens(&mut self) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-        remove_hydrogens_from_molecule(self.as_molecule_mut())
+        remove_hydrogens_from_molecule(self)
     }
 
     pub fn to_smiles(&self) -> Result<String, MolWriteError> {
@@ -77,37 +64,29 @@ impl SmallMolecule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SmallMoleculeReadError {
+pub enum MoleculeReadError {
     Parse(SmilesParseError),
     Interpret(SmilesInterpretError),
-    /// A `SmallMolecule` convenience requires one connected SMILES component.
-    ComponentCount {
-        actual: usize,
-    },
 }
 
-impl fmt::Display for SmallMoleculeReadError {
+impl fmt::Display for MoleculeReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Parse(error) => write!(f, "{error}"),
             Self::Interpret(error) => write!(f, "{error}"),
-            Self::ComponentCount { actual } => write!(
-                f,
-                "SmallMolecule requires exactly one connected SMILES component, found {actual}"
-            ),
         }
     }
 }
 
-impl std::error::Error for SmallMoleculeReadError {}
+impl std::error::Error for MoleculeReadError {}
 
-impl From<SmilesParseError> for SmallMoleculeReadError {
+impl From<SmilesParseError> for MoleculeReadError {
     fn from(error: SmilesParseError) -> Self {
         Self::Parse(error)
     }
 }
 
-impl From<SmilesInterpretError> for SmallMoleculeReadError {
+impl From<SmilesInterpretError> for MoleculeReadError {
     fn from(error: SmilesInterpretError) -> Self {
         Self::Interpret(error)
     }

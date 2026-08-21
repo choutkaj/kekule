@@ -191,6 +191,7 @@ impl SourceStereoNormalizationError {
 /// publishes represented chemistry only.
 pub(crate) fn canonicalize_molecule_for_publication(
     molecule: &mut Molecule,
+    geometry: Option<&crate::core::Conformer>,
     source_stereo: &[SourceStereoBondMark],
 ) -> Result<NormalizationReport, NormalizationError> {
     canonicalize_represented_chemistry(molecule).map_err(|error| {
@@ -202,12 +203,12 @@ pub(crate) fn canonicalize_molecule_for_publication(
     // Source-stereo normalization must not observe arbitrary installed
     // perception. Representation rewrites above already invalidate it
     // conceptually, so clear it before decoding any source marks.
-    molecule.clear_perception_state();
-    let report = normalize_source_stereo(molecule, source_stereo)
+    molecule.clear_perception();
+    let report = normalize_source_stereo(molecule, geometry, source_stereo)
         .map_err(NormalizationError::SourceStereo)?;
     // Adding represented stereo invalidates only stereo-derived state. The
     // publication contract clears the complete perception state.
-    molecule.clear_perception_state();
+    molecule.clear_perception();
     Ok(report)
 }
 
@@ -359,7 +360,7 @@ fn try_localize_aromatic_component_with_limit(
 
     let selected_double_bonds = selected_double_bonds.into_iter().collect::<BTreeSet<_>>();
     for (bond_id, bond) in (0..=u32::MAX)
-        .zip(molecule.bonds.iter_mut())
+        .zip(molecule.graph.bonds.iter_mut())
         .filter_map(|(raw, bond)| bond.as_mut().map(|bond| (BondId::new(raw), bond)))
     {
         if aromatic_bonds.contains(&bond_id)
@@ -479,7 +480,7 @@ mod tests {
 
     #[test]
     fn aromatic_localization_limit_is_structured_and_transactional() {
-        let mut molecule = Molecule::new();
+        let mut molecule = crate::core::MoleculeEditor::new();
         let atoms = (0..6)
             .map(|_| {
                 molecule

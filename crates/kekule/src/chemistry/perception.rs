@@ -44,7 +44,7 @@ pub fn perceive_molecule(molecule: &mut Molecule) -> Result<(), PerceptionError>
     let previous = molecule.perception().clone();
     if let Err(error) = perceive_molecule_in_place(molecule) {
         molecule
-            .install_perception_state(previous)
+            .install_perception(previous)
             .expect("previous perception state must remain valid");
         return Err(error);
     }

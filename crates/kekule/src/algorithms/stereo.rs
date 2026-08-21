@@ -185,35 +185,43 @@ pub fn detect_stereo_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 /// Infer coordinate-derived stereo without changing the molecule.
 pub fn infer_coordinate_stereo(
     mol: &Molecule,
+    conformer: &Conformer,
 ) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
-    infer_coordinate_stereo_with_options(mol, CoordinateStereoOptions::default())
+    infer_coordinate_stereo_with_options(mol, conformer, CoordinateStereoOptions::default())
 }
 
 /// Infer coordinate-derived stereo with an explicit axis policy.
 pub fn infer_coordinate_stereo_with_options(
     mol: &Molecule,
+    conformer: &Conformer,
     options: CoordinateStereoOptions,
 ) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
     validate_stereo(mol)?;
     Ok(CoordinateStereoResult {
-        elements: infer_coordinate_stereo_elements(mol, options.infer_axes),
+        elements: infer_coordinate_stereo_elements(mol, conformer, options.infer_axes),
     })
 }
 
 /// Materialize inferred coordinate stereo as represented chemistry.
 pub fn materialize_coordinate_stereo(
-    mol: &mut Molecule,
+    editor: &mut MoleculeEditor,
+    conformer: &Conformer,
 ) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
-    materialize_coordinate_stereo_with_options(mol, CoordinateStereoOptions::default())
+    materialize_coordinate_stereo_with_options(
+        editor,
+        conformer,
+        CoordinateStereoOptions::default(),
+    )
 }
 
 /// Materialize inferred coordinate stereo with an explicit axis policy.
 pub fn materialize_coordinate_stereo_with_options(
-    mol: &mut Molecule,
+    editor: &mut MoleculeEditor,
+    conformer: &Conformer,
     options: CoordinateStereoOptions,
 ) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
-    let inferred = infer_coordinate_stereo_with_options(mol, options)?;
-    let mut staged = mol.clone();
+    let inferred = infer_coordinate_stereo_with_options(editor.working(), conformer, options)?;
+    let mut staged = editor.clone();
     let mut created_elements = Vec::with_capacity(inferred.elements.len());
     for element in inferred.elements {
         let id = staged
@@ -221,8 +229,8 @@ pub fn materialize_coordinate_stereo_with_options(
             .map_err(CoordinateStereoError::CouldNotCreateElement)?;
         created_elements.push(id);
     }
-    validate_stereo(&staged)?;
-    *mol = staged;
+    validate_stereo(staged.working())?;
+    *editor = staged;
     Ok(CoordinateStereoMaterializationReport { created_elements })
 }
 
@@ -590,10 +598,11 @@ fn atom_is_atropisomeric_sp2_endpoint(
         })
 }
 
-fn infer_coordinate_stereo_elements(mol: &Molecule, infer_axes: bool) -> Vec<StereoElement> {
-    let Some((_, conformer)) = mol.first_conformer() else {
-        return Vec::new();
-    };
+fn infer_coordinate_stereo_elements(
+    mol: &Molecule,
+    conformer: &Conformer,
+    infer_axes: bool,
+) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
     assigned.extend(infer_coordinate_tetrahedral(mol, conformer));
     assigned.extend(infer_coordinate_double_bonds(mol, conformer));

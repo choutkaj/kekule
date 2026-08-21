@@ -1,8 +1,7 @@
-use kekule::bio::{MacroMolecule, SmcraAtomSiteMetadata};
+use kekule::bio::SmcraAtomSiteMetadata;
 use kekule::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule, PropValue};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{HarmonicBondParameter, HarmonicBondPotential, Potential};
-use kekule::small::SmallMolecule;
 use kekule::structure::{AtomData, Ensemble, EnsembleMember, Model, Positions, TopologyRemapError};
 use kekule::topology::transform::{
     remove_instances, retain_instances, RemovedSelectionPolicy, SelectionRemapError,
@@ -37,16 +36,16 @@ fn element(symbol: &str) -> Element {
     Element::from_symbol(symbol).expect("test element")
 }
 
-fn one_atom_small(symbol: &str) -> SmallMolecule {
-    let mut graph = Molecule::builder();
+fn one_atom_small(symbol: &str) -> Molecule {
+    let mut graph = kekule::core::MoleculeEditor::new();
     graph
         .add_atom(Atom::new(element(symbol)))
         .expect("test atom capacity");
-    SmallMolecule::from_molecule(graph.build().expect("connected single atom"))
+    graph.finish().expect("connected single atom")
 }
 
-fn ligand_with_tombstones() -> SmallMolecule {
-    let mut graph = Molecule::builder();
+fn ligand_with_tombstones() -> Molecule {
+    let mut graph = kekule::core::MoleculeEditor::new();
     let carbon = graph
         .add_atom(Atom::new(element("C")))
         .expect("test atom capacity");
@@ -63,11 +62,11 @@ fn ligand_with_tombstones() -> SmallMolecule {
         .add_bond(carbon, oxygen, BondOrder::Double)
         .expect("test bond capacity");
     graph.delete_atom(deleted).expect("delete test tombstone");
-    SmallMolecule::from_molecule(graph.build().expect("connected ligand"))
+    graph.finish().expect("connected ligand")
 }
 
-fn one_atom_macro() -> MacroMolecule {
-    let mut builder = MacroMolecule::builder();
+fn one_atom_macro() -> Molecule {
+    let mut builder = kekule::core::MoleculeEditor::new();
     let atom = builder
         .add_atom(Atom::new(element("C")))
         .expect("test atom capacity");
@@ -88,7 +87,7 @@ fn one_atom_macro() -> MacroMolecule {
     builder
         .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .expect("test atom site");
-    builder.build().expect("valid test macromolecule")
+    builder.finish().expect("valid test macromolecule")
 }
 
 fn metadata(role: MoleculeRole, label: &str) -> MoleculeInstanceMetadata {
@@ -108,16 +107,16 @@ fn fixture() -> Fixture {
 
     let mut builder = TopologyBuilder::new();
     let water_definition = builder
-        .add_small_molecule_definition(&water)
+        .add_molecule_definition(&water)
         .expect("water definition");
     let ligand_definition = builder
-        .add_small_molecule_definition(&ligand)
+        .add_molecule_definition(&ligand)
         .expect("ligand definition");
     let macro_definition = builder
-        .add_macro_molecule_definition(&macromolecule)
+        .add_molecule_definition(&macromolecule)
         .expect("macro definition");
     let ion_definition = builder
-        .add_small_molecule_definition(&ion)
+        .add_molecule_definition(&ion)
         .expect("ion definition");
 
     let water_first = builder
@@ -473,7 +472,7 @@ fn mapping_with_added_atom() -> (
     let one = one_atom_small("C");
     let mut source_builder = TopologyBuilder::new();
     let source_definition = source_builder
-        .add_small_molecule_definition(&one)
+        .add_molecule_definition(&one)
         .expect("source definition");
     let source_instance = source_builder
         .add_instance(source_definition, MoleculeInstanceMetadata::default())
@@ -481,7 +480,7 @@ fn mapping_with_added_atom() -> (
     let source_topology = Arc::new(source_builder.build().expect("source topology"));
     let mut target_builder = TopologyBuilder::new();
     let target_definition = target_builder
-        .add_small_molecule_definition(&one)
+        .add_molecule_definition(&one)
         .expect("target definition");
     let target_first = target_builder
         .add_instance(target_definition, MoleculeInstanceMetadata::default())
@@ -982,10 +981,10 @@ fn solvent_rich_subset_regression_avoids_quadratic_builder_cloning() {
     let ligand = one_atom_small("C");
     let mut builder = TopologyBuilder::new();
     let water_definition = builder
-        .add_small_molecule_definition(&water)
+        .add_molecule_definition(&water)
         .expect("water definition");
     let ligand_definition = builder
-        .add_small_molecule_definition(&ligand)
+        .add_molecule_definition(&ligand)
         .expect("ligand definition");
     builder
         .reserve_instances(WATER_COUNT + 1)

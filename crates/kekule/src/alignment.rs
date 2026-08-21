@@ -14,15 +14,14 @@
 //!
 //! ```
 //! use kekule::alignment::kabsch;
-//! use kekule::core::{Atom, BondOrder, Element, Molecule};
+//! use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 //! use kekule::geometry::Point3;
-//! use kekule::small::SmallMolecule;
 //! use kekule::structure::{Model, Positions};
 //! use kekule::topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use std::sync::Arc;
 //!
-//! let mut graph = Molecule::builder();
+//! let mut graph = MoleculeEditor::new();
 //! let mut previous = None;
 //! for _ in 0..3 {
 //!     let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
@@ -31,9 +30,9 @@
 //!     }
 //!     previous = Some(atom);
 //! }
-//! let molecule = SmallMolecule::from_molecule(graph.build()?);
+//! let molecule = graph.finish()?;
 //! let mut builder = TopologyBuilder::new();
-//! let definition = builder.add_small_molecule_definition(&molecule)?;
+//! let definition = builder.add_molecule_definition(&molecule)?;
 //! builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
 //! let topology = Arc::new(builder.build()?);
 //! let moving_points = [
@@ -819,15 +818,14 @@ fn matrix_is_finite(matrix: Matrix) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, BondOrder, Element, Molecule};
+    use crate::core::{Atom, BondOrder, Element};
     use crate::geometry::PeriodicCell;
-    use crate::small::SmallMolecule;
     use crate::structure::{Model, Positions};
     use crate::topology::{AtomSelection, MoleculeInstanceMetadata, Topology, TopologyBuilder};
     use crate::units::{Quantity, ANGSTROM, NANOMETER};
 
     fn topology(atom_count: usize) -> Arc<Topology> {
-        let mut graph = Molecule::builder();
+        let mut graph = crate::core::MoleculeEditor::new();
         let mut previous = None;
         for _ in 0..atom_count {
             let atom = graph
@@ -838,9 +836,9 @@ mod tests {
             }
             previous = Some(atom);
         }
-        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
+        let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();

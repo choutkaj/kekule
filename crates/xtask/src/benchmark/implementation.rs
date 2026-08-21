@@ -22,7 +22,7 @@ pub(crate) fn implementation_expected(
                         .into_iter()
                         .map(|(name, value)| SdfDataField::new(name, value))
                         .collect();
-                    SdfRecord::new(record.title, record.molecule, fields)
+                    SdfRecord::new(record.title, vec![record.molecule], fields)
                 })
                 .collect::<Vec<_>>();
             let written = sdf::write_v2000(&records)?;
@@ -450,7 +450,7 @@ fn dssp_residue_letter(name: &str) -> char {
 pub(crate) struct IndexedSmallRecord {
     pub(crate) record_index: usize,
     pub(crate) title: String,
-    pub(crate) molecule: SmallMolecule,
+    pub(crate) molecule: Molecule,
     pub(crate) sdf_fields: BTreeMap<String, String>,
 }
 
@@ -460,15 +460,15 @@ pub(crate) struct IndexedSmilesRecord {
     pub(crate) status: String,
     pub(crate) title: String,
     pub(crate) input_smiles: String,
-    pub(crate) molecule: Option<SmallMolecule>,
-    pub(crate) components: Vec<SmallMolecule>,
+    pub(crate) molecule: Option<Molecule>,
+    pub(crate) components: Vec<Molecule>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct IndexedStereoPerceptionRecord {
     pub(crate) record_index: usize,
     pub(crate) title: String,
-    pub(crate) components: Vec<SmallMolecule>,
+    pub(crate) components: Vec<Molecule>,
 }
 
 const BOUNDED_SUBSTRUCTURE_QUERIES: &[&str] = &[
@@ -532,9 +532,8 @@ fn substructure_record_json(record: &mut IndexedSmallRecord) -> Value {
     for smarts in BOUNDED_SUBSTRUCTURE_QUERIES {
         let graph =
             query::parse_smarts(smarts).expect("checked-in bounded benchmark SMARTS must parse");
-        let matches =
-            substructure::find_substructure_matches(record.molecule.as_molecule(), &graph)
-                .expect("perceived benchmark molecule must satisfy query prerequisites");
+        let matches = substructure::find_substructure_matches(&record.molecule, &graph)
+            .expect("perceived benchmark molecule must satisfy query prerequisites");
         let mut atom_sets = matches
             .into_iter()
             .map(|query_match| {
@@ -572,7 +571,7 @@ pub(crate) fn read_small_records_by_suffix(
     ) {
         let document = molfile::parse_str(&input)?;
         let title = document.header().title().to_owned();
-        let molecule = molfile::interpret(&document)?.to_molecule();
+        let molecule = exactly_one_molecule(molfile::interpret(&document)?.to_molecules())?;
         return Ok(vec![IndexedSmallRecord {
             record_index: 0,
             title,
@@ -597,14 +596,15 @@ pub(crate) fn small_record(index: usize, record: SdfRecord) -> IndexedSmallRecor
     IndexedSmallRecord {
         record_index: index,
         title,
-        molecule: record.to_molecule(),
+        molecule: exactly_one_molecule(record.to_molecules())
+            .expect("small-record benchmark requires one connected component"),
         sdf_fields,
     }
 }
 
-fn interpret_molfile(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
+fn interpret_molfile(input: &str) -> Result<Molecule, Box<dyn Error>> {
     let document = molfile::parse_str(input)?;
-    Ok(molfile::interpret(&document)?.to_molecule())
+    exactly_one_molecule(molfile::interpret(&document)?.to_molecules())
 }
 
 fn interpret_sdf(input: &str) -> Result<Vec<SdfRecord>, Box<dyn Error>> {
@@ -612,12 +612,23 @@ fn interpret_sdf(input: &str) -> Result<Vec<SdfRecord>, Box<dyn Error>> {
     Ok(sdf::interpret(&document)?.to_records())
 }
 
-fn interpret_smiles(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
+fn interpret_smiles(input: &str) -> Result<Molecule, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
-    Ok(smiles::interpret(&document)?.to_molecule()?)
+    exactly_one_molecule(smiles::interpret(&document)?.to_molecules())
 }
 
-fn interpret_smiles_components(input: &str) -> Result<Vec<SmallMolecule>, Box<dyn Error>> {
+fn exactly_one_molecule(mut molecules: Vec<Molecule>) -> Result<Molecule, Box<dyn Error>> {
+    if molecules.len() != 1 {
+        return Err(std::io::Error::other(format!(
+            "expected one connected molecule, found {}",
+            molecules.len()
+        ))
+        .into());
+    }
+    Ok(molecules.pop().expect("component count was checked"))
+}
+
+fn interpret_smiles_components(input: &str) -> Result<Vec<Molecule>, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
     Ok(smiles::interpret(&document)?.to_molecules())
 }
@@ -731,7 +742,7 @@ pub(crate) fn read_stereo_records_by_suffix(
     }
     let document = molfile::parse_str(&input)?;
     let title = document.header().title().to_owned();
-    let molecule = molfile::interpret(&document)?.to_molecule();
+    let molecule = exactly_one_molecule(molfile::interpret(&document)?.to_molecules())?;
     Ok(vec![IndexedSmallRecord {
         record_index: 0,
         title,
@@ -776,7 +787,7 @@ pub(crate) fn smiles_unsupported_subset_reason(smiles: &str) -> Option<&'static 
 }
 
 pub(crate) fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = record.molecule.as_molecule();
+    let mol = &record.molecule;
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -790,7 +801,7 @@ pub(crate) fn sdf_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn mol_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = record.molecule.as_molecule();
+    let mol = &record.molecule;
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -803,27 +814,13 @@ pub(crate) fn mol_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn conformer_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = record.molecule.as_molecule();
+    let mol = &record.molecule;
     json!({
         "record_index": record.record_index,
         "status": "ok",
         "title": record.title,
         "atom_count": mol.atom_count(),
-        "conformers": mol.conformers().map(|(_, conformer)| {
-            mol.atom_ids()
-                .filter_map(|atom_id| {
-                    conformer.position(atom_id).map(|point| {
-                        let point = point.value();
-                        json!({
-                            "atom_index": atom_id.raw(),
-                            "x": point.x,
-                            "y": point.y,
-                            "z": point.z,
-                        })
-                    })
-                })
-                .collect::<Vec<_>>()
-        }).collect::<Vec<_>>(),
+        "conformers": Vec::<Value>::new(),
         "atoms": mol.atoms().map(|(id, atom)| conformer_atom_json(mol, id, atom)).collect::<Vec<_>>(),
     })
 }
@@ -838,11 +835,9 @@ pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) 
     }
     let policy = kekule::descriptors::HydrogenCountPolicy::IncludePerceived;
     let result = (|| {
-        let formula =
-            kekule::descriptors::molecular_formula(record.molecule.as_molecule(), policy)?;
-        let average = kekule::descriptors::average_mass(record.molecule.as_molecule(), policy)?;
-        let monoisotopic =
-            kekule::descriptors::monoisotopic_mass(record.molecule.as_molecule(), policy)?;
+        let formula = kekule::descriptors::molecular_formula(&record.molecule, policy)?;
+        let average = kekule::descriptors::average_mass(&record.molecule, policy)?;
+        let monoisotopic = kekule::descriptors::monoisotopic_mass(&record.molecule, policy)?;
         Ok::<_, kekule::descriptors::MolecularDescriptorError>((
             formula,
             *average.value(),
@@ -880,7 +875,7 @@ pub(crate) fn molecular_descriptor_record_json(record: &mut IndexedSmallRecord) 
 }
 
 pub(crate) fn rotatable_bond_record_json(record: &IndexedSmallRecord) -> Value {
-    let molecule = record.molecule.as_molecule();
+    let molecule = &record.molecule;
     let detected = kekule::rotatable_bonds::detect(
         molecule,
         kekule::rotatable_bonds::RotatableBondOptions::STRICT,
@@ -920,7 +915,7 @@ pub(crate) fn rotatable_bond_smiles_record_json(record: &IndexedSmilesRecord) ->
     let mut atom_offset = 0usize;
     let mut bonds = Vec::new();
     for component in &record.components {
-        let molecule = component.as_molecule();
+        let molecule = component;
         let detected = kekule::rotatable_bonds::detect(
             molecule,
             kekule::rotatable_bonds::RotatableBondOptions::STRICT,
@@ -946,7 +941,7 @@ pub(crate) fn rotatable_bond_smiles_record_json(record: &IndexedSmilesRecord) ->
 }
 
 pub(crate) fn mol_parse_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = record.molecule.as_molecule();
+    let mol = &record.molecule;
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -958,7 +953,7 @@ pub(crate) fn mol_parse_record_json(record: &IndexedSmallRecord) -> Value {
 }
 
 pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
-    let mol = record.molecule.as_molecule();
+    let mol = &record.molecule;
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -973,12 +968,11 @@ pub(crate) fn stereo_record_json(record: &IndexedSmallRecord) -> Value {
 pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> Value {
     let source_stereo_elements = record
         .molecule
-        .as_molecule()
         .stereo_elements()
         .map(|(id, _)| id)
         .collect::<Vec<_>>();
     if record.molecule.perceive().is_err() {
-        let mol = record.molecule.as_molecule();
+        let mol = &record.molecule;
         return json!({
             "record_index": record.record_index,
             "status": "perception_error",
@@ -987,9 +981,17 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
             "bond_count": mol.bond_count(),
         });
     }
-    let candidates = stereo::detect_stereo_candidates(record.molecule.as_molecule());
-    let result = stereo::materialize_coordinate_stereo(record.molecule.as_molecule_mut());
-    let mol = record.molecule.as_molecule();
+    let candidates = stereo::detect_stereo_candidates(&record.molecule);
+    let conformer =
+        kekule::core::Conformer::new(kekule::units::ANGSTROM).expect("angstrom is a length unit");
+    let mut editor = record.molecule.edit();
+    let result = stereo::materialize_coordinate_stereo(&mut editor, &conformer);
+    if result.is_ok() {
+        record.molecule = editor
+            .finish()
+            .expect("coordinate stereo materialization preserves publication invariants");
+    }
+    let mol = &record.molecule;
     match result {
         Ok(report) => json!({
             "record_index": record.record_index,
@@ -1062,8 +1064,8 @@ pub(crate) fn stereo_perception_group_record_json(
                 "record_index": record.record_index,
                 "status": value.get("status").cloned().unwrap_or_else(|| json!("perception_error")),
                 "title": record.title,
-                "atom_count": record.components.iter().map(|molecule| molecule.as_molecule().atom_count()).sum::<usize>(),
-                "bond_count": record.components.iter().map(|molecule| molecule.as_molecule().bond_count()).sum::<usize>(),
+                "atom_count": record.components.iter().map(|molecule| molecule.atom_count()).sum::<usize>(),
+                "bond_count": record.components.iter().map(|molecule| molecule.bond_count()).sum::<usize>(),
             });
         }
         let object = value
@@ -1190,11 +1192,11 @@ pub(crate) fn stereo_cip_record_json(
     if record.molecule.perceive().is_err() {
         return None;
     }
-    if stereo::validate_stereo(record.molecule.as_molecule()).is_err() {
+    if stereo::validate_stereo(&record.molecule).is_err() {
         return None;
     }
-    stereo::assign_cip_descriptors(record.molecule.as_molecule_mut()).ok()?;
-    let mol = record.molecule.as_molecule();
+    stereo::assign_cip_descriptors(&mut record.molecule).ok()?;
+    let mol = &record.molecule;
     let atom_index = rdkit_default_atom_index(mol, remove_plain_hydrogens);
     let atom_descriptors = cip_atom_descriptors_json(mol, &atom_index);
     let bond_descriptors = cip_bond_descriptors_json(mol, &atom_index);
@@ -1344,23 +1346,8 @@ fn rdkit_default_removes_hydrogen(atom: &Atom) -> bool {
 }
 
 pub(crate) fn conformers_json(mol: &Molecule) -> Vec<Vec<Value>> {
-    mol.conformers()
-        .map(|(_, conformer)| {
-            mol.atom_ids()
-                .filter_map(|atom_id| {
-                    conformer.position(atom_id).map(|point| {
-                        let point = point.value();
-                        json!({
-                            "atom_index": atom_id.raw(),
-                            "x": point.x,
-                            "y": point.y,
-                            "z": point.z,
-                        })
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>()
+    let _ = mol;
+    Vec::new()
 }
 
 pub(crate) fn conformer_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Value {
@@ -1377,8 +1364,8 @@ pub(crate) fn conformer_atom_json(mol: &Molecule, id: AtomId, atom: &Atom) -> Va
 }
 
 pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Value {
-    let membership = rings::perceive_ring_membership(record.molecule.as_molecule_mut());
-    let mol = record.molecule.as_molecule();
+    let membership = rings::perceive_ring_membership(&mut record.molecule);
+    let mol = &record.molecule;
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -1389,7 +1376,7 @@ pub(crate) fn ring_membership_record_json(record: &mut IndexedSmallRecord) -> Va
 }
 
 pub(crate) fn ring_set_record_json(record: &mut IndexedSmallRecord) -> Value {
-    match rings::perceive_ring_set(record.molecule.as_molecule_mut()) {
+    match rings::perceive_ring_set(&mut record.molecule) {
         Ok(ring_set) => json!({
             "record_index": record.record_index,
             "status": "ok",
@@ -1414,7 +1401,7 @@ pub(crate) fn default_perception_atom_record_json(record: &mut IndexedSmallRecor
             "record_index": record.record_index,
             "status": "ok",
             "title": record.title,
-            "atoms": basic_atoms_json(record.molecule.as_molecule()),
+            "atoms": basic_atoms_json(&record.molecule),
         })
     } else {
         json!({
@@ -1427,7 +1414,7 @@ pub(crate) fn default_perception_atom_record_json(record: &mut IndexedSmallRecor
 
 pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
     let result = valence::perceive_valence_with_options(
-        record.molecule.as_molecule_mut(),
+        &mut record.molecule,
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
     );
@@ -1444,9 +1431,9 @@ pub(crate) fn valence_record_json(record: &mut IndexedSmallRecord) -> Value {
         "title": record.title,
         "atoms": record
             .molecule
-            .as_molecule()
+
             .atoms()
-            .map(|(id, atom)| valence_atom_json(record.molecule.as_molecule(), id, atom))
+            .map(|(id, atom)| valence_atom_json(&record.molecule, id, atom))
             .collect::<Vec<_>>(),
     })
 }
@@ -1475,9 +1462,7 @@ pub(crate) fn hydrogen_transform_record_json(record: &mut IndexedSmallRecord) ->
         *added_by_parent.entry(entry.parent.index()).or_default() += 1;
     }
 
-    if valence::perceive_valence(record.molecule.as_molecule_mut(), ValenceModel::RdkitLike)
-        .is_err()
-    {
+    if valence::perceive_valence(&mut record.molecule, ValenceModel::RdkitLike).is_err() {
         return json!({
             "record_index": record.record_index,
             "status": "add_error",
@@ -1516,7 +1501,7 @@ pub(crate) fn aromaticity_record_json(record: &mut IndexedSmallRecord) -> Value 
             "title": record.title,
         });
     }
-    let mol = record.molecule.as_molecule();
+    let mol = &record.molecule;
     json!({
         "record_index": record.record_index,
         "status": "ok",
@@ -1534,7 +1519,7 @@ pub(crate) fn canonical_ranking_record_json(record: &mut IndexedSmallRecord) -> 
             "title": record.title,
         });
     }
-    let ranking = canon::atom_ranking(record.molecule.as_molecule());
+    let ranking = canon::atom_ranking(&record.molecule);
     let mut classes = BTreeMap::<u32, Vec<usize>>::new();
     for (atom, rank) in ranking.iter() {
         classes.entry(rank).or_default().push(atom.index());
@@ -1731,8 +1716,8 @@ pub(crate) fn smiles_error_record_json(record: &IndexedSmilesRecord) -> Value {
     })
 }
 
-pub(crate) fn smiles_raw_semantic_json(molecule: &SmallMolecule) -> Value {
-    let mol = molecule.as_molecule();
+pub(crate) fn smiles_raw_semantic_json(molecule: &Molecule) -> Value {
+    let mol = &molecule;
     json!({
         "atom_count": mol.atom_count(),
         "bond_count": mol.bond_count(),
@@ -1741,7 +1726,7 @@ pub(crate) fn smiles_raw_semantic_json(molecule: &SmallMolecule) -> Value {
     })
 }
 
-pub(crate) fn smiles_components_raw_semantic_json(components: &[SmallMolecule]) -> Value {
+pub(crate) fn smiles_components_raw_semantic_json(components: &[Molecule]) -> Value {
     if let [molecule] = components {
         return smiles_raw_semantic_json(molecule);
     }
@@ -1750,7 +1735,7 @@ pub(crate) fn smiles_components_raw_semantic_json(components: &[SmallMolecule]) 
     let mut atom_offset = 0u64;
     let mut bond_offset = 0u64;
     for component in components {
-        let mol = component.as_molecule();
+        let mol = component;
         for mut atom in basic_atoms_json(mol) {
             offset_object_u64(&mut atom, "index", atom_offset);
             atoms.push(atom);
@@ -1789,11 +1774,11 @@ fn offset_object_u64(value: &mut Value, key: &str, offset: u64) {
         .insert(key.to_owned(), json!(number + offset));
 }
 
-pub(crate) fn smiles_perceived_semantic_json(mut molecule: SmallMolecule) -> Value {
+pub(crate) fn smiles_perceived_semantic_json(mut molecule: Molecule) -> Value {
     if molecule.perceive().is_err() {
         return json!({ "status": "perception_error" });
     }
-    let mol = molecule.as_molecule();
+    let mol = &molecule;
     json!({
         "status": "ok",
         "atom_count": mol.atom_count(),
@@ -1803,7 +1788,7 @@ pub(crate) fn smiles_perceived_semantic_json(mut molecule: SmallMolecule) -> Val
     })
 }
 
-pub(crate) fn smiles_components_perceived_semantic_json(components: &[SmallMolecule]) -> Value {
+pub(crate) fn smiles_components_perceived_semantic_json(components: &[Molecule]) -> Value {
     let mut molecules = components.to_vec();
     if molecules
         .iter_mut()
@@ -1813,15 +1798,15 @@ pub(crate) fn smiles_components_perceived_semantic_json(components: &[SmallMolec
     }
     let atom_count = molecules
         .iter()
-        .map(|molecule| molecule.as_molecule().atom_count())
+        .map(|molecule| molecule.atom_count())
         .sum::<usize>();
     let bond_count = molecules
         .iter()
-        .map(|molecule| molecule.as_molecule().bond_count())
+        .map(|molecule| molecule.bond_count())
         .sum::<usize>();
     let mut atoms = molecules
         .iter()
-        .flat_map(|molecule| smiles_perceived_atom_entries_json(molecule.as_molecule()))
+        .flat_map(smiles_perceived_atom_entries_json)
         .collect::<Vec<_>>();
     atoms.sort_by(|left, right| {
         left.0
@@ -1831,7 +1816,7 @@ pub(crate) fn smiles_components_perceived_semantic_json(components: &[SmallMolec
     let atoms = atoms.into_iter().map(|(_, atom)| atom).collect::<Vec<_>>();
     let mut bonds = molecules
         .iter()
-        .flat_map(|molecule| smiles_perceived_bonds_json(molecule.as_molecule()))
+        .flat_map(smiles_perceived_bonds_json)
         .collect::<Vec<_>>();
     bonds.sort_by_key(Value::to_string);
     json!({
@@ -1843,13 +1828,13 @@ pub(crate) fn smiles_components_perceived_semantic_json(components: &[SmallMolec
     })
 }
 
-pub(crate) fn hydrogen_transform_semantic_json(mut molecule: SmallMolecule) -> Value {
+pub(crate) fn hydrogen_transform_semantic_json(mut molecule: Molecule) -> Value {
     let _ = valence::perceive_valence_with_options(
-        molecule.as_molecule_mut(),
+        &mut molecule,
         ValenceModel::RdkitLike,
         ValenceOptions { strict: false },
     );
-    let mol = molecule.as_molecule();
+    let mol = &molecule;
     let atoms = mol
         .atoms()
         .map(|(id, atom)| {
@@ -1880,14 +1865,14 @@ pub(crate) fn hydrogen_transform_semantic_json(mut molecule: SmallMolecule) -> V
     })
 }
 
-pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: SmallMolecule) -> Value {
+pub(crate) fn smiles_isomeric_stereo_semantic_json(mut molecule: Molecule) -> Value {
     if molecule.perceive().is_err() {
         return json!({ "status": "perception_error" });
     }
-    if stereo::assign_cip_descriptors(molecule.as_molecule_mut()).is_err() {
+    if stereo::assign_cip_descriptors(&mut molecule).is_err() {
         return json!({ "status": "cip_error" });
     }
-    let mol = molecule.as_molecule();
+    let mol = &molecule;
     json!({
         "status": "ok",
         "atom_descriptors": smiles_cip_atom_descriptor_keys_json(mol),
@@ -2178,7 +2163,7 @@ pub(crate) fn explicit_valence_json(mol: &Molecule, atom: AtomId) -> u8 {
         .filter(|(id, _)| mol.bond_is_aromatic(*id).ok().flatten() == Some(true))
         .count();
     // The RDKit semantic record treats a pyrrolic donor H as explicit after
-    // RDKit's prepared state. Kekule keeps an inferred H in PerceptionState, so derive
+    // RDKit's prepared state. Kekule keeps an inferred H in Perception, so derive
     // the comparable bond-valence contribution without rewriting the atom.
     let has_aromatic_nitrogen_hydrogen = atom_record.is_some_and(|atom_record| {
         atom_record.element.symbol() == "N"
