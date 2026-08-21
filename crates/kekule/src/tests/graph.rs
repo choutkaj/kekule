@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn empty_molecule_has_no_atoms_or_bonds() {
-    let mol = Molecule::new();
+    let mol = crate::core::MoleculeEditor::new();
 
     assert_eq!(mol.atom_count(), 0);
     assert_eq!(mol.bond_count(), 0);
@@ -13,7 +13,7 @@ fn empty_molecule_has_no_atoms_or_bonds() {
 
 #[test]
 fn formal_charge_sums_only_live_atom_payloads() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let positive = mol
         .add_atom(charged_atom("N", 3))
         .expect("atom identifier capacity");
@@ -36,7 +36,7 @@ fn formal_charge_sums_only_live_atom_payloads() {
 
 #[test]
 fn atom_insertion_assigns_stable_typed_ids() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
 
@@ -56,7 +56,7 @@ fn atom_insertion_assigns_stable_typed_ids() {
 
 #[test]
 fn bond_insertion_assigns_stable_typed_ids() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -74,7 +74,7 @@ fn bond_insertion_assigns_stable_typed_ids() {
 
 #[test]
 fn invalid_atom_ids_are_rejected() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let atom = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     assert_eq!(
@@ -96,7 +96,7 @@ fn invalid_atom_ids_are_rejected() {
 
 #[test]
 fn invalid_bond_ids_are_rejected() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -122,7 +122,7 @@ fn invalid_bond_ids_are_rejected() {
 
 #[test]
 fn self_bonds_are_rejected() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let atom = mol.add_atom(carbon()).expect("atom identifier capacity");
 
     let err = mol
@@ -133,7 +133,7 @@ fn self_bonds_are_rejected() {
 
 #[test]
 fn duplicate_bond_is_rejected() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     mol.add_bond(a, b, BondOrder::Single)
@@ -152,7 +152,7 @@ fn duplicate_bond_is_rejected() {
 
 #[test]
 fn neighbor_iteration_reports_live_adjacent_atoms() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -180,7 +180,7 @@ fn neighbor_iteration_reports_live_adjacent_atoms() {
 
 #[test]
 fn incident_bond_iteration_reports_live_bonds() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -216,7 +216,7 @@ fn incident_bond_iteration_reports_live_bonds() {
 
 #[test]
 fn bond_between_finds_live_undirected_bonds() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let c = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -231,7 +231,7 @@ fn bond_between_finds_live_undirected_bonds() {
 
 #[test]
 fn bond_deletion_preserves_remaining_ids_and_counts() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -262,7 +262,7 @@ fn bond_deletion_preserves_remaining_ids_and_counts() {
 
 #[test]
 fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -300,7 +300,7 @@ fn atom_deletion_removes_incident_bonds_and_preserves_remaining_ids() {
 
 #[test]
 fn adding_after_deletion_allocates_new_ids() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let first_bond = mol
@@ -322,7 +322,7 @@ fn adding_after_deletion_allocates_new_ids() {
 
 #[test]
 fn every_topology_mutation_invalidates_fresh_perception() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     mark_all_fresh(&mut mol);
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     assert_all_stale(&mol);
@@ -348,7 +348,7 @@ fn every_topology_mutation_invalidates_fresh_perception() {
 
 #[test]
 fn absent_perception_remains_absent_after_topology_mutation() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
 
     mol.add_atom(carbon()).expect("atom identifier capacity");
 
@@ -360,7 +360,7 @@ fn absent_perception_remains_absent_after_topology_mutation() {
 
 #[test]
 fn property_maps_can_be_mutated_without_topology_changes() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -416,50 +416,7 @@ fn property_and_coordinate_edits_preserve_computed_state() {
         .insert("score".to_owned(), PropValue::Int(1));
     mol.props_mut()
         .insert("name".to_owned(), PropValue::String("triangle".to_owned()));
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            atoms[0],
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    let conformer_id = mol.add_conformer(conformer).expect("valid conformer");
-    mol.conformer_mut(conformer_id)
-        .expect("conformer exists")
-        .set_position(
-            atoms[1],
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-
     assert_eq!(mol.perception(), &before);
     assert!(mol.ring_membership().is_some());
     assert!(mol.ring_set().is_some());
-}
-
-#[test]
-fn conformer_attachment_rejects_coordinates_for_non_live_atoms_transactionally() {
-    let mut mol = Molecule::new();
-    let deleted = mol.add_atom(carbon()).expect("atom identifier capacity");
-    let live = mol.add_atom(oxygen()).expect("atom identifier capacity");
-    mol.delete_atom(deleted).expect("delete atom");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            deleted,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            live,
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-
-    assert!(matches!(
-        mol.add_conformer(conformer),
-        Err(MoleculeError::InvalidAtomId(id)) if id == deleted
-    ));
-    assert!(mol.conformers().next().is_none());
 }

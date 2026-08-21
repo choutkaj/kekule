@@ -20,6 +20,5 @@ pub(crate) fn checked_fixed_id_collection_len(
 
 fixed_u32_id!(AtomId, "a");
 fixed_u32_id!(BondId, "b");
-fixed_u32_id!(ConformerId, "c");
 fixed_u32_id!(StereoElementId, "s");
 fixed_u32_id!(StereoGroupId, "sg");

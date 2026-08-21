@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::algorithms::ordered_atom_pair;
+use crate::core::Molecule;
 use crate::core::*;
 use crate::io::MolWriteError;
-use crate::small::model::SmallMolecule;
 
 use super::parse::SmilesDirectionToken;
 
-pub fn write_smiles(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.as_molecule();
+pub fn write_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
+    let mol = molecule;
     let plan = plan_smiles_write(mol, StereoWriteMode::Reject)?;
     let mut parts = Vec::new();
     for start in &plan.roots {
@@ -24,10 +24,8 @@ pub fn write_smiles(molecule: &SmallMolecule) -> std::result::Result<String, Mol
     Ok(parts.join("."))
 }
 
-pub fn write_isomeric_smiles(
-    molecule: &SmallMolecule,
-) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.as_molecule();
+pub fn write_isomeric_smiles(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
+    let mol = molecule;
     let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
     let stereo = SmilesStereoWriteContext::new(mol)?;
     let component_styles = smiles_connected_components(mol)?

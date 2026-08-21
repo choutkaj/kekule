@@ -1,31 +1,21 @@
 use super::*;
 
 #[test]
-fn happy_path_small_molecule_api_matches_architecture() {
-    let mut molecule = SmallMolecule::from_smiles("c1ccccc1O").expect("phenol parses");
+fn happy_path_universal_molecule_api_matches_architecture() {
+    let mut molecule = read_smiles("c1ccccc1O").expect("phenol parses");
 
-    assert_eq!(
-        molecule.as_molecule().perception(),
-        &PerceptionState::default()
-    );
+    assert_eq!(molecule.perception(), &Perception::default());
     molecule.perceive().expect("phenol perceives");
-    assert_eq!(
-        molecule
-            .as_molecule()
-            .ring_set()
-            .expect("installed ring basis")
-            .len(),
-        1
-    );
-    assert_eq!(molecule.atom_count(), molecule.as_molecule().atom_count());
-    assert_eq!(molecule.bond_count(), molecule.as_molecule().bond_count());
+    assert_eq!(molecule.ring_set().expect("installed ring basis").len(), 1);
+    assert_eq!(molecule.atom_count(), molecule.atom_count());
+    assert_eq!(molecule.bond_count(), molecule.bond_count());
 
     let canonical = molecule
         .to_canonical_smiles()
         .expect("canonical SMILES writes");
     assert!(!canonical.is_empty());
 
-    let chiral = SmallMolecule::from_smiles("F[C@H](Cl)Br").expect("chiral molecule parses");
+    let chiral = read_smiles("F[C@H](Cl)Br").expect("chiral molecule parses");
     assert_eq!(
         chiral.to_isomeric_smiles().expect("isomeric SMILES writes"),
         "F[C@H](Cl)Br"
@@ -33,12 +23,12 @@ fn happy_path_small_molecule_api_matches_architecture() {
 }
 
 #[test]
-fn namespaced_small_molecule_api_keeps_pipeline_stages_separate() {
+fn namespaced_molecule_api_keeps_pipeline_stages_separate() {
     let mut molecule = read_smiles("CC(=O)O").expect("acetic acid parses");
-    assert!(!molecule.as_molecule().perception().has_valence());
+    assert!(!molecule.perception().has_valence());
 
     perceive(&mut molecule).expect("acetic acid perceives");
-    assert!(molecule.as_molecule().perception().has_valence());
+    assert!(molecule.perception().has_valence());
 
     let canonical = smiles_api::write_canonical(&molecule).expect("canonical SMILES writes");
     assert!(!canonical.is_empty());

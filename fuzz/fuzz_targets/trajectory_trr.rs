@@ -4,8 +4,7 @@ use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
 
 use libfuzzer_sys::fuzz_target;
-use kekule::core::{Atom, BondOrder, Element, Molecule};
-use kekule::small::SmallMolecule;
+use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
 use kekule_traj::{AtomOrderAssertion, FrameBuffer, TrajectoryReader};
 use kekule_traj::io::trr::{TrrReadOptions, TrrReader};
@@ -14,7 +13,7 @@ use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
 fn topology() -> &'static Arc<Topology> {
     static TOPOLOGY: OnceLock<Arc<Topology>> = OnceLock::new();
     TOPOLOGY.get_or_init(|| {
-        let mut graph = Molecule::builder();
+        let mut graph = MoleculeEditor::new();
         let mut previous = None;
         for symbol in ["C", "H", "O"] {
             let atom = graph
@@ -27,10 +26,10 @@ fn topology() -> &'static Arc<Topology> {
             }
             previous = Some(atom);
         }
-        let molecule = SmallMolecule::from_molecule(graph.build().expect("molecule"));
+        let molecule = graph.finish().expect("molecule");
         let mut builder = TopologyBuilder::new();
         let definition = builder
-            .add_small_molecule_definition(&molecule)
+            .add_molecule_definition(&molecule)
             .expect("definition");
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())

@@ -21,13 +21,19 @@ The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md). Option
 
 ## Concept
 
-The `Molecule` type is the canonical represented graph for one connected molecule. `Molecule` is wrapped as either `SmallMolecule` or `MacroMolecule`. `SmallMolecule` handles ordinary cheminformatics workflows, while `MacroMolecule` pairs one connected graph with a `SmcraHierarchy`.
+`Molecule` is the single universal molecular type: one non-empty, connected,
+geometry-independent entity. Its `Graph` owns authoritative chemistry, its
+optional `Hierarchy` owns coordinate-independent residue and chain organization,
+and its `Perception` stores reconstructible derived chemistry.
 
 ```text
-Molecule (one connected graph)
-┣ SmallMolecule
-┗ MacroMolecule (Molecule + SmcraHierarchy)
+Molecule = Graph + Hierarchy + Perception
 ```
+
+Coordinates and conformers are detached from `Molecule`. They enter at the
+`Model`, `Ensemble`, or trajectory layer. Structural construction and editing
+use `MoleculeEditor`; only `finish()` can publish a molecule, after validating
+that it is non-empty and connected.
 
 Higher, modeling-based objects are built around `Topology`: an immutable topological construct containing one or multiple molecule instances. Source-level identities such as an mmCIF entity or chain may map to more than one represented molecule instance when the observed structure contains a genuine unresolved gap.
 
@@ -39,12 +45,12 @@ Topology = reusable definitions + explicit instances + dense ordering
 ┗ Trajectory = Topology + ordered frames / reusable streaming buffers
 ```
 
-### Small-molecule pipeline
+### Molecular pipeline
 
 Kekule separates the basic chemistry pipeline into clear stages:
 
 - **Parse** reads source syntax into a format-specific `*Document`.
-- **Interpret** translates source-asserted chemistry and publishes a canonical, format-independent `Molecule`.
+- **Interpret** translates source-asserted chemistry and publishes source-ordered, connected `Molecule` components.
 - **Perceive** derives model-dependent chemical interpretation such as valence, rings, and aromaticity.
 - **CIP** optionally derives stereochemical descriptors such as `R`/`S` and `E`/`Z`.
 
@@ -55,13 +61,15 @@ Expert workflows can keep every stage explicit:
 ```rust
 use std::error::Error;
 
-use kekule::{smiles, small::SmallMolecule};
+use kekule::{core::Molecule, smiles};
 
-fn load_explicitly(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
+fn load_explicitly(input: &str) -> Result<Vec<Molecule>, Box<dyn Error>> {
     let document = smiles::parse_str(input)?;
-    let mut molecule = smiles::interpret(&document)?.to_molecule()?;
-    molecule.perceive()?;
-    Ok(molecule)
+    let mut molecules = smiles::interpret(&document)?.to_molecules();
+    for molecule in &mut molecules {
+        molecule.perceive()?;
+    }
+    Ok(molecules)
 }
 ```
 
@@ -74,24 +82,22 @@ Parse and inspect a simple chiral molecule, assign its stereochemistry, detect r
 use std::error::Error;
 
 use kekule::{
+    core::Molecule,
     rotatable_bonds::{self, RotatableBondOptions},
-    small::SmallMolecule,
     stereo,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and canonically interpret a chiral amino acid, then perceive it.
-    let mut molecule = SmallMolecule::from_smiles("C[C@@H](C(=O)O)N")?;
+    let mut molecules = Molecule::from_smiles("C[C@@H](C(=O)O)N")?;
+    let mut molecule = molecules.pop().expect("SMILES contains one component");
     molecule.perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
-    let stereochemistry = stereo::assign_cip_descriptors(molecule.as_molecule_mut())?;
+    let stereochemistry = stereo::assign_cip_descriptors(&mut molecule)?;
 
     // Detect rotatable bonds using the strict small-molecule definition.
-    let rotatable = rotatable_bonds::detect(
-        molecule.as_molecule(),
-        RotatableBondOptions::STRICT,
-    );
+    let rotatable = rotatable_bonds::detect(&molecule, RotatableBondOptions::STRICT);
 
     // Inspect basic graph properties and derived chemistry.
     println!("atoms: {}", molecule.atom_count());
@@ -111,51 +117,41 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ## Modeling
 
-Load a ligand from SDF, minimize its coordinates with the DREIDING force field, and write the optimized structure back to SDF: 
+Combine a connected molecule with detached coordinates, then minimize the
+resulting model with the DREIDING force field:
 
 ```rust
-use std::{error::Error, fs};
+use std::error::Error;
 
 use kekule::{
+    core::{Conformer, Molecule},
+    geometry::Point3,
     modeling::{minimize, MinimizeOptions},
-    sdf::{self, SdfParseOptions, SdfRecord},
     structure::Model,
-    units::MODEL_GRADIENT_UNIT,
+    units::{Quantity, ANGSTROM, MODEL_GRADIENT_UNIT},
 };
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse and canonically interpret one SDF record without perceiving it.
-    let input = fs::read_to_string("examples/ligand.sdf")?;
-    let document = sdf::parse_str(&input, SdfParseOptions::default())?;
-    let mut records = sdf::interpret(&document)?.to_records();
-    assert_eq!(records.len(), 1, "expected one ligand record");
-
-    // Preserve the record metadata while working on its molecule.
-    let record = records.pop().expect("record count was checked");
-    let title = record.title().to_owned();
-    let data_fields = record.data_fields().to_vec();
-    let mut ligand = record.to_molecule();
+    let mut molecules = Molecule::from_smiles("CCO")?;
+    let mut ligand = molecules.pop().expect("SMILES contains one component");
     ligand.perceive()?;
 
-    // Inspect the canonical, perceived ligand before modeling it.
-    println!("atoms: {}", ligand.atom_count());
-    println!("bonds: {}", ligand.bond_count());
-    println!("formal charge: {}", ligand.formal_charge());
-
-    // Build a fixed-topology model from the ligand's first conformer.
-    let conformer = ligand
-        .as_molecule()
-        .first_conformer()
-        .map(|(id, _)| id)
-        .expect("the SDF record has 3D coordinates");
+    // Molecule carries no geometry. Supply a detached conformer explicitly.
+    let mut conformer = Conformer::new(ANGSTROM)?;
+    for atom in ligand.atom_ids() {
+        conformer.set_position(
+            atom,
+            Quantity::new(Point3::new(atom.index() as f64, 0.0, 0.0), ANGSTROM),
+        )?;
+    }
     let mut builder = Model::builder();
-    let instance = builder.add_small_molecule(&ligand, conformer)?;
+    builder.add_molecule(&ligand, &conformer)?;
     let model = builder.build()?;
 
-    // Prepare DREIDING explicitly, then minimize a clone of the model.
+    // Prepare DREIDING explicitly, then minimize the model.
     let mut potential = DreidingPotential::prepare(
-        model.topology(),
+        &model.shared_topology(),
         model.view(),
         DreidingPrepareOptions::default(),
     )?;
@@ -177,14 +173,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         minimized.final_energy.unit()
     );
 
-    // Copy the optimized instance positions back to the source conformer.
-    minimized
-        .model
-        .instance_to_conformer(instance, ligand.as_molecule_mut(), conformer)?;
-
-    // Reassemble the original record metadata and write the optimized SDF.
-    let output = sdf::write_v2000(&[SdfRecord::new(title, ligand, data_fields)])?;
-    fs::write("examples/ligand-minimized.sdf", output)?;
     Ok(())
 }
 ```

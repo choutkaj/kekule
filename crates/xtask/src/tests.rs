@@ -1,7 +1,18 @@
 use super::*;
 
-fn perceive(molecule: &mut SmallMolecule) {
+fn perceive(molecule: &mut Molecule) {
     molecule.perceive().expect("molecule should be perceived");
+}
+
+fn one_smiles(input: &str) -> Result<Molecule, String> {
+    let mut molecules = Molecule::from_smiles(input).map_err(|error| error.to_string())?;
+    if molecules.len() != 1 {
+        return Err(format!(
+            "expected one connected molecule, found {}",
+            molecules.len()
+        ));
+    }
+    Ok(molecules.pop().expect("component count was checked"))
 }
 
 #[test]
@@ -745,7 +756,7 @@ fn benchmark_run_does_not_rewrite_dashboard_or_results_metadata() {
 
 #[test]
 fn stereo_perception_benchmark_records_reference_preparation_errors_per_record() {
-    let molecule = SmallMolecule::from_smiles("C(C)(C)(C)(C)C")
+    let molecule = one_smiles("C(C)(C)(C)(C)C")
         .expect("pentavalent neutral carbon should remain an interpretation-valid graph");
     let mut record = IndexedSmallRecord {
         record_index: 0,
@@ -920,83 +931,66 @@ fn comparison_normalizes_undirected_bonds_and_ring_order() {
 
 #[test]
 fn smiles_semantic_records_assert_topology_and_atom_identity() {
-    let single = SmallMolecule::from_smiles("CC").expect("single bond should parse");
-    let double = SmallMolecule::from_smiles("C=C").expect("double bond should parse");
+    let single = one_smiles("CC").expect("single bond should parse");
+    let double = one_smiles("C=C").expect("double bond should parse");
     assert_ne!(
-        smiles_perceived_bonds_json(single.as_molecule()),
-        smiles_perceived_bonds_json(double.as_molecule())
+        smiles_perceived_bonds_json(&single),
+        smiles_perceived_bonds_json(&double)
     );
 
-    let aromatic = SmallMolecule::from_smiles("c1ccccc1").expect("benzene should parse");
+    let aromatic = one_smiles("c1ccccc1").expect("benzene should parse");
     let mut perceived_aromatic = aromatic.clone();
     perceive(&mut perceived_aromatic);
     assert_eq!(
-        explicit_valence_json(perceived_aromatic.as_molecule(), AtomId::new(0)),
+        explicit_valence_json(&perceived_aromatic, AtomId::new(0)),
         3
     );
-    let mut aromatic_cyclohexyne =
-        SmallMolecule::from_smiles("C1=CC#CC=C1").expect("cyclohexyne parses");
+    let mut aromatic_cyclohexyne = one_smiles("C1=CC#CC=C1").expect("cyclohexyne parses");
     perceive(&mut aromatic_cyclohexyne);
     let alkyne_atoms = aromatic_cyclohexyne
-        .as_molecule()
         .bonds()
         .find_map(|(id, bond)| {
-            (aromatic_cyclohexyne
-                .as_molecule()
-                .bond_is_aromatic(id)
-                .ok()
-                .flatten()
-                == Some(true)
+            (aromatic_cyclohexyne.bond_is_aromatic(id).ok().flatten() == Some(true)
                 && bond.order == BondOrder::Triple)
                 .then_some(bond.endpoints())
         })
         .expect("aromaticized triple bond is retained");
     assert_eq!(
-        explicit_valence_json(aromatic_cyclohexyne.as_molecule(), alkyne_atoms.0),
+        explicit_valence_json(&aromatic_cyclohexyne, alkyne_atoms.0),
         4
     );
     assert_eq!(
-        explicit_valence_json(aromatic_cyclohexyne.as_molecule(), alkyne_atoms.1),
+        explicit_valence_json(&aromatic_cyclohexyne, alkyne_atoms.1),
         4
     );
-    let mut thiophene = SmallMolecule::from_smiles("c1ccsc1").expect("thiophene parses");
+    let mut thiophene = one_smiles("c1ccsc1").expect("thiophene parses");
     perceive(&mut thiophene);
     let sulfur_id = thiophene
-        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| (atom.element.symbol() == "S").then_some(id))
         .expect("sulfur atom");
-    assert_eq!(explicit_valence_json(thiophene.as_molecule(), sulfur_id), 2);
-    let mut phosphorus_ring =
-        SmallMolecule::from_smiles("C(F)(F)(F)P1P(P(P(P1C(F)(F)F)C(F)(F)F)C(F)(F)F)C(F)(F)F")
-            .expect("phosphorus ring parses");
+    assert_eq!(explicit_valence_json(&thiophene, sulfur_id), 2);
+    let mut phosphorus_ring = one_smiles("C(F)(F)(F)P1P(P(P(P1C(F)(F)F)C(F)(F)F)C(F)(F)F)C(F)(F)F")
+        .expect("phosphorus ring parses");
     perceive(&mut phosphorus_ring);
     for (phosphorus_id, _phosphorus) in phosphorus_ring
-        .as_molecule()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "P")
     {
         assert_eq!(
-            phosphorus_ring
-                .as_molecule()
-                .atom_is_aromatic(phosphorus_id)
-                .unwrap(),
+            phosphorus_ring.atom_is_aromatic(phosphorus_id).unwrap(),
             Some(true)
         );
-        assert_eq!(
-            explicit_valence_json(phosphorus_ring.as_molecule(), phosphorus_id),
-            3
-        );
+        assert_eq!(explicit_valence_json(&phosphorus_ring, phosphorus_id), 3);
     }
-    let mut phosphinine = SmallMolecule::from_smiles("C1=CC=PC=C1").expect("phosphinine parses");
+    let mut phosphinine = one_smiles("C1=CC=PC=C1").expect("phosphinine parses");
     perceive(&mut phosphinine);
     let phosphinine_phosphorus = phosphinine
-        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| (atom.element.symbol() == "P").then_some(id))
         .expect("phosphinine phosphorus");
     assert_eq!(
-        explicit_valence_json(phosphinine.as_molecule(), phosphinine_phosphorus),
+        explicit_valence_json(&phosphinine, phosphinine_phosphorus),
         3
     );
     let document = kekule::smiles::parse_str("CN(C)CCO.C1=CC=C2C(=C1)C3=NC4=C5C=CC=CC5=C([N-]4)N=C6C7=CC=CC=C7C(=N6)N=C8C9=CC=CC=C9C(=N8)N=C2[N-]3.[Cu+2]")
@@ -1007,68 +1001,52 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         .swap_remove(1);
     perceive(&mut anionic_macrocycle);
     let anionic_nitrogen = anionic_macrocycle
-        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| {
             (atom.element.symbol() == "N"
                 && atom.formal_charge < 0
-                && anionic_macrocycle
-                    .as_molecule()
-                    .atom_is_aromatic(id)
-                    .ok()
-                    .flatten()
-                    == Some(true))
+                && anionic_macrocycle.atom_is_aromatic(id).ok().flatten() == Some(true))
             .then_some(id)
         })
         .expect("anionic aromatic nitrogen");
     assert_eq!(
-        explicit_valence_json(anionic_macrocycle.as_molecule(), anionic_nitrogen),
+        explicit_valence_json(&anionic_macrocycle, anionic_nitrogen),
         2
     );
-    let mut cyclopentadienyl = SmallMolecule::from_smiles("[CH-]1[C-]=[C-][C-]=[C-]1")
-        .expect("cyclopentadienyl anion parses");
+    let mut cyclopentadienyl =
+        one_smiles("[CH-]1[C-]=[C-][C-]=[C-]1").expect("cyclopentadienyl anion parses");
     perceive(&mut cyclopentadienyl);
     let anionic_carbon_with_h = cyclopentadienyl
-        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| {
             (atom.element.symbol() == "C"
                 && atom.formal_charge < 0
-                && cyclopentadienyl
-                    .as_molecule()
-                    .atom_is_aromatic(id)
-                    .ok()
-                    .flatten()
-                    == Some(true)
+                && cyclopentadienyl.atom_is_aromatic(id).ok().flatten() == Some(true)
                 && atom.hydrogens.explicit_count() > 0)
                 .then_some(id)
         })
         .expect("anionic aromatic carbon with explicit hydrogen");
     let anionic_carbon = cyclopentadienyl
-        .as_molecule()
         .atom(anionic_carbon_with_h)
         .expect("anionic carbon should exist");
     assert_eq!(
-        explicit_valence_json(cyclopentadienyl.as_molecule(), anionic_carbon_with_h)
+        explicit_valence_json(&cyclopentadienyl, anionic_carbon_with_h)
             + anionic_carbon.hydrogens.explicit_count(),
         3
     );
-    let mut substituted_cyclopentadienyl = SmallMolecule::from_smiles("C[C-]1[C-]=[C-][C-]=[C-]1")
-        .expect("substituted cyclopentadienyl parses");
+    let mut substituted_cyclopentadienyl =
+        one_smiles("C[C-]1[C-]=[C-][C-]=[C-]1").expect("substituted cyclopentadienyl parses");
     perceive(&mut substituted_cyclopentadienyl);
     let substituted_anionic_carbon = substituted_cyclopentadienyl
-        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| {
             let degree = substituted_cyclopentadienyl
-                .as_molecule()
                 .incident_bonds(id)
                 .ok()?
                 .count();
             (atom.element.symbol() == "C"
                 && atom.formal_charge < 0
                 && substituted_cyclopentadienyl
-                    .as_molecule()
                     .atom_is_aromatic(id)
                     .ok()
                     .flatten()
@@ -1078,53 +1056,34 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         })
         .expect("substituted anionic carbon");
     assert_eq!(
-        explicit_valence_json(
-            substituted_cyclopentadienyl.as_molecule(),
-            substituted_anionic_carbon,
-        ),
+        explicit_valence_json(&substituted_cyclopentadienyl, substituted_anionic_carbon,),
         3
     );
-    let mut fused_triazine = SmallMolecule::from_smiles(
-        "O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2",
-    )
-    .expect("fused triazine should parse");
+    let mut fused_triazine =
+        one_smiles("O=[N+]([O-])c2cc(-c1nn5c(=O)c(C=Cc3c(O)ccc4c3cccc4)nnc5s1)ccc2")
+            .expect("fused triazine should parse");
     perceive(&mut fused_triazine);
     let tricoordinate_aromatic_nitrogen = fused_triazine
-        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| {
             let aromatic_degree = fused_triazine
-                .as_molecule()
                 .incident_bonds(id)
                 .ok()?
                 .filter(|(bond, _)| {
-                    fused_triazine
-                        .as_molecule()
-                        .bond_is_aromatic(*bond)
-                        .ok()
-                        .flatten()
-                        == Some(true)
+                    fused_triazine.bond_is_aromatic(*bond).ok().flatten() == Some(true)
                 })
                 .count();
             (atom.element.symbol() == "N"
-                && fused_triazine
-                    .as_molecule()
-                    .atom_is_aromatic(id)
-                    .ok()
-                    .flatten()
-                    == Some(true)
+                && fused_triazine.atom_is_aromatic(id).ok().flatten() == Some(true)
                 && aromatic_degree >= 3)
                 .then_some(id)
         })
         .expect("tri-coordinate aromatic nitrogen");
     assert_eq!(
-        explicit_valence_json(
-            fused_triazine.as_molecule(),
-            tricoordinate_aromatic_nitrogen
-        ),
+        explicit_valence_json(&fused_triazine, tricoordinate_aromatic_nitrogen),
         3
     );
-    let localized_bonds = smiles_perceived_bonds_json(aromatic.as_molecule());
+    let localized_bonds = smiles_perceived_bonds_json(&aromatic);
     assert_eq!(
         localized_bonds
             .iter()
@@ -1140,17 +1099,14 @@ fn smiles_semantic_records_assert_topology_and_atom_identity() {
         3
     );
     assert!(perceived_aromatic
-        .as_molecule()
         .bonds()
         .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
-    assert!(
-        smiles_perceived_bonds_json(perceived_aromatic.as_molecule())
-            .iter()
-            .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true)
-    );
+    assert!(smiles_perceived_bonds_json(&perceived_aromatic)
+        .iter()
+        .all(|bond| bond["bond_type"] == "AROMATIC" && bond["is_aromatic"] == true));
 
-    let labeled = SmallMolecule::from_smiles("[13CH3:7]C").expect("labeled carbon should parse");
-    let atoms = smiles_perceived_atoms_json(labeled.as_molecule());
+    let labeled = one_smiles("[13CH3:7]C").expect("labeled carbon should parse");
+    let atoms = smiles_perceived_atoms_json(&labeled);
     assert!(atoms
         .iter()
         .any(|atom| atom["isotope"] == 13 && atom["atom_map"] == 7));
@@ -1201,8 +1157,8 @@ fn canonical_smiles_benchmark_matches_rdkit_parse_status_for_invalid_input() {
 
 #[test]
 fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
-    let molecule = SmallMolecule::from_smiles("CCCCCCCc1cc2c(=O)ccn(O)c2cc1")
-        .expect("aromatic carbonyl SMILES should parse");
+    let molecule =
+        one_smiles("CCCCCCCc1cc2c(=O)ccn(O)c2cc1").expect("aromatic carbonyl SMILES should parse");
 
     let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
@@ -1245,8 +1201,7 @@ fn smiles_semantics_match_rdkit_aromatic_carbonyl_valence() {
 
 #[test]
 fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
-    let molecule =
-        SmallMolecule::from_smiles("[nH]1cccc1").expect("aromatic nH SMILES should parse");
+    let molecule = one_smiles("[nH]1cccc1").expect("aromatic nH SMILES should parse");
 
     let item = smiles_perceived_semantic_json(molecule);
     let atoms = item["atoms"]
@@ -1264,7 +1219,7 @@ fn smiles_semantics_match_rdkit_aromatic_nh_no_implicit_flag() {
 
 #[test]
 fn smiles_semantics_derive_promoted_aromatic_nh_valence_without_feedback() {
-    let molecule = SmallMolecule::from_smiles("CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C")
+    let molecule = one_smiles("CCOC(=O)C1=C(C(=C(N1)C)C(=O)OC(C)(C)C)C")
         .expect("substituted pyrrole SMILES should parse");
 
     let item = smiles_perceived_semantic_json(molecule);

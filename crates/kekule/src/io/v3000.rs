@@ -8,7 +8,6 @@ use crate::chemistry::{
 use crate::core::*;
 use crate::geometry::Point3;
 use crate::io::{MolWriteError, MolfileParseOptions, MolfileVersion, SdfParseError};
-use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::structure_documents::{
@@ -53,8 +52,8 @@ pub(super) struct V3000BondSyntax {
     pub(super) line: usize,
 }
 
-pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.as_molecule();
+pub fn write_mol_v3000(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
+    let mol = molecule;
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let bonds = mol.bond_ids().collect::<Vec<_>>();
     let mut atom_index = BTreeMap::new();
@@ -65,7 +64,6 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
     let title = "";
     let program = "kekule";
     let comment = "";
-    let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
     let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
 
     let mut out = String::new();
@@ -82,10 +80,7 @@ pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, 
         let atom = mol
             .atom(*atom_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let point = conformer
-            .and_then(|conformer| conformer.position(*atom_id))
-            .map(|point| point.value_in(ANGSTROM).expect("conformer length unit"))
-            .unwrap_or_default();
+        let point = Point3::default();
         let index = atom_index
             .get(atom_id)
             .ok_or_else(|| MolWriteError::new("atom missing from V3000 atom table"))?;
@@ -363,14 +358,14 @@ pub(super) fn parse_v3000_syntax(
 
 pub(super) fn interpret_v3000_syntax(
     syntax: &V3000Syntax,
-) -> std::result::Result<(SmallMolecule, Vec<SourceStereoBondMark>), SdfParseError> {
-    let mut mol = Molecule::new();
+) -> std::result::Result<(MoleculeEditor, Conformer, Vec<SourceStereoBondMark>), SdfParseError> {
+    let mut editor = crate::core::MoleculeEditor::new();
     let mut atom_ids = BTreeMap::<usize, AtomId>::new();
     let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
         .expect("angstrom is a length unit");
     for record in &syntax.atoms {
         let atom = interpret_v3000_atom(record)?;
-        let atom_id = mol.add_atom(atom).map_err(|error| {
+        let atom_id = editor.add_atom(atom).map_err(|error| {
             SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
         })?;
         conformer
@@ -406,7 +401,7 @@ pub(super) fn interpret_v3000_syntax(
             ));
         }
         let (order, source_aromatic) = interpret_v3000_bond_order(record.order_code, record.line)?;
-        let bond_id = mol
+        let bond_id = editor
             .add_bond(a, b, order)
             .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
         if source_aromatic {
@@ -424,23 +419,23 @@ pub(super) fn interpret_v3000_syntax(
         }
     }
 
-    apply_v3000_declared_hydrogens(&mut mol, syntax, &atom_ids, &source_aromatic_bonds)?;
-    localize_source_aromatic_bonds(&mut mol, &source_aromatic_bonds).map_err(|error| {
-        SdfParseError::new(
-            1,
-            first_aromatic_line.unwrap_or(1),
-            format!("aromatic bond localization failed: {error}"),
-        )
-    })?;
+    apply_v3000_declared_hydrogens(
+        editor.working_mut(),
+        syntax,
+        &atom_ids,
+        &source_aromatic_bonds,
+    )?;
+    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
+        |error| {
+            SdfParseError::new(
+                1,
+                first_aromatic_line.unwrap_or(1),
+                format!("aromatic bond localization failed: {error}"),
+            )
+        },
+    )?;
 
-    if conformer.positions().next().is_some() {
-        mol.add_conformer(conformer)
-            .expect("parsed coordinates reference live atoms");
-    }
-    Ok((
-        SmallMolecule::from_molecule_unchecked_connectedness(mol),
-        source_stereo,
-    ))
+    Ok((editor, conformer, source_stereo))
 }
 
 fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {

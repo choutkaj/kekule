@@ -1,5 +1,6 @@
-mod connected_graph;
-mod hierarchy;
+//! Coordinate-independent biological organization and algorithms.
 
-pub use connected_graph::*;
-pub use hierarchy::*;
+pub use crate::core::{
+    Hierarchy, HierarchyError, SmcraAtomSite, SmcraAtomSiteId, SmcraAtomSiteMetadata, SmcraChain,
+    SmcraChainId, SmcraIdKind, SmcraResidue, SmcraResidueId,
+};

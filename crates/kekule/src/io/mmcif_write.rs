@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
-use crate::bio::{MacroValidateOptions, SmcraAtomSite, SmcraHierarchy};
+use crate::bio::{Hierarchy, SmcraAtomSite};
 use crate::core::{AtomId, BondOrder, HydrogenDeclaration};
 use crate::geometry::Point3;
 use crate::structure::Model;
@@ -283,8 +283,8 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
             .topology()
             .definition_for_instance(id)
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?
-            .small_molecule()
-            .is_none()
+            .hierarchy()
+            .is_some()
         {
             continue;
         }
@@ -419,11 +419,11 @@ fn entity_kind(
         Some(MoleculeRole::NonPolymer) => EntityKind::NonPolymer,
         Some(MoleculeRole::Solvent) => EntityKind::Water,
         Some(_) => unreachable!("primary roles are exhaustive"),
-        None if definition.macro_molecule().is_some() => EntityKind::Polymer,
+        None if definition.hierarchy().is_some() => EntityKind::Polymer,
         None => EntityKind::NonPolymer,
     };
     let macro_kind = matches!(kind, EntityKind::Polymer | EntityKind::Branched);
-    if macro_kind != definition.macro_molecule().is_some() {
+    if macro_kind != definition.hierarchy().is_some() {
         return Err(MmcifWriteError::EntityRolePayloadMismatch(molecule.id()));
     }
     Ok(kind)
@@ -478,20 +478,13 @@ fn collect_macro_rows(
     model: &Model,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
-    hierarchy: &SmcraHierarchy,
+    hierarchy: &Hierarchy,
     entity_id: &str,
     kind: EntityKind,
     asyms: &mut Vec<AsymRow>,
     asym_seen: &mut BTreeSet<String>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), MmcifWriteError> {
-    definition
-        .macro_molecule()
-        .expect("hierarchy implies macro molecule")
-        .validate_with_options(MacroValidateOptions {
-            validate_coordinates: false,
-        })
-        .map_err(|error| invalid_hierarchy(molecule, error.to_string()))?;
     let mut sites = BTreeMap::<AtomId, &SmcraAtomSite>::new();
     for (_, site) in hierarchy.atom_sites() {
         if sites.insert(site.atom, site).is_some() {

@@ -1,4 +1,3 @@
-use crate::bio::*;
 use crate::chemistry::*;
 use crate::core::*;
 use crate::geometry::Point3;
@@ -7,7 +6,6 @@ use crate::perception::{
     valence as valence_api, valence::*,
 };
 use crate::sdf::*;
-use crate::small::*;
 use crate::smiles::*;
 use crate::{
     canon, molfile, perception as perception_api, sdf, smiles as smiles_api, stereo as stereo_api,
@@ -24,14 +22,14 @@ pub(super) fn oxygen() -> Atom {
 
 pub(super) fn read_smiles(
     input: &str,
-) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
+) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
     Ok(smiles_api::interpret(&document)?.to_molecule()?)
 }
 
 pub(super) fn read_smiles_components(
     input: &str,
-) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
+) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
     Ok(smiles_api::interpret(&document)?.to_molecules())
 }
@@ -39,7 +37,7 @@ pub(super) fn read_smiles_components(
 pub(super) fn read_smiles_component(
     input: &str,
     component: usize,
-) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
+) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
     read_smiles_components(input)?
         .into_iter()
         .nth(component)
@@ -53,13 +51,13 @@ pub(super) fn read_smiles_component(
 }
 
 pub(super) fn perceive(
-    molecule: &mut SmallMolecule,
+    molecule: &mut Molecule,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     molecule.perceive()?;
     Ok(())
 }
 
-pub(super) fn canonical_smiles_round_trip(molecule: &SmallMolecule) -> (String, SmallMolecule) {
+pub(super) fn canonical_smiles_round_trip(molecule: &Molecule) -> (String, Molecule) {
     let written = smiles_api::write_canonical(molecule)
         .unwrap_or_else(|error| panic!("canonical SMILES should write: {error}"));
     let mut reparsed = read_smiles(&written)
@@ -71,7 +69,7 @@ pub(super) fn canonical_smiles_round_trip(molecule: &SmallMolecule) -> (String, 
 
 pub(super) fn read_smiles_with_report(
     input: &str,
-) -> std::result::Result<(SmallMolecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
+) -> std::result::Result<(Molecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
     Ok(smiles_api::interpret(&document)?.to_parts()?)
 }
@@ -87,36 +85,39 @@ pub(super) trait CanonicalizeFixture {
     ) -> std::result::Result<NormalizationReport, NormalizationError>;
 }
 
-impl CanonicalizeFixture for SmallMolecule {
+impl CanonicalizeFixture for Molecule {
     fn canonicalize_fixture(
         &mut self,
     ) -> std::result::Result<NormalizationReport, NormalizationError> {
-        canonicalize_molecule_for_publication(self.as_molecule_mut(), &[])
+        canonicalize_molecule_for_publication(self, None, &[])
     }
 
     fn canonicalize_fixture_with_source_stereo(
         &mut self,
         source_stereo: &[SourceStereoBondMark],
     ) -> std::result::Result<NormalizationReport, NormalizationError> {
-        canonicalize_molecule_for_publication(self.as_molecule_mut(), source_stereo)
+        canonicalize_molecule_for_publication(self, None, source_stereo)
     }
 }
 
 pub(super) fn read_molfile(
     input: &str,
-) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
+) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
     let document = molfile::parse_str(input)?;
-    Ok(molfile::interpret(&document)?.to_molecule())
+    let molecules = molfile::interpret(&document)?.to_molecules();
+    exactly_one(molecules, "molfile")
 }
 
 pub(super) fn read_molfile_with_report(
     input: &str,
-) -> std::result::Result<
-    (SmallMolecule, molfile::MolfileInterpretationReport),
-    Box<dyn std::error::Error>,
-> {
+) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
+{
     let document = molfile::parse_str(input)?;
-    Ok(molfile::interpret(&document)?.to_parts())
+    let mut components = molfile::interpret(&document)?.to_components();
+    if components.len() != 1 {
+        return Err(format!("expected one molfile component, found {}", components.len()).into());
+    }
+    Ok(components.pop().expect("length checked").to_parts())
 }
 
 pub(super) fn read_sdf_records(
@@ -135,21 +136,82 @@ pub(super) fn read_sdf_records_with_options(
 
 pub(super) fn read_sdf_molecules(
     input: &str,
-) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
-    Ok(read_sdf_records(input)?
+) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
+    read_sdf_records(input)?
         .into_iter()
-        .map(SdfRecord::to_molecule)
-        .collect())
+        .map(|record| exactly_one(record.to_molecules(), "SDF record"))
+        .collect::<std::result::Result<Vec<_>, _>>()
 }
 
 pub(super) fn read_sdf_molecules_with_options(
     input: &str,
     options: SdfParseOptions,
-) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
-    Ok(read_sdf_records_with_options(input, options)?
+) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
+    read_sdf_records_with_options(input, options)?
         .into_iter()
-        .map(SdfRecord::to_molecule)
-        .collect())
+        .map(|record| exactly_one(record.to_molecules(), "SDF record"))
+        .collect::<std::result::Result<Vec<_>, _>>()
+}
+
+fn exactly_one(
+    mut molecules: Vec<Molecule>,
+    source: &str,
+) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
+    if molecules.len() != 1 {
+        return Err(format!(
+            "expected one molecule from {source}, found {}",
+            molecules.len()
+        )
+        .into());
+    }
+    Ok(molecules.pop().expect("length checked"))
+}
+
+pub(super) trait MolfileInterpretationTestExt {
+    fn molecule(&self) -> &Molecule;
+    fn report(&self) -> &molfile::MolfileInterpretationReport;
+    fn to_molecule(self) -> Molecule;
+}
+
+impl MolfileInterpretationTestExt for molfile::MolfileInterpretation {
+    fn molecule(&self) -> &Molecule {
+        assert_eq!(
+            self.components().len(),
+            1,
+            "test fixture must have one component"
+        );
+        self.components()[0].molecule()
+    }
+
+    fn report(&self) -> &molfile::MolfileInterpretationReport {
+        assert_eq!(
+            self.components().len(),
+            1,
+            "test fixture must have one component"
+        );
+        self.components()[0].report()
+    }
+
+    fn to_molecule(self) -> Molecule {
+        let mut components = self.to_components();
+        assert_eq!(components.len(), 1, "test fixture must have one component");
+        components.pop().expect("length checked").to_molecule()
+    }
+}
+
+pub(super) trait SdfRecordTestExt {
+    fn molecule(&self) -> &Molecule;
+}
+
+impl SdfRecordTestExt for SdfRecord {
+    fn molecule(&self) -> &Molecule {
+        assert_eq!(
+            self.molecules().len(),
+            1,
+            "test record must have one component"
+        );
+        &self.molecules()[0]
+    }
 }
 
 pub(super) fn element_atom(symbol: &str) -> Atom {
@@ -168,8 +230,8 @@ pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
     atom
 }
 
-pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondId) {
-    let mut mol = Molecule::new();
+pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Conformer, BondId) {
+    let mut mol = crate::core::MoleculeEditor::new();
     let left = mol
         .add_atom(aromatic_carbon_no_hydrogens())
         .expect("atom identifier capacity");
@@ -197,10 +259,6 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondI
         .expect("right reference");
     mol.add_bond(right, right_other, BondOrder::Single)
         .expect("right other");
-    mol.begin_aromaticity(AromaticityModel::RdkitLike);
-    mol.set_atom_aromatic(left, true);
-    mol.set_atom_aromatic(right, true);
-
     let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
     conformer
         .set_position(
@@ -253,8 +311,11 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, BondI
             )
             .unwrap();
     }
-    mol.add_conformer(conformer).expect("valid conformer");
-    (mol, axis)
+    let mut mol = mol.finish().expect("connected axis molecule");
+    mol.begin_aromaticity(AromaticityModel::RdkitLike);
+    mol.set_atom_aromatic(left, true);
+    mol.set_atom_aromatic(right, true);
+    (mol, conformer, axis)
 }
 
 pub(super) fn ring_molecule(
@@ -262,7 +323,7 @@ pub(super) fn ring_molecule(
     orders: &[BondOrder],
 ) -> (Molecule, Vec<AtomId>, Vec<BondId>) {
     assert_eq!(symbols.len(), orders.len());
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let atoms = symbols
         .iter()
         .map(|symbol| {
@@ -280,7 +341,7 @@ pub(super) fn ring_molecule(
                 .expect("ring bond should be valid"),
         );
     }
-    (mol, atoms, bonds)
+    (mol.finish().expect("connected ring molecule"), atoms, bonds)
 }
 
 pub(super) fn sorted_atom_ids(ids: impl IntoIterator<Item = AtomId>) -> Vec<AtomId> {
@@ -320,13 +381,13 @@ struct RepresentedStereoElementSnapshot {
     group: Option<StereoGroupId>,
 }
 
-/// Complete primary molecule state, excluding only `PerceptionState`.
+/// Complete primary molecule state, excluding only `Perception`.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct RepresentedMoleculeSnapshot {
     atoms: Vec<Option<RepresentedAtomSnapshot>>,
     bonds: Vec<Option<RepresentedBondSnapshot>>,
     adjacency: Vec<Vec<BondId>>,
-    conformers: Vec<Option<Conformer>>,
+    hierarchy: Hierarchy,
     stereo_elements: Vec<Option<RepresentedStereoElementSnapshot>>,
     stereo_groups: Vec<Option<StereoGroup>>,
     props: PropMap,
@@ -335,6 +396,7 @@ pub(super) struct RepresentedMoleculeSnapshot {
 pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedMoleculeSnapshot {
     RepresentedMoleculeSnapshot {
         atoms: molecule
+            .graph
             .atoms
             .iter()
             .map(|atom| {
@@ -350,6 +412,7 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
             })
             .collect(),
         bonds: molecule
+            .graph
             .bonds
             .iter()
             .map(|bond| {
@@ -361,9 +424,10 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
                 })
             })
             .collect(),
-        adjacency: molecule.adjacency.clone(),
-        conformers: molecule.conformers.clone(),
+        adjacency: molecule.graph.adjacency.clone(),
+        hierarchy: molecule.hierarchy().clone(),
         stereo_elements: molecule
+            .graph
             .stereo_elements
             .iter()
             .map(|element| {
@@ -375,8 +439,8 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
                     })
             })
             .collect(),
-        stereo_groups: molecule.stereo_groups.clone(),
-        props: molecule.props.clone(),
+        stereo_groups: molecule.graph.stereo_groups.clone(),
+        props: molecule.graph.props.clone(),
     }
 }
 

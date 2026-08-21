@@ -1,9 +1,8 @@
 #![cfg(feature = "dreiding")]
 
-use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element, Molecule};
+use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
-use kekule::small::SmallMolecule;
 use kekule::structure::Model;
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 use kekule_potentials::dreiding::{
@@ -12,7 +11,7 @@ use kekule_potentials::dreiding::{
 
 #[test]
 fn downstream_preparation_and_evaluation() {
-    let mut graph = Molecule::builder();
+    let mut graph = kekule::core::MoleculeEditor::new();
     let mut explicit_atom = |symbol: &str| {
         let mut atom = Atom::new(Element::from_symbol(symbol).unwrap());
         atom.hydrogens = kekule::core::HydrogenDeclaration::Fixed(0);
@@ -49,11 +48,9 @@ fn downstream_preparation_and_evaluation() {
             ),
         )
         .unwrap();
-    let mut graph = graph.build().unwrap();
-    let conformer = graph.add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_molecule(graph);
-    let model = Model::from_small_molecule(&molecule, conformer).unwrap();
-    let independently_built = Model::from_small_molecule(&molecule, conformer).unwrap();
+    let molecule = graph.finish().unwrap();
+    let model = Model::from_molecule(&molecule, &conformer).unwrap();
+    let independently_built = Model::from_molecule(&molecule, &conformer).unwrap();
     let mut periodic = model.clone();
     periodic.set_cell(Some(
         PeriodicCell::orthorhombic(

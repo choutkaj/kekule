@@ -25,17 +25,17 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoElement {
     pub kind: StereoElementKind,
-    /// Owning relation group, assigned only by [`Molecule::add_stereo_group`].
+    /// Owning relation group, assigned only by [`MoleculeEditor::add_stereo_group`].
     ///
-    /// [`Molecule::add_stereo_element`] rejects values with this field set, and
-    /// [`Molecule::remove_stereo_element`] clears it on the returned value.
+    /// [`MoleculeEditor::add_stereo_element`] rejects values with this field set, and
+    /// [`MoleculeEditor::remove_stereo_element`] clears it on the returned value.
     pub group: Option<StereoGroupId>,
 }
 
 impl StereoElement {
     /// Creates an ungrouped stereo assertion for checked molecule insertion.
     ///
-    /// [`Molecule::add_stereo_element`] canonicalizes carrier and endpoint
+    /// [`MoleculeEditor::add_stereo_element`] canonicalizes carrier and endpoint
     /// conventions before storing it.
     pub fn new(kind: StereoElementKind) -> Self {
         Self { kind, group: None }

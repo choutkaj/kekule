@@ -68,7 +68,8 @@ pub(crate) fn corpus_requires_data(_corpus: &str, requested: bool) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum CorpusKind {
-    SmallMolecule,
+    #[serde(rename = "small-molecule")]
+    Molecular,
     Macromolecule,
     Mixed,
 }

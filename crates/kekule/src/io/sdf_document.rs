@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::small::model::SmallMolecule;
+use crate::core::Molecule;
 
 use super::{
     interpret_molfile_document, parse_molfile_document_with_options, MolfileDocument,
@@ -71,19 +71,19 @@ impl SdfDocument {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdfRecord {
     title: String,
-    molecule: SmallMolecule,
+    molecules: Vec<Molecule>,
     data_fields: Vec<SdfDataField>,
 }
 
 impl SdfRecord {
     pub fn new(
         title: impl Into<String>,
-        molecule: SmallMolecule,
+        molecules: Vec<Molecule>,
         data_fields: Vec<SdfDataField>,
     ) -> Self {
         Self {
             title: title.into(),
-            molecule,
+            molecules,
             data_fields,
         }
     }
@@ -92,12 +92,12 @@ impl SdfRecord {
         &self.title
     }
 
-    pub fn molecule(&self) -> &SmallMolecule {
-        &self.molecule
+    pub fn molecules(&self) -> &[Molecule] {
+        &self.molecules
     }
 
-    pub fn to_molecule(self) -> SmallMolecule {
-        self.molecule
+    pub fn to_molecules(self) -> Vec<Molecule> {
+        self.molecules
     }
 
     pub fn data_fields(&self) -> &[SdfDataField] {
@@ -142,7 +142,7 @@ impl std::error::Error for SdfInterpretError {}
 pub struct SdfRecordInterpretationReport {
     record: usize,
     source_start_line: usize,
-    molfile: MolfileInterpretationReport,
+    molfile_components: Vec<MolfileInterpretationReport>,
 }
 
 impl SdfRecordInterpretationReport {
@@ -154,8 +154,8 @@ impl SdfRecordInterpretationReport {
         self.source_start_line
     }
 
-    pub fn molfile(&self) -> &MolfileInterpretationReport {
-        &self.molfile
+    pub fn molfile_components(&self) -> &[MolfileInterpretationReport] {
+        &self.molfile_components
     }
 }
 
@@ -373,16 +373,22 @@ pub fn interpret_sdf_document(
                 line: record.source_start_line + error.line.saturating_sub(1),
                 message: error.message,
             })?;
-        let (molecule, molfile) = interpretation.to_parts();
+        let mut molecules = Vec::new();
+        let mut molfile_components = Vec::new();
+        for component in interpretation.to_components() {
+            let (molecule, report) = component.to_parts();
+            molecules.push(molecule);
+            molfile_components.push(report);
+        }
         records.push(SdfRecord::new(
             record.molfile.header().title(),
-            molecule,
+            molecules,
             record.data_fields.clone(),
         ));
         reports.push(SdfRecordInterpretationReport {
             record: record_number,
             source_start_line: record.source_start_line,
-            molfile,
+            molfile_components,
         });
     }
     Ok(SdfInterpretation {

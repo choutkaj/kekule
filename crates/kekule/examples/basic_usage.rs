@@ -1,14 +1,15 @@
 use std::error::Error;
 
-use kekule::{small::SmallMolecule, stereo};
+use kekule::{core::Molecule, stereo};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Interpret a chiral amino acid canonically, then perceive chemistry.
-    let mut molecule = SmallMolecule::from_smiles("C[C@@H](C(=O)O)N")?;
+    let mut molecules = Molecule::from_smiles("C[C@@H](C(=O)O)N")?;
+    let mut molecule = molecules.pop().expect("SMILES contains one component");
     molecule.perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
-    let stereochemistry = stereo::assign_cip_descriptors(molecule.as_molecule_mut())?;
+    let stereochemistry = stereo::assign_cip_descriptors(&mut molecule)?;
 
     // Inspect basic graph properties and the asserted molecular charge.
     println!("atoms: {}", molecule.atom_count());

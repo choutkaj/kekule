@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::bio::{MacroMolecule, SmcraHierarchy};
-use crate::core::{AtomId, Molecule};
-use crate::small::SmallMolecule;
+use crate::bio::Hierarchy;
+use crate::core::{AtomId, MoleculeEditor};
 use crate::structure::{AtomData, Ensemble, EnsembleMember, Model, Positions};
 use crate::topology::{
     InstanceAtomId, MoleculeInstanceId, MoleculeRole, Topology, TopologyBuilder,
@@ -190,17 +189,9 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
         }
 
         if components.len() == 1 {
-            let definition_id = if let Some(molecule) = definition.macro_molecule() {
-                builder
-                    .add_macro_molecule_definition(molecule)
-                    .map_err(interpret_error)?
-            } else if let Some(molecule) = definition.small_molecule() {
-                builder
-                    .add_small_molecule_definition(molecule)
-                    .map_err(interpret_error)?
-            } else {
-                return Err(interpret_error("mmCIF definition has no molecule payload"));
-            };
+            let definition_id = builder
+                .add_molecule_definition(definition.molecule())
+                .map_err(interpret_error)?;
             let target_instance = builder
                 .add_instance(definition_id, source_metadata.metadata().clone())
                 .map_err(interpret_error)?;
@@ -219,25 +210,16 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
 
         for component in components {
             let ExtractedConnectedGraph {
-                graph,
+                mut graph,
                 atom_map: local_map,
                 ordered_source_atoms,
             } = extract_connected_graph(definition.graph(), &component)?;
-            let definition_id = if let Some(molecule) = definition.macro_molecule() {
-                let hierarchy = extract_hierarchy(molecule.hierarchy(), &local_map)?;
-                let molecule =
-                    MacroMolecule::from_parts(graph, hierarchy).map_err(interpret_error)?;
-                builder
-                    .add_macro_molecule_definition(&molecule)
-                    .map_err(interpret_error)?
-            } else if definition.small_molecule().is_some() {
-                let molecule = SmallMolecule::from_molecule(graph);
-                builder
-                    .add_small_molecule_definition(&molecule)
-                    .map_err(interpret_error)?
-            } else {
-                return Err(interpret_error("mmCIF definition has no molecule payload"));
-            };
+            *graph.hierarchy_mut() =
+                extract_hierarchy(definition.molecule().hierarchy(), &local_map)?;
+            let molecule = graph.finish().map_err(interpret_error)?;
+            let definition_id = builder
+                .add_molecule_definition(&molecule)
+                .map_err(interpret_error)?;
             let target_instance = builder
                 .add_instance(definition_id, source_metadata.metadata().clone())
                 .map_err(interpret_error)?;
@@ -287,19 +269,19 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
 }
 
 struct ExtractedConnectedGraph {
-    graph: Molecule,
+    graph: MoleculeEditor,
     atom_map: BTreeMap<AtomId, AtomId>,
     ordered_source_atoms: Vec<AtomId>,
 }
 
 fn extract_connected_graph(
-    source: &Molecule,
+    source: &crate::core::Molecule,
     component: &[AtomId],
 ) -> Result<ExtractedConnectedGraph, raw::MmcifInterpretError> {
     let selected = component.iter().copied().collect::<BTreeSet<_>>();
     let mut ordered = component.to_vec();
     ordered.sort_unstable();
-    let mut builder = Molecule::builder();
+    let mut builder = crate::core::MoleculeEditor::new();
     let mut atom_map = BTreeMap::new();
     let mut bond_props = Vec::new();
 
@@ -320,11 +302,14 @@ fn extract_connected_graph(
             .map_err(interpret_error)?;
         bond_props.push((target_bond, bond.props.clone()));
     }
-    let mut graph = builder.build().map_err(interpret_error)?;
+    let mut graph = builder;
     for (target_bond, props) in bond_props {
-        *graph.bond_props_mut(target_bond).map_err(interpret_error)? = props;
+        *graph
+            .working_mut()
+            .bond_props_mut(target_bond)
+            .map_err(interpret_error)? = props;
     }
-    graph.props_mut().clone_from(source.props());
+    graph.working_mut().props_mut().clone_from(source.props());
     Ok(ExtractedConnectedGraph {
         graph,
         atom_map,
@@ -333,10 +318,10 @@ fn extract_connected_graph(
 }
 
 fn extract_hierarchy(
-    source: &SmcraHierarchy,
+    source: &Hierarchy,
     atom_map: &BTreeMap<AtomId, AtomId>,
-) -> Result<SmcraHierarchy, raw::MmcifInterpretError> {
-    let mut hierarchy = SmcraHierarchy::new();
+) -> Result<Hierarchy, raw::MmcifInterpretError> {
+    let mut hierarchy = Hierarchy::new();
     hierarchy.props_mut().clone_from(source.props());
 
     for (_, source_chain) in source.chains() {
@@ -445,7 +430,7 @@ fn remap_report(
             partition
                 .topology
                 .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.macro_molecule().is_some())
+                .is_ok_and(|definition| definition.hierarchy().is_some())
         })
         .count();
     report.small_molecules = partition
@@ -455,7 +440,7 @@ fn remap_report(
             partition
                 .topology
                 .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.small_molecule().is_some())
+                .is_ok_and(|definition| definition.hierarchy().is_none())
         })
         .count();
     report.solvent_molecules = partition

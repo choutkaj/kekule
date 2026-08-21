@@ -8,9 +8,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::{
-    InstanceAtomId, InstanceBondId, MoleculeDefinitionPayload, MoleculeInstanceId, SelectionError,
-    Topology, TopologyBuildError, TopologyBuilder, TopologyEditResult, TopologyMapping,
-    TopologyMappingError,
+    InstanceAtomId, InstanceBondId, MoleculeInstanceId, SelectionError, Topology,
+    TopologyBuildError, TopologyBuilder, TopologyEditResult, TopologyMapping, TopologyMappingError,
 };
 
 /// Retains complete molecule instances in source topology order.
@@ -22,19 +21,18 @@ use super::{
 /// # Examples
 ///
 /// ```
-/// use kekule::core::{Atom, Element, Molecule};
-/// use kekule::small::SmallMolecule;
+/// use kekule::core::{Atom, Element, MoleculeEditor};
 /// use kekule::topology::{
 ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
 /// };
 /// use std::sync::Arc;
 ///
-/// let mut water_builder = Molecule::builder();
+/// let mut water_builder = MoleculeEditor::new();
 /// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-/// let water = SmallMolecule::from_molecule(water_builder.build()?);
+/// let water = water_builder.finish()?;
 ///
 /// let mut builder = TopologyBuilder::new();
-/// let definition = builder.add_small_molecule_definition(&water)?;
+/// let definition = builder.add_molecule_definition(&water)?;
 /// let mut metadata = MoleculeInstanceMetadata::default();
 /// metadata.insert_role(MoleculeRole::Solvent);
 /// let first = builder.add_instance(definition, metadata.clone())?;
@@ -139,14 +137,7 @@ fn retain_normalized(
         .definitions()
         .filter(|(id, _)| referenced_definitions[id.index()])
     {
-        let target_id = match definition.payload() {
-            MoleculeDefinitionPayload::Small(molecule) => {
-                builder.add_small_molecule_definition(molecule)?
-            }
-            MoleculeDefinitionPayload::Macro(molecule) => {
-                builder.add_macro_molecule_definition(molecule)?
-            }
-        };
+        let target_id = builder.add_molecule_definition(definition.molecule())?;
         definition_targets[source_id.index()] = Some(target_id);
         definitions.push((source_id, target_id));
     }
