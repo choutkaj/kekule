@@ -195,7 +195,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
             "memory.trr",
         )
         .unwrap()
-        .into_indexed()
+        .to_indexed()
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(3));
         indexed.read_frame(1, &mut destination).unwrap();
@@ -249,7 +249,7 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
         "exact-index-limit.trr",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -279,7 +279,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
         "restore-failure.trr",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .unwrap();
     let mut destination = populated_frame(&topology, 9.0, 99);
     destination
@@ -355,7 +355,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
             "guarded-index.trr",
         )
         .unwrap()
-        .into_indexed()
+        .to_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -543,7 +543,7 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
         "mixed.trr",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .unwrap();
     let mut destination = FrameBuffer::new(topology);
     assert_eq!(reader.frame_count(), Some(2));

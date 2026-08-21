@@ -252,7 +252,7 @@ impl PeriodicCell {
         lengths: Quantity<Vector3>,
         periodic_axes: [bool; 3],
     ) -> Result<Self, PeriodicCellError> {
-        let lengths = lengths.into_unit(MODEL_LENGTH_UNIT)?.into_value();
+        let lengths = lengths.to_unit(MODEL_LENGTH_UNIT)?.to_value();
         if !lengths.is_finite() || lengths.x <= 0.0 || lengths.y <= 0.0 || lengths.z <= 0.0 {
             return Err(PeriodicCellError::InvalidOrthorhombicLengths);
         }
@@ -277,7 +277,7 @@ impl PeriodicCell {
         if !periodic_axes.into_iter().any(|periodic| periodic) {
             return Err(PeriodicCellError::NoPeriodicAxes);
         }
-        let [a, b, c] = vectors.into_unit(MODEL_LENGTH_UNIT)?.into_value();
+        let [a, b, c] = vectors.to_unit(MODEL_LENGTH_UNIT)?.to_value();
         let matrix = Matrix3::from_columns(a, b, c);
         if !matrix.is_finite() {
             return Err(PeriodicCellError::NonFiniteVector);

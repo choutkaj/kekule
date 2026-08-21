@@ -96,7 +96,7 @@ impl SdfRecord {
         &self.molecule
     }
 
-    pub fn into_molecule(self) -> SmallMolecule {
+    pub fn to_molecule(self) -> SmallMolecule {
         self.molecule
     }
 
@@ -185,11 +185,11 @@ impl SdfInterpretation {
         &self.report
     }
 
-    pub fn into_records(self) -> Vec<SdfRecord> {
+    pub fn to_records(self) -> Vec<SdfRecord> {
         self.records
     }
 
-    pub fn into_parts(self) -> (Vec<SdfRecord>, SdfInterpretationReport) {
+    pub fn to_parts(self) -> (Vec<SdfRecord>, SdfInterpretationReport) {
         (self.records, self.report)
     }
 }
@@ -373,7 +373,7 @@ pub fn interpret_sdf_document(
                 line: record.source_start_line + error.line.saturating_sub(1),
                 message: error.message,
             })?;
-        let (molecule, molfile) = interpretation.into_parts();
+        let (molecule, molfile) = interpretation.to_parts();
         records.push(SdfRecord::new(
             record.molfile.header().title(),
             molecule,

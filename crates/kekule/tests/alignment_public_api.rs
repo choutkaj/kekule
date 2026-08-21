@@ -23,7 +23,7 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
         }
         previous = Some(atom);
     }
-    let molecule = SmallMolecule::from_graph(graph.build()?);
+    let molecule = SmallMolecule::from_molecule(graph.build()?);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
@@ -66,7 +66,7 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
             periodic_policy: PeriodicAlignmentPolicy::RejectPeriodic,
         },
     )?;
-    assert!(weighted.rmsd().into_value() < 1.0e-12);
+    assert!(weighted.rmsd().to_value() < 1.0e-12);
 
     let error = kabsch_with_options(
         moving.view(),

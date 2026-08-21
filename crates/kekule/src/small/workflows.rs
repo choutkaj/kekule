@@ -16,7 +16,7 @@ impl SmallMolecule {
     pub fn from_smiles(input: &str) -> Result<Self, SmallMoleculeReadError> {
         let document = parse_smiles_document(input)?;
         interpret_smiles_document(&document)?
-            .into_molecule()
+            .to_molecule()
             .map_err(|error| SmallMoleculeReadError::ComponentCount {
                 actual: error.actual(),
             })
@@ -41,7 +41,7 @@ impl SmallMolecule {
     /// kekule::normalization::normalize(&mut molecule).unwrap();
     /// ```
     pub fn perceive(&mut self) -> Result<(), PerceptionError> {
-        perceive_molecule(self.graph_mut())
+        perceive_molecule(self.as_molecule_mut())
     }
 
     /// Materialize stored and perceived hydrogens as graph atoms.
@@ -54,12 +54,12 @@ impl SmallMolecule {
         &mut self,
         options: AddHydrogensOptions,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_to_molecule(self.graph_mut(), options)
+        add_hydrogens_to_molecule(self.as_molecule_mut(), options)
     }
 
     /// Collapse ordinary graph hydrogens and report retained protected atoms.
     pub fn remove_hydrogens(&mut self) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-        remove_hydrogens_from_molecule(self.graph_mut())
+        remove_hydrogens_from_molecule(self.as_molecule_mut())
     }
 
     pub fn to_smiles(&self) -> Result<String, MolWriteError> {

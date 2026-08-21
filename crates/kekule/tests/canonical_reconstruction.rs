@@ -110,9 +110,9 @@ fn default_perception_has_no_installed_sections() {
 fn full_installed_perception_round_trips_through_public_api() {
     let mut source = SmallMolecule::from_smiles("c1ccccc1[C@H](F)Cl").expect("interpreted source");
     source.perceive().expect("perceived source");
-    kekule::stereo::assign_cip_descriptors(source.graph_mut())
+    kekule::stereo::assign_cip_descriptors(source.as_molecule_mut())
         .expect("CIP assignment should succeed");
-    let perception = source.graph().perception();
+    let perception = source.as_molecule().perception();
     assert_eq!(
         perception.valence_state().and_then(|state| state.model()),
         Some(ValenceModel::RdkitLike)
@@ -135,17 +135,17 @@ fn full_installed_perception_round_trips_through_public_api() {
     let detached = export_perception(perception).expect("public export");
     assert_eq!(&detached, perception);
 
-    let mut reconstructed_graph = source.graph().clone();
-    reconstructed_graph.invalidate_topology();
+    let mut reconstructed_graph = source.as_molecule().clone();
+    reconstructed_graph.clear_perception_state();
     reconstructed_graph
         .install_perception_state(detached)
         .expect("public install");
     assert_eq!(
         reconstructed_graph.perception(),
-        source.graph().perception()
+        source.as_molecule().perception()
     );
 
-    let reconstructed = SmallMolecule::from_graph(reconstructed_graph);
+    let reconstructed = SmallMolecule::from_molecule(reconstructed_graph);
     assert!(build_small_topology(&source).same_layout(&build_small_topology(&reconstructed)));
 }
 
@@ -176,8 +176,12 @@ fn topology_reconstruction_preserves_explicit_unknown_stereo_exactly() {
             },
         )))
         .expect("explicit unknown stereo");
-    let source = SmallMolecule::from_graph(graph);
-    let expected = source.graph().stereo_element(element).unwrap().clone();
+    let source = SmallMolecule::from_molecule(graph);
+    let expected = source
+        .as_molecule()
+        .stereo_element(element)
+        .unwrap()
+        .clone();
     assert!(expected.is_explicitly_unknown());
 
     let mut builder = TopologyBuilder::new();
@@ -214,7 +218,7 @@ fn topology_reconstruction_preserves_hydrogen_declarations_exactly() {
             .add_bond(pair[0], pair[1], BondOrder::Single)
             .expect("chain bond");
     }
-    let source = SmallMolecule::from_graph(builder.build().expect("connected graph"));
+    let source = SmallMolecule::from_molecule(builder.build().expect("connected graph"));
     let topology = build_small_topology(&source);
     let reconstructed = topology
         .definitions()
@@ -653,8 +657,8 @@ fn enriched_smcra_state_round_trips_and_invalid_ids_are_transactional() {
         .is_err());
     assert_eq!(rebuilt, before);
 
-    let source_macro = MacroMolecule::try_from_parts(graph.clone(), source).unwrap();
-    let rebuilt_macro = MacroMolecule::try_from_parts(graph, rebuilt).unwrap();
+    let source_macro = MacroMolecule::from_parts(graph.clone(), source).unwrap();
+    let rebuilt_macro = MacroMolecule::from_parts(graph, rebuilt).unwrap();
     assert_eq!(source_macro.hierarchy(), rebuilt_macro.hierarchy());
 
     let build = |molecule: &MacroMolecule| {
@@ -715,8 +719,8 @@ fn stereo_group_tombstone_layout_replays_with_stable_next_id() {
             .map(|(id, group)| (id, group.cloned()))
             .collect::<Vec<_>>()
     );
-    let source_topology = build_small_topology(&SmallMolecule::from_graph(source.clone()));
-    let rebuilt_topology = build_small_topology(&SmallMolecule::from_graph(rebuilt.clone()));
+    let source_topology = build_small_topology(&SmallMolecule::from_molecule(source.clone()));
+    let rebuilt_topology = build_small_topology(&SmallMolecule::from_molecule(rebuilt.clone()));
     assert!(source_topology.same_layout(&rebuilt_topology));
 
     let source_next = source

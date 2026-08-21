@@ -51,7 +51,7 @@ fn downstream_preparation_and_evaluation() {
         .unwrap();
     let mut graph = graph.build().unwrap();
     let conformer = graph.add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     let independently_built = Model::from_small_molecule(&molecule, conformer).unwrap();
     let mut periodic = model.clone();

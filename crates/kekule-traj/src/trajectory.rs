@@ -334,7 +334,7 @@ impl TrajectoryFrame {
     pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), FrameError> {
         self.time = match time {
             Some(time) => {
-                let time = time.into_unit(MODEL_TIME_UNIT)?;
+                let time = time.to_unit(MODEL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }
@@ -704,7 +704,7 @@ impl FrameBuffer {
     pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), FrameError> {
         self.time = match time {
             Some(time) => {
-                let time = time.into_unit(MODEL_TIME_UNIT)?;
+                let time = time.to_unit(MODEL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }
@@ -816,7 +816,7 @@ impl FrameBuffer {
         let time = data
             .time
             .map(|time| {
-                let time = time.into_unit(MODEL_TIME_UNIT)?;
+                let time = time.to_unit(MODEL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }
@@ -1036,7 +1036,7 @@ impl Trajectory {
                 }
                 continue;
             };
-            let value = time.into_value();
+            let value = time.to_value();
             if previous.is_some_and(|previous| value < previous) {
                 return Err(TrajectoryError::NonMonotonicTime { frame: index });
             }
@@ -1171,7 +1171,7 @@ impl MemoryTrajectoryWriter {
         }
     }
 
-    pub fn into_trajectory(self) -> Trajectory {
+    pub fn to_trajectory(self) -> Trajectory {
         self.trajectory
     }
 }
@@ -1865,7 +1865,7 @@ mod tests {
         graph
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .expect("atom identifier capacity");
-        let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
         builder
@@ -1883,7 +1883,7 @@ mod tests {
             .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
             .unwrap();
         graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
-        let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
         builder
@@ -2006,7 +2006,7 @@ mod tests {
         writer
             .write_frame(trajectory.frames().next().unwrap())
             .unwrap();
-        let written = writer.into_trajectory();
+        let written = writer.to_trajectory();
         assert_eq!(
             written
                 .frame(0)
@@ -2291,7 +2291,7 @@ mod tests {
         writer
             .write_frame(trajectory.frames().next().unwrap())
             .unwrap();
-        let written = writer.into_trajectory();
+        let written = writer.to_trajectory();
         assert_eq!(written.len(), 1);
         assert_eq!(
             written
@@ -2414,7 +2414,7 @@ mod tests {
         graph
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .expect("atom identifier capacity");
-        let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
         builder

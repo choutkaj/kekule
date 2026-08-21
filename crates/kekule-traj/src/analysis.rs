@@ -632,7 +632,7 @@ mod tests {
             }
             previous = Some(atom);
         }
-        let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
         builder
@@ -891,16 +891,16 @@ mod tests {
         );
         for (actual, expected) in transformed_cell
             .vectors()
-            .into_value()
+            .to_value()
             .into_iter()
-            .zip(reference_cell.vectors().into_value())
+            .zip(reference_cell.vectors().to_value())
         {
             assert_vector_close(actual, expected, 1.0e-12);
         }
-        for velocity in transformed.velocities().unwrap().values().into_value() {
+        for velocity in transformed.velocities().unwrap().values().to_value() {
             assert_vector_close(*velocity, Vector3::new(0.0, 1.0, 0.0), 2.0e-12);
         }
-        for force in transformed.forces().unwrap().values().into_value() {
+        for force in transformed.forces().unwrap().values().to_value() {
             assert_vector_close(*force, Vector3::new(-1.0, 0.0, 0.0), 2.0e-12);
         }
         assert_eq!(transformed.time(), Some(Quantity::new(2.5, PICOSECOND)));
@@ -1091,12 +1091,7 @@ mod tests {
             })
         );
         assert_eq!(
-            trajectory
-                .frame(1)
-                .unwrap()
-                .positions()
-                .values()
-                .into_value(),
+            trajectory.frame(1).unwrap().positions().values().to_value(),
             before.as_slice()
         );
     }

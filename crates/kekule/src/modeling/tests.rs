@@ -47,7 +47,7 @@ fn two_atom_small(distance: f64) -> (SmallMolecule, ConformerId, AtomId, AtomId,
         )
         .unwrap();
     let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    (SmallMolecule::from_graph(graph), conformer, a, b, bond)
+    (SmallMolecule::from_molecule(graph), conformer, a, b, bond)
 }
 
 fn one_atom_macro() -> (MacroMolecule, ConformerId, AtomId, SmcraAtomSiteId) {
@@ -72,7 +72,7 @@ fn one_atom_macro() -> (MacroMolecule, ConformerId, AtomId, SmcraAtomSiteId) {
         .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .unwrap();
     (
-        MacroMolecule::try_from_parts(graph, hierarchy).unwrap(),
+        MacroMolecule::from_parts(graph, hierarchy).unwrap(),
         conformer,
         atom,
         site,
@@ -115,19 +115,19 @@ fn model_converts_source_conformer_units_once_without_mutating_the_source() {
         .set_position(atom, Quantity::new(Point3::new(0.15, 0.0, 0.0), NANOMETER))
         .unwrap();
     let conformer_id = graph.add_conformer(conformer).unwrap();
-    let small = SmallMolecule::from_graph(graph);
+    let small = SmallMolecule::from_molecule(graph);
 
     let model = Model::from_small_molecule(&small, conformer_id).unwrap();
     let qualified = InstanceAtomId::new(MoleculeInstanceId::new(0), atom);
     assert_eq!(model.position(qualified).unwrap().unit(), ANGSTROM);
     assert_eq!(model.position(qualified).unwrap().x, 1.5);
     assert_eq!(
-        small.graph().conformer(conformer_id).unwrap().unit(),
+        small.as_molecule().conformer(conformer_id).unwrap().unit(),
         NANOMETER
     );
     assert_eq!(
         small
-            .graph()
+            .as_molecule()
             .conformer(conformer_id)
             .unwrap()
             .position(atom)
@@ -158,31 +158,31 @@ fn instance_to_conformer_maps_local_ids_converts_units_and_is_transactional() {
 
     let mut target = small.clone();
     let nanometer = Conformer::new(NANOMETER).unwrap();
-    let nanometer = target.graph_mut().add_conformer(nanometer).unwrap();
+    let nanometer = target.as_molecule_mut().add_conformer(nanometer).unwrap();
     model
-        .instance_to_conformer(instance, target.graph_mut(), nanometer)
+        .instance_to_conformer(instance, target.as_molecule_mut(), nanometer)
         .unwrap();
-    let transferred = target.graph().conformer(nanometer).unwrap();
+    let transferred = target.as_molecule().conformer(nanometer).unwrap();
     assert_eq!(transferred.unit(), NANOMETER);
     assert!((transferred.position(a).unwrap().x - 0.2).abs() < 1.0e-12);
     assert!((transferred.position(b).unwrap().x - 0.3).abs() < 1.0e-12);
 
     let extra = target
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
         .expect("atom identifier capacity");
     let before = target.clone();
     assert_eq!(
-        model.instance_to_conformer(instance, target.graph_mut(), nanometer),
+        model.instance_to_conformer(instance, target.as_molecule_mut(), nanometer),
         Err(InstanceToConformerError::UnexpectedTargetAtom(extra))
     );
     assert_eq!(target, before);
 
     let mut missing = small.clone();
-    missing.graph_mut().delete_atom(b).unwrap();
+    missing.as_molecule_mut().delete_atom(b).unwrap();
     let before = missing.clone();
     assert_eq!(
-        model.instance_to_conformer(instance, missing.graph_mut(), conformer),
+        model.instance_to_conformer(instance, missing.as_molecule_mut(), conformer),
         Err(InstanceToConformerError::MissingTargetAtom(b))
     );
     assert_eq!(missing, before);
@@ -269,7 +269,11 @@ fn construction_copies_positions_and_preserves_sources() {
         .unwrap();
     assert_eq!(small, source);
     assert_eq!(
-        small.graph().conformer(conformer).unwrap().position(a),
+        small
+            .as_molecule()
+            .conformer(conformer)
+            .unwrap()
+            .position(a),
         Some(Quantity::new(Point3::new(0.0, 0.0, 0.0), ANGSTROM))
     );
     assert_eq!(
@@ -309,7 +313,7 @@ fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
 
     let (mut small, conformer, a, _, _) = two_atom_small(1.0);
     small
-        .graph_mut()
+        .as_molecule_mut()
         .conformer_mut(conformer)
         .unwrap()
         .set_position(a, Quantity::new(Point3::new(f64::NAN, 0.0, 0.0), ANGSTROM))
@@ -335,13 +339,13 @@ fn position_updates_are_complete_finite_and_transactional() {
         model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
         Err(PositionError::PositionCountMismatch { .. })
     ));
-    assert_eq!(model.positions().values().into_value(), original.as_slice());
+    assert_eq!(model.positions().values().to_value(), original.as_slice());
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(
         matches!(model.set_positions(Quantity::new(&invalid, ANGSTROM)), Err(PositionError::NonFinitePosition { atom }) if atom.atom() == a)
     );
-    assert_eq!(model.positions().values().into_value(), original.as_slice());
+    assert_eq!(model.positions().values().to_value(), original.as_slice());
 }
 
 #[test]
@@ -359,7 +363,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
     )
     .unwrap();
     let initial = potential.evaluate(model.view()).unwrap();
-    assert!((initial.energy().into_value() - 50.0).abs() < 1.0e-10);
+    assert!((initial.energy().to_value() - 50.0).abs() < 1.0e-10);
     let result = minimize(&model, &mut potential, MinimizeOptions::default()).unwrap();
     assert!(result.final_energy < result.initial_energy);
     assert_eq!(

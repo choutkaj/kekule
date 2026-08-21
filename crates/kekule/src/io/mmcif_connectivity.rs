@@ -29,7 +29,7 @@ impl MmcifInterpretation {
         self.model.topology()
     }
 
-    pub fn into_parts(self) -> (Model, raw::MmcifInterpretationReport) {
+    pub fn to_parts(self) -> (Model, raw::MmcifInterpretationReport) {
         (self.model, self.report)
     }
 }
@@ -41,7 +41,7 @@ pub fn interpret_mmcif(
     options: raw::MmcifInterpretOptions,
 ) -> Result<MmcifInterpretation, raw::MmcifInterpretError> {
     let interpretation = raw::interpret_mmcif(document, options)?;
-    let (model, mut report) = interpretation.into_parts();
+    let (model, mut report) = interpretation.to_parts();
     let (model, pending) = rebuild_model_with_connectivity(document, model, &report)?;
     report.template_bonds_pending = pending;
     Ok(MmcifInterpretation { model, report })
@@ -54,7 +54,7 @@ pub struct MmcifEnsembleInterpretation {
 }
 
 impl MmcifEnsembleInterpretation {
-    pub fn into_parts(self) -> (Ensemble, Vec<raw::MmcifInterpretationReport>) {
+    pub fn to_parts(self) -> (Ensemble, Vec<raw::MmcifInterpretationReport>) {
         (self.ensemble, self.reports)
     }
 }
@@ -66,7 +66,7 @@ pub fn interpret_mmcif_ensemble(
     options: raw::MmcifEnsembleInterpretOptions,
 ) -> Result<MmcifEnsembleInterpretation, raw::MmcifEnsembleInterpretError> {
     let interpretation = raw::interpret_mmcif_ensemble(document, options)?;
-    let (source, mut reports) = interpretation.into_parts();
+    let (source, mut reports) = interpretation.to_parts();
     let first = source
         .member(0)
         .ok_or(raw::MmcifEnsembleInterpretError::EmptyModelSelection)?;
@@ -311,8 +311,8 @@ fn rebuild_model_with_connectivity(
             .map(|atom| {
                 source
                     .position(InstanceAtomId::new(instance_id, atom))
-                    .and_then(|position| position.into_unit(ANGSTROM).map_err(Into::into))
-                    .map(|position| position.into_value())
+                    .and_then(|position| position.to_unit(ANGSTROM).map_err(Into::into))
+                    .map(|position| position.to_value())
                     .map_err(interpret_error)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -321,18 +321,18 @@ fn rebuild_model_with_connectivity(
             let mut molecule = molecule.clone();
             let mut source_aromatic_bonds = BTreeSet::new();
             apply_instance_connectivity(
-                molecule.graph_mut_unchecked_connectedness(),
+                molecule.molecule_mut_unchecked_connectedness(),
                 provenance,
                 &catalog,
                 &mut source_aromatic_bonds,
             )?;
             localize_source_aromatic_bonds(
-                molecule.graph_mut_unchecked_connectedness(),
+                molecule.molecule_mut_unchecked_connectedness(),
                 &source_aromatic_bonds,
             )
             .map_err(interpret_error)?;
             let publication_report = canonicalize_molecule_for_publication(
-                molecule.graph_mut_unchecked_connectedness(),
+                molecule.molecule_mut_unchecked_connectedness(),
                 &[],
             )
             .map_err(|error| {
@@ -341,8 +341,8 @@ fn rebuild_model_with_connectivity(
                 ))
             })?;
             debug_assert!(publication_report.warnings.is_empty());
-            let connected = molecule.graph().is_connected();
-            if molecule.graph().atom_count() > 1 && !connected {
+            let connected = molecule.as_molecule().is_connected();
+            if molecule.as_molecule().atom_count() > 1 && !connected {
                 pending += 1;
             }
             let definition = builder
@@ -359,15 +359,15 @@ fn rebuild_model_with_connectivity(
             let mut molecule = molecule.clone();
             let mut source_aromatic_bonds = BTreeSet::new();
             apply_instance_connectivity(
-                molecule.graph_mut(),
+                molecule.as_molecule_mut(),
                 provenance,
                 &catalog,
                 &mut source_aromatic_bonds,
             )?;
-            localize_source_aromatic_bonds(molecule.graph_mut(), &source_aromatic_bonds)
+            localize_source_aromatic_bonds(molecule.as_molecule_mut(), &source_aromatic_bonds)
                 .map_err(interpret_error)?;
             let publication_report =
-                canonicalize_molecule_for_publication(molecule.graph_mut(), &[]).map_err(
+                canonicalize_molecule_for_publication(molecule.as_molecule_mut(), &[]).map_err(
                     |error| {
                         interpret_error(format!(
                         "could not publish canonical mmCIF molecule instance {instance_id}: {error}"
@@ -375,7 +375,7 @@ fn rebuild_model_with_connectivity(
                     },
                 )?;
             debug_assert!(publication_report.warnings.is_empty());
-            if molecule.graph().atom_count() > 1 && !molecule.graph().is_connected() {
+            if molecule.as_molecule().atom_count() > 1 && !molecule.as_molecule().is_connected() {
                 pending += 1;
             }
             let definition = builder

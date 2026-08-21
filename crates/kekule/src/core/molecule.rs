@@ -19,6 +19,15 @@ use super::*;
 /// let molecule = Molecule::default();
 /// let _ = molecule.stereo_bond_marks();
 /// ```
+///
+/// ```compile_fail
+/// use kekule::core::Molecule;
+///
+/// let molecule = Molecule::default();
+/// let _ = molecule.is_connected();
+/// let _ = molecule.validate_connected();
+/// let _ = molecule.connected_components();
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Molecule {
     pub(crate) atoms: Vec<Option<Atom>>,
@@ -58,7 +67,7 @@ impl DerefMut for AtomMut<'_> {
 impl Drop for AtomMut<'_> {
     fn drop(&mut self) {
         if AtomChemistry::from(&**self) != self.original {
-            self.molecule.invalidate_topology();
+            self.molecule.clear_perception_state();
         }
     }
 }
@@ -90,7 +99,7 @@ impl DerefMut for BondMut<'_> {
 impl Drop for BondMut<'_> {
     fn drop(&mut self) {
         if BondChemistry::from(&**self) != self.original {
-            self.molecule.invalidate_topology();
+            self.molecule.clear_perception_state();
         }
     }
 }
@@ -137,6 +146,10 @@ impl Molecule {
         self.atoms.iter().flatten().count()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.atom_count() == 0
+    }
+
     pub fn bond_count(&self) -> usize {
         self.bonds.iter().flatten().count()
     }
@@ -164,7 +177,7 @@ impl Molecule {
         debug_assert_eq!(slot, self.atoms.len());
         self.atoms.push(Some(atom));
         self.adjacency.push(Vec::new());
-        self.invalidate_topology();
+        self.clear_perception_state();
         Ok(id)
     }
 
@@ -190,7 +203,7 @@ impl Molecule {
             conformer.clear_position(id);
         }
         self.prune_stereo_for_atom(id);
-        self.invalidate_topology();
+        self.clear_perception_state();
         Ok(atom)
     }
 
@@ -244,7 +257,7 @@ impl Molecule {
         self.bonds.push(Some(Bond::new(a, b, order)));
         self.adjacency[a.index()].push(id);
         self.adjacency[b.index()].push(id);
-        self.invalidate_topology();
+        self.clear_perception_state();
         Ok(id)
     }
 
@@ -258,7 +271,7 @@ impl Molecule {
         self.remove_incident_bond(bond.a, id);
         self.remove_incident_bond(bond.b, id);
         self.prune_stereo_for_bond(id);
-        self.invalidate_topology();
+        self.clear_perception_state();
         Ok(bond)
     }
 
@@ -311,7 +324,7 @@ impl Molecule {
     /// A completed nonempty public molecule has exactly one component. The
     /// general result shape also supports empty values and private builder,
     /// editor, and format-interpretation staging.
-    pub fn connected_components(&self) -> Vec<Vec<AtomId>> {
+    pub(crate) fn connected_components(&self) -> Vec<Vec<AtomId>> {
         let mut seen = vec![false; self.atoms.len()];
         let mut components = Vec::new();
         for start in self.atom_ids() {
@@ -656,7 +669,8 @@ impl Molecule {
         Ok(id)
     }
 
-    pub fn invalidate_topology(&mut self) {
+    /// Removes all installed derived perception without changing represented chemistry.
+    pub fn clear_perception_state(&mut self) {
         self.perception = PerceptionState::default();
     }
 

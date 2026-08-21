@@ -366,8 +366,8 @@ pub enum MoleculeDefinitionPayload {
 impl MoleculeDefinitionPayload {
     pub fn graph(&self) -> &Molecule {
         match self {
-            Self::Small(molecule) => molecule.graph(),
-            Self::Macro(molecule) => molecule.graph(),
+            Self::Small(molecule) => molecule.as_molecule(),
+            Self::Macro(molecule) => molecule.as_molecule(),
         }
     }
 
@@ -1096,7 +1096,7 @@ impl TopologyBuilder {
         &mut self,
         molecule: &SmallMolecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        validate_graph(molecule.graph())?;
+        validate_graph(molecule.as_molecule())?;
         let payload = MoleculeDefinitionPayload::Small(molecule.clone_without_conformers());
         self.commit_definition(payload)
     }
@@ -1105,7 +1105,7 @@ impl TopologyBuilder {
         &mut self,
         molecule: SmallMolecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        validate_graph(molecule.graph())?;
+        validate_graph(molecule.as_molecule())?;
         self.commit_definition(MoleculeDefinitionPayload::Small(
             molecule.without_conformers(),
         ))
@@ -1134,7 +1134,7 @@ impl TopologyBuilder {
         &mut self,
         molecule: &SmallMolecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        validate_nonempty_graph(molecule.graph())?;
+        validate_nonempty_graph(molecule.as_molecule())?;
         let payload = MoleculeDefinitionPayload::Small(molecule.clone_without_conformers());
         self.commit_definition(payload)
     }
@@ -1143,7 +1143,7 @@ impl TopologyBuilder {
         &mut self,
         molecule: &MacroMolecule,
     ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
-        validate_nonempty_graph(molecule.graph())?;
+        validate_nonempty_graph(molecule.as_molecule())?;
         let payload = MoleculeDefinitionPayload::Macro(molecule.clone_without_conformers());
         self.commit_definition(payload)
     }
@@ -1172,7 +1172,7 @@ impl TopologyBuilder {
         molecule: &SmallMolecule,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
-        validate_graph(molecule.graph())?;
+        validate_graph(molecule.as_molecule())?;
         let payload = MoleculeDefinitionPayload::Small(molecule.clone_without_conformers());
         self.commit_definition_and_instance(payload, metadata)
     }
@@ -1193,7 +1193,7 @@ impl TopologyBuilder {
         molecule: &SmallMolecule,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
-        validate_nonempty_graph(molecule.graph())?;
+        validate_nonempty_graph(molecule.as_molecule())?;
         let payload = MoleculeDefinitionPayload::Small(molecule.clone_without_conformers());
         self.commit_definition_and_instance(payload, metadata)
     }
@@ -1204,7 +1204,7 @@ impl TopologyBuilder {
         molecule: &MacroMolecule,
         metadata: MoleculeInstanceMetadata,
     ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
-        validate_nonempty_graph(molecule.graph())?;
+        validate_nonempty_graph(molecule.as_molecule())?;
         let payload = MoleculeDefinitionPayload::Macro(molecule.clone_without_conformers());
         self.commit_definition_and_instance(payload, metadata)
     }
@@ -1384,7 +1384,7 @@ fn validate_nonempty_graph(graph: &Molecule) -> Result<(), TopologyBuildError> {
 }
 
 fn validate_macro(molecule: &MacroMolecule) -> Result<(), TopologyBuildError> {
-    validate_graph(molecule.graph())?;
+    validate_graph(molecule.as_molecule())?;
     molecule
         .validate_with_options(MacroValidateOptions {
             validate_coordinates: false,
@@ -2464,7 +2464,7 @@ impl TopologyEditResult {
         &self.mapping
     }
 
-    pub fn into_parts(self) -> (Arc<Topology>, TopologyMapping) {
+    pub fn to_parts(self) -> (Arc<Topology>, TopologyMapping) {
         (self.topology, self.mapping)
     }
 }
@@ -2500,7 +2500,7 @@ mod tests {
         let deleted_bond = graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
         graph.delete_bond(deleted_bond).unwrap();
         let bond = graph.add_bond(carbon, oxygen, BondOrder::Double).unwrap();
-        (SmallMolecule::from_graph(graph), carbon, oxygen, bond)
+        (SmallMolecule::from_molecule(graph), carbon, oxygen, bond)
     }
 
     fn topology_with_reused_definition() -> (Arc<Topology>, AtomId, AtomId, BondId) {
@@ -2526,8 +2526,8 @@ mod tests {
         Vec<BondId>,
     ) {
         let molecule = perceived_small_molecule(smiles);
-        let atoms = molecule.graph().atom_ids().collect();
-        let bonds = molecule.graph().bond_ids().collect();
+        let atoms = molecule.as_molecule().atom_ids().collect();
+        let bonds = molecule.as_molecule().bond_ids().collect();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_small_molecule_definition(&molecule).unwrap();
         let instance = builder
@@ -2693,13 +2693,13 @@ mod tests {
     fn builder_is_transactional_and_does_not_intern_equal_definitions() {
         let (molecule, ..) = tombstoned_molecule();
         let mut conformer = Conformer::new(ANGSTROM).unwrap();
-        for atom in molecule.graph().atom_ids() {
+        for atom in molecule.as_molecule().atom_ids() {
             conformer
                 .set_position(atom, Quantity::new(Point3::origin(), ANGSTROM))
                 .unwrap();
         }
         let mut molecule = molecule;
-        molecule.graph_mut().add_conformer(conformer).unwrap();
+        molecule.as_molecule_mut().add_conformer(conformer).unwrap();
 
         let mut builder = TopologyBuilder::new();
         let first = builder.add_small_molecule_definition(&molecule).unwrap();
@@ -2710,7 +2710,7 @@ mod tests {
                 .count(),
             0
         );
-        assert_eq!(molecule.graph().conformers().count(), 1);
+        assert_eq!(molecule.as_molecule().conformers().count(), 1);
         assert_eq!(
             builder.add_instance(
                 MoleculeDefinitionId::new(99),
@@ -2816,7 +2816,7 @@ mod tests {
         assert_eq!(oxygen.indices().len(), 1);
 
         let query = query::parse_smarts("O").unwrap();
-        let matches = substructure::find_substructure_matches(water.graph(), &query).unwrap();
+        let matches = substructure::find_substructure_matches(water.as_molecule(), &query).unwrap();
         let from_query =
             AtomSelection::from_query_matches(&topology, water_instance, &matches).unwrap();
         assert_eq!(
@@ -2842,7 +2842,7 @@ mod tests {
     fn reused_macro_hierarchy_navigation_and_selections_are_instance_qualified() {
         let mut macro_builder = MacroMolecule::builder();
         let atom = macro_builder
-            .graph_mut()
+            .as_molecule_mut()
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .expect("atom identifier capacity");
         let chain = macro_builder.hierarchy_mut().add_chain("A", None).unwrap();
@@ -3047,7 +3047,7 @@ mod tests {
         let new_carbon = new_graph
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .expect("atom identifier capacity");
-        let new_molecule = SmallMolecule::from_graph(new_graph);
+        let new_molecule = SmallMolecule::from_molecule(new_graph);
         let mut new_builder = TopologyBuilder::new();
         let new_definition = new_builder
             .add_small_molecule_definition(&new_molecule)

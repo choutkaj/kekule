@@ -1,12 +1,20 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::chemistry::{perceive_molecule, PerceptionError};
 use crate::core::*;
 
 /// One connected macromolecular graph with its coordinated SMCRA sidecar.
+///
+/// ```compile_fail
+/// use kekule::bio::MacroMolecule;
+///
+/// let mut molecule = MacroMolecule::new();
+/// let _ = molecule.as_molecule_mut();
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MacroMolecule {
-    graph: Molecule,
+    molecule: Molecule,
     hierarchy: SmcraHierarchy,
 }
 
@@ -19,37 +27,47 @@ impl MacroMolecule {
         MacroMoleculeBuilder::new()
     }
 
-    pub fn try_from_parts(
-        mut graph: Molecule,
+    pub fn from_parts(
+        mut molecule: Molecule,
         hierarchy: SmcraHierarchy,
     ) -> std::result::Result<Self, MacroValidateError> {
-        canonicalize_represented_chemistry(&mut graph).map_err(|error| {
+        canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
             MacroValidateError::CanonicalRepresentation {
                 atom: error.atom,
                 charge: error.charge,
             }
         })?;
-        let molecule = Self { graph, hierarchy };
-        molecule.validate()?;
-        Ok(molecule)
+        let macro_molecule = Self {
+            molecule,
+            hierarchy,
+        };
+        macro_molecule.validate()?;
+        Ok(macro_molecule)
     }
 
     /// Builds private interpretation staging state before component partitioning.
-    pub(crate) fn try_from_parts_unchecked_connectedness(
-        graph: Molecule,
+    pub(crate) fn from_parts_unchecked_connectedness(
+        molecule: Molecule,
         hierarchy: SmcraHierarchy,
     ) -> std::result::Result<Self, MacroValidateError> {
-        let molecule = Self { graph, hierarchy };
-        validate_macro_molecule_contents(&molecule, MacroValidateOptions::default())?;
-        Ok(molecule)
+        let macro_molecule = Self {
+            molecule,
+            hierarchy,
+        };
+        validate_macro_molecule_contents(&macro_molecule, MacroValidateOptions::default())?;
+        Ok(macro_molecule)
     }
 
-    pub fn graph(&self) -> &Molecule {
-        &self.graph
+    pub fn as_molecule(&self) -> &Molecule {
+        &self.molecule
     }
 
-    pub(crate) fn graph_mut_unchecked_connectedness(&mut self) -> &mut Molecule {
-        &mut self.graph
+    pub(crate) fn molecule_mut_unchecked_connectedness(&mut self) -> &mut Molecule {
+        &mut self.molecule
+    }
+
+    pub fn to_parts(self) -> (Molecule, SmcraHierarchy) {
+        (self.molecule, self.hierarchy)
     }
 
     pub fn hierarchy(&self) -> &SmcraHierarchy {
@@ -58,22 +76,58 @@ impl MacroMolecule {
 
     pub fn edit(&mut self) -> MacroMoleculeEditor<'_> {
         MacroMoleculeEditor {
-            graph: self.graph.clone(),
+            molecule: self.molecule.clone(),
             hierarchy: self.hierarchy.clone(),
             target: self,
         }
     }
 
     pub(crate) fn without_conformers(mut self) -> Self {
-        self.graph = self.graph.without_conformers();
+        self.molecule = self.molecule.without_conformers();
         self
     }
 
     pub(crate) fn clone_without_conformers(&self) -> Self {
         Self {
-            graph: self.graph.clone_without_conformers(),
+            molecule: self.molecule.clone_without_conformers(),
             hierarchy: self.hierarchy.clone(),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.molecule.is_empty()
+    }
+
+    pub fn atom_count(&self) -> usize {
+        self.molecule.atom_count()
+    }
+
+    pub fn bond_count(&self) -> usize {
+        self.molecule.bond_count()
+    }
+
+    pub fn formal_charge(&self) -> i64 {
+        self.molecule.formal_charge()
+    }
+
+    pub fn atom(&self, id: AtomId) -> crate::core::Result<&Atom> {
+        self.molecule.atom(id)
+    }
+
+    pub fn bond(&self, id: BondId) -> crate::core::Result<&Bond> {
+        self.molecule.bond(id)
+    }
+
+    pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
+        self.molecule.atoms()
+    }
+
+    pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
+        self.molecule.bonds()
+    }
+
+    pub fn perceive(&mut self) -> std::result::Result<(), PerceptionError> {
+        perceive_molecule(&mut self.molecule)
     }
 
     pub fn chains(&self) -> impl Iterator<Item = (SmcraChainId, &SmcraChain)> {
@@ -104,10 +158,16 @@ impl MacroMolecule {
     }
 }
 
+impl AsRef<Molecule> for MacroMolecule {
+    fn as_ref(&self) -> &Molecule {
+        self.as_molecule()
+    }
+}
+
 /// Mutable staging for one final connected [`MacroMolecule`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MacroMoleculeBuilder {
-    graph: Molecule,
+    molecule: Molecule,
     hierarchy: SmcraHierarchy,
 }
 
@@ -116,12 +176,12 @@ impl MacroMoleculeBuilder {
         Self::default()
     }
 
-    pub fn graph(&self) -> &Molecule {
-        &self.graph
+    pub fn as_molecule(&self) -> &Molecule {
+        &self.molecule
     }
 
-    pub fn graph_mut(&mut self) -> &mut Molecule {
-        &mut self.graph
+    pub fn as_molecule_mut(&mut self) -> &mut Molecule {
+        &mut self.molecule
     }
 
     pub fn hierarchy(&self) -> &SmcraHierarchy {
@@ -138,41 +198,41 @@ impl MacroMoleculeBuilder {
         atom: AtomId,
         metadata: SmcraAtomSiteMetadata,
     ) -> std::result::Result<SmcraAtomSiteId, SmcraHierarchyError> {
-        self.graph
+        self.molecule
             .atom(atom)
             .map_err(|_| SmcraHierarchyError::InvalidAtomId(atom))?;
         self.hierarchy.add_atom_site(residue, atom, metadata)
     }
 
     pub fn build(self) -> std::result::Result<MacroMolecule, MacroValidateError> {
-        MacroMolecule::try_from_parts(self.graph, self.hierarchy)
+        MacroMolecule::from_parts(self.molecule, self.hierarchy)
     }
 }
 
 /// Transactional coordinated editing for a connected [`MacroMolecule`].
 pub struct MacroMoleculeEditor<'a> {
     target: &'a mut MacroMolecule,
-    graph: Molecule,
+    molecule: Molecule,
     hierarchy: SmcraHierarchy,
 }
 
 impl MacroMoleculeEditor<'_> {
-    pub fn graph(&self) -> &Molecule {
-        &self.graph
+    pub fn as_molecule(&self) -> &Molecule {
+        &self.molecule
     }
 
-    pub fn graph_mut(&mut self) -> &mut Molecule {
-        &mut self.graph
+    pub fn as_molecule_mut(&mut self) -> &mut Molecule {
+        &mut self.molecule
     }
 
     /// Returns mutable represented atom state in this checked working copy.
     pub fn atom_mut(&mut self, atom: AtomId) -> crate::core::Result<AtomMut<'_>> {
-        self.graph.atom_mut(atom)
+        self.molecule.atom_mut(atom)
     }
 
     /// Returns mutable represented bond state in this checked working copy.
     pub fn bond_mut(&mut self, bond: BondId) -> crate::core::Result<BondMut<'_>> {
-        self.graph.bond_mut(bond)
+        self.molecule.bond_mut(bond)
     }
 
     pub fn hierarchy(&self) -> &SmcraHierarchy {
@@ -189,14 +249,14 @@ impl MacroMoleculeEditor<'_> {
         atom: AtomId,
         metadata: SmcraAtomSiteMetadata,
     ) -> std::result::Result<SmcraAtomSiteId, SmcraHierarchyError> {
-        self.graph
+        self.molecule
             .atom(atom)
             .map_err(|_| SmcraHierarchyError::InvalidAtomId(atom))?;
         self.hierarchy.add_atom_site(residue, atom, metadata)
     }
 
     pub fn commit(self) -> std::result::Result<(), MacroValidateError> {
-        let candidate = MacroMolecule::try_from_parts(self.graph, self.hierarchy)?;
+        let candidate = MacroMolecule::from_parts(self.molecule, self.hierarchy)?;
         *self.target = candidate;
         Ok(())
     }
@@ -305,7 +365,7 @@ fn validate_macro_molecule(
     options: MacroValidateOptions,
 ) -> std::result::Result<MacroValidateReport, MacroValidateError> {
     molecule
-        .graph
+        .molecule
         .validate_connected()
         .map_err(MacroValidateError::DisconnectedGraph)?;
     validate_macro_molecule_contents(molecule, options)
@@ -351,7 +411,7 @@ fn validate_macro_molecule_contents(
             }
         })?;
         molecule
-            .graph
+            .molecule
             .atom(site.atom)
             .map_err(|_| MacroValidateError::InvalidAtomSiteAtom {
                 site: site_id,
@@ -359,17 +419,17 @@ fn validate_macro_molecule_contents(
             })?;
         report.atom_sites_checked += 1;
     }
-    for atom in molecule.graph.atom_ids() {
+    for atom in molecule.molecule.atom_ids() {
         if molecule.hierarchy.atom_site_for_atom(atom).is_none() {
             return Err(MacroValidateError::MissingAtomSiteForAtom { atom });
         }
     }
     if options.validate_coordinates {
-        for (conformer_id, conformer) in molecule.graph.conformers() {
+        for (conformer_id, conformer) in molecule.molecule.conformers() {
             report.conformers_checked += 1;
             for (atom, point) in conformer.positions() {
                 let point = point.value();
-                molecule.graph.atom(atom).map_err(|_| {
+                molecule.molecule.atom(atom).map_err(|_| {
                     MacroValidateError::InvalidConformerAtom {
                         conformer: conformer_id,
                         atom,
@@ -828,7 +888,10 @@ mod coordinate_independence_tests {
         // Keep public checked assembly strict; this module-private fixture
         // exercises downstream behavior for an invalid unselected conformer.
         (
-            MacroMolecule { graph, hierarchy },
+            MacroMolecule {
+                molecule: graph,
+                hierarchy,
+            },
             atom,
             valid,
             first_invalid.expect("fixture requires an invalid conformer"),
@@ -888,9 +951,12 @@ mod coordinate_independence_tests {
             })
         );
 
-        assert_eq!(molecule.graph().conformers().count(), UNUSED_CONFORMERS + 1);
+        assert_eq!(
+            molecule.as_molecule().conformers().count(),
+            UNUSED_CONFORMERS + 1
+        );
         assert!(molecule
-            .graph()
+            .as_molecule()
             .conformer(invalid)
             .unwrap()
             .position(atom)
