@@ -144,11 +144,11 @@ impl SmilesComponentInterpretation {
         &self.report
     }
 
-    pub fn into_molecule(self) -> SmallMolecule {
+    pub fn to_molecule(self) -> SmallMolecule {
         self.molecule
     }
 
-    pub fn into_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
+    pub fn to_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -170,10 +170,10 @@ impl SmilesInterpretation {
             .map(SmilesComponentInterpretation::molecule)
     }
 
-    pub fn into_molecules(self) -> Vec<SmallMolecule> {
+    pub fn to_molecules(self) -> Vec<SmallMolecule> {
         self.components
             .into_iter()
-            .map(SmilesComponentInterpretation::into_molecule)
+            .map(SmilesComponentInterpretation::to_molecule)
             .collect()
     }
 
@@ -192,15 +192,15 @@ impl SmilesInterpretation {
     }
 
     /// Consumes an interpretation known to contain exactly one component.
-    pub fn into_molecule(self) -> Result<SmallMolecule, SmilesComponentCountError> {
-        Ok(self.into_single_component()?.into_molecule())
+    pub fn to_molecule(self) -> Result<SmallMolecule, SmilesComponentCountError> {
+        Ok(self.to_single_component()?.to_molecule())
     }
 
     /// Consumes an interpretation known to contain exactly one component and its report.
-    pub fn into_parts(
+    pub fn to_parts(
         self,
     ) -> Result<(SmallMolecule, SmilesInterpretationReport), SmilesComponentCountError> {
-        Ok(self.into_single_component()?.into_parts())
+        Ok(self.to_single_component()?.to_parts())
     }
 
     fn single_component(
@@ -214,7 +214,7 @@ impl SmilesInterpretation {
         }
     }
 
-    fn into_single_component(
+    fn to_single_component(
         mut self,
     ) -> Result<SmilesComponentInterpretation, SmilesComponentCountError> {
         if self.components.len() != 1 {
@@ -247,9 +247,9 @@ pub fn interpret_smiles_document(
                 message: error.message().to_owned(),
             }
         })?;
-        let (molecule, report) = local.into_parts();
+        let (molecule, report) = local.to_parts();
         molecule
-            .graph()
+            .as_molecule()
             .validate_connected()
             .map_err(|error| SmilesInterpretError {
                 offset: source_span.start,
@@ -321,7 +321,7 @@ struct SmilesProgramInterpretation {
 }
 
 impl SmilesProgramInterpretation {
-    fn into_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
+    fn to_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -439,7 +439,7 @@ fn interpret_smiles_program_component(
         })?;
     debug_assert!(publication_report.warnings.is_empty());
     Ok(SmilesProgramInterpretation {
-        molecule: SmallMolecule::from_graph(mol),
+        molecule: SmallMolecule::from_molecule(mol),
         report: SmilesInterpretationReport {
             atom_mappings,
             bond_mappings,
@@ -692,7 +692,7 @@ mod tests {
         assert_eq!(interpretation.components().len(), 2);
         assert!(interpretation
             .molecules()
-            .all(|molecule| molecule.graph().is_connected()));
+            .all(|molecule| molecule.as_molecule().is_connected()));
         assert_eq!(interpretation.components()[0].source_span(), 0..10);
         assert_eq!(interpretation.components()[1].source_span(), 11..16);
     }
@@ -712,7 +712,7 @@ mod tests {
         let document = parse_smiles_document("C.O").expect("valid components");
         let error = interpret_smiles_document(&document)
             .expect("interpret components")
-            .into_molecule()
+            .to_molecule()
             .expect_err("single-component access must reject two components");
         assert_eq!(error.actual(), 2);
     }

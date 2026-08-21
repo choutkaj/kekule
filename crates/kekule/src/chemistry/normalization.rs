@@ -202,12 +202,12 @@ pub(crate) fn canonicalize_molecule_for_publication(
     // Source-stereo normalization must not observe arbitrary installed
     // perception. Representation rewrites above already invalidate it
     // conceptually, so clear it before decoding any source marks.
-    molecule.invalidate_topology();
+    molecule.clear_perception_state();
     let report = normalize_source_stereo(molecule, source_stereo)
         .map_err(NormalizationError::SourceStereo)?;
     // Adding represented stereo invalidates only stereo-derived state. The
     // publication contract clears the complete perception state.
-    molecule.invalidate_topology();
+    molecule.clear_perception_state();
     Ok(report)
 }
 

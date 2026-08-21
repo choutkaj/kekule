@@ -160,7 +160,7 @@ impl Positions {
         let index = topology
             .atom_index(atom)
             .ok_or(PositionError::InvalidAtomId(atom))?;
-        let point = position.into_unit(MODEL_LENGTH_UNIT)?.into_value();
+        let point = position.to_unit(MODEL_LENGTH_UNIT)?.to_value();
         if !point.is_finite() {
             return Err(PositionError::NonFinitePosition { atom });
         }

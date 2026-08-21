@@ -26,7 +26,7 @@ pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
             .unwrap();
     }
 
-    let molecule = SmallMolecule::from_graph(graph.build().unwrap());
+    let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule).unwrap();
     builder

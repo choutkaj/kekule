@@ -811,7 +811,7 @@ impl<R: Read + Seek> DcdReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryError> {
+    pub fn to_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
             if offsets.len() as u64 == self.header.declared_frames {

@@ -39,10 +39,10 @@ impl MacroMoleculeBuilder {
     /// Once the graph is nonempty, use [`Self::add_atom_bonded_to`] so the
     /// public builder remains connected by construction.
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId, MacroGraphEditError> {
-        if self.graph().atom_count() != 0 {
+        if self.as_molecule().atom_count() != 0 {
             return Err(MacroGraphEditError::DisconnectedAtomInsertion);
         }
-        Ok(self.graph_mut().add_atom(atom)?)
+        Ok(self.as_molecule_mut().add_atom(atom)?)
     }
 
     /// Adds one atom and its connecting bond atomically.
@@ -52,13 +52,13 @@ impl MacroMoleculeBuilder {
         atom: Atom,
         order: BondOrder,
     ) -> Result<(AtomId, BondId), MacroGraphEditError> {
-        self.graph().atom(parent)?;
-        let before = self.graph().clone();
-        let atom_id = self.graph_mut().add_atom(atom)?;
-        match self.graph_mut().add_bond(parent, atom_id, order) {
+        self.as_molecule().atom(parent)?;
+        let before = self.as_molecule().clone();
+        let atom_id = self.as_molecule_mut().add_atom(atom)?;
+        match self.as_molecule_mut().add_bond(parent, atom_id, order) {
             Ok(bond_id) => Ok((atom_id, bond_id)),
             Err(error) => {
-                *self.graph_mut() = before;
+                *self.as_molecule_mut() = before;
                 Err(error.into())
             }
         }
@@ -71,7 +71,7 @@ impl MacroMoleculeBuilder {
         right: AtomId,
         order: BondOrder,
     ) -> Result<BondId, MacroGraphEditError> {
-        Ok(self.graph_mut().add_bond(left, right, order)?)
+        Ok(self.as_molecule_mut().add_bond(left, right, order)?)
     }
 }
 
@@ -80,10 +80,10 @@ impl MacroMoleculeEditor<'_> {
     ///
     /// For a nonempty graph use [`Self::add_atom_bonded_to`].
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId, MacroGraphEditError> {
-        if self.graph().atom_count() != 0 {
+        if self.as_molecule().atom_count() != 0 {
             return Err(MacroGraphEditError::DisconnectedAtomInsertion);
         }
-        Ok(self.graph_mut().add_atom(atom)?)
+        Ok(self.as_molecule_mut().add_atom(atom)?)
     }
 
     /// Adds one atom and its connecting bond atomically while preserving graph
@@ -94,13 +94,13 @@ impl MacroMoleculeEditor<'_> {
         atom: Atom,
         order: BondOrder,
     ) -> Result<(AtomId, BondId), MacroGraphEditError> {
-        self.graph().atom(parent)?;
-        let before = self.graph().clone();
-        let atom_id = self.graph_mut().add_atom(atom)?;
-        match self.graph_mut().add_bond(parent, atom_id, order) {
+        self.as_molecule().atom(parent)?;
+        let before = self.as_molecule().clone();
+        let atom_id = self.as_molecule_mut().add_atom(atom)?;
+        match self.as_molecule_mut().add_bond(parent, atom_id, order) {
             Ok(bond_id) => Ok((atom_id, bond_id)),
             Err(error) => {
-                *self.graph_mut() = before;
+                *self.as_molecule_mut() = before;
                 Err(error.into())
             }
         }
@@ -113,7 +113,7 @@ impl MacroMoleculeEditor<'_> {
         right: AtomId,
         order: BondOrder,
     ) -> Result<BondId, MacroGraphEditError> {
-        Ok(self.graph_mut().add_bond(left, right, order)?)
+        Ok(self.as_molecule_mut().add_bond(left, right, order)?)
     }
 }
 
@@ -138,10 +138,10 @@ mod tests {
             .add_atom_bonded_to(first, carbon(), BondOrder::Single)
             .expect("bonded atom");
         assert!(builder
-            .graph()
+            .as_molecule()
             .bond_between(first, second)
             .unwrap()
             .is_some());
-        assert!(builder.graph().is_connected());
+        assert!(builder.as_molecule().is_connected());
     }
 }

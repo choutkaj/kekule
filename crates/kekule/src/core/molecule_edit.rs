@@ -125,12 +125,12 @@ impl Molecule {
     ///
     /// Empty and single-atom molecules are treated as valid connected boundary
     /// cases so `Default`/`new` remain useful lightweight values.
-    pub fn is_connected(&self) -> bool {
+    pub(crate) fn is_connected(&self) -> bool {
         self.validate_connected().is_ok()
     }
 
     /// Validates the public connectedness invariant.
-    pub fn validate_connected(&self) -> std::result::Result<(), MoleculeConnectivityError> {
+    pub(crate) fn validate_connected(&self) -> std::result::Result<(), MoleculeConnectivityError> {
         if self.atom_count() <= 1 {
             return Ok(());
         }
@@ -302,7 +302,7 @@ pub(crate) fn canonicalize_represented_chemistry(
         }
     }
     if rewritten {
-        molecule.invalidate_topology();
+        molecule.clear_perception_state();
     }
     molecule.canonicalize_stored_stereo_elements();
     Ok(())

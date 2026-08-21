@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     molecule.add_bond(atoms[0], atoms[1], BondOrder::Single)?;
     molecule.add_bond(atoms[0], atoms[2], BondOrder::Single)?;
-    let molecule = SmallMolecule::from_graph(molecule.build()?);
+    let molecule = SmallMolecule::from_molecule(molecule.build()?);
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_small_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;

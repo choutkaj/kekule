@@ -770,7 +770,7 @@ fn carrier_signatures(
             &atomic_number_fractions,
             &cip_bond_orders,
         )?;
-        collect_auxiliary_occurrences_from_graph(mol, &descriptor_context, &aux_graph);
+        collect_auxiliary_occurrences_from_molecule(mol, &descriptor_context, &aux_graph);
         precompute_auxiliary_descriptors(
             mol,
             &descriptor_context,
@@ -2751,7 +2751,7 @@ fn record_auxiliary_occurrence(
     });
 }
 
-fn collect_auxiliary_occurrences_from_graph(
+fn collect_auxiliary_occurrences_from_molecule(
     mol: &Molecule,
     context: &DescriptorContext,
     graph: &AuxiliaryGraph,

@@ -48,7 +48,7 @@ impl Conformer {
             .ok_or(ConformerError::PositionCapacityExceeded)?;
         checked_fixed_id_collection_len(0, required_len)
             .map_err(|_| ConformerError::PositionCapacityExceeded)?;
-        let point = point.into_unit(self.unit)?.into_value();
+        let point = point.to_unit(self.unit)?.to_value();
         if self.positions.len() <= atom.index() {
             self.positions.resize(required_len, None);
         }

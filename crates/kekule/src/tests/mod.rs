@@ -26,14 +26,14 @@ pub(super) fn read_smiles(
     input: &str,
 ) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.into_molecule()?)
+    Ok(smiles_api::interpret(&document)?.to_molecule()?)
 }
 
 pub(super) fn read_smiles_components(
     input: &str,
 ) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.into_molecules())
+    Ok(smiles_api::interpret(&document)?.to_molecules())
 }
 
 pub(super) fn read_smiles_component(
@@ -73,7 +73,7 @@ pub(super) fn read_smiles_with_report(
     input: &str,
 ) -> std::result::Result<(SmallMolecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input)?;
-    Ok(smiles_api::interpret(&document)?.into_parts()?)
+    Ok(smiles_api::interpret(&document)?.to_parts()?)
 }
 
 pub(super) trait CanonicalizeFixture {
@@ -91,14 +91,14 @@ impl CanonicalizeFixture for SmallMolecule {
     fn canonicalize_fixture(
         &mut self,
     ) -> std::result::Result<NormalizationReport, NormalizationError> {
-        canonicalize_molecule_for_publication(self.graph_mut(), &[])
+        canonicalize_molecule_for_publication(self.as_molecule_mut(), &[])
     }
 
     fn canonicalize_fixture_with_source_stereo(
         &mut self,
         source_stereo: &[SourceStereoBondMark],
     ) -> std::result::Result<NormalizationReport, NormalizationError> {
-        canonicalize_molecule_for_publication(self.graph_mut(), source_stereo)
+        canonicalize_molecule_for_publication(self.as_molecule_mut(), source_stereo)
     }
 }
 
@@ -106,7 +106,7 @@ pub(super) fn read_molfile(
     input: &str,
 ) -> std::result::Result<SmallMolecule, Box<dyn std::error::Error>> {
     let document = molfile::parse_str(input)?;
-    Ok(molfile::interpret(&document)?.into_molecule())
+    Ok(molfile::interpret(&document)?.to_molecule())
 }
 
 pub(super) fn read_molfile_with_report(
@@ -116,7 +116,7 @@ pub(super) fn read_molfile_with_report(
     Box<dyn std::error::Error>,
 > {
     let document = molfile::parse_str(input)?;
-    Ok(molfile::interpret(&document)?.into_parts())
+    Ok(molfile::interpret(&document)?.to_parts())
 }
 
 pub(super) fn read_sdf_records(
@@ -130,7 +130,7 @@ pub(super) fn read_sdf_records_with_options(
     options: SdfParseOptions,
 ) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
     let document = sdf::parse_str(input, options)?;
-    Ok(sdf::interpret(&document)?.into_records())
+    Ok(sdf::interpret(&document)?.to_records())
 }
 
 pub(super) fn read_sdf_molecules(
@@ -138,7 +138,7 @@ pub(super) fn read_sdf_molecules(
 ) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
     Ok(read_sdf_records(input)?
         .into_iter()
-        .map(SdfRecord::into_molecule)
+        .map(SdfRecord::to_molecule)
         .collect())
 }
 
@@ -148,7 +148,7 @@ pub(super) fn read_sdf_molecules_with_options(
 ) -> std::result::Result<Vec<SmallMolecule>, Box<dyn std::error::Error>> {
     Ok(read_sdf_records_with_options(input, options)?
         .into_iter()
-        .map(SdfRecord::into_molecule)
+        .map(SdfRecord::to_molecule)
         .collect())
 }
 

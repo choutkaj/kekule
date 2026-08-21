@@ -8,7 +8,7 @@ use crate::small::model::SmallMolecule;
 use super::parse::SmilesDirectionToken;
 
 pub fn write_smiles(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.graph();
+    let mol = molecule.as_molecule();
     let plan = plan_smiles_write(mol, StereoWriteMode::Reject)?;
     let mut parts = Vec::new();
     for start in &plan.roots {
@@ -27,7 +27,7 @@ pub fn write_smiles(molecule: &SmallMolecule) -> std::result::Result<String, Mol
 pub fn write_isomeric_smiles(
     molecule: &SmallMolecule,
 ) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.graph();
+    let mol = molecule.as_molecule();
     let plan = plan_smiles_write(mol, StereoWriteMode::Encode)?;
     let stereo = SmilesStereoWriteContext::new(mol)?;
     let component_styles = smiles_connected_components(mol)?

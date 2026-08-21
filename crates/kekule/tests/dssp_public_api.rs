@@ -17,7 +17,7 @@ fn crambin_model() -> kekule::structure::Model {
         },
     )
     .expect("checked-in RCSB 1CRN fixture interprets")
-    .into_model()
+    .to_model()
 }
 
 #[test]

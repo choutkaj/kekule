@@ -31,7 +31,7 @@ use super::{
 ///
 /// let mut water_builder = Molecule::builder();
 /// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-/// let water = SmallMolecule::from_graph(water_builder.build()?);
+/// let water = SmallMolecule::from_molecule(water_builder.build()?);
 ///
 /// let mut builder = TopologyBuilder::new();
 /// let definition = builder.add_small_molecule_definition(&water)?;

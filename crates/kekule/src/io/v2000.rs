@@ -348,7 +348,7 @@ pub(super) fn interpret_v2000_syntax(
     }
 
     Ok((
-        SmallMolecule::from_graph_unchecked_connectedness(mol),
+        SmallMolecule::from_molecule_unchecked_connectedness(mol),
         source_stereo,
     ))
 }
@@ -729,7 +729,7 @@ impl fmt::Display for MolWriteError {
 impl std::error::Error for MolWriteError {}
 
 pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.graph();
+    let mol = molecule.as_molecule();
     let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
     if mol.atom_count() > 999 || mol.bond_count() > 999 {
         return Err(MolWriteError::new(
