@@ -463,7 +463,7 @@ fn extract_chain(
                         molecule: molecule_id,
                         message: error.to_string(),
                     })?
-                    .into_value(),
+                    .to_value(),
             ));
         }
 

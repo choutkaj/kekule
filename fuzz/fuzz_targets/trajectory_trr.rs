@@ -27,7 +27,7 @@ fn topology() -> &'static Arc<Topology> {
             }
             previous = Some(atom);
         }
-        let molecule = SmallMolecule::from_graph(graph.build().expect("molecule"));
+        let molecule = SmallMolecule::from_molecule(graph.build().expect("molecule"));
         let mut builder = TopologyBuilder::new();
         let definition = builder
             .add_small_molecule_definition(&molecule)

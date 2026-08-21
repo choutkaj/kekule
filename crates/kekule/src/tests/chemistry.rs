@@ -3,16 +3,16 @@ use super::*;
 #[test]
 fn interpretation_and_default_perception_are_separate() {
     let mut small = read_smiles("CCO").expect("smiles should parse");
-    assert!(!small.graph().perception().has_valence());
+    assert!(!small.as_molecule().perception().has_valence());
 
     small.perceive().expect("ethanol perception");
 
-    assert!(small.graph().perception().has_valence());
-    assert!(small.graph().perception().has_rings());
-    assert!(small.graph().perception().has_aromaticity());
+    assert!(small.as_molecule().perception().has_valence());
+    assert!(small.as_molecule().perception().has_rings());
+    assert!(small.as_molecule().perception().has_aromaticity());
     assert_eq!(
         small
-            .graph()
+            .as_molecule()
             .implicit_hydrogens(AtomId::new(2))
             .expect("oxygen"),
         Some(1)
@@ -24,18 +24,21 @@ fn default_perception_installs_one_ring_basis_for_aromaticity() {
     let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
     molecule.perceive().expect("benzene perception");
 
-    let ring_set = molecule.graph().ring_set().expect("installed ring basis");
+    let ring_set = molecule
+        .as_molecule()
+        .ring_set()
+        .expect("installed ring basis");
     assert_eq!(ring_set.len(), 1);
     assert_eq!(
-        molecule.graph().perception().ring_basis_model(),
+        molecule.as_molecule().perception().ring_basis_model(),
         Some(RingBasisModel::FiguerasSssrLike)
     );
-    assert!(molecule.graph().perception().has_aromaticity());
+    assert!(molecule.as_molecule().perception().has_aromaticity());
     assert_eq!(
         molecule
-            .graph()
+            .as_molecule()
             .atoms()
-            .filter(|(atom, _)| molecule.graph().atom_is_aromatic(*atom) == Ok(Some(true)))
+            .filter(|(atom, _)| molecule.as_molecule().atom_is_aromatic(*atom) == Ok(Some(true)))
             .count(),
         6
     );
@@ -47,26 +50,30 @@ fn interpretation_owns_source_stereo_before_default_perception() {
         read_smiles_with_report("C/C=C\\F").expect("directional smiles should interpret");
 
     assert_eq!(report.created_stereo_elements().len(), 1);
-    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
 
     molecule.perceive().expect("directional perception");
 
-    assert_eq!(molecule.graph().stereo_elements().count(), 1);
-    assert!(!molecule.graph().perception().has_stereo());
-    assert!(molecule.graph().perception().stereo_state().is_none());
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
+    assert!(!molecule.as_molecule().perception().has_stereo());
+    assert!(molecule.as_molecule().perception().stereo_state().is_none());
 }
 
 #[test]
 fn normalization_preserves_unknown_double_bond_stereo() {
     let mut molecule = read_smiles("CC=CC").expect("alkene should parse");
     let double_bond = molecule
-        .graph()
+        .as_molecule()
         .bonds()
         .find_map(|(bond_id, bond)| (bond.order == BondOrder::Double).then_some(bond_id))
         .expect("double bond");
     let source_stereo = [SourceStereoBondMark {
         bond: double_bond,
-        from: molecule.graph().bond(double_bond).expect("double bond").a(),
+        from: molecule
+            .as_molecule()
+            .bond(double_bond)
+            .expect("double bond")
+            .a(),
         kind: SourceStereoBondMarkKind::DoubleBondEither,
     }];
 
@@ -76,7 +83,7 @@ fn normalization_preserves_unknown_double_bond_stereo() {
 
     assert_eq!(report.created_stereo_elements.len(), 1);
     let (_, element) = molecule
-        .graph()
+        .as_molecule()
         .stereo_elements()
         .next()
         .expect("unknown stereo element");
@@ -129,23 +136,23 @@ fn default_perception_does_not_assign_coordinate_only_stereo() {
         )
         .unwrap();
     mol.add_conformer(conformer).expect("valid conformer");
-    let mut molecule = SmallMolecule::from_graph(mol);
+    let mut molecule = SmallMolecule::from_molecule(mol);
 
     molecule
         .perceive()
         .expect("coordinate-only molecule should perceive discrete chemistry");
 
-    assert_eq!(molecule.graph().stereo_elements().count(), 0);
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 0);
 
-    let inferred = stereo_api::infer_coordinate_stereo(molecule.graph())
+    let inferred = stereo_api::infer_coordinate_stereo(molecule.as_molecule())
         .expect("direct coordinate inference should succeed");
     assert_eq!(inferred.elements.len(), 1);
-    assert_eq!(molecule.graph().stereo_elements().count(), 0);
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 0);
 
-    let materialized = stereo_api::materialize_coordinate_stereo(molecule.graph_mut())
+    let materialized = stereo_api::materialize_coordinate_stereo(molecule.as_molecule_mut())
         .expect("explicit coordinate materialization should succeed");
     assert_eq!(materialized.created_elements.len(), 1);
-    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
 }
 
 #[test]
@@ -159,7 +166,7 @@ fn failed_source_stereo_normalization_is_transactional() {
         from: a,
         kind: SourceStereoBondMarkKind::WedgeEither,
     }];
-    let mut molecule = SmallMolecule::from_graph(mol);
+    let mut molecule = SmallMolecule::from_molecule(mol);
     let before = molecule.clone();
 
     let error = molecule
@@ -204,7 +211,7 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
             },
         })
         .collect::<Vec<_>>();
-    let mut molecule = SmallMolecule::from_graph(mol);
+    let mut molecule = SmallMolecule::from_molecule(mol);
 
     let report = molecule
         .canonicalize_fixture_with_source_stereo(&source_stereo)
@@ -216,7 +223,7 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
             mark_count: 4,
         }));
     assert_eq!(report.warnings.len(), 1);
-    assert!(molecule.graph().stereo_elements().next().is_none());
+    assert!(molecule.as_molecule().stereo_elements().next().is_none());
 }
 
 #[test]
@@ -231,7 +238,7 @@ fn failed_default_valence_perception_is_transactional() {
             .expect("bond");
     }
     rings_api::perceive_ring_set(&mut mol).expect("ring perception should succeed");
-    let mut molecule = SmallMolecule::from_graph(mol);
+    let mut molecule = SmallMolecule::from_molecule(mol);
     let before = molecule.clone();
 
     let error = molecule
@@ -260,13 +267,13 @@ fn invalid_aromatic_source_is_rejected_before_publication() {
 fn direct_aromaticity_perception_accepts_localized_aromatic_input() {
     let mut molecule = read_smiles("c1ccccc1").expect("aromatic representation localizes");
 
-    aromaticity_api::perceive_aromaticity(molecule.graph_mut(), AromaticityModel::RdkitLike)
+    aromaticity_api::perceive_aromaticity(molecule.as_molecule_mut(), AromaticityModel::RdkitLike)
         .expect("localized aromatic representation should be perceived");
 
     assert!(molecule
-        .graph()
+        .as_molecule()
         .bond_ids()
-        .all(|bond| molecule.graph().bond_is_aromatic(bond) == Ok(Some(true))));
+        .all(|bond| molecule.as_molecule().bond_is_aromatic(bond) == Ok(Some(true))));
 }
 
 #[test]
@@ -300,35 +307,43 @@ fn normalization_cleanup_invalidates_preexisting_perception() {
     mol.add_bond(chlorine, hydroxyl, BondOrder::Single)
         .expect("hydroxyl bond");
     mark_all_fresh(&mut mol);
-    let mut molecule = SmallMolecule::from_graph(mol);
+    let mut molecule = SmallMolecule::from_molecule(mol);
 
     molecule
         .canonicalize_fixture()
         .expect("representation cleanup");
 
-    assert_all_stale(molecule.graph());
+    assert_all_stale(molecule.as_molecule());
     assert_eq!(
         molecule
-            .graph()
+            .as_molecule()
             .atom(chlorine)
             .expect("chlorine")
             .formal_charge,
         1
     );
     assert_eq!(
-        molecule.graph().atom(oxo).expect("oxygen").formal_charge,
+        molecule
+            .as_molecule()
+            .atom(oxo)
+            .expect("oxygen")
+            .formal_charge,
         -1
     );
     assert_eq!(
         molecule
-            .graph()
+            .as_molecule()
             .atom(hydroxyl)
             .expect("hydroxyl oxygen")
             .formal_charge,
         0
     );
     assert_eq!(
-        molecule.graph().bond(BondId::new(0)).expect("bond").order,
+        molecule
+            .as_molecule()
+            .bond(BondId::new(0))
+            .expect("bond")
+            .order,
         BondOrder::Single
     );
 }
@@ -732,9 +747,9 @@ $$$$
         .next()
         .expect("one molecule");
 
-    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
     let element = molecule
-        .graph()
+        .as_molecule()
         .stereo_elements()
         .next()
         .expect("created tetrahedral element")
@@ -767,9 +782,9 @@ $$$$
         .next()
         .expect("one molecule");
 
-    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
     let element = molecule
-        .graph()
+        .as_molecule()
         .stereo_elements()
         .next()
         .expect("created tetrahedral element")

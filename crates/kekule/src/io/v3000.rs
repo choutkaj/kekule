@@ -54,7 +54,7 @@ pub(super) struct V3000BondSyntax {
 }
 
 pub fn write_mol_v3000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.graph();
+    let mol = molecule.as_molecule();
     let atoms = mol.atom_ids().collect::<Vec<_>>();
     let bonds = mol.bond_ids().collect::<Vec<_>>();
     let mut atom_index = BTreeMap::new();
@@ -438,7 +438,7 @@ pub(super) fn interpret_v3000_syntax(
             .expect("parsed coordinates reference live atoms");
     }
     Ok((
-        SmallMolecule::from_graph_unchecked_connectedness(mol),
+        SmallMolecule::from_molecule_unchecked_connectedness(mol),
         source_stereo,
     ))
 }

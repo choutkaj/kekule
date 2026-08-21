@@ -42,7 +42,7 @@ fn one_atom_small(symbol: &str) -> SmallMolecule {
     graph
         .add_atom(Atom::new(element(symbol)))
         .expect("test atom capacity");
-    SmallMolecule::from_graph(graph.build().expect("connected single atom"))
+    SmallMolecule::from_molecule(graph.build().expect("connected single atom"))
 }
 
 fn ligand_with_tombstones() -> SmallMolecule {
@@ -63,7 +63,7 @@ fn ligand_with_tombstones() -> SmallMolecule {
         .add_bond(carbon, oxygen, BondOrder::Double)
         .expect("test bond capacity");
     graph.delete_atom(deleted).expect("delete test tombstone");
-    SmallMolecule::from_graph(graph.build().expect("connected ligand"))
+    SmallMolecule::from_molecule(graph.build().expect("connected ligand"))
 }
 
 fn one_atom_macro() -> MacroMolecule {
@@ -795,7 +795,7 @@ fn trajectory_and_reusable_buffer_remapping_preserve_every_frame_field() {
         .evaluate(buffer.frame_view().model_view())
         .expect("evaluate remapped target view")
         .energy()
-        .into_value()
+        .to_value()
         .is_finite());
 
     let independent = self::fixture();

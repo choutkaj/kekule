@@ -412,8 +412,8 @@ impl<R: Read + Seek> DcdReader<R> {
                 )
             })?;
             seen.resize(atom_count, false);
-            for chunk in record.chunks_exact(4) {
-                let one_based = endian.i32(chunk.try_into().expect("index chunk"));
+            for chunk in record.as_chunks::<4>().0 {
+                let one_based = endian.i32(*chunk);
                 if one_based <= 0 {
                     return Err(header_error(
                         &source_label,
@@ -676,12 +676,8 @@ impl<R: Read + Seek> DcdReader<R> {
                     "DCD coordinate record has the wrong size",
                 ));
             }
-            for (value_index, chunk) in self.record.chunks_exact(4).enumerate() {
-                let value = f64::from(
-                    self.header
-                        .endian
-                        .f32(chunk.try_into().expect("coordinate chunk")),
-                );
+            for (value_index, chunk) in self.record.as_chunks::<4>().0.iter().enumerate() {
+                let value = f64::from(self.header.endian.f32(*chunk));
                 if !value.is_finite() {
                     return Err(frame_error(
                         TrajectoryCodecErrorKind::InvalidFrame,
@@ -811,7 +807,7 @@ impl<R: Read + Seek> DcdReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryError> {
+    pub fn to_indexed(mut self) -> Result<IndexedDcdReader<R>, TrajectoryError> {
         let mut offsets = Vec::new();
         loop {
             if offsets.len() as u64 == self.header.declared_frames {
@@ -1406,7 +1402,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         if let Some(cell) = cell {
             let values = encode_cell(cell, &self.source_label)?;
             let mut payload = [0_u8; CELL_BYTES];
-            for (chunk, value) in payload.chunks_exact_mut(8).zip(values) {
+            for (chunk, value) in payload.as_chunks_mut::<8>().0.iter_mut().zip(values) {
                 chunk.copy_from_slice(&self.options.endian.encode_f64(value));
             }
             write_record(
@@ -1490,7 +1486,7 @@ fn encode_header(options: DcdWriteOptions, frames: i32) -> [u8; HEADER_BYTES] {
         0,
         24,
     ];
-    for (chunk, control) in header[4..].chunks_exact_mut(4).zip(controls) {
+    for (chunk, control) in header[4..].as_chunks_mut::<4>().0.iter_mut().zip(controls) {
         chunk.copy_from_slice(&options.endian.encode_i32(control));
     }
     header[40..44].copy_from_slice(&options.endian.encode_f32(options.delta));
@@ -1509,8 +1505,8 @@ fn parse_controls(
         ));
     }
     let mut controls = [0_i32; 20];
-    for (target, chunk) in controls.iter_mut().zip(bytes.chunks_exact(4)) {
-        *target = endian.i32(chunk.try_into().expect("control chunk"));
+    for (target, chunk) in controls.iter_mut().zip(bytes.as_chunks::<4>().0.iter()) {
+        *target = endian.i32(*chunk);
     }
     Ok(controls)
 }
@@ -1564,8 +1560,8 @@ fn decode_cell(
     frame: u64,
 ) -> Result<PeriodicCell, TrajectoryError> {
     let mut values = [0_f64; 6];
-    for (target, chunk) in values.iter_mut().zip(record.chunks_exact(8)) {
-        *target = endian.f64(chunk.try_into().expect("cell chunk"));
+    for (target, chunk) in values.iter_mut().zip(record.as_chunks::<8>().0.iter()) {
+        *target = endian.f64(*chunk);
     }
     if values.iter().any(|value| !value.is_finite()) {
         return Err(frame_error(

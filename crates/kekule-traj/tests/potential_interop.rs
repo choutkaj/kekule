@@ -24,7 +24,7 @@ fn bonded_model() -> (Model, InstanceBondId) {
         .unwrap();
     let mut molecule = molecule.build().unwrap();
     let conformer = molecule.add_conformer(conformer).unwrap();
-    let molecule = SmallMolecule::from_graph(molecule);
+    let molecule = SmallMolecule::from_molecule(molecule);
     let model = Model::from_small_molecule(&molecule, conformer).unwrap();
     (model, InstanceBondId::new(MoleculeInstanceId::new(0), bond))
 }

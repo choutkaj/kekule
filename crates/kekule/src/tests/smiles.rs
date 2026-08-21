@@ -2,7 +2,7 @@ use super::*;
 
 fn aromatic_atom(molecule: &SmallMolecule, atom: AtomId) -> bool {
     molecule
-        .graph()
+        .as_molecule()
         .atom_is_aromatic(atom)
         .expect("atom exists")
         == Some(true)
@@ -10,7 +10,7 @@ fn aromatic_atom(molecule: &SmallMolecule, atom: AtomId) -> bool {
 
 fn aromatic_bond(molecule: &SmallMolecule, bond: BondId) -> bool {
     molecule
-        .graph()
+        .as_molecule()
         .bond_is_aromatic(bond)
         .expect("bond exists")
         == Some(true)
@@ -18,14 +18,14 @@ fn aromatic_bond(molecule: &SmallMolecule, bond: BondId) -> bool {
 
 fn implicit_hydrogens(molecule: &SmallMolecule, atom: AtomId) -> Option<u8> {
     molecule
-        .graph()
+        .as_molecule()
         .implicit_hydrogens(atom)
         .expect("atom exists")
 }
 
 fn aromatic_atom_count(molecule: &SmallMolecule) -> usize {
     molecule
-        .graph()
+        .as_molecule()
         .atom_ids()
         .filter(|atom| aromatic_atom(molecule, *atom))
         .count()
@@ -33,7 +33,7 @@ fn aromatic_atom_count(molecule: &SmallMolecule) -> usize {
 
 fn aromatic_bond_count(molecule: &SmallMolecule) -> usize {
     molecule
-        .graph()
+        .as_molecule()
         .bond_ids()
         .filter(|bond| aromatic_bond(molecule, *bond))
         .count()
@@ -93,10 +93,14 @@ fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
         assert_eq!(component.molecule().bond_count(), 0);
         component
             .molecule()
-            .graph()
+            .as_molecule()
             .validate_connected()
             .expect("each interpreted component is connected");
-        assert!(!component.molecule().graph().perception().has_valence());
+        assert!(!component
+            .molecule()
+            .as_molecule()
+            .perception()
+            .has_valence());
         assert_eq!(component.report().atom_mappings().len(), 1);
         assert!(component.report().bond_mappings().is_empty());
     }
@@ -111,22 +115,22 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
     assert_eq!(
         components
             .iter()
-            .map(|molecule| molecule.graph().atom_count())
+            .map(|molecule| molecule.as_molecule().atom_count())
             .sum::<usize>(),
         14
     );
     assert_eq!(
         components
             .iter()
-            .map(|molecule| molecule.graph().bond_count())
+            .map(|molecule| molecule.as_molecule().bond_count())
             .sum::<usize>(),
         11
     );
     for molecule in &components {
-        assert_all_stale(molecule.graph());
+        assert_all_stale(molecule.as_molecule());
     }
     let bracket_atom = components[2]
-        .graph()
+        .as_molecule()
         .atom(AtomId::new(0))
         .expect("bracket atom");
     assert_eq!(bracket_atom.isotope, Some(13));
@@ -134,12 +138,12 @@ fn smiles_interprets_branches_rings_brackets_and_fragments_canonically_without_p
     assert_eq!(bracket_atom.formal_charge, 1);
     assert_eq!(bracket_atom.atom_map, Some(7));
     let chiral_atom = components[3]
-        .graph()
+        .as_molecule()
         .atom(AtomId::new(1))
         .expect("chiral bracket atom");
     assert_eq!(chiral_atom.hydrogens, HydrogenDeclaration::Fixed(1));
     let stereo = components[3]
-        .graph()
+        .as_molecule()
         .stereo_elements()
         .map(|(_, element)| element)
         .collect::<Vec<_>>();
@@ -169,14 +173,20 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
     ] {
         let mut molecule = read_smiles(source)
             .unwrap_or_else(|error| panic!("{source} should interpret: {error}"));
-        let atom = molecule.graph().atom(AtomId::new(0)).expect("source atom");
+        let atom = molecule
+            .as_molecule()
+            .atom(AtomId::new(0))
+            .expect("source atom");
         assert_eq!(atom.hydrogens, declaration, "{source}");
-        assert!(!molecule.graph().perception().has_valence(), "{source}");
+        assert!(
+            !molecule.as_molecule().perception().has_valence(),
+            "{source}"
+        );
 
         perceive(&mut molecule).unwrap_or_else(|error| panic!("{source} should perceive: {error}"));
         assert_eq!(
             molecule
-                .graph()
+                .as_molecule()
                 .atom(AtomId::new(0))
                 .expect("perceived atom")
                 .hydrogens,
@@ -184,7 +194,7 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
             "perception must not rewrite {source}"
         );
         assert_eq!(
-            molecule.graph().implicit_hydrogens(AtomId::new(0)),
+            molecule.as_molecule().implicit_hydrogens(AtomId::new(0)),
             Ok(Some(perceived_implicit)),
             "{source}"
         );
@@ -195,9 +205,9 @@ fn smiles_brackets_publish_exact_hydrogen_declarations() {
 fn smiles_interpretation_canonicalizes_directional_bond_markers() {
     let small = read_smiles("C/C=C\\C").expect("directional bond markers should parse");
 
-    assert_eq!(small.graph().atom_count(), 4);
-    assert_eq!(small.graph().bond_count(), 3);
-    assert_eq!(small.graph().stereo_elements().count(), 1);
+    assert_eq!(small.as_molecule().atom_count(), 4);
+    assert_eq!(small.as_molecule().bond_count(), 3);
+    assert_eq!(small.as_molecule().stereo_elements().count(), 1);
     canonical_smiles_round_trip(&small);
 }
 
@@ -207,7 +217,7 @@ fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
     perceive(&mut small).expect("platinum bromide salt perceives");
 
     let bromines = small
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "Br")
         .map(|(atom_id, atom)| {
@@ -222,7 +232,7 @@ fn metal_bound_organic_subset_halogen_keeps_rdkit_no_implicit_state() {
     let mut aryl_bromide = read_smiles("c1ccccc1Br").expect("aryl bromide should parse");
     perceive(&mut aryl_bromide).expect("aryl bromide should perceive");
     let bromine = aryl_bromide
-        .graph()
+        .as_molecule()
         .atoms()
         .find_map(|(_, atom)| (atom.element.symbol() == "Br").then_some(atom))
         .expect("bromine atom");
@@ -234,18 +244,21 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
     let mut aryl_mercury = read_smiles("c1ccccc1[Hg]").expect("aryl mercury should parse");
     perceive(&mut aryl_mercury).expect("aryl mercury should perceive");
     let aryl_mercury_carbon = aryl_mercury
-        .graph()
+        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| {
             (atom.element.symbol() == "C"
-                && aryl_mercury.graph().incident_bonds(id).is_ok_and(|bonds| {
-                    bonds.into_iter().any(|(_, bond)| {
-                        aryl_mercury
-                            .graph()
-                            .atom(bond.other_atom(id))
-                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
-                    })
-                }))
+                && aryl_mercury
+                    .as_molecule()
+                    .incident_bonds(id)
+                    .is_ok_and(|bonds| {
+                        bonds.into_iter().any(|(_, bond)| {
+                            aryl_mercury
+                                .as_molecule()
+                                .atom(bond.other_atom(id))
+                                .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
+                        })
+                    }))
             .then_some((id, atom))
         })
         .expect("aryl carbon bound to mercury");
@@ -257,7 +270,7 @@ fn metal_bound_organic_subset_atoms_rely_on_valence_hydrogens() {
 
     let methyl_sodium = read_smiles("C[Na]").expect("methyl sodium should parse");
     let carbon = methyl_sodium
-        .graph()
+        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| (atom.element.symbol() == "C").then_some((id, atom)))
         .expect("carbon atom");
@@ -272,7 +285,7 @@ fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
 
     let chalcogens = components
         .iter()
-        .flat_map(|molecule| molecule.graph().atoms())
+        .flat_map(|molecule| molecule.as_molecule().atoms())
         .filter(|(_, atom)| matches!(atom.element.symbol(), "Se" | "Te"))
         .map(|(_, atom)| {
             (
@@ -287,9 +300,9 @@ fn aromatic_chalcogen_bracket_atoms_localize_without_perceiving() {
     );
     assert!(components
         .iter()
-        .all(|molecule| !molecule.graph().perception().has_aromaticity()));
+        .all(|molecule| !molecule.as_molecule().perception().has_aromaticity()));
     assert!(components.iter().all(|molecule| molecule
-        .graph()
+        .as_molecule()
         .bonds()
         .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double))));
 }
@@ -342,54 +355,60 @@ fn smiles_writer_round_trips_graph_shape() {
     let text = smiles_api::write(&small).expect("smiles should write");
     let reparsed = read_smiles(&text).expect("written smiles should parse");
 
-    assert_eq!(reparsed.graph().atom_count(), small.graph().atom_count());
-    assert_eq!(reparsed.graph().bond_count(), small.graph().bond_count());
+    assert_eq!(
+        reparsed.as_molecule().atom_count(),
+        small.as_molecule().atom_count()
+    );
+    assert_eq!(
+        reparsed.as_molecule().bond_count(),
+        small.as_molecule().bond_count()
+    );
 }
 
 #[test]
 fn canonical_smiles_is_stable_across_atom_order_for_tree_roles() {
     let mut first = SmallMolecule::new();
     let first_terminal_a = first
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let first_center = first
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let first_terminal_b = first
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     first
-        .graph_mut()
+        .as_molecule_mut()
         .add_bond(first_terminal_a, first_center, BondOrder::Single)
         .expect("bond should be valid");
     first
-        .graph_mut()
+        .as_molecule_mut()
         .add_bond(first_center, first_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
     perceive(&mut first).expect("propane perceives");
 
     let mut second = SmallMolecule::new();
     let second_center = second
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let second_terminal_a = second
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let second_terminal_b = second
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     second
-        .graph_mut()
+        .as_molecule_mut()
         .add_bond(second_center, second_terminal_a, BondOrder::Single)
         .expect("bond should be valid");
     second
-        .graph_mut()
+        .as_molecule_mut()
         .add_bond(second_center, second_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
     perceive(&mut second).expect("propane perceives");
@@ -439,9 +458,15 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
     let reparsed = read_smiles(&written).expect("canonical output should parse");
 
     assert!(!written.contains('['), "{written}");
-    assert_eq!(reparsed.graph().stereo_elements().count(), 0);
-    assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
-    assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
+    assert_eq!(reparsed.as_molecule().stereo_elements().count(), 0);
+    assert_eq!(
+        reparsed.as_molecule().atom_count(),
+        molecule.as_molecule().atom_count()
+    );
+    assert_eq!(
+        reparsed.as_molecule().bond_count(),
+        molecule.as_molecule().bond_count()
+    );
 
     let isotope = read_smiles("[11CH3]OC").expect("isotope parses");
     assert_eq!(
@@ -464,7 +489,7 @@ fn canonical_smiles_ignores_stereo_for_non_isomeric_output() {
         .expect("explicit hydrogen isotopologue canonicalizes");
     assert_eq!(written.matches("[H]").count(), 1, "{written}");
     let reparsed = read_smiles(&written).expect("normalized explicit hydrogen output reparses");
-    assert_eq!(reparsed.graph().atom_count(), 4, "{written}");
+    assert_eq!(reparsed.as_molecule().atom_count(), 4, "{written}");
 }
 
 #[test]
@@ -478,8 +503,14 @@ fn canonical_smiles_round_trips_supported_branch_and_ring_graphs() {
         let reparsed = read_smiles(&written)
             .unwrap_or_else(|_| panic!("canonical output should parse: {written}"));
 
-        assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
-        assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
+        assert_eq!(
+            reparsed.as_molecule().atom_count(),
+            molecule.as_molecule().atom_count()
+        );
+        assert_eq!(
+            reparsed.as_molecule().bond_count(),
+            molecule.as_molecule().bond_count()
+        );
     }
 }
 
@@ -515,7 +546,7 @@ fn canonical_smiles_preserves_aromatic_high_order_bonds() {
 
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
     assert!(written.contains('#'), "{written}");
-    assert!(reparsed.graph().bonds().any(
+    assert!(reparsed.as_molecule().bonds().any(
         |(bond_id, bond)| bond.order == BondOrder::Triple && aromatic_bond(&reparsed, bond_id)
     ));
 }
@@ -533,14 +564,14 @@ fn aromatic_smiles_omitted_bonds_perceive_with_expected_hydrogens() {
     let mut benzene = read_smiles("c1ccccc1").expect("benzene should parse");
     assert_eq!(
         benzene
-            .graph()
+            .as_molecule()
             .bonds()
             .filter(|(_, bond)| bond.order == BondOrder::Double)
             .count(),
         3
     );
     perceive(&mut benzene).expect("benzene should perceive");
-    for atom_id in benzene.graph().atom_ids() {
+    for atom_id in benzene.as_molecule().atom_ids() {
         assert_eq!(implicit_hydrogens(&benzene, atom_id), Some(1));
         assert!(aromatic_atom(&benzene, atom_id));
     }
@@ -554,7 +585,10 @@ fn aromatic_smiles_omitted_bonds_perceive_with_expected_hydrogens() {
 
     let mut pyridinium = read_smiles("[nH+]1ccccc1").expect("pyridinium should parse");
     perceive(&mut pyridinium).expect("pyridinium should perceive");
-    let nitrogen = pyridinium.graph().atom(AtomId::new(0)).expect("nitrogen");
+    let nitrogen = pyridinium
+        .as_molecule()
+        .atom(AtomId::new(0))
+        .expect("nitrogen");
     assert!(aromatic_atom(&pyridinium, AtomId::new(0)));
     assert_eq!(nitrogen.formal_charge, 1);
     assert_eq!(nitrogen.radical, None);
@@ -562,11 +596,11 @@ fn aromatic_smiles_omitted_bonds_perceive_with_expected_hydrogens() {
     assert_eq!(implicit_hydrogens(&pyridinium, AtomId::new(0)), Some(0));
     assert_eq!(
         aromatic_bond_count(&pyridinium),
-        pyridinium.graph().bond_count()
+        pyridinium.as_molecule().bond_count()
     );
     assert_eq!(
         pyridinium
-            .graph()
+            .as_molecule()
             .bonds()
             .filter(|(_, bond)| bond.order == BondOrder::Double)
             .count(),
@@ -676,10 +710,10 @@ fn smiles_source_aromaticity_validation_preserves_supported_forms() {
             .unwrap_or_else(|_| panic!("consistent source aromaticity should publish: {source}"));
 
         assert!(molecule
-            .graph()
+            .as_molecule()
             .bonds()
             .all(|(_, bond)| matches!(bond.order, BondOrder::Single | BondOrder::Double)));
-        assert!(!molecule.graph().perception().has_aromaticity());
+        assert!(!molecule.as_molecule().perception().has_aromaticity());
     }
 }
 
@@ -698,8 +732,14 @@ fn thiocarbonyl_chalcogen_ring_perceives_aromatic_like_rdkit() {
     let written = smiles_api::write(&molecule)
         .expect("normalized_and_perceived thiocarbonyl heterocycle should write");
     let reparsed = read_smiles(&written).expect("writer output should parse");
-    assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
-    assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
+    assert_eq!(
+        reparsed.as_molecule().atom_count(),
+        molecule.as_molecule().atom_count()
+    );
+    assert_eq!(
+        reparsed.as_molecule().bond_count(),
+        molecule.as_molecule().bond_count()
+    );
 
     let (canonical, canonical_reparsed) = canonical_smiles_round_trip(&molecule);
     assert_eq!(aromatic_atom_count(&canonical_reparsed), 6, "{canonical}");
@@ -726,7 +766,7 @@ fn bracket_carbon_suppresses_implicit_hydrogens() {
 
     let bracket_carbon_id = AtomId::new(6);
     let bracket_carbon = molecule
-        .graph()
+        .as_molecule()
         .atom(bracket_carbon_id)
         .expect("bracket carbon");
     assert_eq!(bracket_carbon.hydrogens, HydrogenDeclaration::Fixed(1));
@@ -790,20 +830,20 @@ fn fused_aromatic_component_preserves_explicit_single_bond() {
     perceive(&mut molecule).expect("fused aromatic system should perceive");
 
     let explicit_single_between_aromatic_atoms = molecule
-        .graph()
+        .as_molecule()
         .bonds()
         .filter(|(bond_id, bond)| {
             matches!(bond.order, BondOrder::Single)
                 && molecule
-                    .graph()
+                    .as_molecule()
                     .atom_is_aromatic(bond.a())
                     .is_ok_and(|aromatic| aromatic == Some(true))
                 && molecule
-                    .graph()
+                    .as_molecule()
                     .atom_is_aromatic(bond.b())
                     .is_ok_and(|aromatic| aromatic == Some(true))
                 && molecule
-                    .graph()
+                    .as_molecule()
                     .bond_is_aromatic(*bond_id)
                     .is_ok_and(|aromatic| aromatic == Some(false))
         })
@@ -816,20 +856,20 @@ fn fused_aromatic_component_preserves_explicit_single_bond() {
     perceive(&mut reparsed).expect("writer output should perceive");
     assert_eq!(
         reparsed
-            .graph()
+            .as_molecule()
             .bonds()
             .filter(|(bond_id, bond)| {
                 matches!(bond.order, BondOrder::Single)
                     && reparsed
-                        .graph()
+                        .as_molecule()
                         .atom_is_aromatic(bond.a())
                         .is_ok_and(|aromatic| aromatic == Some(true))
                     && reparsed
-                        .graph()
+                        .as_molecule()
                         .atom_is_aromatic(bond.b())
                         .is_ok_and(|aromatic| aromatic == Some(true))
                     && reparsed
-                        .graph()
+                        .as_molecule()
                         .bond_is_aromatic(*bond_id)
                         .is_ok_and(|aromatic| aromatic == Some(false))
             })
@@ -1065,16 +1105,22 @@ fn canonical_fused_quinone_cn_core_round_trip_matches_aromatic_shape() {
 
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
-    assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
-    assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
-    let original_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(molecule.graph());
-    let reparsed_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(reparsed.graph());
+    assert_eq!(
+        reparsed.as_molecule().atom_count(),
+        molecule.as_molecule().atom_count()
+    );
+    assert_eq!(
+        reparsed.as_molecule().bond_count(),
+        molecule.as_molecule().bond_count()
+    );
+    let original_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(molecule.as_molecule());
+    let reparsed_aromatic_carbonyl_centers = aromatic_carbonyl_center_count(reparsed.as_molecule());
     assert_eq!(
         reparsed_aromatic_carbonyl_centers, original_aromatic_carbonyl_centers,
         "{written}"
     );
     let aromatic_n_h_count = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "N"
@@ -1098,8 +1144,8 @@ fn canonical_aromatic_carbonyl_component_uses_representable_kekule_form() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     assert_eq!(
-        local_atom_neighbor_signatures(molecule.graph()),
-        local_atom_neighbor_signatures(reparsed.graph()),
+        local_atom_neighbor_signatures(molecule.as_molecule()),
+        local_atom_neighbor_signatures(reparsed.as_molecule()),
         "{written}"
     );
 }
@@ -1113,8 +1159,8 @@ fn canonical_charged_aromatic_carbon_component_uses_representable_kekule_form() 
         perceive(molecule).expect("cyclopentadienyl salt component should perceive");
         let (component_smiles, reparsed) = canonical_smiles_round_trip(molecule);
         assert_eq!(
-            local_atom_neighbor_signatures_ignoring_halogen_no_implicit(molecule.graph()),
-            local_atom_neighbor_signatures_ignoring_halogen_no_implicit(reparsed.graph()),
+            local_atom_neighbor_signatures_ignoring_halogen_no_implicit(molecule.as_molecule()),
+            local_atom_neighbor_signatures_ignoring_halogen_no_implicit(reparsed.as_molecule()),
             "{component_smiles}"
         );
         written.push(component_smiles);
@@ -1195,7 +1241,10 @@ fn exocyclic_iminium_sulfur_ring_remains_aromatic() {
             "heteroaromatic ring atom {atom_id} should be aromatic"
         );
     }
-    let exocyclic_iminium = molecule.graph().atom(AtomId::new(5)).expect("iminium N");
+    let exocyclic_iminium = molecule
+        .as_molecule()
+        .atom(AtomId::new(5))
+        .expect("iminium N");
     assert!(!aromatic_atom(&molecule, AtomId::new(5)));
     assert_eq!(exocyclic_iminium.formal_charge, 1);
 }
@@ -1258,71 +1307,77 @@ fn neutral_exocyclic_alkene_sulfur_ring_stays_aliphatic() {
         );
     }
     let exocyclic_alkene_ring_carbons = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && !aromatic_atom(&molecule, *id)
-                && molecule.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    let bonds = bonds.collect::<Vec<_>>();
-                    bonds.len() == 3
-                        && bonds.iter().any(|(_, bond)| {
-                            matches!(bond.order, BondOrder::Double)
-                                && molecule
-                                    .graph()
+                && molecule
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        let bonds = bonds.collect::<Vec<_>>();
+                        bonds.len() == 3
+                            && bonds.iter().any(|(_, bond)| {
+                                matches!(bond.order, BondOrder::Double)
+                                    && molecule
+                                        .as_molecule()
+                                        .atom(bond.other_atom(*id))
+                                        .is_ok_and(|other| other.element.symbol() == "C")
+                            })
+                            && bonds.iter().any(|(_, bond)| {
+                                molecule
+                                    .as_molecule()
                                     .atom(bond.other_atom(*id))
-                                    .is_ok_and(|other| other.element.symbol() == "C")
-                        })
-                        && bonds.iter().any(|(_, bond)| {
-                            molecule
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "N")
-                        })
-                        && bonds.iter().any(|(_, bond)| {
-                            molecule
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "S")
-                        })
-                })
+                                    .is_ok_and(|other| other.element.symbol() == "N")
+                            })
+                            && bonds.iter().any(|(_, bond)| {
+                                molecule
+                                    .as_molecule()
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|other| other.element.symbol() == "S")
+                            })
+                    })
         })
         .count();
     assert_eq!(exocyclic_alkene_ring_carbons, 1);
     let aliphatic_neutral_ring_nitrogens = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "N"
                 && atom.formal_charge == 0
                 && !aromatic_atom(&molecule, *id)
-                && molecule.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    bonds.into_iter().any(|(_, bond)| {
-                        molecule
-                            .graph()
-                            .atom(bond.other_atom(*id))
-                            .is_ok_and(|other| {
-                                other.element.symbol() == "C"
-                                    && !aromatic_atom(&molecule, bond.other_atom(*id))
-                                    && molecule
-                                        .graph()
-                                        .incident_bonds(bond.other_atom(*id))
-                                        .is_ok_and(|carbon_bonds| {
-                                            carbon_bonds.into_iter().any(|(_, carbon_bond)| {
-                                                molecule
-                                                    .graph()
-                                                    .atom(
-                                                        carbon_bond
-                                                            .other_atom(bond.other_atom(*id)),
-                                                    )
-                                                    .is_ok_and(|neighbor| {
-                                                        neighbor.element.symbol() == "S"
-                                                    })
+                && molecule
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        bonds.into_iter().any(|(_, bond)| {
+                            molecule
+                                .as_molecule()
+                                .atom(bond.other_atom(*id))
+                                .is_ok_and(|other| {
+                                    other.element.symbol() == "C"
+                                        && !aromatic_atom(&molecule, bond.other_atom(*id))
+                                        && molecule
+                                            .as_molecule()
+                                            .incident_bonds(bond.other_atom(*id))
+                                            .is_ok_and(|carbon_bonds| {
+                                                carbon_bonds.into_iter().any(|(_, carbon_bond)| {
+                                                    molecule
+                                                        .as_molecule()
+                                                        .atom(
+                                                            carbon_bond
+                                                                .other_atom(bond.other_atom(*id)),
+                                                        )
+                                                        .is_ok_and(|neighbor| {
+                                                            neighbor.element.symbol() == "S"
+                                                        })
+                                                })
                                             })
-                                        })
-                            })
+                                })
+                        })
                     })
-                })
         })
         .count();
     assert_eq!(aliphatic_neutral_ring_nitrogens, 1);
@@ -1336,7 +1391,7 @@ fn fused_seven_membered_ether_ring_stays_aliphatic() {
     perceive(&mut molecule).expect("fused ether polycycle should perceive");
 
     assert!(molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "O")
         .all(|(atom_id, _)| !aromatic_atom(&molecule, atom_id)));
@@ -1354,7 +1409,7 @@ fn charged_bracket_halogen_and_bismuth_salt_perceives() {
     }
 
     let protonated_chlorine = components[2]
-        .graph()
+        .as_molecule()
         .atom(AtomId::new(0))
         .expect("protonated chlorine");
     assert_eq!(protonated_chlorine.element.symbol(), "Cl");
@@ -1362,7 +1417,10 @@ fn charged_bracket_halogen_and_bismuth_salt_perceives() {
     assert_eq!(protonated_chlorine.hydrogens, HydrogenDeclaration::Fixed(2));
     assert_eq!(implicit_hydrogens(&components[2], AtomId::new(0)), Some(0));
 
-    let bismuth = components[4].graph().atom(AtomId::new(0)).expect("bismuth");
+    let bismuth = components[4]
+        .as_molecule()
+        .atom(AtomId::new(0))
+        .expect("bismuth");
     assert_eq!(bismuth.element.symbol(), "Bi");
     assert_eq!(bismuth.formal_charge, 3);
     assert_eq!(implicit_hydrogens(&components[4], AtomId::new(0)), Some(0));
@@ -1378,7 +1436,7 @@ fn oxide_dianion_transition_metal_salt_perceives() {
     }
 
     for oxide in &components[..3] {
-        let oxygen = oxide.graph().atom(AtomId::new(0)).expect("oxide");
+        let oxygen = oxide.as_molecule().atom(AtomId::new(0)).expect("oxide");
         assert_eq!(oxygen.element.symbol(), "O");
         assert_eq!(oxygen.formal_charge, -2);
         assert_eq!(implicit_hydrogens(oxide, AtomId::new(0)), Some(0));
@@ -1394,7 +1452,10 @@ fn hydroxide_niobium_v_salt_perceives() {
         perceive(molecule).expect("niobium hydroxide salt component should perceive");
     }
 
-    let niobium = components[1].graph().atom(AtomId::new(0)).expect("niobium");
+    let niobium = components[1]
+        .as_molecule()
+        .atom(AtomId::new(0))
+        .expect("niobium");
     assert_eq!(niobium.element.symbol(), "Nb");
     assert_eq!(niobium.formal_charge, 5);
     assert_eq!(implicit_hydrogens(&components[1], AtomId::new(0)), Some(0));
@@ -1409,7 +1470,10 @@ fn formate_indium_salt_perceives() {
         perceive(molecule).expect("indium formate salt component should perceive");
     }
 
-    let indium = components[3].graph().atom(AtomId::new(0)).expect("indium");
+    let indium = components[3]
+        .as_molecule()
+        .atom(AtomId::new(0))
+        .expect("indium");
     assert_eq!(indium.element.symbol(), "In");
     assert_eq!(indium.formal_charge, 3);
     assert_eq!(implicit_hydrogens(&components[3], AtomId::new(0)), Some(0));
@@ -1421,7 +1485,7 @@ fn periodate_cleanup_perceives_iodine_plus_three() {
 
     perceive(&mut molecule).expect("periodate should perceive");
 
-    let iodine = molecule.graph().atom(AtomId::new(1)).expect("iodine");
+    let iodine = molecule.as_molecule().atom(AtomId::new(1)).expect("iodine");
     assert_eq!(iodine.element.symbol(), "I");
     assert_eq!(iodine.formal_charge, 3);
     assert_eq!(implicit_hydrogens(&molecule, AtomId::new(1)), Some(0));
@@ -1443,28 +1507,28 @@ fn oxohalogen_cleanup_distinguishes_oxyacids_from_carbon_substituents() {
     let mut iodous_acid = read_smiles("OI=O").expect("iodous acid should parse");
     perceive(&mut iodous_acid).expect("iodous acid should perceive");
     let iodine = iodous_acid
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "I")
         .expect("iodine")
         .1;
     assert_eq!(iodine.formal_charge, 1);
     assert!(iodous_acid
-        .graph()
+        .as_molecule()
         .atoms()
         .any(|(_, atom)| atom.element.symbol() == "O" && atom.formal_charge == -1));
 
     let mut iodyl_methane = read_smiles("CI(=O)=O").expect("iodyl methane should parse");
     perceive(&mut iodyl_methane).expect("iodyl methane should perceive");
     let iodine = iodyl_methane
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "I")
         .expect("iodine")
         .1;
     assert_eq!(iodine.formal_charge, 0);
     assert!(iodyl_methane
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "O")
         .all(|(_, atom)| atom.formal_charge == 0));
@@ -1473,14 +1537,14 @@ fn oxohalogen_cleanup_distinguishes_oxyacids_from_carbon_substituents() {
         read_smiles("COI(=O)(N)C").expect("iodane with a bridging oxygen should parse");
     perceive(&mut cyclic_iodane_fragment).expect("neutral lambda-five iodane should perceive");
     let iodine = cyclic_iodane_fragment
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "I")
         .expect("iodine")
         .1;
     assert_eq!(iodine.formal_charge, 0);
     assert!(cyclic_iodane_fragment
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "O")
         .all(|(_, atom)| atom.formal_charge == 0));
@@ -1497,7 +1561,10 @@ fn uranyl_beta_diketonate_salt_perceives() {
         perceive(molecule).expect("uranyl salt component should perceive");
     }
 
-    let uranium = components[2].graph().atom(AtomId::new(1)).expect("uranium");
+    let uranium = components[2]
+        .as_molecule()
+        .atom(AtomId::new(1))
+        .expect("uranium");
     assert_eq!(uranium.element.symbol(), "U");
     assert_eq!(uranium.formal_charge, 2);
     assert_eq!(implicit_hydrogens(&components[2], AtomId::new(1)), Some(0));
@@ -1515,7 +1582,7 @@ fn cyclopentadienyl_anion_perceives_aromatic() {
 
     for atom_id in 0..=4 {
         let atom = molecule
-            .graph()
+            .as_molecule()
             .atom(AtomId::new(atom_id))
             .expect("cyclopentadienyl atom");
         assert_eq!(atom.element.symbol(), "C");
@@ -1594,13 +1661,13 @@ fn canonical_saturated_fused_ring_round_trip_stays_aliphatic() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let saturated_carbons = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && implicit_hydrogens(&reparsed, *id) == Some(2)
                 && reparsed
-                    .graph()
+                    .as_molecule()
                     .incident_bonds(*id)
                     .is_ok_and(|bonds| bonds.count() == 2)
         })
@@ -1674,21 +1741,24 @@ fn fused_saturated_carbonyl_bridge_round_trip_stays_aliphatic() {
         aromatic_atoms, 12,
         "canonical output should preserve only the two aromatic rings: {written}"
     );
-    assert!(reparsed.graph().atoms().any(|(id, atom)| {
+    assert!(reparsed.as_molecule().atoms().any(|(id, atom)| {
         atom.element.symbol() == "C"
             && !aromatic_atom(&reparsed, id)
             && implicit_hydrogens(&reparsed, id) == Some(0)
-            && reparsed.graph().incident_bonds(id).is_ok_and(|bonds| {
-                let bonds = bonds.collect::<Vec<_>>();
-                bonds.len() == 3
-                    && bonds.iter().any(|(_, bond)| {
-                        matches!(bond.order, BondOrder::Double)
-                            && reparsed
-                                .graph()
-                                .atom(bond.other_atom(id))
-                                .is_ok_and(|other| other.element.symbol() == "O")
-                    })
-            })
+            && reparsed
+                .as_molecule()
+                .incident_bonds(id)
+                .is_ok_and(|bonds| {
+                    let bonds = bonds.collect::<Vec<_>>();
+                    bonds.len() == 3
+                        && bonds.iter().any(|(_, bond)| {
+                            matches!(bond.order, BondOrder::Double)
+                                && reparsed
+                                    .as_molecule()
+                                    .atom(bond.other_atom(id))
+                                    .is_ok_and(|other| other.element.symbol() == "O")
+                        })
+                })
     }));
 }
 
@@ -1713,7 +1783,7 @@ fn canonical_tellurophene_round_trip_preserves_aromatic_chalcogen() {
     let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(aromatic_atoms, 5, "{written}");
     let tellurium = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .find_map(|(atom_id, atom)| (atom.element.symbol() == "Te").then_some((atom_id, atom)))
         .expect("tellurium atom");
@@ -1729,18 +1799,21 @@ fn canonical_aryl_mercury_round_trip_preserves_no_implicit_aromatic_carbon() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let mercury_bound_carbon = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| {
             (atom.element.symbol() == "C"
-                && reparsed.graph().incident_bonds(id).is_ok_and(|bonds| {
-                    bonds.into_iter().any(|(_, bond)| {
-                        reparsed
-                            .graph()
-                            .atom(bond.other_atom(id))
-                            .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
-                    })
-                }))
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(id)
+                    .is_ok_and(|bonds| {
+                        bonds.into_iter().any(|(_, bond)| {
+                            reparsed
+                                .as_molecule()
+                                .atom(bond.other_atom(id))
+                                .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
+                        })
+                    }))
             .then_some((id, atom))
         })
         .expect("aromatic carbon bound to mercury");
@@ -1767,21 +1840,24 @@ fn fused_sulfonamide_tertiary_amine_round_trip_keeps_ring_nitrogen_aliphatic() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let aliphatic_ring_nitrogens = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "N"
                 && !aromatic_atom(&reparsed, *id)
-                && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    let bonds = bonds.collect::<Vec<_>>();
-                    bonds.len() == 3
-                        && bonds.iter().any(|(_, bond)| {
-                            reparsed
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|neighbor| neighbor.element.symbol() == "S")
-                        })
-                })
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        let bonds = bonds.collect::<Vec<_>>();
+                        bonds.len() == 3
+                            && bonds.iter().any(|(_, bond)| {
+                                reparsed
+                                    .as_molecule()
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|neighbor| neighbor.element.symbol() == "S")
+                            })
+                    })
         })
         .count();
     assert_eq!(aliphatic_ring_nitrogens, 1, "{written}");
@@ -1799,23 +1875,26 @@ fn cationic_fused_imide_round_trip_clears_carbonyl_ring_atoms() {
     let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(aromatic_atoms, 22, "{written}");
     let aliphatic_carbonyl_ring_atoms = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && !aromatic_atom(&reparsed, *id)
                 && implicit_hydrogens(&reparsed, *id) == Some(0)
-                && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    let bonds = bonds.collect::<Vec<_>>();
-                    bonds.len() == 3
-                        && bonds.iter().any(|(_, bond)| {
-                            matches!(bond.order, BondOrder::Double)
-                                && reparsed
-                                    .graph()
-                                    .atom(bond.other_atom(*id))
-                                    .is_ok_and(|other| other.element.symbol() == "O")
-                        })
-                })
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        let bonds = bonds.collect::<Vec<_>>();
+                        bonds.len() == 3
+                            && bonds.iter().any(|(_, bond)| {
+                                matches!(bond.order, BondOrder::Double)
+                                    && reparsed
+                                        .as_molecule()
+                                        .atom(bond.other_atom(*id))
+                                        .is_ok_and(|other| other.element.symbol() == "O")
+                            })
+                    })
         })
         .count();
     assert_eq!(aliphatic_carbonyl_ring_atoms, 4, "{written}");
@@ -1860,16 +1939,19 @@ fn imine_fused_benzene_with_exocyclic_pyrimidinedione_keeps_imine_ring_aliphatic
     let aromatic_atoms = aromatic_atom_count(&reparsed);
     assert_eq!(aromatic_atoms, 12, "{written}");
     let aliphatic_imine_nitrogens = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "N"
                 && !aromatic_atom(&reparsed, *id)
-                && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    bonds
-                        .into_iter()
-                        .any(|(_, bond)| matches!(bond.order, BondOrder::Double))
-                })
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        bonds
+                            .into_iter()
+                            .any(|(_, bond)| matches!(bond.order, BondOrder::Double))
+                    })
         })
         .count();
     assert_eq!(aliphatic_imine_nitrogens, 1, "{written}");
@@ -1897,24 +1979,27 @@ fn partially_saturated_fused_amide_enone_ring_stays_aliphatic() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let aliphatic_enone_ring_atoms = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && !aromatic_atom(&reparsed, *id)
-                && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    let bonds = bonds.collect::<Vec<_>>();
-                    bonds
-                        .iter()
-                        .any(|(_, bond)| matches!(bond.order, BondOrder::Double))
-                        && bonds.iter().any(|(_, bond)| {
-                            reparsed
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "C")
-                                && !aromatic_atom(&reparsed, bond.other_atom(*id))
-                        })
-                })
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        let bonds = bonds.collect::<Vec<_>>();
+                        bonds
+                            .iter()
+                            .any(|(_, bond)| matches!(bond.order, BondOrder::Double))
+                            && bonds.iter().any(|(_, bond)| {
+                                reparsed
+                                    .as_molecule()
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|other| other.element.symbol() == "C")
+                                    && !aromatic_atom(&reparsed, bond.other_atom(*id))
+                            })
+                    })
         })
         .count();
     assert!(
@@ -1931,28 +2016,31 @@ fn fused_lactam_enone_canonical_round_trip_keeps_bridge_carbon_aliphatic() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let aliphatic_lactam_enone_carbons = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && !aromatic_atom(&reparsed, *id)
-                && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    let bonds = bonds.collect::<Vec<_>>();
-                    bonds.iter().any(|(_, bond)| {
-                        matches!(bond.order, BondOrder::Double)
-                            && reparsed
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "C")
-                            && !aromatic_atom(&reparsed, bond.other_atom(*id))
-                    }) && bonds.iter().any(|(_, bond)| {
-                        matches!(bond.order, BondOrder::Single)
-                            && reparsed
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "N")
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        let bonds = bonds.collect::<Vec<_>>();
+                        bonds.iter().any(|(_, bond)| {
+                            matches!(bond.order, BondOrder::Double)
+                                && reparsed
+                                    .as_molecule()
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|other| other.element.symbol() == "C")
+                                && !aromatic_atom(&reparsed, bond.other_atom(*id))
+                        }) && bonds.iter().any(|(_, bond)| {
+                            matches!(bond.order, BondOrder::Single)
+                                && reparsed
+                                    .as_molecule()
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|other| other.element.symbol() == "N")
+                        })
                     })
-                })
         })
         .count();
     assert!(
@@ -1960,7 +2048,7 @@ fn fused_lactam_enone_canonical_round_trip_keeps_bridge_carbon_aliphatic() {
         "canonical output should keep the lactam enone bridge aliphatic: {written}"
     );
     let aromatic_oxygens = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "O" && aromatic_atom(&reparsed, *atom_id)
@@ -1977,20 +2065,23 @@ fn spiro_saturated_fused_hydrocarbon_bridge_stays_aliphatic() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let saturated_aromatic_carbons = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && aromatic_atom(&reparsed, *id)
-                && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    let bonds = bonds.collect::<Vec<_>>();
-                    bonds
-                        .iter()
-                        .all(|(_, bond)| matches!(bond.order, BondOrder::Single))
-                        && bonds
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        let bonds = bonds.collect::<Vec<_>>();
+                        bonds
                             .iter()
-                            .any(|(bond_id, _)| !aromatic_bond(&reparsed, *bond_id))
-                })
+                            .all(|(_, bond)| matches!(bond.order, BondOrder::Single))
+                            && bonds
+                                .iter()
+                                .any(|(bond_id, _)| !aromatic_bond(&reparsed, *bond_id))
+                    })
         })
         .count();
     assert_eq!(saturated_aromatic_carbons, 0, "{written}");
@@ -2004,27 +2095,30 @@ fn fused_cyclic_imine_round_trip_keeps_imine_carbon_aliphatic() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let aromatic_imine_carbons = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(id, atom)| {
             atom.element.symbol() == "C"
                 && aromatic_atom(&reparsed, *id)
-                && reparsed.graph().incident_bonds(*id).is_ok_and(|bonds| {
-                    let bonds = bonds.collect::<Vec<_>>();
-                    bonds.iter().any(|(_, bond)| {
-                        matches!(bond.order, BondOrder::Double)
-                            && reparsed
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "N")
-                    }) && bonds.iter().any(|(_, bond)| {
-                        matches!(bond.order, BondOrder::Single)
-                            && reparsed
-                                .graph()
-                                .atom(bond.other_atom(*id))
-                                .is_ok_and(|other| other.element.symbol() == "N")
+                && reparsed
+                    .as_molecule()
+                    .incident_bonds(*id)
+                    .is_ok_and(|bonds| {
+                        let bonds = bonds.collect::<Vec<_>>();
+                        bonds.iter().any(|(_, bond)| {
+                            matches!(bond.order, BondOrder::Double)
+                                && reparsed
+                                    .as_molecule()
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|other| other.element.symbol() == "N")
+                        }) && bonds.iter().any(|(_, bond)| {
+                            matches!(bond.order, BondOrder::Single)
+                                && reparsed
+                                    .as_molecule()
+                                    .atom(bond.other_atom(*id))
+                                    .is_ok_and(|other| other.element.symbol() == "N")
+                        })
                     })
-                })
         })
         .count();
     assert_eq!(aromatic_imine_carbons, 0, "{written}");
@@ -2120,7 +2214,7 @@ fn fused_imide_heterocycle_keeps_only_phenyl_rings_aromatic() {
     let aromatic_atoms = aromatic_atom_count(&molecule);
     let aromatic_bonds = aromatic_bond_count(&molecule);
     let aromatic_nitrogens = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "N" && aromatic_atom(&molecule, *atom_id)
@@ -2163,7 +2257,7 @@ fn large_conjugated_macrocycle_aromatic_core_is_not_size_skipped() {
         read_smiles_component(input, 2).expect("copper component should parse");
     perceive(&mut copper_component).expect("copper component should perceive");
     let copper = copper_component
-        .graph()
+        .as_molecule()
         .atom(AtomId::new(0))
         .expect("copper atom");
     assert!(!aromatic_atom(&copper_component, AtomId::new(0)));
@@ -2179,13 +2273,13 @@ fn tetrahydroporphyrin_marks_each_conjugated_pyrrole_ring_aromatic() {
     perceive(&mut molecule).expect("tetrahydroporphyrin should perceive");
 
     let aromatic_atoms = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, _)| aromatic_atom(&molecule, *atom_id))
         .map(|(atom_id, atom)| (atom_id.index(), atom.element.symbol()))
         .collect::<Vec<_>>();
     let rings = molecule
-        .graph()
+        .as_molecule()
         .ring_set()
         .expect("normalization_and_perception should retain the ring set")
         .rings()
@@ -2195,7 +2289,7 @@ fn tetrahydroporphyrin_marks_each_conjugated_pyrrole_ring_aromatic() {
                 .iter()
                 .map(|atom| {
                     let payload = molecule
-                        .graph()
+                        .as_molecule()
                         .atom(*atom)
                         .expect("ring atom should exist");
                     (
@@ -2284,7 +2378,7 @@ fn fused_azo_indole_ring_keeps_explicit_hydrogen_nitrogen_aromatic() {
     perceive(&mut molecule).expect("fused azo indole salt should perceive");
 
     let aromatic_atom_ids = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter_map(|(atom_id, _)| aromatic_atom(&molecule, atom_id).then_some(atom_id.index()))
         .collect::<Vec<_>>();
@@ -2300,7 +2394,7 @@ fn fused_tertiary_amine_ring_does_not_extend_aromatic_core() {
 
     assert_eq!(aromatic_atom_count(&molecule), 6);
     assert!(molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "N")
         .all(|(atom_id, _)| !aromatic_atom(&molecule, atom_id)));
@@ -2317,7 +2411,7 @@ fn fused_n_hydroxy_lactam_ring_stays_aromatic() {
     perceive(&mut molecule).expect("fused N-hydroxy lactam should perceive");
 
     let aromatic_atoms = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter_map(|(atom_id, atom)| {
             aromatic_atom(&molecule, atom_id).then_some((atom_id.index(), atom.element.symbol()))
@@ -2325,7 +2419,7 @@ fn fused_n_hydroxy_lactam_ring_stays_aromatic() {
         .collect::<Vec<_>>();
     assert_eq!(aromatic_atoms.len(), 10, "{aromatic_atoms:?}");
     assert!(molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(_, atom)| atom.element.symbol() == "N")
         .all(|(atom_id, _)| aromatic_atom(&molecule, atom_id)));
@@ -2345,7 +2439,7 @@ fn n_aryl_fused_pyrrole_ring_stays_aromatic() {
     perceive(&mut molecule).expect("N-aryl fused pyrrole salt should perceive");
 
     let aromatic_neutral_nitrogens = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "N"
@@ -2357,7 +2451,7 @@ fn n_aryl_fused_pyrrole_ring_stays_aromatic() {
 
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
     let reparsed_aromatic_neutral_nitrogens = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "N"
@@ -2378,7 +2472,7 @@ fn fused_saturated_thioether_bridge_stays_aliphatic() {
     perceive(&mut molecule).expect("fused thioether bridge should perceive");
 
     let neutral_sulfur_aromatic_count = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "S"
@@ -2390,7 +2484,7 @@ fn fused_saturated_thioether_bridge_stays_aliphatic() {
 
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
     let reparsed_neutral_sulfur_aromatic_count = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "S"
@@ -2409,8 +2503,14 @@ fn canonical_smiles_prefers_normalizable_lactone_candidate() {
         perceive(molecule).expect("lactone imidazole component should perceive");
         let (_, reparsed) = canonical_smiles_round_trip(molecule);
 
-        assert_eq!(reparsed.graph().atom_count(), molecule.graph().atom_count());
-        assert_eq!(reparsed.graph().bond_count(), molecule.graph().bond_count());
+        assert_eq!(
+            reparsed.as_molecule().atom_count(),
+            molecule.as_molecule().atom_count()
+        );
+        assert_eq!(
+            reparsed.as_molecule().bond_count(),
+            molecule.as_molecule().bond_count()
+        );
     }
 }
 
@@ -2429,7 +2529,7 @@ fn saturated_fused_benzodiazepinone_lactam_round_trip_stays_aliphatic() {
         "canonical output should keep only the two benzene rings aromatic: {written}"
     );
     let aromatic_nitrogens = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "N" && aromatic_atom(&reparsed, *atom_id)
@@ -2446,7 +2546,7 @@ fn aromatic_pyridinium_smiles_perceives() {
     perceive(&mut molecule).expect("aromatic pyridinium should perceive");
 
     let cationic_nitrogen = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "N" && atom.formal_charge > 0)
         .expect("pyridinium nitrogen should exist");
@@ -2454,7 +2554,7 @@ fn aromatic_pyridinium_smiles_perceives() {
 
     let mut protonated = read_smiles("Nc1ccc[nH+]c1").expect("protonated pyridinium should parse");
     perceive(&mut protonated).expect("protonated pyridinium should perceive");
-    assert!(protonated.graph().atoms().any(|(atom_id, atom)| {
+    assert!(protonated.as_molecule().atoms().any(|(atom_id, atom)| {
         atom.element.symbol() == "N"
             && atom.formal_charge > 0
             && aromatic_atom(&protonated, atom_id)
@@ -2462,7 +2562,7 @@ fn aromatic_pyridinium_smiles_perceives() {
 
     let mut anionic = read_smiles("c1[n-]cnn1").expect("anionic aromatic nitrogen should parse");
     perceive(&mut anionic).expect("anionic aromatic nitrogen should perceive");
-    assert!(anionic.graph().atoms().any(|(atom_id, atom)| {
+    assert!(anionic.as_molecule().atoms().any(|(atom_id, atom)| {
         atom.element.symbol() == "N" && atom.formal_charge < 0 && aromatic_atom(&anionic, atom_id)
     }));
 }
@@ -2483,18 +2583,18 @@ fn canonical_smiles_preserves_metal_bound_bracket_hydrogens() {
 
     assert!(written.contains("[CH2][Hg+]"), "{written}");
     let metal_bound_carbon = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(atom_id, atom)| {
             atom.element.symbol() == "C"
                 && reparsed
-                    .graph()
+                    .as_molecule()
                     .incident_bonds(*atom_id)
                     .expect("atom should be live")
                     .any(|(_, bond)| {
                         let neighbor_id = bond.other_atom(*atom_id);
                         reparsed
-                            .graph()
+                            .as_molecule()
                             .atom(neighbor_id)
                             .is_ok_and(|neighbor| neighbor.element.symbol() == "Hg")
                     })
@@ -2536,7 +2636,7 @@ fn canonical_smiles_materializes_hydrogen_on_bracketed_hypervalent_phosphorus() 
     assert!(written.contains("[PH]"), "{written}");
 
     let phosphorus = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "P")
         .expect("phosphorus should remain");
@@ -2600,19 +2700,19 @@ fn canonical_aryl_germanium_round_trip_preserves_no_implicit_aromatic_carbon() {
     assert!(written.contains("[c]"), "{written}");
 
     let germanium_bound_carbon = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(atom_id, atom)| {
             atom.element.symbol() == "C"
                 && aromatic_atom(&reparsed, *atom_id)
                 && reparsed
-                    .graph()
+                    .as_molecule()
                     .incident_bonds(*atom_id)
                     .expect("atom should be live")
                     .any(|(_, bond)| {
                         let neighbor_id = bond.other_atom(*atom_id);
                         reparsed
-                            .graph()
+                            .as_molecule()
                             .atom(neighbor_id)
                             .is_ok_and(|neighbor| neighbor.element.symbol() == "Ge")
                     })
@@ -2634,19 +2734,19 @@ fn canonical_aryl_tin_round_trip_preserves_no_implicit_aromatic_carbons() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let tin_bound_aromatic_carbons = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             atom.element.symbol() == "C"
                 && aromatic_atom(&reparsed, *atom_id)
                 && reparsed
-                    .graph()
+                    .as_molecule()
                     .incident_bonds(*atom_id)
                     .expect("atom should be live")
                     .any(|(_, bond)| {
                         let neighbor_id = bond.other_atom(*atom_id);
                         reparsed
-                            .graph()
+                            .as_molecule()
                             .atom(neighbor_id)
                             .is_ok_and(|neighbor| neighbor.element.symbol() == "Sn")
                     })
@@ -2671,7 +2771,7 @@ fn cationic_thiadiazolium_imine_canonical_round_trip_perceives() {
     let (written, reparsed) = canonical_smiles_round_trip(&molecule);
 
     let aromatic_ring_atoms = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .filter(|(atom_id, atom)| {
             matches!(atom.element.symbol(), "C" | "N" | "S") && aromatic_atom(&reparsed, *atom_id)
@@ -2688,8 +2788,8 @@ fn canonical_multicomponent_oxygen_neighbors_match_after_round_trip() {
         perceive(molecule).expect("oxygen-rich component should perceive");
         let (written, reparsed) = canonical_smiles_round_trip(molecule);
         assert_eq!(
-            local_atom_neighbor_signatures(molecule.graph()),
-            local_atom_neighbor_signatures(reparsed.graph()),
+            local_atom_neighbor_signatures(molecule.as_molecule()),
+            local_atom_neighbor_signatures(reparsed.as_molecule()),
             "{written}"
         );
     }
@@ -2703,8 +2803,8 @@ fn canonical_pubchem_macrocycle_anionic_nitrogen_round_trip_matches_neighbors() 
         perceive(molecule).expect("PubChem mixture component should perceive");
         let (written, reparsed) = canonical_smiles_round_trip(molecule);
         assert_eq!(
-            local_atom_neighbor_signatures(molecule.graph()),
-            local_atom_neighbor_signatures(reparsed.graph()),
+            local_atom_neighbor_signatures(molecule.as_molecule()),
+            local_atom_neighbor_signatures(reparsed.as_molecule()),
             "{written}"
         );
     }
@@ -2716,12 +2816,12 @@ fn canonical_substituted_pyrrole_uses_perceived_nitrogen_hydrogen_without_feedba
         .expect("substituted pyrrole should parse");
     perceive(&mut molecule).expect("substituted pyrrole should perceive");
     let (nitrogen_id, nitrogen) = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .find(|(_, atom)| atom.element.symbol() == "N")
         .expect("substituted pyrrole nitrogen");
     assert_eq!(
-        molecule.graph().atom_is_aromatic(nitrogen_id),
+        molecule.as_molecule().atom_is_aromatic(nitrogen_id),
         Ok(Some(true))
     );
     assert_eq!(
@@ -2729,7 +2829,7 @@ fn canonical_substituted_pyrrole_uses_perceived_nitrogen_hydrogen_without_feedba
         HydrogenDeclaration::Infer { explicit: 0 }
     );
     assert_eq!(
-        molecule.graph().implicit_hydrogens(nitrogen_id),
+        molecule.as_molecule().implicit_hydrogens(nitrogen_id),
         Ok(Some(1))
     );
     assert!(nitrogen.hydrogens.allows_implicit());
@@ -2837,15 +2937,15 @@ fn test_bond_order_code(order: BondOrder) -> u8 {
 fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     let mut molecule = SmallMolecule::default();
     let a = molecule
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let b = molecule
-        .graph_mut()
+        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let bond = molecule
-        .graph_mut()
+        .as_molecule_mut()
         .add_bond(a, b, BondOrder::Dative)
         .expect("bond");
     assert!(smiles_api::write(&molecule)
@@ -2853,9 +2953,13 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .message
         .contains("cannot encode"));
 
-    molecule.graph_mut().bond_mut(bond).expect("bond").order = BondOrder::Single;
     molecule
-        .graph_mut()
+        .as_molecule_mut()
+        .bond_mut(bond)
+        .expect("bond")
+        .order = BondOrder::Single;
+    molecule
+        .as_molecule_mut()
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
@@ -2870,16 +2974,16 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .contains("stereochemistry"));
 
     let element = molecule
-        .graph()
+        .as_molecule()
         .stereo_element_ids()
         .next()
         .expect("stereo element");
     molecule
-        .graph_mut()
+        .as_molecule_mut()
         .remove_stereo_element(element)
         .expect("remove atom stereo");
     {
-        let mut atom = molecule.graph_mut().atom_mut(a).expect("atom");
+        let mut atom = molecule.as_molecule_mut().atom_mut(a).expect("atom");
         atom.radical = Some(AtomRadical::Doublet);
         atom.hydrogens = HydrogenDeclaration::Fixed(2);
     }
@@ -2889,7 +2993,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .contains("explicit radical token"));
 
     {
-        let mut atom = molecule.graph_mut().atom_mut(a).expect("atom");
+        let mut atom = molecule.as_molecule_mut().atom_mut(a).expect("atom");
         atom.radical = None;
         atom.hydrogens = HydrogenDeclaration::Fixed(0);
     }
@@ -2897,7 +3001,7 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
     assert!(written.contains("[C]"));
     let reparsed = read_smiles(&written).expect("writer output should parse");
     assert!(reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .any(|(_, atom)| !atom.hydrogens.allows_implicit()));
 }
@@ -2923,7 +3027,7 @@ fn all_smiles_writers_round_trip_lossless_hydrogen_declarations() {
             });
             assert_eq!(
                 reparsed
-                    .graph()
+                    .as_molecule()
                     .atom(AtomId::new(0))
                     .expect("single atom")
                     .hydrogens,
@@ -2940,7 +3044,7 @@ fn all_smiles_writers_reject_represented_hydrogens_with_inference_enabled() {
     atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
     let mut graph = Molecule::builder();
     graph.add_atom(atom).expect("carbon");
-    let molecule = SmallMolecule::from_graph(graph.build().expect("single atom molecule"));
+    let molecule = SmallMolecule::from_molecule(graph.build().expect("single atom molecule"));
 
     for (writer, result) in [
         ("regular", smiles_api::write(&molecule)),
@@ -2974,7 +3078,7 @@ fn bracket_atoms_do_not_infer_radicals_from_a_valence_model() {
         let molecule = read_smiles(smiles).expect("bracket SMILES should interpret");
         assert_eq!(
             molecule
-                .graph()
+                .as_molecule()
                 .atom(AtomId::new(atom_index))
                 .expect("bracket atom")
                 .radical,
@@ -2995,7 +3099,7 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
     let molecule = read_smiles("F[C@H](Cl)Br").expect("tetrahedral SMILES should parse");
     assert_eq!(
         molecule
-            .graph()
+            .as_molecule()
             .atom(AtomId::new(1))
             .expect("stereo center")
             .hydrogens,
@@ -3008,14 +3112,14 @@ fn isomeric_smiles_writes_tetrahedral_elements_from_stereo_model() {
     let reparsed = read_smiles(&written).expect("isomeric output should parse");
     assert_eq!(
         reparsed
-            .graph()
+            .as_molecule()
             .atom(AtomId::new(1))
             .expect("reparsed stereo center")
             .hydrogens,
         HydrogenDeclaration::Fixed(1)
     );
     let stereo = reparsed
-        .graph()
+        .as_molecule()
         .stereo_elements()
         .map(|(_, element)| element)
         .collect::<Vec<_>>();
@@ -3047,12 +3151,19 @@ fn isomeric_smiles_rejects_tetrahedral_stereo_that_would_fix_inferred_hydrogen_p
     perceive(&mut molecule).expect("tetrahedral graph should perceive");
     let center = AtomId::new(1);
     assert_eq!(
-        molecule.graph().atom(center).expect("center").hydrogens,
+        molecule
+            .as_molecule()
+            .atom(center)
+            .expect("center")
+            .hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
-    assert_eq!(molecule.graph().implicit_hydrogens(center), Ok(Some(1)));
+    assert_eq!(
+        molecule.as_molecule().implicit_hydrogens(center),
+        Ok(Some(1))
+    );
     molecule
-        .graph_mut()
+        .as_molecule_mut()
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center,
@@ -3076,7 +3187,11 @@ fn isomeric_smiles_rejects_tetrahedral_stereo_that_would_fix_inferred_hydrogen_p
         "{error}"
     );
     assert_eq!(
-        molecule.graph().atom(center).expect("center").hydrogens,
+        molecule
+            .as_molecule()
+            .atom(center)
+            .expect("center")
+            .hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
 }
@@ -3085,16 +3200,16 @@ fn isomeric_smiles_rejects_tetrahedral_stereo_that_would_fix_inferred_hydrogen_p
 fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
     let mut molecule = read_smiles("F[C@H](Cl)Br").expect("tetrahedral SMILES should parse");
     let element = molecule
-        .graph()
+        .as_molecule()
         .stereo_element_ids()
         .next()
         .expect("stereo element");
     molecule
-        .graph_mut()
+        .as_molecule_mut()
         .remove_stereo_element(element)
         .expect("remove parsed stereo");
     molecule
-        .graph_mut()
+        .as_molecule_mut()
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: AtomId::new(1),
@@ -3123,12 +3238,12 @@ fn isomeric_smiles_accepts_interpreted_source_stereo_and_rejects_unknown_stereo(
 
     let mut unknown = read_smiles("F[C@H](Cl)Br").expect("tetrahedral SMILES should parse");
     let element = unknown
-        .graph()
+        .as_molecule()
         .stereo_element_ids()
         .next()
         .expect("stereo element");
     let mut replacement = unknown
-        .graph()
+        .as_molecule()
         .stereo_element(element)
         .expect("stereo element")
         .clone();
@@ -3137,7 +3252,7 @@ fn isomeric_smiles_accepts_interpreted_source_stereo_and_rejects_unknown_stereo(
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
     unknown
-        .graph_mut()
+        .as_molecule_mut()
         .replace_stereo_element(element, replacement)
         .expect("valid replacement");
     assert!(smiles_api::write_isomeric(&unknown)
@@ -3162,7 +3277,7 @@ fn isomeric_smiles_writes_directional_double_bond_elements() {
         let mut reparsed = read_smiles(&written).expect("isomeric alkene output should parse");
         perceive(&mut reparsed).expect("isomeric alkene output should perceive");
         let stereo = reparsed
-            .graph()
+            .as_molecule()
             .stereo_elements()
             .filter_map(|(_, element)| match &element.kind {
                 StereoElementKind::DoubleBond(stereo) => Some(stereo),
@@ -3184,7 +3299,7 @@ fn isomeric_smiles_writes_pubchem_conjugated_directional_polyene() {
 
     let mut reparsed = read_smiles(&written).expect("isomeric polyene output should parse");
     perceive(&mut reparsed).expect("isomeric polyene output should perceive");
-    assert!(reparsed.graph().stereo_elements().next().is_some());
+    assert!(reparsed.as_molecule().stereo_elements().next().is_some());
 }
 
 #[test]
@@ -3192,7 +3307,7 @@ fn isomeric_smiles_preserves_pubchem_fused_quaternary_center() {
     let mut molecule = read_smiles("C[C@]12CCCC(C1CCC3=CC(=C(C=C23)C(=O)OC)C(=O)OC)(C)C")
         .expect("fused quaternary center should parse");
     perceive(&mut molecule).expect("fused quaternary center should perceive");
-    let report = stereo_api::assign_cip_descriptors(molecule.graph_mut())
+    let report = stereo_api::assign_cip_descriptors(molecule.as_molecule_mut())
         .expect("CIP assignment should succeed");
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
 
@@ -3200,7 +3315,7 @@ fn isomeric_smiles_preserves_pubchem_fused_quaternary_center() {
         smiles_api::write_isomeric(&molecule).expect("fused quaternary center should write");
     let mut reparsed = read_smiles(&written).expect("isomeric fused center output should parse");
     perceive(&mut reparsed).expect("isomeric fused center output should perceive");
-    let report = stereo_api::assign_cip_descriptors(reparsed.graph_mut())
+    let report = stereo_api::assign_cip_descriptors(reparsed.as_molecule_mut())
         .expect("CIP reassignment should succeed");
 
     assert_eq!(report.assigned[0].descriptor, StereoDescriptor::S);
@@ -3222,12 +3337,12 @@ fn isomeric_smiles_round_trips_pubchem_anthraquinone_aromatic_shape() {
     );
     assert_eq!(
         reparsed
-            .graph()
+            .as_molecule()
             .atoms()
             .filter(|(_, atom)| !atom.hydrogens.allows_implicit())
             .count(),
         molecule
-            .graph()
+            .as_molecule()
             .atoms()
             .filter(|(_, atom)| !atom.hydrogens.allows_implicit())
             .count(),
@@ -3253,35 +3368,35 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
     ] {
         let mut molecule = SmallMolecule::default();
         let left = molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_atom(carbon())
             .expect("atom identifier capacity");
         let right = molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_atom(carbon())
             .expect("atom identifier capacity");
         let fluorine = molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_atom(element_atom("F"))
             .expect("atom identifier capacity");
         let chlorine = molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_atom(element_atom("Cl"))
             .expect("atom identifier capacity");
         molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_bond(left, fluorine, BondOrder::Single)
             .expect("left carrier bond");
         let double_bond = molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_bond(left, right, BondOrder::Double)
             .expect("double bond");
         molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_bond(right, chlorine, BondOrder::Single)
             .expect("right carrier bond");
         molecule
-            .graph_mut()
+            .as_molecule_mut()
             .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
                 DoubleBondStereo {
                     bond: double_bond,
@@ -3293,8 +3408,8 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
                 },
             )))
             .expect("double-bond stereo");
-        molecule.graph_mut().set_implicit_hydrogens(left, 1);
-        molecule.graph_mut().set_implicit_hydrogens(right, 1);
+        molecule.as_molecule_mut().set_implicit_hydrogens(left, 1);
+        molecule.as_molecule_mut().set_implicit_hydrogens(right, 1);
 
         let written =
             smiles_api::write_isomeric(&molecule).expect("implicit-carrier stereo should write");
@@ -3306,7 +3421,7 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
         let mut reparsed = read_smiles(&written).expect("isomeric alkene output should parse");
         perceive(&mut reparsed).expect("isomeric alkene output should perceive");
         let stereo = reparsed
-            .graph()
+            .as_molecule()
             .stereo_elements()
             .filter_map(|(_, element)| match &element.kind {
                 StereoElementKind::DoubleBond(stereo) => Some(stereo),
@@ -3324,7 +3439,7 @@ fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
     let atoms = (0..16)
         .map(|_| {
             molecule
-                .graph_mut()
+                .as_molecule_mut()
                 .add_atom(carbon())
                 .expect("atom identifier capacity")
         })
@@ -3332,7 +3447,7 @@ fn smiles_writer_rejects_more_ring_labels_than_parser_supports() {
     for left in 0..atoms.len() {
         for right in (left + 1)..atoms.len() {
             molecule
-                .graph_mut()
+                .as_molecule_mut()
                 .add_bond(atoms[left], atoms[right], BondOrder::Single)
                 .expect("complete graph bond should be valid");
         }

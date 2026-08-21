@@ -151,7 +151,7 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
             "memory.xtc",
         )
         .unwrap()
-        .into_indexed()
+        .to_indexed()
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(2));
         indexed.read_frame(1, &mut destination).unwrap();
@@ -194,7 +194,7 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
         "exact-index-limit.xtc",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -327,7 +327,7 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
         "restore-failure.xtc",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .unwrap();
     let mut destination = source_frame(&topology, 9.0, 99);
     destination
@@ -404,7 +404,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
             "guarded-index.xtc",
         )
         .unwrap()
-        .into_indexed()
+        .to_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -509,7 +509,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
         "truncated.xtc",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .err()
     .unwrap();
     assert_eq!(

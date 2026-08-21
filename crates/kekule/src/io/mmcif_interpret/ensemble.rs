@@ -82,7 +82,7 @@ pub(crate) fn interpret_mmcif_ensemble(
     let mut ensemble = Ensemble::new(Arc::clone(&shared_topology));
     let mut reports = Vec::with_capacity(interpreted.len());
     for interpretation in interpreted {
-        let (model, report) = interpretation.into_parts();
+        let (model, report) = interpretation.to_parts();
         let model_id = report.selected_model().unwrap_or("<unknown>").to_owned();
         let atom_identity = provenance_identity(&report);
         if atom_identity != shared_atom_identity {

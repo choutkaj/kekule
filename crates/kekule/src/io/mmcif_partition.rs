@@ -36,11 +36,11 @@ impl MmcifInterpretation {
         self.model.topology()
     }
 
-    pub fn into_model(self) -> Model {
+    pub fn to_model(self) -> Model {
         self.model
     }
 
-    pub fn into_parts(self) -> (Model, raw::MmcifInterpretationReport) {
+    pub fn to_parts(self) -> (Model, raw::MmcifInterpretationReport) {
         (self.model, self.report)
     }
 }
@@ -56,7 +56,7 @@ pub fn interpret_mmcif(
     options: raw::MmcifInterpretOptions,
 ) -> Result<MmcifInterpretation, raw::MmcifInterpretError> {
     let interpretation = connectivity::interpret_mmcif(document, options)?;
-    let (source, report) = interpretation.into_parts();
+    let (source, report) = interpretation.to_parts();
     let source_topology = source.shared_topology();
     let partition = partition_topology(&source_topology)?;
     let positions = remap_positions(
@@ -97,7 +97,7 @@ impl MmcifEnsembleInterpretation {
         &self.reports
     }
 
-    pub fn into_parts(self) -> (Ensemble, Vec<raw::MmcifInterpretationReport>) {
+    pub fn to_parts(self) -> (Ensemble, Vec<raw::MmcifInterpretationReport>) {
         (self.ensemble, self.reports)
     }
 }
@@ -108,7 +108,7 @@ pub fn interpret_mmcif_ensemble(
     options: raw::MmcifEnsembleInterpretOptions,
 ) -> Result<MmcifEnsembleInterpretation, raw::MmcifEnsembleInterpretError> {
     let interpretation = connectivity::interpret_mmcif_ensemble(document, options)?;
-    let (source, reports) = interpretation.into_parts();
+    let (source, reports) = interpretation.to_parts();
     let source_topology = source.shared_topology();
     let partition = partition_topology(&source_topology).map_err(|error| {
         raw::MmcifEnsembleInterpretError::Model {
@@ -226,12 +226,12 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
             let definition_id = if let Some(molecule) = definition.macro_molecule() {
                 let hierarchy = extract_hierarchy(molecule.hierarchy(), &local_map)?;
                 let molecule =
-                    MacroMolecule::try_from_parts(graph, hierarchy).map_err(interpret_error)?;
+                    MacroMolecule::from_parts(graph, hierarchy).map_err(interpret_error)?;
                 builder
                     .add_macro_molecule_definition(&molecule)
                     .map_err(interpret_error)?
             } else if definition.small_molecule().is_some() {
-                let molecule = SmallMolecule::from_graph(graph);
+                let molecule = SmallMolecule::from_molecule(graph);
                 builder
                     .add_small_molecule_definition(&molecule)
                     .map_err(interpret_error)?
@@ -478,7 +478,7 @@ fn remap_positions(
         .map(|atom| {
             source
                 .position(source_topology, atom)
-                .map(|position| position.into_value())
+                .map(|position| position.to_value())
                 .map_err(interpret_error)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -518,7 +518,7 @@ fn remap_atom_data(
         .set_b_factors(Quantity::new(
             b_factors
                 .into_iter()
-                .map(|value| value.map(Quantity::into_value))
+                .map(|value| value.map(Quantity::to_value))
                 .collect::<Vec<_>>(),
             crate::units::SQUARE_ANGSTROM,
         ))

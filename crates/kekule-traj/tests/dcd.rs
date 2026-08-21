@@ -120,7 +120,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             "memory.dcd",
         )
         .unwrap()
-        .into_indexed()
+        .to_indexed()
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(2));
         indexed.read_frame(1, &mut destination).unwrap();
@@ -142,7 +142,7 @@ fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
         "fixed.dcd",
     )
     .unwrap();
-    let mut reader = reader.into_indexed().unwrap();
+    let mut reader = reader.to_indexed().unwrap();
     let mut buffer = FrameBuffer::new(topology);
     reader.read_frame(1, &mut buffer).unwrap();
     assert_eq!(xs(&buffer), vec![0.0, 10.0, 2.0]);
@@ -182,7 +182,7 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
         "exact-index-limit.dcd",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .unwrap();
     assert_eq!(indexed.frame_count(), Some(2));
 }
@@ -220,7 +220,7 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
             "declared-indexed.dcd",
         )
         .unwrap()
-        .into_indexed()
+        .to_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -242,7 +242,7 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
         "restore-failure.dcd",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .unwrap();
     let mut destination = FrameBuffer::new(topology);
     set_frame(
@@ -338,7 +338,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
             "guarded-index.dcd",
         )
         .unwrap()
-        .into_indexed()
+        .to_indexed()
         .err()
         .unwrap();
         assert_eq!(
@@ -415,7 +415,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
         "count.dcd",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .err()
     .unwrap();
     assert_eq!(
@@ -458,7 +458,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
         "truncated.dcd",
     )
     .unwrap()
-    .into_indexed()
+    .to_indexed()
     .err()
     .unwrap();
     assert_eq!(
@@ -595,7 +595,7 @@ fn fixed_atom_fixture(endian: DcdEndian) -> Vec<u8> {
     controls[2] = 1;
     controls[8] = 2;
     controls[19] = 24;
-    for (chunk, value) in header[4..].chunks_exact_mut(4).zip(controls) {
+    for (chunk, value) in header[4..].as_chunks_mut::<4>().0.iter_mut().zip(controls) {
         chunk.copy_from_slice(&i32_bytes(value));
     }
     header[40..44].copy_from_slice(&f32_bytes(1.0));

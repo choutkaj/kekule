@@ -400,11 +400,11 @@ impl MolfileInterpretation {
         &self.report
     }
 
-    pub fn into_molecule(self) -> SmallMolecule {
+    pub fn to_molecule(self) -> SmallMolecule {
         self.molecule
     }
 
-    pub fn into_parts(self) -> (SmallMolecule, MolfileInterpretationReport) {
+    pub fn to_parts(self) -> (SmallMolecule, MolfileInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -590,7 +590,7 @@ pub fn interpret_molfile_document(
         ),
     };
     let publication_report =
-        canonicalize_molecule_for_publication(molecule.graph_mut(), &source_stereo).map_err(
+        canonicalize_molecule_for_publication(molecule.as_molecule_mut(), &source_stereo).map_err(
             |error| MolfileInterpretError {
                 line: canonicalization_error_line(&error, &atom_lines, &bond_lines),
                 message: format!("could not publish canonical molecule: {error}"),
@@ -611,12 +611,12 @@ pub fn interpret_molfile_document(
         .collect();
     let atom_mappings = atom_lines
         .into_iter()
-        .zip(molecule.graph().atom_ids())
+        .zip(molecule.as_molecule().atom_ids())
         .map(|(source_line, atom)| MolfileAtomMapping { atom, source_line })
         .collect();
     let bond_mappings = bond_lines
         .into_iter()
-        .zip(molecule.graph().bond_ids())
+        .zip(molecule.as_molecule().bond_ids())
         .map(|(source_line, bond)| MolfileBondMapping { bond, source_line })
         .collect();
     let ignored_record_lines = document

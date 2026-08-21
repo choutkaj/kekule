@@ -32,6 +32,8 @@
 //! corresponding structured capacity error before canonical state is changed.
 #![forbid(unsafe_code)]
 #![warn(rustdoc::broken_intra_doc_links)]
+// Kekule consistently names owned conversions `to_*`, including consuming ones.
+#![allow(clippy::wrong_self_convention)]
 
 macro_rules! fixed_u32_id {
     ($name:ident) => {
@@ -343,7 +345,7 @@ pub mod hydrogens {
         molecule: &mut SmallMolecule,
         options: AddHydrogensOptions,
     ) -> Result<AddHydrogensReport, HydrogenTransformError> {
-        add_hydrogens_to_molecule(molecule.graph_mut(), options)
+        add_hydrogens_to_molecule(molecule.as_molecule_mut(), options)
     }
 
     /// Collapse ordinary degree-one hydrogens without discarding protected state.
@@ -354,7 +356,7 @@ pub mod hydrogens {
     pub fn remove_hydrogens(
         molecule: &mut SmallMolecule,
     ) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
-        remove_hydrogens_from_molecule(molecule.graph_mut())
+        remove_hydrogens_from_molecule(molecule.as_molecule_mut())
     }
 }
 

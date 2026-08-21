@@ -334,14 +334,14 @@ pub(super) fn build_molecule(
     if is_macro {
         let hierarchy = build_hierarchy(&graph, &representative, &atoms)?;
         Ok(BuiltMolecule::Macro {
-            molecule: MacroMolecule::try_from_parts_unchecked_connectedness(graph, hierarchy)
+            molecule: MacroMolecule::from_parts_unchecked_connectedness(graph, hierarchy)
                 .map_err(graph_error)?,
             conformer,
             metadata,
             provenance,
         })
     } else {
-        let molecule = SmallMolecule::from_graph_unchecked_connectedness(graph);
+        let molecule = SmallMolecule::from_molecule_unchecked_connectedness(graph);
         Ok(BuiltMolecule::Small {
             molecule,
             conformer,

@@ -448,7 +448,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
         Ok(())
     }
 
-    pub fn into_indexed(mut self) -> Result<IndexedXyzReader<R>, TrajectoryError> {
+    pub fn to_indexed(mut self) -> Result<IndexedXyzReader<R>, TrajectoryError> {
         self.reader.seek(SeekFrom::Start(0)).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Index,

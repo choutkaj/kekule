@@ -359,7 +359,7 @@ pub struct MmcifInterpretation {
 }
 
 impl MmcifInterpretation {
-    pub fn into_parts(self) -> (Model, MmcifInterpretationReport) {
+    pub fn to_parts(self) -> (Model, MmcifInterpretationReport) {
         (self.model, self.report)
     }
 }
@@ -428,7 +428,7 @@ pub struct MmcifEnsembleInterpretation {
 }
 
 impl MmcifEnsembleInterpretation {
-    pub fn into_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
+    pub fn to_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
         (self.ensemble, self.reports)
     }
 }

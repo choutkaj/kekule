@@ -35,8 +35,8 @@ impl PotentialEvaluation {
         energy: Quantity<f64>,
         gradient: Quantity<Vec<Vector3>>,
     ) -> Result<Self, PotentialError> {
-        let energy = energy.into_unit(MODEL_ENERGY_UNIT)?;
-        let gradient = gradient.into_unit(MODEL_GRADIENT_UNIT)?;
+        let energy = energy.to_unit(MODEL_ENERGY_UNIT)?;
+        let gradient = gradient.to_unit(MODEL_GRADIENT_UNIT)?;
         if !energy.value().is_finite() {
             return Err(PotentialError::NonFiniteEnergy);
         }
@@ -161,12 +161,12 @@ impl HarmonicBondPotential {
             }
             let equilibrium_length = parameter
                 .equilibrium_length
-                .into_unit(MODEL_LENGTH_UNIT)?
-                .into_value();
+                .to_unit(MODEL_LENGTH_UNIT)?
+                .to_value();
             let force_constant = parameter
                 .force_constant
-                .into_unit(MODEL_FORCE_CONSTANT_UNIT)?
-                .into_value();
+                .to_unit(MODEL_FORCE_CONSTANT_UNIT)?
+                .to_value();
             if !equilibrium_length.is_finite() || equilibrium_length <= 0.0 {
                 return Err(PotentialError::InvalidBondParameter {
                     bond: parameter.bond,
@@ -213,11 +213,11 @@ impl Potential for HarmonicBondPotential {
             let a = model
                 .position(term.a)
                 .map_err(|_| PotentialError::IncompatibleTopology)?
-                .into_value();
+                .to_value();
             let b = model
                 .position(term.b)
                 .map_err(|_| PotentialError::IncompatibleTopology)?
-                .into_value();
+                .to_value();
             let displacement = Vector3::new(a.x - b.x, a.y - b.y, a.z - b.z);
             let distance = displacement.norm();
             if distance == 0.0 {

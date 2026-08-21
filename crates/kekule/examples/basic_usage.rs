@@ -8,12 +8,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     molecule.perceive()?;
 
     // Assign absolute CIP descriptors to the perceived stereo elements.
-    let stereochemistry = stereo::assign_cip_descriptors(molecule.graph_mut())?;
+    let stereochemistry = stereo::assign_cip_descriptors(molecule.as_molecule_mut())?;
 
     // Inspect basic graph properties and the asserted molecular charge.
     println!("atoms: {}", molecule.atom_count());
     println!("bonds: {}", molecule.bond_count());
-    println!("formal charge: {}", molecule.graph().formal_charge());
+    println!("formal charge: {}", molecule.formal_charge());
     for assignment in &stereochemistry.assigned {
         println!(
             "stereo {:?}: {:?}",

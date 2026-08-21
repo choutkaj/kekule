@@ -172,7 +172,7 @@ impl Ensemble {
         let topology = Arc::new(topology_builder.build()?);
         let mut ensemble = Self::new(Arc::clone(&topology));
         for conformer in conformers {
-            let positions = stage_conformer_positions(molecule.graph(), conformer)
+            let positions = stage_conformer_positions(molecule.as_molecule(), conformer)
                 .map_err(|error| EnsembleError::ModelBuild(Box::new(error)))?;
             let positions = Positions::new(&topology, Quantity::new(positions, MODEL_LENGTH_UNIT))?;
             ensemble.push(EnsembleMember::new(positions))?;

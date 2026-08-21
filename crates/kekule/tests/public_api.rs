@@ -70,12 +70,103 @@ fn quantity_and_unit_public_api() -> Result<(), Box<dyn std::error::Error>> {
 fn small_molecule_happy_path() -> Result<(), Box<dyn std::error::Error>> {
     let mut mol = SmallMolecule::from_smiles("c1ccccc1O")?;
     mol.perceive()?;
+    assert!(!mol.is_empty());
     assert_eq!(mol.atom_count(), 7);
     assert_eq!(mol.bond_count(), 7);
-    let formal_charge: i64 = mol.graph().formal_charge();
+    let formal_charge: i64 = mol.formal_charge();
     assert_eq!(formal_charge, 0);
+    let first_atom = mol.atoms().next().expect("phenol atom").0;
+    assert_eq!(mol.atom(first_atom)?, mol.as_molecule().atom(first_atom)?);
+    let core: &Molecule = mol.as_ref();
+    assert_eq!(core.atom_count(), mol.atom_count());
     let smiles = mol.to_canonical_smiles()?;
     assert!(!smiles.is_empty());
+    Ok(())
+}
+
+#[test]
+fn molecule_wrapper_conversion_and_macro_facade() -> Result<(), Box<dyn std::error::Error>> {
+    use kekule::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
+
+    let small = SmallMolecule::from_smiles("C[NH3+]")?;
+    let core = small.clone().to_molecule();
+    assert_eq!(core, *small.as_molecule());
+
+    let mut hierarchy = SmcraHierarchy::new();
+    let chain = hierarchy.add_chain("A", None)?;
+    let residue = hierarchy.add_residue(chain, "NH4", Some(1), None, None)?;
+    for atom in core.atom_ids() {
+        hierarchy.add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())?;
+    }
+
+    let mut macromolecule = MacroMolecule::from_parts(core, hierarchy)?;
+    assert_eq!(macromolecule.is_empty(), small.is_empty());
+    assert_eq!(macromolecule.atom_count(), small.atom_count());
+    assert_eq!(macromolecule.bond_count(), small.bond_count());
+    assert_eq!(macromolecule.formal_charge(), small.formal_charge());
+    assert_eq!(macromolecule.atoms().count(), small.atoms().count());
+    assert_eq!(macromolecule.bonds().count(), small.bonds().count());
+    assert_eq!(
+        macromolecule.atom(AtomId::new(0))?,
+        small.atom(AtomId::new(0))?
+    );
+    assert_eq!(
+        macromolecule.bond(BondId::new(0))?,
+        small.bond(BondId::new(0))?
+    );
+
+    let core_ref: &Molecule = macromolecule.as_ref();
+    assert_eq!(core_ref, macromolecule.as_molecule());
+    let hierarchy_before = macromolecule.hierarchy().clone();
+    macromolecule.perceive()?;
+    assert!(macromolecule.as_molecule().perception().has_valence());
+    assert_eq!(macromolecule.hierarchy(), &hierarchy_before);
+
+    let (core, hierarchy) = macromolecule.to_parts();
+    let rebuilt = MacroMolecule::from_parts(core, hierarchy)?;
+    assert_eq!(rebuilt.formal_charge(), 1);
+    assert_eq!(rebuilt.atom_sites().count(), 2);
+    Ok(())
+}
+
+#[test]
+fn small_edit_and_perception_clear_preserve_representation(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut molecule = perceived_smiles("CO")?;
+    let represented_atoms = molecule
+        .atoms()
+        .map(|(id, atom)| (id, atom.clone()))
+        .collect::<Vec<_>>();
+    let represented_bonds = molecule
+        .bonds()
+        .map(|(id, bond)| (id, bond.clone()))
+        .collect::<Vec<_>>();
+
+    molecule.as_molecule_mut().clear_perception_state();
+    assert_eq!(
+        molecule.as_molecule().perception(),
+        &kekule::core::PerceptionState::default()
+    );
+    assert_eq!(
+        molecule
+            .atoms()
+            .map(|(id, atom)| (id, atom.clone()))
+            .collect::<Vec<_>>(),
+        represented_atoms
+    );
+    assert_eq!(
+        molecule
+            .bonds()
+            .map(|(id, bond)| (id, bond.clone()))
+            .collect::<Vec<_>>(),
+        represented_bonds
+    );
+
+    let carbon = molecule.atoms().next().expect("carbon atom").0;
+    let mut editor = molecule.edit();
+    editor.atom_mut(carbon)?.formal_charge = 1;
+    editor.commit()?;
+    assert_eq!(molecule.formal_charge(), 1);
     Ok(())
 }
 
@@ -87,7 +178,7 @@ fn molecular_descriptor_public_api() -> Result<(), Box<dyn std::error::Error>> {
     };
     use kekule::units::DALTON;
 
-    let molecule = perceived_smiles("[13CH3]CO")?;
+    let molecule = perceived_smiles("[13CH3]CO")?.to_molecule();
     let formula: MolecularFormula =
         molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)?;
     assert_eq!(formula.to_string(), "C[13C]H6O");
@@ -103,7 +194,7 @@ fn molecular_descriptor_public_api() -> Result<(), Box<dyn std::error::Error>> {
 
     let raw = SmallMolecule::from_smiles("C")?;
     let error: MolecularDescriptorError =
-        molecular_formula(&raw, HydrogenCountPolicy::IncludePerceived).unwrap_err();
+        molecular_formula(raw.as_molecule(), HydrogenCountPolicy::IncludePerceived).unwrap_err();
     assert!(matches!(
         error,
         MolecularDescriptorError::MissingImplicitHydrogens { .. }
@@ -117,12 +208,12 @@ fn rotatable_bond_public_api() -> Result<(), Box<dyn std::error::Error>> {
 
     let molecule = SmallMolecule::from_smiles("CCCC")?;
     let detected: RotatableBondSet =
-        rotatable_bonds::detect(molecule.graph(), RotatableBondOptions::STRICT);
+        rotatable_bonds::detect(molecule.as_molecule(), RotatableBondOptions::STRICT);
     assert_eq!(detected.options(), RotatableBondOptions::STRICT);
     assert_eq!(detected.bond_ids(), &[BondId::new(1)]);
     assert!(detected.contains(BondId::new(1)));
 
-    let general = rotatable_bonds::detect(molecule.graph(), RotatableBondOptions::GENERAL);
+    let general = rotatable_bonds::detect(molecule.as_molecule(), RotatableBondOptions::GENERAL);
     assert_eq!(general.options(), RotatableBondOptions::GENERAL);
     assert_eq!(
         general.bond_ids(),
@@ -137,8 +228,8 @@ fn namespaced_small_molecule_api() -> Result<(), Box<dyn std::error::Error>> {
     let interpreted = kekule::smiles::interpret(&document)?;
     assert_eq!(interpreted.report()?.atom_mappings().len(), 4);
     assert_eq!(interpreted.report()?.bond_mappings().len(), 3);
-    let mut mol = interpreted.into_molecule()?;
-    kekule::perception::perceive(mol.graph_mut())?;
+    let mut mol = interpreted.to_molecule()?;
+    kekule::perception::perceive(mol.as_molecule_mut())?;
     let smiles = kekule::smiles::write_canonical(&mol)?;
     assert!(!smiles.is_empty());
     Ok(())
@@ -149,45 +240,45 @@ fn interpretation_publishes_canonical_unperceived_molecules(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let molecule = SmallMolecule::from_smiles("O=ClO")?;
     let chlorine = molecule
-        .graph()
+        .as_molecule()
         .atoms()
         .find_map(|(atom, value)| (value.element.symbol() == "Cl").then_some(atom))
         .expect("chlorine atom");
     let oxo = molecule
-        .graph()
+        .as_molecule()
         .neighbors(chlorine)?
         .find(|neighbor| {
             molecule
-                .graph()
+                .as_molecule()
                 .atom(*neighbor)
                 .is_ok_and(|atom| atom.formal_charge < 0)
         })
         .expect("canonical oxo atom");
 
-    assert_eq!(molecule.graph().atom(chlorine)?.formal_charge, 1);
-    assert_eq!(molecule.graph().atom(oxo)?.formal_charge, -1);
+    assert_eq!(molecule.as_molecule().atom(chlorine)?.formal_charge, 1);
+    assert_eq!(molecule.as_molecule().atom(oxo)?.formal_charge, -1);
     assert_eq!(
-        molecule.graph().perception(),
+        molecule.as_molecule().perception(),
         &kekule::core::PerceptionState::default()
     );
 
     let document = kekule::smiles::parse_str("C/C=C\\F")?;
     let interpretation = kekule::smiles::interpret(&document)?;
     assert_eq!(interpretation.report()?.created_stereo_elements().len(), 1);
-    let directional = interpretation.into_molecule()?;
-    assert_eq!(directional.graph().stereo_elements().count(), 1);
+    let directional = interpretation.to_molecule()?;
+    assert_eq!(directional.as_molecule().stereo_elements().count(), 1);
 
     let mut perceived = perceived_smiles("CCO")?;
-    assert!(perceived.graph().perception().has_valence());
+    assert!(perceived.as_molecule().perception().has_valence());
     let represented = perceived
-        .graph()
+        .as_molecule()
         .bonds()
         .map(|(bond, value)| (bond, value.clone()))
         .collect::<Vec<_>>();
     perceived.perceive()?;
     assert_eq!(
         perceived
-            .graph()
+            .as_molecule()
             .bonds()
             .map(|(bond, value)| (bond, value.clone()))
             .collect::<Vec<_>>(),
@@ -276,7 +367,7 @@ fn parser_resource_options_are_public() -> Result<(), Box<dyn std::error::Error>
 fn hydrogen_transforms_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let mut molecule = perceived_smiles("C")?;
     assert_eq!(
-        molecule.graph().atom(AtomId::new(0))?.hydrogens,
+        molecule.as_molecule().atom(AtomId::new(0))?.hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
     let added: Result<
@@ -300,7 +391,7 @@ fn writers_reject_unrepresentable_hydrogen_inference_policy(
     atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
     let mut builder = Molecule::builder();
     builder.add_atom(atom)?;
-    let molecule = SmallMolecule::from_graph(builder.build()?);
+    let molecule = SmallMolecule::from_molecule(builder.build()?);
 
     for error in [
         kekule::smiles::write(&molecule).expect_err("SMILES cannot preserve the declaration"),
@@ -314,7 +405,7 @@ fn writers_reject_unrepresentable_hydrogen_inference_policy(
         assert!(error.message().contains("implicit-H inference enabled"));
     }
     assert_eq!(
-        molecule.graph().atom(AtomId::new(0))?.hydrogens,
+        molecule.as_molecule().atom(AtomId::new(0))?.hydrogens,
         HydrogenDeclaration::Infer { explicit: 1 }
     );
     Ok(())
@@ -324,7 +415,7 @@ fn writers_reject_unrepresentable_hydrogen_inference_policy(
 fn query_graph_smarts_and_substructure_public_api() -> Result<(), Box<dyn std::error::Error>> {
     let target = perceived_smiles("CC(=O)O")?;
     let query = kekule::query::parse_smarts("[C](=O)[O;H1]")?;
-    let matches = kekule::substructure::find_substructure_matches(target.graph(), &query)?;
+    let matches = kekule::substructure::find_substructure_matches(target.as_molecule(), &query)?;
 
     assert_eq!(query.atom_count(), 3);
     assert_eq!(matches.len(), 1);
@@ -403,26 +494,26 @@ fn macro_molecule_public_api() -> Result<(), Box<dyn std::error::Error>> {
 fn parse_interpret_perceive_is_explicit_across_public_formats(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let smiles = kekule::smiles::parse_str("c1ccccc1")?;
-    let smiles = kekule::smiles::interpret(&smiles)?.into_molecule()?;
-    assert_explicit_perception_preserves_representation(smiles.graph())?;
+    let smiles = kekule::smiles::interpret(&smiles)?.to_molecule()?;
+    assert_explicit_perception_preserves_representation(smiles.as_molecule())?;
 
     let v2000 = "benzene\nkekule\n\n  6  6  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    2.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    2.0000    1.0000    0.0000 C   0  0  0  0  0  0\n    1.0000    1.0000    0.0000 C   0  0  0  0  0  0\n    0.0000    1.0000    0.0000 C   0  0  0  0  0  0\n  1  2  4  0  0  0  0\n  2  3  4  0  0  0  0\n  3  4  4  0  0  0  0\n  4  5  4  0  0  0  0\n  5  6  4  0  0  0  0\n  6  1  4  0  0  0  0\nM  END\n";
     let document = kekule::molfile::parse_str(v2000)?;
-    let molecule = kekule::molfile::interpret(&document)?.into_molecule();
-    assert_explicit_perception_preserves_representation(molecule.graph())?;
+    let molecule = kekule::molfile::interpret(&document)?.to_molecule();
+    assert_explicit_perception_preserves_representation(molecule.as_molecule())?;
 
     let v3000 = "carbon\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n";
     let document = kekule::molfile::parse_str(v3000)?;
-    let molecule = kekule::molfile::interpret(&document)?.into_molecule();
-    assert_explicit_perception_preserves_representation(molecule.graph())?;
+    let molecule = kekule::molfile::interpret(&document)?.to_molecule();
+    assert_explicit_perception_preserves_representation(molecule.as_molecule())?;
 
     let sdf = format!("{v2000}$$$$\n");
     let document = kekule::sdf::parse_str(&sdf, kekule::sdf::SdfParseOptions::default())?;
     let record = kekule::sdf::interpret(&document)?
-        .into_records()
+        .to_records()
         .pop()
         .expect("one SDF record");
-    assert_explicit_perception_preserves_representation(record.molecule().graph())?;
+    assert_explicit_perception_preserves_representation(record.molecule().as_molecule())?;
 
     let mmcif = r#"
 data_ligand
@@ -478,7 +569,7 @@ fn model_and_static_smcra_hierarchy_coexist() -> Result<(), Box<dyn std::error::
         .unwrap();
     let mut graph = graph.build()?;
     let conformer = graph.add_conformer(conformer)?;
-    let molecule = SmallMolecule::from_graph(graph);
+    let molecule = SmallMolecule::from_molecule(graph);
     let model = Model::from_small_molecule(&molecule, conformer)?;
 
     assert_eq!(model.atom_count(), 1);
@@ -601,7 +692,7 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
         .unwrap();
     let mut graph = graph.build()?;
     let conformer = graph.add_conformer(conformer).unwrap();
-    let mut molecule = SmallMolecule::from_graph(graph);
+    let mut molecule = SmallMolecule::from_molecule(graph);
 
     let mut builder = Model::builder();
     let instance = builder.add_small_molecule(&molecule, conformer)?;
@@ -633,14 +724,14 @@ fn small_molecule_modeling_public_api() -> Result<(), Box<dyn std::error::Error>
 
     result
         .model
-        .instance_to_conformer(instance, molecule.graph_mut(), conformer)?;
+        .instance_to_conformer(instance, molecule.as_molecule_mut(), conformer)?;
 
     assert_eq!(result.status, MinimizationStatus::Converged);
     assert!(result.final_energy < result.initial_energy);
     assert_eq!(model.positions().values().value()[1].x, 2.0);
     assert!(
         molecule
-            .graph()
+            .as_molecule()
             .conformer(conformer)?
             .position(oxygen)
             .expect("oxygen position")
@@ -809,16 +900,17 @@ fn production_smiles_stereo_uses_installed_perception_state(
     let document = kekule::smiles::parse_str(r"C(=C\F)\F")?;
     let interpretation = kekule::smiles::interpret(&document)?;
     assert_eq!(interpretation.report()?.created_stereo_elements().len(), 1);
-    let mut molecule = interpretation.into_molecule()?;
-    perception::perceive(molecule.graph_mut())?;
+    let mut molecule = interpretation.to_molecule()?;
+    perception::perceive(molecule.as_molecule_mut())?;
 
-    let graph = molecule.graph();
+    let graph = molecule.as_molecule();
     assert_eq!(graph.implicit_hydrogens(AtomId::new(0))?, Some(1));
     assert_eq!(graph.implicit_hydrogens(AtomId::new(1))?, Some(1));
 
-    let validation: Result<(), StereoValidationError> = stereo::validate_stereo(molecule.graph());
+    let validation: Result<(), StereoValidationError> =
+        stereo::validate_stereo(molecule.as_molecule());
     validation?;
-    let candidates: Vec<StereoCandidate> = stereo::detect_stereo_candidates(molecule.graph());
+    let candidates: Vec<StereoCandidate> = stereo::detect_stereo_candidates(molecule.as_molecule());
     assert!(
         candidates.iter().any(|candidate| matches!(
             candidate,
@@ -833,13 +925,13 @@ fn production_smiles_stereo_uses_installed_perception_state(
     );
     let before = molecule.clone();
     let inference: Result<CoordinateStereoResult, CoordinateStereoError> =
-        stereo::infer_coordinate_stereo(molecule.graph());
+        stereo::infer_coordinate_stereo(molecule.as_molecule());
     assert!(inference?.elements.is_empty());
     assert_eq!(molecule, before);
     let materialization: Result<CoordinateStereoMaterializationReport, CoordinateStereoError> =
-        stereo::materialize_coordinate_stereo(molecule.graph_mut());
+        stereo::materialize_coordinate_stereo(molecule.as_molecule_mut());
     assert!(materialization?.created_elements.is_empty());
-    assert_eq!(molecule.graph().stereo_elements().count(), 1);
+    assert_eq!(molecule.as_molecule().stereo_elements().count(), 1);
     Ok(())
 }
 
@@ -852,15 +944,17 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
         "../../../benchmarks/corpora/smoke/data/rdkit_atropisomers/RP-6306_atrop4.mol"
     );
     let document = kekule::molfile::parse_str(input)?;
-    let mut molecule = kekule::molfile::interpret(&document)?.into_molecule();
+    let mut molecule = kekule::molfile::interpret(&document)?.to_molecule();
     molecule.perceive()?;
     let assignment: Result<CipAssignmentReport, CipAssignmentError> =
-        stereo::assign_cip_descriptors(molecule.graph_mut());
+        stereo::assign_cip_descriptors(molecule.as_molecule_mut());
     let report = assignment?;
 
     assert_eq!(report.assigned.len(), 1);
     assert_eq!(
-        molecule.graph().cip_descriptor(StereoElementId::new(0))?,
+        molecule
+            .as_molecule()
+            .cip_descriptor(StereoElementId::new(0))?,
         Some(StereoDescriptor::P)
     );
     Ok(())
@@ -870,19 +964,19 @@ fn production_atrop_cip_matches_pinned_reference() -> Result<(), Box<dyn std::er
 fn production_canonical_smiles_preserves_collapsed_hydrogen_without_perception(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let document = kekule::smiles::parse_str("[H][C](F)(Cl)Br")?;
-    let molecule = kekule::smiles::interpret(&document)?.into_molecule()?;
-    assert!(!molecule.graph().perception().has_valence());
+    let molecule = kekule::smiles::interpret(&document)?.to_molecule()?;
+    assert!(!molecule.as_molecule().perception().has_valence());
 
     let written = kekule::smiles::write_canonical(&molecule)?;
     let mut reparsed = SmallMolecule::from_smiles(&written)?;
     reparsed.perceive()?;
     let carbon = reparsed
-        .graph()
+        .as_molecule()
         .atoms()
         .find_map(|(atom_id, atom)| (atom.element.symbol() == "C").then_some(atom_id))
         .expect("canonical output retains carbon");
     assert_eq!(
-        reparsed.graph().implicit_hydrogens(carbon)?,
+        reparsed.as_molecule().implicit_hydrogens(carbon)?,
         Some(1),
         "canonical output was {written}"
     );
