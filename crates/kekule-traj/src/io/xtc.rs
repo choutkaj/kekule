@@ -282,8 +282,11 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             ));
         }
         let mut box_values = [0_f64; 9];
-        for (value, chunk) in box_values.iter_mut().zip(header[16..52].chunks_exact(4)) {
-            *value = f64::from(f32::from_be_bytes(chunk.try_into().expect("box")));
+        for (value, chunk) in box_values
+            .iter_mut()
+            .zip(header[16..52].as_chunks::<4>().0.iter())
+        {
+            *value = f64::from(f32::from_be_bytes(*chunk));
         }
         let cell = decode_cell(box_values, options.cell_policy, source_label, frame_index)?;
         let base_scratch = atom_count
@@ -324,8 +327,8 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 Some(frame_index),
                 "truncated XTC small-frame coordinates",
             )?;
-            for chunk in self.scratch.chunks_exact(4) {
-                let value = f32::from_be_bytes(chunk.try_into().expect("small coordinate"));
+            for chunk in self.scratch.as_chunks::<4>().0 {
+                let value = f32::from_be_bytes(*chunk);
                 if !value.is_finite() {
                     return Err(corrupt_error(
                         source_label,
@@ -781,7 +784,7 @@ impl<R: Read + Seek> XtcReader<R> {
         for (point, values) in self
             .positions
             .iter_mut()
-            .zip(self.adapter.decoded_positions.chunks_exact(3))
+            .zip(self.adapter.decoded_positions.as_chunks::<3>().0.iter())
         {
             *point = Point3::new(
                 f64::from(values[0]),

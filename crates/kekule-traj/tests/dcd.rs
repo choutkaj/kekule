@@ -595,7 +595,7 @@ fn fixed_atom_fixture(endian: DcdEndian) -> Vec<u8> {
     controls[2] = 1;
     controls[8] = 2;
     controls[19] = 24;
-    for (chunk, value) in header[4..].chunks_exact_mut(4).zip(controls) {
+    for (chunk, value) in header[4..].as_chunks_mut::<4>().0.iter_mut().zip(controls) {
         chunk.copy_from_slice(&i32_bytes(value));
     }
     header[40..44].copy_from_slice(&f32_bytes(1.0));
