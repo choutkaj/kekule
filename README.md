@@ -68,12 +68,16 @@ fn load_explicitly(input: &str) -> Result<SmallMolecule, Box<dyn Error>> {
 
 ## Basic Usage
 
-Parse and inspect a simple chiral molecule, assign its stereochemistry, and write it back to SMILES:
+Parse and inspect a simple chiral molecule, assign its stereochemistry, detect rotatable bonds, and write it back to SMILES:
 
 ```rust
 use std::error::Error;
 
-use kekule::{small::SmallMolecule, stereo};
+use kekule::{
+    rotatable_bonds::{self, RotatableBondOptions},
+    small::SmallMolecule,
+    stereo,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse and canonically interpret a chiral amino acid, then perceive it.
@@ -83,10 +87,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Assign absolute CIP descriptors to the perceived stereo elements.
     let stereochemistry = stereo::assign_cip_descriptors(molecule.as_molecule_mut())?;
 
-    // Inspect basic graph properties and the asserted molecular charge.
+    // Detect rotatable bonds using the strict small-molecule definition.
+    let rotatable = rotatable_bonds::detect(
+        molecule.as_molecule(),
+        RotatableBondOptions::STRICT,
+    );
+
+    // Inspect basic graph properties and derived chemistry.
     println!("atoms: {}", molecule.atom_count());
     println!("bonds: {}", molecule.bond_count());
     println!("formal charge: {}", molecule.formal_charge());
+    println!("strict rotatable bonds: {}", rotatable.len());
     for assignment in &stereochemistry.assigned {
         println!("stereo {:?}: {:?}", assignment.element, assignment.descriptor);
     }
