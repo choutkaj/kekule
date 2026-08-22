@@ -616,7 +616,7 @@ mod tests {
     use kekule::core::{Atom, BondOrder, Element, PropValue};
     use kekule::geometry::{Matrix3, Point3, Vector3};
     use kekule::structure::AtomData;
-    use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+    use kekule::topology::{Topology, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
 
     fn make_topology(atom_count: usize) -> Arc<Topology> {
@@ -634,9 +634,7 @@ mod tests {
         let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        builder.add_instance(definition).unwrap();
         Arc::new(builder.build().unwrap())
     }
 

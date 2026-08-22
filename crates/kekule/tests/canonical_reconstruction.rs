@@ -2,7 +2,7 @@ use kekule::core::{
     Atom, AtomId, BondOrder, Element, Molecule, MoleculeEditor, MoleculePublicationError,
     Perception,
 };
-use kekule::topology::{MoleculeInstanceMetadata, TopologyBuilder};
+use kekule::topology::TopologyBuilder;
 
 fn carbon() -> Atom {
     Atom::new(Element::from_symbol("C").expect("carbon exists"))
@@ -73,9 +73,7 @@ fn topology_definitions_consume_the_universal_molecule_directly() {
     let molecule = one_smiles("CCO");
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
+    builder.add_instance(definition).unwrap();
     let topology = builder.build().unwrap();
     let stored = topology.definition(definition).unwrap().molecule();
     assert_eq!(stored, &molecule);

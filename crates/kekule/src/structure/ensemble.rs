@@ -3,9 +3,7 @@ use std::sync::Arc;
 
 use crate::core::{Conformer, Molecule, PropMap};
 use crate::geometry::PeriodicCell;
-use crate::topology::{
-    MoleculeInstanceMetadata, Topology, TopologyBuildError, TopologyBuilder, TopologyMapping,
-};
+use crate::topology::{Topology, TopologyBuildError, TopologyBuilder, TopologyMapping};
 use crate::units::{Quantity, MODEL_LENGTH_UNIT};
 
 use super::model::stage_conformer_positions;
@@ -167,7 +165,7 @@ impl Ensemble {
     ) -> Result<Self, EnsembleError> {
         let mut topology_builder = TopologyBuilder::new();
         let definition = topology_builder.add_molecule_definition(molecule)?;
-        topology_builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+        topology_builder.add_instance(definition)?;
         let topology = Arc::new(topology_builder.build()?);
         let mut ensemble = Self::new(Arc::clone(&topology));
         for conformer in conformers {

@@ -223,11 +223,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
 fn qeq_grouping_policy_is_explicit() {
     let (water, conformer) = water(0.0);
     let model = Model::from_molecule(&water, &conformer).unwrap();
-    for grouping in [
-        QeqGrouping::WholeTopology,
-        QeqGrouping::MoleculeInstances,
-        QeqGrouping::ConnectedComponents,
-    ] {
+    for grouping in [QeqGrouping::WholeTopology, QeqGrouping::MoleculeInstances] {
         let potential = DreidingPotential::prepare(
             &model.shared_topology(),
             model.view(),

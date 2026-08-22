@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use kekule::core::{Atom, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::{Topology, TopologyBuilder};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
 use kekule_traj::io::trr::{
@@ -309,7 +309,7 @@ fn topology(atom_count: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
     let molecule = molecule.finish()?;
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule)?;
-    builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+    builder.add_instance(definition)?;
     Ok(Arc::new(builder.build()?))
 }
 
