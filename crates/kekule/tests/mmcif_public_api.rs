@@ -100,7 +100,7 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
         .next()
         .expect("one molecule definition")
         .1
-        .graph();
+        .molecule();
 
     assert_eq!(graph.bond_count(), 1);
 }

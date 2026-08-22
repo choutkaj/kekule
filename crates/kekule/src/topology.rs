@@ -370,10 +370,6 @@ impl MoleculeDefinition {
         &self.molecule
     }
 
-    pub fn graph(&self) -> &Molecule {
-        &self.molecule
-    }
-
     pub fn hierarchy(&self) -> Option<&Hierarchy> {
         (!self.molecule.hierarchy().is_empty()).then(|| self.molecule.hierarchy())
     }
@@ -707,11 +703,11 @@ impl Topology {
             .filter(move |instance| instance.definition == definition))
     }
 
-    pub fn graph_for_instance(
+    pub fn molecule_for_instance(
         &self,
         instance: MoleculeInstanceId,
     ) -> Result<&Molecule, TopologyError> {
-        Ok(self.definition_for_instance(instance)?.graph())
+        Ok(self.definition_for_instance(instance)?.molecule())
     }
 
     pub fn hierarchy(
@@ -871,13 +867,13 @@ impl Topology {
     }
 
     pub fn atom(&self, id: InstanceAtomId) -> Result<&Atom, TopologyError> {
-        self.graph_for_instance(id.molecule)?
+        self.molecule_for_instance(id.molecule)?
             .atom(id.atom)
             .map_err(|_| TopologyError::InvalidAtomId(id))
     }
 
     pub fn bond(&self, id: InstanceBondId) -> Result<&Bond, TopologyError> {
-        self.graph_for_instance(id.molecule)?
+        self.molecule_for_instance(id.molecule)?
             .bond(id.bond)
             .map_err(|_| TopologyError::InvalidBondId(id))
     }
@@ -938,11 +934,11 @@ impl Topology {
         &self,
         atom: InstanceAtomId,
     ) -> Result<impl Iterator<Item = InstanceAtomId> + '_, TopologyError> {
-        let graph = self.graph_for_instance(atom.molecule)?;
-        graph
+        let molecule = self.molecule_for_instance(atom.molecule)?;
+        molecule
             .atom(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))?;
-        Ok(graph
+        Ok(molecule
             .neighbors(atom.atom)
             .expect("validated atom has valid local adjacency")
             .map(move |neighbor| InstanceAtomId::new(atom.molecule, neighbor)))
@@ -952,11 +948,11 @@ impl Topology {
         &self,
         atom: InstanceAtomId,
     ) -> Result<impl Iterator<Item = (InstanceBondId, &Bond)> + '_, TopologyError> {
-        let graph = self.graph_for_instance(atom.molecule)?;
-        graph
+        let molecule = self.molecule_for_instance(atom.molecule)?;
+        molecule
             .atom(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))?;
-        Ok(graph
+        Ok(molecule
             .incident_bonds(atom.atom)
             .expect("validated atom has valid local adjacency")
             .map(move |(bond, payload)| (InstanceBondId::new(atom.molecule, bond), payload)))
@@ -967,7 +963,7 @@ impl Topology {
         instance: MoleculeInstanceId,
     ) -> Result<Vec<Vec<InstanceAtomId>>, TopologyError> {
         Ok(self
-            .graph_for_instance(instance)?
+            .molecule_for_instance(instance)?
             .connected_components()
             .into_iter()
             .map(|component| {
@@ -981,21 +977,21 @@ impl Topology {
 
     pub fn implicit_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<u8>, TopologyError> {
         self.atom(atom)?;
-        self.graph_for_instance(atom.molecule)?
+        self.molecule_for_instance(atom.molecule)?
             .implicit_hydrogens(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))
     }
 
     pub fn atom_is_aromatic(&self, atom: InstanceAtomId) -> Result<Option<bool>, TopologyError> {
         self.atom(atom)?;
-        self.graph_for_instance(atom.molecule)?
+        self.molecule_for_instance(atom.molecule)?
             .atom_is_aromatic(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))
     }
 
     pub fn bond_is_aromatic(&self, bond: InstanceBondId) -> Result<Option<bool>, TopologyError> {
         self.bond(bond)?;
-        self.graph_for_instance(bond.molecule)?
+        self.molecule_for_instance(bond.molecule)?
             .bond_is_aromatic(bond.bond)
             .map_err(|_| TopologyError::InvalidBondId(bond))
     }
@@ -1108,7 +1104,7 @@ impl TopologyBuilder {
             count
                 .checked_add(
                     self.definitions[instance.definition.index()]
-                        .graph()
+                        .molecule()
                         .atom_count(),
                 )
                 .ok_or(TopologyBuildError::IdentifierCapacityExceeded(
@@ -1120,7 +1116,7 @@ impl TopologyBuilder {
             count
                 .checked_add(
                     self.definitions[instance.definition.index()]
-                        .graph()
+                        .molecule()
                         .bond_count(),
                 )
                 .ok_or(TopologyBuildError::IdentifierCapacityExceeded(
@@ -1141,15 +1137,15 @@ impl TopologyBuilder {
             .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::Bond))?;
 
         for instance in &self.instances {
-            let graph = self.definitions[instance.definition.index()].graph();
-            for atom in graph.atom_ids() {
+            let molecule = self.definitions[instance.definition.index()].molecule();
+            for atom in molecule.atom_ids() {
                 let qualified = instance.qualify_atom(atom);
                 let index =
                     checked_id::<TopologyAtomIndex>(instance_atoms.len(), TopologyIdKind::Atom)?;
                 atom_indices.insert(qualified, index);
                 instance_atoms.push(qualified);
             }
-            for bond in graph.bond_ids() {
+            for bond in molecule.bond_ids() {
                 let qualified = instance.qualify_bond(bond);
                 let index =
                     checked_id::<TopologyBondIndex>(instance_bonds.len(), TopologyIdKind::Bond)?;
@@ -3049,7 +3045,7 @@ mod tests {
         let (source_a, source_b) = source
             .definition(source_definition)
             .unwrap()
-            .graph()
+            .molecule()
             .bond(source_bond)
             .unwrap()
             .endpoints();

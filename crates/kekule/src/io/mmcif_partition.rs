@@ -183,7 +183,7 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
         let definition = source
             .definition_for_instance(source_instance)
             .map_err(interpret_error)?;
-        let components = definition.graph().connected_components();
+        let components = definition.molecule().connected_components();
         if components.is_empty() {
             return Err(interpret_error("mmCIF molecule instance has no atoms"));
         }
@@ -195,7 +195,7 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
             let target_instance = builder
                 .add_instance(definition_id, source_metadata.metadata().clone())
                 .map_err(interpret_error)?;
-            for atom in definition.graph().atom_ids() {
+            for atom in definition.molecule().atom_ids() {
                 let source_atom = InstanceAtomId::new(source_instance, atom);
                 let target_atom = InstanceAtomId::new(target_instance, atom);
                 source_atoms.push(source_atom);
@@ -213,7 +213,7 @@ fn partition_topology(source: &Topology) -> Result<PartitionedTopology, raw::Mmc
                 mut graph,
                 atom_map: local_map,
                 ordered_source_atoms,
-            } = extract_connected_graph(definition.graph(), &component)?;
+            } = extract_connected_graph(definition.molecule(), &component)?;
             *graph.hierarchy_mut() =
                 extract_hierarchy(definition.molecule().hierarchy(), &local_map)?;
             let molecule = graph.finish().map_err(interpret_error)?;

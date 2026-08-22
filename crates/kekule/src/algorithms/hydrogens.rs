@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeError,
-    StereoCarrier, StereoElementId, StereoElementKind,
+    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeEditor,
+    MoleculeError, MoleculePublicationError, StereoCarrier, StereoElementId, StereoElementKind,
 };
 
 use super::{perceive_valence_with_options, ValenceModel, ValenceOptions};
@@ -124,6 +124,7 @@ pub enum HydrogenTransformError {
         actual: usize,
     },
     Molecule(MoleculeError),
+    Publication(MoleculePublicationError),
 }
 
 impl fmt::Display for HydrogenTransformError {
@@ -161,6 +162,7 @@ impl fmt::Display for HydrogenTransformError {
                 "hydrogen transformation changed the total hydrogen count at atom {atom}: expected {expected}, got {actual}"
             ),
             Self::Molecule(error) => write!(f, "{error}"),
+            Self::Publication(error) => write!(f, "{error}"),
         }
     }
 }
@@ -170,6 +172,12 @@ impl std::error::Error for HydrogenTransformError {}
 impl From<MoleculeError> for HydrogenTransformError {
     fn from(error: MoleculeError) -> Self {
         Self::Molecule(error)
+    }
+}
+
+impl From<MoleculePublicationError> for HydrogenTransformError {
+    fn from(error: MoleculePublicationError) -> Self {
+        Self::Publication(error)
     }
 }
 
@@ -206,7 +214,7 @@ pub(crate) fn add_hydrogens_to_molecule(
 
     validate_materialized_stereo_hydrogens(molecule, &plan, options.explicit_only)?;
 
-    let mut staged = molecule.clone();
+    let mut editor = molecule.edit();
     let hydrogen = Element::from_atomic_number(1).expect("hydrogen is a periodic-table element");
     let mut report = AddHydrogensReport::default();
     let mut added_by_parent = BTreeMap::<AtomId, Vec<AtomId>>::new();
@@ -217,8 +225,8 @@ pub(crate) fn add_hydrogens_to_molecule(
         {
             let mut atom = Atom::new(hydrogen);
             atom.hydrogens = HydrogenDeclaration::Fixed(0);
-            let hydrogen_id = staged.add_atom(atom)?;
-            staged.add_bond(parent, hydrogen_id, BondOrder::Single)?;
+            let hydrogen_id = editor.add_atom(atom)?;
+            editor.add_bond(parent, hydrogen_id, BondOrder::Single)?;
             added_by_parent.entry(parent).or_default().push(hydrogen_id);
             report.added.push(AddedHydrogen {
                 hydrogen: hydrogen_id,
@@ -227,13 +235,14 @@ pub(crate) fn add_hydrogens_to_molecule(
             });
         }
         if explicit > 0 {
-            let mut atom = staged.atom_mut(parent)?;
+            let mut atom = editor.atom_mut(parent)?;
             atom.hydrogens = atom.hydrogens.with_explicit_count(0);
         }
     }
 
-    materialize_stereo_hydrogen_carriers(&mut staged, &added_by_parent)?;
-    *molecule = staged;
+    materialize_stereo_hydrogen_carriers(&mut editor, &added_by_parent)?;
+    let published = editor.finish()?;
+    *molecule = published;
     Ok(report)
 }
 
@@ -299,11 +308,11 @@ pub(crate) fn remove_hydrogens_from_molecule(
                 && molecule.atom_is_aromatic(*parent).ok().flatten() == Some(true)
         })
     }));
-    let mut staged = molecule.clone();
-    collapse_stereo_hydrogen_carriers(&mut staged, &removable)?;
+    let mut editor = molecule.edit();
+    collapse_stereo_hydrogen_carriers(&mut editor, &removable)?;
     for (parent, hydrogens) in &by_parent {
         for hydrogen in hydrogens {
-            staged.delete_atom(*hydrogen)?;
+            editor.delete_atom(*hydrogen)?;
             report.removed.push(RemovedHydrogen {
                 hydrogen: *hydrogen,
                 parent: *parent,
@@ -312,16 +321,18 @@ pub(crate) fn remove_hydrogens_from_molecule(
     }
 
     adjust_collapsed_hydrogen_counts(
-        &mut staged,
+        &mut editor,
         &expected_totals,
         &by_parent,
         &explicit_count_parents,
     )?;
-    report.adjustments = verify_collapsed_hydrogen_counts(&staged, &expected_totals, &by_parent)?;
+    report.adjustments =
+        verify_collapsed_hydrogen_counts(editor.working(), &expected_totals, &by_parent)?;
     report.removed.sort_by_key(|entry| entry.hydrogen);
     report.retained.sort_by_key(|entry| entry.hydrogen);
     report.adjustments.sort_by_key(|entry| entry.parent);
-    *molecule = staged;
+    let published = editor.finish()?;
+    *molecule = published;
     Ok(report)
 }
 
@@ -398,10 +409,11 @@ fn validate_implicit_stereo_count(
 }
 
 fn materialize_stereo_hydrogen_carriers(
-    molecule: &mut Molecule,
+    editor: &mut MoleculeEditor,
     added_by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
 ) -> Result<(), HydrogenTransformError> {
-    let replacements = molecule
+    let replacements = editor
+        .working()
         .stereo_elements()
         .filter_map(|(id, element)| {
             let mut replacement = element.clone();
@@ -446,7 +458,7 @@ fn materialize_stereo_hydrogen_carriers(
         })
         .collect::<Vec<_>>();
     for (id, replacement) in replacements {
-        molecule.replace_stereo_element(id, replacement)?;
+        editor.replace_stereo_element(id, replacement)?;
     }
     Ok(())
 }
@@ -548,10 +560,11 @@ fn stereo_hydrogen_is_collapsible(
 }
 
 fn collapse_stereo_hydrogen_carriers(
-    molecule: &mut Molecule,
+    editor: &mut MoleculeEditor,
     removable: &BTreeSet<AtomId>,
 ) -> Result<(), HydrogenTransformError> {
-    let replacements = molecule
+    let replacements = editor
+        .working()
         .stereo_elements()
         .filter_map(|(id, element)| {
             let mut replacement = element.clone();
@@ -581,7 +594,7 @@ fn collapse_stereo_hydrogen_carriers(
         })
         .collect::<Vec<_>>();
     for (id, replacement) in replacements {
-        molecule.replace_stereo_element(id, replacement)?;
+        editor.replace_stereo_element(id, replacement)?;
     }
     Ok(())
 }
@@ -614,12 +627,12 @@ fn stereo_hydrogen_parents(molecule: &Molecule, removable: &BTreeSet<AtomId>) ->
 }
 
 fn adjust_collapsed_hydrogen_counts(
-    molecule: &mut Molecule,
+    editor: &mut MoleculeEditor,
     expected_totals: &BTreeMap<AtomId, usize>,
     by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
     explicit_count_parents: &BTreeSet<AtomId>,
 ) -> Result<(), HydrogenTransformError> {
-    let mut probe = molecule.clone();
+    let mut probe = editor.working().clone();
     let _ = perceive_valence_with_options(
         &mut probe,
         ValenceModel::RdkitLike,
@@ -633,11 +646,11 @@ fn adjust_collapsed_hydrogen_counts(
                     count: *expected,
                 }
             })?;
-            let mut atom = molecule.atom_mut(*parent)?;
+            let mut atom = editor.atom_mut(*parent)?;
             atom.hydrogens = atom.hydrogens.with_explicit_count(adjusted);
             continue;
         }
-        let explicit = usize::from(molecule.atom(*parent)?.hydrogens.explicit_count());
+        let explicit = usize::from(editor.working().atom(*parent)?.hydrogens.explicit_count());
         let implicit = usize::from(probe.implicit_hydrogens(*parent)?.unwrap_or(0));
         let actual = explicit + implicit;
         if actual < *expected {
@@ -648,7 +661,7 @@ fn adjust_collapsed_hydrogen_counts(
                     count: adjusted,
                 }
             })?;
-            let mut atom = molecule.atom_mut(*parent)?;
+            let mut atom = editor.atom_mut(*parent)?;
             atom.hydrogens = atom.hydrogens.with_explicit_count(adjusted);
         } else if actual > *expected {
             let adjusted = u8::try_from(*expected).map_err(|_| {
@@ -657,7 +670,7 @@ fn adjust_collapsed_hydrogen_counts(
                     count: *expected,
                 }
             })?;
-            let mut atom = molecule.atom_mut(*parent)?;
+            let mut atom = editor.atom_mut(*parent)?;
             atom.hydrogens = HydrogenDeclaration::Fixed(adjusted);
         }
         debug_assert!(!by_parent[parent].is_empty());

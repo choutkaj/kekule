@@ -15,7 +15,7 @@ fixed_u32_id!(SmcraAtomSiteId);
 pub struct Hierarchy {
     chains: Vec<SmcraChain>,
     pub(crate) residues: Vec<SmcraResidue>,
-    atom_sites: Vec<SmcraAtomSite>,
+    atom_sites: Vec<Option<SmcraAtomSite>>,
     atom_lookup: BTreeMap<AtomId, SmcraAtomSiteId>,
     props: PropMap,
 }
@@ -104,13 +104,13 @@ impl Hierarchy {
             SmcraIdKind::AtomSite,
             SmcraAtomSiteId::new,
         )?;
-        self.atom_sites.push(SmcraAtomSite {
+        self.atom_sites.push(Some(SmcraAtomSite {
             id,
             residue,
             atom,
             metadata,
             props: PropMap::new(),
-        });
+        }));
         self.residues[residue.index()].atom_sites.push(id);
         self.atom_lookup.insert(atom, id);
         Ok(id)
@@ -137,13 +137,52 @@ impl Hierarchy {
     ) -> std::result::Result<&SmcraAtomSite, HierarchyError> {
         self.atom_sites
             .get(id.index())
+            .and_then(Option::as_ref)
             .ok_or(HierarchyError::InvalidAtomSiteId(id))
     }
 
     pub fn atom_site_for_atom(&self, atom: AtomId) -> Option<&SmcraAtomSite> {
         self.atom_lookup
             .get(&atom)
-            .and_then(|id| self.atom_sites.get(id.index()))
+            .and_then(|id| self.atom_sites.get(id.index()).and_then(Option::as_ref))
+    }
+
+    pub(crate) fn atom_lookup_entries(
+        &self,
+    ) -> impl Iterator<Item = (AtomId, SmcraAtomSiteId)> + '_ {
+        self.atom_lookup.iter().map(|(atom, site)| (*atom, *site))
+    }
+
+    /// Removes one atom site without renumbering any hierarchy identifier.
+    pub(crate) fn remove_atom_site(
+        &mut self,
+        id: SmcraAtomSiteId,
+    ) -> std::result::Result<SmcraAtomSite, HierarchyError> {
+        let site = self
+            .atom_sites
+            .get(id.index())
+            .and_then(Option::as_ref)
+            .ok_or(HierarchyError::InvalidAtomSiteId(id))?;
+        let residue = self
+            .residues
+            .get(site.residue.index())
+            .ok_or(HierarchyError::InvalidResidueId(site.residue))?;
+        let Some(residue_position) = residue.atom_sites.iter().position(|site| *site == id) else {
+            return Err(HierarchyError::InconsistentAtomSite(id));
+        };
+        if self.atom_lookup.get(&site.atom) != Some(&id) {
+            return Err(HierarchyError::InconsistentAtomSite(id));
+        }
+
+        let atom = site.atom;
+        let removed = self.atom_sites[id.index()]
+            .take()
+            .expect("validated atom-site must remain live");
+        self.residues[removed.residue.index()]
+            .atom_sites
+            .remove(residue_position);
+        self.atom_lookup.remove(&atom);
+        Ok(removed)
     }
 
     /// Restores distinct label and author component identifiers on one residue.
@@ -191,6 +230,7 @@ impl Hierarchy {
     ) -> std::result::Result<&mut PropMap, HierarchyError> {
         self.atom_sites
             .get_mut(site.index())
+            .and_then(Option::as_mut)
             .map(|site| &mut site.props)
             .ok_or(HierarchyError::InvalidAtomSiteId(site))
     }
@@ -204,7 +244,7 @@ impl Hierarchy {
     }
 
     pub fn atom_sites(&self) -> impl Iterator<Item = (SmcraAtomSiteId, &SmcraAtomSite)> {
-        self.atom_sites.iter().map(|site| (site.id, site))
+        self.atom_sites.iter().flatten().map(|site| (site.id, site))
     }
 
     pub fn props(&self) -> &PropMap {
@@ -373,6 +413,8 @@ pub enum HierarchyError {
     InvalidAtomSiteId(SmcraAtomSiteId),
     InvalidAtomId(AtomId),
     DuplicateAtomPlacement(AtomId),
+    /// An atom-site slot disagrees with its residue or atom lookup.
+    InconsistentAtomSite(SmcraAtomSiteId),
     /// A new hierarchy node cannot be represented by the fixed-width ID for `kind`.
     IdentifierCapacityExceeded(SmcraIdKind),
 }
@@ -385,6 +427,9 @@ impl fmt::Display for HierarchyError {
             Self::InvalidAtomSiteId(id) => write!(f, "invalid atom-site id: {}", id.raw()),
             Self::InvalidAtomId(id) => write!(f, "invalid hierarchy atom id: {id}"),
             Self::DuplicateAtomPlacement(id) => write!(f, "duplicate hierarchy placement for {id}"),
+            Self::InconsistentAtomSite(id) => {
+                write!(f, "inconsistent hierarchy atom-site: {}", id.raw())
+            }
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(f, "{kind} identifier capacity exceeded")
             }

@@ -389,9 +389,9 @@ fn entity_kind(
             });
         }
     }
-    let inferred_ion = definition.graph().atom_count() == 1
+    let inferred_ion = definition.molecule().atom_count() == 1
         && definition
-            .graph()
+            .molecule()
             .atoms()
             .next()
             .is_some_and(|(_, atom)| atom.formal_charge != 0);
@@ -433,11 +433,13 @@ fn validate_graph_chemistry(
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
 ) -> Result<(), MmcifWriteError> {
-    let graph = definition.graph();
-    if graph.stereo_elements().next().is_some() || graph.stereo_groups().next().is_some() {
+    let molecule_definition = definition.molecule();
+    if molecule_definition.stereo_elements().next().is_some()
+        || molecule_definition.stereo_groups().next().is_some()
+    {
         return Err(MmcifWriteError::UnsupportedStereo(molecule.id()));
     }
-    for (atom_id, atom) in graph.atoms() {
+    for (atom_id, atom) in molecule_definition.atoms() {
         let atom_id = molecule.qualify_atom(atom_id);
         if atom.isotope.is_some() {
             return Err(MmcifWriteError::UnsupportedAtomField {
@@ -502,7 +504,7 @@ fn collect_macro_rows(
         }
     }
 
-    for (atom_id, atom) in definition.graph().atoms() {
+    for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let site = sites
             .get(&atom_id)
@@ -614,7 +616,7 @@ fn collect_small_rows(
     } else {
         "MOL"
     };
-    for (atom_id, atom) in definition.graph().atoms() {
+    for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
         let atom_name = generated_atom_name(atom.element.symbol(), atom_id);
         rows.push(AtomRow {

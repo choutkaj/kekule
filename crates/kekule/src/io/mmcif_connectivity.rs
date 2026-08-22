@@ -748,7 +748,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .expect("interpret peptide");
         let graph = interpretation
             .topology()
-            .graph_for_instance(MoleculeInstanceId::new(0))
+            .molecule_for_instance(MoleculeInstanceId::new(0))
             .expect("peptide instance");
         assert_eq!(graph.bond_count(), 7);
         assert_eq!(
@@ -790,7 +790,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .instances()
             .all(|(instance, _)| interpretation
                 .topology()
-                .graph_for_instance(instance)
+                .molecule_for_instance(instance)
                 .expect("partitioned peptide instance")
                 .is_connected()));
         assert_eq!(interpretation.report().template_bonds_pending(), 0);
@@ -807,7 +807,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .expect("interpret branch");
         let graph = interpretation
             .topology()
-            .graph_for_instance(MoleculeInstanceId::new(0))
+            .molecule_for_instance(MoleculeInstanceId::new(0))
             .expect("branch instance");
         assert_eq!(graph.bond_count(), 3);
         assert!(graph

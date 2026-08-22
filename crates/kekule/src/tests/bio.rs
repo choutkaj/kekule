@@ -91,3 +91,93 @@ fn molecule_publication_validates_hierarchy_references() {
     edited.delete_atom(atom).unwrap();
     assert_eq!(edited.finish(), Err(MoleculePublicationError::EmptyGraph));
 }
+
+#[test]
+fn deleting_annotated_atom_removes_site_without_renumbering_hierarchy() {
+    let mut editor = MoleculeEditor::new();
+    let annotated = editor.add_atom(carbon()).unwrap();
+    let retained = editor.add_atom(carbon()).unwrap();
+    editor
+        .add_bond(annotated, retained, BondOrder::Single)
+        .unwrap();
+    let chain = editor.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = editor
+        .hierarchy_mut()
+        .add_residue(chain, "LIG", Some(1), None, None)
+        .unwrap();
+    let removed_site = editor
+        .add_atom_site(residue, annotated, SmcraAtomSiteMetadata::default())
+        .unwrap();
+    let molecule = editor.finish().unwrap();
+
+    let mut editor = molecule.edit();
+    editor.delete_atom(annotated).unwrap();
+    let molecule = editor.finish().expect("remaining atom is connected");
+
+    assert_eq!(molecule.atom_count(), 1);
+    assert!(molecule.atom(annotated).is_err());
+    assert!(molecule.hierarchy().atom_site(removed_site).is_err());
+    assert!(molecule.hierarchy().atom_site_for_atom(annotated).is_none());
+    assert!(molecule
+        .hierarchy()
+        .residue(residue)
+        .unwrap()
+        .atom_sites()
+        .is_empty());
+    assert_eq!(
+        molecule.hierarchy().chain(chain).unwrap().residues(),
+        &[residue]
+    );
+
+    let mut editor = molecule.edit();
+    let replacement_site = editor
+        .add_atom_site(residue, retained, SmcraAtomSiteMetadata::default())
+        .unwrap();
+    assert!(replacement_site.raw() > removed_site.raw());
+    let molecule = editor.finish().expect("replacement site publishes");
+    assert_eq!(
+        molecule
+            .hierarchy()
+            .atom_site_for_atom(retained)
+            .unwrap()
+            .id(),
+        replacement_site
+    );
+}
+
+#[test]
+fn deleting_annotated_bridge_atom_still_fails_transactionally() {
+    let mut editor = MoleculeEditor::new();
+    let left = editor.add_atom(carbon()).unwrap();
+    let bridge = editor.add_atom(carbon()).unwrap();
+    let right = editor.add_atom(carbon()).unwrap();
+    editor.add_bond(left, bridge, BondOrder::Single).unwrap();
+    editor.add_bond(bridge, right, BondOrder::Single).unwrap();
+    let chain = editor.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = editor
+        .hierarchy_mut()
+        .add_residue(chain, "LIG", Some(1), None, None)
+        .unwrap();
+    let site = editor
+        .add_atom_site(residue, bridge, SmcraAtomSiteMetadata::default())
+        .unwrap();
+    let molecule = editor.finish().unwrap();
+    let original = molecule.clone();
+
+    let mut editor = molecule.edit();
+    editor.delete_atom(bridge).unwrap();
+    assert!(matches!(
+        editor.finish(),
+        Err(MoleculePublicationError::DisconnectedGraph(_))
+    ));
+
+    assert_eq!(molecule, original);
+    assert_eq!(
+        molecule
+            .hierarchy()
+            .atom_site_for_atom(bridge)
+            .unwrap()
+            .id(),
+        site
+    );
+}

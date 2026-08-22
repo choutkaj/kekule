@@ -71,6 +71,86 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
 }
 
 #[test]
+fn hydrogen_transforms_preserve_original_when_publication_fails() {
+    let mut editor = MoleculeEditor::new();
+    let mut atom = carbon();
+    atom.hydrogens = HydrogenDeclaration::Fixed(1);
+    editor.add_atom(atom).unwrap();
+    let mut molecule = editor.finish().unwrap();
+    let chain = molecule.hierarchy.add_chain("A", None).unwrap();
+    let residue = molecule
+        .hierarchy
+        .add_residue(chain, "LIG", Some(1), None, None)
+        .unwrap();
+    molecule
+        .hierarchy
+        .add_atom_site(residue, AtomId::new(999), SmcraAtomSiteMetadata::default())
+        .unwrap();
+    let original = molecule.clone();
+
+    assert!(matches!(
+        molecule.add_hydrogens_with_options(AddHydrogensOptions {
+            explicit_only: true,
+            ..AddHydrogensOptions::default()
+        }),
+        Err(HydrogenTransformError::Publication(
+            MoleculePublicationError::InvalidHierarchy(_)
+        ))
+    ));
+    assert_eq!(molecule, original);
+    assert_eq!(molecule.perception(), original.perception());
+
+    perceive(&mut molecule).unwrap();
+    let original = molecule.clone();
+    assert!(matches!(
+        molecule.remove_hydrogens(),
+        Err(HydrogenTransformError::Publication(
+            MoleculePublicationError::InvalidHierarchy(_)
+        ))
+    ));
+    assert_eq!(molecule, original);
+    assert_eq!(molecule.perception(), original.perception());
+}
+
+#[test]
+fn removing_annotated_graph_hydrogen_removes_its_atom_site() {
+    let mut editor = MoleculeEditor::new();
+    let carbon = editor.add_atom(carbon()).unwrap();
+    let hydrogen = editor
+        .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
+        .unwrap();
+    editor
+        .add_bond(carbon, hydrogen, BondOrder::Single)
+        .unwrap();
+    let chain = editor.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = editor
+        .hierarchy_mut()
+        .add_residue(chain, "LIG", Some(1), None, None)
+        .unwrap();
+    let site = editor
+        .add_atom_site(residue, hydrogen, SmcraAtomSiteMetadata::default())
+        .unwrap();
+    let mut molecule = editor.finish().unwrap();
+    perceive(&mut molecule).unwrap();
+
+    let report = molecule.remove_hydrogens().expect("hydrogen collapses");
+
+    assert_eq!(report.removed.len(), 1);
+    assert_eq!(report.removed[0].hydrogen, hydrogen);
+    assert_eq!(molecule.atom_count(), 1);
+    assert!(molecule.atom(hydrogen).is_err());
+    assert!(molecule.hierarchy().atom_site(site).is_err());
+    assert!(molecule.hierarchy().atom_site_for_atom(hydrogen).is_none());
+    assert!(molecule
+        .hierarchy()
+        .residue(residue)
+        .unwrap()
+        .atom_sites()
+        .is_empty());
+    assert!(molecule.edit().finish().is_ok());
+}
+
+#[test]
 fn explicit_only_materializes_bracket_counts_without_implicit_hydrogens() {
     let mut molecule = perceived_smiles("[CH3]");
     let carbon = molecule.atom_ids().next().expect("carbon");

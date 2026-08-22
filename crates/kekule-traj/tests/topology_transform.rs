@@ -210,7 +210,7 @@ fn whole_instance_subset_is_deterministic_complete_and_non_mutating() {
 
     assert_eq!(
         target
-            .graph_for_instance(MoleculeInstanceId::new(0))
+            .molecule_for_instance(MoleculeInstanceId::new(0))
             .expect("retained ligand")
             .atom_ids()
             .collect::<Vec<_>>(),
@@ -218,7 +218,7 @@ fn whole_instance_subset_is_deterministic_complete_and_non_mutating() {
     );
     assert_eq!(
         target
-            .graph_for_instance(MoleculeInstanceId::new(0))
+            .molecule_for_instance(MoleculeInstanceId::new(0))
             .expect("retained ligand")
             .bond_ids()
             .collect::<Vec<_>>(),
