@@ -18,7 +18,10 @@ fn topology() -> Arc<Topology> {
 }
 
 fn frame(topology: &Arc<Topology>, points: [Point3; 3]) -> TrajectoryFrame {
-    TrajectoryFrame::new(Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap())
+    TrajectoryFrame::new(
+        Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
+        topology.bond_count(),
+    )
 }
 
 #[test]

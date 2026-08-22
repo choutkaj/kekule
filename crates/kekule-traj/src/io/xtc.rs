@@ -808,12 +808,9 @@ impl<R: Read + Seek> XtcReader<R> {
         info: &XtcFrameInfo,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(
-            self.binding.topology_arc(),
-            Quantity::new(positions, NANOMETER),
-        )
-        .with_time(Quantity::new(info.time, PICOSECOND))
-        .with_step(info.step);
+        let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
+            .with_time(Quantity::new(info.time, PICOSECOND))
+            .with_step(info.step);
         if let Some(cell) = info.cell {
             data = data.with_cell(cell);
         }

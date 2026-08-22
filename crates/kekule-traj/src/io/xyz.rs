@@ -378,10 +378,10 @@ impl<R: BufRead> XyzReader<R> {
 
     fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryError> {
         destination
-            .replace_from_data(FrameBufferData::new(
-                self.binding.topology_arc(),
-                Quantity::new(self.positions.as_slice(), self.options.length_unit),
-            ))
+            .replace_from_data(FrameBufferData::new(Quantity::new(
+                self.positions.as_slice(),
+                self.options.length_unit,
+            )))
             .map_err(Into::into)
     }
 }
