@@ -5,11 +5,12 @@ use crate::core::{
 };
 use crate::geometry::Point3;
 use crate::mmcif::{
-    self, MmcifAltLocPolicy, MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretOptions,
-    MmcifInterpretationReport, MmcifModelSelection, MmcifParseOptions, MmcifWriteError,
-    MmcifWriteOptions,
+    self, MmcifAltLocPolicy, MmcifEntityClassifications, MmcifEntityKind, MmcifInstanceProvenance,
+    MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection, MmcifParseOptions,
+    MmcifWriteError, MmcifWriteOptions,
 };
 use crate::structure::{Model, ModelBuilder};
+use crate::topology::MoleculeInstanceId;
 use crate::units::{Quantity, DIMENSIONLESS, NANOMETER};
 
 const MIXED: &str = r#"
@@ -1459,8 +1460,9 @@ covale A N 1 A CA 1 doub
 #[test]
 fn mmcif_writer_rejects_unsupported_chemistry_and_invalid_hierarchy() {
     let dative = small_model_with_bond(BondOrder::Dative);
+    let classifications = classifications_for(&dative, MmcifEntityKind::NonPolymer);
     assert!(matches!(
-        mmcif::write(&dative, MmcifWriteOptions::default()),
+        mmcif::write_with_classifications(&dative, &classifications, MmcifWriteOptions::default()),
         Err(MmcifWriteError::UnsupportedBondOrder {
             order: BondOrder::Dative,
             ..
@@ -1500,7 +1502,13 @@ fn mmcif_writer_preserves_supported_bond_orders() {
         BondOrder::Quadruple,
     ] {
         let model = small_model_with_bond(order);
-        let written = mmcif::write(&model, MmcifWriteOptions::default()).unwrap();
+        let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
+        let written = mmcif::write_with_classifications(
+            &model,
+            &classifications,
+            MmcifWriteOptions::default(),
+        )
+        .unwrap();
         let interpreted =
             mmcif::interpret(&parse(&written), MmcifInterpretOptions::default()).unwrap();
         let round_trip = interpreted
@@ -1584,31 +1592,90 @@ fn mmcif_writer_requires_explicit_classification_for_hierarchy() {
         Err(MmcifWriteError::MissingEntityClassification(molecule))
     );
 
-    let report = report_with_entity_kinds(&model, &[MmcifEntityKind::NonPolymer]);
-    let written = mmcif::write_with_report(&model, &report, MmcifWriteOptions::default()).unwrap();
+    let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
+    let written =
+        mmcif::write_with_classifications(&model, &classifications, MmcifWriteOptions::default())
+            .unwrap();
     assert!(written.contains("1 non-polymer"));
     assert!(!written.contains("1 polymer"));
 }
 
 #[test]
+fn mmcif_writer_requires_explicit_classification_without_hierarchy() {
+    let model = small_single_atom_model("C");
+    let molecule = model.topology().instances().next().unwrap().0;
+    assert_eq!(
+        mmcif::write(&model, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::MissingEntityClassification(molecule))
+    );
+}
+
+#[test]
 fn mmcif_writer_does_not_infer_water_from_neutral_oxygen() {
     let model = small_single_atom_model("O");
-    let written = mmcif::write(&model, MmcifWriteOptions::default()).unwrap();
+    let molecule = model.topology().instances().next().unwrap().0;
+    assert_eq!(
+        mmcif::write(&model, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::MissingEntityClassification(molecule))
+    );
+
+    let classifications = classifications_for(&model, MmcifEntityKind::NonPolymer);
+    let written =
+        mmcif::write_with_classifications(&model, &classifications, MmcifWriteOptions::default())
+            .unwrap();
     assert!(written.contains("1 non-polymer"));
     assert!(!written.contains("1 water"));
 
-    let report = report_with_entity_kinds(&model, &[MmcifEntityKind::Water]);
-    let written = mmcif::write_with_report(&model, &report, MmcifWriteOptions::default()).unwrap();
+    let classifications = classifications_for(&model, MmcifEntityKind::Water);
+    let written =
+        mmcif::write_with_classifications(&model, &classifications, MmcifWriteOptions::default())
+            .unwrap();
     assert!(written.contains("1 water"));
 }
 
 #[test]
-fn mmcif_writer_uses_explicit_branched_kind_and_rejects_conflicts() {
+fn mmcif_writer_with_report_preserves_every_supported_source_kind() {
+    assert_report_kind(
+        &hierarchical_single_atom_model("GLY", "CA", "C"),
+        MmcifEntityKind::Polymer,
+        "polymer",
+    );
+    assert_report_kind(
+        &hierarchical_single_atom_model("NAG", "C1", "C"),
+        MmcifEntityKind::Branched,
+        "branched",
+    );
+    assert_report_kind(
+        &small_single_atom_model("C"),
+        MmcifEntityKind::NonPolymer,
+        "non-polymer",
+    );
+    assert_report_kind(
+        &small_single_atom_model("O"),
+        MmcifEntityKind::Water,
+        "water",
+    );
+}
+
+#[test]
+fn mmcif_writer_uses_explicit_polymer_and_branched_kinds() {
     let model = hierarchical_single_atom_model("NAG", "C1", "C");
-    let report = report_with_entity_kinds(&model, &[MmcifEntityKind::Branched]);
-    let written = mmcif::write_with_report(&model, &report, MmcifWriteOptions::default()).unwrap();
+    let classifications = classifications_for(&model, MmcifEntityKind::Branched);
+    let written =
+        mmcif::write_with_classifications(&model, &classifications, MmcifWriteOptions::default())
+            .unwrap();
     assert!(written.contains("1 branched"));
 
+    let classifications = classifications_for(&model, MmcifEntityKind::Polymer);
+    let written =
+        mmcif::write_with_classifications(&model, &classifications, MmcifWriteOptions::default())
+            .unwrap();
+    assert!(written.contains("1 polymer"));
+}
+
+#[test]
+fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classifications() {
+    let model = hierarchical_single_atom_model("NAG", "C1", "C");
     let molecule = model.topology().instances().next().unwrap().0;
     let report = report_with_entity_kinds(
         &model,
@@ -1621,6 +1688,81 @@ fn mmcif_writer_uses_explicit_branched_kind_and_rejects_conflicts() {
             ..
         }) if conflicted == molecule
     ));
+
+    let report = report_with_entity_kinds(&model, &[]);
+    assert_eq!(
+        mmcif::write_with_report(&model, &report, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::MissingEntityClassification(molecule))
+    );
+
+    let report = report_with_entity_kinds(
+        &model,
+        &[MmcifEntityKind::Other("unsupported-kind".to_owned())],
+    );
+    assert_eq!(
+        mmcif::write_with_report(&model, &report, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::UnsupportedEntityClassification {
+            molecule,
+            classification: "unsupported-kind".to_owned(),
+        })
+    );
+
+    let mut report = report_with_entity_kinds(&model, &[MmcifEntityKind::Branched]);
+    report.instances.push(report.instances[0].clone());
+    assert_eq!(
+        mmcif::write_with_report(&model, &report, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::DuplicateEntityClassification(molecule))
+    );
+
+    let mut duplicate = MmcifEntityClassifications::new();
+    duplicate
+        .insert(molecule, MmcifEntityKind::Branched)
+        .unwrap();
+    assert_eq!(
+        duplicate.insert(molecule, MmcifEntityKind::Polymer),
+        Err(MmcifWriteError::DuplicateEntityClassification(molecule))
+    );
+
+    let unknown = MoleculeInstanceId::new(u32::MAX);
+    let mut classifications = MmcifEntityClassifications::new();
+    classifications
+        .insert(unknown, MmcifEntityKind::NonPolymer)
+        .unwrap();
+    assert_eq!(
+        mmcif::write_with_classifications(&model, &classifications, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::UnknownClassifiedMolecule(unknown))
+    );
+}
+
+#[test]
+fn mmcif_writer_requires_one_classification_for_every_instance() {
+    let interpreted = mmcif::interpret(&parse(MIXED), MmcifInterpretOptions::default()).unwrap();
+    let model = interpreted.model();
+    let mut instances = model.topology().instances().map(|(id, _)| id);
+    let classified = instances.next().unwrap();
+    let missing = instances.next().unwrap();
+    let mut classifications = MmcifEntityClassifications::new();
+    classifications
+        .insert(classified, MmcifEntityKind::Polymer)
+        .unwrap();
+    assert_eq!(
+        mmcif::write_with_classifications(model, &classifications, MmcifWriteOptions::default()),
+        Err(MmcifWriteError::MissingEntityClassification(missing))
+    );
+}
+
+fn classifications_for(model: &Model, kind: MmcifEntityKind) -> MmcifEntityClassifications {
+    let mut classifications = MmcifEntityClassifications::new();
+    for (molecule, _) in model.topology().instances() {
+        classifications.insert(molecule, kind.clone()).unwrap();
+    }
+    classifications
+}
+
+fn assert_report_kind(model: &Model, kind: MmcifEntityKind, expected: &str) {
+    let report = report_with_entity_kinds(model, &[kind]);
+    let written = mmcif::write_with_report(model, &report, MmcifWriteOptions::default()).unwrap();
+    assert!(written.contains(&format!("1 {expected}")));
 }
 
 fn report_with_entity_kinds(model: &Model, kinds: &[MmcifEntityKind]) -> MmcifInterpretationReport {

@@ -101,7 +101,7 @@ impl fmt::Display for MmcifWriteError {
             ),
             Self::DuplicateEntityClassification(molecule) => write!(
                 f,
-                "the mmCIF interpretation report classifies {molecule} more than once"
+                "mmCIF entity semantics classify {molecule} more than once"
             ),
             Self::ConflictingEntityClassifications {
                 molecule,
@@ -119,7 +119,7 @@ impl fmt::Display for MmcifWriteError {
             ),
             Self::UnknownClassifiedMolecule(molecule) => write!(
                 f,
-                "the mmCIF interpretation report classifies unknown {molecule}"
+                "mmCIF entity semantics reference unknown {molecule}"
             ),
             Self::DuplicateAsymId(id) => {
                 write!(f, "duplicate mmCIF structural-instance ID `{id}`")
@@ -170,6 +170,56 @@ impl fmt::Display for MmcifWriteError {
 }
 
 impl std::error::Error for MmcifWriteError {}
+
+/// Explicit mmCIF entity semantics for generic molecule instances.
+///
+/// Generic [`Model`] and topology state intentionally do not classify
+/// molecules as polymers, branched entities, non-polymers, or water.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MmcifEntityClassifications {
+    kinds: BTreeMap<MoleculeInstanceId, MmcifEntityKind>,
+}
+
+impl MmcifEntityClassifications {
+    pub const fn new() -> Self {
+        Self {
+            kinds: BTreeMap::new(),
+        }
+    }
+
+    /// Assigns one explicit mmCIF entity kind to a molecule instance.
+    pub fn insert(
+        &mut self,
+        molecule: MoleculeInstanceId,
+        kind: MmcifEntityKind,
+    ) -> Result<(), MmcifWriteError> {
+        if self.kinds.contains_key(&molecule) {
+            return Err(MmcifWriteError::DuplicateEntityClassification(molecule));
+        }
+        self.kinds.insert(molecule, kind);
+        Ok(())
+    }
+
+    /// Returns the assigned kind for one molecule instance.
+    pub fn get(&self, molecule: MoleculeInstanceId) -> Option<&MmcifEntityKind> {
+        self.kinds.get(&molecule)
+    }
+
+    /// Iterates over explicitly classified molecule instances in ID order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MmcifEntityKind)> {
+        self.kinds.iter().map(|(&molecule, kind)| (molecule, kind))
+    }
+
+    /// Returns the number of explicitly classified molecule instances.
+    pub fn len(&self) -> usize {
+        self.kinds.len()
+    }
+
+    /// Returns whether no molecule instance has been classified.
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EntityKind {
@@ -252,7 +302,24 @@ pub fn write_mmcif_model(
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
-    let prepared = prepare_model(model, None)?;
+    let classifications = normalize_entity_classifications(model, std::iter::empty())?;
+    let prepared = prepare_model(model, &classifications)?;
+    render_model(&prepared, &options)
+}
+
+pub fn write_mmcif_model_with_classifications(
+    model: &Model,
+    classifications: &MmcifEntityClassifications,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    validate_options(&options)?;
+    let classifications = normalize_entity_classifications(
+        model,
+        classifications
+            .iter()
+            .map(|(molecule, kind)| (molecule, vec![kind.clone()])),
+    )?;
+    let prepared = prepare_model(model, &classifications)?;
     render_model(&prepared, &options)
 }
 
@@ -262,8 +329,14 @@ pub fn write_mmcif_model_with_report(
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
-    let classifications = report_entity_classifications(model, report)?;
-    let prepared = prepare_model(model, Some(&classifications))?;
+    let classifications = normalize_entity_classifications(
+        model,
+        report
+            .instances()
+            .iter()
+            .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
+    )?;
+    let prepared = prepare_model(model, &classifications)?;
     render_model(&prepared, &options)
 }
 
@@ -288,7 +361,7 @@ fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> 
 
 fn prepare_model(
     model: &Model,
-    classifications: Option<&BTreeMap<MoleculeInstanceId, EntityKind>>,
+    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
 ) -> Result<PreparedModel, MmcifWriteError> {
     let mut reserved_asym_ids = BTreeSet::new();
     for (id, molecule) in model.topology().instances() {
@@ -343,7 +416,7 @@ fn prepare_model(
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
         validate_graph_chemistry(molecule, definition)?;
         let entity_id = one_based_serial(id.raw()).to_string();
-        let kind = entity_kind(molecule, definition, classifications)?;
+        let kind = entity_kind(molecule, classifications)?;
         entities.push(EntityRow {
             id: entity_id.clone(),
             kind,
@@ -412,35 +485,25 @@ fn prepare_model(
 
 fn entity_kind(
     molecule: &MoleculeInstance,
-    definition: &MoleculeDefinition,
-    classifications: Option<&BTreeMap<MoleculeInstanceId, EntityKind>>,
+    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
 ) -> Result<EntityKind, MmcifWriteError> {
-    if let Some(classifications) = classifications {
-        return classifications
-            .get(&molecule.id())
-            .copied()
-            .ok_or(MmcifWriteError::MissingEntityClassification(molecule.id()));
-    }
-    if definition.hierarchy().is_some() {
-        return Err(MmcifWriteError::MissingEntityClassification(molecule.id()));
-    }
-    Ok(EntityKind::NonPolymer)
+    classifications
+        .get(&molecule.id())
+        .copied()
+        .ok_or(MmcifWriteError::MissingEntityClassification(molecule.id()))
 }
 
-fn report_entity_classifications(
+fn normalize_entity_classifications(
     model: &Model,
-    report: &MmcifInterpretationReport,
+    entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<MmcifEntityKind>)>,
 ) -> Result<BTreeMap<MoleculeInstanceId, EntityKind>, MmcifWriteError> {
     let mut classifications = BTreeMap::new();
-    for instance in report.instances() {
-        let molecule = instance.molecule();
+    for (molecule, source_kinds) in entries {
         if model.topology().instance(molecule).is_err() {
             return Err(MmcifWriteError::UnknownClassifiedMolecule(molecule));
         }
-        let kinds = instance
-            .entity_kinds()
-            .iter()
-            .cloned()
+        let kinds = source_kinds
+            .into_iter()
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
