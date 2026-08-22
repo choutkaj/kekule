@@ -1,7 +1,6 @@
 use std::fmt;
 
 use crate::geometry::Point3;
-use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
 
 /// A dense numerical coordinate array in canonical model length units.
@@ -21,7 +20,6 @@ impl Positions {
     {
         let factor = positions.unit().conversion_factor_to(MODEL_LENGTH_UNIT)?;
         let source = positions.value().as_ref();
-        validate_position_capacity(source.len())?;
         let values = source
             .iter()
             .copied()
@@ -29,9 +27,7 @@ impl Positions {
             .map(|(index, point)| {
                 let point = Point3::new(point.x * factor, point.y * factor, point.z * factor);
                 if !point.is_finite() {
-                    return Err(PositionError::NonFinitePosition {
-                        index: TopologyAtomIndex::new(index as u32),
-                    });
+                    return Err(PositionError::NonFinitePosition { index });
                 }
                 Ok(point)
             })
@@ -40,11 +36,10 @@ impl Positions {
     }
 
     /// Constructs a zero-filled coordinate array with `len` entries.
-    pub fn zeros(len: usize) -> Result<Self, PositionError> {
-        validate_position_capacity(len)?;
-        Ok(Self {
+    pub fn zeros(len: usize) -> Self {
+        Self {
             values: vec![Point3::origin(); len],
-        })
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -59,17 +54,17 @@ impl Positions {
         Quantity::new(self.values.as_slice(), MODEL_LENGTH_UNIT)
     }
 
-    pub fn position_at(&self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
+    pub fn position_at(&self, index: usize) -> Result<Quantity<Point3>, PositionError> {
         self.values
-            .get(index.index())
+            .get(index)
             .copied()
             .map(|point| Quantity::new(point, MODEL_LENGTH_UNIT))
-            .ok_or(PositionError::InvalidAtomIndex(index))
+            .ok_or(PositionError::InvalidIndex { index })
     }
 
     pub fn set_position_at(
         &mut self,
-        index: TopologyAtomIndex,
+        index: usize,
         position: Quantity<Point3>,
     ) -> Result<(), PositionError> {
         let point = position.to_unit(MODEL_LENGTH_UNIT)?.to_value();
@@ -78,8 +73,8 @@ impl Positions {
         }
         let destination = self
             .values
-            .get_mut(index.index())
-            .ok_or(PositionError::InvalidAtomIndex(index))?;
+            .get_mut(index)
+            .ok_or(PositionError::InvalidIndex { index })?;
         *destination = point;
         Ok(())
     }
@@ -118,9 +113,7 @@ impl Positions {
         for (index, point) in source.iter().copied().enumerate() {
             let converted = Point3::new(point.x * factor, point.y * factor, point.z * factor);
             if !converted.is_finite() {
-                return Err(PositionError::NonFinitePosition {
-                    index: TopologyAtomIndex::new(index as u32),
-                });
+                return Err(PositionError::NonFinitePosition { index });
             }
         }
         Ok(factor)
@@ -133,35 +126,25 @@ impl Positions {
     }
 }
 
-fn validate_position_capacity(actual: usize) -> Result<(), PositionError> {
-    crate::core::checked_fixed_id_collection_len(0, actual)
-        .map_err(|_| PositionError::CapacityOverflow)?;
-    Ok(())
-}
-
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum PositionError {
-    InvalidAtomIndex(TopologyAtomIndex),
+    InvalidIndex { index: usize },
     PositionCountMismatch { expected: usize, actual: usize },
-    NonFinitePosition { index: TopologyAtomIndex },
-    CapacityOverflow,
+    NonFinitePosition { index: usize },
     Unit(UnitError),
 }
 
 impl fmt::Display for PositionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidAtomIndex(index) => write!(formatter, "invalid {index}"),
+            Self::InvalidIndex { index } => write!(formatter, "invalid position index {index}"),
             Self::PositionCountMismatch { expected, actual } => write!(
                 formatter,
                 "positions require {expected} coordinates, but received {actual}"
             ),
             Self::NonFinitePosition { index } => {
                 write!(formatter, "position at {index} is not finite")
-            }
-            Self::CapacityOverflow => {
-                formatter.write_str("position count exceeds fixed-width dense-index capacity")
             }
             Self::Unit(error) => write!(formatter, "invalid position unit: {error}"),
         }

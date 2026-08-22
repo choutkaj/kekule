@@ -616,7 +616,7 @@ mod tests {
     use kekule::core::{Atom, BondOrder, Element, PropValue};
     use kekule::geometry::{Matrix3, Point3, Vector3};
     use kekule::structure::AtomData;
-    use kekule::topology::{Topology, TopologyAtomIndex, TopologyBuilder};
+    use kekule::topology::{Topology, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
 
     fn make_topology(atom_count: usize) -> Arc<Topology> {
@@ -853,9 +853,7 @@ mod tests {
             .unwrap();
         moving_frame.set_step(Some(25));
         let mut atom_data = AtomData::new(topology.atom_count());
-        atom_data
-            .set_occupancy_at(TopologyAtomIndex::new(0), Some(0.7))
-            .unwrap();
+        atom_data.set_occupancy_at(0, Some(0.7)).unwrap();
         moving_frame.set_atom_data(atom_data.clone()).unwrap();
         moving_frame
             .props_mut()

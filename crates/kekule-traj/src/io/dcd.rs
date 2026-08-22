@@ -1278,14 +1278,14 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "forces",
             ));
         }
-        if !frame.atom_data().is_empty() {
+        if frame.atom_data().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "atom data",
             ));
         }
-        if !frame.bond_data().is_empty() {
+        if frame.bond_data().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
