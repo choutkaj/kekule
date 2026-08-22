@@ -9,7 +9,7 @@ use kekule::structure::{
     AtomData, AtomDataError, BondData, BondDataError, ModelError, ModelView, PositionError,
     Positions,
 };
-use kekule::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
+use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{
     Quantity, Unit, UnitError, MODEL_FORCE_UNIT, MODEL_TIME_UNIT, MODEL_VELOCITY_UNIT,
 };
@@ -35,9 +35,7 @@ impl DenseVectors {
             .map(|(index, vector)| {
                 let vector = Vector3::new(vector.x * factor, vector.y * factor, vector.z * factor);
                 if !vector.is_finite() {
-                    return Err(FrameError::NonFiniteVector {
-                        index: TopologyAtomIndex::new(index as u32),
-                    });
+                    return Err(FrameError::NonFiniteVector { index });
                 }
                 Ok(vector)
             })
@@ -84,9 +82,7 @@ impl DenseVectors {
         for (index, vector) in source.iter().copied().enumerate() {
             let converted = Vector3::new(vector.x * factor, vector.y * factor, vector.z * factor);
             if !converted.is_finite() {
-                return Err(FrameError::NonFiniteVector {
-                    index: TopologyAtomIndex::new(index as u32),
-                });
+                return Err(FrameError::NonFiniteVector { index });
             }
         }
         Ok(factor)
@@ -506,8 +502,7 @@ pub struct FrameBuffer {
 impl FrameBuffer {
     pub fn new(topology: Arc<Topology>) -> Self {
         Self {
-            positions: Positions::zeros(topology.atom_count())
-                .expect("topology atom count fits dense index capacity"),
+            positions: Positions::zeros(topology.atom_count()),
             cell: None,
             atom_data: AtomData::new(topology.atom_count()),
             bond_data: BondData::new(topology.bond_count()),
@@ -1122,7 +1117,7 @@ pub enum FrameError {
     TopologyMismatch,
     AtomCountMismatch { expected: usize, actual: usize },
     BondCountMismatch { expected: usize, actual: usize },
-    NonFiniteVector { index: TopologyAtomIndex },
+    NonFiniteVector { index: usize },
     NonFiniteTime,
     Position(PositionError),
     AtomData(AtomDataError),
@@ -1592,10 +1587,12 @@ impl From<TrajectoryCodecErrorContext> for TrajectoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
+    use kekule::core::{Atom, BondOrder, Element, MoleculeEditor, PropValue};
     use kekule::geometry::Point3;
-    use kekule::topology::{TopologyAtomIndex, TopologyBuilder};
-    use kekule::units::{ANGSTROM, KELVIN, PICOSECOND};
+    use kekule::topology::TopologyBuilder;
+    use kekule::units::{
+        ANGSTROM, DIMENSIONLESS, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
+    };
     use std::sync::Arc;
 
     fn make_topology(with_bond: bool) -> Arc<Topology> {
@@ -1623,20 +1620,27 @@ mod tests {
     #[test]
     fn vector_arrays_are_topology_free_unit_aware_and_equal_by_values() {
         let vectors = [Vector3::new(1.0, 2.0, 3.0)];
-        let velocities = Velocities::new(Quantity::new(vectors, MODEL_VELOCITY_UNIT)).unwrap();
+        let velocities = Velocities::new(Quantity::new(vectors, NANOMETER / PICOSECOND)).unwrap();
         let same = Velocities::new(Quantity::new(vectors, MODEL_VELOCITY_UNIT)).unwrap();
-        assert_eq!(velocities, same);
+        let converted_velocity = velocities.values().value()[0];
+        assert!((converted_velocity.x - 10.0).abs() < 1.0e-12);
+        assert!((converted_velocity.y - 20.0).abs() < 1.0e-12);
+        assert!((converted_velocity.z - 30.0).abs() < 1.0e-12);
+        assert_ne!(velocities, same);
         assert_eq!(velocities.len(), 1);
         assert!(!velocities.is_empty());
 
-        let forces = Forces::zeros(3);
-        assert_eq!(forces.len(), 3);
+        let forces = Forces::new(Quantity::new(vectors, KILOJOULE_PER_MOLE / NANOMETER)).unwrap();
+        let converted_force = forces.values().value()[0];
+        assert!((converted_force.x - 0.1).abs() < 1.0e-12);
+        assert!((converted_force.y - 0.2).abs() < 1.0e-12);
+        assert!((converted_force.z - 0.3).abs() < 1.0e-12);
         assert!(matches!(
             Velocities::new(Quantity::new(
                 [Vector3::new(f64::NAN, 0.0, 0.0)],
                 MODEL_VELOCITY_UNIT
             )),
-            Err(FrameError::NonFiniteVector { index }) if index == TopologyAtomIndex::new(0)
+            Err(FrameError::NonFiniteVector { index: 0 })
         ));
         assert!(matches!(
             Forces::new(Quantity::new(vectors, KELVIN)),
@@ -1699,7 +1703,7 @@ mod tests {
         );
         frame
             .atom_data_mut()
-            .set_occupancy_at(TopologyAtomIndex::new(0), Some(0.8))
+            .set_occupancy_at(0, Some(0.8))
             .unwrap();
         frame
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
@@ -1747,6 +1751,14 @@ mod tests {
         let force_ptr = buffer.forces.values().value().as_ptr();
         let points = [Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)];
         let vectors = [Vector3::new(1.0, 0.0, 0.0); 2];
+        let mut atom_data = AtomData::new(topology.atom_count());
+        atom_data.set_occupancy_at(0, Some(0.75)).unwrap();
+        let mut bond_data = BondData::new(topology.bond_count());
+        bond_data
+            .set_property("score", Quantity::new([Some(2.0)], DIMENSIONLESS))
+            .unwrap();
+        let mut props = PropMap::new();
+        props.insert("codec:value".into(), PropValue::Int(7));
 
         buffer
             .replace_from_data(
@@ -1754,7 +1766,10 @@ mod tests {
                     .with_velocities(Quantity::new(vectors.as_slice(), MODEL_VELOCITY_UNIT))
                     .with_forces(Quantity::new(vectors.as_slice(), MODEL_FORCE_UNIT))
                     .with_time(Quantity::new(1.0, PICOSECOND))
-                    .with_step(4),
+                    .with_step(4)
+                    .with_atom_data(&atom_data)
+                    .with_bond_data(&bond_data)
+                    .with_props(&props),
             )
             .unwrap();
         assert!(buffer.frame_view().velocities().is_some());
@@ -1762,6 +1777,9 @@ mod tests {
         assert_eq!(buffer.positions().values().value().as_ptr(), position_ptr);
         assert_eq!(buffer.velocities.values().value().as_ptr(), velocity_ptr);
         assert_eq!(buffer.forces.values().value().as_ptr(), force_ptr);
+        assert!(buffer.atom_data().has_data());
+        assert!(buffer.bond_data().has_data());
+        assert_eq!(buffer.props().get("codec:value"), Some(&PropValue::Int(7)));
 
         let before = buffer.frame_view().positions().values().value().to_vec();
         assert!(matches!(
@@ -1783,6 +1801,9 @@ mod tests {
         assert!(buffer.frame_view().forces().is_none());
         assert!(buffer.frame_view().time().is_none());
         assert!(buffer.frame_view().step().is_none());
+        assert!(!buffer.atom_data().has_data());
+        assert!(!buffer.bond_data().has_data());
+        assert!(buffer.props().is_empty());
     }
 
     #[test]
@@ -1800,13 +1821,21 @@ mod tests {
 
     #[test]
     fn memory_reader_and_writer_round_trip_validated_frames() {
-        let topology = make_topology(false);
+        let topology = make_topology(true);
         let mut trajectory = Trajectory::new(Arc::clone(&topology));
         let mut frame = TrajectoryFrame::new(
-            positions(&[Point3::new(5.0, 0.0, 0.0)]),
+            positions(&[Point3::new(5.0, 0.0, 0.0), Point3::new(6.0, 0.0, 0.0)]),
             topology.bond_count(),
         );
         frame.set_step(Some(9));
+        frame
+            .atom_data_mut()
+            .set_occupancy_at(0, Some(0.6))
+            .unwrap();
+        frame
+            .bond_data_mut()
+            .set_property("score", Quantity::new([Some(4.0)], DIMENSIONLESS))
+            .unwrap();
         trajectory.push(frame).unwrap();
 
         let mut reader = MemoryTrajectoryReader::new(&trajectory);
@@ -1814,6 +1843,11 @@ mod tests {
         assert!(reader.read_next(&mut buffer).unwrap());
         assert_eq!(buffer.positions().values().value()[0].x, 5.0);
         assert_eq!(buffer.frame_view().step(), Some(9));
+        assert_eq!(buffer.atom_data().occupancy_at(0).unwrap(), Some(0.6));
+        assert_eq!(
+            buffer.bond_data().property_value_at("score", 0).unwrap(),
+            Some(Quantity::new(4.0, DIMENSIONLESS))
+        );
         assert!(!reader.read_next(&mut buffer).unwrap());
 
         let mut writer = MemoryTrajectoryWriter::new(Arc::clone(&topology));
@@ -1821,6 +1855,35 @@ mod tests {
         let written = writer.to_trajectory();
         assert_eq!(written.len(), 1);
         assert_eq!(written.frames().next().unwrap().step(), Some(9));
+        assert_eq!(
+            written
+                .frame(0)
+                .unwrap()
+                .atom_data()
+                .occupancy_at(0)
+                .unwrap(),
+            Some(0.6)
+        );
+        assert_eq!(
+            written
+                .frame(0)
+                .unwrap()
+                .bond_data()
+                .property_value_at("score", 0)
+                .unwrap(),
+            Some(Quantity::new(4.0, DIMENSIONLESS))
+        );
+
+        let independent = make_topology(true);
+        let other = TrajectoryFrame::new(
+            positions(&[Point3::origin(), Point3::origin()]),
+            independent.bond_count(),
+        );
+        let mut writer = MemoryTrajectoryWriter::new(Arc::clone(&topology));
+        assert!(matches!(
+            writer.write_frame(other.view(&independent).unwrap()),
+            Err(TrajectoryError::TopologyMismatch)
+        ));
     }
 
     #[test]
@@ -1836,6 +1899,19 @@ mod tests {
         let mut buffer = FrameBuffer::new(Arc::clone(&topology));
         assert!(reader.read_next(&mut buffer).unwrap());
         assert_eq!(buffer.positions().values().value()[0].x, 6.0);
+
+        let assertion = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
+        let mut reader = CoordinateFrameReader::new(
+            Arc::clone(&topology),
+            assertion,
+            [Quantity::new(vec![Point3::origin()], ANGSTROM)],
+        )
+        .unwrap();
+        let mut wrong_buffer = FrameBuffer::new(make_topology(false));
+        assert!(matches!(
+            reader.read_next(&mut wrong_buffer),
+            Err(TrajectoryError::TopologyMismatch)
+        ));
 
         let independent = make_topology(false);
         let assertion = AtomOrderAssertion::assert_file_uses_topology_order(&topology);

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::topology::{TopologyAtomIndex, TopologyBondIndex};
 use crate::units::{Quantity, Unit, UnitError, DIMENSIONLESS, SQUARE_ANGSTROM};
 
 const MAX_PROPERTY_NAME_LEN: usize = 128;
@@ -236,9 +235,14 @@ impl AtomData {
         self.len
     }
 
-    /// Returns whether every supported scientific column is wholly absent.
+    /// Returns whether the logical atom dimension is zero.
     pub fn is_empty(&self) -> bool {
-        self.occupancies.is_none() && self.b_factors.is_none() && self.properties.is_empty()
+        self.len == 0
+    }
+
+    /// Returns whether at least one canonical or custom data column is present.
+    pub fn has_data(&self) -> bool {
+        self.occupancies.is_some() || self.b_factors.is_some() || !self.properties.is_empty()
     }
 
     pub fn occupancies(&self) -> Option<&[Option<f64>]> {
@@ -292,13 +296,13 @@ impl AtomData {
     pub fn property_value_at(
         &self,
         name: &str,
-        index: TopologyAtomIndex,
+        index: usize,
     ) -> Result<Option<Quantity<f64>>, AtomDataError> {
         validate_atom_property_name(name)?;
         validate_index(self.atom_count(), index)?;
         Ok(self.properties.get(name).and_then(|column| {
             column
-                .value(index.index())
+                .value(index)
                 .map(|value| Quantity::new(value, column.unit))
         }))
     }
@@ -311,45 +315,36 @@ impl AtomData {
     pub fn set_property_value_at(
         &mut self,
         name: &str,
-        index: TopologyAtomIndex,
+        index: usize,
         value: Option<Quantity<f64>>,
     ) -> Result<(), AtomDataError> {
         validate_atom_property_name(name)?;
         validate_index(self.atom_count(), index)?;
         let atom_count = self.atom_count();
-        set_named_property_column_value(
-            &mut self.properties,
-            name,
-            atom_count,
-            index.index(),
-            value,
-        )
-        .map_err(|error| atom_property_column_error(name, error))
+        set_named_property_column_value(&mut self.properties, name, atom_count, index, value)
+            .map_err(|error| atom_property_column_error(name, error))
     }
 
-    pub fn occupancy_at(&self, index: TopologyAtomIndex) -> Result<Option<f64>, AtomDataError> {
+    pub fn occupancy_at(&self, index: usize) -> Result<Option<f64>, AtomDataError> {
         validate_index(self.atom_count(), index)?;
         Ok(self
             .occupancies
             .as_ref()
-            .and_then(|column| column.value(index.index())))
+            .and_then(|column| column.value(index)))
     }
 
-    pub fn b_factor_at(
-        &self,
-        index: TopologyAtomIndex,
-    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
+    pub fn b_factor_at(&self, index: usize) -> Result<Option<Quantity<f64>>, AtomDataError> {
         validate_index(self.atom_count(), index)?;
         Ok(self.b_factors.as_ref().and_then(|column| {
             column
-                .value(index.index())
+                .value(index)
                 .map(|value| Quantity::new(value, column.unit))
         }))
     }
 
     pub fn set_occupancy_at(
         &mut self,
-        index: TopologyAtomIndex,
+        index: usize,
         value: Option<f64>,
     ) -> Result<(), AtomDataError> {
         validate_index(self.atom_count(), index)?;
@@ -357,7 +352,7 @@ impl AtomData {
         set_optional_property_column_value(
             &mut self.occupancies,
             len,
-            index.index(),
+            index,
             value.map(|value| Quantity::new(value, DIMENSIONLESS)),
             DIMENSIONLESS,
         )
@@ -366,19 +361,13 @@ impl AtomData {
 
     pub fn set_b_factor_at(
         &mut self,
-        index: TopologyAtomIndex,
+        index: usize,
         value: Option<Quantity<f64>>,
     ) -> Result<(), AtomDataError> {
         validate_index(self.atom_count(), index)?;
         let len = self.atom_count();
-        set_optional_property_column_value(
-            &mut self.b_factors,
-            len,
-            index.index(),
-            value,
-            SQUARE_ANGSTROM,
-        )
-        .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))
+        set_optional_property_column_value(&mut self.b_factors, len, index, value, SQUARE_ANGSTROM)
+            .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))
     }
 
     /// Replaces the complete occupancy column transactionally. An all-absent
@@ -433,20 +422,16 @@ fn atom_data_column_error(field: AtomDataField, error: ScalarPropertyColumnError
             AtomDataError::AtomCountMismatch { expected, actual }
         }
         ScalarPropertyColumnError::NonFiniteValue { index } => match field {
-            AtomDataField::Occupancy => AtomDataError::NonFiniteOccupancy {
-                index: TopologyAtomIndex::new(index as u32),
-            },
-            AtomDataField::BFactor => AtomDataError::NonFiniteBFactor {
-                index: TopologyAtomIndex::new(index as u32),
-            },
+            AtomDataField::Occupancy => AtomDataError::NonFiniteOccupancy { index },
+            AtomDataField::BFactor => AtomDataError::NonFiniteBFactor { index },
         },
         ScalarPropertyColumnError::Unit(error) => AtomDataError::Unit(error),
     }
 }
 
-fn validate_index(len: usize, index: TopologyAtomIndex) -> Result<(), AtomDataError> {
-    if index.index() >= len {
-        return Err(AtomDataError::InvalidAtomIndex(index));
+fn validate_index(len: usize, index: usize) -> Result<(), AtomDataError> {
+    if index >= len {
+        return Err(AtomDataError::InvalidIndex { index });
     }
     Ok(())
 }
@@ -477,7 +462,7 @@ fn atom_property_column_error(name: &str, error: ScalarPropertyColumnError) -> A
         ScalarPropertyColumnError::NonFiniteValue { index } => {
             AtomDataError::NonFinitePropertyValue {
                 property: name.to_owned(),
-                index: TopologyAtomIndex::new(index as u32),
+                index,
             }
         }
         ScalarPropertyColumnError::Unit(error) => AtomDataError::PropertyUnit {
@@ -494,12 +479,14 @@ pub enum AtomDataError {
         expected: usize,
         actual: usize,
     },
-    InvalidAtomIndex(TopologyAtomIndex),
+    InvalidIndex {
+        index: usize,
+    },
     NonFiniteOccupancy {
-        index: TopologyAtomIndex,
+        index: usize,
     },
     NonFiniteBFactor {
-        index: TopologyAtomIndex,
+        index: usize,
     },
     InvalidPropertyName {
         name: String,
@@ -514,7 +501,7 @@ pub enum AtomDataError {
     },
     NonFinitePropertyValue {
         property: String,
-        index: TopologyAtomIndex,
+        index: usize,
     },
     PropertyUnit {
         property: String,
@@ -530,7 +517,7 @@ impl fmt::Display for AtomDataError {
                 formatter,
                 "atom data requires {expected} values per present column, but received {actual}"
             ),
-            Self::InvalidAtomIndex(index) => write!(formatter, "invalid {index}"),
+            Self::InvalidIndex { index } => write!(formatter, "invalid atom-data index {index}"),
             Self::NonFiniteOccupancy { index } => {
                 write!(formatter, "occupancy at {index} must be finite")
             }
@@ -601,8 +588,14 @@ impl BondData {
         self.len
     }
 
+    /// Returns whether the logical bond dimension is zero.
     pub fn is_empty(&self) -> bool {
-        self.properties.is_empty()
+        self.len == 0
+    }
+
+    /// Returns whether at least one custom data column is present.
+    pub fn has_data(&self) -> bool {
+        !self.properties.is_empty()
     }
 
     /// Iterates custom scalar properties in stable name order.
@@ -645,13 +638,13 @@ impl BondData {
     pub fn property_value_at(
         &self,
         name: &str,
-        index: TopologyBondIndex,
+        index: usize,
     ) -> Result<Option<Quantity<f64>>, BondDataError> {
         validate_bond_property_name(name)?;
         validate_bond_index(self.bond_count(), index)?;
         Ok(self.properties.get(name).and_then(|column| {
             column
-                .value(index.index())
+                .value(index)
                 .map(|value| Quantity::new(value, column.unit))
         }))
     }
@@ -664,20 +657,14 @@ impl BondData {
     pub fn set_property_value_at(
         &mut self,
         name: &str,
-        index: TopologyBondIndex,
+        index: usize,
         value: Option<Quantity<f64>>,
     ) -> Result<(), BondDataError> {
         validate_bond_property_name(name)?;
         validate_bond_index(self.bond_count(), index)?;
         let bond_count = self.bond_count();
-        set_named_property_column_value(
-            &mut self.properties,
-            name,
-            bond_count,
-            index.index(),
-            value,
-        )
-        .map_err(|error| bond_property_column_error(name, error))
+        set_named_property_column_value(&mut self.properties, name, bond_count, index, value)
+            .map_err(|error| bond_property_column_error(name, error))
     }
 }
 
@@ -690,9 +677,9 @@ fn validate_bond_property_name(name: &str) -> Result<(), BondDataError> {
     Ok(())
 }
 
-fn validate_bond_index(len: usize, index: TopologyBondIndex) -> Result<(), BondDataError> {
-    if index.index() >= len {
-        return Err(BondDataError::InvalidBondIndex(index));
+fn validate_bond_index(len: usize, index: usize) -> Result<(), BondDataError> {
+    if index >= len {
+        return Err(BondDataError::InvalidIndex { index });
     }
     Ok(())
 }
@@ -709,7 +696,7 @@ fn bond_property_column_error(name: &str, error: ScalarPropertyColumnError) -> B
         ScalarPropertyColumnError::NonFiniteValue { index } => {
             BondDataError::NonFinitePropertyValue {
                 property: name.to_owned(),
-                index: TopologyBondIndex::new(index as u32),
+                index,
             }
         }
         ScalarPropertyColumnError::Unit(error) => BondDataError::PropertyUnit {
@@ -722,7 +709,9 @@ fn bond_property_column_error(name: &str, error: ScalarPropertyColumnError) -> B
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum BondDataError {
-    InvalidBondIndex(TopologyBondIndex),
+    InvalidIndex {
+        index: usize,
+    },
     InvalidPropertyName {
         name: String,
     },
@@ -733,7 +722,7 @@ pub enum BondDataError {
     },
     NonFinitePropertyValue {
         property: String,
-        index: TopologyBondIndex,
+        index: usize,
     },
     PropertyUnit {
         property: String,
@@ -744,7 +733,7 @@ pub enum BondDataError {
 impl fmt::Display for BondDataError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidBondIndex(index) => write!(formatter, "invalid {index}"),
+            Self::InvalidIndex { index } => write!(formatter, "invalid bond-data index {index}"),
             Self::InvalidPropertyName { name } => write!(
                 formatter,
                 "invalid bond property name {name:?}; use a 1-{MAX_PROPERTY_NAME_LEN} character ASCII identifier"

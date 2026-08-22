@@ -208,11 +208,11 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.positions.position_at(index)?)
+        Ok(self.positions.position_at(index.index())?)
     }
 
     pub fn position_at(&self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position_at(index)
+        self.positions.position_at(index.index())
     }
 
     pub fn set_position(
@@ -224,7 +224,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.positions.set_position_at(index, position)?)
+        Ok(self.positions.set_position_at(index.index(), position)?)
     }
 
     pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), PositionError>
@@ -285,7 +285,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.occupancy_at(index)?)
+        Ok(self.atom_data.occupancy_at(index.index())?)
     }
 
     pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
@@ -293,7 +293,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.b_factor_at(index)?)
+        Ok(self.atom_data.b_factor_at(index.index())?)
     }
 
     pub fn set_occupancy(
@@ -305,7 +305,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.set_occupancy_at(index, value)?)
+        Ok(self.atom_data.set_occupancy_at(index.index(), value)?)
     }
 
     pub fn set_b_factor(
@@ -317,7 +317,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.set_b_factor_at(index, value)?)
+        Ok(self.atom_data.set_b_factor_at(index.index(), value)?)
     }
 
     pub fn atom_property_value(
@@ -329,7 +329,7 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.property_value_at(name, index)?)
+        Ok(self.atom_data.property_value_at(name, index.index())?)
     }
 
     pub fn set_atom_property_value(
@@ -342,7 +342,9 @@ impl Model {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.set_property_value_at(name, index, value)?)
+        Ok(self
+            .atom_data
+            .set_property_value_at(name, index.index(), value)?)
     }
 
     pub fn bond_property_value(
@@ -354,7 +356,7 @@ impl Model {
             .topology
             .bond_index(bond)
             .ok_or(ModelError::InvalidBondId(bond))?;
-        Ok(self.bond_data.property_value_at(name, index)?)
+        Ok(self.bond_data.property_value_at(name, index.index())?)
     }
 
     pub fn set_bond_property_value(
@@ -367,7 +369,9 @@ impl Model {
             .topology
             .bond_index(bond)
             .ok_or(ModelError::InvalidBondId(bond))?;
-        Ok(self.bond_data.set_property_value_at(name, index, value)?)
+        Ok(self
+            .bond_data
+            .set_property_value_at(name, index.index(), value)?)
     }
 
     pub fn atom_count(&self) -> usize {
@@ -565,11 +569,11 @@ impl<'a> ModelView<'a> {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.positions.position_at(index)?)
+        Ok(self.positions.position_at(index.index())?)
     }
 
     pub fn position_at(self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position_at(index)
+        self.positions.position_at(index.index())
     }
 
     pub const fn cell(self) -> Option<&'a PeriodicCell> {
@@ -589,7 +593,7 @@ impl<'a> ModelView<'a> {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.occupancy_at(index)?)
+        Ok(self.atom_data.occupancy_at(index.index())?)
     }
 
     pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
@@ -597,7 +601,7 @@ impl<'a> ModelView<'a> {
             .topology
             .atom_index(atom)
             .ok_or(ModelError::InvalidAtomId(atom))?;
-        Ok(self.atom_data.b_factor_at(index)?)
+        Ok(self.atom_data.b_factor_at(index.index())?)
     }
 
     pub fn atom_count(self) -> usize {
