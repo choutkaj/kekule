@@ -158,7 +158,7 @@ fn retain_normalized(
         .iter()
         .flat_map(|(source_instance, target_instance)| {
             topology
-                .graph_for_instance(*source_instance)
+                .molecule_for_instance(*source_instance)
                 .expect("retained source instance was validated")
                 .atom_ids()
                 .map(|atom| {
@@ -172,7 +172,7 @@ fn retain_normalized(
         .iter()
         .flat_map(|(source_instance, target_instance)| {
             topology
-                .graph_for_instance(*source_instance)
+                .molecule_for_instance(*source_instance)
                 .expect("retained source instance was validated")
                 .bond_ids()
                 .map(|bond| {

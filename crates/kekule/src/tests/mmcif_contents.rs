@@ -303,12 +303,16 @@ fn assert_declared_bond(
         .definition_for_instance(left.molecule())
         .expect("connection molecule definition");
     let bond = definition
-        .graph()
+        .molecule()
         .bond_between(left.atom(), right.atom())
         .expect("valid connection atoms")
         .expect("declared connection bond");
     assert_eq!(
-        definition.graph().bond(bond).expect("declared bond").order,
+        definition
+            .molecule()
+            .bond(bond)
+            .expect("declared bond")
+            .order,
         order
     );
 }
@@ -486,9 +490,9 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
         4
     );
     for (_, definition) in &instances {
-        assert!(definition.graph().props().is_empty());
+        assert!(definition.molecule().props().is_empty());
         assert!(definition
-            .graph()
+            .molecule()
             .atoms()
             .all(|(_, atom)| atom.props.keys().all(|key| !key.starts_with("mmcif."))));
     }
@@ -522,7 +526,7 @@ fn mmcif_connectivity_candidates_do_not_create_bonds() {
         .model()
         .topology()
         .definitions()
-        .all(|(_, definition)| definition.graph().validate_connected().is_ok()));
+        .all(|(_, definition)| definition.molecule().validate_connected().is_ok()));
     assert_eq!(interpreted.report().connectivity_candidates(), 2);
 }
 
@@ -1319,7 +1323,13 @@ covale A N 1 A CA 1 doub
     let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
     let first = result.model().topology().definitions().next().unwrap().1;
     assert_eq!(
-        first.graph().bonds().next().expect("declared bond").1.order,
+        first
+            .molecule()
+            .bonds()
+            .next()
+            .expect("declared bond")
+            .1
+            .order,
         BondOrder::Double
     );
 
@@ -1421,7 +1431,7 @@ covale A N 1 A CA 1 doub
     assert!(first_instance.has_role(MoleculeRole::Polymer));
     assert_eq!(
         first
-            .graph()
+            .molecule()
             .bonds()
             .next()
             .expect("round-trip bond")
@@ -1485,7 +1495,7 @@ fn mmcif_writer_preserves_supported_bond_orders() {
             .next()
             .unwrap()
             .1
-            .graph()
+            .molecule()
             .bonds()
             .next()
             .unwrap()

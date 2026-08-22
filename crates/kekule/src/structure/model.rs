@@ -593,8 +593,8 @@ impl ModelBuilder {
     where
         T: AsRef<[Point3]>,
     {
-        let graph = self.topology.definition(definition)?.graph();
-        let staged = stage_instance_positions(graph, positions)?;
+        let molecule = self.topology.definition(definition)?.molecule();
+        let staged = stage_instance_positions(molecule, positions)?;
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;

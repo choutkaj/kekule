@@ -180,7 +180,7 @@ impl PreparedInput {
                 .instances()
                 .map(|(id, _)| {
                     let atoms = topology
-                        .graph_for_instance(id)
+                        .molecule_for_instance(id)
                         .expect("validated topology instance")
                         .atom_ids()
                         .map(|atom| InstanceAtomId::new(id, atom))
