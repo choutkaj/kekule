@@ -10,7 +10,7 @@ model. Detailed API behavior belongs in Rustdoc and tests.
 bioinformatics, molecular structure handling, and molecular modelling.
 
 The foundational chemical object is `Molecule`: one non-empty connected,
-geometry-independent chemical graph. The foundational system object is
+geometry-independent molecular entity. The foundational system object is
 `Topology`: one coordinate-free molecular system composed from one or more
 molecule instances. Geometry belongs above topology.
 
@@ -22,38 +22,37 @@ source text / bytes
     -> Vec<Molecule>
          each Molecule is one connected component
     -> optional Topology construction
-         one or more molecule instances
-    -> Model      = Topology + Positions + model-level data
+         one or more Molecule instances
+    -> Model      = Topology + one Positions set + model-level data
        Ensemble   = one Topology + finite non-temporal position sets
-       Trajectory = one Topology + ordered position frames
+       Trajectory = one Topology + ordered temporal position frames
 ```
 
-The molecule refactor defined here intentionally does not redesign `Topology`,
-`Model`, `Ensemble`, or `Trajectory`. Those layers retain their present
-geometry/system responsibilities. They may receive only the minimal API
-adaptations needed to consume the new universal `Molecule`.
-
-## Semantic layers
-
-Kekule separates three levels:
+The intended ownership hierarchy is therefore:
 
 ```text
 Molecule
-  one connected, geometry-independent molecular entity
+  one connected geometry-independent molecular entity
 
 Topology
   one geometry-independent system made from one or more Molecule instances
 
 Model
   one geometry-dependent realization of a Topology
+
+Ensemble
+  several non-temporal realizations of one Topology
+
+Trajectory
+  several temporally ordered realizations of one Topology
 ```
 
 A salt, noncovalent complex, solvent box, protein-ligand system, or DNA duplex
-is therefore not represented by weakening `Molecule` into a disconnected graph.
-It is represented by several connected molecules at the system level.
+is not represented by weakening `Molecule` into a disconnected graph. It is
+represented by several connected molecules at the `Topology` level.
 
-An asserted topological `Bond` contributes to molecular connectedness.
-Spatial association, hydrogen bonding, ionic attraction, contact, or any other
+An asserted topological `Bond` contributes to molecular connectedness. Spatial
+association, hydrogen bonding, ionic attraction, contact, or any other
 non-topological interaction does not.
 
 Examples:
@@ -83,7 +82,7 @@ pub struct Molecule {
 }
 ```
 
-These three fields have deliberately different semantic roles:
+These fields have deliberately different semantic roles:
 
 ```text
 Graph
@@ -102,8 +101,8 @@ Perception
   does not define molecular identity
 ```
 
-`Molecule` contains no coordinates, conformers, velocities, unit cell, or other
-geometry-dependent state.
+`Molecule` contains no coordinates, conformers, velocities, periodic cell, or
+other geometry-dependent state.
 
 ### Connectedness invariant
 
@@ -115,9 +114,9 @@ A disconnected graph is never a valid `Molecule`.
 Temporary disconnectedness is permitted only inside construction/edit staging
 such as `MoleculeEditor`.
 
-This is a type-level architectural invariant, not merely a convention.
-Public construction and editing APIs must make it impossible to publish an
-invalid disconnected molecule.
+This is a type-level architectural invariant, not merely a convention. Public
+construction and editing APIs must make it impossible to publish an invalid
+disconnected molecule.
 
 ## `Graph`
 
@@ -231,30 +230,29 @@ Kekule must not fabricate bonds to preserve that source grouping.
 Each connected component becomes a separate `Molecule`, carrying the subset of
 hierarchy that belongs to that component.
 
-Cross-component source provenance or future system-level biological grouping
-may be represented above `Molecule`, but this refactor does not redesign
-`Topology` to add such grouping.
+The current core architecture does not introduce a system-level biological
+grouping or provenance framework. Such information may remain in format-layer
+records or other external sidecars when needed.
 
 ### Domain-specific APIs
 
 Protein-, nucleic-acid-, or polymer-specific algorithms do not require owning
 wrapper types.
 
-They may operate directly on `Molecule`/`Hierarchy`, or future APIs may expose
+They may operate directly on `Molecule`/`Hierarchy`, or APIs may expose
 lightweight borrowed validated views such as `ProteinView<'_>` or
 `NucleicAcidView<'_>`.
 
 Such views are interpretations of one `Molecule`; they do not own another
-molecular object and are not required for the initial refactor.
+molecular object.
 
 ## `Perception`
 
 `Perception` is the installed derived interpretation of one exact represented
 molecular graph.
 
-It replaces the architectural role currently described by
-`PerceptionState`. The shorter name is intentional: within `Molecule`,
-`perception: Perception` is idiomatic Rust and unambiguous.
+It replaces the architectural role formerly described by `PerceptionState`.
+Within `Molecule`, `perception: Perception` is idiomatic Rust and unambiguous.
 
 Perception is semantically subordinate to represented chemistry:
 
@@ -297,7 +295,6 @@ For example:
 graph-derived:
   degree
   connected traversal data
-  connected components during editing
   generic cycle membership
 
 chemically perceived:
@@ -314,8 +311,8 @@ This distinction may be reflected internally if useful, but the public
 
 Perception must always correspond to the current authoritative graph.
 
-Graph-changing edits invalidate affected perception. The initial implementation
-should prefer simple, safe invalidation over a complex dependency engine.
+Graph-changing edits invalidate affected perception. The implementation should
+prefer simple, safe invalidation over a complex dependency engine.
 
 Exact reconstruction of externally stored perception may be supported through
 checked installation APIs, but installation must validate references and
@@ -407,9 +404,8 @@ does not carry a semantic guarantee that it is the chemically "main" component.
 A caller may choose the first component if that is its desired policy, or apply
 an explicit largest/organic/main-component policy separately.
 
-Kekule should not introduce direct parser-to-`Topology` construction as part of
-this refactor. A caller that wants a system may subsequently assemble a
-`Topology` from the returned molecules.
+A caller that wants a multi-molecule system subsequently assembles a `Topology`
+from the returned molecules.
 
 ### Parsing versus source documents
 
@@ -429,12 +425,12 @@ Coordinate-bearing formats create an important separation:
 
 - chemistry extracted from a record becomes geometry-independent `Molecule`
   values;
-- positions remain geometry-dependent and must not be stored in `Molecule`.
+- positions remain geometry-dependent and must not be stored in `Molecule` or
+  `Topology`.
 
-Existing or future APIs that construct `Model`/`Ensemble`/`Trajectory` from
-coordinate-bearing formats are outside the scope of this molecule refactor.
-The format layer may preserve coordinates until such a geometry-producing path
-uses them.
+Format-specific loaders may construct higher-level geometry objects when that is
+the natural API, but the same semantic boundary remains: topology is
+coordinate-free and geometry lives above it.
 
 ### Interpretation
 
@@ -451,43 +447,314 @@ tautomer/protonation state, or invent bonds merely to force connectedness.
 If interpretation yields multiple disconnected components, each component is
 published independently as a valid `Molecule`.
 
+## `Topology`
+
+`Topology` is the immutable, geometry-independent representation of one
+molecular system.
+
+Its fundamental responsibility is to answer:
+
+> Which molecular entities exist in this system, and how are all of their
+> identities laid out at system scope?
+
+A topology contains one or more explicit `Molecule` instances. Because every
+`Molecule` is connected and topology introduces no bonds between different
+instances, the connected components of the topology's asserted covalent graph
+are exactly its molecule instances.
+
+Conceptually:
+
+```text
+Topology
+  molecule definitions
+  molecule instances
+  topology-wide atom/bond identity
+  canonical dense atom/bond ordering
+  identity <-> dense-index mappings
+```
+
+Topology contains no positions, velocities, forces, periodic cell, conformers,
+frame ordering, or other geometry-dependent state.
+
+### Molecule instances are the public system concept
+
+Scientifically, a topology is a system containing molecules. A caller should
+normally think in terms of explicit molecule instances, not storage
+normalization.
+
+The primary public abstraction is therefore one instance-qualified molecule.
+A borrowed view such as:
+
+```rust
+pub struct MoleculeInstanceView<'a> {
+    topology: &'a Topology,
+    id: MoleculeInstanceId,
+}
+```
+
+may provide ergonomic access to:
+
+```text
+instance identity
+underlying Molecule
+qualified atoms
+qualified bonds
+qualified hierarchy
+```
+
+The exact type name is not normative, but instance-first navigation is.
+
+Typical APIs should make ordinary iteration natural:
+
+```rust
+for molecule in topology.molecules() {
+    for (atom_id, atom) in molecule.atoms() {
+        // atom_id is instance-qualified
+    }
+}
+```
+
+Lower-level definition/instance APIs remain useful for explicit reuse and
+advanced system construction.
+
+### Definitions are a storage/reuse mechanism
+
+Repeated identical molecule instances should not require repeated storage of the
+same geometry-independent molecular definition.
+
+Topology may therefore intern reusable `Molecule` values as definitions:
+
+```text
+MoleculeDefinition
+  owns one Molecule
+
+MoleculeInstance
+  has one MoleculeInstanceId
+  references one MoleculeDefinitionId
+```
+
+For example, a box containing many water molecules may store one water
+`MoleculeDefinition` and many `MoleculeInstance`s.
+
+This definition/instance split is part of the storage architecture, but it is
+not the primary scientific mental model presented to ordinary callers.
+
+A published topology must not contain unused molecule definitions. Every
+`MoleculeDefinition` must be referenced by at least one `MoleculeInstance`.
+
+The minimal core does not attach a generic `MoleculeInstanceMetadata` object to
+each instance. Contextual roles, annotations, or source metadata can be added
+later only when concrete use cases justify their semantics.
+
+### Instance-qualified identity
+
+`AtomId` and `BondId` are local to one `Molecule` definition. Once a molecule
+appears in a topology, system-level identity must qualify the local ID by its
+molecule instance.
+
+Conceptually:
+
+```text
+InstanceAtomId = (MoleculeInstanceId, AtomId)
+InstanceBondId = (MoleculeInstanceId, BondId)
+```
+
+The same rule applies to hierarchy-local identities when exposed at topology
+scope.
+
+This prevents identity collisions when one definition is instantiated multiple
+times.
+
+### Dense topology ordering
+
+Numerical and geometry-bearing data require a deterministic dense ordering over
+the complete system.
+
+Topology therefore owns an authoritative dense atom order and, where useful, a
+dense bond order:
+
+```text
+InstanceAtomId <-> TopologyAtomIndex
+InstanceBondId <-> TopologyBondIndex
+```
+
+These concepts have deliberately different roles:
+
+```text
+InstanceAtomId / InstanceBondId
+  semantic system identity
+
+TopologyAtomIndex / TopologyBondIndex
+  dense storage position
+  suitable for Positions and topology-bound arrays
+```
+
+Dense ordering is part of the topology layout. Geometry-bearing objects are
+compatible with a topology only when they use that exact layout.
+
+### No topology-level covalent bonds
+
+Topology must not introduce asserted covalent/topological bonds between
+molecule instances.
+
+If atoms from two current molecule instances become connected by an asserted
+bond, those atoms belong to one connected `Molecule`. The resulting system must
+therefore be represented by a new topology containing the newly connected
+molecule rather than by adding an inter-instance bond.
+
+Hydrogen bonds, salt bridges, contacts, coordination hypotheses, force-field
+interactions, and other spatial or energetic relations are not topology bonds.
+
+### No connected-components API per instance
+
+Because every published `Molecule` is connected, asking for connected components
+inside one molecule instance is redundant: the answer is always exactly that
+instance.
+
+Topology should therefore expose molecule-instance membership directly rather
+than retain an API such as `connected_components(instance)` whose result is
+architecturally predetermined.
+
+### Construction and invariants
+
+A topology builder may stage definitions and instances and publish an immutable
+`Topology` only after validation.
+
+A published topology must satisfy at least:
+
+```text
+at least one molecule instance
+every instance references a live definition
+every definition is referenced by at least one instance
+every referenced Molecule satisfies Molecule invariants
+instance-qualified atom/bond identities are valid
+dense atom/bond ordering is complete and deterministic
+identity/index mappings are mutually consistent
+```
+
+Convenience construction may add one fresh definition and one instance in a
+single operation. Explicit APIs may separately add a reusable definition and
+then instantiate it many times.
+
+### Immutability and topology changes
+
+Published `Topology` is immutable.
+
+Shared exact ownership should use `Arc<Topology>` rather than cloning independent
+copies of topology state.
+
+Geometry-bearing objects such as `Model`, `Ensemble`, `Trajectory`, `Positions`,
+and topology-bound data arrays are tied to one exact topology layout.
+
+A chemical or structural transformation that changes molecule membership,
+connectivity, atom count, bond count, hierarchy identity, or dense layout
+produces a new `Topology` rather than mutating an existing topology underneath
+bound geometry.
+
+When correspondence matters, such a transformation should return or construct
+an explicit mapping from old topology identities to new topology identities.
+
+Conceptually:
+
+```text
+Topology A
+   |
+   | topology-changing transformation
+   v
+Topology B + mapping A -> B
+```
+
+This model naturally supports later reactive or connectivity-perception
+workflows without weakening topology identity or invalidating attached geometry
+silently.
+
+### Scope of the current Topology design
+
+The current core intentionally remains minimal.
+
+It does not introduce:
+
+```text
+generic molecule-instance metadata
+system-level biological grouping
+system-level provenance hierarchy
+geometry-dependent interactions
+inter-molecule topology bonds
+```
+
+These concerns should not be added speculatively. They may be introduced later
+only as separate concepts when concrete requirements establish their semantics.
+
 ## Geometry boundary
 
-`Molecule` is strictly geometry-independent.
+Geometry starts above `Topology`.
 
-Coordinates, conformers, velocities, forces, periodic cells, occupancies,
-B-factors, and other coordinate/model state do not belong in `Molecule`.
-
-The existing higher-level separation remains:
+The fundamental relationship is:
 
 ```text
 Topology + Positions -> Model
 ```
 
-and:
+`Positions` is ordered by the topology's dense atom layout and is valid only for
+that topology.
+
+Geometry-dependent quantities such as positions, velocities, forces, periodic
+cell, occupancies, B-factors, and other model/frame state do not belong in
+`Molecule` or `Topology`.
+
+## `Model`
+
+`Model` is one concrete geometry-dependent realization of one topology.
+
+Conceptually:
 
 ```text
-one Topology + many position sets -> Ensemble / Trajectory
+Model
+  shared Topology
+  one Positions set
+  optional periodic cell
+  model-level atom/bond data as appropriate
 ```
 
-This refactor must remove local conformer ownership from `Molecule`.
+A `Model` does not duplicate molecular chemistry. It interprets one dense
+position array against one exact topology layout.
 
-## `Topology`
+## `Ensemble`
 
-`Topology` remains the geometry-independent system layer.
+`Ensemble` is a finite collection of non-temporal realizations of one topology.
 
-It can contain one or more molecule instances and qualifies their local
-identities at system scope.
+Conceptually:
 
-This refactor is not intended to redesign topology storage, instance semantics,
-model binding, ensembles, or trajectories.
+```text
+Ensemble
+  shared Topology
+  members[]
+    Positions
+    optional member-level geometry/data
+    optional weight
+```
 
-However, because the current implementation accepts `SmallMolecule` and
-`MacroMolecule`, minimal mechanical changes to `Topology` are expected so it
-consumes the new universal `Molecule` directly.
+All members share the same topology and dense layout. Differences between
+members are geometric or member-level data, not molecular identity.
 
-Those changes must preserve existing topology semantics rather than expand the
-scope of this refactor.
+## `Trajectory`
+
+`Trajectory` is an ordered temporal sequence of realizations of one topology.
+
+Conceptually:
+
+```text
+Trajectory
+  shared Topology
+  ordered frames[]
+    Positions
+    optional frame-level geometry/data
+    time/order semantics
+```
+
+A trajectory with topology-changing chemistry is not represented by silently
+mutating one shared topology. Such workflows require explicit topology changes
+and mappings between topology epochs.
 
 ## Molecular identity and equality
 
@@ -502,11 +769,15 @@ operation must be explicit in that operation's semantics. Chemical graph
 identity and full represented-object identity need not be forced into one
 ambiguous notion of equality.
 
+Topology layout equality is distinct from graph isomorphism or chemical
+identity. Two independently constructed topologies may represent chemically
+equivalent systems while still having different instance IDs or dense layouts.
+
 ## Persistence and reconstruction
 
 Persistence consumers may store graph, hierarchy, and perception separately.
 
-Reconstruction order is:
+Molecule reconstruction order is:
 
 ```text
 Graph
@@ -523,9 +794,13 @@ or rejected before publication.
 
 Loading must never weaken the connectedness invariant.
 
+Topology persistence must reconstruct definitions, instances, qualified
+identities, and authoritative dense ordering consistently. Geometry is restored
+separately against that topology layout.
+
 Runtime domain objects are not required to be generic file-format DTOs. Source
-metadata that is not canonical represented molecular state should remain in
-format records, provenance objects, or other sidecars.
+metadata that is not canonical represented molecular or topology state should
+remain in format records or other external sidecars.
 
 ## Mutation and transformations
 
@@ -535,14 +810,15 @@ Operations whose semantic purpose is to split a molecule naturally return more
 than one molecule, for example a fragmentation transformation may return
 `Vec<Molecule>`.
 
-Topology-changing system operations remain system-level transformations.
+Topology-changing system operations return a new topology rather than mutating a
+published topology in place.
 
-Coordinate-only operations never mutate `Graph`, `Hierarchy`, or discrete
-geometry-independent `Perception`.
+Coordinate-only operations never mutate `Graph`, `Hierarchy`, `Perception`, or
+`Topology`.
 
 ## Naming and module style
 
-The intended field/type naming is idiomatic Rust:
+The intended molecule field/type naming is idiomatic Rust:
 
 ```rust
 pub struct Molecule {
@@ -554,62 +830,33 @@ pub struct Molecule {
 
 Field names use `snake_case`; type names use `UpperCamelCase`. Patterns such as
 `graph: Graph`, `hierarchy: Hierarchy`, and `perception: Perception` are normal
-Rust style and are preferred over redundant names such as
-`molecular_graph: MolecularGraph` unless a real ambiguity appears.
+Rust style and are preferred over redundant names unless a real ambiguity
+appears.
 
-A natural module layout is:
-
-```text
-core/
-  atom_bond.rs
-  graph.rs
-  hierarchy.rs
-  perception.rs
-  molecule.rs
-  molecule_edit.rs
-  stereo.rs
-```
-
-The exact file layout is not normative; the semantic boundaries are.
-
-## Scope of the molecule refactor
-
-The refactor implementing this document should:
-
-- replace the current `Molecule` implementation with the
-  `Graph + Hierarchy + Perception` architecture;
-- enforce non-empty connected published molecules;
-- make `MoleculeEditor` the transactional structural mutation boundary;
-- remove owning `SmallMolecule` and `MacroMolecule` wrappers;
-- integrate hierarchy directly into universal `Molecule`;
-- rename/reframe `PerceptionState` as `Perception` while preserving useful
-  perception functionality;
-- remove geometry/conformer storage from `Molecule`;
-- make molecule-producing parsing/interpretation yield connected
-  `Vec<Molecule>` components;
-- adapt downstream molecule consumers as required to compile and preserve
-  behavior.
-
-The refactor should not redesign `Topology`, `Model`, `Ensemble`, or
-`Trajectory`. Touch those layers only where the removal of old wrapper APIs
-requires a mechanical compatibility update.
+The exact file/module layout is not normative; semantic boundaries are.
 
 ## Design rules
 
 When deciding where new state belongs:
 
 1. Is it authoritative atom/bond/stereo chemistry? Put it in `Graph`.
-2. Is it coordinate-independent residue/chain/polymer organization? Put it in
-   `Hierarchy`.
+2. Is it coordinate-independent residue/chain/polymer organization within one
+   connected molecule? Put it in `Hierarchy`.
 3. Is it fundamental chemistry derived from the represented graph? Put it in
    `Perception`.
-4. Is it task-specific analysis, typing, scoring, or parameterization? Keep it
+4. Does it identify which connected molecules exist in one coordinate-free
+   system or define their topology-wide layout? Put it in `Topology`.
+5. Is it task-specific analysis, typing, scoring, or parameterization? Keep it
    in a separate derived object.
-5. Is it coordinate or model state? Keep it outside `Molecule`.
-6. Does it combine several connected molecular entities? It belongs at or above
-   `Topology`, not in a disconnected `Molecule`.
+6. Is it coordinate or model state? Keep it above `Topology`.
+7. Does an asserted new bond connect two current molecule instances? Construct a
+   new connected `Molecule` and therefore a new `Topology`.
 
-The core invariant is intentionally simple:
+The two core invariants are intentionally simple:
 
 > A Kekule `Molecule` is one connected, geometry-independent molecular entity
 > represented by `Graph + Hierarchy + Perception`.
+
+> A Kekule `Topology` is one immutable, geometry-independent molecular system
+> composed of one or more explicit `Molecule` instances with authoritative
+> topology-wide identity and dense layout.
