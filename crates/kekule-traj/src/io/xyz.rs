@@ -378,10 +378,10 @@ impl<R: BufRead> XyzReader<R> {
 
     fn publish(&self, destination: &mut FrameBuffer) -> Result<(), TrajectoryError> {
         destination
-            .replace_from_data(FrameBufferData::new(
-                self.binding.topology_arc(),
-                Quantity::new(self.positions.as_slice(), self.options.length_unit),
-            ))
+            .replace_from_data(FrameBufferData::new(Quantity::new(
+                self.positions.as_slice(),
+                self.options.length_unit,
+            )))
             .map_err(Into::into)
     }
 }
@@ -744,8 +744,8 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             (frame.forces().is_some(), "forces"),
             (frame.time().is_some(), "time"),
             (frame.step().is_some(), "step"),
-            (!frame.atom_data().is_empty(), "atom data"),
-            (!frame.bond_data().is_empty(), "bond data"),
+            (frame.atom_data().has_data(), "atom data"),
+            (frame.bond_data().has_data(), "bond data"),
             (!frame.props().is_empty(), "frame properties"),
         ];
         if let Some((_, field)) = unsupported.into_iter().find(|(present, _)| *present) {

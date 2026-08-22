@@ -99,10 +99,7 @@ fn companion_crate_can_publish_frames_and_implement_all_streaming_traits() {
     let points = [Point3::new(1.0, 2.0, 3.0)];
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
-        .replace_from_data(FrameBufferData::new(
-            &topology,
-            Quantity::new(&points[..], ANGSTROM),
-        ))
+        .replace_from_data(FrameBufferData::new(Quantity::new(&points[..], ANGSTROM)))
         .unwrap();
 
     let mut sequential = CompanionSequential {

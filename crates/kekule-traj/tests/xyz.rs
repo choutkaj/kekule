@@ -161,13 +161,10 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
         destination
-            .replace_from_data(FrameBufferData::new(
-                &topology,
-                Quantity::new(
-                    &[Point3::new(9.0, 0.0, 0.0), Point3::new(8.0, 0.0, 0.0)],
-                    ANGSTROM,
-                ),
-            ))
+            .replace_from_data(FrameBufferData::new(Quantity::new(
+                &[Point3::new(9.0, 0.0, 0.0), Point3::new(8.0, 0.0, 0.0)],
+                ANGSTROM,
+            )))
             .unwrap();
         let before = point_xs(&destination);
         let error = reader.read_next(&mut destination).unwrap_err();
@@ -229,10 +226,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     let points = [Point3::new(1.25, 2.5, 3.75), Point3::new(4.0, 5.0, 6.0)];
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
-        .replace_from_data(FrameBufferData::new(
-            &topology,
-            Quantity::new(&points, ANGSTROM),
-        ))
+        .replace_from_data(FrameBufferData::new(Quantity::new(&points, ANGSTROM)))
         .unwrap();
 
     let mut writer = XyzWriter::new(
@@ -348,10 +342,7 @@ fn path_detection_metadata_indexing_and_atomic_finish_are_bounded() {
     let points = [Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 5.0, 6.0)];
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
-        .replace_from_data(FrameBufferData::new(
-            &topology,
-            Quantity::new(&points, ANGSTROM),
-        ))
+        .replace_from_data(FrameBufferData::new(Quantity::new(&points, ANGSTROM)))
         .unwrap();
     let mut writer = create_trajectory_writer(
         &output,

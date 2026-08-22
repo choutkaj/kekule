@@ -335,7 +335,7 @@ fn transform_frame(
         .copied()
         .map(|point| transform.transform_point(point))
         .collect::<Vec<_>>();
-    let positions = Positions::new(topology, Quantity::new(positions, MODEL_LENGTH_UNIT))
+    let positions = Positions::new(Quantity::new(positions, MODEL_LENGTH_UNIT))
         .map_err(FrameError::from)
         .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
     let cell = source
@@ -344,7 +344,7 @@ fn transform_frame(
         .map(|cell| transform_cell(cell, transform))
         .transpose()
         .map_err(|source| TransformFrameError::Cell(Box::new(source)))?;
-    let mut transformed = TrajectoryFrame::new(positions);
+    let mut transformed = TrajectoryFrame::new(positions, topology.bond_count());
     transformed.set_cell(cell);
     transformed
         .set_atom_data(source.atom_data().clone())
@@ -356,7 +356,7 @@ fn transform_frame(
             .copied()
             .map(|value| transform.transform_vector(value))
             .collect::<Vec<_>>();
-        let velocities = Velocities::new(topology, Quantity::new(rotated, values.unit()))
+        let velocities = Velocities::new(Quantity::new(rotated, values.unit()))
             .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
         transformed
             .set_velocities(Some(velocities))
@@ -369,7 +369,7 @@ fn transform_frame(
             .copied()
             .map(|value| transform.transform_vector(value))
             .collect::<Vec<_>>();
-        let forces = Forces::new(topology, Quantity::new(rotated, values.unit()))
+        let forces = Forces::new(Quantity::new(rotated, values.unit()))
             .map_err(|source| TransformFrameError::Frame(Box::new(source)))?;
         transformed
             .set_forces(Some(forces))
@@ -654,7 +654,10 @@ mod tests {
     }
 
     fn frame(topology: &Arc<Topology>, points: &[Point3]) -> TrajectoryFrame {
-        TrajectoryFrame::new(Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap())
+        TrajectoryFrame::new(
+            Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
+            topology.bond_count(),
+        )
     }
 
     fn transformed(points: &[Point3], transform: RigidTransform) -> Vec<Point3> {
@@ -799,47 +802,49 @@ mod tests {
         .unwrap();
         let reference_cell = transform_cell(moving_cell, transform).unwrap();
         let mut reference_frame = TrajectoryFrame::new(
-            Positions::new(&topology, Quantity::new(&reference, ANGSTROM)).unwrap(),
+            Positions::new(Quantity::new(&reference, ANGSTROM)).unwrap(),
+            topology.bond_count(),
         );
         reference_frame.set_cell(Some(reference_cell));
         reference_frame
             .set_velocities(Some(
-                Velocities::new(
-                    &topology,
-                    Quantity::new(vec![Vector3::new(0.0, 1.0, 0.0); 4], MODEL_VELOCITY_UNIT),
-                )
+                Velocities::new(Quantity::new(
+                    vec![Vector3::new(0.0, 1.0, 0.0); 4],
+                    MODEL_VELOCITY_UNIT,
+                ))
                 .unwrap(),
             ))
             .unwrap();
         reference_frame
             .set_forces(Some(
-                Forces::new(
-                    &topology,
-                    Quantity::new(vec![Vector3::new(-1.0, 0.0, 0.0); 4], MODEL_FORCE_UNIT),
-                )
+                Forces::new(Quantity::new(
+                    vec![Vector3::new(-1.0, 0.0, 0.0); 4],
+                    MODEL_FORCE_UNIT,
+                ))
                 .unwrap(),
             ))
             .unwrap();
 
         let mut moving_frame = TrajectoryFrame::new(
-            Positions::new(&topology, Quantity::new(&moving, ANGSTROM)).unwrap(),
+            Positions::new(Quantity::new(&moving, ANGSTROM)).unwrap(),
+            topology.bond_count(),
         );
         moving_frame.set_cell(Some(moving_cell));
         moving_frame
             .set_velocities(Some(
-                Velocities::new(
-                    &topology,
-                    Quantity::new(vec![Vector3::new(1.0, 0.0, 0.0); 4], MODEL_VELOCITY_UNIT),
-                )
+                Velocities::new(Quantity::new(
+                    vec![Vector3::new(1.0, 0.0, 0.0); 4],
+                    MODEL_VELOCITY_UNIT,
+                ))
                 .unwrap(),
             ))
             .unwrap();
         moving_frame
             .set_forces(Some(
-                Forces::new(
-                    &topology,
-                    Quantity::new(vec![Vector3::new(0.0, 1.0, 0.0); 4], MODEL_FORCE_UNIT),
-                )
+                Forces::new(Quantity::new(
+                    vec![Vector3::new(0.0, 1.0, 0.0); 4],
+                    MODEL_FORCE_UNIT,
+                ))
                 .unwrap(),
             ))
             .unwrap();
@@ -847,10 +852,8 @@ mod tests {
             .set_time(Some(Quantity::new(2.5, PICOSECOND)))
             .unwrap();
         moving_frame.set_step(Some(25));
-        let mut atom_data = AtomData::new(&topology);
-        atom_data
-            .set_occupancy(&topology, topology.atom_ids()[0], Some(0.7))
-            .unwrap();
+        let mut atom_data = AtomData::new(topology.atom_count());
+        atom_data.set_occupancy_at(0, Some(0.7)).unwrap();
         moving_frame.set_atom_data(atom_data.clone()).unwrap();
         moving_frame
             .props_mut()
@@ -975,7 +978,8 @@ mod tests {
         )
         .unwrap();
         let mut periodic_frame = TrajectoryFrame::new(
-            Positions::new(&topology, Quantity::new(&points, ANGSTROM)).unwrap(),
+            Positions::new(Quantity::new(&points, ANGSTROM)).unwrap(),
+            topology.bond_count(),
         );
         periodic_frame.set_cell(Some(cell));
         let trajectory = Trajectory::from_frames(Arc::clone(&topology), [periodic_frame]).unwrap();

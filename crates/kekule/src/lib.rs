@@ -9,8 +9,8 @@
 //! System structure is coordinate-free and immutable in [`topology`].
 //! Dynamic structure follows three explicit relationships:
 //!
-//! - [`structure::Model`] = one [`topology::Topology`] plus topology-bound
-//!   positions, an optional periodic cell, and per-atom and per-bond data;
+//! - [`structure::Model`] = one [`topology::Topology`] plus dense positions,
+//!   an optional periodic cell, and dimensioned per-atom and per-bond data;
 //! - [`structure::Ensemble`] = one topology plus finite non-temporal members;
 //!
 //! Ordered multi-frame trajectories and their file codecs live in the
@@ -19,8 +19,9 @@
 //! Coordinate-dependent kernels consume borrowed [`structure::ModelView`]
 //! values, allowing the same analysis or prepared potential to operate over a
 //! model, ensemble member, trajectory frame, or reusable frame buffer without
-//! copying coordinates. Positions, selections, buffers, and prepared systems
-//! require the same shared `Arc<Topology>` allocation.
+//! copying coordinates. Models, selections, buffers, and prepared systems may
+//! require the same shared `Arc<Topology>` allocation; primitive dense arrays
+//! carry no topology identity.
 //! [`topology::Topology::same_layout`]
 //! compares complete static layout, including semantic IDs and dense order;
 //! general order-independent structural equivalence and isomorphism mapping

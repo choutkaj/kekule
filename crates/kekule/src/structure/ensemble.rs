@@ -3,14 +3,11 @@ use std::sync::Arc;
 
 use crate::core::{Conformer, Molecule, PropMap};
 use crate::geometry::PeriodicCell;
-use crate::topology::{Topology, TopologyBuildError, TopologyBuilder, TopologyMapping};
+use crate::topology::{Topology, TopologyBuildError, TopologyBuilder};
 use crate::units::{Quantity, MODEL_LENGTH_UNIT};
 
 use super::model::stage_conformer_positions;
-use super::{
-    AtomData, BondData, Model, ModelBuildError, ModelView, PositionError, Positions,
-    TopologyRemapError,
-};
+use super::{AtomData, BondData, Model, ModelBuildError, ModelView, PositionError, Positions};
 
 /// One finite non-temporal ensemble member.
 #[derive(Debug, Clone, PartialEq)]
@@ -24,9 +21,9 @@ pub struct EnsembleMember {
 }
 
 impl EnsembleMember {
-    pub fn new(positions: Positions) -> Self {
-        let atom_data = AtomData::new(positions.topology_arc());
-        let bond_data = BondData::new(positions.topology_arc());
+    pub fn new(positions: Positions, bond_count: usize) -> Self {
+        let atom_data = AtomData::new(positions.len());
+        let bond_data = BondData::new(bond_count);
         Self {
             positions,
             cell: None,
@@ -58,8 +55,11 @@ impl EnsembleMember {
     }
 
     pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), EnsembleError> {
-        if !Arc::ptr_eq(atom_data.topology_arc(), self.positions.topology_arc()) {
-            return Err(EnsembleError::TopologyMismatch);
+        if atom_data.len() != self.positions.len() {
+            return Err(EnsembleError::AtomDataCountMismatch {
+                expected: self.positions.len(),
+                actual: atom_data.len(),
+            });
         }
         self.atom_data = atom_data;
         Ok(())
@@ -74,8 +74,11 @@ impl EnsembleMember {
     }
 
     pub fn set_bond_data(&mut self, bond_data: BondData) -> Result<(), EnsembleError> {
-        if !Arc::ptr_eq(bond_data.topology_arc(), self.positions.topology_arc()) {
-            return Err(EnsembleError::TopologyMismatch);
+        if bond_data.len() != self.bond_data.len() {
+            return Err(EnsembleError::BondDataCountMismatch {
+                expected: self.bond_data.len(),
+                actual: bond_data.len(),
+            });
         }
         self.bond_data = bond_data;
         Ok(())
@@ -109,7 +112,7 @@ impl EnsembleMember {
             &self.atom_data,
             &self.bond_data,
         )
-        .map_err(|_| EnsembleError::TopologyMismatch)
+        .map_err(|error| EnsembleError::Model(Box::new(error)))
     }
 }
 
@@ -171,8 +174,8 @@ impl Ensemble {
         for conformer in conformers {
             let positions = stage_conformer_positions(molecule, &conformer)
                 .map_err(|error| EnsembleError::ModelBuild(Box::new(error)))?;
-            let positions = Positions::new(&topology, Quantity::new(positions, MODEL_LENGTH_UNIT))?;
-            ensemble.push(EnsembleMember::new(positions))?;
+            let positions = Positions::new(Quantity::new(positions, MODEL_LENGTH_UNIT))?;
+            ensemble.push(EnsembleMember::new(positions, topology.bond_count()))?;
         }
         Ok(ensemble)
     }
@@ -206,11 +209,23 @@ impl Ensemble {
     }
 
     pub fn push(&mut self, member: EnsembleMember) -> Result<(), EnsembleError> {
-        if !member.positions.is_compatible(&self.topology)
-            || !member.atom_data.is_compatible(&self.topology)
-            || !member.bond_data.is_compatible(&self.topology)
-        {
-            return Err(EnsembleError::TopologyMismatch);
+        if member.positions.len() != self.topology.atom_count() {
+            return Err(EnsembleError::PositionCountMismatch {
+                expected: self.topology.atom_count(),
+                actual: member.positions.len(),
+            });
+        }
+        if member.atom_data.len() != self.topology.atom_count() {
+            return Err(EnsembleError::AtomDataCountMismatch {
+                expected: self.topology.atom_count(),
+                actual: member.atom_data.len(),
+            });
+        }
+        if member.bond_data.len() != self.topology.bond_count() {
+            return Err(EnsembleError::BondDataCountMismatch {
+                expected: self.topology.bond_count(),
+                actual: member.bond_data.len(),
+            });
         }
         self.members.push(member);
         Ok(())
@@ -243,45 +258,6 @@ impl Ensemble {
         }
         Ok(())
     }
-
-    /// Remaps every member to one exact target topology without renormalizing
-    /// weights or changing member order.
-    pub fn remap_to(
-        &self,
-        target: &Arc<Topology>,
-        mapping: &TopologyMapping,
-    ) -> Result<Self, TopologyRemapError> {
-        if !mapping.is_source(&self.topology) {
-            return Err(TopologyRemapError::MappingSourceMismatch);
-        }
-        if !mapping.is_target(target) {
-            return Err(TopologyRemapError::MappingTargetMismatch);
-        }
-        let mut members = Vec::with_capacity(self.members.len());
-        for (member_index, member) in self.members.iter().enumerate() {
-            let remap_member = || -> Result<EnsembleMember, TopologyRemapError> {
-                let positions = member.positions.remap_to(&self.topology, target, mapping)?;
-                let atom_data = member.atom_data.remap_to(&self.topology, target, mapping)?;
-                let bond_data = member.bond_data.remap_to(&self.topology, target, mapping)?;
-                Ok(EnsembleMember {
-                    positions,
-                    cell: member.cell,
-                    atom_data,
-                    bond_data,
-                    weight: member.weight,
-                    props: member.props.clone(),
-                })
-            };
-            members.push(remap_member().map_err(|error| TopologyRemapError::Member {
-                member: member_index,
-                error: Box::new(error),
-            })?);
-        }
-        Ok(Self {
-            topology: Arc::clone(target),
-            members,
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -289,12 +265,16 @@ impl Ensemble {
 pub enum EnsembleError {
     EmptySource,
     TopologyMismatch,
+    PositionCountMismatch { expected: usize, actual: usize },
+    AtomDataCountMismatch { expected: usize, actual: usize },
+    BondDataCountMismatch { expected: usize, actual: usize },
     InvalidWeight,
     MissingWeight { member: usize },
     ZeroTotalWeight,
     TopologyBuild(TopologyBuildError),
     ModelBuild(Box<ModelBuildError>),
     Position(PositionError),
+    Model(Box<super::ModelError>),
 }
 
 impl fmt::Display for EnsembleError {
@@ -304,6 +284,18 @@ impl fmt::Display for EnsembleError {
             Self::TopologyMismatch => {
                 formatter.write_str("ensemble member belongs to a different topology")
             }
+            Self::PositionCountMismatch { expected, actual } => write!(
+                formatter,
+                "ensemble topology requires {expected} positions, but received {actual}"
+            ),
+            Self::AtomDataCountMismatch { expected, actual } => write!(
+                formatter,
+                "ensemble topology requires atom data of length {expected}, but received {actual}"
+            ),
+            Self::BondDataCountMismatch { expected, actual } => write!(
+                formatter,
+                "ensemble topology requires bond data of length {expected}, but received {actual}"
+            ),
             Self::InvalidWeight => {
                 formatter.write_str("ensemble weight must be finite and non-negative")
             }
@@ -316,6 +308,7 @@ impl fmt::Display for EnsembleError {
             Self::TopologyBuild(error) => write!(formatter, "cannot build topology: {error}"),
             Self::ModelBuild(error) => write!(formatter, "cannot build ensemble member: {error}"),
             Self::Position(error) => write!(formatter, "cannot build member positions: {error}"),
+            Self::Model(error) => write!(formatter, "invalid ensemble member state: {error}"),
         }
     }
 }
