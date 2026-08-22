@@ -9,7 +9,7 @@ use kekule::topology::transform::{
 };
 use kekule::topology::{
     AtomSelection, InstanceAtomId, InstanceBondId, MoleculeDefinitionId, MoleculeInstanceId,
-    MoleculeInstanceMetadata, MoleculeRole, Topology, TopologyBuilder, TopologyMapping,
+    Topology, TopologyBuilder, TopologyMapping,
 };
 use kekule::units::{
     Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT,
@@ -90,15 +90,6 @@ fn one_atom_macro() -> Molecule {
     builder.finish().expect("valid test macromolecule")
 }
 
-fn metadata(role: MoleculeRole, label: &str) -> MoleculeInstanceMetadata {
-    let mut metadata = MoleculeInstanceMetadata::default();
-    metadata.insert_role(role);
-    metadata
-        .props_mut()
-        .insert("label".to_owned(), PropValue::String(label.to_owned()));
-    metadata
-}
-
 fn fixture() -> Fixture {
     let water = one_atom_small("O");
     let ligand = ligand_with_tombstones();
@@ -120,20 +111,18 @@ fn fixture() -> Fixture {
         .expect("ion definition");
 
     let water_first = builder
-        .add_instance(water_definition, metadata(MoleculeRole::Solvent, "water-0"))
+        .add_instance(water_definition)
         .expect("water instance");
     let ligand = builder
-        .add_instance(ligand_definition, metadata(MoleculeRole::Ligand, "ligand"))
+        .add_instance(ligand_definition)
         .expect("ligand instance");
     let water_second = builder
-        .add_instance(water_definition, metadata(MoleculeRole::Solvent, "water-1"))
+        .add_instance(water_definition)
         .expect("water instance");
     let macromolecule = builder
-        .add_instance(macro_definition, metadata(MoleculeRole::Polymer, "protein"))
+        .add_instance(macro_definition)
         .expect("macro instance");
-    let ion = builder
-        .add_instance(ion_definition, metadata(MoleculeRole::Ion, "sodium"))
-        .expect("ion instance");
+    let ion = builder.add_instance(ion_definition).expect("ion instance");
 
     Fixture {
         topology: Arc::new(builder.build().expect("test topology")),
@@ -210,16 +199,18 @@ fn whole_instance_subset_is_deterministic_complete_and_non_mutating() {
 
     assert_eq!(
         target
-            .molecule_for_instance(MoleculeInstanceId::new(0))
+            .molecule(MoleculeInstanceId::new(0))
             .expect("retained ligand")
+            .molecule()
             .atom_ids()
             .collect::<Vec<_>>(),
         vec![AtomId::new(0), AtomId::new(2)]
     );
     assert_eq!(
         target
-            .molecule_for_instance(MoleculeInstanceId::new(0))
+            .molecule(MoleculeInstanceId::new(0))
             .expect("retained ligand")
+            .molecule()
             .bond_ids()
             .collect::<Vec<_>>(),
         vec![BondId::new(1)]
@@ -228,12 +219,8 @@ fn whole_instance_subset_is_deterministic_complete_and_non_mutating() {
         target
             .instance(MoleculeInstanceId::new(0))
             .expect("retained ligand")
-            .metadata(),
-        fixture
-            .topology
-            .instance(fixture.ligand)
-            .expect("source ligand")
-            .metadata()
+            .definition(),
+        MoleculeDefinitionId::new(1)
     );
     assert_eq!(
         target
@@ -333,11 +320,6 @@ fn subset_normalization_no_ops_and_failures_are_explicit() {
         .expect("protein-ligand complex");
     assert_eq!(complex.topology().definition_count(), 2);
     assert_eq!(complex.topology().instance_count(), 2);
-    assert!(complex
-        .topology()
-        .instances()
-        .all(|(_, instance)| !instance.has_role(MoleculeRole::Solvent)
-            && !instance.has_role(MoleculeRole::Ion)));
     assert_eq!(
         complex.mapping().removed_definitions(),
         &[fixture.water_definition, fixture.ion_definition]
@@ -475,7 +457,7 @@ fn mapping_with_added_atom() -> (
         .add_molecule_definition(&one)
         .expect("source definition");
     let source_instance = source_builder
-        .add_instance(source_definition, MoleculeInstanceMetadata::default())
+        .add_instance(source_definition)
         .expect("source instance");
     let source_topology = Arc::new(source_builder.build().expect("source topology"));
     let mut target_builder = TopologyBuilder::new();
@@ -483,10 +465,10 @@ fn mapping_with_added_atom() -> (
         .add_molecule_definition(&one)
         .expect("target definition");
     let target_first = target_builder
-        .add_instance(target_definition, MoleculeInstanceMetadata::default())
+        .add_instance(target_definition)
         .expect("target instance");
     let target_added = target_builder
-        .add_instance(target_definition, MoleculeInstanceMetadata::default())
+        .add_instance(target_definition)
         .expect("target added instance");
     let target_topology = Arc::new(target_builder.build().expect("target topology"));
     let mapping = TopologyMapping::from_pairs(
@@ -990,15 +972,12 @@ fn solvent_rich_subset_regression_avoids_quadratic_builder_cloning() {
         .reserve_instances(WATER_COUNT + 1)
         .expect("synthetic capacity");
     let ligand_instance = builder
-        .add_instance(ligand_definition, metadata(MoleculeRole::Ligand, "ligand"))
+        .add_instance(ligand_definition)
         .expect("ligand instance");
     let mut retained_waters = Vec::new();
     for index in 0..WATER_COUNT {
         let water_instance = builder
-            .add_instance(
-                water_definition,
-                metadata(MoleculeRole::Solvent, &format!("water-{index}")),
-            )
+            .add_instance(water_definition)
             .expect("water instance");
         if index % 2 == 0 {
             retained_waters.push(water_instance);

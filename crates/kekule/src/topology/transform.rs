@@ -22,9 +22,7 @@ use super::{
 ///
 /// ```
 /// use kekule::core::{Atom, Element, MoleculeEditor};
-/// use kekule::topology::{
-///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
-/// };
+/// use kekule::topology::{transform, TopologyBuilder};
 /// use std::sync::Arc;
 ///
 /// let mut water_builder = MoleculeEditor::new();
@@ -33,10 +31,8 @@ use super::{
 ///
 /// let mut builder = TopologyBuilder::new();
 /// let definition = builder.add_molecule_definition(&water)?;
-/// let mut metadata = MoleculeInstanceMetadata::default();
-/// metadata.insert_role(MoleculeRole::Solvent);
-/// let first = builder.add_instance(definition, metadata.clone())?;
-/// builder.add_instance(definition, metadata)?;
+/// let first = builder.add_instance(definition)?;
+/// builder.add_instance(definition)?;
 /// let source = Arc::new(builder.build()?);
 ///
 /// let edit = transform::retain_instances(&source, [first])?;
@@ -149,7 +145,7 @@ fn retain_normalized(
     {
         let target_definition = definition_targets[instance.definition().index()]
             .expect("retained instance has a retained definition");
-        let target_id = builder.add_instance(target_definition, instance.metadata().clone())?;
+        let target_id = builder.add_instance(target_definition)?;
         instances.push((source_id, target_id));
     }
 
@@ -158,29 +154,19 @@ fn retain_normalized(
         .iter()
         .flat_map(|(source_instance, target_instance)| {
             topology
-                .molecule_for_instance(*source_instance)
+                .molecule(*source_instance)
                 .expect("retained source instance was validated")
-                .atom_ids()
-                .map(|atom| {
-                    (
-                        InstanceAtomId::new(*source_instance, atom),
-                        InstanceAtomId::new(*target_instance, atom),
-                    )
-                })
+                .atoms()
+                .map(|(atom, _)| (atom, InstanceAtomId::new(*target_instance, atom.atom())))
         });
     let bonds = instances
         .iter()
         .flat_map(|(source_instance, target_instance)| {
             topology
-                .molecule_for_instance(*source_instance)
+                .molecule(*source_instance)
                 .expect("retained source instance was validated")
-                .bond_ids()
-                .map(|bond| {
-                    (
-                        InstanceBondId::new(*source_instance, bond),
-                        InstanceBondId::new(*target_instance, bond),
-                    )
-                })
+                .bonds()
+                .map(|(bond, _)| (bond, InstanceBondId::new(*target_instance, bond.bond())))
         });
     let mapping = TopologyMapping::from_pairs(
         topology,

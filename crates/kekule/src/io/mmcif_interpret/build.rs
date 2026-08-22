@@ -5,7 +5,7 @@ use crate::bio::{Hierarchy, SmcraAtomSiteMetadata};
 use crate::chemistry::canonicalize_molecule_for_publication;
 use crate::core::{Atom, AtomId, Conformer, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
-use crate::topology::{InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole};
+use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
 use super::super::MmcifDataBlock;
@@ -81,14 +81,12 @@ pub(super) fn group_rows(
 pub(super) struct BuiltMolecule {
     pub(super) editor: MoleculeEditor,
     pub(super) conformer: Conformer,
-    pub(super) metadata: MoleculeInstanceMetadata,
     pub(super) provenance: BuiltMoleculeProvenance,
 }
 
 pub(super) struct PublishedMolecule {
     pub(super) molecule: Molecule,
     pub(super) conformer: Conformer,
-    pub(super) metadata: MoleculeInstanceMetadata,
     pub(super) provenance: BuiltMoleculeProvenance,
 }
 
@@ -163,6 +161,29 @@ impl BuiltMoleculeProvenance {
 }
 
 impl BuiltMolecule {
+    pub(super) fn complete_connectivity(
+        &mut self,
+        block: &MmcifDataBlock,
+    ) -> Result<(), MmcifInterpretError> {
+        let Self {
+            editor, provenance, ..
+        } = self;
+        let atoms = provenance.atoms.iter().map(|atom| {
+            super::super::mmcif_connectivity::StagedAtomProvenance {
+                atom: atom.atom,
+                atom_name: &atom.atom_name,
+                component_id: &atom.component_id,
+                asym_id: &atom.asym_id,
+                entity_id: atom.entity_id.as_deref(),
+                label_sequence_id: atom.label_sequence_id,
+                author_sequence_id: atom.author_sequence_id.as_deref(),
+                insertion_code: atom.insertion_code.as_deref(),
+                occurrence: atom.occurrence,
+            }
+        });
+        super::super::mmcif_connectivity::complete_editor_connectivity(block, editor, atoms)
+    }
+
     pub(super) fn publish_components(self) -> Result<Vec<PublishedMolecule>, MmcifInterpretError> {
         let components = self.editor.working().connected_components();
         if components.is_empty() {
@@ -224,7 +245,6 @@ impl BuiltMolecule {
             published.push(PublishedMolecule {
                 molecule,
                 conformer,
-                metadata: self.metadata.clone(),
                 provenance,
             });
         }
@@ -372,44 +392,12 @@ pub(super) fn build_molecule(
         entity_kinds,
         atoms: atom_provenance,
     };
-    if editor.working().atom_count() > 1 {
-        report.template_bonds_pending += 1;
-    }
-
-    let mut metadata = MoleculeInstanceMetadata::default();
-    for kind in &group.kinds {
-        match kind {
-            MmcifEntityKind::Polymer => {
-                metadata.insert_role(MoleculeRole::Polymer);
-            }
-            MmcifEntityKind::Branched => {
-                metadata.insert_role(MoleculeRole::Branched);
-            }
-            MmcifEntityKind::NonPolymer => {
-                metadata.insert_role(MoleculeRole::NonPolymer);
-            }
-            MmcifEntityKind::Water => {
-                metadata.insert_role(MoleculeRole::Solvent);
-            }
-            MmcifEntityKind::Other(_) => {}
-        }
-    }
-    if editor.working().atom_count() == 1
-        && editor
-            .working()
-            .atoms()
-            .next()
-            .is_some_and(|(_, atom)| atom.formal_charge != 0)
-    {
-        metadata.insert_role(MoleculeRole::Ion);
-    }
     if is_macro {
         *editor.hierarchy_mut() = build_hierarchy(editor.working(), &representative, &atoms)?;
     }
     Ok(BuiltMolecule {
         editor,
         conformer,
-        metadata,
         provenance,
     })
 }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use kekule::core::{Atom, BondOrder, Element};
 use kekule::geometry::Point3;
-use kekule::topology::{MoleculeInstanceMetadata, TopologyBuilder};
+use kekule::topology::TopologyBuilder;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::io::xyz::XyzWriteOptions;
 use kekule_traj::io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let molecule = molecule.finish()?;
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule)?;
-    builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+    builder.add_instance(definition)?;
     let topology = Arc::new(builder.build()?);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz)
         .with_overwrite_policy(OverwritePolicy::Replace)

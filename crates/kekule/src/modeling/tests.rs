@@ -8,8 +8,7 @@ use crate::modeling::potential::{
 };
 use crate::structure::{Ensemble, Model, ModelBuildError, ModelView, PositionError};
 use crate::topology::{
-    InstanceAtomId, InstanceAtomSiteId, InstanceBondId, MoleculeInstanceId,
-    MoleculeInstanceMetadata, MoleculeRole, TopologyBuildError,
+    InstanceAtomId, InstanceAtomSiteId, InstanceBondId, MoleculeInstanceId, TopologyBuildError,
 };
 use crate::units::{
     Quantity, ANGSTROM, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
@@ -151,22 +150,21 @@ fn topology_allocation_is_shared_only_by_model_clones() {
 fn mixed_instances_and_hierarchy_use_qualified_ids() {
     let (small, small_conformer, _, _, _) = two_atom_small(1.0);
     let (macromolecule, macro_conformer, atom, site) = one_atom_macro();
-    let mut metadata = MoleculeInstanceMetadata::default();
-    metadata.insert_role(MoleculeRole::Ligand);
     let mut builder = Model::builder();
-    let small_id = builder
-        .add_molecule_with_metadata(&small, &small_conformer, metadata)
-        .unwrap();
+    let small_id = builder.add_molecule(&small, &small_conformer).unwrap();
     let macro_id = builder
         .add_molecule(&macromolecule, &macro_conformer)
         .unwrap();
     let model = builder.build().unwrap();
     assert_ne!(small_id, macro_id);
-    assert!(model
-        .topology()
-        .instance(small_id)
-        .unwrap()
-        .has_role(MoleculeRole::Ligand));
+    assert!(std::ptr::eq(
+        model.topology().molecule(small_id).unwrap().molecule(),
+        model
+            .topology()
+            .definition_for_instance(small_id)
+            .unwrap()
+            .molecule()
+    ));
     let hierarchy = model.topology().hierarchy(macro_id).unwrap().unwrap();
     assert_eq!(
         hierarchy

@@ -6,8 +6,8 @@ use crate::geometry::{PeriodicCell, Point3};
 use crate::topology::{
     InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
     InstanceChainId, InstanceHierarchy, InstanceResidue, InstanceResidueId, MoleculeDefinitionId,
-    MoleculeInstance, MoleculeInstanceId, MoleculeInstanceMetadata, Topology, TopologyAtomIndex,
-    TopologyBuildError, TopologyBuilder, TopologyError, TopologyMapping,
+    MoleculeInstance, MoleculeInstanceId, Topology, TopologyAtomIndex, TopologyBuildError,
+    TopologyBuilder, TopologyError, TopologyMapping,
 };
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
 
@@ -306,9 +306,7 @@ impl Model {
     /// use kekule::core::{Atom, Element, MoleculeEditor};
     /// use kekule::geometry::Point3;
     /// use kekule::structure::{Model, Positions};
-    /// use kekule::topology::{
-    ///     transform, MoleculeInstanceMetadata, MoleculeRole, TopologyBuilder,
-    /// };
+    /// use kekule::topology::{transform, TopologyBuilder};
     /// use kekule::units::{Quantity, ANGSTROM};
     /// use std::sync::Arc;
     ///
@@ -321,10 +319,8 @@ impl Model {
     /// let mut builder = TopologyBuilder::new();
     /// let ligand_definition = builder.add_molecule_definition(&ligand)?;
     /// let water_definition = builder.add_molecule_definition(&water)?;
-    /// builder.add_instance(ligand_definition, MoleculeInstanceMetadata::default())?;
-    /// let mut solvent = MoleculeInstanceMetadata::default();
-    /// solvent.insert_role(MoleculeRole::Solvent);
-    /// let water_instance = builder.add_instance(water_definition, solvent)?;
+    /// builder.add_instance(ligand_definition)?;
+    /// let water_instance = builder.add_instance(water_definition)?;
     /// let topology = Arc::new(builder.build()?);
     /// let positions = Positions::new(
     ///     &topology,
@@ -588,7 +584,6 @@ impl ModelBuilder {
         &mut self,
         definition: MoleculeDefinitionId,
         positions: Quantity<T>,
-        metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError>
     where
         T: AsRef<[Point3]>,
@@ -598,7 +593,7 @@ impl ModelBuilder {
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
-        let instance = self.topology.add_instance(definition, metadata)?;
+        let instance = self.topology.add_instance(definition)?;
         self.positions.extend(staged);
         Ok(instance)
     }
@@ -607,15 +602,6 @@ impl ModelBuilder {
         &mut self,
         molecule: &Molecule,
         conformer: &Conformer,
-    ) -> Result<MoleculeInstanceId, ModelBuildError> {
-        self.add_molecule_with_metadata(molecule, conformer, MoleculeInstanceMetadata::default())
-    }
-
-    pub fn add_molecule_with_metadata(
-        &mut self,
-        molecule: &Molecule,
-        conformer: &Conformer,
-        metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
         if molecule.atom_count() == 0 {
             return Err(ModelBuildError::Topology(
@@ -626,7 +612,7 @@ impl ModelBuilder {
         self.positions
             .try_reserve(staged.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
-        let (_, instance) = self.topology.add_molecule_instance(molecule, metadata)?;
+        let instance = self.topology.add_molecule(molecule)?;
         self.positions.extend(staged);
         Ok(instance)
     }

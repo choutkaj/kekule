@@ -190,10 +190,11 @@ pub mod mmcif {
     pub use crate::io::{
         MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason, MmcifDataBlock,
         MmcifDocument, MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions,
-        MmcifEnsembleInterpretation, MmcifEntityKind, MmcifEntry, MmcifInstanceProvenance,
-        MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions, MmcifInterpretation,
-        MmcifInterpretationReport, MmcifItem, MmcifLoopTable, MmcifModelSelection, MmcifParseError,
-        MmcifParseOptions, MmcifValue, MmcifWriteError, MmcifWriteOptions,
+        MmcifEnsembleInterpretation, MmcifEntityClassifications, MmcifEntityKind, MmcifEntry,
+        MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
+        MmcifInterpretation, MmcifInterpretationReport, MmcifItem, MmcifLoopTable,
+        MmcifModelSelection, MmcifParseError, MmcifParseOptions, MmcifValue, MmcifWriteError,
+        MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular meaning.
@@ -220,12 +221,40 @@ pub mod mmcif {
         crate::io::interpret_mmcif_ensemble(document, options)
     }
 
-    /// Writes one canonical molecular model as a structural mmCIF data block.
+    /// Attempts to write a model without inventing mmCIF entity semantics.
+    ///
+    /// Generic topology state intentionally contains no mmCIF entity roles, so
+    /// a non-empty model returns [`MmcifWriteError::MissingEntityClassification`].
+    /// Use [`write_with_classifications`] for a generic model or
+    /// [`write_with_report`] for an interpreted mmCIF model.
     pub fn write(
         model: &crate::structure::Model,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
         crate::io::write_mmcif_model(model, options)
+    }
+
+    /// Writes a generic model with explicit format-specific entity semantics.
+    ///
+    /// Every molecule instance must occur exactly once in `classifications`.
+    pub fn write_with_classifications(
+        model: &crate::structure::Model,
+        classifications: &MmcifEntityClassifications,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_model_with_classifications(model, classifications, options)
+    }
+
+    /// Writes a canonical model while preserving explicit source mmCIF entity kinds.
+    ///
+    /// The report must classify every molecule instance exactly once. Conflicting
+    /// source kinds are rejected instead of being guessed or collapsed.
+    pub fn write_with_report(
+        model: &crate::structure::Model,
+        report: &MmcifInterpretationReport,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_model_with_report(model, report, options)
     }
 }
 
