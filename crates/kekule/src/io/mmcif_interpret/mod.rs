@@ -110,8 +110,7 @@ fn interpret_block(
         occupancies[index.index()] = occupancy;
         b_factors[index.index()] = b_factor;
     }
-    let topology = model.shared_topology();
-    let mut atom_data = AtomData::new(&topology);
+    let mut atom_data = AtomData::new(model.atom_count());
     atom_data
         .set_occupancies(occupancies)
         .map_err(graph_error)?;

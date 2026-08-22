@@ -232,7 +232,7 @@ fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
 
 #[test]
 fn position_updates_are_complete_finite_and_transactional() {
-    let (small, conformer, a, _, _) = two_atom_small(1.0);
+    let (small, conformer, _a, _, _) = two_atom_small(1.0);
     let mut model = Model::from_molecule(&small, &conformer).unwrap();
     let original = model.positions().values().value().to_vec();
     assert!(matches!(
@@ -242,9 +242,10 @@ fn position_updates_are_complete_finite_and_transactional() {
     assert_eq!(model.positions().values().to_value(), original.as_slice());
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
-    assert!(
-        matches!(model.set_positions(Quantity::new(&invalid, ANGSTROM)), Err(PositionError::NonFinitePosition { atom }) if atom.atom() == a)
-    );
+    assert!(matches!(
+        model.set_positions(Quantity::new(&invalid, ANGSTROM)),
+        Err(PositionError::NonFinitePosition { index: 0 })
+    ));
     assert_eq!(model.positions().values().to_value(), original.as_slice());
 }
 

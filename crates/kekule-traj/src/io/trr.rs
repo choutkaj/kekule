@@ -448,13 +448,10 @@ impl<R: Read + Seek> TrrReader<R> {
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(
-            self.binding.topology_arc(),
-            Quantity::new(positions, NANOMETER),
-        )
-        .with_time(Quantity::new(decoded.header.time, PICOSECOND))
-        .with_step(decoded.header.step)
-        .with_props(props);
+        let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
+            .with_time(Quantity::new(decoded.header.time, PICOSECOND))
+            .with_step(decoded.header.step)
+            .with_props(props);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
@@ -839,14 +836,14 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         if !std::ptr::eq(frame.topology(), self.topology()) {
             return Err(TrajectoryError::TopologyMismatch);
         }
-        if !frame.atom_data().is_empty() {
+        if frame.atom_data().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
                 "atom data",
             ));
         }
-        if !frame.bond_data().is_empty() {
+        if frame.bond_data().has_data() {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,

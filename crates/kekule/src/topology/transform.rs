@@ -7,10 +7,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use super::{
-    InstanceAtomId, InstanceBondId, MoleculeInstanceId, SelectionError, Topology,
-    TopologyBuildError, TopologyBuilder, TopologyEditResult, TopologyMapping, TopologyMappingError,
-};
+use super::{MoleculeInstanceId, Topology, TopologyBuildError, TopologyBuilder};
 
 /// Retains complete molecule instances in source topology order.
 ///
@@ -35,16 +32,16 @@ use super::{
 /// builder.add_instance(definition)?;
 /// let source = Arc::new(builder.build()?);
 ///
-/// let edit = transform::retain_instances(&source, [first])?;
-/// assert_eq!(edit.topology().instance_count(), 1);
-/// assert_eq!(edit.topology().definition_count(), 1);
-/// assert!(!Arc::ptr_eq(&source, &edit.mapping().target_arc()));
+/// let target = transform::retain_instances(&source, [first])?;
+/// assert_eq!(target.instance_count(), 1);
+/// assert_eq!(target.definition_count(), 1);
+/// assert!(!Arc::ptr_eq(&source, &target));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn retain_instances(
     topology: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
-) -> Result<TopologyEditResult, TopologyTransformError> {
+) -> Result<Arc<Topology>, TopologyTransformError> {
     let retained = validate_instances(topology, instances)?;
     retain_normalized(topology, &retained)
 }
@@ -56,7 +53,7 @@ pub fn retain_instances(
 pub fn remove_instances(
     topology: &Arc<Topology>,
     instances: impl IntoIterator<Item = MoleculeInstanceId>,
-) -> Result<TopologyEditResult, TopologyTransformError> {
+) -> Result<Arc<Topology>, TopologyTransformError> {
     let removed = validate_instances(topology, instances)?;
     let retained = InstanceMembership {
         members: removed
@@ -103,13 +100,12 @@ fn validate_instances(
 fn retain_normalized(
     topology: &Arc<Topology>,
     retained: &InstanceMembership,
-) -> Result<TopologyEditResult, TopologyTransformError> {
+) -> Result<Arc<Topology>, TopologyTransformError> {
     if retained.len == 0 {
         return Err(TopologyTransformError::EmptyTargetTopology);
     }
     if retained.len == topology.instance_count() {
-        let mapping = TopologyMapping::between_identical_layouts(topology, topology)?;
-        return Ok(TopologyEditResult::new(Arc::clone(topology), mapping)?);
+        return Ok(Arc::clone(topology));
     }
 
     let mut referenced_definitions = vec![false; topology.definition_count()];
@@ -128,55 +124,24 @@ fn retain_normalized(
     builder.reserve_instances(retained.len)?;
 
     let mut definition_targets = vec![None; topology.definition_count()];
-    let mut definitions = Vec::with_capacity(retained_definition_count);
     for (source_id, definition) in topology
         .definitions()
         .filter(|(id, _)| referenced_definitions[id.index()])
     {
         let target_id = builder.add_molecule_definition(definition.molecule())?;
         definition_targets[source_id.index()] = Some(target_id);
-        definitions.push((source_id, target_id));
     }
 
-    let mut instances = Vec::with_capacity(retained.len);
-    for (source_id, instance) in topology
+    for (_, instance) in topology
         .instances()
         .filter(|(id, _)| retained.contains(*id))
     {
         let target_definition = definition_targets[instance.definition().index()]
             .expect("retained instance has a retained definition");
-        let target_id = builder.add_instance(target_definition)?;
-        instances.push((source_id, target_id));
+        builder.add_instance(target_definition)?;
     }
 
-    let target = Arc::new(builder.build()?);
-    let atoms = instances
-        .iter()
-        .flat_map(|(source_instance, target_instance)| {
-            topology
-                .molecule(*source_instance)
-                .expect("retained source instance was validated")
-                .atoms()
-                .map(|(atom, _)| (atom, InstanceAtomId::new(*target_instance, atom.atom())))
-        });
-    let bonds = instances
-        .iter()
-        .flat_map(|(source_instance, target_instance)| {
-            topology
-                .molecule(*source_instance)
-                .expect("retained source instance was validated")
-                .bonds()
-                .map(|(bond, _)| (bond, InstanceBondId::new(*target_instance, bond.bond())))
-        });
-    let mapping = TopologyMapping::from_pairs(
-        topology,
-        &target,
-        definitions,
-        instances.iter().copied(),
-        atoms,
-        bonds,
-    )?;
-    Ok(TopologyEditResult::new(target, mapping)?)
+    Ok(Arc::new(builder.build()?))
 }
 
 /// Failure to construct an immutable whole-instance topology subset.
@@ -189,8 +154,6 @@ pub enum TopologyTransformError {
     EmptyTargetTopology,
     /// The filtered target topology could not be constructed.
     TopologyBuild(TopologyBuildError),
-    /// Complete checked edit lineage could not be constructed.
-    Mapping(TopologyMappingError),
 }
 
 impl fmt::Display for TopologyTransformError {
@@ -205,7 +168,6 @@ impl fmt::Display for TopologyTransformError {
             Self::TopologyBuild(error) => {
                 write!(formatter, "cannot build target topology: {error}")
             }
-            Self::Mapping(error) => write!(formatter, "cannot build topology lineage: {error}"),
         }
     }
 }
@@ -217,58 +179,3 @@ impl From<TopologyBuildError> for TopologyTransformError {
         Self::TopologyBuild(error)
     }
 }
-
-impl From<TopologyMappingError> for TopologyTransformError {
-    fn from(error: TopologyMappingError) -> Self {
-        Self::Mapping(error)
-    }
-}
-
-/// Policy for source atoms removed while remapping an atom selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum RemovedSelectionPolicy {
-    /// Reject the remap and identify the first removed selected atom.
-    Error,
-    /// Explicitly discard removed selected atoms.
-    Drop,
-}
-
-/// Failure to remap a topology-bound atom selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SelectionRemapError {
-    /// The selection is not bound to the supplied source topology.
-    SourceTopologyMismatch,
-    /// The mapping is not sourced from the supplied source topology.
-    MappingSourceMismatch,
-    /// The mapping does not target the supplied target topology.
-    MappingTargetMismatch,
-    /// Strict policy encountered a selected atom removed by the edit.
-    RemovedSelectedAtom(InstanceAtomId),
-    /// The mapped target selection could not be constructed.
-    Selection(SelectionError),
-}
-
-impl fmt::Display for SelectionRemapError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SourceTopologyMismatch => formatter
-                .write_str("atom selection does not belong to the supplied source topology"),
-            Self::MappingSourceMismatch => {
-                formatter.write_str("topology mapping does not match the supplied source topology")
-            }
-            Self::MappingTargetMismatch => {
-                formatter.write_str("topology mapping does not match the supplied target topology")
-            }
-            Self::RemovedSelectedAtom(atom) => {
-                write!(formatter, "selected source atom {atom} was removed")
-            }
-            Self::Selection(error) => {
-                write!(formatter, "cannot construct target selection: {error}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for SelectionRemapError {}

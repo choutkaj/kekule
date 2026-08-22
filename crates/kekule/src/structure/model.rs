@@ -7,11 +7,11 @@ use crate::topology::{
     InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
     InstanceChainId, InstanceHierarchy, InstanceResidue, InstanceResidueId, MoleculeDefinitionId,
     MoleculeInstance, MoleculeInstanceId, Topology, TopologyAtomIndex, TopologyBuildError,
-    TopologyBuilder, TopologyError, TopologyMapping,
+    TopologyBuilder, TopologyError,
 };
 use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
 
-use super::{AtomData, AtomDataError, BondData, PositionError, Positions, TopologyRemapError};
+use super::{AtomData, AtomDataError, BondData, BondDataError, PositionError, Positions};
 
 /// One concrete realization of one immutable topology.
 #[derive(Debug, Clone)]
@@ -36,11 +36,9 @@ impl PartialEq for Model {
 impl Model {
     /// Creates a non-periodic model with empty atom and bond data.
     pub fn new(topology: Arc<Topology>, positions: Positions) -> Result<Self, ModelError> {
-        if !positions.is_compatible(&topology) {
-            return Err(ModelError::TopologyMismatch);
-        }
-        let atom_data = AtomData::new(&topology);
-        let bond_data = BondData::new(&topology);
+        validate_positions_len(&topology, &positions)?;
+        let atom_data = AtomData::new(topology.atom_count());
+        let bond_data = BondData::new(topology.bond_count());
         Ok(Self {
             topology,
             positions,
@@ -50,18 +48,18 @@ impl Model {
         })
     }
 
-    /// Creates a model from complete topology-bound state.
+    /// Creates a model from complete dimensioned state.
     pub fn with_atom_data(
         topology: Arc<Topology>,
         positions: Positions,
         cell: Option<PeriodicCell>,
         atom_data: AtomData,
     ) -> Result<Self, ModelError> {
-        let bond_data = BondData::new(&topology);
+        let bond_data = BondData::new(topology.bond_count());
         Self::with_data(topology, positions, cell, atom_data, bond_data)
     }
 
-    /// Creates a model from complete topology-bound atom and bond state.
+    /// Creates a model from complete dimensioned atom and bond state.
     pub fn with_data(
         topology: Arc<Topology>,
         positions: Positions,
@@ -69,12 +67,7 @@ impl Model {
         atom_data: AtomData,
         bond_data: BondData,
     ) -> Result<Self, ModelError> {
-        if !positions.is_compatible(&topology)
-            || !atom_data.is_compatible(&topology)
-            || !bond_data.is_compatible(&topology)
-        {
-            return Err(ModelError::TopologyMismatch);
-        }
+        validate_dimensions(&topology, &positions, &atom_data, &bond_data)?;
         Ok(Self {
             topology,
             positions,
@@ -210,27 +203,35 @@ impl Model {
         &self.positions
     }
 
-    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position(&self.topology, atom)
+    pub fn position(&self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.positions.position_at(index.index())?)
     }
 
     pub fn position_at(&self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position_at(index)
+        self.positions.position_at(index.index())
     }
 
     pub fn set_position(
         &mut self,
         atom: InstanceAtomId,
         position: Quantity<Point3>,
-    ) -> Result<(), PositionError> {
-        self.positions.set_position(&self.topology, atom, position)
+    ) -> Result<(), ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.positions.set_position_at(index.index(), position)?)
     }
 
     pub fn set_positions<T>(&mut self, positions: Quantity<T>) -> Result<(), PositionError>
     where
         T: AsRef<[Point3]>,
     {
-        self.positions.set_all(&self.topology, positions)
+        self.positions.set_all(positions)
     }
 
     pub const fn cell(&self) -> Option<&PeriodicCell> {
@@ -250,8 +251,11 @@ impl Model {
     }
 
     pub fn set_atom_data(&mut self, atom_data: AtomData) -> Result<(), ModelError> {
-        if !atom_data.is_compatible(&self.topology) {
-            return Err(ModelError::TopologyMismatch);
+        if atom_data.len() != self.topology.atom_count() {
+            return Err(ModelError::AtomDataCountMismatch {
+                expected: self.topology.atom_count(),
+                actual: atom_data.len(),
+            });
         }
         self.atom_data = atom_data;
         Ok(())
@@ -266,19 +270,108 @@ impl Model {
     }
 
     pub fn set_bond_data(&mut self, bond_data: BondData) -> Result<(), ModelError> {
-        if !bond_data.is_compatible(&self.topology) {
-            return Err(ModelError::TopologyMismatch);
+        if bond_data.len() != self.topology.bond_count() {
+            return Err(ModelError::BondDataCountMismatch {
+                expected: self.topology.bond_count(),
+                actual: bond_data.len(),
+            });
         }
         self.bond_data = bond_data;
         Ok(())
     }
 
-    pub fn occupancy(&self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
-        self.atom_data.occupancy(&self.topology, atom)
+    pub fn occupancy(&self, atom: InstanceAtomId) -> Result<Option<f64>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_data.occupancy_at(index.index())?)
     }
 
-    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, AtomDataError> {
-        self.atom_data.b_factor(&self.topology, atom)
+    pub fn b_factor(&self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_data.b_factor_at(index.index())?)
+    }
+
+    pub fn set_occupancy(
+        &mut self,
+        atom: InstanceAtomId,
+        value: Option<f64>,
+    ) -> Result<(), ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_data.set_occupancy_at(index.index(), value)?)
+    }
+
+    pub fn set_b_factor(
+        &mut self,
+        atom: InstanceAtomId,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_data.set_b_factor_at(index.index(), value)?)
+    }
+
+    pub fn atom_property_value(
+        &self,
+        name: &str,
+        atom: InstanceAtomId,
+    ) -> Result<Option<Quantity<f64>>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_data.property_value_at(name, index.index())?)
+    }
+
+    pub fn set_atom_property_value(
+        &mut self,
+        name: &str,
+        atom: InstanceAtomId,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self
+            .atom_data
+            .set_property_value_at(name, index.index(), value)?)
+    }
+
+    pub fn bond_property_value(
+        &self,
+        name: &str,
+        bond: InstanceBondId,
+    ) -> Result<Option<Quantity<f64>>, ModelError> {
+        let index = self
+            .topology
+            .bond_index(bond)
+            .ok_or(ModelError::InvalidBondId(bond))?;
+        Ok(self.bond_data.property_value_at(name, index.index())?)
+    }
+
+    pub fn set_bond_property_value(
+        &mut self,
+        name: &str,
+        bond: InstanceBondId,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), ModelError> {
+        let index = self
+            .topology
+            .bond_index(bond)
+            .ok_or(ModelError::InvalidBondId(bond))?;
+        Ok(self
+            .bond_data
+            .set_property_value_at(name, index.index(), value)?)
     }
 
     pub fn atom_count(&self) -> usize {
@@ -294,66 +387,38 @@ impl Model {
             bond_data: &self.bond_data,
         }
     }
+}
 
-    /// Remaps this model to an explicitly related target topology.
-    ///
-    /// The source model is unchanged. Positions, cell, [`AtomData`], and
-    /// [`BondData`] are staged before the target model is returned.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use kekule::core::{Atom, Element, MoleculeEditor};
-    /// use kekule::geometry::Point3;
-    /// use kekule::structure::{Model, Positions};
-    /// use kekule::topology::{transform, TopologyBuilder};
-    /// use kekule::units::{Quantity, ANGSTROM};
-    /// use std::sync::Arc;
-    ///
-    /// let mut ligand_builder = MoleculeEditor::new();
-    /// ligand_builder.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
-    /// let ligand = ligand_builder.finish()?;
-    /// let mut water_builder = MoleculeEditor::new();
-    /// water_builder.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-    /// let water = water_builder.finish()?;
-    /// let mut builder = TopologyBuilder::new();
-    /// let ligand_definition = builder.add_molecule_definition(&ligand)?;
-    /// let water_definition = builder.add_molecule_definition(&water)?;
-    /// builder.add_instance(ligand_definition)?;
-    /// let water_instance = builder.add_instance(water_definition)?;
-    /// let topology = Arc::new(builder.build()?);
-    /// let positions = Positions::new(
-    ///     &topology,
-    ///     Quantity::new(
-    ///         vec![Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 0.0, 0.0)],
-    ///         ANGSTROM,
-    ///     ),
-    /// )?;
-    /// let model = Model::new(Arc::clone(&topology), positions)?;
-    ///
-    /// let edit = transform::remove_instances(&topology, [water_instance])?;
-    /// let target = edit.shared_topology();
-    /// let stripped = model.remap_to(&target, edit.mapping())?;
-    /// assert_eq!(stripped.atom_count(), 1);
-    /// assert_eq!(stripped.positions().values().value()[0].x, 0.0);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn remap_to(
-        &self,
-        target: &Arc<Topology>,
-        mapping: &TopologyMapping,
-    ) -> Result<Self, TopologyRemapError> {
-        let positions = self.positions.remap_to(&self.topology, target, mapping)?;
-        let atom_data = self.atom_data.remap_to(&self.topology, target, mapping)?;
-        let bond_data = self.bond_data.remap_to(&self.topology, target, mapping)?;
-        Ok(Self {
-            topology: Arc::clone(target),
-            positions,
-            cell: self.cell,
-            atom_data,
-            bond_data,
-        })
+fn validate_positions_len(topology: &Topology, positions: &Positions) -> Result<(), ModelError> {
+    if positions.len() != topology.atom_count() {
+        return Err(ModelError::PositionCountMismatch {
+            expected: topology.atom_count(),
+            actual: positions.len(),
+        });
     }
+    Ok(())
+}
+
+fn validate_dimensions(
+    topology: &Topology,
+    positions: &Positions,
+    atom_data: &AtomData,
+    bond_data: &BondData,
+) -> Result<(), ModelError> {
+    validate_positions_len(topology, positions)?;
+    if atom_data.len() != topology.atom_count() {
+        return Err(ModelError::AtomDataCountMismatch {
+            expected: topology.atom_count(),
+            actual: atom_data.len(),
+        });
+    }
+    if bond_data.len() != topology.bond_count() {
+        return Err(ModelError::BondDataCountMismatch {
+            expected: topology.bond_count(),
+            actual: bond_data.len(),
+        });
+    }
+    Ok(())
 }
 
 /// Borrowed topology, positions, cell, atom data, and bond data for structural
@@ -375,12 +440,7 @@ impl<'a> ModelView<'a> {
         atom_data: &'a AtomData,
         bond_data: &'a BondData,
     ) -> Result<Self, ModelError> {
-        if !positions.is_compatible(topology)
-            || !atom_data.is_compatible(topology)
-            || !bond_data.is_compatible(topology)
-        {
-            return Err(ModelError::TopologyMismatch);
-        }
+        validate_dimensions(topology, positions, atom_data, bond_data)?;
         Ok(Self {
             topology,
             positions,
@@ -504,12 +564,16 @@ impl<'a> ModelView<'a> {
         self.positions
     }
 
-    pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position(self.topology, atom)
+    pub fn position(self, atom: InstanceAtomId) -> Result<Quantity<Point3>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.positions.position_at(index.index())?)
     }
 
     pub fn position_at(self, index: TopologyAtomIndex) -> Result<Quantity<Point3>, PositionError> {
-        self.positions.position_at(index)
+        self.positions.position_at(index.index())
     }
 
     pub const fn cell(self) -> Option<&'a PeriodicCell> {
@@ -524,12 +588,20 @@ impl<'a> ModelView<'a> {
         self.bond_data
     }
 
-    pub fn occupancy(self, atom: InstanceAtomId) -> Result<Option<f64>, AtomDataError> {
-        self.atom_data.occupancy(self.topology, atom)
+    pub fn occupancy(self, atom: InstanceAtomId) -> Result<Option<f64>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_data.occupancy_at(index.index())?)
     }
 
-    pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, AtomDataError> {
-        self.atom_data.b_factor(self.topology, atom)
+    pub fn b_factor(self, atom: InstanceAtomId) -> Result<Option<Quantity<f64>>, ModelError> {
+        let index = self
+            .topology
+            .atom_index(atom)
+            .ok_or(ModelError::InvalidAtomId(atom))?;
+        Ok(self.atom_data.b_factor_at(index.index())?)
     }
 
     pub fn atom_count(self) -> usize {
@@ -537,23 +609,62 @@ impl<'a> ModelView<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelError {
-    TopologyMismatch,
+    PositionCountMismatch { expected: usize, actual: usize },
+    AtomDataCountMismatch { expected: usize, actual: usize },
+    BondDataCountMismatch { expected: usize, actual: usize },
+    InvalidAtomId(InstanceAtomId),
+    InvalidBondId(InstanceBondId),
+    Position(PositionError),
+    AtomData(AtomDataError),
+    BondData(BondDataError),
 }
 
 impl fmt::Display for ModelError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyMismatch => {
-                formatter.write_str("model state belongs to a different topology")
-            }
+            Self::PositionCountMismatch { expected, actual } => write!(
+                formatter,
+                "topology requires {expected} positions, but received {actual}"
+            ),
+            Self::AtomDataCountMismatch { expected, actual } => write!(
+                formatter,
+                "topology requires atom data of length {expected}, but received {actual}"
+            ),
+            Self::BondDataCountMismatch { expected, actual } => write!(
+                formatter,
+                "topology requires bond data of length {expected}, but received {actual}"
+            ),
+            Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
+            Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
+            Self::Position(error) => write!(formatter, "invalid position data: {error}"),
+            Self::AtomData(error) => write!(formatter, "invalid atom data: {error}"),
+            Self::BondData(error) => write!(formatter, "invalid bond data: {error}"),
         }
     }
 }
 
 impl std::error::Error for ModelError {}
+
+impl From<PositionError> for ModelError {
+    fn from(error: PositionError) -> Self {
+        Self::Position(error)
+    }
+}
+
+impl From<AtomDataError> for ModelError {
+    fn from(error: AtomDataError) -> Self {
+        Self::AtomData(error)
+    }
+}
+
+impl From<BondDataError> for ModelError {
+    fn from(error: BondDataError) -> Self {
+        Self::BondData(error)
+    }
+}
 
 /// Convenience builder that assembles topology and one complete model.
 ///
@@ -619,9 +730,8 @@ impl ModelBuilder {
 
     pub fn build(self) -> Result<Model, ModelBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        let positions =
-            Positions::new(&topology, Quantity::new(self.positions, MODEL_LENGTH_UNIT))?;
-        Ok(Model::new(topology, positions).expect("builder creates exactly topology-bound state"))
+        let positions = Positions::new(Quantity::new(self.positions, MODEL_LENGTH_UNIT))?;
+        Ok(Model::new(topology, positions).expect("builder creates dimensionally valid state"))
     }
 }
 

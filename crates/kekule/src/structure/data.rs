@@ -1,13 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
 
-use crate::topology::{
-    InstanceAtomId, InstanceBondId, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyMapping,
-};
 use crate::units::{Quantity, Unit, UnitError, DIMENSIONLESS, SQUARE_ANGSTROM};
-
-use super::{remap, TopologyRemapError};
 
 const MAX_PROPERTY_NAME_LEN: usize = 128;
 
@@ -207,84 +201,48 @@ fn set_optional_property_column_value(
     Ok(())
 }
 
-fn remap_atom_property_column(
-    column: &ScalarPropertyColumn,
-    source: &Arc<Topology>,
-    target: &Arc<Topology>,
-    mapping: &TopologyMapping,
-) -> Result<Option<ScalarPropertyColumn>, TopologyRemapError> {
-    let values = remap::dense_atom_values(&column.values, source, target, mapping)?;
-    Ok(ScalarPropertyColumn::from_values(column.unit, values))
-}
-
-fn remap_bond_property_column(
-    column: &ScalarPropertyColumn,
-    source: &Arc<Topology>,
-    target: &Arc<Topology>,
-    mapping: &TopologyMapping,
-) -> Result<Option<ScalarPropertyColumn>, TopologyRemapError> {
-    let values = remap::dense_bond_values(&column.values, source, target, mapping)?;
-    Ok(ScalarPropertyColumn::from_values(column.unit, values))
-}
-
-/// Topology-bound model-level per-atom data in dense atom order.
+/// Dimensioned model-level per-atom data in dense atom order.
 ///
 /// Canonical occupancy and B-factor columns retain dedicated APIs and fixed
 /// semantic units. Custom scalar properties occupy a separate namespace. Every
 /// column is dense and optional, so a field absent for all atoms requires no
-/// per-atom allocation.
-#[derive(Debug, Clone)]
+/// per-atom allocation. `AtomData` does not own a topology.
+#[derive(Debug, Clone, PartialEq)]
 pub struct AtomData {
-    topology: Arc<Topology>,
+    len: usize,
     pub(super) occupancies: Option<ScalarPropertyColumn>,
     pub(super) b_factors: Option<ScalarPropertyColumn>,
     properties: BTreeMap<String, ScalarPropertyColumn>,
 }
 
-impl PartialEq for AtomData {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology)
-            && self.occupancies == other.occupancies
-            && self.b_factors == other.b_factors
-            && self.properties == other.properties
-    }
-}
-
 impl AtomData {
-    /// Creates atom data with no allocated scientific columns.
-    pub fn new(topology: &Arc<Topology>) -> Self {
+    /// Creates atom data with a logical length and no allocated columns.
+    pub fn new(atom_count: usize) -> Self {
         Self {
-            topology: Arc::clone(topology),
+            len: atom_count,
             occupancies: None,
             b_factors: None,
             properties: BTreeMap::new(),
         }
     }
 
-    pub fn topology(&self) -> &Topology {
-        &self.topology
-    }
-
-    pub fn shared_topology(&self) -> Arc<Topology> {
-        Arc::clone(&self.topology)
-    }
-
-    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
-        Arc::ptr_eq(&self.topology, topology)
-    }
-
-    pub(super) fn topology_arc(&self) -> &Arc<Topology> {
-        &self.topology
-    }
-
-    /// Returns the atom count of the bound topology.
+    /// Returns the logical atom count even when every column is absent.
     pub fn atom_count(&self) -> usize {
-        self.topology.atom_count()
+        self.len
     }
 
-    /// Returns whether every supported scientific column is wholly absent.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the logical atom dimension is zero.
     pub fn is_empty(&self) -> bool {
-        self.occupancies.is_none() && self.b_factors.is_none() && self.properties.is_empty()
+        self.len == 0
+    }
+
+    /// Returns whether at least one canonical or custom data column is present.
+    pub fn has_data(&self) -> bool {
+        self.occupancies.is_some() || self.b_factors.is_some() || !self.properties.is_empty()
     }
 
     pub fn occupancies(&self) -> Option<&[Option<f64>]> {
@@ -334,48 +292,19 @@ impl AtomData {
         Ok(self.properties.remove(name).is_some())
     }
 
-    /// Returns one unit-aware custom property value by semantic atom ID.
-    pub fn property_value(
-        &self,
-        topology: &Arc<Topology>,
-        name: &str,
-        atom: InstanceAtomId,
-    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .atom_index(atom)
-            .ok_or(AtomDataError::InvalidAtomId(atom))?;
-        self.property_value_at(name, index)
-    }
-
     /// Returns one unit-aware custom property value by dense atom index.
     pub fn property_value_at(
         &self,
         name: &str,
-        index: TopologyAtomIndex,
+        index: usize,
     ) -> Result<Option<Quantity<f64>>, AtomDataError> {
         validate_atom_property_name(name)?;
         validate_index(self.atom_count(), index)?;
         Ok(self.properties.get(name).and_then(|column| {
             column
-                .value(index.index())
+                .value(index)
                 .map(|value| Quantity::new(value, column.unit))
         }))
-    }
-
-    /// Sets one custom property value by semantic atom ID.
-    pub fn set_property_value(
-        &mut self,
-        topology: &Arc<Topology>,
-        name: &str,
-        atom: InstanceAtomId,
-        value: Option<Quantity<f64>>,
-    ) -> Result<(), AtomDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .atom_index(atom)
-            .ok_or(AtomDataError::InvalidAtomId(atom))?;
-        self.set_property_value_at(name, index, value)
     }
 
     /// Sets one custom property value by dense atom index.
@@ -386,82 +315,36 @@ impl AtomData {
     pub fn set_property_value_at(
         &mut self,
         name: &str,
-        index: TopologyAtomIndex,
+        index: usize,
         value: Option<Quantity<f64>>,
     ) -> Result<(), AtomDataError> {
         validate_atom_property_name(name)?;
         validate_index(self.atom_count(), index)?;
         let atom_count = self.atom_count();
-        set_named_property_column_value(
-            &mut self.properties,
-            name,
-            atom_count,
-            index.index(),
-            value,
-        )
-        .map_err(|error| atom_property_column_error(name, error))
+        set_named_property_column_value(&mut self.properties, name, atom_count, index, value)
+            .map_err(|error| atom_property_column_error(name, error))
     }
 
-    pub fn occupancy(
-        &self,
-        topology: &Arc<Topology>,
-        atom: InstanceAtomId,
-    ) -> Result<Option<f64>, AtomDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .atom_index(atom)
-            .ok_or(AtomDataError::InvalidAtomId(atom))?;
-        self.occupancy_at(index)
-    }
-
-    pub fn occupancy_at(&self, index: TopologyAtomIndex) -> Result<Option<f64>, AtomDataError> {
+    pub fn occupancy_at(&self, index: usize) -> Result<Option<f64>, AtomDataError> {
         validate_index(self.atom_count(), index)?;
         Ok(self
             .occupancies
             .as_ref()
-            .and_then(|column| column.value(index.index())))
+            .and_then(|column| column.value(index)))
     }
 
-    pub fn b_factor(
-        &self,
-        topology: &Arc<Topology>,
-        atom: InstanceAtomId,
-    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .atom_index(atom)
-            .ok_or(AtomDataError::InvalidAtomId(atom))?;
-        self.b_factor_at(index)
-    }
-
-    pub fn b_factor_at(
-        &self,
-        index: TopologyAtomIndex,
-    ) -> Result<Option<Quantity<f64>>, AtomDataError> {
+    pub fn b_factor_at(&self, index: usize) -> Result<Option<Quantity<f64>>, AtomDataError> {
         validate_index(self.atom_count(), index)?;
         Ok(self.b_factors.as_ref().and_then(|column| {
             column
-                .value(index.index())
+                .value(index)
                 .map(|value| Quantity::new(value, column.unit))
         }))
     }
 
-    pub fn set_occupancy(
-        &mut self,
-        topology: &Arc<Topology>,
-        atom: InstanceAtomId,
-        value: Option<f64>,
-    ) -> Result<(), AtomDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .atom_index(atom)
-            .ok_or(AtomDataError::InvalidAtomId(atom))?;
-        self.set_occupancy_at(index, value)
-    }
-
     pub fn set_occupancy_at(
         &mut self,
-        index: TopologyAtomIndex,
+        index: usize,
         value: Option<f64>,
     ) -> Result<(), AtomDataError> {
         validate_index(self.atom_count(), index)?;
@@ -469,41 +352,22 @@ impl AtomData {
         set_optional_property_column_value(
             &mut self.occupancies,
             len,
-            index.index(),
+            index,
             value.map(|value| Quantity::new(value, DIMENSIONLESS)),
             DIMENSIONLESS,
         )
         .map_err(|error| atom_data_column_error(AtomDataField::Occupancy, error))
     }
 
-    pub fn set_b_factor(
-        &mut self,
-        topology: &Arc<Topology>,
-        atom: InstanceAtomId,
-        value: Option<Quantity<f64>>,
-    ) -> Result<(), AtomDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .atom_index(atom)
-            .ok_or(AtomDataError::InvalidAtomId(atom))?;
-        self.set_b_factor_at(index, value)
-    }
-
     pub fn set_b_factor_at(
         &mut self,
-        index: TopologyAtomIndex,
+        index: usize,
         value: Option<Quantity<f64>>,
     ) -> Result<(), AtomDataError> {
         validate_index(self.atom_count(), index)?;
         let len = self.atom_count();
-        set_optional_property_column_value(
-            &mut self.b_factors,
-            len,
-            index.index(),
-            value,
-            SQUARE_ANGSTROM,
-        )
-        .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))
+        set_optional_property_column_value(&mut self.b_factors, len, index, value, SQUARE_ANGSTROM)
+            .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))
     }
 
     /// Replaces the complete occupancy column transactionally. An all-absent
@@ -544,50 +408,6 @@ impl AtomData {
     pub fn clear_b_factors(&mut self) {
         self.b_factors = None;
     }
-
-    /// Remaps every canonical and custom property column through checked
-    /// topology lineage.
-    pub fn remap_to(
-        &self,
-        source: &Arc<Topology>,
-        target: &Arc<Topology>,
-        mapping: &TopologyMapping,
-    ) -> Result<Self, TopologyRemapError> {
-        if !self.is_compatible(source) {
-            return Err(TopologyRemapError::SourceTopologyMismatch);
-        }
-        let occupancies = self
-            .occupancies
-            .as_ref()
-            .map(|column| remap_atom_property_column(column, source, target, mapping))
-            .transpose()?
-            .flatten();
-        let b_factors = self
-            .b_factors
-            .as_ref()
-            .map(|column| remap_atom_property_column(column, source, target, mapping))
-            .transpose()?
-            .flatten();
-        let mut properties = BTreeMap::new();
-        for (name, column) in &self.properties {
-            if let Some(column) = remap_atom_property_column(column, source, target, mapping)? {
-                properties.insert(name.clone(), column);
-            }
-        }
-        Ok(Self {
-            topology: Arc::clone(target),
-            occupancies,
-            b_factors,
-            properties,
-        })
-    }
-
-    fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), AtomDataError> {
-        if !self.is_compatible(topology) {
-            return Err(AtomDataError::TopologyMismatch);
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -602,20 +422,16 @@ fn atom_data_column_error(field: AtomDataField, error: ScalarPropertyColumnError
             AtomDataError::AtomCountMismatch { expected, actual }
         }
         ScalarPropertyColumnError::NonFiniteValue { index } => match field {
-            AtomDataField::Occupancy => AtomDataError::NonFiniteOccupancy {
-                index: TopologyAtomIndex::new(index as u32),
-            },
-            AtomDataField::BFactor => AtomDataError::NonFiniteBFactor {
-                index: TopologyAtomIndex::new(index as u32),
-            },
+            AtomDataField::Occupancy => AtomDataError::NonFiniteOccupancy { index },
+            AtomDataField::BFactor => AtomDataError::NonFiniteBFactor { index },
         },
         ScalarPropertyColumnError::Unit(error) => AtomDataError::Unit(error),
     }
 }
 
-fn validate_index(len: usize, index: TopologyAtomIndex) -> Result<(), AtomDataError> {
-    if index.index() >= len {
-        return Err(AtomDataError::InvalidAtomIndex(index));
+fn validate_index(len: usize, index: usize) -> Result<(), AtomDataError> {
+    if index >= len {
+        return Err(AtomDataError::InvalidIndex { index });
     }
     Ok(())
 }
@@ -646,7 +462,7 @@ fn atom_property_column_error(name: &str, error: ScalarPropertyColumnError) -> A
         ScalarPropertyColumnError::NonFiniteValue { index } => {
             AtomDataError::NonFinitePropertyValue {
                 property: name.to_owned(),
-                index: TopologyAtomIndex::new(index as u32),
+                index,
             }
         }
         ScalarPropertyColumnError::Unit(error) => AtomDataError::PropertyUnit {
@@ -659,18 +475,18 @@ fn atom_property_column_error(name: &str, error: ScalarPropertyColumnError) -> A
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AtomDataError {
-    TopologyMismatch,
     AtomCountMismatch {
         expected: usize,
         actual: usize,
     },
-    InvalidAtomId(InstanceAtomId),
-    InvalidAtomIndex(TopologyAtomIndex),
+    InvalidIndex {
+        index: usize,
+    },
     NonFiniteOccupancy {
-        index: TopologyAtomIndex,
+        index: usize,
     },
     NonFiniteBFactor {
-        index: TopologyAtomIndex,
+        index: usize,
     },
     InvalidPropertyName {
         name: String,
@@ -685,7 +501,7 @@ pub enum AtomDataError {
     },
     NonFinitePropertyValue {
         property: String,
-        index: TopologyAtomIndex,
+        index: usize,
     },
     PropertyUnit {
         property: String,
@@ -697,15 +513,11 @@ pub enum AtomDataError {
 impl fmt::Display for AtomDataError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyMismatch => {
-                formatter.write_str("atom data belongs to a different topology")
-            }
             Self::AtomCountMismatch { expected, actual } => write!(
                 formatter,
                 "atom data requires {expected} values per present column, but received {actual}"
             ),
-            Self::InvalidAtomId(atom) => write!(formatter, "invalid topology atom: {atom}"),
-            Self::InvalidAtomIndex(index) => write!(formatter, "invalid {index}"),
+            Self::InvalidIndex { index } => write!(formatter, "invalid atom-data index {index}"),
             Self::NonFiniteOccupancy { index } => {
                 write!(formatter, "occupancy at {index} must be finite")
             }
@@ -747,55 +559,43 @@ impl From<UnitError> for AtomDataError {
     }
 }
 
-/// Topology-bound model-level per-bond annotations in authoritative dense bond
-/// order.
+/// Dimensioned model-level per-bond annotations in authoritative dense bond
+/// order. `BondData` does not own a topology.
 ///
 /// Bond data has no canonical scientific fields. It stores only conservative,
 /// user- or analysis-defined unit-aware scalar properties.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BondData {
-    topology: Arc<Topology>,
+    len: usize,
     properties: BTreeMap<String, ScalarPropertyColumn>,
 }
 
-impl PartialEq for BondData {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.topology, &other.topology) && self.properties == other.properties
-    }
-}
-
 impl BondData {
-    /// Creates empty bond data bound to the exact shared topology allocation.
-    pub fn new(topology: &Arc<Topology>) -> Self {
+    /// Creates bond data with a logical length and no allocated columns.
+    pub fn new(bond_count: usize) -> Self {
         Self {
-            topology: Arc::clone(topology),
+            len: bond_count,
             properties: BTreeMap::new(),
         }
     }
 
-    pub fn topology(&self) -> &Topology {
-        &self.topology
-    }
-
-    pub fn shared_topology(&self) -> Arc<Topology> {
-        Arc::clone(&self.topology)
-    }
-
-    pub fn is_compatible(&self, topology: &Arc<Topology>) -> bool {
-        Arc::ptr_eq(&self.topology, topology)
-    }
-
-    pub(super) fn topology_arc(&self) -> &Arc<Topology> {
-        &self.topology
-    }
-
-    /// Returns the bond count of the bound topology.
+    /// Returns the logical bond count even when every column is absent.
     pub fn bond_count(&self) -> usize {
-        self.topology.bond_count()
+        self.len
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the logical bond dimension is zero.
     pub fn is_empty(&self) -> bool {
-        self.properties.is_empty()
+        self.len == 0
+    }
+
+    /// Returns whether at least one custom data column is present.
+    pub fn has_data(&self) -> bool {
+        !self.properties.is_empty()
     }
 
     /// Iterates custom scalar properties in stable name order.
@@ -834,48 +634,19 @@ impl BondData {
         Ok(self.properties.remove(name).is_some())
     }
 
-    /// Returns one unit-aware custom property value by semantic bond ID.
-    pub fn property_value(
-        &self,
-        topology: &Arc<Topology>,
-        name: &str,
-        bond: InstanceBondId,
-    ) -> Result<Option<Quantity<f64>>, BondDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .bond_index(bond)
-            .ok_or(BondDataError::InvalidBondId(bond))?;
-        self.property_value_at(name, index)
-    }
-
     /// Returns one unit-aware custom property value by dense bond index.
     pub fn property_value_at(
         &self,
         name: &str,
-        index: TopologyBondIndex,
+        index: usize,
     ) -> Result<Option<Quantity<f64>>, BondDataError> {
         validate_bond_property_name(name)?;
         validate_bond_index(self.bond_count(), index)?;
         Ok(self.properties.get(name).and_then(|column| {
             column
-                .value(index.index())
+                .value(index)
                 .map(|value| Quantity::new(value, column.unit))
         }))
-    }
-
-    /// Sets one custom property value by semantic bond ID.
-    pub fn set_property_value(
-        &mut self,
-        topology: &Arc<Topology>,
-        name: &str,
-        bond: InstanceBondId,
-        value: Option<Quantity<f64>>,
-    ) -> Result<(), BondDataError> {
-        self.ensure_compatible(topology)?;
-        let index = topology
-            .bond_index(bond)
-            .ok_or(BondDataError::InvalidBondId(bond))?;
-        self.set_property_value_at(name, index, value)
     }
 
     /// Sets one custom property value by dense bond index.
@@ -886,49 +657,14 @@ impl BondData {
     pub fn set_property_value_at(
         &mut self,
         name: &str,
-        index: TopologyBondIndex,
+        index: usize,
         value: Option<Quantity<f64>>,
     ) -> Result<(), BondDataError> {
         validate_bond_property_name(name)?;
         validate_bond_index(self.bond_count(), index)?;
         let bond_count = self.bond_count();
-        set_named_property_column_value(
-            &mut self.properties,
-            name,
-            bond_count,
-            index.index(),
-            value,
-        )
-        .map_err(|error| bond_property_column_error(name, error))
-    }
-
-    /// Remaps every custom property through checked topology lineage.
-    pub fn remap_to(
-        &self,
-        source: &Arc<Topology>,
-        target: &Arc<Topology>,
-        mapping: &TopologyMapping,
-    ) -> Result<Self, TopologyRemapError> {
-        if !self.is_compatible(source) {
-            return Err(TopologyRemapError::SourceTopologyMismatch);
-        }
-        let mut properties = BTreeMap::new();
-        for (name, column) in &self.properties {
-            if let Some(column) = remap_bond_property_column(column, source, target, mapping)? {
-                properties.insert(name.clone(), column);
-            }
-        }
-        Ok(Self {
-            topology: Arc::clone(target),
-            properties,
-        })
-    }
-
-    fn ensure_compatible(&self, topology: &Arc<Topology>) -> Result<(), BondDataError> {
-        if !self.is_compatible(topology) {
-            return Err(BondDataError::TopologyMismatch);
-        }
-        Ok(())
+        set_named_property_column_value(&mut self.properties, name, bond_count, index, value)
+            .map_err(|error| bond_property_column_error(name, error))
     }
 }
 
@@ -941,9 +677,9 @@ fn validate_bond_property_name(name: &str) -> Result<(), BondDataError> {
     Ok(())
 }
 
-fn validate_bond_index(len: usize, index: TopologyBondIndex) -> Result<(), BondDataError> {
-    if index.index() >= len {
-        return Err(BondDataError::InvalidBondIndex(index));
+fn validate_bond_index(len: usize, index: usize) -> Result<(), BondDataError> {
+    if index >= len {
+        return Err(BondDataError::InvalidIndex { index });
     }
     Ok(())
 }
@@ -960,7 +696,7 @@ fn bond_property_column_error(name: &str, error: ScalarPropertyColumnError) -> B
         ScalarPropertyColumnError::NonFiniteValue { index } => {
             BondDataError::NonFinitePropertyValue {
                 property: name.to_owned(),
-                index: TopologyBondIndex::new(index as u32),
+                index,
             }
         }
         ScalarPropertyColumnError::Unit(error) => BondDataError::PropertyUnit {
@@ -973,9 +709,9 @@ fn bond_property_column_error(name: &str, error: ScalarPropertyColumnError) -> B
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum BondDataError {
-    TopologyMismatch,
-    InvalidBondId(InstanceBondId),
-    InvalidBondIndex(TopologyBondIndex),
+    InvalidIndex {
+        index: usize,
+    },
     InvalidPropertyName {
         name: String,
     },
@@ -986,7 +722,7 @@ pub enum BondDataError {
     },
     NonFinitePropertyValue {
         property: String,
-        index: TopologyBondIndex,
+        index: usize,
     },
     PropertyUnit {
         property: String,
@@ -997,11 +733,7 @@ pub enum BondDataError {
 impl fmt::Display for BondDataError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyMismatch => {
-                formatter.write_str("bond data belongs to a different topology")
-            }
-            Self::InvalidBondId(bond) => write!(formatter, "invalid topology bond: {bond}"),
-            Self::InvalidBondIndex(index) => write!(formatter, "invalid {index}"),
+            Self::InvalidIndex { index } => write!(formatter, "invalid bond-data index {index}"),
             Self::InvalidPropertyName { name } => write!(
                 formatter,
                 "invalid bond property name {name:?}; use a 1-{MAX_PROPERTY_NAME_LEN} character ASCII identifier"

@@ -808,12 +808,9 @@ impl<R: Read + Seek> XtcReader<R> {
         info: &XtcFrameInfo,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(
-            self.binding.topology_arc(),
-            Quantity::new(positions, NANOMETER),
-        )
-        .with_time(Quantity::new(info.time, PICOSECOND))
-        .with_step(info.step);
+        let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
+            .with_time(Quantity::new(info.time, PICOSECOND))
+            .with_step(info.step);
         if let Some(cell) = info.cell {
             data = data.with_cell(cell);
         }
@@ -1212,8 +1209,8 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         for (present, field) in [
             (frame.velocities().is_some(), "velocities"),
             (frame.forces().is_some(), "forces"),
-            (!frame.atom_data().is_empty(), "atom data"),
-            (!frame.bond_data().is_empty(), "bond data"),
+            (frame.atom_data().has_data(), "atom data"),
+            (frame.bond_data().has_data(), "bond data"),
             (!frame.props().is_empty(), "properties"),
         ] {
             if present {

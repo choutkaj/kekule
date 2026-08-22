@@ -47,17 +47,11 @@
 //! ));
 //! let moving = Model::new(
 //!     Arc::clone(&topology),
-//!     Positions::new(
-//!         &topology,
-//!         Quantity::new(moving_points, ANGSTROM),
-//!     )?,
+//!     Positions::new(Quantity::new(moving_points, ANGSTROM))?,
 //! )?;
 //! let reference = Model::new(
 //!     Arc::clone(&topology),
-//!     Positions::new(
-//!         &topology,
-//!         Quantity::new(reference_points, ANGSTROM),
-//!     )?,
+//!     Positions::new(Quantity::new(reference_points, ANGSTROM))?,
 //! )?;
 //! let selection = AtomSelection::from_atoms(
 //!     &topology,
@@ -844,7 +838,7 @@ mod tests {
     }
 
     fn model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
-        let positions = Positions::new(topology, Quantity::new(points, ANGSTROM)).unwrap();
+        let positions = Positions::new(Quantity::new(points, ANGSTROM)).unwrap();
         Model::new(Arc::clone(topology), positions).unwrap()
     }
 
