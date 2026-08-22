@@ -120,7 +120,10 @@ fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
         )
         .unwrap();
     let ensemble = Ensemble::from_models(&[model.clone(), displaced.clone()]).unwrap();
-    let frame = TrajectoryFrame::new(displaced.positions().clone());
+    let frame = TrajectoryFrame::new(
+        displaced.positions().clone(),
+        displaced.topology().bond_count(),
+    );
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
         model.view(),
@@ -190,7 +193,10 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
         potential.evaluate(periodic_ensemble.views().next().unwrap()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
-    let mut periodic_frame = TrajectoryFrame::new(periodic_model.positions().clone());
+    let mut periodic_frame = TrajectoryFrame::new(
+        periodic_model.positions().clone(),
+        periodic_model.topology().bond_count(),
+    );
     periodic_frame.set_cell(periodic_model.cell().copied());
     assert_eq!(
         potential.evaluate(

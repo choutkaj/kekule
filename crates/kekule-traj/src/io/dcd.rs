@@ -791,11 +791,8 @@ impl<R: Read + Seek> DcdReader<R> {
         decoded: DcdDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(
-            self.binding.topology_arc(),
-            Quantity::new(positions, ANGSTROM),
-        )
-        .with_step(decoded.step);
+        let mut data =
+            FrameBufferData::new(Quantity::new(positions, ANGSTROM)).with_step(decoded.step);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }

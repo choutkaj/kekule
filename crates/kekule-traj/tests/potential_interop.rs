@@ -40,7 +40,7 @@ fn kekule_potentials_consume_trajectory_views_without_coordinate_copies() {
     )
     .unwrap();
 
-    let frame = TrajectoryFrame::new(model.positions().clone());
+    let frame = TrajectoryFrame::new(model.positions().clone(), model.topology().bond_count());
     assert!(potential
         .evaluate(frame.view(&topology).unwrap().model_view())
         .is_ok());

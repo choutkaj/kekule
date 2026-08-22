@@ -669,8 +669,9 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
     assert_eq!(interpreted.reports().len(), 2);
     let shared_topology = ensemble.shared_topology();
     assert!(ensemble.members().all(|member| {
-        member.positions().is_compatible(&shared_topology)
-            && member.atom_data().is_compatible(&shared_topology)
+        member.positions().len() == shared_topology.atom_count()
+            && member.atom_data().len() == shared_topology.atom_count()
+            && member.bond_data().len() == shared_topology.bond_count()
     }));
     assert_eq!(
         ensemble
@@ -867,21 +868,11 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
         interpreted.reports()[1].instances()[0].atoms()[0].atom()
     );
     assert_eq!(
-        ensemble
-            .member(0)
-            .unwrap()
-            .atom_data()
-            .occupancy(&topology, atom)
-            .unwrap(),
+        ensemble.views().next().unwrap().occupancy(atom).unwrap(),
         Some(0.8)
     );
     assert_eq!(
-        ensemble
-            .member(1)
-            .unwrap()
-            .atom_data()
-            .occupancy(&topology, atom)
-            .unwrap(),
+        ensemble.views().nth(1).unwrap().occupancy(atom).unwrap(),
         Some(0.9)
     );
     let selected_altlocs = interpreted
@@ -1379,17 +1370,9 @@ covale A N 1 A CA 1 doub
     .to_parts();
     let topology = original.shared_topology();
     let first_atom = topology.atom_ids()[0];
+    original.set_occupancy(first_atom, Some(0.625)).unwrap();
     original
-        .atom_data_mut()
-        .set_occupancy(&topology, first_atom, Some(0.625))
-        .unwrap();
-    original
-        .atom_data_mut()
-        .set_b_factor(
-            &topology,
-            first_atom,
-            Some(Quantity::new(0.125, NANOMETER.powi(2))),
-        )
+        .set_b_factor(first_atom, Some(Quantity::new(0.125, NANOMETER.powi(2))))
         .unwrap();
     original
         .atom_data_mut()

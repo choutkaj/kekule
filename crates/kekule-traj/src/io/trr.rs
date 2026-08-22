@@ -448,13 +448,10 @@ impl<R: Read + Seek> TrrReader<R> {
         decoded: &TrrDecodedFrame,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryError> {
-        let mut data = FrameBufferData::new(
-            self.binding.topology_arc(),
-            Quantity::new(positions, NANOMETER),
-        )
-        .with_time(Quantity::new(decoded.header.time, PICOSECOND))
-        .with_step(decoded.header.step)
-        .with_props(props);
+        let mut data = FrameBufferData::new(Quantity::new(positions, NANOMETER))
+            .with_time(Quantity::new(decoded.header.time, PICOSECOND))
+            .with_step(decoded.header.step)
+            .with_props(props);
         if let Some(cell) = decoded.cell {
             data = data.with_cell(cell);
         }
