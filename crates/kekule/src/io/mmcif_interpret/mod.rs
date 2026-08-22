@@ -5,7 +5,6 @@ mod struct_conn;
 mod types;
 
 use crate::structure::{AtomData, ModelBuilder};
-use crate::topology::MoleculeInstanceId;
 use crate::units::{Quantity, SQUARE_ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument};
@@ -17,12 +16,11 @@ use build::{build_molecule, graph_error, group_rows, polymer_asym_order};
 use struct_conn::{read_connections, InstanceUnion};
 
 pub(crate) use ensemble::interpret_mmcif_ensemble;
-pub(crate) use types::MmcifInterpretation;
 pub use types::{
     MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
-    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEntityKind,
-    MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
-    MmcifInterpretationReport, MmcifModelSelection,
+    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
+    MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
+    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
 };
 
 pub(crate) fn interpret_mmcif(
@@ -91,12 +89,7 @@ fn interpret_block(
     let mut qualified_atom_data = Vec::new();
     for group in groups {
         let mut built = build_molecule(group, &connections, &mut report)?;
-        let (staged_provenance, _) = built.provenance.clone().qualify(MoleculeInstanceId::new(0));
-        super::mmcif_connectivity::complete_editor_connectivity(
-            block,
-            &mut built.editor,
-            &staged_provenance,
-        )?;
+        built.complete_connectivity(block)?;
         for built in built.publish_components()? {
             let id = builder
                 .add_molecule(&built.molecule, &built.conformer)
