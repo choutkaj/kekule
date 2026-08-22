@@ -5,7 +5,7 @@ mod struct_conn;
 mod types;
 
 use crate::structure::{AtomData, ModelBuilder};
-use crate::topology::MoleculeRole;
+use crate::topology::{MoleculeInstanceId, MoleculeRole};
 use crate::units::{Quantity, SQUARE_ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument};
@@ -13,7 +13,7 @@ use atom_site::{
     read_asym_entities, read_atom_rows, read_entity_types, select_alt_locations,
     select_coordinate_model,
 };
-use build::{build_molecule, graph_error, group_rows, polymer_asym_order, BuiltMolecule};
+use build::{build_molecule, graph_error, group_rows, polymer_asym_order};
 use struct_conn::{read_connections, InstanceUnion};
 
 pub(crate) use ensemble::interpret_mmcif_ensemble;
@@ -90,38 +90,20 @@ fn interpret_block(
     let mut builder = ModelBuilder::new();
     let mut qualified_atom_data = Vec::new();
     for group in groups {
-        let built = build_molecule(group, &connections, &mut report)?;
-        match built {
-            BuiltMolecule::Macro {
-                molecule,
-                conformer,
-                metadata,
-                provenance,
-            } => {
-                let id = builder
-                    .add_macro_molecule_with_metadata_unchecked_connectedness(
-                        &molecule, conformer, metadata,
-                    )
-                    .map_err(graph_error)?;
-                let (provenance, atom_data) = provenance.qualify(id);
-                report.instances.push(provenance);
-                qualified_atom_data.extend(atom_data);
-            }
-            BuiltMolecule::Small {
-                molecule,
-                conformer,
-                metadata,
-                provenance,
-            } => {
-                let id = builder
-                    .add_small_molecule_with_metadata_unchecked_connectedness(
-                        &molecule, conformer, metadata,
-                    )
-                    .map_err(graph_error)?;
-                let (provenance, atom_data) = provenance.qualify(id);
-                report.instances.push(provenance);
-                qualified_atom_data.extend(atom_data);
-            }
+        let mut built = build_molecule(group, &connections, &mut report)?;
+        let (staged_provenance, _) = built.provenance.clone().qualify(MoleculeInstanceId::new(0));
+        super::mmcif_connectivity::complete_editor_connectivity(
+            block,
+            &mut built.editor,
+            &staged_provenance,
+        )?;
+        for built in built.publish_components()? {
+            let id = builder
+                .add_molecule_with_metadata(&built.molecule, &built.conformer, built.metadata)
+                .map_err(graph_error)?;
+            let (provenance, atom_data) = built.provenance.qualify(id);
+            report.instances.push(provenance);
+            qualified_atom_data.extend(atom_data);
         }
     }
     let mut model = builder.build().map_err(graph_error)?;
@@ -151,7 +133,7 @@ fn interpret_block(
             model
                 .topology()
                 .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.macro_molecule().is_some())
+                .is_ok_and(|definition| definition.hierarchy().is_some())
         })
         .count();
     report.small_molecules = model
@@ -161,7 +143,7 @@ fn interpret_block(
             model
                 .topology()
                 .definition_for_instance(*id)
-                .is_ok_and(|definition| definition.small_molecule().is_some())
+                .is_ok_and(|definition| definition.hierarchy().is_none())
         })
         .count();
     report.solvent_molecules = model

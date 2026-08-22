@@ -7,10 +7,10 @@ use crate::chemistry::{
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::core::{
-    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, StereoCarrier,
-    StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation, TetrahedralStereo,
+    Atom, AtomId, BondId, BondOrder, Element, HydrogenDeclaration, Molecule, MoleculeEditor,
+    StereoCarrier, StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation,
+    TetrahedralStereo,
 };
-use crate::small::model::SmallMolecule;
 
 use super::parse::{
     PendingStereoCarrier, PendingTetrahedral, SmilesAtomSyntax, SmilesBondToken,
@@ -127,7 +127,7 @@ impl SmilesInterpretationReport {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmilesComponentInterpretation {
     source_span: Range<usize>,
-    molecule: SmallMolecule,
+    molecule: Molecule,
     report: SmilesInterpretationReport,
 }
 
@@ -136,7 +136,7 @@ impl SmilesComponentInterpretation {
         self.source_span.clone()
     }
 
-    pub fn molecule(&self) -> &SmallMolecule {
+    pub fn molecule(&self) -> &Molecule {
         &self.molecule
     }
 
@@ -144,11 +144,11 @@ impl SmilesComponentInterpretation {
         &self.report
     }
 
-    pub fn to_molecule(self) -> SmallMolecule {
+    pub fn to_molecule(self) -> Molecule {
         self.molecule
     }
 
-    pub fn to_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
+    pub fn to_parts(self) -> (Molecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -164,13 +164,13 @@ impl SmilesInterpretation {
         &self.components
     }
 
-    pub fn molecules(&self) -> impl ExactSizeIterator<Item = &SmallMolecule> + DoubleEndedIterator {
+    pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.components
             .iter()
             .map(SmilesComponentInterpretation::molecule)
     }
 
-    pub fn to_molecules(self) -> Vec<SmallMolecule> {
+    pub fn to_molecules(self) -> Vec<Molecule> {
         self.components
             .into_iter()
             .map(SmilesComponentInterpretation::to_molecule)
@@ -182,7 +182,7 @@ impl SmilesInterpretation {
     /// Prefer [`Self::components`] for general SMILES input. This method keeps
     /// the pre-component API convenient for callers whose input contract is
     /// already single-molecule and fails loudly rather than discarding data.
-    pub fn molecule(&self) -> Result<&SmallMolecule, SmilesComponentCountError> {
+    pub fn molecule(&self) -> Result<&Molecule, SmilesComponentCountError> {
         Ok(self.single_component()?.molecule())
     }
 
@@ -192,14 +192,14 @@ impl SmilesInterpretation {
     }
 
     /// Consumes an interpretation known to contain exactly one component.
-    pub fn to_molecule(self) -> Result<SmallMolecule, SmilesComponentCountError> {
+    pub fn to_molecule(self) -> Result<Molecule, SmilesComponentCountError> {
         Ok(self.to_single_component()?.to_molecule())
     }
 
     /// Consumes an interpretation known to contain exactly one component and its report.
     pub fn to_parts(
         self,
-    ) -> Result<(SmallMolecule, SmilesInterpretationReport), SmilesComponentCountError> {
+    ) -> Result<(Molecule, SmilesInterpretationReport), SmilesComponentCountError> {
         Ok(self.to_single_component()?.to_parts())
     }
 
@@ -233,7 +233,7 @@ impl SmilesInterpretation {
 ///
 /// Parsing remains record-level: [`SmilesDocument`] preserves the complete
 /// source and component separators. Interpretation turns each syntactic
-/// component into one connected [`SmallMolecule`] with component-local atom and
+/// component into one connected [`Molecule`] with component-local atom and
 /// bond identifiers while retaining mappings to the original source offsets.
 pub fn interpret_smiles_document(
     document: &SmilesDocument,
@@ -248,14 +248,6 @@ pub fn interpret_smiles_document(
             }
         })?;
         let (molecule, report) = local.to_parts();
-        molecule
-            .as_molecule()
-            .validate_connected()
-            .map_err(|error| SmilesInterpretError {
-                offset: source_span.start,
-                message: error.to_string(),
-            })?;
-
         let atom_mappings = report
             .atom_mappings()
             .iter()
@@ -316,12 +308,12 @@ fn component_source_span(
 
 #[derive(Debug, Clone, PartialEq)]
 struct SmilesProgramInterpretation {
-    molecule: SmallMolecule,
+    molecule: Molecule,
     report: SmilesInterpretationReport,
 }
 
 impl SmilesProgramInterpretation {
-    fn to_parts(self) -> (SmallMolecule, SmilesInterpretationReport) {
+    fn to_parts(self) -> (Molecule, SmilesInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -341,7 +333,7 @@ fn interpret_smiles_program_component(
     validate_smiles_source_aromaticity(program, component, source)?;
     let end_offset = source.len();
 
-    let mut mol = Molecule::new();
+    let mut editor = crate::core::MoleculeEditor::new();
     let mut source_to_atom = BTreeMap::<usize, AtomId>::new();
     let mut atom_mappings = Vec::new();
     for (index, record) in program.atoms.iter().enumerate() {
@@ -349,10 +341,12 @@ fn interpret_smiles_program_component(
             continue;
         }
         let atom = interpret_smiles_atom(&record.syntax, record.span.start)?;
-        let atom_id = mol.add_atom(atom).map_err(|error| SmilesInterpretError {
-            offset: record.span.start,
-            message: format!("invalid represented atom: {error}"),
-        })?;
+        let atom_id = editor
+            .add_atom(atom)
+            .map_err(|error| SmilesInterpretError {
+                offset: record.span.start,
+                message: format!("invalid represented atom: {error}"),
+            })?;
         source_to_atom.insert(index, atom_id);
         atom_mappings.push(SmilesAtomMapping {
             atom: atom_id,
@@ -383,7 +377,7 @@ fn interpret_smiles_program_component(
                     message: "bond right endpoint is outside its SMILES component".to_owned(),
                 })?;
         let (order, source_aromatic) = interpret_smiles_bond_token(bond.token);
-        let bond_id = add_smiles_bond(&mut mol, left, right, order, bond.offset)?;
+        let bond_id = add_smiles_bond(&mut editor, left, right, order, bond.offset)?;
         if let Some(direction) = bond.direction {
             let source_from = bond.direction_from.ok_or_else(|| SmilesInterpretError {
                 offset: bond.direction_offset.unwrap_or(bond.offset),
@@ -413,33 +407,38 @@ fn interpret_smiles_program_component(
             source_offset: bond.direction_offset.unwrap_or(bond.offset),
         });
     }
-    localize_source_aromatic_bonds(&mut mol, &source_aromatic_bonds).map_err(|error| {
-        SmilesInterpretError {
+    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
+        |error| SmilesInterpretError {
             offset: first_aromatic_offset.unwrap_or(end_offset),
             message: error.to_string(),
-        }
-    })?;
+        },
+    )?;
 
     add_smiles_tetrahedral_elements(
-        &mut mol,
+        &mut editor,
         &source_to_atom,
         &program.tetrahedral,
         &program.tetrahedral_carriers,
         end_offset,
     )?;
-    let publication_report = canonicalize_molecule_for_publication(&mut mol, &source_stereo)
-        .map_err(|error| SmilesInterpretError {
-            offset: canonicalization_error_offset(
-                &error,
-                &atom_mappings,
-                &bond_mappings,
-                end_offset,
-            ),
-            message: format!("could not publish canonical molecule: {error}"),
-        })?;
+    let publication_report = canonicalize_molecule_for_publication(
+        editor.working_mut(),
+        None,
+        &source_stereo,
+    )
+    .map_err(|error| SmilesInterpretError {
+        offset: canonicalization_error_offset(&error, &atom_mappings, &bond_mappings, end_offset),
+        message: format!("could not publish canonical molecule: {error}"),
+    })?;
     debug_assert!(publication_report.warnings.is_empty());
+    let molecule = editor.finish().map_err(|error| SmilesInterpretError {
+        offset: atom_mappings
+            .first()
+            .map_or(end_offset, |mapping| mapping.source_span.start),
+        message: error.to_string(),
+    })?;
     Ok(SmilesProgramInterpretation {
-        molecule: SmallMolecule::from_molecule(mol),
+        molecule,
         report: SmilesInterpretationReport {
             atom_mappings,
             bond_mappings,
@@ -584,13 +583,14 @@ const fn interpret_smiles_direction(direction: SmilesDirectionToken) -> SourceSt
 }
 
 fn add_smiles_bond(
-    mol: &mut Molecule,
+    editor: &mut MoleculeEditor,
     left: AtomId,
     right: AtomId,
     order: BondOrder,
     offset: usize,
 ) -> std::result::Result<BondId, SmilesInterpretError> {
-    mol.add_bond(left, right, order)
+    editor
+        .add_bond(left, right, order)
         .map_err(|error| SmilesInterpretError {
             offset,
             message: error.to_string(),
@@ -598,7 +598,7 @@ fn add_smiles_bond(
 }
 
 fn add_smiles_tetrahedral_elements(
-    mol: &mut Molecule,
+    editor: &mut MoleculeEditor,
     source_to_atom: &BTreeMap<usize, AtomId>,
     centers: &[PendingTetrahedral],
     carriers_by_center: &BTreeMap<usize, Vec<PendingStereoCarrier>>,
@@ -609,7 +609,7 @@ fn add_smiles_tetrahedral_elements(
             continue;
         };
         let carriers = resolve_smiles_tetrahedral_carriers(
-            mol,
+            editor.working(),
             center,
             source_to_atom,
             carriers_by_center
@@ -618,20 +618,21 @@ fn add_smiles_tetrahedral_elements(
                 .unwrap_or_default(),
             offset,
         )?;
-        mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
-            TetrahedralStereo {
-                center,
-                carriers,
-                orientation: Some(match pending.orientation {
-                    SmilesChiralityToken::At => TetrahedralOrientation::Clockwise,
-                    SmilesChiralityToken::AtAt => TetrahedralOrientation::CounterClockwise,
-                }),
-            },
-        )))
-        .map_err(|error| SmilesInterpretError {
-            offset,
-            message: error.to_string(),
-        })?;
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+                TetrahedralStereo {
+                    center,
+                    carriers,
+                    orientation: Some(match pending.orientation {
+                        SmilesChiralityToken::At => TetrahedralOrientation::Clockwise,
+                        SmilesChiralityToken::AtAt => TetrahedralOrientation::CounterClockwise,
+                    }),
+                },
+            )))
+            .map_err(|error| SmilesInterpretError {
+                offset,
+                message: error.to_string(),
+            })?;
     }
     Ok(())
 }
@@ -692,7 +693,7 @@ mod tests {
         assert_eq!(interpretation.components().len(), 2);
         assert!(interpretation
             .molecules()
-            .all(|molecule| molecule.as_molecule().is_connected()));
+            .all(|molecule| molecule.is_connected()));
         assert_eq!(interpretation.components()[0].source_span(), 0..10);
         assert_eq!(interpretation.components()[1].source_span(), 11..16);
     }

@@ -37,7 +37,7 @@ impl RingMembership {
     /// Constructs detached ring membership over complete stable atom and bond slots.
     ///
     /// Slot lengths and live references are checked when the containing
-    /// [`PerceptionState`] is installed on a molecule.
+    /// [`Perception`] is installed on a molecule.
     pub fn from_slot_flags(atom_flags: Vec<bool>, bond_flags: Vec<bool>) -> Self {
         Self {
             atom_flags,
@@ -93,7 +93,7 @@ impl RingSet {
     /// Constructs a detached deterministic ring basis.
     ///
     /// Ring references and graph coherence are checked when the containing
-    /// [`PerceptionState`] is installed on a molecule.
+    /// [`Perception`] is installed on a molecule.
     pub fn from_rings(rings: Vec<Ring>) -> Self {
         Self { rings }
     }
@@ -119,19 +119,19 @@ pub struct RingBasisState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValencePerceptionState {
+pub struct ValencePerception {
     pub(super) model: Option<ValenceModel>,
     pub(super) implicit_hydrogens: BTreeMap<AtomId, u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingPerceptionState {
+pub struct RingPerception {
     pub(super) membership: RingMembership,
     pub(super) basis: Option<RingBasisState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AromaticityPerceptionState {
+pub struct AromaticityPerception {
     pub(super) model: AromaticityModel,
     pub(super) atoms: BTreeSet<AtomId>,
     pub(super) bonds: BTreeSet<BondId>,
@@ -142,19 +142,19 @@ pub struct AromaticityPerceptionState {
 /// Presence of this section records that CIP derivation completed successfully,
 /// including when no descriptors were assigned.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct StereoPerceptionState {
+pub struct StereoPerception {
     pub(super) cip_descriptors: BTreeMap<StereoElementId, StereoDescriptor>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PerceptionState {
-    pub(super) valence: Option<ValencePerceptionState>,
-    pub(super) rings: Option<RingPerceptionState>,
-    pub(super) aromaticity: Option<AromaticityPerceptionState>,
-    pub(super) stereo: Option<StereoPerceptionState>,
+pub struct Perception {
+    pub(super) valence: Option<ValencePerception>,
+    pub(super) rings: Option<RingPerception>,
+    pub(super) aromaticity: Option<AromaticityPerception>,
+    pub(super) stereo: Option<StereoPerception>,
 }
 
-impl ValencePerceptionState {
+impl ValencePerception {
     /// Returns the named model, or `None` for an installed model-neutral section.
     pub const fn model(&self) -> Option<ValenceModel> {
         self.model
@@ -170,7 +170,7 @@ impl ValencePerceptionState {
     }
 }
 
-impl RingPerceptionState {
+impl RingPerception {
     /// Returns complete ring membership over stable atom and bond slots.
     pub const fn membership(&self) -> &RingMembership {
         &self.membership
@@ -207,7 +207,7 @@ impl RingBasisState {
     }
 }
 
-impl AromaticityPerceptionState {
+impl AromaticityPerception {
     /// Returns the model that perceived this semantic aromaticity membership.
     pub const fn model(&self) -> AromaticityModel {
         self.model
@@ -224,7 +224,7 @@ impl AromaticityPerceptionState {
     }
 }
 
-impl StereoPerceptionState {
+impl StereoPerception {
     /// Iterates every installed CIP descriptor assignment.
     pub fn cip_descriptors(
         &self,
@@ -241,29 +241,29 @@ impl StereoPerceptionState {
     }
 }
 
-impl PerceptionState {
+impl Perception {
     /// Starts construction of a detached complete perception state.
-    pub fn builder() -> PerceptionStateBuilder {
-        PerceptionStateBuilder::default()
+    pub fn builder() -> PerceptionBuilder {
+        PerceptionBuilder::default()
     }
 
     /// Returns the exact installed valence section, including model-neutral state.
-    pub const fn valence_state(&self) -> Option<&ValencePerceptionState> {
+    pub const fn valence_state(&self) -> Option<&ValencePerception> {
         self.valence.as_ref()
     }
 
     /// Returns the exact installed ring section.
-    pub const fn ring_state(&self) -> Option<&RingPerceptionState> {
+    pub const fn ring_state(&self) -> Option<&RingPerception> {
         self.rings.as_ref()
     }
 
     /// Returns the exact installed aromaticity section.
-    pub const fn aromaticity_state(&self) -> Option<&AromaticityPerceptionState> {
+    pub const fn aromaticity_state(&self) -> Option<&AromaticityPerception> {
         self.aromaticity.as_ref()
     }
 
     /// Returns the exact installed stereo-perception section.
-    pub const fn stereo_state(&self) -> Option<&StereoPerceptionState> {
+    pub const fn stereo_state(&self) -> Option<&StereoPerception> {
         self.stereo.as_ref()
     }
 
@@ -327,18 +327,18 @@ impl PerceptionState {
     }
 
     pub fn ring_set(&self) -> Option<&RingSet> {
-        self.rings.as_ref().and_then(RingPerceptionState::ring_set)
+        self.rings.as_ref().and_then(RingPerception::ring_set)
     }
 
     /// Returns the named ring-basis model, if a named basis is installed.
     ///
-    /// Use [`Self::ring_state`] and [`RingPerceptionState::basis`] to
+    /// Use [`Self::ring_state`] and [`RingPerception::basis`] to
     /// distinguish absent ring perception, membership-only state, and an
     /// installed model-neutral basis.
     pub fn ring_basis_model(&self) -> Option<RingBasisModel> {
         self.rings
             .as_ref()
-            .and_then(RingPerceptionState::basis)
+            .and_then(RingPerception::basis)
             .and_then(RingBasisState::model)
     }
 
@@ -367,28 +367,28 @@ impl PerceptionState {
 
 /// Constructs one detached perception state without mutating a molecule.
 #[derive(Debug, Clone, Default)]
-pub struct PerceptionStateBuilder {
-    state: PerceptionState,
+pub struct PerceptionBuilder {
+    state: Perception,
 }
 
-impl PerceptionStateBuilder {
+impl PerceptionBuilder {
     /// Installs an exact valence section on the detached state.
     pub fn with_valence(
         mut self,
         model: Option<ValenceModel>,
         assignments: Vec<(AtomId, u8)>,
-    ) -> std::result::Result<Self, PerceptionStateBuildError> {
+    ) -> std::result::Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(
             assignments.len(),
-            PerceptionStateComponent::ImplicitHydrogens,
+            PerceptionComponent::ImplicitHydrogens,
         )?;
         let mut implicit_hydrogens = BTreeMap::new();
         for (atom, count) in assignments {
             if implicit_hydrogens.insert(atom, count).is_some() {
-                return Err(PerceptionStateBuildError::DuplicateImplicitHydrogen(atom));
+                return Err(PerceptionBuildError::DuplicateImplicitHydrogen(atom));
             }
         }
-        self.state.valence = Some(ValencePerceptionState {
+        self.state.valence = Some(ValencePerception {
             model,
             implicit_hydrogens,
         });
@@ -397,7 +397,7 @@ impl PerceptionStateBuilder {
 
     /// Installs exact ring membership and an optional deterministic ring basis.
     pub fn with_rings(mut self, membership: RingMembership, basis: Option<RingBasisState>) -> Self {
-        self.state.rings = Some(RingPerceptionState { membership, basis });
+        self.state.rings = Some(RingPerception { membership, basis });
         self
     }
 
@@ -407,22 +407,22 @@ impl PerceptionStateBuilder {
         model: AromaticityModel,
         atoms: Vec<AtomId>,
         bonds: Vec<BondId>,
-    ) -> std::result::Result<Self, PerceptionStateBuildError> {
-        check_perception_component_capacity(atoms.len(), PerceptionStateComponent::AromaticAtoms)?;
-        check_perception_component_capacity(bonds.len(), PerceptionStateComponent::AromaticBonds)?;
+    ) -> std::result::Result<Self, PerceptionBuildError> {
+        check_perception_component_capacity(atoms.len(), PerceptionComponent::AromaticAtoms)?;
+        check_perception_component_capacity(bonds.len(), PerceptionComponent::AromaticBonds)?;
         let mut atom_set = BTreeSet::new();
         for atom in atoms {
             if !atom_set.insert(atom) {
-                return Err(PerceptionStateBuildError::DuplicateAromaticAtom(atom));
+                return Err(PerceptionBuildError::DuplicateAromaticAtom(atom));
             }
         }
         let mut bond_set = BTreeSet::new();
         for bond in bonds {
             if !bond_set.insert(bond) {
-                return Err(PerceptionStateBuildError::DuplicateAromaticBond(bond));
+                return Err(PerceptionBuildError::DuplicateAromaticBond(bond));
             }
         }
-        self.state.aromaticity = Some(AromaticityPerceptionState {
+        self.state.aromaticity = Some(AromaticityPerception {
             model,
             atoms: atom_set,
             bonds: bond_set,
@@ -437,33 +437,33 @@ impl PerceptionStateBuilder {
     pub fn with_cip_descriptors(
         mut self,
         assignments: Vec<(StereoElementId, StereoDescriptor)>,
-    ) -> std::result::Result<Self, PerceptionStateBuildError> {
+    ) -> std::result::Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(
             assignments.len(),
-            PerceptionStateComponent::CipDescriptors,
+            PerceptionComponent::CipDescriptors,
         )?;
         let mut descriptors = BTreeMap::new();
         for (element, descriptor) in assignments {
             if descriptors.insert(element, descriptor).is_some() {
-                return Err(PerceptionStateBuildError::DuplicateCipDescriptor(element));
+                return Err(PerceptionBuildError::DuplicateCipDescriptor(element));
             }
         }
-        self.state.stereo = Some(StereoPerceptionState {
+        self.state.stereo = Some(StereoPerception {
             cip_descriptors: descriptors,
         });
         Ok(self)
     }
 
     /// Finishes detached construction. Molecule-specific validation occurs on install.
-    pub fn build(self) -> PerceptionState {
+    pub fn build(self) -> Perception {
         self.state
     }
 }
 
-/// Capacity-bounded components accepted by [`PerceptionStateBuilder`].
+/// Capacity-bounded components accepted by [`PerceptionBuilder`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PerceptionStateComponent {
+pub enum PerceptionComponent {
     /// Complete atom-slot ring-membership flags.
     RingAtomSlots,
     /// Complete bond-slot ring-membership flags.
@@ -484,7 +484,7 @@ pub enum PerceptionStateComponent {
     CipDescriptors,
 }
 
-impl fmt::Display for PerceptionStateComponent {
+impl fmt::Display for PerceptionComponent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::RingAtomSlots => "ring atom-slot flags",
@@ -503,9 +503,9 @@ impl fmt::Display for PerceptionStateComponent {
 /// Errors constructing a detached perception state.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PerceptionStateBuildError {
+pub enum PerceptionBuildError {
     /// A component contains more entries than fixed-width stable IDs can address.
-    ComponentCapacityExceeded(PerceptionStateComponent),
+    ComponentCapacityExceeded(PerceptionComponent),
     /// One atom has more than one implicit-hydrogen assignment.
     DuplicateImplicitHydrogen(AtomId),
     /// One aromatic atom is listed more than once.
@@ -516,7 +516,7 @@ pub enum PerceptionStateBuildError {
     DuplicateCipDescriptor(StereoElementId),
 }
 
-impl fmt::Display for PerceptionStateBuildError {
+impl fmt::Display for PerceptionBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ComponentCapacityExceeded(component) => {
@@ -544,7 +544,7 @@ impl fmt::Display for PerceptionStateBuildError {
     }
 }
 
-impl std::error::Error for PerceptionStateBuildError {}
+impl std::error::Error for PerceptionBuildError {}
 
 /// Structural reasons an installed ring is not a simple graph cycle.
 #[non_exhaustive]
@@ -583,9 +583,9 @@ impl fmt::Display for MalformedRingReason {
 /// Errors validating a detached perception state against one molecule.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PerceptionStateInstallError {
+pub enum PerceptionInstallError {
     /// One component exceeds the fixed-width stable-ID capacity.
-    ComponentCapacityExceeded(PerceptionStateComponent),
+    ComponentCapacityExceeded(PerceptionComponent),
     /// An atom reference is not live.
     InvalidAtomId(AtomId),
     /// A bond reference is not live.
@@ -623,7 +623,7 @@ pub enum PerceptionStateInstallError {
     RingBondMissingFromBasis(BondId),
 }
 
-impl fmt::Display for PerceptionStateInstallError {
+impl fmt::Display for PerceptionInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ComponentCapacityExceeded(component) => {
@@ -673,37 +673,38 @@ impl fmt::Display for PerceptionStateInstallError {
     }
 }
 
-impl std::error::Error for PerceptionStateInstallError {}
+impl std::error::Error for PerceptionInstallError {}
 
 fn check_perception_component_capacity(
     length: usize,
-    component: PerceptionStateComponent,
-) -> std::result::Result<(), PerceptionStateBuildError> {
+    component: PerceptionComponent,
+) -> std::result::Result<(), PerceptionBuildError> {
     checked_fixed_id_collection_len(0, length)
-        .map_err(|_| PerceptionStateBuildError::ComponentCapacityExceeded(component))
+        .map_err(|_| PerceptionBuildError::ComponentCapacityExceeded(component))
 }
 
 fn check_install_component_capacity(
     length: usize,
-    component: PerceptionStateComponent,
-) -> std::result::Result<(), PerceptionStateInstallError> {
+    component: PerceptionComponent,
+) -> std::result::Result<(), PerceptionInstallError> {
     checked_fixed_id_collection_len(0, length)
-        .map_err(|_| PerceptionStateInstallError::ComponentCapacityExceeded(component))
+        .map_err(|_| PerceptionInstallError::ComponentCapacityExceeded(component))
 }
 
-pub(super) fn validate_perception_state(
+pub(super) fn validate_perception(
     molecule: &Molecule,
-    state: &PerceptionState,
-) -> std::result::Result<(), PerceptionStateInstallError> {
+    state: &Perception,
+) -> std::result::Result<(), PerceptionInstallError> {
     if let Some(valence) = &state.valence {
         for atom in valence.implicit_hydrogens.keys().copied() {
             if molecule
+                .graph
                 .atoms
                 .get(atom.index())
                 .and_then(Option::as_ref)
                 .is_none()
             {
-                return Err(PerceptionStateInstallError::InvalidAtomId(atom));
+                return Err(PerceptionInstallError::InvalidAtomId(atom));
             }
         }
     }
@@ -715,22 +716,24 @@ pub(super) fn validate_perception_state(
     if let Some(aromaticity) = &state.aromaticity {
         for atom in aromaticity.atoms.iter().copied() {
             if molecule
+                .graph
                 .atoms
                 .get(atom.index())
                 .and_then(Option::as_ref)
                 .is_none()
             {
-                return Err(PerceptionStateInstallError::InvalidAtomId(atom));
+                return Err(PerceptionInstallError::InvalidAtomId(atom));
             }
         }
         for bond in aromaticity.bonds.iter().copied() {
             if molecule
+                .graph
                 .bonds
                 .get(bond.index())
                 .and_then(Option::as_ref)
                 .is_none()
             {
-                return Err(PerceptionStateInstallError::InvalidBondId(bond));
+                return Err(PerceptionInstallError::InvalidBondId(bond));
             }
         }
     }
@@ -738,12 +741,13 @@ pub(super) fn validate_perception_state(
     if let Some(stereo) = &state.stereo {
         for element in stereo.cip_descriptors.keys().copied() {
             if molecule
+                .graph
                 .stereo_elements
                 .get(element.index())
                 .and_then(Option::as_ref)
                 .is_none()
             {
-                return Err(PerceptionStateInstallError::InvalidStereoElementId(element));
+                return Err(PerceptionInstallError::InvalidStereoElementId(element));
             }
         }
     }
@@ -752,45 +756,47 @@ pub(super) fn validate_perception_state(
 
 fn validate_ring_state(
     molecule: &Molecule,
-    state: &RingPerceptionState,
-) -> std::result::Result<(), PerceptionStateInstallError> {
+    state: &RingPerception,
+) -> std::result::Result<(), PerceptionInstallError> {
     let membership = &state.membership;
     let atom_slots = membership.atom_slot_flags().len();
     let bond_slots = membership.bond_slot_flags().len();
-    check_install_component_capacity(atom_slots, PerceptionStateComponent::RingAtomSlots)?;
-    check_install_component_capacity(bond_slots, PerceptionStateComponent::RingBondSlots)?;
-    if atom_slots != molecule.atoms.len() {
-        return Err(PerceptionStateInstallError::RingAtomSlotCountMismatch {
-            expected: molecule.atoms.len(),
+    check_install_component_capacity(atom_slots, PerceptionComponent::RingAtomSlots)?;
+    check_install_component_capacity(bond_slots, PerceptionComponent::RingBondSlots)?;
+    if atom_slots != molecule.graph.atoms.len() {
+        return Err(PerceptionInstallError::RingAtomSlotCountMismatch {
+            expected: molecule.graph.atoms.len(),
             actual: atom_slots,
         });
     }
-    if bond_slots != molecule.bonds.len() {
-        return Err(PerceptionStateInstallError::RingBondSlotCountMismatch {
-            expected: molecule.bonds.len(),
+    if bond_slots != molecule.graph.bonds.len() {
+        return Err(PerceptionInstallError::RingBondSlotCountMismatch {
+            expected: molecule.graph.bonds.len(),
             actual: bond_slots,
         });
     }
     for (raw, in_ring) in (0..=u32::MAX).zip(membership.atom_slot_flags()) {
         if *in_ring
             && molecule
+                .graph
                 .atoms
                 .get(AtomId::new(raw).index())
                 .and_then(Option::as_ref)
                 .is_none()
         {
-            return Err(PerceptionStateInstallError::InvalidAtomId(AtomId::new(raw)));
+            return Err(PerceptionInstallError::InvalidAtomId(AtomId::new(raw)));
         }
     }
     for (raw, in_ring) in (0..=u32::MAX).zip(membership.bond_slot_flags()) {
         if *in_ring
             && molecule
+                .graph
                 .bonds
                 .get(BondId::new(raw).index())
                 .and_then(Option::as_ref)
                 .is_none()
         {
-            return Err(PerceptionStateInstallError::InvalidBondId(BondId::new(raw)));
+            return Err(PerceptionInstallError::InvalidBondId(BondId::new(raw)));
         }
     }
 
@@ -798,7 +804,7 @@ fn validate_ring_state(
         return Ok(());
     };
     let ring_set = &basis.rings;
-    check_install_component_capacity(ring_set.rings().len(), PerceptionStateComponent::Rings)?;
+    check_install_component_capacity(ring_set.rings().len(), PerceptionComponent::Rings)?;
 
     let mut covered_atoms = BTreeSet::new();
     let mut covered_bonds = BTreeSet::new();
@@ -806,29 +812,25 @@ fn validate_ring_state(
         validate_installed_ring(molecule, ring_index, ring)?;
         for atom in ring.atoms.iter().copied() {
             if !membership.atom_in_ring(atom) {
-                return Err(PerceptionStateInstallError::InconsistentRingAtomMembership(
-                    atom,
-                ));
+                return Err(PerceptionInstallError::InconsistentRingAtomMembership(atom));
             }
             covered_atoms.insert(atom);
         }
         for bond in ring.bonds.iter().copied() {
             if !membership.bond_in_ring(bond) {
-                return Err(PerceptionStateInstallError::InconsistentRingBondMembership(
-                    bond,
-                ));
+                return Err(PerceptionInstallError::InconsistentRingBondMembership(bond));
             }
             covered_bonds.insert(bond);
         }
     }
     for atom in membership.ring_atom_ids() {
         if !covered_atoms.contains(&atom) {
-            return Err(PerceptionStateInstallError::RingAtomMissingFromBasis(atom));
+            return Err(PerceptionInstallError::RingAtomMissingFromBasis(atom));
         }
     }
     for bond in membership.ring_bond_ids() {
         if !covered_bonds.contains(&bond) {
-            return Err(PerceptionStateInstallError::RingBondMissingFromBasis(bond));
+            return Err(PerceptionInstallError::RingBondMissingFromBasis(bond));
         }
     }
     Ok(())
@@ -838,31 +840,31 @@ fn validate_installed_ring(
     molecule: &Molecule,
     ring_index: usize,
     ring: &Ring,
-) -> std::result::Result<(), PerceptionStateInstallError> {
-    check_install_component_capacity(ring.atoms.len(), PerceptionStateComponent::RingAtoms)?;
-    check_install_component_capacity(ring.bonds.len(), PerceptionStateComponent::RingBonds)?;
+) -> std::result::Result<(), PerceptionInstallError> {
+    check_install_component_capacity(ring.atoms.len(), PerceptionComponent::RingAtoms)?;
+    check_install_component_capacity(ring.bonds.len(), PerceptionComponent::RingBonds)?;
     if ring.atoms.len() < 3 {
-        return Err(PerceptionStateInstallError::MalformedRing {
+        return Err(PerceptionInstallError::MalformedRing {
             ring: ring_index,
             reason: MalformedRingReason::TooFewAtoms,
         });
     }
     if ring.atoms.len() != ring.bonds.len() {
-        return Err(PerceptionStateInstallError::MalformedRing {
+        return Err(PerceptionInstallError::MalformedRing {
             ring: ring_index,
             reason: MalformedRingReason::AtomBondCountMismatch,
         });
     }
     let atom_set = ring.atoms.iter().copied().collect::<BTreeSet<_>>();
     if atom_set.len() != ring.atoms.len() {
-        return Err(PerceptionStateInstallError::MalformedRing {
+        return Err(PerceptionInstallError::MalformedRing {
             ring: ring_index,
             reason: MalformedRingReason::DuplicateAtom,
         });
     }
     let bond_set = ring.bonds.iter().copied().collect::<BTreeSet<_>>();
     if bond_set.len() != ring.bonds.len() {
-        return Err(PerceptionStateInstallError::MalformedRing {
+        return Err(PerceptionInstallError::MalformedRing {
             ring: ring_index,
             reason: MalformedRingReason::DuplicateBond,
         });
@@ -872,22 +874,28 @@ fn validate_installed_ring(
     let mut adjacency = BTreeMap::<AtomId, Vec<AtomId>>::new();
     for atom in atom_set.iter().copied() {
         if molecule
+            .graph
             .atoms
             .get(atom.index())
             .and_then(Option::as_ref)
             .is_none()
         {
-            return Err(PerceptionStateInstallError::InvalidAtomId(atom));
+            return Err(PerceptionInstallError::InvalidAtomId(atom));
         }
         degrees.insert(atom, 0);
         adjacency.insert(atom, Vec::new());
     }
     for bond_id in bond_set {
-        let Some(bond) = molecule.bonds.get(bond_id.index()).and_then(Option::as_ref) else {
-            return Err(PerceptionStateInstallError::InvalidBondId(bond_id));
+        let Some(bond) = molecule
+            .graph
+            .bonds
+            .get(bond_id.index())
+            .and_then(Option::as_ref)
+        else {
+            return Err(PerceptionInstallError::InvalidBondId(bond_id));
         };
         if !atom_set.contains(&bond.a) || !atom_set.contains(&bond.b) {
-            return Err(PerceptionStateInstallError::MalformedRing {
+            return Err(PerceptionInstallError::MalformedRing {
                 ring: ring_index,
                 reason: MalformedRingReason::BondEndpointOutsideRing,
             });
@@ -908,7 +916,7 @@ fn validate_installed_ring(
             .push(bond.a);
     }
     if degrees.values().any(|degree| *degree != 2) {
-        return Err(PerceptionStateInstallError::MalformedRing {
+        return Err(PerceptionInstallError::MalformedRing {
             ring: ring_index,
             reason: MalformedRingReason::NotSimpleCycle,
         });
@@ -924,7 +932,7 @@ fn validate_installed_ring(
         }
     }
     if seen.len() != atom_set.len() {
-        return Err(PerceptionStateInstallError::MalformedRing {
+        return Err(PerceptionInstallError::MalformedRing {
             ring: ring_index,
             reason: MalformedRingReason::Disconnected,
         });

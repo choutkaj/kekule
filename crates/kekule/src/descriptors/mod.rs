@@ -341,8 +341,7 @@ fn molecular_mass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Atom, AtomRadical, BondOrder, HydrogenDeclaration, Molecule};
-    use crate::small::SmallMolecule;
+    use crate::core::{Atom, AtomRadical, BondOrder, HydrogenDeclaration};
 
     fn element(symbol: &str) -> Element {
         Element::from_symbol(symbol).expect("test element")
@@ -354,18 +353,15 @@ mod tests {
 
     #[test]
     fn stored_and_perceived_hydrogens_are_explicit_policies() {
-        let mut molecule = SmallMolecule::from_smiles("C").expect("methane parses");
+        let mut molecule = crate::tests::read_smiles("C").expect("methane parses");
         assert_eq!(
-            molecular_formula(molecule.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
                 .expect("stored formula")
                 .to_string(),
             "C"
         );
         assert_eq!(
-            molecular_formula(
-                molecule.as_molecule(),
-                HydrogenCountPolicy::IncludePerceived
-            ),
+            molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived),
             Err(MolecularDescriptorError::MissingImplicitHydrogens {
                 atom: AtomId::new(0)
             })
@@ -373,12 +369,9 @@ mod tests {
 
         molecule.perceive().expect("methane perceives");
         assert_eq!(
-            molecular_formula(
-                molecule.as_molecule(),
-                HydrogenCountPolicy::IncludePerceived
-            )
-            .expect("perceived formula")
-            .to_string(),
+            molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)
+                .expect("perceived formula")
+                .to_string(),
             "CH4"
         );
     }
@@ -387,39 +380,32 @@ mod tests {
     fn represented_hydrogens_can_coexist_with_perceived_hydrogens() {
         let mut atom = Atom::new(element("C"));
         atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
-        let mut graph = Molecule::builder();
+        let mut graph = crate::core::MoleculeEditor::new();
         graph.add_atom(atom).expect("carbon");
-        let mut molecule = SmallMolecule::from_molecule(graph.build().expect("single atom"));
+        let mut molecule = graph.finish().expect("single atom");
 
         assert_eq!(
-            molecular_formula(molecule.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
                 .expect("stored formula")
                 .to_string(),
             "CH"
         );
         molecule.perceive().expect("carbon perceives");
         assert_eq!(
-            molecular_formula(
-                molecule.as_molecule(),
-                HydrogenCountPolicy::IncludePerceived
-            )
-            .expect("complete formula")
-            .to_string(),
+            molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived)
+                .expect("complete formula")
+                .to_string(),
             "CH4"
         );
         assert_eq!(
-            molecule
-                .as_molecule()
-                .atom(AtomId::new(0))
-                .expect("carbon")
-                .hydrogens,
+            molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
             HydrogenDeclaration::Infer { explicit: 1 }
         );
     }
 
     #[test]
     fn hill_order_isotope_order_and_accessors_are_stable() {
-        let mut graph = Molecule::new();
+        let mut graph = crate::core::MoleculeEditor::new();
         let mut carbon_13_atom = Atom::new(element("C"));
         carbon_13_atom.isotope = Some(13);
         let mut carbon_12_atom = carbon_13_atom.clone();
@@ -445,11 +431,7 @@ mod tests {
         graph
             .add_bond(carbon, carbon_12, BondOrder::Single)
             .expect("third connecting bond");
-        let formula = molecular_formula(
-            SmallMolecule::from_molecule(graph).as_molecule(),
-            HydrogenCountPolicy::StoredOnly,
-        )
-        .expect("formula");
+        let formula = molecular_formula(&graph, HydrogenCountPolicy::StoredOnly).expect("formula");
 
         assert_eq!(formula.to_string(), "C[12C][13C]O");
         assert_eq!(formula.count(element("C")), 3);
@@ -475,32 +457,32 @@ mod tests {
         let formulas = components
             .iter()
             .map(|component| {
-                molecular_formula(component.as_molecule(), HydrogenCountPolicy::StoredOnly)
+                molecular_formula(component, HydrogenCountPolicy::StoredOnly)
                     .expect("component formula")
                     .to_string()
             })
             .collect::<Vec<_>>();
         assert_eq!(formulas, vec!["H4N+", "Cl-"]);
 
-        let ammonium = SmallMolecule::from_smiles("[NH4+]").expect("ammonium parses");
+        let ammonium = crate::tests::read_smiles("[NH4+]").expect("ammonium parses");
         assert_eq!(
-            molecular_formula(ammonium.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            molecular_formula(&ammonium, HydrogenCountPolicy::StoredOnly)
                 .expect("formula")
                 .to_string(),
             "H4N+"
         );
 
-        let chloride = SmallMolecule::from_smiles("[Cl-]").expect("chloride parses");
+        let chloride = crate::tests::read_smiles("[Cl-]").expect("chloride parses");
         assert_eq!(
-            molecular_formula(chloride.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            molecular_formula(&chloride, HydrogenCountPolicy::StoredOnly)
                 .expect("formula")
                 .to_string(),
             "Cl-"
         );
 
-        let iron = SmallMolecule::from_smiles("[Fe+2]").expect("iron ion parses");
+        let iron = crate::tests::read_smiles("[Fe+2]").expect("iron ion parses");
         assert_eq!(
-            molecular_formula(iron.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            molecular_formula(&iron, HydrogenCountPolicy::StoredOnly)
                 .expect("formula")
                 .to_string(),
             "Fe+2"
@@ -509,23 +491,22 @@ mod tests {
 
     #[test]
     fn average_and_monoisotopic_mass_use_pinned_tables() {
-        let mut water = SmallMolecule::from_smiles("O").expect("water parses");
+        let mut water = crate::tests::read_smiles("O").expect("water parses");
         water.perceive().expect("water perceives");
         let average = mass_value(
-            average_mass(water.as_molecule(), HydrogenCountPolicy::IncludePerceived)
-                .expect("average mass"),
+            average_mass(&water, HydrogenCountPolicy::IncludePerceived).expect("average mass"),
         );
         let monoisotopic = mass_value(
-            monoisotopic_mass(water.as_molecule(), HydrogenCountPolicy::IncludePerceived)
+            monoisotopic_mass(&water, HydrogenCountPolicy::IncludePerceived)
                 .expect("monoisotopic mass"),
         );
         assert!((average - 18.015).abs() < 1.0e-12);
         assert!((monoisotopic - 18.010_564_683_056).abs() < 1.0e-12);
 
-        let carbon_13 = SmallMolecule::from_smiles("[13C]").expect("isotope parses");
+        let carbon_13 = crate::tests::read_smiles("[13C]").expect("isotope parses");
         assert!(
             (mass_value(
-                monoisotopic_mass(carbon_13.as_molecule(), HydrogenCountPolicy::StoredOnly)
+                monoisotopic_mass(&carbon_13, HydrogenCountPolicy::StoredOnly)
                     .expect("isotope mass")
             ) - 13.003_354_835_34)
                 .abs()
@@ -535,15 +516,13 @@ mod tests {
 
     #[test]
     fn formal_charge_applies_electron_mass_correction() {
-        let sodium = SmallMolecule::from_smiles("[Na+]").expect("sodium parses");
-        let chloride = SmallMolecule::from_smiles("[Cl-]").expect("chloride parses");
+        let sodium = crate::tests::read_smiles("[Na+]").expect("sodium parses");
+        let chloride = crate::tests::read_smiles("[Cl-]").expect("chloride parses");
         let sodium_mass = mass_value(
-            average_mass(sodium.as_molecule(), HydrogenCountPolicy::StoredOnly)
-                .expect("sodium mass"),
+            average_mass(&sodium, HydrogenCountPolicy::StoredOnly).expect("sodium mass"),
         );
         let chloride_mass = mass_value(
-            average_mass(chloride.as_molecule(), HydrogenCountPolicy::StoredOnly)
-                .expect("chloride mass"),
+            average_mass(&chloride, HydrogenCountPolicy::StoredOnly).expect("chloride mass"),
         );
         assert!((sodium_mass - (22.990 - data::ELECTRON_MASS_DA)).abs() < 1.0e-12);
         assert!((chloride_mass - (35.45 + data::ELECTRON_MASS_DA)).abs() < 1.0e-12);
@@ -551,20 +530,20 @@ mod tests {
 
     #[test]
     fn radicals_need_no_mass_correction_beyond_charge() {
-        let mut graph = Molecule::new();
+        let mut graph = crate::core::MoleculeEditor::new();
         let mut carbon = Atom::new(element("C"));
         carbon.radical = Some(AtomRadical::Doublet);
         graph.add_atom(carbon).expect("atom identifier capacity");
-        let molecule = SmallMolecule::from_molecule(graph);
+        let molecule = graph;
         assert_eq!(
-            molecular_formula(molecule.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
                 .expect("formula")
                 .to_string(),
             "C"
         );
         assert_eq!(
             mass_value(
-                monoisotopic_mass(molecule.as_molecule(), HydrogenCountPolicy::StoredOnly)
+                monoisotopic_mass(&molecule, HydrogenCountPolicy::StoredOnly)
                     .expect("radical mass")
             ),
             12.0
@@ -573,46 +552,42 @@ mod tests {
 
     #[test]
     fn unavailable_weights_and_isotopes_are_structured_errors() {
-        let technetium = SmallMolecule::from_smiles("[Tc]").expect("technetium parses");
+        let technetium = crate::tests::read_smiles("[Tc]").expect("technetium parses");
         assert!(matches!(
-            average_mass(technetium.as_molecule(), HydrogenCountPolicy::StoredOnly),
+            average_mass(&technetium, HydrogenCountPolicy::StoredOnly),
             Err(MolecularDescriptorError::MissingStandardAtomicWeight {
                 element: actual_element,
                 ..
             }) if actual_element == element("Tc")
         ));
         assert!(matches!(
-            monoisotopic_mass(technetium.as_molecule(), HydrogenCountPolicy::StoredOnly),
+            monoisotopic_mass(&technetium, HydrogenCountPolicy::StoredOnly),
             Err(MolecularDescriptorError::MissingNaturalIsotope {
                 element: actual_element,
                 ..
             }) if actual_element == element("Tc")
         ));
 
-        let technetium_99 =
-            SmallMolecule::from_smiles("[99Tc]").expect("technetium isotope parses");
+        let technetium_99 = crate::tests::read_smiles("[99Tc]").expect("technetium isotope parses");
         let average = mass_value(
-            average_mass(technetium_99.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            average_mass(&technetium_99, HydrogenCountPolicy::StoredOnly)
                 .expect("labeled isotope has an AME mass"),
         );
         let monoisotopic = mass_value(
-            monoisotopic_mass(technetium_99.as_molecule(), HydrogenCountPolicy::StoredOnly)
+            monoisotopic_mass(&technetium_99, HydrogenCountPolicy::StoredOnly)
                 .expect("labeled isotope has an AME mass"),
         );
         assert_eq!(average, monoisotopic);
         assert!((average - 98.906_249_681).abs() < 1.0e-12);
 
-        let mut graph = Molecule::new();
+        let mut graph = crate::core::MoleculeEditor::new();
         let mut impossible = Atom::new(element("C"));
         impossible.isotope = Some(999);
         graph
             .add_atom(impossible)
             .expect("atom identifier capacity");
         assert!(matches!(
-            monoisotopic_mass(
-                SmallMolecule::from_molecule(graph).as_molecule(),
-                HydrogenCountPolicy::StoredOnly
-            ),
+            monoisotopic_mass(&graph, HydrogenCountPolicy::StoredOnly),
             Err(MolecularDescriptorError::UnknownIsotope {
                 mass_number: 999,
                 ..
@@ -622,22 +597,18 @@ mod tests {
 
     #[test]
     fn empty_molecule_has_empty_formula_and_zero_masses() {
-        let molecule = SmallMolecule::new();
-        let formula = molecular_formula(molecule.as_molecule(), HydrogenCountPolicy::StoredOnly)
-            .expect("formula");
+        let molecule = crate::core::MoleculeEditor::new();
+        let formula =
+            molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly).expect("formula");
         assert!(formula.is_empty());
         assert_eq!(formula.to_string(), "");
         assert_eq!(
-            mass_value(
-                average_mass(molecule.as_molecule(), HydrogenCountPolicy::StoredOnly)
-                    .expect("mass")
-            ),
+            mass_value(average_mass(&molecule, HydrogenCountPolicy::StoredOnly).expect("mass")),
             0.0
         );
         assert_eq!(
             mass_value(
-                monoisotopic_mass(molecule.as_molecule(), HydrogenCountPolicy::StoredOnly)
-                    .expect("mass")
+                monoisotopic_mass(&molecule, HydrogenCountPolicy::StoredOnly).expect("mass")
             ),
             0.0
         );

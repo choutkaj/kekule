@@ -6,9 +6,8 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kekule::core::{Atom, Element, Molecule};
+use kekule::core::{Atom, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule_traj::io::dcd::{DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter};
@@ -297,7 +296,7 @@ where
 }
 
 fn topology(atom_count: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
-    let mut molecule = Molecule::builder();
+    let mut molecule = kekule::core::MoleculeEditor::new();
     let carbon = Element::from_symbol("C").expect("carbon is a built-in element");
     let mut previous = None;
     for _ in 0..atom_count {
@@ -307,9 +306,9 @@ fn topology(atom_count: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
         }
         previous = Some(atom);
     }
-    let molecule = SmallMolecule::from_molecule(molecule.build()?);
+    let molecule = molecule.finish()?;
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule)?;
+    let definition = builder.add_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
     Ok(Arc::new(builder.build()?))
 }

@@ -114,7 +114,7 @@ fn compress_signatures<T: Clone + Ord>(mol: &Molecule, signatures: Vec<(AtomId, 
         .zip(0..=u32::MAX)
         .collect::<BTreeMap<_, _>>();
 
-    let mut ranks = vec![u32::MAX; mol.atoms.len()];
+    let mut ranks = vec![u32::MAX; mol.graph.atom_slot_count()];
     for (atom, signature) in signatures {
         ranks[atom.index()] = rank_by_signature[&signature];
     }
@@ -238,7 +238,7 @@ fn should_refine_ring_topology(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) 
         };
         computed_ring_set.insert(ring_set)
     };
-    let mut ring_counts = vec![0usize; mol.atoms.len()];
+    let mut ring_counts = vec![0usize; mol.graph.atom_slot_count()];
     for ring in ring_set.rings() {
         for atom in &ring.atoms {
             ring_counts[atom.index()] += 1;
@@ -251,7 +251,7 @@ fn should_refine_ring_topology(mol: &Molecule, atoms: &[AtomId], ranks: &[u32]) 
 
 fn ring_topology_signatures(mol: &Molecule, atoms: &[AtomId]) -> Vec<RingTopologySignature> {
     let membership = compute_ring_membership(mol);
-    let mut signatures = vec![RingTopologySignature::default(); mol.atoms.len()];
+    let mut signatures = vec![RingTopologySignature::default(); mol.graph.atom_slot_count()];
     for &root in atoms {
         if membership.atom_in_ring(root) {
             signatures[root.index()] = ring_topology_signature(mol, root, &membership);
@@ -266,13 +266,13 @@ fn ring_topology_signature(
     membership: &super::RingMembership,
 ) -> RingTopologySignature {
     let mut signature = RingTopologySignature::default();
-    let mut visited = vec![false; mol.atoms.len()];
+    let mut visited = vec![false; mol.graph.atom_slot_count()];
     let mut frontier = VecDeque::from([root]);
     visited[root.index()] = true;
 
     while !frontier.is_empty() {
         let current_level = frontier.drain(..).collect::<Vec<_>>();
-        let mut current_flags = vec![false; mol.atoms.len()];
+        let mut current_flags = vec![false; mol.graph.atom_slot_count()];
         for atom in &current_level {
             current_flags[atom.index()] = true;
         }
@@ -293,11 +293,11 @@ fn ring_topology_signature(
             }
         }
 
-        let mut next_flags = vec![false; mol.atoms.len()];
+        let mut next_flags = vec![false; mol.graph.atom_slot_count()];
         for atom in &next_level {
             next_flags[atom.index()] = true;
         }
-        let mut revisits = vec![0usize; mol.atoms.len()];
+        let mut revisits = vec![0usize; mol.graph.atom_slot_count()];
         for atom in &next_level {
             for (_, bond) in mol
                 .incident_bonds(*atom)
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn atom_signature_preserves_large_graph_degree() {
-        let mut mol = Molecule::new();
+        let mut mol = crate::core::MoleculeEditor::new();
         let atom = mol
             .add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))
             .expect("atom identifier capacity");
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn ring_topology_refines_regular_graphs_without_breaking_true_ties() {
-        let mut mol = Molecule::new();
+        let mut mol = crate::core::MoleculeEditor::new();
         let atoms = (0..8)
             .map(|_| {
                 mol.add_atom(Atom::new(Element::from_symbol("C").expect("carbon")))

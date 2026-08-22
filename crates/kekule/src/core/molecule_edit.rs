@@ -1,11 +1,14 @@
 use std::fmt;
 
-use super::{Atom, AtomId, BondId, BondOrder, Molecule, Result};
+use super::{
+    Atom, AtomId, Bond, BondId, BondOrder, Graph, Hierarchy, HierarchyError, Molecule, Perception,
+    Result, SmcraAtomSite, SmcraAtomSiteId, SmcraAtomSiteMetadata, SmcraResidueId, StereoElement,
+    StereoElementId, StereoGroup, StereoGroupId,
+};
 
 /// A connectedness violation at a public [`Molecule`] boundary.
 ///
-/// Empty and single-atom molecules are accepted. Every nontrivial molecule must
-/// contain exactly one graph component.
+/// Every published molecule must contain exactly one graph component.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MoleculeConnectivityError {
     components: usize,
@@ -33,14 +36,22 @@ impl std::error::Error for MoleculeConnectivityError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MoleculePublicationError {
+    EmptyGraph,
     DisconnectedGraph(MoleculeConnectivityError),
+    InvalidGraph(GraphValidationError),
+    InvalidStereo(StereoPublicationError),
+    InvalidHierarchy(HierarchyValidationError),
     FormalChargeOutOfRange { atom: AtomId, charge: usize },
 }
 
 impl fmt::Display for MoleculePublicationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyGraph => formatter.write_str("molecule must contain at least one atom"),
             Self::DisconnectedGraph(error) => write!(formatter, "{error}"),
+            Self::InvalidGraph(error) => write!(formatter, "invalid molecular graph: {error}"),
+            Self::InvalidStereo(error) => write!(formatter, "invalid represented stereo: {error}"),
+            Self::InvalidHierarchy(error) => write!(formatter, "invalid hierarchy: {error}"),
             Self::FormalChargeOutOfRange { atom, charge } => write!(
                 formatter,
                 "publishing atom {atom} requires formal charge +{charge}, which is outside the supported range"
@@ -52,11 +63,143 @@ impl fmt::Display for MoleculePublicationError {
 impl std::error::Error for MoleculePublicationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::InvalidHierarchy(error) => Some(error),
             Self::DisconnectedGraph(error) => Some(error),
-            Self::FormalChargeOutOfRange { .. } => None,
+            Self::InvalidGraph(error) => Some(error),
+            Self::InvalidStereo(error) => Some(error),
+            Self::EmptyGraph | Self::FormalChargeOutOfRange { .. } => None,
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GraphValidationError {
+    AdjacencySlotCount,
+    TombstonedAtomHasAdjacency { atom: AtomId },
+    InvalidBondEndpoint { bond: BondId },
+    InvalidAdjacencyBond { atom: AtomId, bond: BondId },
+    AdjacencyEndpointMismatch { atom: AtomId, bond: BondId },
+    DuplicateAdjacencyEntry { atom: AtomId, bond: BondId },
+    MissingAdjacencyEntry { atom: AtomId, bond: BondId },
+}
+
+impl fmt::Display for GraphValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for GraphValidationError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StereoPublicationError {
+    InvalidElementReference {
+        element: StereoElementId,
+    },
+    InvalidElementGroup {
+        element: StereoElementId,
+    },
+    EmptyGroup {
+        group: StereoGroupId,
+    },
+    InvalidGroupMember {
+        group: StereoGroupId,
+        element: StereoElementId,
+    },
+    DuplicateGroupMember {
+        group: StereoGroupId,
+        element: StereoElementId,
+    },
+    InconsistentGroupMembership {
+        group: StereoGroupId,
+        element: StereoElementId,
+    },
+}
+
+impl fmt::Display for StereoPublicationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for StereoPublicationError {}
+
+/// A hierarchy reference that cannot be published against the edited graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HierarchyValidationError {
+    InvalidResidueChain {
+        residue: SmcraResidueId,
+    },
+    InvalidResidueAtomSite {
+        residue: SmcraResidueId,
+        site: SmcraAtomSiteId,
+    },
+    InvalidAtomSiteResidue {
+        site: SmcraAtomSiteId,
+    },
+    InconsistentResidueAtomSite {
+        residue: SmcraResidueId,
+        site: SmcraAtomSiteId,
+    },
+    InvalidAtomSiteAtom {
+        site: SmcraAtomSiteId,
+        atom: AtomId,
+    },
+    InconsistentAtomLookup {
+        site: SmcraAtomSiteId,
+        atom: AtomId,
+    },
+}
+
+impl fmt::Display for HierarchyValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidResidueChain { residue } => {
+                write!(
+                    formatter,
+                    "residue {} references an invalid chain",
+                    residue.raw()
+                )
+            }
+            Self::InvalidResidueAtomSite { residue, site } => write!(
+                formatter,
+                "residue {} references invalid atom-site {}",
+                residue.raw(),
+                site.raw()
+            ),
+            Self::InvalidAtomSiteResidue { site } => {
+                write!(
+                    formatter,
+                    "atom-site {} references an invalid residue",
+                    site.raw()
+                )
+            }
+            Self::InconsistentResidueAtomSite { residue, site } => write!(
+                formatter,
+                "residue {} and atom-site {} do not reference each other exactly once",
+                residue.raw(),
+                site.raw()
+            ),
+            Self::InvalidAtomSiteAtom { site, atom } => {
+                write!(
+                    formatter,
+                    "atom-site {} references invalid atom {atom}",
+                    site.raw()
+                )
+            }
+            Self::InconsistentAtomLookup { site, atom } => write!(
+                formatter,
+                "atom-site {} is inconsistent with the hierarchy lookup for {atom}",
+                site.raw()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for HierarchyValidationError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CanonicalRepresentationError {
@@ -65,75 +208,18 @@ pub(crate) struct CanonicalRepresentationError {
 }
 
 impl Molecule {
-    /// Starts construction of one molecule.
-    ///
-    /// The builder may be temporarily disconnected. [`MoleculeBuilder::build`]
-    /// validates connectedness and canonicalizes represented chemistry before
-    /// returning a public `Molecule`.
-    pub fn builder() -> MoleculeBuilder {
-        MoleculeBuilder::new()
+    /// Starts a detached transaction from this published molecule.
+    pub fn edit(&self) -> MoleculeEditor {
+        MoleculeEditor::from_molecule(self)
     }
 
-    /// Starts a transactional topology edit.
-    ///
-    /// The working copy may be temporarily disconnected. [`MoleculeEditor::commit`]
-    /// publishes it only when the final graph is connected and representable in
-    /// canonical form; otherwise the original molecule is left unchanged.
-    /// Canonicality-sensitive atom, bond, and topology mutation is available on
-    /// the editor rather than directly on a published molecule.
-    ///
-    /// ```compile_fail
-    /// use kekule::core::{Atom, BondOrder, Element, Molecule};
-    ///
-    /// let mut builder = Molecule::builder();
-    /// let chlorine = builder.add_atom(Atom::new(Element::from_symbol("Cl").unwrap())).unwrap();
-    /// let oxygen = builder.add_atom(Atom::new(Element::from_symbol("O").unwrap())).unwrap();
-    /// let bond = builder.add_bond(chlorine, oxygen, BondOrder::Single).unwrap();
-    /// let mut molecule = builder.build().unwrap();
-    /// molecule.bond_mut(bond).unwrap().order = BondOrder::Double;
-    /// ```
-    ///
-    /// ```compile_fail
-    /// use kekule::core::{Atom, Element, Molecule};
-    ///
-    /// let mut builder = Molecule::builder();
-    /// let carbon = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
-    /// let mut molecule = builder.build().unwrap();
-    /// molecule.atom_mut(carbon).unwrap().formal_charge = 1;
-    /// ```
-    ///
-    /// ```compile_fail
-    /// use kekule::core::{Atom, BondOrder, Element, Molecule};
-    ///
-    /// let mut builder = Molecule::builder();
-    /// let first = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
-    /// let middle = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
-    /// let last = builder.add_atom(Atom::new(Element::from_symbol("C").unwrap())).unwrap();
-    /// builder.add_bond(first, middle, BondOrder::Single).unwrap();
-    /// builder.add_bond(middle, last, BondOrder::Single).unwrap();
-    /// let mut molecule = builder.build().unwrap();
-    /// molecule.add_bond(first, last, BondOrder::Single).unwrap();
-    /// ```
-    pub fn edit(&mut self) -> MoleculeEditor<'_> {
-        MoleculeEditor {
-            working: self.clone(),
-            target: self,
-        }
-    }
-
-    /// Returns whether this molecule satisfies the public connectedness invariant.
-    ///
-    /// Empty and single-atom molecules are treated as valid connected boundary
-    /// cases so `Default`/`new` remain useful lightweight values.
+    #[cfg(test)]
     pub(crate) fn is_connected(&self) -> bool {
         self.validate_connected().is_ok()
     }
 
     /// Validates the public connectedness invariant.
     pub(crate) fn validate_connected(&self) -> std::result::Result<(), MoleculeConnectivityError> {
-        if self.atom_count() <= 1 {
-            return Ok(());
-        }
         let components = self.connected_components().len();
         if components == 1 {
             Ok(())
@@ -142,80 +228,75 @@ impl Molecule {
         }
     }
 }
-
-/// Mutable construction state for one final connected [`Molecule`].
+/// Transactional construction and structural editing state.
 ///
-/// Connectivity and canonical representation are checked only by
-/// [`Self::build`], allowing ordinary graph construction such as adding all
-/// atoms before adding bonds.
-/// The staging graph is not publicly borrowable, so even a cloned or replaced
-/// builder must pass through `build` before yielding a `Molecule`.
-///
-/// ```compile_fail
-/// use kekule::core::{Atom, Element, Molecule};
-///
-/// let mut builder = Molecule::builder();
-/// builder.add_atom(Atom::new(Element::from_atomic_number(6).unwrap())).unwrap();
-/// builder.add_atom(Atom::new(Element::from_atomic_number(8).unwrap())).unwrap();
-/// let leaked: Molecule = builder.molecule().clone();
-/// # let _ = leaked;
-/// ```
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct MoleculeBuilder {
-    molecule: Molecule,
+/// The working graph may be empty, disconnected, or chemically incomplete.
+/// Only [`Self::finish`] can publish a `Molecule`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoleculeEditor {
+    working: Molecule,
 }
 
-impl MoleculeBuilder {
+// Unit tests exercise chemistry algorithms against in-progress editor state.
+// This coercion is deliberately unavailable in normal library builds.
+#[cfg(test)]
+impl std::ops::Deref for MoleculeEditor {
+    type Target = Molecule;
+
+    fn deref(&self) -> &Self::Target {
+        &self.working
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for MoleculeEditor {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.working
+    }
+}
+
+impl Default for MoleculeEditor {
+    fn default() -> Self {
+        Self {
+            working: Molecule {
+                graph: Graph::default(),
+                hierarchy: Hierarchy::default(),
+                perception: Perception::default(),
+            },
+        }
+    }
+}
+
+impl MoleculeEditor {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
-        self.molecule.add_atom(atom)
+    pub fn from_molecule(molecule: &Molecule) -> Self {
+        Self {
+            working: molecule.clone(),
+        }
     }
 
-    pub fn delete_atom(&mut self, atom: AtomId) -> Result<Atom> {
-        self.molecule.delete_atom(atom)
+    pub fn graph(&self) -> &Graph {
+        &self.working.graph
     }
 
-    pub fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
-        self.molecule.add_bond(a, b, order)
+    pub fn hierarchy(&self) -> &Hierarchy {
+        &self.working.hierarchy
     }
 
-    pub fn delete_bond(&mut self, bond: BondId) -> Result<super::Bond> {
-        self.molecule.delete_bond(bond)
+    pub fn hierarchy_mut(&mut self) -> &mut Hierarchy {
+        &mut self.working.hierarchy
     }
 
-    pub fn build(self) -> std::result::Result<Molecule, MoleculePublicationError> {
-        publish_molecule(self.molecule)
+    pub(crate) fn working(&self) -> &Molecule {
+        &self.working
     }
-}
 
-/// Transactional topology edit over one existing connected [`Molecule`].
-///
-/// The private working graph can be temporarily disconnected, but it cannot be
-/// borrowed or extracted as a completed `Molecule`; only [`Self::commit`] can
-/// publish it.
-///
-/// ```compile_fail
-/// use kekule::core::{Atom, BondOrder, Element, Molecule};
-///
-/// let mut builder = Molecule::builder();
-/// let carbon = builder.add_atom(Atom::new(Element::from_atomic_number(6).unwrap())).unwrap();
-/// let oxygen = builder.add_atom(Atom::new(Element::from_atomic_number(8).unwrap())).unwrap();
-/// let bond = builder.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
-/// let mut molecule = builder.build().unwrap();
-/// let mut editor = molecule.edit();
-/// editor.delete_bond(bond).unwrap();
-/// let leaked: Molecule = std::mem::take(editor.molecule_mut());
-/// # let _ = leaked;
-/// ```
-pub struct MoleculeEditor<'a> {
-    working: Molecule,
-    target: &'a mut Molecule,
-}
-
-impl MoleculeEditor<'_> {
+    pub(crate) fn working_mut(&mut self) -> &mut Molecule {
+        &mut self.working
+    }
     /// Returns mutable represented atom state in this private working copy.
     pub fn atom_mut(&mut self, atom: AtomId) -> Result<super::AtomMut<'_>> {
         self.working.atom_mut(atom)
@@ -230,7 +311,22 @@ impl MoleculeEditor<'_> {
         self.working.add_atom(atom)
     }
 
+    /// Deletes an atom and its hierarchy atom-site, if present.
+    ///
+    /// Parent residues and chains are retained even when they become empty.
     pub fn delete_atom(&mut self, atom: AtomId) -> Result<Atom> {
+        self.working.atom(atom)?;
+        if let Some(site) = self
+            .working
+            .hierarchy
+            .atom_site_for_atom(atom)
+            .map(SmcraAtomSite::id)
+        {
+            self.working
+                .hierarchy
+                .remove_atom_site(site)
+                .expect("published editor hierarchy must be internally consistent");
+        }
         self.working.delete_atom(atom)
     }
 
@@ -238,29 +334,261 @@ impl MoleculeEditor<'_> {
         self.working.add_bond(a, b, order)
     }
 
-    pub fn delete_bond(&mut self, bond: BondId) -> Result<super::Bond> {
+    pub fn delete_bond(&mut self, bond: BondId) -> Result<Bond> {
         self.working.delete_bond(bond)
     }
 
-    pub fn commit(self) -> std::result::Result<(), MoleculePublicationError> {
-        *self.target = publish_molecule(self.working)?;
-        Ok(())
+    pub fn add_atom_site(
+        &mut self,
+        residue: SmcraResidueId,
+        atom: AtomId,
+        metadata: SmcraAtomSiteMetadata,
+    ) -> std::result::Result<SmcraAtomSiteId, HierarchyError> {
+        self.working
+            .atom(atom)
+            .map_err(|_| HierarchyError::InvalidAtomId(atom))?;
+        self.working
+            .hierarchy
+            .add_atom_site(residue, atom, metadata)
+    }
+
+    /// Removes one hierarchy atom-site while preserving all hierarchy IDs.
+    pub fn remove_atom_site(
+        &mut self,
+        site: SmcraAtomSiteId,
+    ) -> std::result::Result<SmcraAtomSite, HierarchyError> {
+        self.working.hierarchy.remove_atom_site(site)
+    }
+
+    pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
+        self.working.add_stereo_element(element)
+    }
+
+    pub fn replace_stereo_element(
+        &mut self,
+        id: StereoElementId,
+        replacement: StereoElement,
+    ) -> Result<StereoElement> {
+        self.working.replace_stereo_element(id, replacement)
+    }
+
+    pub fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
+        self.working.remove_stereo_element(id)
+    }
+
+    pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
+        self.working.add_stereo_group(group)
+    }
+
+    pub fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
+        self.working.remove_stereo_group(id)
+    }
+
+    pub fn append_stereo_group_tombstone(&mut self) -> Result<StereoGroupId> {
+        self.working.append_stereo_group_tombstone()
+    }
+
+    pub fn finish(self) -> std::result::Result<Molecule, MoleculePublicationError> {
+        publish_molecule(self.working)
     }
 }
 
 fn publish_molecule(
     mut molecule: Molecule,
 ) -> std::result::Result<Molecule, MoleculePublicationError> {
+    if molecule.is_empty() {
+        return Err(MoleculePublicationError::EmptyGraph);
+    }
+    validate_graph(&molecule).map_err(MoleculePublicationError::InvalidGraph)?;
     molecule
         .validate_connected()
         .map_err(MoleculePublicationError::DisconnectedGraph)?;
+    validate_stereo(&molecule).map_err(MoleculePublicationError::InvalidStereo)?;
+    validate_hierarchy(&molecule).map_err(MoleculePublicationError::InvalidHierarchy)?;
     canonicalize_represented_chemistry(&mut molecule).map_err(|error| {
         MoleculePublicationError::FormalChargeOutOfRange {
             atom: error.atom,
             charge: error.charge,
         }
     })?;
+    molecule.clear_perception();
     Ok(molecule)
+}
+
+fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidationError> {
+    if molecule.graph.adjacency.len() != molecule.graph.atoms.len() {
+        return Err(GraphValidationError::AdjacencySlotCount);
+    }
+    for (index, atom) in molecule.graph.atoms.iter().enumerate() {
+        let atom_id = AtomId::new(index as u32);
+        let adjacency = &molecule.graph.adjacency[index];
+        if atom.is_none() && !adjacency.is_empty() {
+            return Err(GraphValidationError::TombstonedAtomHasAdjacency { atom: atom_id });
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for &bond_id in adjacency {
+            if !seen.insert(bond_id) {
+                return Err(GraphValidationError::DuplicateAdjacencyEntry {
+                    atom: atom_id,
+                    bond: bond_id,
+                });
+            }
+            let Some(Some(bond)) = molecule.graph.bonds.get(bond_id.index()) else {
+                return Err(GraphValidationError::InvalidAdjacencyBond {
+                    atom: atom_id,
+                    bond: bond_id,
+                });
+            };
+            if ![bond.a(), bond.b()].contains(&atom_id) {
+                return Err(GraphValidationError::AdjacencyEndpointMismatch {
+                    atom: atom_id,
+                    bond: bond_id,
+                });
+            }
+        }
+    }
+    for (index, bond) in molecule.graph.bonds.iter().enumerate() {
+        let Some(bond) = bond else { continue };
+        let bond_id = BondId::new(index as u32);
+        for atom in [bond.a(), bond.b()] {
+            if molecule.atom(atom).is_err() {
+                return Err(GraphValidationError::InvalidBondEndpoint { bond: bond_id });
+            }
+            if !molecule.graph.adjacency[atom.index()].contains(&bond_id) {
+                return Err(GraphValidationError::MissingAdjacencyEntry {
+                    atom,
+                    bond: bond_id,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_stereo(molecule: &Molecule) -> std::result::Result<(), StereoPublicationError> {
+    for (element_id, element) in molecule.stereo_elements() {
+        molecule
+            .validate_stereo_element_refs(element)
+            .map_err(|_| StereoPublicationError::InvalidElementReference {
+                element: element_id,
+            })?;
+        if let Some(group_id) = element.group {
+            let group = molecule.stereo_group(group_id).map_err(|_| {
+                StereoPublicationError::InvalidElementGroup {
+                    element: element_id,
+                }
+            })?;
+            if !group.members.contains(&element_id) {
+                return Err(StereoPublicationError::InconsistentGroupMembership {
+                    group: group_id,
+                    element: element_id,
+                });
+            }
+        }
+    }
+    for (group_id, group) in molecule.stereo_groups() {
+        if group.members.is_empty() {
+            return Err(StereoPublicationError::EmptyGroup { group: group_id });
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for &element_id in &group.members {
+            if !seen.insert(element_id) {
+                return Err(StereoPublicationError::DuplicateGroupMember {
+                    group: group_id,
+                    element: element_id,
+                });
+            }
+            let element = molecule.stereo_element(element_id).map_err(|_| {
+                StereoPublicationError::InvalidGroupMember {
+                    group: group_id,
+                    element: element_id,
+                }
+            })?;
+            if element.group != Some(group_id) {
+                return Err(StereoPublicationError::InconsistentGroupMembership {
+                    group: group_id,
+                    element: element_id,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_hierarchy(molecule: &Molecule) -> std::result::Result<(), HierarchyValidationError> {
+    let hierarchy = &molecule.hierarchy;
+    for (residue_id, residue) in hierarchy.residues() {
+        if hierarchy.chain(residue.chain()).is_err() {
+            return Err(HierarchyValidationError::InvalidResidueChain {
+                residue: residue_id,
+            });
+        }
+        for site in residue.atom_sites() {
+            let Ok(atom_site) = hierarchy.atom_site(*site) else {
+                return Err(HierarchyValidationError::InvalidResidueAtomSite {
+                    residue: residue_id,
+                    site: *site,
+                });
+            };
+            if atom_site.residue() != residue_id
+                || residue
+                    .atom_sites()
+                    .iter()
+                    .filter(|candidate| **candidate == *site)
+                    .count()
+                    != 1
+            {
+                return Err(HierarchyValidationError::InconsistentResidueAtomSite {
+                    residue: residue_id,
+                    site: *site,
+                });
+            }
+        }
+    }
+    for (site_id, site) in hierarchy.atom_sites() {
+        let Ok(residue) = hierarchy.residue(site.residue()) else {
+            return Err(HierarchyValidationError::InvalidAtomSiteResidue { site: site_id });
+        };
+        if residue
+            .atom_sites()
+            .iter()
+            .filter(|candidate| **candidate == site_id)
+            .count()
+            != 1
+        {
+            return Err(HierarchyValidationError::InconsistentResidueAtomSite {
+                residue: site.residue(),
+                site: site_id,
+            });
+        }
+        if molecule.atom(site.atom()).is_err() {
+            return Err(HierarchyValidationError::InvalidAtomSiteAtom {
+                site: site_id,
+                atom: site.atom(),
+            });
+        }
+        if hierarchy
+            .atom_site_for_atom(site.atom())
+            .is_none_or(|mapped| mapped.id() != site_id)
+        {
+            return Err(HierarchyValidationError::InconsistentAtomLookup {
+                site: site_id,
+                atom: site.atom(),
+            });
+        }
+    }
+    for (atom, site_id) in hierarchy.atom_lookup_entries() {
+        if !hierarchy
+            .atom_site(site_id)
+            .is_ok_and(|site| site.atom() == atom)
+        {
+            return Err(HierarchyValidationError::InconsistentAtomLookup {
+                site: site_id,
+                atom,
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn canonicalize_represented_chemistry(
@@ -289,20 +617,20 @@ pub(crate) fn canonicalize_represented_chemistry(
             charge,
         })?;
 
-        if let Some(atom) = molecule.atoms[atom_id.index()].as_mut() {
+        if let Some(atom) = molecule.graph.atoms[atom_id.index()].as_mut() {
             atom.formal_charge = formal_charge;
         }
         for (oxygen_id, bond_id) in oxo_bonds {
-            if let Some(atom) = molecule.atoms[oxygen_id.index()].as_mut() {
+            if let Some(atom) = molecule.graph.atoms[oxygen_id.index()].as_mut() {
                 atom.formal_charge = -1;
             }
-            if let Some(bond) = molecule.bonds[bond_id.index()].as_mut() {
+            if let Some(bond) = molecule.graph.bonds[bond_id.index()].as_mut() {
                 bond.order = BondOrder::Single;
             }
         }
     }
     if rewritten {
-        molecule.clear_perception_state();
+        molecule.clear_perception();
     }
     molecule.canonicalize_stored_stereo_elements();
     Ok(())
@@ -368,11 +696,11 @@ mod tests {
 
     #[test]
     fn builder_rejects_disconnected_final_graph() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         builder.add_atom(carbon()).expect("first atom");
         builder.add_atom(carbon()).expect("second atom");
         assert_eq!(
-            builder.build(),
+            builder.finish(),
             Err(MoleculePublicationError::DisconnectedGraph(
                 MoleculeConnectivityError { components: 2 }
             ))
@@ -381,18 +709,18 @@ mod tests {
 
     #[test]
     fn builder_accepts_connected_graph() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let a = builder.add_atom(carbon()).expect("first atom");
         let b = builder.add_atom(carbon()).expect("second atom");
         builder
             .add_bond(a, b, BondOrder::Single)
             .expect("connecting bond");
-        assert!(builder.build().expect("connected molecule").is_connected());
+        assert!(builder.finish().expect("connected molecule").is_connected());
     }
 
     #[test]
     fn builder_publishes_canonical_hypervalent_representation() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
         let oxo = builder.add_atom(atom("O")).expect("oxo oxygen");
         let hydroxyl = builder.add_atom(atom("O")).expect("hydroxyl oxygen");
@@ -403,33 +731,30 @@ mod tests {
             .add_bond(chlorine, hydroxyl, BondOrder::Single)
             .expect("hydroxyl bond");
 
-        let molecule = builder.build().expect("canonical publication");
+        let molecule = builder.finish().expect("canonical publication");
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
         let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap().unwrap();
         assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
-        assert_eq!(
-            molecule.perception(),
-            &super::super::PerceptionState::default()
-        );
+        assert_eq!(molecule.perception(), &super::super::Perception::default());
     }
 
     #[test]
     fn failed_editor_commit_leaves_original_unchanged() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let a = builder.add_atom(carbon()).expect("first atom");
         let b = builder.add_atom(carbon()).expect("second atom");
         let bond = builder
             .add_bond(a, b, BondOrder::Single)
             .expect("connecting bond");
-        let mut molecule = builder.build().expect("connected molecule");
+        let molecule = builder.finish().expect("connected molecule");
         let before = molecule.clone();
 
         let mut editor = molecule.edit();
         editor.delete_bond(bond).expect("delete in working copy");
         assert_eq!(
-            editor.commit(),
+            editor.finish(),
             Err(MoleculePublicationError::DisconnectedGraph(
                 MoleculeConnectivityError { components: 2 }
             ))
@@ -439,7 +764,7 @@ mod tests {
 
     #[test]
     fn editor_can_pass_through_temporarily_disconnected_state() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let a = builder.add_atom(carbon()).expect("first atom");
         let b = builder.add_atom(carbon()).expect("second atom");
         let c = builder.add_atom(carbon()).expect("third atom");
@@ -449,33 +774,33 @@ mod tests {
         builder
             .add_bond(b, c, BondOrder::Single)
             .expect("second bond");
-        let mut molecule = builder.build().expect("connected molecule");
+        let molecule = builder.finish().expect("connected molecule");
 
         let mut editor = molecule.edit();
         editor.delete_bond(ab).expect("temporary disconnect");
         editor
             .add_bond(a, c, BondOrder::Single)
             .expect("reconnect through another edge");
-        editor.commit().expect("connected final graph");
+        let molecule = editor.finish().expect("connected final graph");
         assert!(molecule.is_connected());
     }
 
     #[test]
     fn editor_canonicalizes_before_transactional_publication() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).expect("chlorine");
         let hydroxyl = builder.add_atom(atom("O")).expect("hydroxyl oxygen");
         builder
             .add_bond(chlorine, hydroxyl, BondOrder::Single)
             .expect("initial bond");
-        let mut molecule = builder.build().expect("initial molecule");
+        let molecule = builder.finish().expect("initial molecule");
 
         let mut editor = molecule.edit();
         let oxo = editor.add_atom(atom("O")).expect("oxo oxygen");
         editor
             .add_bond(chlorine, oxo, BondOrder::Double)
             .expect("source-convention oxo bond");
-        editor.commit().expect("canonical edit publication");
+        let molecule = editor.finish().expect("canonical edit publication");
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
@@ -485,7 +810,7 @@ mod tests {
 
     #[test]
     fn editor_canonicalizes_direct_bond_order_changes_before_publication() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).unwrap();
         let anchor = builder.add_atom(atom("O")).unwrap();
         let oxo = builder.add_atom(atom("O")).unwrap();
@@ -493,11 +818,11 @@ mod tests {
             .add_bond(chlorine, anchor, BondOrder::Single)
             .unwrap();
         let oxo_bond = builder.add_bond(chlorine, oxo, BondOrder::Single).unwrap();
-        let mut molecule = builder.build().unwrap();
+        let molecule = builder.finish().unwrap();
 
         let mut editor = molecule.edit();
         editor.bond_mut(oxo_bond).unwrap().order = BondOrder::Double;
-        editor.commit().expect("canonical edit publication");
+        let molecule = editor.finish().expect("canonical edit publication");
 
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 1);
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
@@ -506,7 +831,7 @@ mod tests {
 
     #[test]
     fn editor_recanonicalizes_stereo_references_after_topology_changes() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let left = builder.add_atom(carbon()).unwrap();
         let right = builder.add_atom(carbon()).unwrap();
         let hydrogen = builder.add_atom(atom("H")).unwrap();
@@ -518,8 +843,9 @@ mod tests {
             .add_bond(right, chlorine, BondOrder::Single)
             .unwrap();
         builder.add_bond(right, bromine, BondOrder::Single).unwrap();
-        let mut molecule = builder.build().unwrap();
-        let element = molecule
+        let molecule = builder.finish().unwrap();
+        let mut editor = molecule.edit();
+        let element = editor
             .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
                 DoubleBondStereo {
                     bond: double_bond,
@@ -531,11 +857,12 @@ mod tests {
                 },
             )))
             .unwrap();
+        let molecule = editor.finish().unwrap();
 
         let mut editor = molecule.edit();
         let fluorine = editor.add_atom(atom("F")).unwrap();
         editor.add_bond(left, fluorine, BondOrder::Single).unwrap();
-        editor.commit().expect("canonical edit publication");
+        let molecule = editor.finish().expect("canonical edit publication");
 
         let StereoElementKind::DoubleBond(stereo) = &molecule.stereo_element(element).unwrap().kind
         else {
@@ -548,7 +875,7 @@ mod tests {
 
     #[test]
     fn failed_editor_canonicalization_leaves_the_published_molecule_unchanged() {
-        let mut builder = Molecule::builder();
+        let mut builder = crate::core::MoleculeEditor::new();
         let chlorine = builder.add_atom(atom("Cl")).unwrap();
         let anchor = builder.add_atom(atom("O")).unwrap();
         builder
@@ -563,7 +890,7 @@ mod tests {
                     .unwrap(),
             );
         }
-        let mut molecule = builder.build().unwrap();
+        let molecule = builder.finish().unwrap();
         let before = molecule.clone();
 
         let mut editor = molecule.edit();
@@ -571,7 +898,7 @@ mod tests {
             editor.bond_mut(bond).unwrap().order = BondOrder::Double;
         }
         assert_eq!(
-            editor.commit(),
+            editor.finish(),
             Err(MoleculePublicationError::FormalChargeOutOfRange {
                 atom: chlorine,
                 charge: 128,

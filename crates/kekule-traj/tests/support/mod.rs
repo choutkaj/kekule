@@ -4,14 +4,13 @@ use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, Molecule};
-use kekule::small::SmallMolecule;
+use kekule::core::{Atom, BondOrder, Element};
 use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
 use kekule_traj::io::TrajectoryTopologyBinding;
 use kekule_traj::{AtomOrderAssertion, FrameBuffer, TrajectoryCodecErrorKind, TrajectoryError};
 
 pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
-    let mut graph = Molecule::builder();
+    let mut graph = kekule::core::MoleculeEditor::new();
     let atoms = symbols
         .iter()
         .map(|symbol| {
@@ -26,9 +25,9 @@ pub fn topology(symbols: &[&str], bonds: &[(usize, usize)]) -> Arc<Topology> {
             .unwrap();
     }
 
-    let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
+    let molecule = graph.finish().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(&molecule).unwrap();
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();

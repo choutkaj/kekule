@@ -8,7 +8,6 @@ use crate::chemistry::{
 };
 use crate::core::*;
 use crate::geometry::Point3;
-use crate::small::model::SmallMolecule;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::sdf_document::{SdfDataField, SdfRecord};
@@ -280,14 +279,14 @@ pub(super) fn parse_v2000_syntax(
 
 pub(super) fn interpret_v2000_syntax(
     syntax: &V2000Syntax,
-) -> std::result::Result<(SmallMolecule, Vec<SourceStereoBondMark>), SdfParseError> {
-    let mut mol = Molecule::new();
+) -> std::result::Result<(MoleculeEditor, Conformer, Vec<SourceStereoBondMark>), SdfParseError> {
+    let mut editor = crate::core::MoleculeEditor::new();
     let mut atom_ids = Vec::with_capacity(syntax.atoms.len());
     let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
         .expect("angstrom is a length unit");
     for record in &syntax.atoms {
         let atom = interpret_v2000_atom(record)?;
-        let atom_id = mol.add_atom(atom).map_err(|error| {
+        let atom_id = editor.add_atom(atom).map_err(|error| {
             SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
         })?;
         conformer
@@ -316,7 +315,7 @@ pub(super) fn interpret_v2000_syntax(
             SdfParseError::new(1, bond.line, "bond endpoint outside parsed atom records")
         })?;
         let (order, source_aromatic) = interpret_v2000_bond_order(bond.order_code, bond.line)?;
-        let bond_id = mol.add_bond(a, b, order).map_err(|error| {
+        let bond_id = editor.add_bond(a, b, order).map_err(|error| {
             SdfParseError::new(1, bond.line, format!("invalid graph bond: {error}"))
         })?;
         if source_aromatic {
@@ -334,23 +333,22 @@ pub(super) fn interpret_v2000_syntax(
         }
     }
 
-    apply_v2000_declared_hydrogens(&mut mol, syntax, &atom_ids, &source_aromatic_bonds)?;
-    localize_source_aromatic_bonds(&mut mol, &source_aromatic_bonds).map_err(|error| {
-        SdfParseError::new(
-            1,
-            first_aromatic_line.unwrap_or(1),
-            format!("aromatic bond localization failed: {error}"),
-        )
-    })?;
-    if conformer.positions().next().is_some() {
-        mol.add_conformer(conformer)
-            .expect("parsed coordinates reference live atoms");
-    }
-
-    Ok((
-        SmallMolecule::from_molecule_unchecked_connectedness(mol),
-        source_stereo,
-    ))
+    apply_v2000_declared_hydrogens(
+        editor.working_mut(),
+        syntax,
+        &atom_ids,
+        &source_aromatic_bonds,
+    )?;
+    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
+        |error| {
+            SdfParseError::new(
+                1,
+                first_aromatic_line.unwrap_or(1),
+                format!("aromatic bond localization failed: {error}"),
+            )
+        },
+    )?;
+    Ok((editor, conformer, source_stereo))
 }
 
 fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {
@@ -728,8 +726,8 @@ impl fmt::Display for MolWriteError {
 
 impl std::error::Error for MolWriteError {}
 
-pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, MolWriteError> {
-    let mol = molecule.as_molecule();
+pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWriteError> {
+    let mol = molecule;
     let projected_stereo = project_molfile_stereo_bond_marks(mol).map_err(MolWriteError::new)?;
     if mol.atom_count() > 999 || mol.bond_count() > 999 {
         return Err(MolWriteError::new(
@@ -746,7 +744,6 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
     let title = "";
     let program = "kekule";
     let comment = "";
-    let conformer = mol.first_conformer().map(|(_, conformer)| conformer);
     let mut out = String::new();
     out.push_str(&format!("{title}\n{program}\n{comment}\n"));
     out.push_str(&format!(
@@ -759,10 +756,7 @@ pub fn write_mol_v2000(molecule: &SmallMolecule) -> std::result::Result<String, 
         let atom = mol
             .atom(*atom_id)
             .map_err(|error| MolWriteError::new(error.to_string()))?;
-        let point = conformer
-            .and_then(|conformer| conformer.position(*atom_id))
-            .map(|point| point.value_in(ANGSTROM).expect("conformer length unit"))
-            .unwrap_or_default();
+        let point = Point3::default();
         let valence_code = v2000_valence_code(mol, *atom_id, atom)?;
         out.push_str(&format!(
             "{:>10.4}{:>10.4}{:>10.4} {:<3}{:>2}{:>3}  0  0  0{:>3}  0  0  0{:>3}  0  0\n",
@@ -853,7 +847,12 @@ pub fn write_sdf_v2000(records: &[SdfRecord]) -> std::result::Result<String, Mol
         for field in record.data_fields() {
             validate_sdf_data_field(field)?;
         }
-        let written = write_mol_v2000(record.molecule())?;
+        let [molecule] = record.molecules() else {
+            return Err(MolWriteError::new(
+                "V2000 SDF writing currently requires exactly one connected molecule per record",
+            ));
+        };
+        let written = write_mol_v2000(molecule)?;
         let mut lines = written.lines();
         let _generated_title = lines.next();
         out.push_str(record.title());

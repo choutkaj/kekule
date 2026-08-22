@@ -4,40 +4,23 @@ use std::ops::{Deref, DerefMut};
 
 use super::*;
 
-/// One completed connected canonical molecular graph.
+/// One published, non-empty, connected, geometry-independent molecular entity.
 ///
-/// Empty and single-atom values are valid boundary cases. Build nontrivial
-/// graphs with [`Molecule::builder`] and change topology transactionally with
-/// [`Molecule::edit`], both of which enforce canonical representation and
-/// connectedness before publication. Source-format stereo marks are resolved
-/// into canonical stereo elements during interpretation and are never stored
-/// in this payload.
-///
-/// ```compile_fail
-/// use kekule::core::Molecule;
-///
-/// let molecule = Molecule::default();
-/// let _ = molecule.stereo_bond_marks();
-/// ```
-///
-/// ```compile_fail
-/// use kekule::core::Molecule;
-///
-/// let molecule = Molecule::default();
-/// let _ = molecule.is_connected();
-/// let _ = molecule.validate_connected();
-/// let _ = molecule.connected_components();
-/// ```
-#[derive(Debug, Clone, Default, PartialEq)]
+/// Authoritative represented chemistry is owned by [`Graph`], optional
+/// coordinate-independent organization by [`Hierarchy`], and reconstructible
+/// derived chemistry by [`Perception`]. Construction and structural editing
+/// publish exclusively through [`MoleculeEditor::finish`].
+#[derive(Debug, Clone)]
 pub struct Molecule {
-    pub(crate) atoms: Vec<Option<Atom>>,
-    pub(crate) bonds: Vec<Option<Bond>>,
-    pub(crate) adjacency: Vec<Vec<BondId>>,
-    pub(crate) conformers: Vec<Option<Conformer>>,
-    pub(crate) stereo_elements: Vec<Option<StereoElement>>,
-    pub(crate) stereo_groups: Vec<Option<StereoGroup>>,
-    pub(crate) props: PropMap,
-    pub(crate) perception: PerceptionState,
+    pub(crate) graph: Graph,
+    pub(crate) hierarchy: Hierarchy,
+    pub(crate) perception: Perception,
+}
+
+impl PartialEq for Molecule {
+    fn eq(&self, other: &Self) -> bool {
+        self.graph == other.graph && self.hierarchy == other.hierarchy
+    }
 }
 
 pub struct AtomMut<'a> {
@@ -50,7 +33,7 @@ impl Deref for AtomMut<'_> {
     type Target = Atom;
 
     fn deref(&self) -> &Self::Target {
-        self.molecule.atoms[self.id.index()]
+        self.molecule.graph.atoms[self.id.index()]
             .as_ref()
             .expect("validated atom must remain live while borrowed")
     }
@@ -58,7 +41,7 @@ impl Deref for AtomMut<'_> {
 
 impl DerefMut for AtomMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.molecule.atoms[self.id.index()]
+        self.molecule.graph.atoms[self.id.index()]
             .as_mut()
             .expect("validated atom must remain live while borrowed")
     }
@@ -67,7 +50,7 @@ impl DerefMut for AtomMut<'_> {
 impl Drop for AtomMut<'_> {
     fn drop(&mut self) {
         if AtomChemistry::from(&**self) != self.original {
-            self.molecule.clear_perception_state();
+            self.molecule.clear_perception();
         }
     }
 }
@@ -82,7 +65,7 @@ impl Deref for BondMut<'_> {
     type Target = Bond;
 
     fn deref(&self) -> &Self::Target {
-        self.molecule.bonds[self.id.index()]
+        self.molecule.graph.bonds[self.id.index()]
             .as_ref()
             .expect("validated bond must remain live while borrowed")
     }
@@ -90,7 +73,7 @@ impl Deref for BondMut<'_> {
 
 impl DerefMut for BondMut<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.molecule.bonds[self.id.index()]
+        self.molecule.graph.bonds[self.id.index()]
             .as_mut()
             .expect("validated bond must remain live while borrowed")
     }
@@ -99,7 +82,7 @@ impl DerefMut for BondMut<'_> {
 impl Drop for BondMut<'_> {
     fn drop(&mut self) {
         if BondChemistry::from(&**self) != self.original {
-            self.molecule.clear_perception_state();
+            self.molecule.clear_perception();
         }
     }
 }
@@ -137,13 +120,16 @@ impl From<&Bond> for BondChemistry {
 }
 
 impl Molecule {
-    /// Creates the valid empty molecule boundary case.
-    pub fn new() -> Self {
-        Self::default()
+    pub fn graph(&self) -> &Graph {
+        &self.graph
+    }
+
+    pub fn hierarchy(&self) -> &Hierarchy {
+        &self.hierarchy
     }
 
     pub fn atom_count(&self) -> usize {
-        self.atoms.iter().flatten().count()
+        self.graph.atoms.iter().flatten().count()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -151,7 +137,7 @@ impl Molecule {
     }
 
     pub fn bond_count(&self) -> usize {
-        self.bonds.iter().flatten().count()
+        self.graph.bonds.iter().flatten().count()
     }
 
     /// Returns the sum of the asserted formal charges on all live atoms.
@@ -165,28 +151,29 @@ impl Molecule {
 
     /// Inserts an atom into crate-private construction/edit state.
     ///
-    /// Public molecule construction goes through [`Molecule::builder`], because
+    /// Public molecule construction goes through [`MoleculeEditor`], because
     /// adding an atom to an already populated graph would temporarily violate
     /// the connected-molecule invariant.
     pub(crate) fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
-        self.add_atom_at_slot(atom, self.atoms.len())
+        self.add_atom_at_slot(atom, self.graph.atoms.len())
     }
 
     fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId> {
         let id = checked_molecule_id(slot, MoleculeIdKind::Atom, AtomId::new)?;
-        debug_assert_eq!(slot, self.atoms.len());
-        self.atoms.push(Some(atom));
-        self.adjacency.push(Vec::new());
-        self.clear_perception_state();
+        debug_assert_eq!(slot, self.graph.atoms.len());
+        self.graph.atoms.push(Some(atom));
+        self.graph.adjacency.push(Vec::new());
+        self.clear_perception();
         Ok(id)
     }
 
     /// Removes an atom only inside crate-private construction/edit state.
     pub(crate) fn delete_atom(&mut self, id: AtomId) -> Result<Atom> {
         self.atom(id)?;
-        let incident = self.adjacency[id.index()].clone();
+        let incident = self.graph.adjacency[id.index()].clone();
         for bond_id in incident {
             if self
+                .graph
                 .bonds
                 .get(bond_id.index())
                 .and_then(Option::as_ref)
@@ -195,20 +182,18 @@ impl Molecule {
                 self.delete_bond(bond_id)?;
             }
         }
-        self.adjacency[id.index()].clear();
-        let atom = self.atoms[id.index()]
+        self.graph.adjacency[id.index()].clear();
+        let atom = self.graph.atoms[id.index()]
             .take()
             .ok_or(MoleculeError::InvalidAtomId(id))?;
-        for conformer in self.conformers.iter_mut().flatten() {
-            conformer.clear_position(id);
-        }
         self.prune_stereo_for_atom(id);
-        self.clear_perception_state();
+        self.clear_perception();
         Ok(atom)
     }
 
     pub fn atom(&self, id: AtomId) -> Result<&Atom> {
-        self.atoms
+        self.graph
+            .atoms
             .get(id.index())
             .and_then(Option::as_ref)
             .ok_or(MoleculeError::InvalidAtomId(id))
@@ -225,7 +210,7 @@ impl Molecule {
 
     pub fn atoms(&self) -> impl Iterator<Item = (AtomId, &Atom)> {
         (0..=u32::MAX)
-            .zip(self.atoms.iter())
+            .zip(self.graph.atoms.iter())
             .filter_map(|(raw, atom)| atom.as_ref().map(|atom| (AtomId::new(raw), atom)))
     }
 
@@ -236,6 +221,7 @@ impl Molecule {
     /// Returns mutable generic annotations without changing represented chemistry.
     pub fn atom_props_mut(&mut self, id: AtomId) -> Result<&mut PropMap> {
         Ok(&mut self
+            .graph
             .atoms
             .get_mut(id.index())
             .and_then(Option::as_mut)
@@ -253,17 +239,18 @@ impl Molecule {
         if self.bond_between(a, b)?.is_some() {
             return Err(MoleculeError::DuplicateBond { a, b });
         }
-        let id = checked_molecule_id(self.bonds.len(), MoleculeIdKind::Bond, BondId::new)?;
-        self.bonds.push(Some(Bond::new(a, b, order)));
-        self.adjacency[a.index()].push(id);
-        self.adjacency[b.index()].push(id);
-        self.clear_perception_state();
+        let id = checked_molecule_id(self.graph.bonds.len(), MoleculeIdKind::Bond, BondId::new)?;
+        self.graph.bonds.push(Some(Bond::new(a, b, order)));
+        self.graph.adjacency[a.index()].push(id);
+        self.graph.adjacency[b.index()].push(id);
+        self.clear_perception();
         Ok(id)
     }
 
     /// Removes a bond only inside crate-private construction/edit state.
     pub(crate) fn delete_bond(&mut self, id: BondId) -> Result<Bond> {
         let bond = self
+            .graph
             .bonds
             .get_mut(id.index())
             .and_then(Option::take)
@@ -271,12 +258,13 @@ impl Molecule {
         self.remove_incident_bond(bond.a, id);
         self.remove_incident_bond(bond.b, id);
         self.prune_stereo_for_bond(id);
-        self.clear_perception_state();
+        self.clear_perception();
         Ok(bond)
     }
 
     pub fn bond(&self, id: BondId) -> Result<&Bond> {
-        self.bonds
+        self.graph
+            .bonds
             .get(id.index())
             .and_then(Option::as_ref)
             .ok_or(MoleculeError::InvalidBondId(id))
@@ -293,7 +281,7 @@ impl Molecule {
 
     pub fn bonds(&self) -> impl Iterator<Item = (BondId, &Bond)> {
         (0..=u32::MAX)
-            .zip(self.bonds.iter())
+            .zip(self.graph.bonds.iter())
             .filter_map(|(raw, bond)| bond.as_ref().map(|bond| (BondId::new(raw), bond)))
     }
 
@@ -304,6 +292,7 @@ impl Molecule {
     /// Returns mutable generic annotations without changing represented chemistry.
     pub fn bond_props_mut(&mut self, id: BondId) -> Result<&mut PropMap> {
         Ok(&mut self
+            .graph
             .bonds
             .get_mut(id.index())
             .and_then(Option::as_mut)
@@ -313,7 +302,7 @@ impl Molecule {
 
     pub fn neighbors(&self, id: AtomId) -> Result<impl Iterator<Item = AtomId> + '_> {
         self.atom(id)?;
-        Ok(self.adjacency[id.index()]
+        Ok(self.graph.adjacency[id.index()]
             .iter()
             .filter_map(|bond_id| self.bond(*bond_id).ok())
             .map(move |bond| bond.other_atom(id)))
@@ -325,7 +314,7 @@ impl Molecule {
     /// general result shape also supports empty values and private builder,
     /// editor, and format-interpretation staging.
     pub(crate) fn connected_components(&self) -> Vec<Vec<AtomId>> {
-        let mut seen = vec![false; self.atoms.len()];
+        let mut seen = vec![false; self.graph.atoms.len()];
         let mut components = Vec::new();
         for start in self.atom_ids() {
             if seen[start.index()] {
@@ -357,7 +346,7 @@ impl Molecule {
 
     pub fn incident_bonds(&self, id: AtomId) -> Result<impl Iterator<Item = (BondId, &Bond)> + '_> {
         self.atom(id)?;
-        Ok(self.adjacency[id.index()]
+        Ok(self.graph.adjacency[id.index()]
             .iter()
             .filter_map(|bond_id| self.bond(*bond_id).ok().map(|bond| (*bond_id, bond))))
     }
@@ -365,22 +354,25 @@ impl Molecule {
     pub fn bond_between(&self, a: AtomId, b: AtomId) -> Result<Option<BondId>> {
         self.atom(a)?;
         self.atom(b)?;
-        Ok(self.adjacency[a.index()].iter().copied().find(|bond_id| {
-            self.bond(*bond_id)
-                .map(|bond| bond.connects(a, b))
-                .unwrap_or(false)
-        }))
+        Ok(self.graph.adjacency[a.index()]
+            .iter()
+            .copied()
+            .find(|bond_id| {
+                self.bond(*bond_id)
+                    .map(|bond| bond.connects(a, b))
+                    .unwrap_or(false)
+            }))
     }
 
     pub fn props(&self) -> &PropMap {
-        &self.props
+        &self.graph.props
     }
 
     pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.props
+        &mut self.graph.props
     }
 
-    pub fn perception(&self) -> &PerceptionState {
+    pub fn perception(&self) -> &Perception {
         &self.perception
     }
 
@@ -388,11 +380,11 @@ impl Molecule {
     ///
     /// The detached state is checked against all stable graph and stereo slots
     /// before mutation. Failure leaves the previous state exactly unchanged.
-    pub fn install_perception_state(
+    pub fn install_perception(
         &mut self,
-        state: PerceptionState,
-    ) -> std::result::Result<(), PerceptionStateInstallError> {
-        validate_perception_state(self, &state)?;
+        state: Perception,
+    ) -> std::result::Result<(), PerceptionInstallError> {
+        validate_perception(self, &state)?;
         self.perception = state;
         Ok(())
     }
@@ -425,61 +417,6 @@ impl Molecule {
         self.perception.ring_set()
     }
 
-    /// Attaches a conformer after validating its atom slots and identifier capacity.
-    pub fn add_conformer(&mut self, mut conformer: Conformer) -> Result<ConformerId> {
-        checked_fixed_id_collection_len(0, conformer.positions.len())
-            .map_err(|_| MoleculeError::IdentifierCapacityExceeded(MoleculeIdKind::Atom))?;
-        let id = checked_molecule_id(
-            self.conformers.len(),
-            MoleculeIdKind::Conformer,
-            ConformerId::new,
-        )?;
-        for (raw, position) in (0..=u32::MAX).zip(conformer.positions.iter()) {
-            if position.is_some()
-                && self
-                    .atoms
-                    .get(AtomId::new(raw).index())
-                    .and_then(Option::as_ref)
-                    .is_none()
-            {
-                return Err(MoleculeError::InvalidAtomId(AtomId::new(raw)));
-            }
-        }
-        if conformer.positions.len() < self.atoms.len() {
-            conformer.positions.resize(self.atoms.len(), None);
-        }
-        self.conformers.push(Some(conformer));
-        Ok(id)
-    }
-
-    pub fn conformer(&self, id: ConformerId) -> Result<&Conformer> {
-        self.conformers
-            .get(id.index())
-            .and_then(Option::as_ref)
-            .ok_or(MoleculeError::InvalidConformerId(id))
-    }
-
-    pub fn conformer_mut(&mut self, id: ConformerId) -> Result<&mut Conformer> {
-        self.conformers
-            .get_mut(id.index())
-            .and_then(Option::as_mut)
-            .ok_or(MoleculeError::InvalidConformerId(id))
-    }
-
-    pub fn conformers(&self) -> impl Iterator<Item = (ConformerId, &Conformer)> {
-        (0..=u32::MAX)
-            .zip(self.conformers.iter())
-            .filter_map(|(raw, conformer)| {
-                conformer
-                    .as_ref()
-                    .map(|conformer| (ConformerId::new(raw), conformer))
-            })
-    }
-
-    pub fn first_conformer(&self) -> Option<(ConformerId, &Conformer)> {
-        self.conformers().next()
-    }
-
     /// Inserts an ungrouped validated stereo element without narrowing its collection slot.
     ///
     /// Carrier order, double-bond endpoints, and reference carriers are
@@ -488,7 +425,10 @@ impl Molecule {
     /// Group membership must be established separately through
     /// [`Self::add_stereo_group`]. A pre-grouped element is rejected before
     /// slot allocation or perception invalidation.
-    pub fn add_stereo_element(&mut self, mut element: StereoElement) -> Result<StereoElementId> {
+    pub(crate) fn add_stereo_element(
+        &mut self,
+        mut element: StereoElement,
+    ) -> Result<StereoElementId> {
         if element.group.is_some() {
             return Err(MoleculeError::InvalidStereoReference(
                 "stereo element group membership must be established through add_stereo_group",
@@ -497,17 +437,18 @@ impl Molecule {
         self.canonicalize_stereo_element(&mut element);
         self.validate_stereo_element_refs(&element)?;
         let id = checked_molecule_id(
-            self.stereo_elements.len(),
+            self.graph.stereo_elements.len(),
             MoleculeIdKind::StereoElement,
             StereoElementId::new,
         )?;
-        self.stereo_elements.push(Some(element));
+        self.graph.stereo_elements.push(Some(element));
         self.invalidate_stereo();
         Ok(id)
     }
 
     pub fn stereo_element(&self, id: StereoElementId) -> Result<&StereoElement> {
-        self.stereo_elements
+        self.graph
+            .stereo_elements
             .get(id.index())
             .and_then(Option::as_ref)
             .ok_or(MoleculeError::InvalidStereoElementId(id))
@@ -515,12 +456,13 @@ impl Molecule {
 
     /// Replaces an element through the same canonical storage boundary as
     /// [`Self::add_stereo_element`].
-    pub fn replace_stereo_element(
+    pub(crate) fn replace_stereo_element(
         &mut self,
         id: StereoElementId,
         mut replacement: StereoElement,
     ) -> Result<StereoElement> {
         let Some(current) = self
+            .graph
             .stereo_elements
             .get(id.index())
             .and_then(Option::as_ref)
@@ -535,7 +477,7 @@ impl Molecule {
         self.canonicalize_stereo_element(&mut replacement);
         self.validate_stereo_element_refs(&replacement)?;
         let previous = std::mem::replace(
-            self.stereo_elements[id.index()]
+            self.graph.stereo_elements[id.index()]
                 .as_mut()
                 .expect("validated stereo element should remain live"),
             replacement,
@@ -545,8 +487,9 @@ impl Molecule {
     }
 
     /// Removes a stereo element and returns it detached from any relation group.
-    pub fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
+    pub(crate) fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
         let mut element = self
+            .graph
             .stereo_elements
             .get_mut(id.index())
             .and_then(Option::take)
@@ -559,7 +502,7 @@ impl Molecule {
 
     pub fn stereo_elements(&self) -> impl Iterator<Item = (StereoElementId, &StereoElement)> {
         (0..=u32::MAX)
-            .zip(self.stereo_elements.iter())
+            .zip(self.graph.stereo_elements.iter())
             .filter_map(|(raw, element)| {
                 element
                     .as_ref()
@@ -572,7 +515,7 @@ impl Molecule {
     }
 
     /// Inserts a validated stereo group transactionally.
-    pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
+    pub(crate) fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
         if group.members.is_empty() {
             return Err(MoleculeError::InvalidStereoReference(
                 "stereo group must contain at least one element",
@@ -592,36 +535,39 @@ impl Molecule {
             }
         }
         let id = checked_molecule_id(
-            self.stereo_groups.len(),
+            self.graph.stereo_groups.len(),
             MoleculeIdKind::StereoGroup,
             StereoGroupId::new,
         )?;
         for member in &group.members {
-            self.stereo_elements[member.index()]
+            self.graph.stereo_elements[member.index()]
                 .as_mut()
                 .expect("validated stereo group member should remain live")
                 .group = Some(id);
         }
-        self.stereo_groups.push(Some(group));
+        self.graph.stereo_groups.push(Some(group));
         self.invalidate_stereo();
         Ok(id)
     }
 
     pub fn stereo_group(&self, id: StereoGroupId) -> Result<&StereoGroup> {
-        self.stereo_groups
+        self.graph
+            .stereo_groups
             .get(id.index())
             .and_then(Option::as_ref)
             .ok_or(MoleculeError::InvalidStereoGroupId(id))
     }
 
-    pub fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
+    pub(crate) fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
         let group = self
+            .graph
             .stereo_groups
             .get_mut(id.index())
             .and_then(Option::take)
             .ok_or(MoleculeError::InvalidStereoGroupId(id))?;
         for member in &group.members {
             if let Some(element) = self
+                .graph
                 .stereo_elements
                 .get_mut(member.index())
                 .and_then(Option::as_mut)
@@ -637,13 +583,13 @@ impl Molecule {
 
     pub fn stereo_groups(&self) -> impl Iterator<Item = (StereoGroupId, &StereoGroup)> {
         (0..=u32::MAX)
-            .zip(self.stereo_groups.iter())
+            .zip(self.graph.stereo_groups.iter())
             .filter_map(|(raw, group)| group.as_ref().map(|group| (StereoGroupId::new(raw), group)))
     }
 
     /// Returns the complete stereo-group stable-slot count, including tombstones.
     pub fn stereo_group_slot_count(&self) -> usize {
-        self.stereo_groups.len()
+        self.graph.stereo_groups.len()
     }
 
     /// Iterates every stereo-group stable slot, including interior and trailing tombstones.
@@ -651,31 +597,35 @@ impl Molecule {
         &self,
     ) -> impl ExactSizeIterator<Item = (StereoGroupId, Option<&StereoGroup>)> + DoubleEndedIterator + '_
     {
-        self.stereo_groups.iter().enumerate().map(|(slot, group)| {
-            let raw = u32::try_from(slot)
-                .expect("stereo-group slot capacity is checked before insertion");
-            (StereoGroupId::new(raw), group.as_ref())
-        })
+        self.graph
+            .stereo_groups
+            .iter()
+            .enumerate()
+            .map(|(slot, group)| {
+                let raw = u32::try_from(slot)
+                    .expect("stereo-group slot capacity is checked before insertion");
+                (StereoGroupId::new(raw), group.as_ref())
+            })
     }
 
     /// Appends one deleted stereo-group slot without changing live stereo or CIP state.
-    pub fn append_stereo_group_tombstone(&mut self) -> Result<StereoGroupId> {
+    pub(crate) fn append_stereo_group_tombstone(&mut self) -> Result<StereoGroupId> {
         let id = checked_molecule_id(
-            self.stereo_groups.len(),
+            self.graph.stereo_groups.len(),
             MoleculeIdKind::StereoGroup,
             StereoGroupId::new,
         )?;
-        self.stereo_groups.push(None);
+        self.graph.stereo_groups.push(None);
         Ok(id)
     }
 
     /// Removes all installed derived perception without changing represented chemistry.
-    pub fn clear_perception_state(&mut self) {
-        self.perception = PerceptionState::default();
+    pub fn clear_perception(&mut self) {
+        self.perception = Perception::default();
     }
 
     fn remove_incident_bond(&mut self, atom: AtomId, bond: BondId) {
-        if let Some(incident) = self.adjacency.get_mut(atom.index()) {
+        if let Some(incident) = self.graph.adjacency.get_mut(atom.index()) {
             incident.retain(|id| *id != bond);
         }
     }
@@ -694,7 +644,7 @@ impl Molecule {
         model: ValenceModel,
         implicit_hydrogens: BTreeMap<AtomId, u8>,
     ) {
-        self.perception.valence = Some(ValencePerceptionState {
+        self.perception.valence = Some(ValencePerception {
             model: Some(model),
             implicit_hydrogens,
         });
@@ -704,7 +654,7 @@ impl Molecule {
     pub(crate) fn set_implicit_hydrogens(&mut self, atom: AtomId, count: u8) {
         self.perception
             .valence
-            .get_or_insert_with(|| ValencePerceptionState {
+            .get_or_insert_with(|| ValencePerception {
                 model: None,
                 implicit_hydrogens: BTreeMap::new(),
             })
@@ -714,7 +664,7 @@ impl Molecule {
     }
 
     pub(crate) fn install_ring_membership(&mut self, membership: RingMembership) {
-        self.perception.rings = Some(RingPerceptionState {
+        self.perception.rings = Some(RingPerception {
             membership,
             basis: None,
         });
@@ -727,7 +677,7 @@ impl Molecule {
         model: RingBasisModel,
         rings: RingSet,
     ) {
-        self.perception.rings = Some(RingPerceptionState {
+        self.perception.rings = Some(RingPerception {
             membership,
             basis: Some(RingBasisState::new(Some(model), rings)),
         });
@@ -735,7 +685,7 @@ impl Molecule {
     }
 
     pub(crate) fn begin_aromaticity(&mut self, model: AromaticityModel) {
-        self.perception.aromaticity = Some(AromaticityPerceptionState {
+        self.perception.aromaticity = Some(AromaticityPerception {
             model,
             atoms: BTreeSet::new(),
             bonds: BTreeSet::new(),
@@ -779,31 +729,12 @@ impl Molecule {
 
     pub(crate) fn replace_stereo_perception(
         &mut self,
-        state: Option<StereoPerceptionState>,
-    ) -> Option<StereoPerceptionState> {
+        state: Option<StereoPerception>,
+    ) -> Option<StereoPerception> {
         std::mem::replace(&mut self.perception.stereo, state)
     }
 
-    pub(crate) fn without_conformers(mut self) -> Self {
-        self.conformers.clear();
-        self
-    }
-
-    /// Clones coordinate-independent molecular state without cloning conformers.
-    pub(crate) fn clone_without_conformers(&self) -> Self {
-        Self {
-            atoms: self.atoms.clone(),
-            bonds: self.bonds.clone(),
-            adjacency: self.adjacency.clone(),
-            conformers: Vec::new(),
-            stereo_elements: self.stereo_elements.clone(),
-            stereo_groups: self.stereo_groups.clone(),
-            props: self.props.clone(),
-            perception: self.perception.clone(),
-        }
-    }
-
-    fn validate_stereo_element_refs(&self, element: &StereoElement) -> Result<()> {
+    pub(crate) fn validate_stereo_element_refs(&self, element: &StereoElement) -> Result<()> {
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
                 self.atom(stereo.center)?;
@@ -840,6 +771,7 @@ impl Molecule {
 
     pub(crate) fn canonicalize_stored_stereo_elements(&mut self) {
         let stored = self
+            .graph
             .stereo_elements
             .iter()
             .enumerate()
@@ -848,7 +780,7 @@ impl Molecule {
         let mut replacements = Vec::new();
         for (index, mut element) in stored {
             self.canonicalize_stereo_element(&mut element);
-            if self.stereo_elements[index].as_ref() != Some(&element) {
+            if self.graph.stereo_elements[index].as_ref() != Some(&element) {
                 replacements.push((index, element));
             }
         }
@@ -856,7 +788,7 @@ impl Molecule {
             return;
         }
         for (index, element) in replacements {
-            self.stereo_elements[index] = Some(element);
+            self.graph.stereo_elements[index] = Some(element);
         }
         self.invalidate_stereo();
     }
@@ -1030,7 +962,7 @@ impl Molecule {
             .filter_map(|(id, element)| element.references_atom(atom).then_some(id))
             .collect::<Vec<_>>();
         for id in removed {
-            self.stereo_elements[id.index()] = None;
+            self.graph.stereo_elements[id.index()] = None;
             self.remove_stereo_element_from_groups(id);
         }
         self.invalidate_stereo();
@@ -1042,14 +974,14 @@ impl Molecule {
             .filter_map(|(id, element)| element.references_bond(bond).then_some(id))
             .collect::<Vec<_>>();
         for id in removed {
-            self.stereo_elements[id.index()] = None;
+            self.graph.stereo_elements[id.index()] = None;
             self.remove_stereo_element_from_groups(id);
         }
         self.invalidate_stereo();
     }
 
     fn remove_stereo_element_from_groups(&mut self, id: StereoElementId) {
-        for slot in &mut self.stereo_groups {
+        for slot in &mut self.graph.stereo_groups {
             let Some(group) = slot else {
                 continue;
             };
@@ -1111,8 +1043,6 @@ pub enum MoleculeIdKind {
     Atom,
     /// Stable bond slots.
     Bond,
-    /// Stable conformer slots.
-    Conformer,
     /// Stable stereo-element slots.
     StereoElement,
     /// Stable stereo-group slots.
@@ -1124,7 +1054,6 @@ impl fmt::Display for MoleculeIdKind {
         formatter.write_str(match self {
             Self::Atom => "atom",
             Self::Bond => "bond",
-            Self::Conformer => "conformer",
             Self::StereoElement => "stereo element",
             Self::StereoGroup => "stereo group",
         })
@@ -1136,7 +1065,6 @@ impl fmt::Display for MoleculeIdKind {
 pub enum MoleculeError {
     InvalidAtomId(AtomId),
     InvalidBondId(BondId),
-    InvalidConformerId(ConformerId),
     InvalidStereoElementId(StereoElementId),
     InvalidStereoGroupId(StereoGroupId),
     InvalidStereoReference(&'static str),
@@ -1155,7 +1083,6 @@ impl fmt::Display for MoleculeError {
         match self {
             Self::InvalidAtomId(id) => write!(f, "invalid atom id: {id}"),
             Self::InvalidBondId(id) => write!(f, "invalid bond id: {id}"),
-            Self::InvalidConformerId(id) => write!(f, "invalid conformer id: {id}"),
             Self::InvalidStereoElementId(id) => write!(f, "invalid stereo element id: {id}"),
             Self::InvalidStereoGroupId(id) => write!(f, "invalid stereo group id: {id}"),
             Self::InvalidStereoReference(message) => {
@@ -1216,16 +1143,6 @@ mod capacity_tests {
         assert_eq!(
             checked_molecule_id(
                 first_unsupported_slot(),
-                MoleculeIdKind::Conformer,
-                ConformerId::new,
-            ),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::Conformer
-            ))
-        );
-        assert_eq!(
-            checked_molecule_id(
-                first_unsupported_slot(),
                 MoleculeIdKind::StereoElement,
                 StereoElementId::new,
             ),
@@ -1247,7 +1164,7 @@ mod capacity_tests {
 
     #[test]
     fn capacity_rejection_does_not_mutate_molecule_state() {
-        let mut molecule = Molecule::new();
+        let mut molecule = crate::core::MoleculeEditor::new();
         let before = molecule.clone();
         assert_eq!(
             molecule.add_atom_at_slot(

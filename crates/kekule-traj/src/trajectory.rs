@@ -1853,21 +1853,20 @@ impl From<TrajectoryCodecErrorContext> for TrajectoryError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
-    use kekule::small::SmallMolecule;
+    use kekule::core::{Atom, BondOrder, Element, PropValue};
     use kekule::topology::{
         transform::retain_instances, MoleculeInstanceMetadata, TopologyBuilder,
     };
     use kekule::units::{ANGSTROM, KELVIN, KILOJOULE_PER_MOLE, PICOSECOND};
 
     fn one_atom_topology() -> Arc<Topology> {
-        let mut graph = Molecule::builder();
+        let mut graph = kekule::core::MoleculeEditor::new();
         graph
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .expect("atom identifier capacity");
-        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
+        let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
@@ -1875,7 +1874,7 @@ mod tests {
     }
 
     fn one_bond_topology() -> Arc<Topology> {
-        let mut graph = Molecule::builder();
+        let mut graph = kekule::core::MoleculeEditor::new();
         let carbon = graph
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .unwrap();
@@ -1883,9 +1882,9 @@ mod tests {
             .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
             .unwrap();
         graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
-        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
+        let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();
@@ -2410,13 +2409,13 @@ mod tests {
 
     #[test]
     fn repeated_borrowed_remaps_reuse_all_dense_buffer_allocations() {
-        let mut graph = Molecule::builder();
+        let mut graph = kekule::core::MoleculeEditor::new();
         graph
             .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
             .expect("atom identifier capacity");
-        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
+        let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();

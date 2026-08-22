@@ -613,15 +613,14 @@ mod tests {
 
     use super::*;
     use kekule::alignment::{AlignmentGeometry, PeriodicAlignmentPolicy};
-    use kekule::core::{Atom, BondOrder, Element, Molecule, PropValue};
+    use kekule::core::{Atom, BondOrder, Element, PropValue};
     use kekule::geometry::{Matrix3, Point3, Vector3};
-    use kekule::small::SmallMolecule;
     use kekule::structure::AtomData;
     use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_UNIT, MODEL_VELOCITY_UNIT, PICOSECOND};
 
     fn make_topology(atom_count: usize) -> Arc<Topology> {
-        let mut graph = Molecule::builder();
+        let mut graph = kekule::core::MoleculeEditor::new();
         let mut previous = None;
         for _ in 0..atom_count {
             let atom = graph
@@ -632,9 +631,9 @@ mod tests {
             }
             previous = Some(atom);
         }
-        let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
+        let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
-        let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+        let definition = builder.add_molecule_definition(&molecule).unwrap();
         builder
             .add_instance(definition, MoleculeInstanceMetadata::default())
             .unwrap();

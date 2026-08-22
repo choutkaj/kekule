@@ -3,8 +3,8 @@ use crate::hydrogens::{
     AddHydrogensOptions, AddedHydrogenOrigin, HydrogenTransformError, RetainedHydrogenReason,
 };
 
-fn perceived_smiles(input: &str) -> SmallMolecule {
-    let mut molecule = SmallMolecule::from_smiles(input).expect("SMILES should parse");
+fn perceived_smiles(input: &str) -> Molecule {
+    let mut molecule = read_smiles(input).expect("SMILES should parse");
     perceive(&mut molecule).expect("molecule should perceive");
     molecule
 }
@@ -12,11 +12,8 @@ fn perceived_smiles(input: &str) -> SmallMolecule {
 #[test]
 fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
     let mut molecule = perceived_smiles("C");
-    let carbon = molecule.as_molecule().atom_ids().next().expect("carbon");
-    assert_eq!(
-        molecule.as_molecule().implicit_hydrogens(carbon),
-        Ok(Some(4))
-    );
+    let carbon = molecule.atom_ids().next().expect("carbon");
+    assert_eq!(molecule.implicit_hydrogens(carbon), Ok(Some(4)));
 
     let report = molecule.add_hydrogens().expect("materialize hydrogens");
 
@@ -27,11 +24,10 @@ fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
         .all(|entry| entry.parent == carbon && entry.origin == AddedHydrogenOrigin::Implicit));
     assert_eq!(molecule.atom_count(), 5);
     assert_eq!(molecule.bond_count(), 4);
-    assert!(!molecule.as_molecule().perception().has_valence());
+    assert!(!molecule.perception().has_valence());
     for entry in &report.added {
         assert_eq!(
             molecule
-                .as_molecule()
                 .atom(entry.hydrogen)
                 .expect("added hydrogen")
                 .element
@@ -40,7 +36,6 @@ fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
         );
         assert_eq!(
             molecule
-                .as_molecule()
                 .neighbors(entry.hydrogen)
                 .expect("hydrogen neighbor")
                 .collect::<Vec<_>>(),
@@ -51,7 +46,7 @@ fn add_hydrogens_materializes_perceived_counts_and_invalidates_perception() {
 
 #[test]
 fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
-    let mut unperceived = SmallMolecule::from_smiles("C").expect("methane");
+    let mut unperceived = read_smiles("C").expect("methane");
     let original = unperceived.clone();
     assert_eq!(
         unperceived.add_hydrogens(),
@@ -76,9 +71,89 @@ fn add_hydrogens_is_transactional_for_missing_perception_and_resource_limits() {
 }
 
 #[test]
+fn hydrogen_transforms_preserve_original_when_publication_fails() {
+    let mut editor = MoleculeEditor::new();
+    let mut atom = carbon();
+    atom.hydrogens = HydrogenDeclaration::Fixed(1);
+    editor.add_atom(atom).unwrap();
+    let mut molecule = editor.finish().unwrap();
+    let chain = molecule.hierarchy.add_chain("A", None).unwrap();
+    let residue = molecule
+        .hierarchy
+        .add_residue(chain, "LIG", Some(1), None, None)
+        .unwrap();
+    molecule
+        .hierarchy
+        .add_atom_site(residue, AtomId::new(999), SmcraAtomSiteMetadata::default())
+        .unwrap();
+    let original = molecule.clone();
+
+    assert!(matches!(
+        molecule.add_hydrogens_with_options(AddHydrogensOptions {
+            explicit_only: true,
+            ..AddHydrogensOptions::default()
+        }),
+        Err(HydrogenTransformError::Publication(
+            MoleculePublicationError::InvalidHierarchy(_)
+        ))
+    ));
+    assert_eq!(molecule, original);
+    assert_eq!(molecule.perception(), original.perception());
+
+    perceive(&mut molecule).unwrap();
+    let original = molecule.clone();
+    assert!(matches!(
+        molecule.remove_hydrogens(),
+        Err(HydrogenTransformError::Publication(
+            MoleculePublicationError::InvalidHierarchy(_)
+        ))
+    ));
+    assert_eq!(molecule, original);
+    assert_eq!(molecule.perception(), original.perception());
+}
+
+#[test]
+fn removing_annotated_graph_hydrogen_removes_its_atom_site() {
+    let mut editor = MoleculeEditor::new();
+    let carbon = editor.add_atom(carbon()).unwrap();
+    let hydrogen = editor
+        .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
+        .unwrap();
+    editor
+        .add_bond(carbon, hydrogen, BondOrder::Single)
+        .unwrap();
+    let chain = editor.hierarchy_mut().add_chain("A", None).unwrap();
+    let residue = editor
+        .hierarchy_mut()
+        .add_residue(chain, "LIG", Some(1), None, None)
+        .unwrap();
+    let site = editor
+        .add_atom_site(residue, hydrogen, SmcraAtomSiteMetadata::default())
+        .unwrap();
+    let mut molecule = editor.finish().unwrap();
+    perceive(&mut molecule).unwrap();
+
+    let report = molecule.remove_hydrogens().expect("hydrogen collapses");
+
+    assert_eq!(report.removed.len(), 1);
+    assert_eq!(report.removed[0].hydrogen, hydrogen);
+    assert_eq!(molecule.atom_count(), 1);
+    assert!(molecule.atom(hydrogen).is_err());
+    assert!(molecule.hierarchy().atom_site(site).is_err());
+    assert!(molecule.hierarchy().atom_site_for_atom(hydrogen).is_none());
+    assert!(molecule
+        .hierarchy()
+        .residue(residue)
+        .unwrap()
+        .atom_sites()
+        .is_empty());
+    assert!(molecule.edit().finish().is_ok());
+}
+
+#[test]
 fn explicit_only_materializes_bracket_counts_without_implicit_hydrogens() {
     let mut molecule = perceived_smiles("[CH3]");
-    let carbon = molecule.as_molecule().atom_ids().next().expect("carbon");
+    let carbon = molecule.atom_ids().next().expect("carbon");
     let report = molecule
         .add_hydrogens_with_options(AddHydrogensOptions {
             explicit_only: true,
@@ -92,11 +167,7 @@ fn explicit_only_materializes_bracket_counts_without_implicit_hydrogens() {
         .iter()
         .all(|entry| entry.origin == AddedHydrogenOrigin::ExplicitCount));
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(carbon)
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(carbon).expect("carbon").hydrogens,
         HydrogenDeclaration::Fixed(0)
     );
 
@@ -105,28 +176,21 @@ fn explicit_only_materializes_bracket_counts_without_implicit_hydrogens() {
         .remove_hydrogens()
         .expect("fixed graph hydrogens collapse");
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(carbon)
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(carbon).expect("carbon").hydrogens,
         HydrogenDeclaration::Fixed(3)
     );
 }
 
 #[test]
 fn materializing_inferred_declaration_preserves_inference_policy() {
-    let mut graph = Molecule::builder();
+    let mut graph = crate::core::MoleculeEditor::new();
     let mut carbon_atom = carbon();
     carbon_atom.hydrogens = HydrogenDeclaration::Infer { explicit: 1 };
     let carbon = graph.add_atom(carbon_atom).expect("carbon");
-    let graph = graph.build().expect("single atom graph");
-    let mut molecule = SmallMolecule::from_molecule(graph);
+    let graph = graph.finish().expect("single atom graph");
+    let mut molecule = graph;
     perceive(&mut molecule).expect("represented-plus-inferred carbon perceives");
-    assert_eq!(
-        molecule.as_molecule().implicit_hydrogens(carbon),
-        Ok(Some(3))
-    );
+    assert_eq!(molecule.implicit_hydrogens(carbon), Ok(Some(3)));
 
     let report = molecule
         .add_hydrogens_with_options(AddHydrogensOptions {
@@ -137,41 +201,27 @@ fn materializing_inferred_declaration_preserves_inference_policy() {
     assert_eq!(report.added.len(), 1);
     assert_eq!(report.added[0].origin, AddedHydrogenOrigin::ExplicitCount);
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(carbon)
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(carbon).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
 
     perceive(&mut molecule).expect("materialized inference policy perceives");
-    assert_eq!(
-        molecule.as_molecule().implicit_hydrogens(carbon),
-        Ok(Some(3))
-    );
+    assert_eq!(molecule.implicit_hydrogens(carbon), Ok(Some(3)));
     molecule
         .remove_hydrogens()
         .expect("materialized hydrogen collapses");
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(carbon)
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(carbon).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
     perceive(&mut molecule).expect("collapsed inference policy perceives");
-    assert_eq!(
-        molecule.as_molecule().implicit_hydrogens(carbon),
-        Ok(Some(4))
-    );
+    assert_eq!(molecule.implicit_hydrogens(carbon), Ok(Some(4)));
 }
 
 #[test]
 fn add_and_remove_hydrogens_round_trip_methane_semantics() {
     let mut molecule = perceived_smiles("C");
-    let carbon = molecule.as_molecule().atom_ids().next().expect("carbon");
+    let carbon = molecule.atom_ids().next().expect("carbon");
     let added = molecule.add_hydrogens().expect("add hydrogens");
     perceive(&mut molecule).expect("re-perceive explicit methane");
 
@@ -185,11 +235,11 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
     assert_eq!(removed.adjustments[0].parent, carbon);
     assert_eq!(removed.adjustments[0].explicit_hydrogens, 0);
     assert_eq!(removed.adjustments[0].implicit_hydrogens, 4);
-    assert!(!molecule.as_molecule().perception().has_valence());
+    assert!(!molecule.perception().has_valence());
     assert!(added
         .added
         .iter()
-        .all(|entry| molecule.as_molecule().atom(entry.hydrogen).is_err()));
+        .all(|entry| molecule.atom(entry.hydrogen).is_err()));
     perceive(&mut molecule).expect("re-perceive collapsed methane");
     assert_eq!(molecule.to_canonical_smiles().expect("canonical"), "C");
 }
@@ -198,7 +248,6 @@ fn add_and_remove_hydrogens_round_trip_methane_semantics() {
 fn remove_and_add_hydrogens_round_trip_graph_methane() {
     let mut molecule = perceived_smiles("[H]C([H])([H])[H]");
     let carbon = molecule
-        .as_molecule()
         .atoms()
         .find_map(|(id, atom)| (atom.element.symbol() == "C").then_some(id))
         .expect("carbon");
@@ -206,11 +255,7 @@ fn remove_and_add_hydrogens_round_trip_graph_methane() {
     let removed = molecule.remove_hydrogens().expect("collapse graph methane");
     assert_eq!(removed.removed.len(), 4);
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(carbon)
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(carbon).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
 
@@ -220,11 +265,7 @@ fn remove_and_add_hydrogens_round_trip_graph_methane() {
     assert_eq!(molecule.atom_count(), 5);
     assert_eq!(molecule.bond_count(), 4);
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(carbon)
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(carbon).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
 }
@@ -254,7 +295,6 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
     assert_eq!(removed.adjustments[0].implicit_hydrogens, 0);
     assert_eq!(
         molecule
-            .as_molecule()
             .atom(nitrogen)
             .expect("nitrogen")
             .hydrogens
@@ -267,7 +307,6 @@ fn remove_hydrogens_preserves_aromatic_bracket_hydrogen_counts() {
 fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() {
     let mut molecule = perceived_smiles("F[C@H](Cl)Br");
     let (element_id, before) = molecule
-        .as_molecule()
         .stereo_elements()
         .next()
         .map(|(id, element)| (id, element.clone()))
@@ -285,7 +324,6 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
         .expect("center hydrogen")
         .hydrogen;
     match &molecule
-        .as_molecule()
         .stereo_element(element_id)
         .expect("stereo after addition")
         .kind
@@ -301,7 +339,6 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
     assert_eq!(removed.adjustments[0].explicit_hydrogens, 1);
     assert_eq!(removed.adjustments[0].implicit_hydrogens, 0);
     match &molecule
-        .as_molecule()
         .stereo_element(element_id)
         .expect("stereo after removal")
         .kind
@@ -314,42 +351,8 @@ fn hydrogen_materialization_and_collapse_preserve_tetrahedral_stereo_carriers() 
 }
 
 #[test]
-fn added_hydrogens_have_explicitly_missing_conformer_positions() {
-    let mut molecule = perceived_smiles("C");
-    let carbon = molecule.as_molecule().atom_ids().next().expect("carbon");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            carbon,
-            crate::units::Quantity::new(Point3::new(1.0, 2.0, 3.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    let conformer_id = molecule
-        .as_molecule_mut()
-        .add_conformer(conformer)
-        .expect("conformer");
-
-    let report = molecule.add_hydrogens().expect("materialize hydrogens");
-    let conformer = molecule
-        .as_molecule()
-        .conformer(conformer_id)
-        .expect("conformer remains");
-    assert_eq!(
-        conformer.position(carbon),
-        Some(crate::units::Quantity::new(
-            Point3::new(1.0, 2.0, 3.0),
-            crate::units::ANGSTROM,
-        ))
-    );
-    assert!(report
-        .added
-        .iter()
-        .all(|entry| conformer.position(entry.hydrogen).is_none()));
-}
-
-#[test]
 fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
-    let mut graph = Molecule::new();
+    let mut graph = crate::core::MoleculeEditor::new();
     let first_carbon = graph.add_atom(carbon()).expect("atom identifier capacity");
 
     let mut isotope = element_atom("H");
@@ -387,7 +390,7 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
         .expect("second carbon link");
 
     let _ = valence_api::perceive_valence(&mut graph, ValenceModel::RdkitLike);
-    let mut molecule = SmallMolecule::from_molecule(graph);
+    let mut molecule = graph;
     let report = molecule.remove_hydrogens().expect("conservative removal");
 
     assert!(report.removed.is_empty());
@@ -407,7 +410,7 @@ fn remove_hydrogens_reports_lossy_hydrogens_as_retained() {
 
 #[test]
 fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
-    let mut graph = Molecule::new();
+    let mut graph = crate::core::MoleculeEditor::new();
     let mut parent = carbon();
     parent.hydrogens = HydrogenDeclaration::Fixed(u8::MAX);
     let parent = graph.add_atom(parent).expect("atom identifier capacity");
@@ -423,7 +426,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
         ValenceOptions { strict: false },
     )
     .expect("permissive valence perception");
-    let mut molecule = SmallMolecule::from_molecule(graph);
+    let mut molecule = graph;
     let original = molecule.clone();
 
     assert_eq!(
@@ -438,7 +441,7 @@ fn remove_hydrogens_is_transactional_when_encoded_count_overflows() {
 
 #[test]
 fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
-    let mut graph = Molecule::new();
+    let mut graph = crate::core::MoleculeEditor::new();
     let left = graph.add_atom(carbon()).expect("atom identifier capacity");
     let right = graph.add_atom(carbon()).expect("atom identifier capacity");
     let double_bond = graph
@@ -481,7 +484,7 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
             },
         )))
         .expect("double-bond stereo");
-    let mut molecule = SmallMolecule::from_molecule(graph);
+    let mut molecule = graph;
 
     let report = molecule.remove_hydrogens().expect("collapse hydrogen");
 
@@ -489,7 +492,6 @@ fn remove_hydrogens_preserves_double_bond_stereo_carriers() {
     assert_eq!(report.adjustments[0].explicit_hydrogens, 0);
     assert_eq!(report.adjustments[0].implicit_hydrogens, 1);
     match &molecule
-        .as_molecule()
         .stereo_element(stereo)
         .expect("stereo survives")
         .kind

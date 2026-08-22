@@ -4,9 +4,8 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::core::{Atom, BondOrder, Element, Molecule};
+use kekule::core::{Atom, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
-use kekule::small::SmallMolecule;
 use kekule::topology::{MoleculeInstanceMetadata, TopologyBuilder};
 use kekule::units::{Quantity, ANGSTROM};
 use kekule_traj::io::dcd::DcdWriteOptions;
@@ -18,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .nth(1)
         .map(PathBuf::from)
         .ok_or("usage: dcd_interop_writer OUTPUT.dcd")?;
-    let mut molecule = Molecule::builder();
+    let mut molecule = kekule::core::MoleculeEditor::new();
     let mut atoms = Vec::new();
     for symbol in ["C", "H", "O"] {
         atoms.push(molecule.add_atom(Atom::new(
@@ -27,9 +26,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     molecule.add_bond(atoms[0], atoms[1], BondOrder::Single)?;
     molecule.add_bond(atoms[0], atoms[2], BondOrder::Single)?;
-    let molecule = SmallMolecule::from_molecule(molecule.build()?);
+    let molecule = molecule.finish()?;
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule)?;
+    let definition = builder.add_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
     let topology = Arc::new(builder.build()?);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)

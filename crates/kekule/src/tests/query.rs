@@ -3,8 +3,8 @@ use crate::substructure::{self, *};
 
 use super::*;
 
-fn perceived(input: &str) -> SmallMolecule {
-    let mut molecule = SmallMolecule::from_smiles(input).expect("test target should parse");
+fn perceived(input: &str) -> Molecule {
+    let mut molecule = read_smiles(input).expect("test target should parse");
     perceive(&mut molecule).expect("test target should perceive");
     molecule
 }
@@ -109,7 +109,7 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
     // High-precedence &: C OR (N AND H2). Both atoms match in methylamine.
     let high_and = parse_smarts("[C,N&H2]").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(target.as_molecule(), &high_and)
+        substructure::find_substructure_matches(&target, &high_and)
             .unwrap()
             .len(),
         2
@@ -117,15 +117,10 @@ fn smarts_logical_precedence_matches_daylight_operator_order() {
 
     // Low-precedence ;: (C OR N) AND H2. Only nitrogen matches.
     let low_and = parse_smarts("[C,N;H2]").unwrap();
-    let matches = substructure::find_substructure_matches(target.as_molecule(), &low_and).unwrap();
+    let matches = substructure::find_substructure_matches(&target, &low_and).unwrap();
     assert_eq!(matches.len(), 1);
     assert_eq!(
-        target
-            .as_molecule()
-            .atom(matches[0].atoms()[0])
-            .unwrap()
-            .element
-            .symbol(),
+        target.atom(matches[0].atoms()[0]).unwrap().element.symbol(),
         "N"
     );
 }
@@ -136,7 +131,7 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
     for (smarts, expected) in [("[H,D]", 2), ("[C,H]", 3), ("[!H]", 2)] {
         let query = parse_smarts(smarts).unwrap();
         assert_eq!(
-            substructure::find_substructure_matches(ethanol.as_molecule(), &query)
+            substructure::find_substructure_matches(&ethanol, &query)
                 .unwrap()
                 .len(),
             expected,
@@ -149,7 +144,7 @@ fn smarts_hydrogen_primitive_disambiguation_matches_rdkit() {
     perceive(&mut methane).unwrap();
     let elemental_hydrogen = parse_smarts("[H]").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(methane.as_molecule(), &elemental_hydrogen)
+        substructure::find_substructure_matches(&methane, &elemental_hydrogen)
             .unwrap()
             .len(),
         4
@@ -263,8 +258,7 @@ fn matcher_handles_elements_bonds_hydrogens_degree_and_negation() {
         ("[#6]-[#8]", 1),
     ] {
         let query = parse_smarts(smarts).unwrap();
-        let matches =
-            substructure::find_substructure_matches(ethanol.as_molecule(), &query).unwrap();
+        let matches = substructure::find_substructure_matches(&ethanol, &query).unwrap();
         assert_eq!(matches.len(), expected, "{smarts}: {matches:?}");
     }
 }
@@ -274,13 +268,13 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     let benzene = perceived("c1ccccc1");
     let query = parse_smarts("c1ccccc1").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(benzene.as_molecule(), &query)
+        substructure::find_substructure_matches(&benzene, &query)
             .unwrap()
             .len(),
         1
     );
     let embeddings = substructure::find_substructure_matches_with_options(
-        benzene.as_molecule(),
+        &benzene,
         &query,
         SubstructureMatchOptions {
             uniquify: false,
@@ -293,14 +287,14 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
     let cyclohexane = perceived("C1CCCCC1");
     let ring_atoms = parse_smarts("[#6;R]").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(cyclohexane.as_molecule(), &ring_atoms)
+        substructure::find_substructure_matches(&cyclohexane, &ring_atoms)
             .unwrap()
             .len(),
         6
     );
     let ring_bond = parse_smarts("C@C").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(cyclohexane.as_molecule(), &ring_bond)
+        substructure::find_substructure_matches(&cyclohexane, &ring_bond)
             .unwrap()
             .len(),
         6
@@ -311,15 +305,14 @@ fn matcher_handles_aromatic_cycles_ring_bonds_and_uniqueness() {
 fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
     let connected_target = perceived("OCO");
     let query = parse_smarts("[#8].[#8]").unwrap();
-    let matches =
-        substructure::find_substructure_matches(connected_target.as_molecule(), &query).unwrap();
+    let matches = substructure::find_substructure_matches(&connected_target, &query).unwrap();
     assert_eq!(matches.len(), 1);
     assert_ne!(matches[0].atoms()[0], matches[0].atoms()[1]);
 
     let cyclopropane = perceived("C1CC1");
     let edge = parse_smarts("C-C").unwrap();
     assert_eq!(
-        substructure::find_substructure_matches(cyclopropane.as_molecule(), &edge)
+        substructure::find_substructure_matches(&cyclopropane, &edge)
             .unwrap()
             .len(),
         3
@@ -328,7 +321,7 @@ fn matcher_supports_disconnected_queries_and_non_induced_subgraphs() {
 
 #[test]
 fn matcher_requires_only_the_perception_used_by_the_ir() {
-    let mut raw = Molecule::new();
+    let mut raw = crate::core::MoleculeEditor::new();
     let first = raw.add_atom(carbon()).expect("atom identifier capacity");
     let second = raw.add_atom(carbon()).expect("atom identifier capacity");
     raw.add_bond(first, second, BondOrder::Single).unwrap();
@@ -359,7 +352,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     let target = perceived("CCCC");
     let query = parse_smarts("[#6]").unwrap();
     let candidate_error = substructure::find_substructure_matches_with_options(
-        target.as_molecule(),
+        &target,
         &query,
         SubstructureMatchOptions {
             max_candidate_pairs: 3,
@@ -376,7 +369,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
     ));
 
     let state_error = substructure::find_substructure_matches_with_options(
-        target.as_molecule(),
+        &target,
         &query,
         SubstructureMatchOptions {
             max_search_states: 1,
@@ -395,7 +388,7 @@ fn matcher_search_and_candidate_limits_are_hard_failures() {
 
     assert!(matches!(
         substructure::find_substructure_matches_with_options(
-            target.as_molecule(),
+            &target,
             &query,
             SubstructureMatchOptions {
                 max_query_atoms: MAX_SUBSTRUCTURE_QUERY_ATOMS + 1,

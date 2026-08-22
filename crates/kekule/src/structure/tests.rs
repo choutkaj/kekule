@@ -1,20 +1,18 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::bio::*;
 use crate::core::*;
 use crate::geometry::*;
-use crate::small::*;
 use crate::topology::*;
 use crate::units::*;
 fn one_atom_topology() -> Arc<Topology> {
-    let mut graph = Molecule::new();
+    let mut graph = crate::core::MoleculeEditor::new();
     graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
-    let molecule = SmallMolecule::from_molecule(graph);
+    let molecule = graph;
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(&molecule).unwrap();
     builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
@@ -22,7 +20,7 @@ fn one_atom_topology() -> Arc<Topology> {
 }
 
 fn two_bond_instances_topology() -> (Arc<Topology>, MoleculeInstanceId, MoleculeInstanceId) {
-    let mut graph = Molecule::builder();
+    let mut graph = crate::core::MoleculeEditor::new();
     let carbon = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();
@@ -30,9 +28,9 @@ fn two_bond_instances_topology() -> (Arc<Topology>, MoleculeInstanceId, Molecule
         .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
         .unwrap();
     graph.add_bond(carbon, oxygen, BondOrder::Single).unwrap();
-    let molecule = SmallMolecule::from_molecule(graph.build().unwrap());
+    let molecule = graph.finish().unwrap();
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule).unwrap();
+    let definition = builder.add_molecule_definition(&molecule).unwrap();
     let first = builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
         .unwrap();
@@ -117,9 +115,8 @@ fn model_requires_exact_topology_and_views_do_not_copy_coordinates() {
 
 #[test]
 fn model_and_view_share_qualified_hierarchy_navigation_without_copying() {
-    let mut macro_builder = MacroMolecule::builder();
+    let mut macro_builder = crate::core::MoleculeEditor::new();
     let atom = macro_builder
-        .as_molecule_mut()
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .unwrap();
     let chain = macro_builder.hierarchy_mut().add_chain("A", None).unwrap();
@@ -130,11 +127,11 @@ fn model_and_view_share_qualified_hierarchy_navigation_without_copying() {
     let site = macro_builder
         .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .unwrap();
-    let macro_molecule = macro_builder.build().unwrap();
+    let macro_molecule = macro_builder.finish().unwrap();
 
     let mut topology_builder = TopologyBuilder::new();
     let definition = topology_builder
-        .add_macro_molecule_definition(&macro_molecule)
+        .add_molecule_definition(&macro_molecule)
         .unwrap();
     let first = topology_builder
         .add_instance(definition, MoleculeInstanceMetadata::default())
@@ -786,7 +783,7 @@ fn model_remaps_positions_atom_data_bond_data_and_cell_together() {
 
 #[test]
 fn ensemble_from_conformers_preserves_source_order_without_copying_conformers_to_topology() {
-    let mut graph = Molecule::new();
+    let mut graph = crate::core::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
@@ -794,15 +791,13 @@ fn ensemble_from_conformers_preserves_source_order_without_copying_conformers_to
     first
         .set_position(atom, Quantity::new(Point3::new(1.0, 0.0, 0.0), ANGSTROM))
         .unwrap();
-    let first = graph.add_conformer(first).unwrap();
     let mut second = Conformer::new(ANGSTROM).unwrap();
     second
         .set_position(atom, Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM))
         .unwrap();
-    let second = graph.add_conformer(second).unwrap();
-    let molecule = SmallMolecule::from_molecule(graph);
+    let molecule = graph.finish().unwrap();
 
-    let ensemble = Ensemble::from_small_molecule_conformers(&molecule, [second, first]).unwrap();
+    let ensemble = Ensemble::from_molecule_conformers(&molecule, [second, first]).unwrap();
     assert_eq!(
         ensemble
             .views()
@@ -810,16 +805,5 @@ fn ensemble_from_conformers_preserves_source_order_without_copying_conformers_to
             .collect::<Vec<_>>(),
         vec![2.0, 1.0]
     );
-    assert_eq!(
-        ensemble
-            .topology()
-            .definitions()
-            .next()
-            .unwrap()
-            .1
-            .graph()
-            .conformers()
-            .count(),
-        0
-    );
+    assert_eq!(ensemble.topology().definition_count(), 1);
 }

@@ -40,7 +40,7 @@ impl Atom {
 /// The complete non-graph hydrogen statement represented on an atom.
 ///
 /// Graph hydrogen atoms are separate atoms and are not counted here. Hydrogens
-/// inferred by valence perception are stored in [`PerceptionState`] rather
+/// inferred by valence perception are stored in [`Perception`] rather
 /// than this declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HydrogenDeclaration {

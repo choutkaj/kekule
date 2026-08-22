@@ -1,8 +1,7 @@
-use kekule::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
+use kekule::bio::{Hierarchy, SmcraAtomSiteMetadata};
 use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element, HydrogenDeclaration, Molecule};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
-use kekule::small::SmallMolecule;
 use kekule::structure::{Ensemble, Model};
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
@@ -19,8 +18,8 @@ fn molecule(
     elements: &[&str],
     bonds: &[(usize, usize, BondOrder)],
     positions: &[Point3],
-) -> (SmallMolecule, kekule::core::ConformerId) {
-    let mut graph = Molecule::builder();
+) -> (Molecule, Conformer) {
+    let mut graph = kekule::core::MoleculeEditor::new();
     let atoms = elements
         .iter()
         .map(|symbol| {
@@ -41,12 +40,11 @@ fn molecule(
             )
             .unwrap();
     }
-    let mut graph = graph.build().expect("connected test molecule");
-    let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    (SmallMolecule::from_molecule(graph), conformer)
+    let graph = graph.finish().expect("connected test molecule");
+    (graph, conformer)
 }
 
-fn water(offset: f64) -> (SmallMolecule, kekule::core::ConformerId) {
+fn water(offset: f64) -> (Molecule, Conformer) {
     molecule(
         &["O", "H", "H"],
         &[(0, 1, BondOrder::Single), (0, 2, BondOrder::Single)],
@@ -61,7 +59,7 @@ fn water(offset: f64) -> (SmallMolecule, kekule::core::ConformerId) {
 #[test]
 fn preparation_and_evaluation_are_finite() {
     let (water, conformer) = water(0.0);
-    let model = Model::from_small_molecule(&water, conformer).unwrap();
+    let model = Model::from_molecule(&water, &conformer).unwrap();
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
         model.view(),
@@ -81,8 +79,8 @@ fn qeq_is_prepared_per_molecule_instance() {
     let (first, first_conf) = water(0.0);
     let (second, second_conf) = water(5.0);
     let mut builder = Model::builder();
-    let first_id = builder.add_small_molecule(&first, first_conf).unwrap();
-    let second_id = builder.add_small_molecule(&second, second_conf).unwrap();
+    let first_id = builder.add_molecule(&first, &first_conf).unwrap();
+    let second_id = builder.add_molecule(&second, &second_conf).unwrap();
     let model = builder.build().unwrap();
     let potential = DreidingPotential::prepare(
         &model.shared_topology(),
@@ -112,7 +110,7 @@ fn qeq_is_prepared_per_molecule_instance() {
 #[test]
 fn prepared_potential_evaluates_models_ensembles_and_frames_sharing_topology() {
     let (water, conformer) = water(0.0);
-    let model = Model::from_small_molecule(&water, conformer).unwrap();
+    let model = Model::from_molecule(&water, &conformer).unwrap();
     let mut displaced = model.clone();
     let hydrogen = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(1));
     displaced
@@ -152,7 +150,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
         &[(0, 1, BondOrder::Single)],
         &[Point3::new(0.1, 0.0, 0.0), Point3::new(9.9, 0.0, 0.0)],
     );
-    let model = Model::from_small_molecule(&molecule, conformer).unwrap();
+    let model = Model::from_molecule(&molecule, &conformer).unwrap();
     let cell = PeriodicCell::orthorhombic(
         kekule::units::Quantity::new(Vector3::new(10.0, 10.0, 10.0), kekule::units::ANGSTROM),
         [true; 3],
@@ -213,7 +211,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
         Err(PotentialError::UnsupportedPeriodicCell)
     );
 
-    let mut independent = Model::from_small_molecule(&molecule, conformer).unwrap();
+    let mut independent = Model::from_molecule(&molecule, &conformer).unwrap();
     independent.set_cell(Some(cell));
     assert_eq!(
         potential.evaluate(independent.view()),
@@ -224,7 +222,7 @@ fn periodic_state_is_rejected_during_preparation_and_across_structural_views() {
 #[test]
 fn qeq_grouping_policy_is_explicit() {
     let (water, conformer) = water(0.0);
-    let model = Model::from_small_molecule(&water, conformer).unwrap();
+    let model = Model::from_molecule(&water, &conformer).unwrap();
     for grouping in [
         QeqGrouping::WholeTopology,
         QeqGrouping::MoleculeInstances,
@@ -244,7 +242,7 @@ fn qeq_grouping_policy_is_explicit() {
 
 #[test]
 fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
-    let mut graph = Molecule::builder();
+    let mut graph = kekule::core::MoleculeEditor::new();
     let oxygen = graph
         .add_atom(explicit_atom("O"))
         .expect("atom identifier capacity");
@@ -286,10 +284,8 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
             ),
         )
         .unwrap();
-    let mut graph = graph.build().expect("connected water");
-    let conformer = graph.add_conformer(conformer).expect("valid conformer");
-    let molecule = SmallMolecule::from_molecule(graph);
-    let model = Model::from_small_molecule(&molecule, conformer).unwrap();
+    let molecule = graph.finish().expect("connected water");
+    let model = Model::from_molecule(&molecule, &conformer).unwrap();
 
     let potential = DreidingPotential::prepare(
         &model.shared_topology(),
@@ -301,20 +297,22 @@ fn preparation_maps_tombstoned_local_ids_to_dense_adjacency() {
 }
 
 #[test]
-fn eligible_macro_molecules_are_supported() {
+fn hierarchy_bearing_molecules_are_supported() {
     let (small, conformer) = water(0.0);
-    let mut hierarchy = SmcraHierarchy::new();
+    let mut hierarchy = Hierarchy::new();
     let chain = hierarchy.add_chain("A", None).unwrap();
     let residue = hierarchy
         .add_residue(chain, "HOH", None, None, None)
         .unwrap();
-    for atom in small.as_molecule().atom_ids() {
+    for atom in small.atom_ids() {
         hierarchy
             .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
             .unwrap();
     }
-    let macromolecule = MacroMolecule::from_parts(small.as_molecule().clone(), hierarchy).unwrap();
-    let model = Model::from_macro_molecule(&macromolecule, conformer).unwrap();
+    let mut editor = small.edit();
+    *editor.hierarchy_mut() = hierarchy;
+    let macromolecule = editor.finish().unwrap();
+    let model = Model::from_molecule(&macromolecule, &conformer).unwrap();
     let mut potential = DreidingPotential::prepare(
         &model.shared_topology(),
         model.view(),
@@ -331,7 +329,7 @@ fn eligible_macro_molecules_are_supported() {
 #[test]
 fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     let mut atom = Atom::new(Element::from_symbol("C").unwrap());
-    let mut graph = Molecule::builder();
+    let mut graph = kekule::core::MoleculeEditor::new();
     let id = graph
         .add_atom(atom.clone())
         .expect("atom identifier capacity");
@@ -342,10 +340,8 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             kekule::units::Quantity::new(Point3::default(), kekule::units::ANGSTROM),
         )
         .unwrap();
-    let mut graph = graph.build().expect("single atom molecule");
-    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
-    let molecule = SmallMolecule::from_molecule(graph);
-    let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
+    let molecule = graph.finish().expect("single atom molecule");
+    let model = Model::from_molecule(&molecule, &conformer).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
             &model.shared_topology(),
@@ -357,7 +353,7 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
     ));
 
     atom.hydrogens = HydrogenDeclaration::Fixed(1);
-    let mut graph = Molecule::builder();
+    let mut graph = kekule::core::MoleculeEditor::new();
     let id = graph.add_atom(atom).expect("atom identifier capacity");
     let mut conformer = Conformer::new(kekule::units::ANGSTROM).unwrap();
     conformer
@@ -366,10 +362,8 @@ fn unresolved_or_counted_hydrogens_are_rejected_with_qualified_ids() {
             kekule::units::Quantity::new(Point3::default(), kekule::units::ANGSTROM),
         )
         .unwrap();
-    let mut graph = graph.build().expect("single atom molecule");
-    let conformer_id = graph.add_conformer(conformer).expect("valid conformer");
-    let molecule = SmallMolecule::from_molecule(graph);
-    let model = Model::from_small_molecule(&molecule, conformer_id).unwrap();
+    let molecule = graph.finish().expect("single atom molecule");
+    let model = Model::from_molecule(&molecule, &conformer).unwrap();
     assert!(matches!(
         DreidingPotential::prepare(
             &model.shared_topology(),
@@ -387,7 +381,7 @@ fn prepared_potential_uses_exact_shared_topology() {
         &[(0, 1, BondOrder::Single)],
         &[Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 0.0, 0.0)],
     );
-    let combined_model = Model::from_small_molecule(&combined, combined_conf).unwrap();
+    let combined_model = Model::from_molecule(&combined, &combined_conf).unwrap();
     let mut potential = DreidingPotential::prepare(
         &combined_model.shared_topology(),
         combined_model.view(),
@@ -397,8 +391,8 @@ fn prepared_potential_uses_exact_shared_topology() {
 
     let (one, one_conf) = molecule(&["C"], &[], &[Point3::new(0.0, 0.0, 0.0)]);
     let mut builder = Model::builder();
-    builder.add_small_molecule(&one, one_conf).unwrap();
-    builder.add_small_molecule(&one, one_conf).unwrap();
+    builder.add_molecule(&one, &one_conf).unwrap();
+    builder.add_molecule(&one, &one_conf).unwrap();
     let split_model = builder.build().unwrap();
     assert_eq!(
         potential.evaluate(split_model.view()),
