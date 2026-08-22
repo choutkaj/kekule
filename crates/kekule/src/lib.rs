@@ -220,12 +220,28 @@ pub mod mmcif {
         crate::io::interpret_mmcif_ensemble(document, options)
     }
 
-    /// Writes one canonical molecular model as a structural mmCIF data block.
+    /// Writes one canonical molecular model using conservative entity semantics.
+    ///
+    /// Molecules without hierarchy are emitted as `non-polymer`; hierarchy is
+    /// not treated as proof of polymer identity and requires
+    /// [`write_with_report`] instead.
     pub fn write(
         model: &crate::structure::Model,
         options: MmcifWriteOptions,
     ) -> Result<String, MmcifWriteError> {
         crate::io::write_mmcif_model(model, options)
+    }
+
+    /// Writes a canonical model while preserving explicit source mmCIF entity kinds.
+    ///
+    /// The report must classify every molecule instance exactly once. Conflicting
+    /// source kinds are rejected instead of being guessed or collapsed.
+    pub fn write_with_report(
+        model: &crate::structure::Model,
+        report: &MmcifInterpretationReport,
+        options: MmcifWriteOptions,
+    ) -> Result<String, MmcifWriteError> {
+        crate::io::write_mmcif_model_with_report(model, report, options)
     }
 }
 
