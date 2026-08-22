@@ -3,9 +3,8 @@ use kekule::{
         kabsch, kabsch_with_options, AlignmentError, AlignmentWeighting, KabschOptions,
         PeriodicAlignmentPolicy, RigidAlignment,
     },
-    core::{Atom, BondOrder, Element, Molecule},
+    core::{Atom, BondOrder, Element, MoleculeEditor},
     geometry::Point3,
-    small::SmallMolecule,
     structure::{Model, Positions},
     topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder},
     units::{Quantity, ANGSTROM, MODEL_LENGTH_UNIT},
@@ -14,7 +13,7 @@ use std::sync::Arc;
 
 #[test]
 fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::error::Error>> {
-    let mut graph = Molecule::builder();
+    let mut graph = MoleculeEditor::new();
     let mut previous = None;
     for _ in 0..4 {
         let atom = graph.add_atom(Atom::new(Element::from_symbol("C").unwrap()))?;
@@ -23,9 +22,9 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
         }
         previous = Some(atom);
     }
-    let molecule = SmallMolecule::from_molecule(graph.build()?);
+    let molecule = graph.finish()?;
     let mut builder = TopologyBuilder::new();
-    let definition = builder.add_small_molecule_definition(&molecule)?;
+    let definition = builder.add_molecule_definition(&molecule)?;
     builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
     let topology = Arc::new(builder.build()?);
     let moving_points = [

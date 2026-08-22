@@ -160,7 +160,7 @@ fn bond_payload_fields_can_be_set_and_read() {
 
 #[test]
 fn stereo_elements_and_groups_live_on_molecule() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -207,7 +207,7 @@ fn stereo_elements_and_groups_live_on_molecule() {
 
 #[test]
 fn stereo_replacement_and_group_creation_preserve_graph_references() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -259,7 +259,7 @@ fn stereo_replacement_and_group_creation_preserve_graph_references() {
 
 #[test]
 fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let carriers = ["F", "Cl", "Br", "I"]
         .into_iter()
@@ -352,7 +352,7 @@ fn tetrahedral_stereo_storage_canonicalizes_carrier_permutations() {
 
 #[test]
 fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_reference = mol
@@ -446,7 +446,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
 
 #[test]
 fn axis_stereo_storage_canonicalizes_reference_carriers() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
     let right = mol.add_atom(carbon()).expect("atom identifier capacity");
     let left_reference = mol
@@ -545,7 +545,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
 
 #[test]
 fn stereo_element_group_membership_is_transactional_and_relation_owned() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let center = mol.add_atom(carbon()).expect("atom identifier capacity");
     let a = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
@@ -570,11 +570,11 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
             members: vec![element],
         })
         .expect("stereo group");
-    let perception = PerceptionState::builder()
+    let perception = Perception::builder()
         .with_cip_descriptors(vec![(element, StereoDescriptor::R)])
         .expect("unique CIP assignment")
         .build();
-    mol.install_perception_state(perception.clone())
+    mol.install_perception(perception.clone())
         .expect("valid perception");
 
     let mut pre_grouped = mol.stereo_element(element).expect("element").clone();
@@ -582,15 +582,18 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
         unreachable!("test element is tetrahedral");
     };
     stereo.center = AtomId::new(999);
-    let slots_before = mol.stereo_elements.clone();
+    let slots_before = mol.working().graph.stereo_elements.clone();
     assert!(matches!(
         mol.add_stereo_element(pre_grouped),
         Err(MoleculeError::InvalidStereoReference(
             "stereo element group membership must be established through add_stereo_group"
         ))
     ));
-    assert_eq!(mol.stereo_elements.len(), slots_before.len());
-    assert_eq!(mol.stereo_elements, slots_before);
+    assert_eq!(
+        mol.working().graph.stereo_elements.len(),
+        slots_before.len()
+    );
+    assert_eq!(mol.working().graph.stereo_elements, slots_before);
     assert_eq!(mol.perception(), &perception);
 
     let removed = mol
@@ -617,7 +620,7 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
 
 #[test]
 fn topology_deletions_prune_referencing_stereo_state() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
     let c = mol.add_atom(oxygen()).expect("atom identifier capacity");
@@ -677,7 +680,7 @@ fn prop_value_equality_covers_all_initial_variants() {
 
 #[test]
 fn mutable_payload_access_invalidates_fresh_perception() {
-    let mut mol = Molecule::new();
+    let mut mol = crate::core::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
     let bond = mol
@@ -695,7 +698,7 @@ fn mutable_payload_access_invalidates_fresh_perception() {
 
 #[test]
 fn perception_owned_chemistry_edits_invalidate_dependent_state() {
-    let mut methane = Molecule::new();
+    let mut methane = crate::core::MoleculeEditor::new();
     methane
         .add_atom(carbon())
         .expect("atom identifier capacity");

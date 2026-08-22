@@ -1,14 +1,13 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::chemistry::{
     canonicalize_molecule_for_publication, NormalizationError, NormalizationWarning,
 };
 use crate::core::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
-    StereoElementId,
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Conformer, Element, HydrogenDeclaration,
+    Molecule, MoleculeEditor, StereoElementId,
 };
-use crate::small::model::SmallMolecule;
 
 use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax, V2000Syntax};
 use super::v3000::{interpret_v3000_syntax, parse_v3000_syntax, V3000Syntax};
@@ -387,12 +386,40 @@ pub enum MolfileInterpretationWarning {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileInterpretation {
-    molecule: SmallMolecule,
-    report: MolfileInterpretationReport,
+    components: Vec<MolfileComponentInterpretation>,
 }
 
 impl MolfileInterpretation {
-    pub fn molecule(&self) -> &SmallMolecule {
+    pub fn components(&self) -> &[MolfileComponentInterpretation] {
+        &self.components
+    }
+
+    pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
+        self.components
+            .iter()
+            .map(MolfileComponentInterpretation::molecule)
+    }
+
+    pub fn to_molecules(self) -> Vec<Molecule> {
+        self.components
+            .into_iter()
+            .map(MolfileComponentInterpretation::to_molecule)
+            .collect()
+    }
+
+    pub fn to_components(self) -> Vec<MolfileComponentInterpretation> {
+        self.components
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MolfileComponentInterpretation {
+    molecule: Molecule,
+    report: MolfileInterpretationReport,
+}
+
+impl MolfileComponentInterpretation {
+    pub fn molecule(&self) -> &Molecule {
         &self.molecule
     }
 
@@ -400,11 +427,11 @@ impl MolfileInterpretation {
         &self.report
     }
 
-    pub fn to_molecule(self) -> SmallMolecule {
+    pub fn to_molecule(self) -> Molecule {
         self.molecule
     }
 
-    pub fn to_parts(self) -> (SmallMolecule, MolfileInterpretationReport) {
+    pub fn to_parts(self) -> (Molecule, MolfileInterpretationReport) {
         (self.molecule, self.report)
     }
 }
@@ -561,7 +588,7 @@ pub fn parse_molfile_document_with_options(
 pub fn interpret_molfile_document(
     document: &MolfileDocument,
 ) -> Result<MolfileInterpretation, MolfileInterpretError> {
-    let ((mut molecule, source_stereo), atom_lines, bond_lines) = match &document.syntax {
+    let ((staging, geometry, source_stereo), atom_lines, bond_lines) = match &document.syntax {
         MolfileSyntax::V2000(syntax) => (
             interpret_v2000_syntax(syntax)?,
             syntax
@@ -589,37 +616,7 @@ pub fn interpret_molfile_document(
                 .collect::<Vec<_>>(),
         ),
     };
-    let publication_report =
-        canonicalize_molecule_for_publication(molecule.as_molecule_mut(), &source_stereo).map_err(
-            |error| MolfileInterpretError {
-                line: canonicalization_error_line(&error, &atom_lines, &bond_lines),
-                message: format!("could not publish canonical molecule: {error}"),
-            },
-        )?;
-    let warnings = publication_report
-        .warnings
-        .into_iter()
-        .map(|warning| match warning {
-            NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => {
-                MolfileInterpretationWarning::AmbiguousTetrahedralWedgeMarks {
-                    center,
-                    source_line: atom_lines.get(center.index()).copied().unwrap_or(1),
-                    mark_count,
-                }
-            }
-        })
-        .collect();
-    let atom_mappings = atom_lines
-        .into_iter()
-        .zip(molecule.as_molecule().atom_ids())
-        .map(|(source_line, atom)| MolfileAtomMapping { atom, source_line })
-        .collect();
-    let bond_mappings = bond_lines
-        .into_iter()
-        .zip(molecule.as_molecule().bond_ids())
-        .map(|(source_line, bond)| MolfileBondMapping { bond, source_line })
-        .collect();
-    let ignored_record_lines = document
+    let ignored_record_lines: Vec<usize> = document
         .property_records
         .iter()
         .filter(|record| {
@@ -632,16 +629,159 @@ pub fn interpret_molfile_document(
         .chain(document.unsupported_records.iter())
         .map(|record| record.number)
         .collect();
-    Ok(MolfileInterpretation {
-        molecule,
-        report: MolfileInterpretationReport {
-            atom_mappings,
-            bond_mappings,
-            ignored_record_lines,
-            created_stereo_elements: publication_report.created_stereo_elements,
-            warnings,
-        },
-    })
+    let mut components = Vec::new();
+    for raw in partition_molfile_staging(staging, &geometry, &source_stereo)? {
+        let mut editor = raw.editor;
+        let publication_report = canonicalize_molecule_for_publication(
+            editor.working_mut(),
+            Some(&raw.geometry),
+            &raw.source_stereo,
+        )
+        .map_err(|error| MolfileInterpretError {
+            line: canonicalization_error_line(&error, &atom_lines, &bond_lines),
+            message: format!("could not publish canonical molecule: {error}"),
+        })?;
+        let molecule = editor.finish().map_err(|error| MolfileInterpretError {
+            line: raw
+                .old_atoms
+                .first()
+                .and_then(|atom| atom_lines.get(atom.index()))
+                .copied()
+                .unwrap_or(1),
+            message: error.to_string(),
+        })?;
+        let warnings = publication_report
+            .warnings
+            .into_iter()
+            .map(|warning| match warning {
+                NormalizationWarning::AmbiguousTetrahedralWedgeMarks { center, mark_count } => {
+                    let source_line = raw
+                        .atom_map
+                        .iter()
+                        .find_map(|(old, new)| (*new == center).then(|| atom_lines[old.index()]))
+                        .unwrap_or(1);
+                    MolfileInterpretationWarning::AmbiguousTetrahedralWedgeMarks {
+                        center,
+                        source_line,
+                        mark_count,
+                    }
+                }
+            })
+            .collect();
+        let atom_mappings = raw
+            .atom_map
+            .iter()
+            .map(|(old, atom)| MolfileAtomMapping {
+                atom: *atom,
+                source_line: atom_lines[old.index()],
+            })
+            .collect();
+        let bond_mappings = raw
+            .bond_map
+            .iter()
+            .map(|(old, bond)| MolfileBondMapping {
+                bond: *bond,
+                source_line: bond_lines[old.index()],
+            })
+            .collect();
+        components.push(MolfileComponentInterpretation {
+            molecule,
+            report: MolfileInterpretationReport {
+                atom_mappings,
+                bond_mappings,
+                ignored_record_lines: ignored_record_lines.clone(),
+                created_stereo_elements: publication_report.created_stereo_elements,
+                warnings,
+            },
+        });
+    }
+    Ok(MolfileInterpretation { components })
+}
+
+struct RawMolfileComponent {
+    editor: MoleculeEditor,
+    geometry: Conformer,
+    source_stereo: Vec<crate::chemistry::SourceStereoBondMark>,
+    old_atoms: Vec<AtomId>,
+    atom_map: BTreeMap<AtomId, AtomId>,
+    bond_map: BTreeMap<BondId, BondId>,
+}
+
+fn partition_molfile_staging(
+    staging: MoleculeEditor,
+    geometry: &Conformer,
+    source_stereo: &[crate::chemistry::SourceStereoBondMark],
+) -> Result<Vec<RawMolfileComponent>, MolfileInterpretError> {
+    let graph = staging.working();
+    let mut result = Vec::new();
+    for old_atoms in graph.connected_components() {
+        let atom_set = old_atoms.iter().copied().collect::<BTreeSet<_>>();
+        let mut editor = crate::core::MoleculeEditor::new();
+        let mut atom_map = BTreeMap::new();
+        let mut component_geometry =
+            Conformer::new(geometry.unit()).map_err(|error| MolfileInterpretError {
+                line: 1,
+                message: error.to_string(),
+            })?;
+        for old in &old_atoms {
+            let atom = graph.atom(*old).map_err(|error| MolfileInterpretError {
+                line: 1,
+                message: error.to_string(),
+            })?;
+            let new = editor
+                .add_atom(atom.clone())
+                .map_err(|error| MolfileInterpretError {
+                    line: 1,
+                    message: error.to_string(),
+                })?;
+            if let Some(point) = geometry.position(*old) {
+                component_geometry
+                    .set_position(new, point)
+                    .map_err(|error| MolfileInterpretError {
+                        line: 1,
+                        message: error.to_string(),
+                    })?;
+            }
+            atom_map.insert(*old, new);
+        }
+        let mut bond_map = BTreeMap::new();
+        for (old, bond) in graph.bonds() {
+            if !atom_set.contains(&bond.a()) || !atom_set.contains(&bond.b()) {
+                continue;
+            }
+            let new = editor
+                .add_bond(atom_map[&bond.a()], atom_map[&bond.b()], bond.order)
+                .map_err(|error| MolfileInterpretError {
+                    line: 1,
+                    message: error.to_string(),
+                })?;
+            editor
+                .working_mut()
+                .bond_props_mut(new)
+                .expect("new component bond is live")
+                .clone_from(&bond.props);
+            bond_map.insert(old, new);
+        }
+        let remapped_stereo = source_stereo
+            .iter()
+            .filter_map(|mark| {
+                Some(crate::chemistry::SourceStereoBondMark {
+                    bond: *bond_map.get(&mark.bond)?,
+                    from: *atom_map.get(&mark.from)?,
+                    kind: mark.kind,
+                })
+            })
+            .collect();
+        result.push(RawMolfileComponent {
+            editor,
+            geometry: component_geometry,
+            source_stereo: remapped_stereo,
+            old_atoms,
+            atom_map,
+            bond_map,
+        });
+    }
+    Ok(result)
 }
 
 fn canonicalization_error_line(

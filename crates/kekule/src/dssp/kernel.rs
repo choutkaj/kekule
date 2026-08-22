@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::bio::{SmcraChain, SmcraHierarchy, SmcraResidue, SmcraResidueId};
+use crate::bio::{Hierarchy, SmcraChain, SmcraResidue, SmcraResidueId};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, InstanceResidueId, MoleculeInstanceId};
@@ -146,7 +146,7 @@ struct BackboneResidue {
 #[derive(Debug, Clone, Copy)]
 struct ChainFragment<'a> {
     molecule: MoleculeInstanceId,
-    hierarchy: &'a SmcraHierarchy,
+    hierarchy: &'a Hierarchy,
     chain: &'a SmcraChain,
     discovery_order: usize,
 }
@@ -154,7 +154,7 @@ struct ChainFragment<'a> {
 #[derive(Debug, Clone, Copy)]
 struct ChainResidue<'a> {
     molecule: MoleculeInstanceId,
-    hierarchy: &'a SmcraHierarchy,
+    hierarchy: &'a Hierarchy,
     chain: &'a SmcraChain,
     residue: SmcraResidueId,
     discovery_order: usize,
@@ -277,11 +277,12 @@ fn extract_backbones(
             .topology()
             .definition_for_instance(molecule_id)
             .expect("topology instance references a validated definition");
-        let Some(macro_molecule) = definition.macro_molecule() else {
+        let molecule = definition.molecule();
+        if molecule.hierarchy().is_empty() {
             report.ignored_instances.push(molecule_id);
             continue;
-        };
-        let hierarchy = macro_molecule.hierarchy();
+        }
+        let hierarchy = molecule.hierarchy();
         for (_, chain) in hierarchy.chains() {
             fragments.push(ChainFragment {
                 molecule: molecule_id,

@@ -3,7 +3,6 @@ mod mmcif_document;
 mod mmcif_interpret;
 mod mmcif_partition;
 mod mmcif_write;
-mod molfile_connected;
 mod sdf_document;
 mod smiles;
 mod structure_documents;
@@ -21,7 +20,6 @@ pub use mmcif_partition::{
     interpret_mmcif, interpret_mmcif_ensemble, MmcifEnsembleInterpretation, MmcifInterpretation,
 };
 pub use mmcif_write::*;
-pub use molfile_connected::interpret_molfile_document;
 pub use sdf_document::*;
 pub use smiles::{
     interpret_smiles_document, parse_smiles_document, parse_smiles_document_with_options,
@@ -31,8 +29,8 @@ pub use smiles::{
     SmilesParseOptions,
 };
 pub use structure_documents::{
-    parse_molfile_document, parse_molfile_document_with_options, MolfileAtomMapping,
-    MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
+    interpret_molfile_document, parse_molfile_document, parse_molfile_document_with_options,
+    MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
     MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine,
     MolfileParseError, MolfileParseOptions, MolfileVersion,
 };

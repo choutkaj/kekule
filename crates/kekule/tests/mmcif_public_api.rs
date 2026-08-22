@@ -49,15 +49,16 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
 
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(interpreted.model().topology().instance_count(), 1);
-    assert!(interpreted
+    assert!(!interpreted
         .model()
         .topology()
         .definitions()
         .next()
         .unwrap()
         .1
-        .macro_molecule()
-        .is_some());
+        .molecule()
+        .hierarchy()
+        .is_empty());
     assert_eq!(interpreted.model().positions().len(), 2);
     assert_eq!(interpreted.report().selected_model(), Some("1"));
     assert_eq!(interpreted.report().instances().len(), 1);
@@ -99,7 +100,7 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
         .next()
         .expect("one molecule definition")
         .1
-        .graph();
+        .molecule();
 
     assert_eq!(graph.bond_count(), 1);
 }

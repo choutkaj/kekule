@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::bio::{MacroMolecule, SmcraAtomSiteMetadata, SmcraHierarchy};
-use crate::core::{Atom, AtomId, Conformer, ConformerId, Molecule};
+use crate::bio::{Hierarchy, SmcraAtomSiteMetadata};
+use crate::chemistry::canonicalize_molecule_for_publication;
+use crate::core::{Atom, AtomId, Conformer, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
-use crate::small::model::SmallMolecule;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, MoleculeInstanceMetadata, MoleculeRole};
 use crate::units::{Quantity, ANGSTROM};
 
@@ -78,21 +78,21 @@ pub(super) fn group_rows(
     groups
 }
 
-pub(super) enum BuiltMolecule {
-    Small {
-        molecule: SmallMolecule,
-        conformer: ConformerId,
-        metadata: MoleculeInstanceMetadata,
-        provenance: BuiltMoleculeProvenance,
-    },
-    Macro {
-        molecule: MacroMolecule,
-        conformer: ConformerId,
-        metadata: MoleculeInstanceMetadata,
-        provenance: BuiltMoleculeProvenance,
-    },
+pub(super) struct BuiltMolecule {
+    pub(super) editor: MoleculeEditor,
+    pub(super) conformer: Conformer,
+    pub(super) metadata: MoleculeInstanceMetadata,
+    pub(super) provenance: BuiltMoleculeProvenance,
 }
 
+pub(super) struct PublishedMolecule {
+    pub(super) molecule: Molecule,
+    pub(super) conformer: Conformer,
+    pub(super) metadata: MoleculeInstanceMetadata,
+    pub(super) provenance: BuiltMoleculeProvenance,
+}
+
+#[derive(Clone)]
 pub(super) struct BuiltMoleculeProvenance {
     coordinate_model_id: String,
     asym_ids: Vec<String>,
@@ -101,6 +101,7 @@ pub(super) struct BuiltMoleculeProvenance {
     atoms: Vec<BuiltAtomProvenance>,
 }
 
+#[derive(Clone)]
 struct BuiltAtomProvenance {
     atom: AtomId,
     source_line: usize,
@@ -161,13 +162,83 @@ impl BuiltMoleculeProvenance {
     }
 }
 
+impl BuiltMolecule {
+    pub(super) fn publish_components(self) -> Result<Vec<PublishedMolecule>, MmcifInterpretError> {
+        let components = self.editor.working().connected_components();
+        if components.is_empty() {
+            return Err(graph_error("mmCIF molecule group has no atoms"));
+        }
+        let mut published = Vec::with_capacity(components.len());
+        for component in components {
+            let selected = component.iter().copied().collect::<BTreeSet<_>>();
+            let mut editor = crate::core::MoleculeEditor::new();
+            let mut atom_map = BTreeMap::new();
+            for source_atom in component.iter().copied() {
+                let atom = self
+                    .editor
+                    .working()
+                    .atom(source_atom)
+                    .map_err(graph_error)?
+                    .clone();
+                let target_atom = editor.add_atom(atom).map_err(graph_error)?;
+                atom_map.insert(source_atom, target_atom);
+            }
+            for (_, source_bond) in self.editor.working().bonds() {
+                let (left, right) = source_bond.endpoints();
+                if !selected.contains(&left) || !selected.contains(&right) {
+                    continue;
+                }
+                let target = editor
+                    .add_bond(atom_map[&left], atom_map[&right], source_bond.order)
+                    .map_err(graph_error)?;
+                *editor
+                    .working_mut()
+                    .bond_props_mut(target)
+                    .map_err(graph_error)? = source_bond.props.clone();
+            }
+            editor
+                .working_mut()
+                .props_mut()
+                .clone_from(self.editor.working().props());
+            *editor.hierarchy_mut() = extract_hierarchy(self.editor.hierarchy(), &atom_map)?;
+
+            let mut conformer = Conformer::new(self.conformer.unit()).map_err(graph_error)?;
+            conformer.props_mut().clone_from(self.conformer.props());
+            for (source_atom, target_atom) in &atom_map {
+                if let Some(point) = self.conformer.position(*source_atom) {
+                    conformer
+                        .set_position(*target_atom, point)
+                        .map_err(graph_error)?;
+                }
+            }
+            canonicalize_molecule_for_publication(editor.working_mut(), Some(&conformer), &[])
+                .map_err(graph_error)?;
+            let molecule = editor.finish().map_err(graph_error)?;
+            let mut provenance = self.provenance.clone();
+            provenance
+                .atoms
+                .retain(|atom| selected.contains(&atom.atom));
+            for atom in &mut provenance.atoms {
+                atom.atom = atom_map[&atom.atom];
+            }
+            published.push(PublishedMolecule {
+                molecule,
+                conformer,
+                metadata: self.metadata.clone(),
+                provenance,
+            });
+        }
+        Ok(published)
+    }
+}
+
 pub(super) fn build_molecule(
     group: MoleculeGroup,
     connections: &[DeclaredConnection],
     report: &mut MmcifInterpretationReport,
 ) -> Result<BuiltMolecule, MmcifInterpretError> {
     let is_macro = group.kinds.iter().any(MmcifEntityKind::is_macro);
-    let mut graph = Molecule::new();
+    let mut editor = crate::core::MoleculeEditor::new();
     let mut atoms = BTreeMap::new();
     let mut representative = Vec::<(String, AtomRow)>::new();
     let mut seen_atoms = BTreeMap::<String, usize>::new();
@@ -196,7 +267,7 @@ pub(super) fn build_molecule(
     for (key, row) in &representative {
         let mut atom = Atom::new(row.element);
         atom.formal_charge = row.formal_charge;
-        atoms.insert(key.clone(), graph.add_atom(atom).map_err(graph_error)?);
+        atoms.insert(key.clone(), editor.add_atom(atom).map_err(graph_error)?);
     }
     let model_id = group
         .rows
@@ -225,20 +296,22 @@ pub(super) fn build_molecule(
         let Some(&right) = atoms.get(&connection.right_atom) else {
             continue;
         };
-        if graph
+        if editor
+            .working()
             .bond_between(left, right)
             .map_err(graph_error)?
             .is_none()
         {
-            graph
+            editor
                 .add_bond(left, right, connection.order)
                 .map_err(graph_error)?;
         } else {
-            let existing = graph
+            let existing = editor
+                .working()
                 .bond_between(left, right)
                 .map_err(graph_error)?
                 .expect("existing bond was found");
-            if graph.bond(existing).map_err(graph_error)?.order != connection.order {
+            if editor.working().bond(existing).map_err(graph_error)?.order != connection.order {
                 return Err(MmcifInterpretError::new(
                     None,
                     "duplicate struct_conn records assign conflicting bond orders",
@@ -246,13 +319,14 @@ pub(super) fn build_molecule(
             }
         }
     }
-    let connectivity_candidates = infer_covalent_bonds(&graph, &representative, &atoms)?;
+    let connectivity_candidates =
+        infer_covalent_bonds(editor.working_mut(), &representative, &atoms)?;
     if connectivity_candidates > 0 {
         report.connectivity_candidates += connectivity_candidates;
         report
             .issues
             .push(MmcifInterpretIssue::ConnectivityCandidatesInferred {
-                atom_count: graph.atom_count(),
+                atom_count: editor.working().atom_count(),
                 candidate_count: connectivity_candidates,
             });
     }
@@ -298,7 +372,7 @@ pub(super) fn build_molecule(
         entity_kinds,
         atoms: atom_provenance,
     };
-    if graph.atom_count() > 1 {
+    if editor.working().atom_count() > 1 {
         report.template_bonds_pending += 1;
     }
 
@@ -320,35 +394,24 @@ pub(super) fn build_molecule(
             MmcifEntityKind::Other(_) => {}
         }
     }
-    if graph.atom_count() == 1
-        && graph
+    if editor.working().atom_count() == 1
+        && editor
+            .working()
             .atoms()
             .next()
             .is_some_and(|(_, atom)| atom.formal_charge != 0)
     {
         metadata.insert_role(MoleculeRole::Ion);
     }
-    let conformer = graph
-        .add_conformer(conformer)
-        .expect("interpreted coordinates reference live atoms");
     if is_macro {
-        let hierarchy = build_hierarchy(&graph, &representative, &atoms)?;
-        Ok(BuiltMolecule::Macro {
-            molecule: MacroMolecule::from_parts_unchecked_connectedness(graph, hierarchy)
-                .map_err(graph_error)?,
-            conformer,
-            metadata,
-            provenance,
-        })
-    } else {
-        let molecule = SmallMolecule::from_molecule_unchecked_connectedness(graph);
-        Ok(BuiltMolecule::Small {
-            molecule,
-            conformer,
-            metadata,
-            provenance,
-        })
+        *editor.hierarchy_mut() = build_hierarchy(editor.working(), &representative, &atoms)?;
     }
+    Ok(BuiltMolecule {
+        editor,
+        conformer,
+        metadata,
+        provenance,
+    })
 }
 
 const COVALENT_BOND_CELL_ANGSTROM: f64 = 2.1;
@@ -475,8 +538,8 @@ fn build_hierarchy(
     graph: &Molecule,
     representative: &[(String, AtomRow)],
     atoms: &BTreeMap<String, AtomId>,
-) -> Result<SmcraHierarchy, MmcifInterpretError> {
-    let mut hierarchy = SmcraHierarchy::new();
+) -> Result<Hierarchy, MmcifInterpretError> {
+    let mut hierarchy = Hierarchy::new();
     let mut chains = BTreeMap::new();
     let mut residues = BTreeMap::new();
     for (key, row) in representative {
@@ -523,6 +586,78 @@ fn build_hierarchy(
                 },
             )
             .map_err(hierarchy_error)?;
+    }
+    Ok(hierarchy)
+}
+
+fn extract_hierarchy(
+    source: &Hierarchy,
+    atom_map: &BTreeMap<AtomId, AtomId>,
+) -> Result<Hierarchy, MmcifInterpretError> {
+    let mut hierarchy = Hierarchy::new();
+    hierarchy.props_mut().clone_from(source.props());
+    for (_, source_chain) in source.chains() {
+        let residues = source_chain
+            .residues()
+            .iter()
+            .filter_map(|id| source.residue(*id).ok())
+            .filter(|residue| {
+                residue.atom_sites().iter().any(|id| {
+                    source
+                        .atom_site(*id)
+                        .ok()
+                        .is_some_and(|site| atom_map.contains_key(&site.atom()))
+                })
+            })
+            .collect::<Vec<_>>();
+        if residues.is_empty() {
+            continue;
+        }
+        let chain = hierarchy
+            .add_chain(
+                source_chain.label_id().to_owned(),
+                source_chain.author_id().map(str::to_owned),
+            )
+            .map_err(hierarchy_error)?;
+        hierarchy
+            .chain_props_mut(chain)
+            .map_err(hierarchy_error)?
+            .clone_from(source_chain.props());
+        for source_residue in residues {
+            let residue = hierarchy
+                .add_residue(
+                    chain,
+                    source_residue.name().to_owned(),
+                    source_residue.label_seq_id(),
+                    source_residue.author_seq_id().map(str::to_owned),
+                    source_residue.insertion_code().map(str::to_owned),
+                )
+                .map_err(hierarchy_error)?;
+            hierarchy
+                .set_residue_component_ids(
+                    residue,
+                    source_residue.label_comp_id().map(str::to_owned),
+                    source_residue.author_comp_id().map(str::to_owned),
+                )
+                .map_err(hierarchy_error)?;
+            hierarchy
+                .residue_props_mut(residue)
+                .map_err(hierarchy_error)?
+                .clone_from(source_residue.props());
+            for source_site_id in source_residue.atom_sites() {
+                let source_site = source.atom_site(*source_site_id).map_err(hierarchy_error)?;
+                let Some(&target_atom) = atom_map.get(&source_site.atom()) else {
+                    continue;
+                };
+                let site = hierarchy
+                    .add_atom_site(residue, target_atom, source_site.metadata().clone())
+                    .map_err(hierarchy_error)?;
+                hierarchy
+                    .atom_site_props_mut(site)
+                    .map_err(hierarchy_error)?
+                    .clone_from(source_site.props());
+            }
+        }
     }
     Ok(hierarchy)
 }

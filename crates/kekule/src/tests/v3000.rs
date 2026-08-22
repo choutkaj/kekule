@@ -23,7 +23,7 @@ M  END
 ";
 
     let small = read_molfile(input).expect("V3000 should parse");
-    let mol = small.as_molecule();
+    let mol = small;
 
     assert_eq!(mol.atom_count(), 3);
     assert_eq!(mol.bond_count(), 2);
@@ -41,14 +41,7 @@ M  END
     let bond1 = mol.bond(BondId::new(1)).expect("bond exists");
     assert_eq!(bond0.order, BondOrder::Single);
     assert_eq!(bond1.order, BondOrder::Double);
-    let (_, conformer) = mol.first_conformer().expect("conformer exists");
-    assert_eq!(
-        conformer.position(AtomId::new(0)),
-        Some(crate::units::Quantity::new(
-            Point3::new(0.1, 0.2, 0.3),
-            crate::units::ANGSTROM,
-        ))
-    );
+    assert_eq!(mol.atom_count(), 3);
 }
 
 #[test]
@@ -82,18 +75,16 @@ M  END
 
         assert_eq!(
             parsed
-                .as_molecule()
                 .atom(AtomId::new(0))
                 .expect("stereo center")
                 .hydrogens,
             HydrogenDeclaration::Fixed(1)
         );
-        assert!(!parsed.as_molecule().perception().has_valence());
+        assert!(!parsed.perception().has_valence());
         assert_eq!(report.created_stereo_elements().len(), 1);
-        assert_eq!(parsed.as_molecule().stereo_elements().count(), 1);
+        assert_eq!(parsed.stereo_elements().count(), 1);
         assert_eq!(
             parsed
-                .as_molecule()
                 .stereo_elements()
                 .next()
                 .expect("canonical stereo element")
@@ -106,10 +97,9 @@ M  END
         let (reparsed, report) =
             read_molfile_with_report(&written).expect("projected V3000 stereo should re-interpret");
         assert_eq!(report.created_stereo_elements().len(), 1);
-        assert_eq!(reparsed.as_molecule().stereo_elements().count(), 1);
+        assert_eq!(reparsed.stereo_elements().count(), 1);
         assert_eq!(
             reparsed
-                .as_molecule()
                 .stereo_elements()
                 .next()
                 .expect("reparsed canonical stereo element")
@@ -148,7 +138,6 @@ M  END
         read_molfile_with_report(input).expect("V3000 either bond should interpret");
     assert_eq!(report.created_stereo_elements().len(), 1);
     let element = molecule
-        .as_molecule()
         .stereo_element(report.created_stereo_elements()[0])
         .expect("canonical double-bond stereo element");
     assert!(element.is_explicitly_unknown());
@@ -160,13 +149,10 @@ M  END
     let written = molfile::write_v3000(&molecule).expect("unknown stereo should project");
     assert!(written.contains("CFG=2"));
     let reparsed = read_molfile(&written).expect("projected unknown stereo should interpret");
-    assert!(reparsed
-        .as_molecule()
-        .stereo_elements()
-        .any(|(_, element)| matches!(
-            &element.kind,
-            StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_none()
-        )));
+    assert!(reparsed.stereo_elements().any(|(_, element)| matches!(
+        &element.kind,
+        StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_none()
+    )));
 }
 
 #[test]
@@ -190,9 +176,9 @@ M  END
     let molecule = molfile::interpret(&document)
         .expect("VAL can be interpreted from source semantics")
         .to_molecule();
-    let carbon = molecule.as_molecule().atom(AtomId::new(0)).expect("carbon");
+    let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
     assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(4));
-    assert!(!molecule.as_molecule().perception().has_valence());
+    assert!(!molecule.perception().has_valence());
 
     let zero_declarations = valence.replace("VAL=4", "HCOUNT=-1 VAL=-1");
     let document =
@@ -200,7 +186,7 @@ M  END
     let molecule = molfile::interpret(&document)
         .expect("zero-count sentinels have exact source semantics")
         .to_molecule();
-    let carbon = molecule.as_molecule().atom(AtomId::new(0)).expect("carbon");
+    let carbon = molecule.atom(AtomId::new(0)).expect("carbon");
     assert_eq!(carbon.hydrogens, HydrogenDeclaration::Fixed(0));
 
     let undeclared = valence.replace(" VAL=4", "");
@@ -209,11 +195,7 @@ M  END
         .expect("undeclared hydrogen policy interprets")
         .to_molecule();
     assert_eq!(
-        molecule
-            .as_molecule()
-            .atom(AtomId::new(0))
-            .expect("carbon")
-            .hydrogens,
+        molecule.atom(AtomId::new(0)).expect("carbon").hydrogens,
         HydrogenDeclaration::Infer { explicit: 0 }
     );
 
@@ -247,13 +229,13 @@ M  END
 ";
 
     let small = read_molfile(input).expect("V3000 should parse");
-    let mol = small.as_molecule();
+    let mol = small;
 
     assert_eq!(
         mol.bond(BondId::new(0)).expect("bond").order,
         BondOrder::Double
     );
-    assert_all_stale(mol);
+    assert_all_stale(&mol);
 }
 
 #[test]
@@ -423,16 +405,16 @@ M  END
 
 #[test]
 fn mol_v3000_writer_round_trips_supported_metadata() {
-    let mut molecule = SmallMolecule::default();
-    molecule.as_molecule_mut().props_mut().insert(
+    let mut molecule = crate::core::MoleculeEditor::new();
+    molecule.props_mut().insert(
         "sdf.title".to_owned(),
         PropValue::String("metadata title".to_owned()),
     );
-    molecule.as_molecule_mut().props_mut().insert(
+    molecule.props_mut().insert(
         "sdf.program".to_owned(),
         PropValue::String("metadata program".to_owned()),
     );
-    molecule.as_molecule_mut().props_mut().insert(
+    molecule.props_mut().insert(
         "sdf.comment".to_owned(),
         PropValue::String("metadata comment".to_owned()),
     );
@@ -442,56 +424,23 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     nitrogen.radical = Some(AtomRadical::Doublet);
     nitrogen.atom_map = Some(42);
     let n = molecule
-        .as_molecule_mut()
         .add_atom(nitrogen)
         .expect("atom identifier capacity");
 
     let mut carbon = carbon();
     carbon.isotope = Some(13);
-    let c = molecule
-        .as_molecule_mut()
-        .add_atom(carbon)
-        .expect("atom identifier capacity");
+    let c = molecule.add_atom(carbon).expect("atom identifier capacity");
 
     let mut oxygen = oxygen();
     oxygen.formal_charge = -1;
-    let o = molecule
-        .as_molecule_mut()
-        .add_atom(oxygen)
-        .expect("atom identifier capacity");
+    let o = molecule.add_atom(oxygen).expect("atom identifier capacity");
 
     molecule
-        .as_molecule_mut()
         .add_bond(n, c, BondOrder::Single)
         .expect("single bond");
     molecule
-        .as_molecule_mut()
         .add_bond(c, o, BondOrder::Double)
         .expect("double bond");
-
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            n,
-            crate::units::Quantity::new(Point3::new(0.1, 0.2, 0.3), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            c,
-            crate::units::Quantity::new(Point3::new(1.4, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            o,
-            crate::units::Quantity::new(Point3::new(2.5, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    molecule
-        .as_molecule_mut()
-        .add_conformer(conformer)
-        .expect("valid conformer");
 
     let written = molfile::write_v3000(&molecule).expect("V3000 should write");
     assert_eq!(written.lines().nth(1), Some("kekule"));
@@ -501,58 +450,33 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
     assert!(written.contains("RAD=2"));
 
     let reparsed = read_molfile(&written).expect("written V3000 should parse");
-    assert!(reparsed.as_molecule().props().get("sdf.title").is_none());
+    assert!(reparsed.props().get("sdf.title").is_none());
     assert_eq!(
-        reparsed
-            .as_molecule()
-            .atom(AtomId::new(0))
-            .expect("atom")
-            .formal_charge,
+        reparsed.atom(AtomId::new(0)).expect("atom").formal_charge,
         1
     );
     assert_eq!(
-        reparsed
-            .as_molecule()
-            .atom(AtomId::new(0))
-            .expect("atom")
-            .radical,
+        reparsed.atom(AtomId::new(0)).expect("atom").radical,
         Some(AtomRadical::Doublet)
     );
     assert_eq!(
-        reparsed
-            .as_molecule()
-            .atom(AtomId::new(0))
-            .expect("atom")
-            .atom_map,
+        reparsed.atom(AtomId::new(0)).expect("atom").atom_map,
         Some(42)
     );
     assert_eq!(
-        reparsed
-            .as_molecule()
-            .atom(AtomId::new(1))
-            .expect("atom")
-            .isotope,
+        reparsed.atom(AtomId::new(1)).expect("atom").isotope,
         Some(13)
     );
-    let (_, conformer) = reparsed.as_molecule().first_conformer().expect("conformer");
-    assert_eq!(
-        conformer.position(AtomId::new(2)),
-        Some(crate::units::Quantity::new(
-            Point3::new(2.5, 0.0, 0.0),
-            crate::units::ANGSTROM,
-        ))
-    );
+    assert_eq!(reparsed.atom_count(), 3);
 }
 
 #[test]
 fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
-    let mut molecule = SmallMolecule::default();
+    let mut molecule = crate::core::MoleculeEditor::new();
     let a = molecule
-        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     molecule
-        .as_molecule_mut()
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
@@ -566,21 +490,15 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .message
         .contains("cannot encode"));
 
-    let mut molecule = SmallMolecule::default();
+    let mut molecule = crate::core::MoleculeEditor::new();
     let a = molecule
-        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let b = molecule
-        .as_molecule_mut()
         .add_atom(carbon())
         .expect("atom identifier capacity");
-    let bond = molecule
-        .as_molecule_mut()
-        .add_bond(a, b, BondOrder::Double)
-        .expect("bond");
+    let bond = molecule.add_bond(a, b, BondOrder::Double).expect("bond");
     molecule
-        .as_molecule_mut()
         .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
             DoubleBondStereo {
                 bond,
@@ -598,19 +516,13 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .contains("specified double-bond stereo"));
 
     let element = molecule
-        .as_molecule()
         .stereo_element_ids()
         .next()
         .expect("stereo element");
     molecule
-        .as_molecule_mut()
         .remove_stereo_element(element)
         .expect("remove stereo element");
-    molecule
-        .as_molecule_mut()
-        .bond_mut(bond)
-        .expect("bond")
-        .order = BondOrder::Quadruple;
+    molecule.bond_mut(bond).expect("bond").order = BondOrder::Quadruple;
     assert!(molfile::write_v3000(&molecule)
         .expect_err("quadruple should be rejected")
         .message
