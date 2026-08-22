@@ -23,9 +23,9 @@ source text / bytes
          each Molecule is one connected component
     -> optional Topology construction
          one or more Molecule instances
-    -> Model      = Topology + one Positions set + model-level data
-       Ensemble   = one Topology + finite non-temporal position sets
-       Trajectory = one Topology + ordered temporal position frames
+    -> Model      = one Topology + one geometric realization
+       Ensemble   = one Topology + finite non-temporal realizations
+       Trajectory = one Topology + ordered temporal realizations
 ```
 
 The intended ownership hierarchy is therefore:
@@ -350,9 +350,8 @@ finish()
 `MoleculeEditor` is allowed to violate publication invariants while editing.
 The finished `Molecule` is not.
 
-This deliberately avoids APIs such as
-`remove_bond_preserving_connectivity(...)`. Editing operations should be simple
-graph operations; validity is enforced at publication.
+Editing operations should be simple graph operations; validity is enforced at
+publication rather than through specialized mutation APIs.
 
 `finish()` must at minimum validate:
 
@@ -567,7 +566,7 @@ times.
 
 ### Dense topology ordering
 
-Numerical and geometry-bearing data require a deterministic dense ordering over
+Numerical and geometry-bearing state requires a deterministic dense ordering over
 the complete system.
 
 Topology therefore owns an authoritative dense atom order and, where useful, a
@@ -586,11 +585,10 @@ InstanceAtomId / InstanceBondId
 
 TopologyAtomIndex / TopologyBondIndex
   dense storage position
-  suitable for Positions and topology-bound arrays
 ```
 
-Dense ordering is part of the topology layout. Geometry-bearing objects are
-compatible with a topology only when they use that exact layout.
+Dense ordering tells `Model`, `Ensemble`, and `Trajectory` how to interpret their
+numerical arrays. The arrays themselves do not own topology identity.
 
 ### No topology-level covalent bonds
 
@@ -643,30 +641,16 @@ Published `Topology` is immutable.
 Shared exact ownership should use `Arc<Topology>` rather than cloning independent
 copies of topology state.
 
-Geometry-bearing objects such as `Model`, `Ensemble`, `Trajectory`, `Positions`,
-and topology-bound data arrays are tied to one exact topology layout.
-
 A chemical or structural transformation that changes molecule membership,
 connectivity, atom count, bond count, hierarchy identity, or dense layout
 produces a new `Topology` rather than mutating an existing topology underneath
-bound geometry.
+geometry-bearing state.
 
-When correspondence matters, such a transformation should return or construct
-an explicit mapping from old topology identities to new topology identities.
-
-Conceptually:
-
-```text
-Topology A
-   |
-   | topology-changing transformation
-   v
-Topology B + mapping A -> B
-```
-
-This model naturally supports later reactive or connectivity-perception
-workflows without weakening topology identity or invalidating attached geometry
-silently.
+The core architecture does not provide a generic topology-remapping framework.
+If a workflow changes topology, geometry or other dense state for the new system
+must be constructed explicitly according to that workflow's own semantics.
+Topology correspondence, when needed by a specialized algorithm, is a separate
+algorithmic result rather than a foundational ownership mechanism.
 
 ### Scope of the current Topology design
 
@@ -680,6 +664,7 @@ system-level biological grouping
 system-level provenance hierarchy
 geometry-dependent interactions
 inter-molecule topology bonds
+generic topology remapping
 ```
 
 These concerns should not be added speculatively. They may be introduced later
@@ -695,12 +680,55 @@ The fundamental relationship is:
 Topology + Positions -> Model
 ```
 
-`Positions` is ordered by the topology's dense atom layout and is valid only for
-that topology.
+`Positions` and the other dense realization arrays are numerical storage. They
+do not own or retain `Arc<Topology>` and they do not resolve semantic atom or
+bond identities themselves.
+
+The intended separation is:
+
+```text
+Topology
+  defines semantic identities and dense atom/bond ordering
+
+Positions / AtomData / BondData / Velocities / Forces
+  store dense numerical state
+  know their own shape/length and numerical units as appropriate
+  do not own Topology
+  do not carry topology identity
+
+Model / Ensemble / Trajectory
+  own the Topology context exactly once
+  validate dense state against that Topology
+  provide semantic atom/bond access when topology context is required
+```
+
+This means operations such as resolving an `InstanceAtomId` to a coordinate are
+operations on `Model`, `Ensemble` member/frame views, or `Trajectory` frame
+views, not operations on a detached `Positions` array.
+
+Similarly, topology compatibility is an invariant of the owning aggregate. It
+is not established by storing repeated `Arc<Topology>` handles inside every
+numerical subobject.
 
 Geometry-dependent quantities such as positions, velocities, forces, periodic
 cell, occupancies, B-factors, and other model/frame state do not belong in
 `Molecule` or `Topology`.
+
+### Dense numerical containers
+
+`Positions`, `Velocities`, and `Forces` are dense numerical arrays in canonical
+model units. They validate numerical shape, units, and finite values as
+appropriate, but are otherwise topology-agnostic.
+
+`AtomData` and `BondData` are likewise dense data containers rather than
+Topology owners. They may retain a logical item count even when all optional
+columns are absent. Whether particular atom/bond data belongs at model, member,
+frame, or another level is intentionally not settled by this storage rule and
+may be refined separately.
+
+The primitive dense containers must not expose APIs that require a `Topology`
+parameter merely to translate semantic IDs. Semantic navigation belongs to the
+higher-level object that owns both topology and dense state.
 
 ## `Model`
 
@@ -710,14 +738,30 @@ Conceptually:
 
 ```text
 Model
-  shared Topology
-  one Positions set
+  shared Topology          <- owned once
+  Positions
   optional periodic cell
-  model-level atom/bond data as appropriate
+  model-level AtomData
+  model-level BondData
 ```
 
-A `Model` does not duplicate molecular chemistry. It interprets one dense
-position array against one exact topology layout.
+A `Model` does not duplicate molecular chemistry. It interprets dense realization
+state against its topology's authoritative dense layout.
+
+Construction validates at least:
+
+```text
+Positions length == Topology atom count
+AtomData logical length == Topology atom count
+BondData logical length == Topology bond count
+```
+
+After construction, public mutation APIs must preserve those dimensional
+invariants.
+
+Semantic operations such as `position(InstanceAtomId)` belong on `Model` or a
+model-level borrowed view because only that layer owns both the topology and the
+numerical state.
 
 ## `Ensemble`
 
@@ -727,15 +771,22 @@ Conceptually:
 
 ```text
 Ensemble
-  shared Topology
+  shared Topology          <- owned once
   members[]
     Positions
     optional member-level geometry/data
     optional weight
 ```
 
-All members share the same topology and dense layout. Differences between
-members are geometric or member-level data, not molecular identity.
+Members do not own or repeat the shared topology. Their dense state is interpreted
+in the `Ensemble` topology's authoritative order.
+
+Insertion/construction validates every member's dimensions against the ensemble
+topology. Differences between members are geometric or member-level data, not
+molecular identity.
+
+An ensemble weight is contextual to membership in that ensemble and therefore
+belongs to the member relation rather than to `Topology`.
 
 ## `Trajectory`
 
@@ -745,16 +796,29 @@ Conceptually:
 
 ```text
 Trajectory
-  shared Topology
+  shared Topology          <- owned once
   ordered frames[]
     Positions
-    optional frame-level geometry/data
-    time/order semantics
+    optional periodic cell
+    optional AtomData / BondData
+    optional Velocities / Forces
+    optional time / step
+    optional frame properties
 ```
 
-A trajectory with topology-changing chemistry is not represented by silently
-mutating one shared topology. Such workflows require explicit topology changes
-and mappings between topology epochs.
+Frames do not own or repeat the shared topology. Their dense arrays are
+interpreted in the `Trajectory` topology's authoritative order.
+
+Insertion, decoding, and reusable frame-buffer publication validate frame
+shapes against the trajectory topology. Streaming infrastructure may use
+reusable buffers for allocation efficiency, but those buffers follow the same
+ownership rule: topology context is owned once by the buffer/container rather
+than repeated inside every numerical array.
+
+A trajectory represents one fixed-topology epoch. Topology-changing chemistry is
+not represented by silently mutating one shared topology or by generically
+remapping frames. A workflow with changing topology should use separate topology
+epochs/objects and explicitly construct the geometry belonging to each epoch.
 
 ## Molecular identity and equality
 
@@ -796,7 +860,8 @@ Loading must never weaken the connectedness invariant.
 
 Topology persistence must reconstruct definitions, instances, qualified
 identities, and authoritative dense ordering consistently. Geometry is restored
-separately against that topology layout.
+separately and validated by the owning `Model`, `Ensemble`, or `Trajectory`
+against that topology layout.
 
 Runtime domain objects are not required to be generic file-format DTOs. Source
 metadata that is not canonical represented molecular or topology state should
@@ -811,7 +876,8 @@ than one molecule, for example a fragmentation transformation may return
 `Vec<Molecule>`.
 
 Topology-changing system operations return a new topology rather than mutating a
-published topology in place.
+published topology in place. They do not automatically remap existing dense
+geometry/data into the new topology.
 
 Coordinate-only operations never mutate `Graph`, `Hierarchy`, `Perception`, or
 `Topology`.
@@ -848,11 +914,17 @@ When deciding where new state belongs:
    system or define their topology-wide layout? Put it in `Topology`.
 5. Is it task-specific analysis, typing, scoring, or parameterization? Keep it
    in a separate derived object.
-6. Is it coordinate or model state? Keep it above `Topology`.
-7. Does an asserted new bond connect two current molecule instances? Construct a
+6. Is it dense coordinate/model/frame data? Store it in a topology-agnostic
+   numerical container above `Topology`.
+7. Does an operation need to interpret dense data by semantic atom/bond identity?
+   Perform it at the `Model`, `Ensemble`, or `Trajectory` level where topology
+   and numerical state meet.
+8. Does an asserted new bond connect two current molecule instances? Construct a
    new connected `Molecule` and therefore a new `Topology`.
+9. Does a workflow change topology? Construct the new topology and its new dense
+   state explicitly; do not rely on a generic remapping layer.
 
-The two core invariants are intentionally simple:
+The core invariants are intentionally simple:
 
 > A Kekule `Molecule` is one connected, geometry-independent molecular entity
 > represented by `Graph + Hierarchy + Perception`.
@@ -860,3 +932,6 @@ The two core invariants are intentionally simple:
 > A Kekule `Topology` is one immutable, geometry-independent molecular system
 > composed of one or more explicit `Molecule` instances with authoritative
 > topology-wide identity and dense layout.
+
+> `Model`, `Ensemble`, and `Trajectory` each own their shared `Topology` exactly
+> once. Their dense numerical subobjects do not own topology identity.
