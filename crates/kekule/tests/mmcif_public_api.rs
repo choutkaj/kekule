@@ -42,7 +42,10 @@ duplicate covale A C1 A C2 {order}
 
 #[test]
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
-    use kekule::mmcif::{self, MmcifInterpretOptions, MmcifParseOptions, MmcifWriteOptions};
+    use kekule::mmcif::{
+        self, MmcifEntityClassifications, MmcifEntityKind, MmcifInterpretOptions,
+        MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
+    };
 
     let document = mmcif::parse_str(MINIMAL_MMCIF, MmcifParseOptions::default())?;
     let interpreted = mmcif::interpret(&document, MmcifInterpretOptions::default())?;
@@ -82,6 +85,20 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     )?;
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written, MmcifParseOptions::default()).is_ok());
+    assert_eq!(
+        mmcif::write(interpreted.model(), MmcifWriteOptions::default()),
+        Err(MmcifWriteError::MissingEntityClassification(
+            provenance.molecule()
+        ))
+    );
+    let mut classifications = MmcifEntityClassifications::new();
+    classifications.insert(provenance.molecule(), MmcifEntityKind::Polymer)?;
+    let written = mmcif::write_with_classifications(
+        interpreted.model(),
+        &classifications,
+        MmcifWriteOptions::default(),
+    )?;
+    assert!(written.contains("1 polymer"));
     let model = interpreted.to_model();
     assert_eq!(model.topology().instance_count(), 1);
     assert_eq!(model.positions().len(), 2);
