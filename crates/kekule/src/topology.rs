@@ -375,54 +375,11 @@ impl MoleculeDefinition {
     }
 }
 
-/// Conservative semantic roles attached to one molecule instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum MoleculeRole {
-    Polymer,
-    Branched,
-    NonPolymer,
-    Solvent,
-    Ion,
-    Ligand,
-    Cofactor,
-}
-
-/// Static metadata unique to one occurrence of a molecule definition.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct MoleculeInstanceMetadata {
-    roles: BTreeSet<MoleculeRole>,
-    props: PropMap,
-}
-
-impl MoleculeInstanceMetadata {
-    pub fn roles(&self) -> &BTreeSet<MoleculeRole> {
-        &self.roles
-    }
-
-    pub fn has_role(&self, role: MoleculeRole) -> bool {
-        self.roles.contains(&role)
-    }
-
-    pub fn insert_role(&mut self, role: MoleculeRole) -> bool {
-        self.roles.insert(role)
-    }
-
-    pub fn props(&self) -> &PropMap {
-        &self.props
-    }
-
-    pub fn props_mut(&mut self) -> &mut PropMap {
-        &mut self.props
-    }
-}
-
 /// One explicit occurrence of a reusable molecule definition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MoleculeInstance {
     id: MoleculeInstanceId,
     definition: MoleculeDefinitionId,
-    metadata: MoleculeInstanceMetadata,
 }
 
 impl MoleculeInstance {
@@ -432,22 +389,6 @@ impl MoleculeInstance {
 
     pub const fn definition(&self) -> MoleculeDefinitionId {
         self.definition
-    }
-
-    pub fn metadata(&self) -> &MoleculeInstanceMetadata {
-        &self.metadata
-    }
-
-    pub fn roles(&self) -> &BTreeSet<MoleculeRole> {
-        self.metadata.roles()
-    }
-
-    pub fn has_role(&self, role: MoleculeRole) -> bool {
-        self.metadata.has_role(role)
-    }
-
-    pub fn props(&self) -> &PropMap {
-        self.metadata.props()
     }
 
     pub const fn qualify_atom(&self, atom: AtomId) -> InstanceAtomId {
@@ -467,6 +408,103 @@ impl MoleculeInstance {
     }
 
     pub const fn qualify_atom_site(&self, atom_site: SmcraAtomSiteId) -> InstanceAtomSiteId {
+        InstanceAtomSiteId::new(self.id, atom_site)
+    }
+}
+
+/// One explicit molecule occurrence borrowed from a [`Topology`].
+///
+/// This is the instance-first system view. The underlying [`Molecule`] retains
+/// definition-local identities, while atoms, bonds, and hierarchy reached
+/// through this view are qualified by this occurrence's
+/// [`MoleculeInstanceId`].
+#[derive(Clone, Copy)]
+pub struct MoleculeInstanceView<'a> {
+    topology: &'a Topology,
+    id: MoleculeInstanceId,
+}
+
+impl fmt::Debug for MoleculeInstanceView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MoleculeInstanceView")
+            .field("id", &self.id)
+            .field("definition", &self.definition_id())
+            .finish()
+    }
+}
+
+impl<'a> MoleculeInstanceView<'a> {
+    const fn new(topology: &'a Topology, id: MoleculeInstanceId) -> Self {
+        Self { topology, id }
+    }
+
+    /// Returns this occurrence's topology-wide molecule identity.
+    pub const fn id(self) -> MoleculeInstanceId {
+        self.id
+    }
+
+    /// Returns the reusable definition referenced by this occurrence.
+    pub fn definition_id(self) -> MoleculeDefinitionId {
+        self.instance().definition()
+    }
+
+    /// Returns the minimal stored instance record.
+    pub fn instance(self) -> &'a MoleculeInstance {
+        &self.topology.instances[self.id.index()]
+    }
+
+    /// Returns the reusable definition referenced by this occurrence.
+    pub fn definition(self) -> &'a MoleculeDefinition {
+        &self.topology.definitions[self.definition_id().index()]
+    }
+
+    /// Returns the definition-owned molecular state for this occurrence.
+    pub fn molecule(self) -> &'a Molecule {
+        self.definition().molecule()
+    }
+
+    /// Iterates atoms with topology-wide, instance-qualified identities.
+    pub fn atoms(self) -> impl Iterator<Item = (InstanceAtomId, &'a Atom)> + 'a {
+        let instance = self.id;
+        self.molecule()
+            .atoms()
+            .map(move |(atom, payload)| (InstanceAtomId::new(instance, atom), payload))
+    }
+
+    /// Iterates bonds with topology-wide, instance-qualified identities.
+    pub fn bonds(self) -> impl Iterator<Item = (InstanceBondId, &'a Bond)> + 'a {
+        let instance = self.id;
+        self.molecule()
+            .bonds()
+            .map(move |(bond, payload)| (InstanceBondId::new(instance, bond), payload))
+    }
+
+    /// Returns this occurrence's qualified hierarchy when one is present.
+    pub fn hierarchy(self) -> Option<InstanceHierarchy<'a>> {
+        self.definition().hierarchy().map(|_| InstanceHierarchy {
+            molecule: self.id,
+            topology: self.topology,
+        })
+    }
+
+    pub const fn qualify_atom(self, atom: AtomId) -> InstanceAtomId {
+        InstanceAtomId::new(self.id, atom)
+    }
+
+    pub const fn qualify_bond(self, bond: BondId) -> InstanceBondId {
+        InstanceBondId::new(self.id, bond)
+    }
+
+    pub const fn qualify_chain(self, chain: SmcraChainId) -> InstanceChainId {
+        InstanceChainId::new(self.id, chain)
+    }
+
+    pub const fn qualify_residue(self, residue: SmcraResidueId) -> InstanceResidueId {
+        InstanceResidueId::new(self.id, residue)
+    }
+
+    pub const fn qualify_atom_site(self, atom_site: SmcraAtomSiteId) -> InstanceAtomSiteId {
         InstanceAtomSiteId::new(self.id, atom_site)
     }
 }
@@ -610,6 +648,24 @@ impl<'a> InstanceHierarchy<'a> {
 ///     let _ = topology.clone();
 /// }
 /// ```
+///
+/// Generic instance metadata and roles are deliberately not core concepts:
+///
+/// ```compile_fail
+/// use kekule::topology::{MoleculeInstanceMetadata, MoleculeRole};
+/// ```
+///
+/// Molecules are connected by publication, so per-instance component queries
+/// are deliberately unavailable:
+///
+/// ```compile_fail
+/// fn removed_component_api(
+///     topology: &kekule::topology::Topology,
+///     instance: kekule::topology::MoleculeInstanceId,
+/// ) {
+///     let _ = topology.connected_components(instance);
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Topology {
     definitions: Vec<MoleculeDefinition>,
@@ -628,7 +684,7 @@ impl Topology {
     /// Returns whether two topologies have the same complete static layout.
     ///
     /// Layout equality includes chemical and hierarchy content, definition and
-    /// instance partitioning, instance metadata, semantic identifiers,
+    /// instance partitioning, semantic identifiers,
     /// authoritative dense atom and bond order, and the corresponding index
     /// maps. Whether two values share one `Arc` allocation is deliberately
     /// excluded.
@@ -684,6 +740,22 @@ impl Topology {
         self.instances.len()
     }
 
+    /// Returns one instance-qualified molecular view.
+    pub fn molecule(
+        &self,
+        id: MoleculeInstanceId,
+    ) -> Result<MoleculeInstanceView<'_>, TopologyError> {
+        self.instance(id)?;
+        Ok(MoleculeInstanceView::new(self, id))
+    }
+
+    /// Iterates explicit molecules in authoritative instance order.
+    pub fn molecules(&self) -> impl ExactSizeIterator<Item = MoleculeInstanceView<'_>> {
+        self.instances
+            .iter()
+            .map(|instance| MoleculeInstanceView::new(self, instance.id))
+    }
+
     pub fn definition_for_instance(
         &self,
         instance: MoleculeInstanceId,
@@ -701,13 +773,6 @@ impl Topology {
             .instances
             .iter()
             .filter(move |instance| instance.definition == definition))
-    }
-
-    pub fn molecule_for_instance(
-        &self,
-        instance: MoleculeInstanceId,
-    ) -> Result<&Molecule, TopologyError> {
-        Ok(self.definition_for_instance(instance)?.molecule())
     }
 
     pub fn hierarchy(
@@ -867,13 +932,15 @@ impl Topology {
     }
 
     pub fn atom(&self, id: InstanceAtomId) -> Result<&Atom, TopologyError> {
-        self.molecule_for_instance(id.molecule)?
+        self.molecule(id.molecule)?
+            .molecule()
             .atom(id.atom)
             .map_err(|_| TopologyError::InvalidAtomId(id))
     }
 
     pub fn bond(&self, id: InstanceBondId) -> Result<&Bond, TopologyError> {
-        self.molecule_for_instance(id.molecule)?
+        self.molecule(id.molecule)?
+            .molecule()
             .bond(id.bond)
             .map_err(|_| TopologyError::InvalidBondId(id))
     }
@@ -934,7 +1001,7 @@ impl Topology {
         &self,
         atom: InstanceAtomId,
     ) -> Result<impl Iterator<Item = InstanceAtomId> + '_, TopologyError> {
-        let molecule = self.molecule_for_instance(atom.molecule)?;
+        let molecule = self.molecule(atom.molecule)?.molecule();
         molecule
             .atom(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))?;
@@ -948,7 +1015,7 @@ impl Topology {
         &self,
         atom: InstanceAtomId,
     ) -> Result<impl Iterator<Item = (InstanceBondId, &Bond)> + '_, TopologyError> {
-        let molecule = self.molecule_for_instance(atom.molecule)?;
+        let molecule = self.molecule(atom.molecule)?.molecule();
         molecule
             .atom(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))?;
@@ -958,40 +1025,26 @@ impl Topology {
             .map(move |(bond, payload)| (InstanceBondId::new(atom.molecule, bond), payload)))
     }
 
-    pub fn connected_components(
-        &self,
-        instance: MoleculeInstanceId,
-    ) -> Result<Vec<Vec<InstanceAtomId>>, TopologyError> {
-        Ok(self
-            .molecule_for_instance(instance)?
-            .connected_components()
-            .into_iter()
-            .map(|component| {
-                component
-                    .into_iter()
-                    .map(|atom| InstanceAtomId::new(instance, atom))
-                    .collect()
-            })
-            .collect())
-    }
-
     pub fn implicit_hydrogens(&self, atom: InstanceAtomId) -> Result<Option<u8>, TopologyError> {
         self.atom(atom)?;
-        self.molecule_for_instance(atom.molecule)?
+        self.molecule(atom.molecule)?
+            .molecule()
             .implicit_hydrogens(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))
     }
 
     pub fn atom_is_aromatic(&self, atom: InstanceAtomId) -> Result<Option<bool>, TopologyError> {
         self.atom(atom)?;
-        self.molecule_for_instance(atom.molecule)?
+        self.molecule(atom.molecule)?
+            .molecule()
             .atom_is_aromatic(atom.atom)
             .map_err(|_| TopologyError::InvalidAtomId(atom))
     }
 
     pub fn bond_is_aromatic(&self, bond: InstanceBondId) -> Result<Option<bool>, TopologyError> {
         self.bond(bond)?;
-        self.molecule_for_instance(bond.molecule)?
+        self.molecule(bond.molecule)?
+            .molecule()
             .bond_is_aromatic(bond.bond)
             .map_err(|_| TopologyError::InvalidBondId(bond))
     }
@@ -1063,7 +1116,6 @@ impl TopologyBuilder {
     pub fn add_instance(
         &mut self,
         definition: MoleculeDefinitionId,
-        metadata: MoleculeInstanceMetadata,
     ) -> Result<MoleculeInstanceId, TopologyBuildError> {
         self.definition(definition)?;
         self.reserve_instances(1)?;
@@ -1071,21 +1123,18 @@ impl TopologyBuilder {
             self.instances.len(),
             TopologyIdKind::MoleculeInstance,
         )?;
-        self.instances.push(MoleculeInstance {
-            id,
-            definition,
-            metadata,
-        });
+        self.instances.push(MoleculeInstance { id, definition });
         Ok(id)
     }
 
-    pub fn add_molecule_instance(
+    /// Adds one fresh definition and one instance in a single operation.
+    pub fn add_molecule(
         &mut self,
         molecule: &Molecule,
-        metadata: MoleculeInstanceMetadata,
-    ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
+    ) -> Result<MoleculeInstanceId, TopologyBuildError> {
         validate_graph(molecule)?;
-        self.commit_definition_and_instance(molecule.clone(), metadata)
+        self.commit_definition_and_instance(molecule.clone())
+            .map(|(_, instance)| instance)
     }
 
     pub fn build(self) -> Result<Topology, TopologyBuildError> {
@@ -1098,6 +1147,21 @@ impl TopologyBuilder {
                     instance.definition,
                 ));
             }
+        }
+        let mut referenced_definitions = vec![false; self.definitions.len()];
+        for instance in &self.instances {
+            referenced_definitions[instance.definition.index()] = true;
+        }
+        if let Some(index) = referenced_definitions
+            .iter()
+            .position(|referenced| !referenced)
+        {
+            return Err(TopologyBuildError::UnusedMoleculeDefinition(
+                self.definitions[index].id,
+            ));
+        }
+        for definition in &self.definitions {
+            validate_graph(definition.molecule())?;
         }
 
         let atom_count = self.instances.iter().try_fold(0usize, |count, instance| {
@@ -1180,7 +1244,6 @@ impl TopologyBuilder {
     fn commit_definition_and_instance(
         &mut self,
         molecule: Molecule,
-        metadata: MoleculeInstanceMetadata,
     ) -> Result<(MoleculeDefinitionId, MoleculeInstanceId), TopologyBuildError> {
         self.reserve_definitions(1)?;
         self.reserve_instances(1)?;
@@ -1199,7 +1262,6 @@ impl TopologyBuilder {
         self.instances.push(MoleculeInstance {
             id: instance,
             definition,
-            metadata,
         });
         Ok((definition, instance))
     }
@@ -1294,6 +1356,8 @@ pub enum TopologyBuildError {
     EmptyMoleculeDefinition,
     DisconnectedMoleculeDefinition(MoleculeConnectivityError),
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
+    /// A staged definition was not instantiated and cannot be published.
+    UnusedMoleculeDefinition(MoleculeDefinitionId),
     /// A topology collection exceeded the fixed-width identifier space for `kind`.
     IdentifierCapacityExceeded(TopologyIdKind),
 }
@@ -1312,6 +1376,12 @@ impl fmt::Display for TopologyBuildError {
             }
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "invalid molecule definition: {id}")
+            }
+            Self::UnusedMoleculeDefinition(id) => {
+                write!(
+                    formatter,
+                    "molecule definition {id} is not referenced by any instance"
+                )
             }
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(formatter, "{kind} identifier capacity exceeded")
@@ -1454,18 +1524,6 @@ impl AtomSelection {
         Self::for_instances(topology, instances)
     }
 
-    pub fn for_roles(
-        topology: &Arc<Topology>,
-        roles: impl IntoIterator<Item = MoleculeRole>,
-    ) -> Result<Self, SelectionError> {
-        let roles = roles.into_iter().collect::<BTreeSet<_>>();
-        let instances = topology
-            .instances()
-            .filter(|(_, instance)| instance.roles().iter().any(|role| roles.contains(role)))
-            .map(|(id, _)| id);
-        Self::for_instances(topology, instances)
-    }
-
     pub fn for_elements(
         topology: &Arc<Topology>,
         elements: impl IntoIterator<Item = Element>,
@@ -1542,23 +1600,6 @@ impl AtomSelection {
                 .filter(|chain| chain.label_id() == label)
                 .map(InstanceChain::id),
         )
-    }
-
-    pub fn connected_component(
-        topology: &Arc<Topology>,
-        instance: MoleculeInstanceId,
-        component: usize,
-    ) -> Result<Self, SelectionError> {
-        let components = topology
-            .connected_components(instance)
-            .map_err(|_| SelectionError::InvalidMoleculeInstanceId(instance))?;
-        let atoms = components
-            .get(component)
-            .ok_or(SelectionError::InvalidConnectedComponent {
-                instance,
-                component,
-            })?;
-        Self::from_atoms(topology, atoms.iter().copied())
     }
 
     pub fn from_query_matches(
@@ -1661,10 +1702,6 @@ pub enum SelectionError {
     InvalidResidueId(InstanceResidueId),
     InvalidAtomSiteId(InstanceAtomSiteId),
     InvalidAtomIndex(TopologyAtomIndex),
-    InvalidConnectedComponent {
-        instance: MoleculeInstanceId,
-        component: usize,
-    },
 }
 
 impl fmt::Display for SelectionError {
@@ -1684,13 +1721,6 @@ impl fmt::Display for SelectionError {
             Self::InvalidResidueId(id) => write!(formatter, "invalid selected residue: {id}"),
             Self::InvalidAtomSiteId(id) => write!(formatter, "invalid selected atom site: {id}"),
             Self::InvalidAtomIndex(index) => write!(formatter, "invalid selected {index}"),
-            Self::InvalidConnectedComponent {
-                instance,
-                component,
-            } => write!(
-                formatter,
-                "molecule instance {instance} has no connected component {component}"
-            ),
         }
     }
 }
@@ -2370,12 +2400,8 @@ mod tests {
         let (molecule, carbon, oxygen, bond) = tombstoned_molecule();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        let mut first = MoleculeInstanceMetadata::default();
-        first.insert_role(MoleculeRole::Ligand);
-        builder.add_instance(definition, first).unwrap();
-        let mut second = MoleculeInstanceMetadata::default();
-        second.insert_role(MoleculeRole::Solvent);
-        builder.add_instance(definition, second).unwrap();
+        builder.add_instance(definition).unwrap();
+        builder.add_instance(definition).unwrap();
         (Arc::new(builder.build().unwrap()), carbon, oxygen, bond)
     }
 
@@ -2393,9 +2419,7 @@ mod tests {
         let bonds = molecule.bond_ids().collect();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        let instance = builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        let instance = builder.add_instance(definition).unwrap();
         (
             Arc::new(builder.build().unwrap()),
             definition,
@@ -2416,9 +2440,7 @@ mod tests {
         let mut builder = TopologyBuilder::new();
         for molecule in molecules {
             let definition = builder.add_molecule_definition(molecule).unwrap();
-            builder
-                .add_instance(definition, MoleculeInstanceMetadata::default())
-                .unwrap();
+            builder.add_instance(definition).unwrap();
         }
         Arc::new(builder.build().unwrap())
     }
@@ -2429,9 +2451,7 @@ mod tests {
         for _ in 0..2 {
             let definition = builder.add_molecule_definition(&water).unwrap();
             for _ in 0..2 {
-                builder
-                    .add_instance(definition, MoleculeInstanceMetadata::default())
-                    .unwrap();
+                builder.add_instance(definition).unwrap();
             }
         }
         Arc::new(builder.build().unwrap())
@@ -2477,6 +2497,65 @@ mod tests {
             assert_eq!(index.index(), raw);
             assert_eq!(topology.bond_id(index), Some(bond));
         }
+    }
+
+    #[test]
+    fn molecule_views_are_instance_qualified_and_share_definition_state() {
+        let (topology, carbon, oxygen, bond) = topology_with_reused_definition();
+        let molecules = topology.molecules().collect::<Vec<_>>();
+        assert_eq!(molecules.len(), 2);
+        assert_eq!(molecules[0].id(), MoleculeInstanceId::new(0));
+        assert_eq!(molecules[1].id(), MoleculeInstanceId::new(1));
+        assert_eq!(molecules[0].definition_id(), molecules[1].definition_id());
+        assert!(std::ptr::eq(
+            molecules[0].molecule(),
+            molecules[1].molecule()
+        ));
+        assert_eq!(
+            molecules[0].atoms().map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![
+                InstanceAtomId::new(molecules[0].id(), carbon),
+                InstanceAtomId::new(molecules[0].id(), oxygen),
+            ]
+        );
+        assert_eq!(
+            molecules[1].bonds().map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![InstanceBondId::new(molecules[1].id(), bond)]
+        );
+        assert_eq!(
+            topology.molecule(molecules[1].id()).unwrap().id(),
+            molecules[1].id()
+        );
+    }
+
+    #[test]
+    fn builder_rejects_empty_topologies_and_unused_definitions() {
+        assert!(matches!(
+            TopologyBuilder::new().build(),
+            Err(TopologyBuildError::NoMoleculeInstances)
+        ));
+
+        let molecule = perceived_molecule("O");
+        let mut builder = TopologyBuilder::new();
+        let used = builder.add_molecule_definition(&molecule).unwrap();
+        builder.add_instance(used).unwrap();
+        let unused = builder.add_molecule_definition(&molecule).unwrap();
+        assert!(matches!(
+            builder.build(),
+            Err(TopologyBuildError::UnusedMoleculeDefinition(id)) if id == unused
+        ));
+    }
+
+    #[test]
+    fn builder_add_molecule_is_the_concise_single_instance_path() {
+        let molecule = perceived_molecule("CO");
+        let mut builder = TopologyBuilder::new();
+        let instance = builder.add_molecule(&molecule).unwrap();
+        let topology = builder.build().unwrap();
+        assert_eq!(instance, MoleculeInstanceId::new(0));
+        assert_eq!(topology.definition_count(), 1);
+        assert_eq!(topology.instance_count(), 1);
+        assert_eq!(topology.molecule(instance).unwrap().molecule(), &molecule);
     }
 
     #[test]
@@ -2558,22 +2637,15 @@ mod tests {
         let mut builder = TopologyBuilder::new();
         let first = builder.add_molecule_definition(&molecule).unwrap();
         assert_eq!(
-            builder.add_instance(
-                MoleculeDefinitionId::new(99),
-                MoleculeInstanceMetadata::default()
-            ),
+            builder.add_instance(MoleculeDefinitionId::new(99)),
             Err(TopologyBuildError::InvalidMoleculeDefinitionId(
                 MoleculeDefinitionId::new(99)
             ))
         );
         assert!(builder.instances.is_empty());
-        builder
-            .add_instance(first, MoleculeInstanceMetadata::default())
-            .unwrap();
+        builder.add_instance(first).unwrap();
         let second = builder.add_molecule_definition(&molecule).unwrap();
-        builder
-            .add_instance(second, MoleculeInstanceMetadata::default())
-            .unwrap();
+        builder.add_instance(second).unwrap();
         let topology = Arc::new(builder.build().unwrap());
         assert_eq!(topology.definition_count(), 2);
         assert_eq!(topology.instance_count(), 2);
@@ -2635,28 +2707,23 @@ mod tests {
     }
 
     #[test]
-    fn selections_distinguish_instances_components_elements_and_queries() {
+    fn selections_distinguish_instances_elements_and_queries() {
         let ethane = perceived_molecule("CC");
         let water = perceived_molecule("O");
         let mut builder = TopologyBuilder::new();
         let ethane_definition = builder.add_molecule_definition(&ethane).unwrap();
         let water_definition = builder.add_molecule_definition(&water).unwrap();
-        let mut metadata = MoleculeInstanceMetadata::default();
-        metadata.insert_role(MoleculeRole::Ligand);
-        let ethane_instance = builder
-            .add_instance(ethane_definition, metadata.clone())
-            .unwrap();
-        let water_instance = builder.add_instance(water_definition, metadata).unwrap();
+        let ethane_instance = builder.add_instance(ethane_definition).unwrap();
+        let water_instance = builder.add_instance(water_definition).unwrap();
         let topology = Arc::new(builder.build().unwrap());
 
-        let ligand = AtomSelection::for_roles(&topology, [MoleculeRole::Ligand]).unwrap();
-        assert_eq!(ligand.indices().len(), 3);
-        let first_component =
-            AtomSelection::connected_component(&topology, ethane_instance, 0).unwrap();
-        let second_component =
-            AtomSelection::connected_component(&topology, water_instance, 0).unwrap();
-        assert_eq!(first_component.indices().len(), 2);
-        assert_eq!(second_component.indices().len(), 1);
+        let selected =
+            AtomSelection::for_instances(&topology, [ethane_instance, water_instance]).unwrap();
+        assert_eq!(selected.indices().len(), 3);
+        let ethane_selection = AtomSelection::for_instances(&topology, [ethane_instance]).unwrap();
+        let water_selection = AtomSelection::for_instances(&topology, [water_instance]).unwrap();
+        assert_eq!(ethane_selection.indices().len(), 2);
+        assert_eq!(water_selection.indices().len(), 1);
         let oxygen =
             AtomSelection::for_elements(&topology, [Element::from_symbol("O").unwrap()]).unwrap();
         assert_eq!(oxygen.indices().len(), 1);
@@ -2674,12 +2741,10 @@ mod tests {
         let definition = independent_builder
             .add_molecule_definition(&ethane)
             .unwrap();
-        independent_builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        independent_builder.add_instance(definition).unwrap();
         let independent = Arc::new(independent_builder.build().unwrap());
         assert_eq!(
-            ligand.ensure_compatible(&independent),
+            selected.ensure_compatible(&independent),
             Err(SelectionError::TopologyMismatch)
         );
     }
@@ -2702,17 +2767,11 @@ mod tests {
 
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        let first = builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        let first = builder.add_instance(definition).unwrap();
         let small = perceived_molecule("O");
         let small_definition = builder.add_molecule_definition(&small).unwrap();
-        let small_instance = builder
-            .add_instance(small_definition, MoleculeInstanceMetadata::default())
-            .unwrap();
-        let second = builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        let small_instance = builder.add_instance(small_definition).unwrap();
+        let second = builder.add_instance(definition).unwrap();
         let topology = Arc::new(builder.build().unwrap());
         assert_eq!(topology.definition_count(), 2);
         assert!(topology
@@ -2722,6 +2781,22 @@ mod tests {
             .is_some());
         assert!(topology
             .definition(small_definition)
+            .unwrap()
+            .hierarchy()
+            .is_none());
+        let first_molecule = topology.molecule(first).unwrap();
+        assert_eq!(first_molecule.molecule(), &molecule);
+        assert_eq!(
+            first_molecule
+                .hierarchy()
+                .unwrap()
+                .chains()
+                .map(InstanceChain::id)
+                .collect::<Vec<_>>(),
+            vec![InstanceChainId::new(first, chain)]
+        );
+        assert!(topology
+            .molecule(small_instance)
             .unwrap()
             .hierarchy()
             .is_none());
@@ -2874,16 +2949,12 @@ mod tests {
         let (old_molecule, carbon, oxygen, bond) = tombstoned_molecule();
         let mut old_builder = TopologyBuilder::new();
         let old_definition = old_builder.add_molecule_definition(&old_molecule).unwrap();
-        let old_instance = old_builder
-            .add_instance(old_definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        let old_instance = old_builder.add_instance(old_definition).unwrap();
         let old_extra_molecule = perceived_molecule("O");
         let old_extra_definition = old_builder
             .add_molecule_definition(&old_extra_molecule)
             .unwrap();
-        let old_extra_instance = old_builder
-            .add_instance(old_extra_definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        let old_extra_instance = old_builder.add_instance(old_extra_definition).unwrap();
         let old = Arc::new(old_builder.build().unwrap());
 
         let mut new_graph = crate::core::MoleculeEditor::new();
@@ -2893,16 +2964,12 @@ mod tests {
         let new_molecule = new_graph;
         let mut new_builder = TopologyBuilder::new();
         let new_definition = new_builder.add_molecule_definition(&new_molecule).unwrap();
-        let new_instance = new_builder
-            .add_instance(new_definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        let new_instance = new_builder.add_instance(new_definition).unwrap();
         let new_extra_molecule = perceived_molecule("N");
         let new_extra_definition = new_builder
             .add_molecule_definition(&new_extra_molecule)
             .unwrap();
-        let new_extra_instance = new_builder
-            .add_instance(new_extra_definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        let new_extra_instance = new_builder.add_instance(new_extra_definition).unwrap();
         let new = Arc::new(new_builder.build().unwrap());
 
         let old_carbon = InstanceAtomId::new(old_instance, carbon);

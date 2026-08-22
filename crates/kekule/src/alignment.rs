@@ -17,7 +17,7 @@
 //! use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
 //! use kekule::geometry::Point3;
 //! use kekule::structure::{Model, Positions};
-//! use kekule::topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder};
+//! use kekule::topology::{AtomSelection, TopologyBuilder};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use std::sync::Arc;
 //!
@@ -33,7 +33,7 @@
 //! let molecule = graph.finish()?;
 //! let mut builder = TopologyBuilder::new();
 //! let definition = builder.add_molecule_definition(&molecule)?;
-//! builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+//! builder.add_instance(definition)?;
 //! let topology = Arc::new(builder.build()?);
 //! let moving_points = [
 //!     Point3::new(0.0, 0.0, 0.0),
@@ -821,7 +821,7 @@ mod tests {
     use crate::core::{Atom, BondOrder, Element};
     use crate::geometry::PeriodicCell;
     use crate::structure::{Model, Positions};
-    use crate::topology::{AtomSelection, MoleculeInstanceMetadata, Topology, TopologyBuilder};
+    use crate::topology::{AtomSelection, Topology, TopologyBuilder};
     use crate::units::{Quantity, ANGSTROM, NANOMETER};
 
     fn topology(atom_count: usize) -> Arc<Topology> {
@@ -839,9 +839,7 @@ mod tests {
         let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        builder.add_instance(definition).unwrap();
         Arc::new(builder.build().unwrap())
     }
 

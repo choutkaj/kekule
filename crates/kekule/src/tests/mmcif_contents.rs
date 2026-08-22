@@ -5,11 +5,10 @@ use crate::core::{
 };
 use crate::geometry::Point3;
 use crate::mmcif::{
-    self, MmcifAltLocPolicy, MmcifInterpretOptions, MmcifModelSelection, MmcifParseOptions,
-    MmcifWriteError, MmcifWriteOptions,
+    self, MmcifAltLocPolicy, MmcifEntityKind, MmcifInterpretOptions, MmcifModelSelection,
+    MmcifParseOptions, MmcifWriteError, MmcifWriteOptions,
 };
 use crate::structure::{Model, ModelBuilder};
-use crate::topology::{MoleculeInstanceMetadata, MoleculeRole};
 use crate::units::{Quantity, DIMENSIONLESS, NANOMETER};
 
 const MIXED: &str = r#"
@@ -461,23 +460,16 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     let instances = model
         .topology()
         .instances()
-        .map(|(id, instance)| {
-            (
-                instance,
-                model
-                    .topology()
-                    .definition_for_instance(id)
-                    .expect("instance definition"),
-            )
+        .map(|(id, _)| {
+            model
+                .topology()
+                .definition_for_instance(id)
+                .expect("instance definition")
         })
         .collect::<Vec<_>>();
-    assert!(!instances[0].1.molecule().hierarchy().is_empty());
-    assert!(instances[0].0.has_role(MoleculeRole::Polymer));
-    assert!(!instances[1].1.molecule().hierarchy().is_empty());
-    assert!(instances[1].0.has_role(MoleculeRole::Polymer));
-    assert!(instances[2].1.molecule().atom_count() > 0);
-    assert!(instances[2].0.has_role(MoleculeRole::NonPolymer));
-    assert!(instances[3].0.has_role(MoleculeRole::Solvent));
+    assert!(!instances[0].molecule().hierarchy().is_empty());
+    assert!(!instances[1].molecule().hierarchy().is_empty());
+    assert!(instances[2].molecule().atom_count() > 0);
     assert_eq!(interpreted.report().selected_model.as_deref(), Some("1"));
     assert_eq!(interpreted.report().instances.len(), 4);
     assert_eq!(
@@ -489,7 +481,19 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
             .sum::<usize>(),
         4
     );
-    for (_, definition) in &instances {
+    assert!(interpreted.report().instances[0]
+        .entity_kinds()
+        .contains(&MmcifEntityKind::Polymer));
+    assert!(interpreted.report().instances[1]
+        .entity_kinds()
+        .contains(&MmcifEntityKind::Polymer));
+    assert!(interpreted.report().instances[2]
+        .entity_kinds()
+        .contains(&MmcifEntityKind::NonPolymer));
+    assert!(interpreted.report().instances[3]
+        .entity_kinds()
+        .contains(&MmcifEntityKind::Water));
+    for definition in &instances {
         assert!(definition.molecule().props().is_empty());
         assert!(definition
             .molecule()
@@ -1253,22 +1257,24 @@ hydrog A N 1 W O .
     let input = format!("{MIXED}\n{connections}");
     let result = mmcif::interpret(&parse(&input), MmcifInterpretOptions::default()).unwrap();
     assert_eq!(result.model().topology().instance_count(), 3);
-    let (merged_id, merged_instance) = result
-        .model()
-        .topology()
+    let merged = result
+        .report()
         .instances()
-        .find(|(_, instance)| {
-            instance.has_role(MoleculeRole::Polymer) && instance.has_role(MoleculeRole::NonPolymer)
+        .iter()
+        .find(|instance| {
+            instance.entity_kinds().contains(&MmcifEntityKind::Polymer)
+                && instance
+                    .entity_kinds()
+                    .contains(&MmcifEntityKind::NonPolymer)
         })
         .expect("covalently linked entities should share one instance");
+    let merged_id = merged.molecule();
     let merged_definition = result
         .model()
         .topology()
         .definition_for_instance(merged_id)
         .unwrap();
     assert!(!merged_definition.molecule().hierarchy().is_empty());
-    assert!(merged_instance.has_role(MoleculeRole::Polymer));
-    assert!(merged_instance.has_role(MoleculeRole::NonPolymer));
     assert_eq!(result.report().applied_connections, 1);
 }
 
@@ -1422,13 +1428,15 @@ covale A N 1 A CA 1 doub
         .property("analysis_score")
         .unwrap()
         .is_none());
-    let (first_id, first_instance) = round_trip.model().topology().instances().next().unwrap();
+    let (first_id, _) = round_trip.model().topology().instances().next().unwrap();
     let first = round_trip
         .model()
         .topology()
         .definition_for_instance(first_id)
         .unwrap();
-    assert!(first_instance.has_role(MoleculeRole::Polymer));
+    assert!(round_trip.report().instances()[0]
+        .entity_kinds()
+        .contains(&MmcifEntityKind::Polymer));
     assert_eq!(
         first
             .molecule()
@@ -1506,7 +1514,7 @@ fn mmcif_writer_preserves_supported_bond_orders() {
 }
 
 #[test]
-fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
+fn mmcif_writer_rejects_ambiguous_atom_identity() {
     let carbon = Element::from_symbol("C").unwrap();
     let mut graph = crate::core::MoleculeEditor::new();
     let left = graph
@@ -1556,17 +1564,6 @@ fn mmcif_writer_rejects_ambiguous_atom_identity_and_unencodable_roles() {
         mmcif::write(&builder.build().unwrap(), MmcifWriteOptions::default()),
         Err(MmcifWriteError::DuplicateAtomIdentity(_))
     ));
-
-    let mut metadata = MoleculeInstanceMetadata::default();
-    metadata.insert_role(MoleculeRole::Ligand);
-    let model = small_model_with_metadata(metadata);
-    assert!(matches!(
-        mmcif::write(&model, MmcifWriteOptions::default()),
-        Err(MmcifWriteError::UnsupportedMoleculeRole {
-            role: MoleculeRole::Ligand,
-            ..
-        })
-    ));
 }
 
 fn small_model_with_bond(order: BondOrder) -> Model {
@@ -1594,25 +1591,5 @@ fn small_model_with_bond(order: BondOrder) -> Model {
     let molecule = graph.finish().unwrap();
     let mut builder = ModelBuilder::new();
     builder.add_molecule(&molecule, &conformer).unwrap();
-    builder.build().unwrap()
-}
-
-fn small_model_with_metadata(metadata: MoleculeInstanceMetadata) -> Model {
-    let mut graph = crate::core::MoleculeEditor::new();
-    let atom = graph
-        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
-        .expect("atom identifier capacity");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            atom,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    let molecule = graph.finish().unwrap();
-    let mut builder = ModelBuilder::new();
-    builder
-        .add_molecule_with_metadata(&molecule, &conformer, metadata)
-        .unwrap();
     builder.build().unwrap()
 }

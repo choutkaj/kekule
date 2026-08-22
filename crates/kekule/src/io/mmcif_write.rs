@@ -7,7 +7,6 @@ use crate::geometry::Point3;
 use crate::structure::Model;
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
-    MoleculeRole,
 };
 use crate::units::ANGSTROM;
 
@@ -50,12 +49,6 @@ pub enum MmcifWriteError {
         value: String,
     },
     DuplicateAtomIdentity(InstanceAtomId),
-    ConflictingEntityRoles(MoleculeInstanceId),
-    EntityRolePayloadMismatch(MoleculeInstanceId),
-    UnsupportedMoleculeRole {
-        molecule: MoleculeInstanceId,
-        role: MoleculeRole,
-    },
     UnsupportedAtomField {
         atom: InstanceAtomId,
         field: &'static str,
@@ -108,18 +101,6 @@ impl fmt::Display for MmcifWriteError {
                 f,
                 "{atom} duplicates an mmCIF atom identity within one residue"
             ),
-            Self::ConflictingEntityRoles(molecule) => write!(
-                f,
-                "{molecule} has multiple mmCIF entity-kind roles that cannot be represented losslessly"
-            ),
-            Self::EntityRolePayloadMismatch(molecule) => write!(
-                f,
-                "{molecule} has an mmCIF entity-kind role inconsistent with its Small/Macro payload"
-            ),
-            Self::UnsupportedMoleculeRole { molecule, role } => write!(
-                f,
-                "{molecule} has model role {role:?}, which the foundational mmCIF writer cannot encode losslessly"
-            ),
             Self::UnsupportedAtomField { atom, field } => {
                 write!(f, "{atom} has unsupported atom field `{field}`")
             }
@@ -155,7 +136,6 @@ impl std::error::Error for MmcifWriteError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EntityKind {
     Polymer,
-    Branched,
     NonPolymer,
     Water,
 }
@@ -164,7 +144,6 @@ impl EntityKind {
     const fn as_mmcif(self) -> &'static str {
         match self {
             Self::Polymer => "polymer",
-            Self::Branched => "branched",
             Self::NonPolymer => "non-polymer",
             Self::Water => "water",
         }
@@ -172,7 +151,7 @@ impl EntityKind {
 
     const fn default_group_pdb(self) -> &'static str {
         match self {
-            Self::Polymer | Self::Branched => "ATOM",
+            Self::Polymer => "ATOM",
             Self::NonPolymer | Self::Water => "HETATM",
         }
     }
@@ -378,55 +357,23 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
 }
 
 fn entity_kind(
-    molecule: &MoleculeInstance,
+    _molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
 ) -> Result<EntityKind, MmcifWriteError> {
-    for role in [MoleculeRole::Ligand, MoleculeRole::Cofactor] {
-        if molecule.has_role(role) {
-            return Err(MmcifWriteError::UnsupportedMoleculeRole {
-                molecule: molecule.id(),
-                role,
-            });
-        }
+    if definition.hierarchy().is_some() {
+        return Ok(EntityKind::Polymer);
     }
-    let inferred_ion = definition.molecule().atom_count() == 1
-        && definition
-            .molecule()
+    let molecule = definition.molecule();
+    let is_water = molecule.atom_count() == 1
+        && molecule
             .atoms()
             .next()
-            .is_some_and(|(_, atom)| atom.formal_charge != 0);
-    if molecule.has_role(MoleculeRole::Ion) != inferred_ion {
-        return Err(MmcifWriteError::UnsupportedMoleculeRole {
-            molecule: molecule.id(),
-            role: MoleculeRole::Ion,
-        });
-    }
-    let primary = [
-        MoleculeRole::Polymer,
-        MoleculeRole::Branched,
-        MoleculeRole::NonPolymer,
-        MoleculeRole::Solvent,
-    ]
-    .into_iter()
-    .filter(|role| molecule.has_role(*role))
-    .collect::<Vec<_>>();
-    if primary.len() > 1 {
-        return Err(MmcifWriteError::ConflictingEntityRoles(molecule.id()));
-    }
-    let kind = match primary.first().copied() {
-        Some(MoleculeRole::Polymer) => EntityKind::Polymer,
-        Some(MoleculeRole::Branched) => EntityKind::Branched,
-        Some(MoleculeRole::NonPolymer) => EntityKind::NonPolymer,
-        Some(MoleculeRole::Solvent) => EntityKind::Water,
-        Some(_) => unreachable!("primary roles are exhaustive"),
-        None if definition.hierarchy().is_some() => EntityKind::Polymer,
-        None => EntityKind::NonPolymer,
-    };
-    let macro_kind = matches!(kind, EntityKind::Polymer | EntityKind::Branched);
-    if macro_kind != definition.hierarchy().is_some() {
-        return Err(MmcifWriteError::EntityRolePayloadMismatch(molecule.id()));
-    }
-    Ok(kind)
+            .is_some_and(|(_, atom)| atom.element.symbol() == "O" && atom.formal_charge == 0);
+    Ok(if is_water {
+        EntityKind::Water
+    } else {
+        EntityKind::NonPolymer
+    })
 }
 
 fn validate_graph_chemistry(

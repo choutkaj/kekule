@@ -13,9 +13,7 @@ fn one_atom_topology() -> Arc<Topology> {
     let molecule = graph;
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
-    builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
+    builder.add_instance(definition).unwrap();
     Arc::new(builder.build().unwrap())
 }
 
@@ -31,12 +29,8 @@ fn two_bond_instances_topology() -> (Arc<Topology>, MoleculeInstanceId, Molecule
     let molecule = graph.finish().unwrap();
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule).unwrap();
-    let first = builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    let second = builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
+    let first = builder.add_instance(definition).unwrap();
+    let second = builder.add_instance(definition).unwrap();
     (Arc::new(builder.build().unwrap()), first, second)
 }
 
@@ -133,12 +127,8 @@ fn model_and_view_share_qualified_hierarchy_navigation_without_copying() {
     let definition = topology_builder
         .add_molecule_definition(&macro_molecule)
         .unwrap();
-    let first = topology_builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
-    let second = topology_builder
-        .add_instance(definition, MoleculeInstanceMetadata::default())
-        .unwrap();
+    let first = topology_builder.add_instance(definition).unwrap();
+    let second = topology_builder.add_instance(definition).unwrap();
     let topology = Arc::new(topology_builder.build().unwrap());
     let positions = Positions::new(
         &topology,

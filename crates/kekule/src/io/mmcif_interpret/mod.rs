@@ -5,7 +5,7 @@ mod struct_conn;
 mod types;
 
 use crate::structure::{AtomData, ModelBuilder};
-use crate::topology::{MoleculeInstanceId, MoleculeRole};
+use crate::topology::MoleculeInstanceId;
 use crate::units::{Quantity, SQUARE_ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument};
@@ -99,7 +99,7 @@ fn interpret_block(
         )?;
         for built in built.publish_components()? {
             let id = builder
-                .add_molecule_with_metadata(&built.molecule, &built.conformer, built.metadata)
+                .add_molecule(&built.molecule, &built.conformer)
                 .map_err(graph_error)?;
             let (provenance, atom_data) = built.provenance.qualify(id);
             report.instances.push(provenance);
@@ -146,10 +146,10 @@ fn interpret_block(
                 .is_ok_and(|definition| definition.hierarchy().is_none())
         })
         .count();
-    report.solvent_molecules = model
-        .topology()
-        .instances()
-        .filter(|(_, molecule)| molecule.has_role(MoleculeRole::Solvent))
+    report.solvent_molecules = report
+        .instances
+        .iter()
+        .filter(|instance| instance.entity_kinds().contains(&MmcifEntityKind::Water))
         .count();
     Ok(MmcifInterpretation { model, report })
 }
