@@ -5,7 +5,6 @@ mod struct_conn;
 mod types;
 
 use crate::structure::{AtomData, ModelBuilder};
-use crate::topology::{MoleculeInstanceId, MoleculeRole};
 use crate::units::{Quantity, SQUARE_ANGSTROM};
 
 use super::{MmcifDataBlock, MmcifDocument};
@@ -17,12 +16,11 @@ use build::{build_molecule, graph_error, group_rows, polymer_asym_order};
 use struct_conn::{read_connections, InstanceUnion};
 
 pub(crate) use ensemble::interpret_mmcif_ensemble;
-pub(crate) use types::MmcifInterpretation;
 pub use types::{
     MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
-    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEntityKind,
-    MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
-    MmcifInterpretationReport, MmcifModelSelection,
+    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
+    MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
+    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
 };
 
 pub(crate) fn interpret_mmcif(
@@ -91,15 +89,10 @@ fn interpret_block(
     let mut qualified_atom_data = Vec::new();
     for group in groups {
         let mut built = build_molecule(group, &connections, &mut report)?;
-        let (staged_provenance, _) = built.provenance.clone().qualify(MoleculeInstanceId::new(0));
-        super::mmcif_connectivity::complete_editor_connectivity(
-            block,
-            &mut built.editor,
-            &staged_provenance,
-        )?;
+        built.complete_connectivity(block)?;
         for built in built.publish_components()? {
             let id = builder
-                .add_molecule_with_metadata(&built.molecule, &built.conformer, built.metadata)
+                .add_molecule(&built.molecule, &built.conformer)
                 .map_err(graph_error)?;
             let (provenance, atom_data) = built.provenance.qualify(id);
             report.instances.push(provenance);
@@ -146,10 +139,10 @@ fn interpret_block(
                 .is_ok_and(|definition| definition.hierarchy().is_none())
         })
         .count();
-    report.solvent_molecules = model
-        .topology()
-        .instances()
-        .filter(|(_, molecule)| molecule.has_role(MoleculeRole::Solvent))
+    report.solvent_molecules = report
+        .instances
+        .iter()
+        .filter(|instance| instance.entity_kinds().contains(&MmcifEntityKind::Water))
         .count();
     Ok(MmcifInterpretation { model, report })
 }

@@ -6,7 +6,7 @@ use kekule::{
     core::{Atom, BondOrder, Element, MoleculeEditor},
     geometry::Point3,
     structure::{Model, Positions},
-    topology::{AtomSelection, MoleculeInstanceMetadata, TopologyBuilder},
+    topology::{AtomSelection, TopologyBuilder},
     units::{Quantity, ANGSTROM, MODEL_LENGTH_UNIT},
 };
 use std::sync::Arc;
@@ -25,7 +25,7 @@ fn focused_alignment_facade_is_downstream_usable() -> Result<(), Box<dyn std::er
     let molecule = graph.finish()?;
     let mut builder = TopologyBuilder::new();
     let definition = builder.add_molecule_definition(&molecule)?;
-    builder.add_instance(definition, MoleculeInstanceMetadata::default())?;
+    builder.add_instance(definition)?;
     let topology = Arc::new(builder.build()?);
     let moving_points = [
         Point3::new(0.0, 0.0, 0.0),

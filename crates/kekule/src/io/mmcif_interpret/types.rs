@@ -288,7 +288,6 @@ pub struct MmcifInterpretationReport {
     pub(crate) solvent_molecules: usize,
     pub(crate) applied_connections: usize,
     pub(crate) connectivity_candidates: usize,
-    pub(crate) template_bonds_pending: usize,
     pub(crate) instances: Vec<MmcifInstanceProvenance>,
     pub(crate) issues: Vec<MmcifInterpretIssue>,
 }
@@ -335,10 +334,6 @@ impl MmcifInterpretationReport {
         self.connectivity_candidates
     }
 
-    pub const fn template_bonds_pending(&self) -> usize {
-        self.template_bonds_pending
-    }
-
     pub fn instances(&self) -> &[MmcifInstanceProvenance] {
         &self.instances
     }
@@ -353,12 +348,29 @@ impl MmcifInterpretationReport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// One final canonical model and its format-specific mmCIF interpretation report.
 pub struct MmcifInterpretation {
     pub(super) model: Model,
     pub(super) report: MmcifInterpretationReport,
 }
 
 impl MmcifInterpretation {
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    pub fn report(&self) -> &MmcifInterpretationReport {
+        &self.report
+    }
+
+    pub fn topology(&self) -> &crate::topology::Topology {
+        self.model.topology()
+    }
+
+    pub fn to_model(self) -> Model {
+        self.model
+    }
+
     pub fn to_parts(self) -> (Model, MmcifInterpretationReport) {
         (self.model, self.report)
     }
@@ -422,12 +434,21 @@ impl Default for MmcifEnsembleInterpretOptions {
 }
 
 #[derive(Debug, Clone)]
+/// One shared-topology ensemble and one mmCIF report per coordinate model.
 pub struct MmcifEnsembleInterpretation {
     pub(super) ensemble: Ensemble,
     pub(super) reports: Vec<MmcifInterpretationReport>,
 }
 
 impl MmcifEnsembleInterpretation {
+    pub fn ensemble(&self) -> &Ensemble {
+        &self.ensemble
+    }
+
+    pub fn reports(&self) -> &[MmcifInterpretationReport] {
+        &self.reports
+    }
+
     pub fn to_parts(self) -> (Ensemble, Vec<MmcifInterpretationReport>) {
         (self.ensemble, self.reports)
     }

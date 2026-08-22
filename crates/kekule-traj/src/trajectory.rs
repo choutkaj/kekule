@@ -1854,9 +1854,7 @@ impl From<TrajectoryCodecErrorContext> for TrajectoryError {
 mod tests {
     use super::*;
     use kekule::core::{Atom, BondOrder, Element, PropValue};
-    use kekule::topology::{
-        transform::retain_instances, MoleculeInstanceMetadata, TopologyBuilder,
-    };
+    use kekule::topology::{transform::retain_instances, TopologyBuilder};
     use kekule::units::{ANGSTROM, KELVIN, KILOJOULE_PER_MOLE, PICOSECOND};
 
     fn one_atom_topology() -> Arc<Topology> {
@@ -1867,9 +1865,7 @@ mod tests {
         let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        builder.add_instance(definition).unwrap();
         Arc::new(builder.build().unwrap())
     }
 
@@ -1885,9 +1881,7 @@ mod tests {
         let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        builder.add_instance(definition).unwrap();
         Arc::new(builder.build().unwrap())
     }
 
@@ -2416,12 +2410,8 @@ mod tests {
         let molecule = graph.finish().unwrap();
         let mut builder = TopologyBuilder::new();
         let definition = builder.add_molecule_definition(&molecule).unwrap();
-        builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
-        let retained = builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
-            .unwrap();
+        builder.add_instance(definition).unwrap();
+        let retained = builder.add_instance(definition).unwrap();
         let source = Arc::new(builder.build().unwrap());
         let edit = retain_instances(&source, [retained]).unwrap();
         let positions = Positions::new(

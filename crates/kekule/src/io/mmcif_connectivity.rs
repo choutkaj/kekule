@@ -2,144 +2,37 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::chemistry::localize_source_aromatic_bonds;
 use crate::core::{AtomId, BondOrder, Molecule, MoleculeEditor};
-use crate::structure::{AtomData, Ensemble, EnsembleMember, Model, Positions};
-use crate::topology::Topology;
-use std::sync::Arc;
 
 use super::mmcif_interpret as raw;
-use super::{MmcifDataBlock, MmcifDocument, MmcifLoopTable, MmcifValue};
+use super::{MmcifDataBlock, MmcifLoopTable, MmcifValue};
 
-pub(crate) fn complete_editor_connectivity(
+pub(crate) struct StagedAtomProvenance<'a> {
+    pub(crate) atom: AtomId,
+    pub(crate) atom_name: &'a str,
+    pub(crate) component_id: &'a str,
+    pub(crate) asym_id: &'a str,
+    pub(crate) entity_id: Option<&'a str>,
+    pub(crate) label_sequence_id: Option<i32>,
+    pub(crate) author_sequence_id: Option<&'a str>,
+    pub(crate) insertion_code: Option<&'a str>,
+    pub(crate) occurrence: Option<usize>,
+}
+
+pub(crate) fn complete_editor_connectivity<'a>(
     block: &MmcifDataBlock,
     editor: &mut MoleculeEditor,
-    provenance: &raw::MmcifInstanceProvenance,
+    atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
 ) -> Result<(), raw::MmcifInterpretError> {
     let catalog = ConnectivityCatalog::from_block(block)?;
     let mut source_aromatic_bonds = BTreeSet::new();
     apply_instance_connectivity(
         editor.working_mut(),
-        provenance,
+        atoms,
         &catalog,
         &mut source_aromatic_bonds,
     )?;
     localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds)
         .map_err(interpret_error)
-}
-
-/// Interpreted mmCIF model after authoritative component and polymer
-/// connectivity has been materialized into the canonical molecule graphs.
-#[derive(Debug, Clone)]
-pub struct MmcifInterpretation {
-    model: Model,
-    report: raw::MmcifInterpretationReport,
-}
-
-impl MmcifInterpretation {
-    #[cfg(test)]
-    pub fn report(&self) -> &raw::MmcifInterpretationReport {
-        &self.report
-    }
-
-    #[cfg(test)]
-    pub fn topology(&self) -> &Topology {
-        self.model.topology()
-    }
-
-    pub fn to_parts(self) -> (Model, raw::MmcifInterpretationReport) {
-        (self.model, self.report)
-    }
-}
-
-/// Interprets mmCIF syntax first, then completes authoritative covalent
-/// connectivity without using coordinate-distance guesses.
-pub fn interpret_mmcif(
-    document: &MmcifDocument,
-    options: raw::MmcifInterpretOptions,
-) -> Result<MmcifInterpretation, raw::MmcifInterpretError> {
-    let interpretation = raw::interpret_mmcif(document, options)?;
-    let (model, mut report) = interpretation.to_parts();
-    let (model, pending) = rebuild_model_with_connectivity(document, model, &report)?;
-    report.template_bonds_pending = pending;
-    Ok(MmcifInterpretation { model, report })
-}
-
-#[derive(Debug, Clone)]
-pub struct MmcifEnsembleInterpretation {
-    ensemble: Ensemble,
-    reports: Vec<raw::MmcifInterpretationReport>,
-}
-
-impl MmcifEnsembleInterpretation {
-    pub fn to_parts(self) -> (Ensemble, Vec<raw::MmcifInterpretationReport>) {
-        (self.ensemble, self.reports)
-    }
-}
-
-/// Completes the shared topology of a parsed mmCIF ensemble once, then rebinds
-/// every member to the repaired topology without changing dense atom order.
-pub fn interpret_mmcif_ensemble(
-    document: &MmcifDocument,
-    options: raw::MmcifEnsembleInterpretOptions,
-) -> Result<MmcifEnsembleInterpretation, raw::MmcifEnsembleInterpretError> {
-    let interpretation = raw::interpret_mmcif_ensemble(document, options)?;
-    let (source, mut reports) = interpretation.to_parts();
-    let first = source
-        .member(0)
-        .ok_or(raw::MmcifEnsembleInterpretError::EmptyModelSelection)?;
-    let model_id = reports
-        .first()
-        .and_then(raw::MmcifInterpretationReport::selected_model)
-        .unwrap_or("<unknown>")
-        .to_owned();
-    let prototype = Model::with_atom_data(
-        source.shared_topology(),
-        first.positions().clone(),
-        first.cell().copied(),
-        first.atom_data().clone(),
-    )
-    .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
-        model_id: model_id.clone(),
-        error: interpret_error(error),
-    })?;
-    let first_report = reports
-        .first()
-        .ok_or(raw::MmcifEnsembleInterpretError::EmptyModelSelection)?;
-    let (prototype, pending) = rebuild_model_with_connectivity(document, prototype, first_report)
-        .map_err(|error| raw::MmcifEnsembleInterpretError::Model {
-        model_id: model_id.clone(),
-        error,
-    })?;
-    let topology = prototype.shared_topology();
-    let mut ensemble = Ensemble::new(Arc::clone(&topology));
-
-    for member in source.members() {
-        let positions = Positions::new(&topology, member.positions().values())
-            .map_err(raw::MmcifEnsembleInterpretError::Position)?;
-        let mut rebuilt = EnsembleMember::new(positions);
-        rebuilt.set_cell(member.cell().copied());
-        rebuilt
-            .set_weight(member.weight())
-            .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-        rebuilt
-            .set_atom_data(
-                rebound_atom_data(member.atom_data(), &topology).map_err(|error| {
-                    raw::MmcifEnsembleInterpretError::Model {
-                        model_id: model_id.clone(),
-                        error,
-                    }
-                })?,
-            )
-            .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-        rebuilt.props_mut().clone_from(member.props());
-        ensemble
-            .push(rebuilt)
-            .map_err(|error| raw::MmcifEnsembleInterpretError::Ensemble(Box::new(error)))?;
-    }
-
-    for report in &mut reports {
-        report.template_bonds_pending = pending;
-    }
-    Ok(MmcifEnsembleInterpretation { ensemble, reports })
 }
 
 #[derive(Debug, Clone)]
@@ -299,21 +192,13 @@ struct ResidueAtoms {
     atoms: BTreeMap<String, AtomId>,
 }
 
-fn rebuild_model_with_connectivity(
-    _document: &MmcifDocument,
-    source: Model,
-    _report: &raw::MmcifInterpretationReport,
-) -> Result<(Model, usize), raw::MmcifInterpretError> {
-    Ok((source, 0))
-}
-
-fn apply_instance_connectivity(
+fn apply_instance_connectivity<'a>(
     graph: &mut Molecule,
-    provenance: &raw::MmcifInstanceProvenance,
+    atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
     catalog: &ConnectivityCatalog,
     source_aromatic_bonds: &mut BTreeSet<crate::core::BondId>,
 ) -> Result<(), raw::MmcifInterpretError> {
-    let residues = residue_atoms(provenance);
+    let residues = residue_atoms(atoms);
     for residue in residues.values() {
         if let Some(template) = catalog
             .component_bonds
@@ -334,17 +219,19 @@ fn apply_instance_connectivity(
     apply_polymer_links(graph, &residues, catalog, source_aromatic_bonds)
 }
 
-fn residue_atoms(provenance: &raw::MmcifInstanceProvenance) -> BTreeMap<ResidueKey, ResidueAtoms> {
+fn residue_atoms<'a>(
+    atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
+) -> BTreeMap<ResidueKey, ResidueAtoms> {
     let mut residues = BTreeMap::new();
-    for atom in provenance.atoms() {
+    for atom in atoms {
         let key = ResidueKey {
-            asym_id: atom.asym_id().to_owned(),
-            entity_id: atom.entity_id().map(str::to_owned),
-            label_sequence_id: atom.label_sequence_id(),
-            author_sequence_id: atom.author_sequence_id().map(str::to_owned),
-            insertion_code: atom.insertion_code().map(str::to_owned),
-            occurrence: atom.occurrence(),
-            component_id: atom.component_id().to_owned(),
+            asym_id: atom.asym_id.to_owned(),
+            entity_id: atom.entity_id.map(str::to_owned),
+            label_sequence_id: atom.label_sequence_id,
+            author_sequence_id: atom.author_sequence_id.map(str::to_owned),
+            insertion_code: atom.insertion_code.map(str::to_owned),
+            occurrence: atom.occurrence,
+            component_id: atom.component_id.to_owned(),
         };
         residues
             .entry(key.clone())
@@ -353,7 +240,7 @@ fn residue_atoms(provenance: &raw::MmcifInstanceProvenance) -> BTreeMap<ResidueK
                 atoms: BTreeMap::new(),
             })
             .atoms
-            .insert(atom.atom_name().to_owned(), atom.atom().atom());
+            .insert(atom.atom_name.to_owned(), atom.atom);
     }
     residues
 }
@@ -548,24 +435,6 @@ fn component_bond_order(
     }
 }
 
-fn rebound_atom_data(
-    source: &AtomData,
-    target: &Arc<Topology>,
-) -> Result<AtomData, raw::MmcifInterpretError> {
-    let mut atom_data = AtomData::new(target);
-    if let Some(occupancies) = source.occupancies() {
-        atom_data
-            .set_occupancies(occupancies)
-            .map_err(interpret_error)?;
-    }
-    if let Some(b_factors) = source.b_factors() {
-        atom_data
-            .set_b_factors(b_factors)
-            .map_err(interpret_error)?;
-    }
-    Ok(atom_data)
-}
-
 fn normalized(value: &str) -> String {
     value.to_ascii_uppercase()
 }
@@ -744,12 +613,13 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             super::super::mmcif_document::MmcifParseOptions::default(),
         )
         .expect("parse peptide");
-        let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
+        let interpretation = raw::interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
             .expect("interpret peptide");
         let graph = interpretation
             .topology()
-            .molecule_for_instance(MoleculeInstanceId::new(0))
-            .expect("peptide instance");
+            .molecule(MoleculeInstanceId::new(0))
+            .expect("peptide instance")
+            .molecule();
         assert_eq!(graph.bond_count(), 7);
         assert_eq!(
             graph
@@ -766,7 +636,6 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             2
         );
         assert!(graph.is_connected());
-        assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
 
     #[test]
@@ -782,7 +651,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             super::super::mmcif_document::MmcifParseOptions::default(),
         )
         .expect("parse gapped peptide");
-        let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
+        let interpretation = raw::interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
             .expect("interpret gapped peptide");
         assert_eq!(interpretation.topology().instance_count(), 2);
         assert!(interpretation
@@ -790,10 +659,10 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             .instances()
             .all(|(instance, _)| interpretation
                 .topology()
-                .molecule_for_instance(instance)
+                .molecule(instance)
                 .expect("partitioned peptide instance")
+                .molecule()
                 .is_connected()));
-        assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
 
     #[test]
@@ -803,17 +672,17 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             super::super::mmcif_document::MmcifParseOptions::default(),
         )
         .expect("parse branch");
-        let interpretation = interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
+        let interpretation = raw::interpret_mmcif(&document, raw::MmcifInterpretOptions::default())
             .expect("interpret branch");
         let graph = interpretation
             .topology()
-            .molecule_for_instance(MoleculeInstanceId::new(0))
-            .expect("branch instance");
+            .molecule(MoleculeInstanceId::new(0))
+            .expect("branch instance")
+            .molecule();
         assert_eq!(graph.bond_count(), 3);
         assert!(graph
             .bonds()
             .all(|(_, bond)| bond.order == BondOrder::Single));
         assert!(graph.is_connected());
-        assert_eq!(interpretation.report().template_bonds_pending(), 0);
     }
 }

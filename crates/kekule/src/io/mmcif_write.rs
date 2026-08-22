@@ -4,10 +4,10 @@ use std::fmt;
 use crate::bio::{Hierarchy, SmcraAtomSite};
 use crate::core::{AtomId, BondOrder, HydrogenDeclaration};
 use crate::geometry::Point3;
+use crate::io::mmcif_interpret::{MmcifEntityKind, MmcifInterpretationReport};
 use crate::structure::Model;
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
-    MoleculeRole,
 };
 use crate::units::ANGSTROM;
 
@@ -38,6 +38,17 @@ pub enum MmcifWriteError {
         molecule: MoleculeInstanceId,
         message: String,
     },
+    MissingEntityClassification(MoleculeInstanceId),
+    DuplicateEntityClassification(MoleculeInstanceId),
+    ConflictingEntityClassifications {
+        molecule: MoleculeInstanceId,
+        classifications: Vec<MmcifEntityKind>,
+    },
+    UnsupportedEntityClassification {
+        molecule: MoleculeInstanceId,
+        classification: String,
+    },
+    UnknownClassifiedMolecule(MoleculeInstanceId),
     DuplicateAsymId(String),
     MissingAtomSite(InstanceAtomId),
     DuplicateAtomSite(InstanceAtomId),
@@ -50,12 +61,6 @@ pub enum MmcifWriteError {
         value: String,
     },
     DuplicateAtomIdentity(InstanceAtomId),
-    ConflictingEntityRoles(MoleculeInstanceId),
-    EntityRolePayloadMismatch(MoleculeInstanceId),
-    UnsupportedMoleculeRole {
-        molecule: MoleculeInstanceId,
-        role: MoleculeRole,
-    },
     UnsupportedAtomField {
         atom: InstanceAtomId,
         field: &'static str,
@@ -90,6 +95,32 @@ impl fmt::Display for MmcifWriteError {
             Self::InvalidHierarchy { molecule, message } => {
                 write!(f, "invalid hierarchy for {molecule}: {message}")
             }
+            Self::MissingEntityClassification(molecule) => write!(
+                f,
+                "{molecule} has no explicit mmCIF entity classification"
+            ),
+            Self::DuplicateEntityClassification(molecule) => write!(
+                f,
+                "mmCIF entity semantics classify {molecule} more than once"
+            ),
+            Self::ConflictingEntityClassifications {
+                molecule,
+                classifications,
+            } => write!(
+                f,
+                "{molecule} has conflicting mmCIF entity classifications {classifications:?}"
+            ),
+            Self::UnsupportedEntityClassification {
+                molecule,
+                classification,
+            } => write!(
+                f,
+                "{molecule} has unsupported mmCIF entity classification `{classification}`"
+            ),
+            Self::UnknownClassifiedMolecule(molecule) => write!(
+                f,
+                "mmCIF entity semantics reference unknown {molecule}"
+            ),
             Self::DuplicateAsymId(id) => {
                 write!(f, "duplicate mmCIF structural-instance ID `{id}`")
             }
@@ -107,18 +138,6 @@ impl fmt::Display for MmcifWriteError {
             Self::DuplicateAtomIdentity(atom) => write!(
                 f,
                 "{atom} duplicates an mmCIF atom identity within one residue"
-            ),
-            Self::ConflictingEntityRoles(molecule) => write!(
-                f,
-                "{molecule} has multiple mmCIF entity-kind roles that cannot be represented losslessly"
-            ),
-            Self::EntityRolePayloadMismatch(molecule) => write!(
-                f,
-                "{molecule} has an mmCIF entity-kind role inconsistent with its Small/Macro payload"
-            ),
-            Self::UnsupportedMoleculeRole { molecule, role } => write!(
-                f,
-                "{molecule} has model role {role:?}, which the foundational mmCIF writer cannot encode losslessly"
             ),
             Self::UnsupportedAtomField { atom, field } => {
                 write!(f, "{atom} has unsupported atom field `{field}`")
@@ -152,6 +171,56 @@ impl fmt::Display for MmcifWriteError {
 
 impl std::error::Error for MmcifWriteError {}
 
+/// Explicit mmCIF entity semantics for generic molecule instances.
+///
+/// Generic [`Model`] and topology state intentionally do not classify
+/// molecules as polymers, branched entities, non-polymers, or water.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MmcifEntityClassifications {
+    kinds: BTreeMap<MoleculeInstanceId, MmcifEntityKind>,
+}
+
+impl MmcifEntityClassifications {
+    pub const fn new() -> Self {
+        Self {
+            kinds: BTreeMap::new(),
+        }
+    }
+
+    /// Assigns one explicit mmCIF entity kind to a molecule instance.
+    pub fn insert(
+        &mut self,
+        molecule: MoleculeInstanceId,
+        kind: MmcifEntityKind,
+    ) -> Result<(), MmcifWriteError> {
+        if self.kinds.contains_key(&molecule) {
+            return Err(MmcifWriteError::DuplicateEntityClassification(molecule));
+        }
+        self.kinds.insert(molecule, kind);
+        Ok(())
+    }
+
+    /// Returns the assigned kind for one molecule instance.
+    pub fn get(&self, molecule: MoleculeInstanceId) -> Option<&MmcifEntityKind> {
+        self.kinds.get(&molecule)
+    }
+
+    /// Iterates over explicitly classified molecule instances in ID order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (MoleculeInstanceId, &MmcifEntityKind)> {
+        self.kinds.iter().map(|(&molecule, kind)| (molecule, kind))
+    }
+
+    /// Returns the number of explicitly classified molecule instances.
+    pub fn len(&self) -> usize {
+        self.kinds.len()
+    }
+
+    /// Returns whether no molecule instance has been classified.
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EntityKind {
     Polymer,
@@ -172,8 +241,8 @@ impl EntityKind {
 
     const fn default_group_pdb(self) -> &'static str {
         match self {
-            Self::Polymer | Self::Branched => "ATOM",
-            Self::NonPolymer | Self::Water => "HETATM",
+            Self::Polymer => "ATOM",
+            Self::Branched | Self::NonPolymer | Self::Water => "HETATM",
         }
     }
 }
@@ -233,7 +302,41 @@ pub fn write_mmcif_model(
     options: MmcifWriteOptions,
 ) -> Result<String, MmcifWriteError> {
     validate_options(&options)?;
-    let prepared = prepare_model(model)?;
+    let classifications = normalize_entity_classifications(model, std::iter::empty())?;
+    let prepared = prepare_model(model, &classifications)?;
+    render_model(&prepared, &options)
+}
+
+pub fn write_mmcif_model_with_classifications(
+    model: &Model,
+    classifications: &MmcifEntityClassifications,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    validate_options(&options)?;
+    let classifications = normalize_entity_classifications(
+        model,
+        classifications
+            .iter()
+            .map(|(molecule, kind)| (molecule, vec![kind.clone()])),
+    )?;
+    let prepared = prepare_model(model, &classifications)?;
+    render_model(&prepared, &options)
+}
+
+pub fn write_mmcif_model_with_report(
+    model: &Model,
+    report: &MmcifInterpretationReport,
+    options: MmcifWriteOptions,
+) -> Result<String, MmcifWriteError> {
+    validate_options(&options)?;
+    let classifications = normalize_entity_classifications(
+        model,
+        report
+            .instances()
+            .iter()
+            .map(|instance| (instance.molecule(), instance.entity_kinds().to_vec())),
+    )?;
+    let prepared = prepare_model(model, &classifications)?;
     render_model(&prepared, &options)
 }
 
@@ -256,7 +359,10 @@ fn validate_options(options: &MmcifWriteOptions) -> Result<(), MmcifWriteError> 
     Ok(())
 }
 
-fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
+fn prepare_model(
+    model: &Model,
+    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
+) -> Result<PreparedModel, MmcifWriteError> {
     let mut reserved_asym_ids = BTreeSet::new();
     for (id, molecule) in model.topology().instances() {
         let definition = model
@@ -310,7 +416,7 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
             .map_err(|error| MmcifWriteError::InvalidModel(error.to_string()))?;
         validate_graph_chemistry(molecule, definition)?;
         let entity_id = one_based_serial(id.raw()).to_string();
-        let kind = entity_kind(molecule, definition)?;
+        let kind = entity_kind(molecule, classifications)?;
         entities.push(EntityRow {
             id: entity_id.clone(),
             kind,
@@ -379,54 +485,57 @@ fn prepare_model(model: &Model) -> Result<PreparedModel, MmcifWriteError> {
 
 fn entity_kind(
     molecule: &MoleculeInstance,
-    definition: &MoleculeDefinition,
+    classifications: &BTreeMap<MoleculeInstanceId, EntityKind>,
 ) -> Result<EntityKind, MmcifWriteError> {
-    for role in [MoleculeRole::Ligand, MoleculeRole::Cofactor] {
-        if molecule.has_role(role) {
-            return Err(MmcifWriteError::UnsupportedMoleculeRole {
-                molecule: molecule.id(),
-                role,
-            });
+    classifications
+        .get(&molecule.id())
+        .copied()
+        .ok_or(MmcifWriteError::MissingEntityClassification(molecule.id()))
+}
+
+fn normalize_entity_classifications(
+    model: &Model,
+    entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<MmcifEntityKind>)>,
+) -> Result<BTreeMap<MoleculeInstanceId, EntityKind>, MmcifWriteError> {
+    let mut classifications = BTreeMap::new();
+    for (molecule, source_kinds) in entries {
+        if model.topology().instance(molecule).is_err() {
+            return Err(MmcifWriteError::UnknownClassifiedMolecule(molecule));
+        }
+        let kinds = source_kinds
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let kind = match kinds.as_slice() {
+            [MmcifEntityKind::Polymer] => EntityKind::Polymer,
+            [MmcifEntityKind::Branched] => EntityKind::Branched,
+            [MmcifEntityKind::NonPolymer] => EntityKind::NonPolymer,
+            [MmcifEntityKind::Water] => EntityKind::Water,
+            [MmcifEntityKind::Other(classification)] => {
+                return Err(MmcifWriteError::UnsupportedEntityClassification {
+                    molecule,
+                    classification: classification.clone(),
+                });
+            }
+            [] => return Err(MmcifWriteError::MissingEntityClassification(molecule)),
+            _ => {
+                return Err(MmcifWriteError::ConflictingEntityClassifications {
+                    molecule,
+                    classifications: kinds,
+                });
+            }
+        };
+        if classifications.insert(molecule, kind).is_some() {
+            return Err(MmcifWriteError::DuplicateEntityClassification(molecule));
         }
     }
-    let inferred_ion = definition.molecule().atom_count() == 1
-        && definition
-            .molecule()
-            .atoms()
-            .next()
-            .is_some_and(|(_, atom)| atom.formal_charge != 0);
-    if molecule.has_role(MoleculeRole::Ion) != inferred_ion {
-        return Err(MmcifWriteError::UnsupportedMoleculeRole {
-            molecule: molecule.id(),
-            role: MoleculeRole::Ion,
-        });
+    for (molecule, _) in model.topology().instances() {
+        if !classifications.contains_key(&molecule) {
+            return Err(MmcifWriteError::MissingEntityClassification(molecule));
+        }
     }
-    let primary = [
-        MoleculeRole::Polymer,
-        MoleculeRole::Branched,
-        MoleculeRole::NonPolymer,
-        MoleculeRole::Solvent,
-    ]
-    .into_iter()
-    .filter(|role| molecule.has_role(*role))
-    .collect::<Vec<_>>();
-    if primary.len() > 1 {
-        return Err(MmcifWriteError::ConflictingEntityRoles(molecule.id()));
-    }
-    let kind = match primary.first().copied() {
-        Some(MoleculeRole::Polymer) => EntityKind::Polymer,
-        Some(MoleculeRole::Branched) => EntityKind::Branched,
-        Some(MoleculeRole::NonPolymer) => EntityKind::NonPolymer,
-        Some(MoleculeRole::Solvent) => EntityKind::Water,
-        Some(_) => unreachable!("primary roles are exhaustive"),
-        None if definition.hierarchy().is_some() => EntityKind::Polymer,
-        None => EntityKind::NonPolymer,
-    };
-    let macro_kind = matches!(kind, EntityKind::Polymer | EntityKind::Branched);
-    if macro_kind != definition.hierarchy().is_some() {
-        return Err(MmcifWriteError::EntityRolePayloadMismatch(molecule.id()));
-    }
-    Ok(kind)
+    Ok(classifications)
 }
 
 fn validate_graph_chemistry(

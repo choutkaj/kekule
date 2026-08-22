@@ -1,7 +1,6 @@
 mod mmcif_connectivity;
 mod mmcif_document;
 mod mmcif_interpret;
-mod mmcif_partition;
 mod mmcif_write;
 mod sdf_document;
 mod smiles;
@@ -10,14 +9,12 @@ mod v2000;
 mod v3000;
 
 pub use mmcif_document::*;
+pub(crate) use mmcif_interpret::{interpret_mmcif, interpret_mmcif_ensemble};
 pub use mmcif_interpret::{
     MmcifAltLocPolicy, MmcifAtomProvenance, MmcifConnectionResolutionReason,
-    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEntityKind,
-    MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue, MmcifInterpretOptions,
-    MmcifInterpretationReport, MmcifModelSelection,
-};
-pub use mmcif_partition::{
-    interpret_mmcif, interpret_mmcif_ensemble, MmcifEnsembleInterpretation, MmcifInterpretation,
+    MmcifEnsembleInterpretError, MmcifEnsembleInterpretOptions, MmcifEnsembleInterpretation,
+    MmcifEntityKind, MmcifInstanceProvenance, MmcifInterpretError, MmcifInterpretIssue,
+    MmcifInterpretOptions, MmcifInterpretation, MmcifInterpretationReport, MmcifModelSelection,
 };
 pub use mmcif_write::*;
 pub use sdf_document::*;

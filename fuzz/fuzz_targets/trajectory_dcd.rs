@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 
 use libfuzzer_sys::fuzz_target;
 use kekule::core::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::topology::{MoleculeInstanceMetadata, Topology, TopologyBuilder};
+use kekule::topology::{Topology, TopologyBuilder};
 use kekule_traj::{AtomOrderAssertion, FrameBuffer, TrajectoryReader};
 use kekule_traj::io::dcd::{DcdReadOptions, DcdReader};
 use kekule_traj::io::{TrajectoryIoLimits, TrajectoryTopologyBinding};
@@ -32,7 +32,7 @@ fn topology() -> &'static Arc<Topology> {
             .add_molecule_definition(&molecule)
             .expect("definition");
         builder
-            .add_instance(definition, MoleculeInstanceMetadata::default())
+            .add_instance(definition)
             .expect("instance");
         Arc::new(builder.build().expect("topology"))
     })

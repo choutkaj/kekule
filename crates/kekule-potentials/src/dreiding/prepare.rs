@@ -23,7 +23,6 @@ pub(crate) const COULOMB_KJ_ANGSTROM_PER_MOL_E2: f64 = 1_389.354_576_443_82;
 pub enum QeqGrouping {
     WholeTopology,
     MoleculeInstances,
-    ConnectedComponents,
 }
 
 /// Explicit DREIDING preparation policy.
@@ -177,29 +176,13 @@ impl PreparedInput {
         let selections = match grouping {
             QeqGrouping::WholeTopology => vec![(None, whole_atoms)],
             QeqGrouping::MoleculeInstances => topology
-                .instances()
-                .map(|(id, _)| {
-                    let atoms = topology
-                        .molecule_for_instance(id)
-                        .expect("validated topology instance")
-                        .atom_ids()
-                        .map(|atom| InstanceAtomId::new(id, atom))
-                        .collect();
+                .molecules()
+                .map(|molecule| {
+                    let id = molecule.id();
+                    let atoms = molecule.atoms().map(|(atom, _)| atom).collect();
                     (Some(id), atoms)
                 })
                 .collect(),
-            QeqGrouping::ConnectedComponents => {
-                let mut selections = Vec::new();
-                for (id, _) in topology.instances() {
-                    for component in topology
-                        .connected_components(id)
-                        .expect("validated topology instance")
-                    {
-                        selections.push((Some(id), component));
-                    }
-                }
-                selections
-            }
         };
         let groups = selections
             .into_iter()
