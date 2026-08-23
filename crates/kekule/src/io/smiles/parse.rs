@@ -22,6 +22,16 @@ impl SmilesDocument {
     pub fn component_token_ranges(&self) -> &[Range<usize>] {
         &self.components
     }
+
+    /// Interprets this source document as connected canonical molecules.
+    ///
+    /// Dot-delimited components remain separate and no chemical perception is
+    /// run implicitly.
+    pub fn to_molecules(
+        &self,
+    ) -> Result<Vec<crate::core::Molecule>, super::interpret::SmilesInterpretError> {
+        Ok(super::interpret::interpret_smiles_document(self)?.to_molecules())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

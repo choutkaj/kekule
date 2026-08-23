@@ -135,8 +135,8 @@ pub mod molfile {
     pub use crate::io::{
         MolWriteError, MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader,
         MolfileInterpretError, MolfileInterpretation, MolfileInterpretationReport,
-        MolfileInterpretationWarning, MolfileLine, MolfileParseError, MolfileParseOptions,
-        MolfileVersion,
+        MolfileInterpretationWarning, MolfileLine, MolfileModelError, MolfileParseError,
+        MolfileParseOptions, MolfileVersion,
     };
 
     use crate::core::Molecule;
@@ -170,8 +170,8 @@ pub mod molfile {
 pub mod sdf {
     pub use crate::io::{
         MolWriteError, SdfDataField, SdfDocument, SdfInterpretError, SdfInterpretation,
-        SdfInterpretationReport, SdfParseError, SdfParseOptions, SdfRecord, SdfRecordDocument,
-        SdfRecordInterpretationReport,
+        SdfInterpretationReport, SdfModelError, SdfParseError, SdfParseOptions, SdfRecord,
+        SdfRecordInterpretation, SdfRecordInterpretationReport,
     };
 
     pub fn parse_str(input: &str, options: SdfParseOptions) -> Result<SdfDocument, SdfParseError> {
@@ -182,7 +182,7 @@ pub mod sdf {
         crate::io::interpret_sdf_document(document)
     }
 
-    pub fn write_v2000(records: &[SdfRecord]) -> Result<String, MolWriteError> {
+    pub fn write_v2000(records: &[SdfRecordInterpretation]) -> Result<String, MolWriteError> {
         crate::io::write_sdf_v2000(records)
     }
 }

@@ -8,6 +8,7 @@ use crate::core::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Conformer, Element, HydrogenDeclaration,
     Molecule, MoleculeEditor, StereoElementId,
 };
+use crate::structure::{Model, ModelBuildError, ModelBuilder};
 
 use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax, V2000Syntax};
 use super::v3000::{interpret_v3000_syntax, parse_v3000_syntax, V3000Syntax};
@@ -236,6 +237,22 @@ impl MolfileDocument {
     pub fn unsupported_records(&self) -> &[MolfileLine] {
         &self.unsupported_records
     }
+
+    /// Interprets this source document as connected canonical molecules.
+    ///
+    /// Coordinates may participate in source-stereo normalization, but are not
+    /// retained in the returned molecules. No chemical perception is run.
+    pub fn to_molecules(&self) -> Result<Vec<Molecule>, MolfileInterpretError> {
+        Ok(interpret_molfile_document(self)?.to_molecules())
+    }
+
+    /// Interprets this source document as one geometry-bearing model.
+    ///
+    /// Each disconnected source component becomes one molecule instance in
+    /// the model topology. No chemical perception is run.
+    pub fn to_model(&self) -> Result<Model, MolfileModelError> {
+        Ok(interpret_molfile_document(self)?.to_model()?)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,6 +324,44 @@ impl From<SdfParseError> for MolfileInterpretError {
             line: error.line,
             message: error.message,
         }
+    }
+}
+
+/// Failure to interpret a Molfile and assemble its matching model geometry.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum MolfileModelError {
+    Interpretation(MolfileInterpretError),
+    ModelBuild(Box<ModelBuildError>),
+}
+
+impl fmt::Display for MolfileModelError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interpretation(error) => error.fmt(formatter),
+            Self::ModelBuild(error) => write!(formatter, "could not build Molfile model: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for MolfileModelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Interpretation(error) => Some(error),
+            Self::ModelBuild(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+impl From<MolfileInterpretError> for MolfileModelError {
+    fn from(error: MolfileInterpretError) -> Self {
+        Self::Interpretation(error)
+    }
+}
+
+impl From<ModelBuildError> for MolfileModelError {
+    fn from(error: ModelBuildError) -> Self {
+        Self::ModelBuild(Box::new(error))
     }
 }
 
@@ -410,11 +465,21 @@ impl MolfileInterpretation {
     pub fn to_components(self) -> Vec<MolfileComponentInterpretation> {
         self.components
     }
+
+    /// Assembles all interpreted components and their matching geometry into one model.
+    pub fn to_model(self) -> Result<Model, ModelBuildError> {
+        let mut builder = ModelBuilder::new();
+        for component in self.components {
+            builder.add_molecule(&component.molecule, &component.conformer)?;
+        }
+        builder.build()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileComponentInterpretation {
     molecule: Molecule,
+    conformer: Conformer,
     report: MolfileInterpretationReport,
 }
 
@@ -425,6 +490,11 @@ impl MolfileComponentInterpretation {
 
     pub fn report(&self) -> &MolfileInterpretationReport {
         &self.report
+    }
+
+    /// Geometry matched to the canonical atom identities in [`Self::molecule`].
+    pub fn conformer(&self) -> &Conformer {
+        &self.conformer
     }
 
     pub fn to_molecule(self) -> Molecule {
@@ -686,6 +756,7 @@ pub fn interpret_molfile_document(
             .collect();
         components.push(MolfileComponentInterpretation {
             molecule,
+            conformer: raw.geometry,
             report: MolfileInterpretationReport {
                 atom_mappings,
                 bond_mappings,

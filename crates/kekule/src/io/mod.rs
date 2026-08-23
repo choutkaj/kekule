@@ -29,7 +29,7 @@ pub use structure_documents::{
     interpret_molfile_document, parse_molfile_document, parse_molfile_document_with_options,
     MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
     MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine,
-    MolfileParseError, MolfileParseOptions, MolfileVersion,
+    MolfileModelError, MolfileParseError, MolfileParseOptions, MolfileVersion,
 };
 pub use v2000::*;
 pub use v3000::*;

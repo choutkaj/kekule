@@ -122,14 +122,14 @@ pub(super) fn read_molfile_with_report(
 
 pub(super) fn read_sdf_records(
     input: &str,
-) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
+) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     read_sdf_records_with_options(input, SdfParseOptions::default())
 }
 
 pub(super) fn read_sdf_records_with_options(
     input: &str,
     options: SdfParseOptions,
-) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
+) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     let document = sdf::parse_str(input, options)?;
     Ok(sdf::interpret(&document)?.to_records())
 }
@@ -203,7 +203,7 @@ pub(super) trait SdfRecordTestExt {
     fn molecule(&self) -> &Molecule;
 }
 
-impl SdfRecordTestExt for SdfRecord {
+impl SdfRecordTestExt for SdfRecordInterpretation {
     fn molecule(&self) -> &Molecule {
         assert_eq!(
             self.molecules().len(),

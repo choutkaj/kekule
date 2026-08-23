@@ -22,7 +22,7 @@ pub(crate) fn implementation_expected(
                         .into_iter()
                         .map(|(name, value)| SdfDataField::new(name, value))
                         .collect();
-                    SdfRecord::new(record.title, vec![record.molecule], fields)
+                    SdfRecordInterpretation::new(record.title, vec![record.molecule], fields)
                 })
                 .collect::<Vec<_>>();
             let written = sdf::write_v2000(&records)?;
@@ -586,7 +586,7 @@ pub(crate) fn read_small_records_by_suffix(
         .collect())
 }
 
-pub(crate) fn small_record(index: usize, record: SdfRecord) -> IndexedSmallRecord {
+pub(crate) fn small_record(index: usize, record: SdfRecordInterpretation) -> IndexedSmallRecord {
     let title = record.title().to_owned();
     let sdf_fields = record
         .data_fields()
@@ -607,7 +607,7 @@ fn interpret_molfile(input: &str) -> Result<Molecule, Box<dyn Error>> {
     exactly_one_molecule(molfile::interpret(&document)?.to_molecules())
 }
 
-fn interpret_sdf(input: &str) -> Result<Vec<SdfRecord>, Box<dyn Error>> {
+fn interpret_sdf(input: &str) -> Result<Vec<SdfRecordInterpretation>, Box<dyn Error>> {
     let document = sdf::parse_str(input, SdfParseOptions::default())?;
     Ok(sdf::interpret(&document)?.to_records())
 }
