@@ -1,9 +1,9 @@
 #![cfg(feature = "dreiding")]
 
-use kekule::core::{Atom, AtomId, BondOrder, Conformer, Element};
+use kekule::core::{Atom, AtomId, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{Potential, PotentialError};
-use kekule::structure::Model;
+use kekule::structure::{Model, Positions};
 use kekule::topology::{InstanceAtomId, MoleculeInstanceId};
 use kekule_potentials::dreiding::{
     DreidingPotential, DreidingPrepareError, DreidingPrepareOptions,
@@ -26,31 +26,18 @@ fn downstream_preparation_and_evaluation() {
     graph
         .add_bond(oxygen, second_hydrogen, BondOrder::Single)
         .unwrap();
-    let mut conformer = Conformer::new(kekule::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            oxygen,
-            kekule::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), kekule::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            first_hydrogen,
-            kekule::units::Quantity::new(Point3::new(0.9575, 0.0, 0.0), kekule::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            second_hydrogen,
-            kekule::units::Quantity::new(
-                Point3::new(-0.2399, 0.9272, 0.0),
-                kekule::units::ANGSTROM,
-            ),
-        )
-        .unwrap();
+    let positions = Positions::new(kekule::units::Quantity::new(
+        vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(0.9575, 0.0, 0.0),
+            Point3::new(-0.2399, 0.9272, 0.0),
+        ],
+        kekule::units::ANGSTROM,
+    ))
+    .unwrap();
     let molecule = graph.finish().unwrap();
-    let model = Model::from_molecule(&molecule, &conformer).unwrap();
-    let independently_built = Model::from_molecule(&molecule, &conformer).unwrap();
+    let model = Model::from_molecule(&molecule, &positions).unwrap();
+    let independently_built = Model::from_molecule(&molecule, &positions).unwrap();
     let mut periodic = model.clone();
     periodic.set_cell(Some(
         PeriodicCell::orthorhombic(

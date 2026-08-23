@@ -3,11 +3,13 @@ use std::fmt;
 
 use crate::bio::{Hierarchy, SmcraAtomSiteMetadata};
 use crate::chemistry::canonicalize_molecule_for_publication;
-use crate::core::{Atom, AtomId, Conformer, Molecule, MoleculeEditor};
+use crate::core::{Atom, AtomId, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
+use crate::structure::Positions;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
+use super::super::staged_coordinates::StagedCoordinates;
 use super::super::MmcifDataBlock;
 use super::atom_site::{optional, AtomRow};
 use super::struct_conn::{DeclaredConnection, InstanceUnion};
@@ -80,13 +82,13 @@ pub(super) fn group_rows(
 
 pub(super) struct BuiltMolecule {
     pub(super) editor: MoleculeEditor,
-    pub(super) conformer: Conformer,
+    pub(super) coordinates: StagedCoordinates,
     pub(super) provenance: BuiltMoleculeProvenance,
 }
 
 pub(super) struct PublishedMolecule {
     pub(super) molecule: Molecule,
-    pub(super) conformer: Conformer,
+    pub(super) positions: Positions,
     pub(super) provenance: BuiltMoleculeProvenance,
 }
 
@@ -223,18 +225,20 @@ impl BuiltMolecule {
                 .clone_from(self.editor.working().props());
             *editor.hierarchy_mut() = extract_hierarchy(self.editor.hierarchy(), &atom_map)?;
 
-            let mut conformer = Conformer::new(self.conformer.unit()).map_err(graph_error)?;
-            conformer.props_mut().clone_from(self.conformer.props());
+            let mut coordinates =
+                StagedCoordinates::with_atom_capacity(component.len(), self.coordinates.unit())
+                    .map_err(graph_error)?;
             for (source_atom, target_atom) in &atom_map {
-                if let Some(point) = self.conformer.position(*source_atom) {
-                    conformer
+                if let Some(point) = self.coordinates.position(*source_atom) {
+                    coordinates
                         .set_position(*target_atom, point)
                         .map_err(graph_error)?;
                 }
             }
-            canonicalize_molecule_for_publication(editor.working_mut(), Some(&conformer), &[])
+            canonicalize_molecule_for_publication(editor.working_mut(), Some(&coordinates), &[])
                 .map_err(graph_error)?;
             let molecule = editor.finish().map_err(graph_error)?;
+            let positions = coordinates.to_positions(&molecule).map_err(graph_error)?;
             let mut provenance = self.provenance.clone();
             provenance
                 .atoms
@@ -244,7 +248,7 @@ impl BuiltMolecule {
             }
             published.push(PublishedMolecule {
                 molecule,
-                conformer,
+                positions,
                 provenance,
             });
         }
@@ -294,7 +298,8 @@ pub(super) fn build_molecule(
         .first()
         .map(|row| row.model_id.clone())
         .ok_or_else(|| MmcifInterpretError::new(None, "empty molecule group"))?;
-    let mut conformer = Conformer::new(ANGSTROM).expect("angstrom is a length unit");
+    let mut coordinates =
+        StagedCoordinates::with_atom_capacity(atoms.len(), ANGSTROM).map_err(graph_error)?;
     for row in &group.rows {
         let point = row.point.ok_or_else(|| {
             MmcifInterpretError::new(
@@ -305,9 +310,9 @@ pub(super) fn build_molecule(
                 ),
             )
         })?;
-        conformer
+        coordinates
             .set_position(atoms[&row.atom_key()], Quantity::new(point, ANGSTROM))
-            .expect("matching coordinate units");
+            .map_err(graph_error)?;
     }
     for connection in connections {
         let Some(&left) = atoms.get(&connection.left_atom) else {
@@ -397,7 +402,7 @@ pub(super) fn build_molecule(
     }
     Ok(BuiltMolecule {
         editor,
-        conformer,
+        coordinates,
         provenance,
     })
 }

@@ -92,7 +92,7 @@ fn interpret_block(
         built.complete_connectivity(block)?;
         for built in built.publish_components()? {
             let id = builder
-                .add_molecule(&built.molecule, &built.conformer)
+                .add_molecule(&built.molecule, &built.positions)
                 .map_err(graph_error)?;
             let (provenance, atom_data) = built.provenance.qualify(id);
             report.instances.push(provenance);

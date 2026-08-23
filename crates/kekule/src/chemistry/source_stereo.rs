@@ -12,6 +12,7 @@ use super::normalization::{
     NormalizationReport, NormalizationWarning, SourceStereoNormalizationError,
     SourceStereoNormalizationIssue,
 };
+use super::AtomPositionSource;
 
 /// One detached source-format bond stereo assertion awaiting interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +47,7 @@ pub(crate) enum SourceStereoBondMarkKind {
 /// drawing geometry decoded; it never infers stereo from unmarked coordinates.
 pub(super) fn normalize_source_stereo(
     molecule: &mut Molecule,
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     source_marks: &[SourceStereoBondMark],
 ) -> std::result::Result<NormalizationReport, SourceStereoNormalizationError> {
     validate_stereo(molecule).map_err(source_validation_error)?;
@@ -279,7 +280,7 @@ fn source_validation_error(error: StereoValidationError) -> SourceStereoNormaliz
 
 fn assemble_tetrahedral_wedges(
     molecule: &Molecule,
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     source_marks: &[SourceStereoBondMark],
     warnings: &mut Vec<NormalizationWarning>,
     used_marks: &mut Vec<BondId>,
@@ -406,7 +407,7 @@ fn stable_tetrahedral_lone_pair_center(symbol: &str) -> bool {
 
 fn tetrahedral_element_from_wedge(
     molecule: &Molecule,
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     mark: &SourceStereoBondMark,
     center: AtomId,
     carriers: Vec<StereoCarrier>,
@@ -436,12 +437,12 @@ fn tetrahedral_element_from_wedge(
 
 fn tetrahedral_wedge_orientation(
     _molecule: &Molecule,
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     center: AtomId,
     carriers: &[StereoCarrier],
     kind: SourceStereoBondMarkKind,
 ) -> Option<TetrahedralOrientation> {
-    let conformer = geometry?;
+    let coordinates = geometry?;
     let out_of_plane = match kind {
         SourceStereoBondMarkKind::WedgeUp => 1.0,
         SourceStereoBondMarkKind::WedgeDown => -1.0,
@@ -455,7 +456,7 @@ fn tetrahedral_wedge_orientation(
         })
         .collect::<Option<Vec<_>>>()
     {
-        let mut points = tetrahedral_points(conformer, center, &atom_carriers)?;
+        let mut points = tetrahedral_points(coordinates, center, &atom_carriers)?;
         if !coordinates_are_planar(&points) {
             return tetrahedral_orientation_from_points(points);
         }
@@ -463,7 +464,7 @@ fn tetrahedral_wedge_orientation(
         return tetrahedral_orientation_from_points(points);
     }
     let points = tetrahedral_points_with_virtual_declared_hydrogen(
-        conformer,
+        coordinates,
         center,
         carriers,
         out_of_plane,
@@ -472,7 +473,7 @@ fn tetrahedral_wedge_orientation(
 }
 
 fn tetrahedral_points_with_virtual_declared_hydrogen(
-    conformer: &Conformer,
+    coordinates: &dyn AtomPositionSource,
     center: AtomId,
     carriers: &[StereoCarrier],
     out_of_plane: f64,
@@ -493,11 +494,11 @@ fn tetrahedral_points_with_virtual_declared_hydrogen(
         return None;
     }
 
-    let center_point = conformer.position_value(center)?;
+    let center_point = coordinates.position_value(center)?;
     let mut carrier_points = [None; 4];
     for (index, carrier) in carriers.iter().enumerate() {
         if let StereoCarrier::Atom(atom) = carrier {
-            carrier_points[index] = Some(conformer.position_value(*atom)?);
+            carrier_points[index] = Some(coordinates.position_value(*atom)?);
         }
     }
 
@@ -524,7 +525,7 @@ fn tetrahedral_points_with_virtual_declared_hydrogen(
 
 fn assemble_atropisomeric_axes(
     molecule: &Molecule,
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     ring_membership: &RingMembership,
     source_marks: &[SourceStereoBondMark],
     used_marks: &mut Vec<BondId>,
@@ -561,7 +562,7 @@ fn assemble_atropisomeric_axes(
 
 fn atropisomeric_axis_candidates(
     molecule: &Molecule,
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     ring_membership: &RingMembership,
     mark: &SourceStereoBondMark,
 ) -> Vec<(BondId, StereoElement)> {
@@ -606,7 +607,7 @@ fn atropisomeric_axis_candidates(
 
 fn atropisomeric_axis_candidate(
     molecule: &Molecule,
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     ring_membership: &RingMembership,
     mark: &SourceStereoBondMark,
     axis: (BondId, &Bond),
@@ -688,7 +689,7 @@ fn source_atom_is_atropisomeric_sp2_endpoint(
 }
 
 fn axis_orientation_from_wedge(
-    geometry: Option<&Conformer>,
+    geometry: Option<&dyn AtomPositionSource>,
     axis_bond: &Bond,
     left_reference: AtomId,
     right_reference: AtomId,
@@ -696,14 +697,14 @@ fn axis_orientation_from_wedge(
     marked_carrier: AtomId,
     kind: SourceStereoBondMarkKind,
 ) -> Option<AxisOrientation> {
-    let conformer = geometry?;
+    let coordinates = geometry?;
     let (left, right) = axis_bond.endpoints();
-    let left_point = conformer.position_value(left)?;
-    let right_point = conformer.position_value(right)?;
-    let mut left_reference_point = conformer.position_value(left_reference)?;
-    let mut right_reference_point = conformer.position_value(right_reference)?;
-    let marked_endpoint_point = conformer.position_value(marked_endpoint)?;
-    let marked_point = conformer.position_value(marked_carrier)?;
+    let left_point = coordinates.position_value(left)?;
+    let right_point = coordinates.position_value(right)?;
+    let mut left_reference_point = coordinates.position_value(left_reference)?;
+    let mut right_reference_point = coordinates.position_value(right_reference)?;
+    let marked_endpoint_point = coordinates.position_value(marked_endpoint)?;
+    let marked_point = coordinates.position_value(marked_carrier)?;
     let coordinate_points = [
         left_point,
         right_point,

@@ -260,20 +260,16 @@ fn aromaticity_perception_preserves_complete_primary_representation() {
         .expect("first bond")
         .props
         .insert("source".to_owned(), PropValue::Bool(true));
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).expect("length unit");
-    for atom_id in molecule.atom_ids() {
-        conformer
-            .set_position(
-                atom_id,
-                crate::units::Quantity::new(
-                    Point3::new(atom_id.index() as f64, 0.0, 0.0),
-                    crate::units::ANGSTROM,
-                ),
-            )
-            .expect("valid position");
-    }
+    let positions = crate::structure::Positions::new(crate::units::Quantity::new(
+        molecule
+            .atom_ids()
+            .map(|atom_id| Point3::new(atom_id.index() as f64, 0.0, 0.0))
+            .collect::<Vec<_>>(),
+        crate::units::ANGSTROM,
+    ))
+    .expect("valid positions");
     assert!(molecule.stereo_elements().next().is_some());
-    assert_eq!(conformer.positions().count(), molecule.atom_count());
+    assert_eq!(positions.len(), molecule.atom_count());
     valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike)
         .expect("valence perception");
 

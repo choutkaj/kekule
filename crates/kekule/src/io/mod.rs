@@ -4,6 +4,7 @@ mod mmcif_interpret;
 mod mmcif_write;
 mod sdf_document;
 mod smiles;
+mod staged_coordinates;
 mod structure_documents;
 mod v2000;
 mod v3000;
@@ -29,7 +30,7 @@ pub use structure_documents::{
     interpret_molfile_document, parse_molfile_document, parse_molfile_document_with_options,
     MolfileAtomMapping, MolfileBondMapping, MolfileDocument, MolfileHeader, MolfileInterpretError,
     MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning, MolfileLine,
-    MolfileParseError, MolfileParseOptions, MolfileVersion,
+    MolfileModelError, MolfileParseError, MolfileParseOptions, MolfileVersion,
 };
 pub use v2000::*;
 pub use v3000::*;
