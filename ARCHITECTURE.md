@@ -18,14 +18,15 @@ molecule instances. Geometry belongs above topology.
 
 ```text
 source text / bytes
-    -> format-specific parsing / interpretation
-    -> Vec<Molecule>
-         each Molecule is one connected component
-    -> optional Topology construction
-         one or more Molecule instances
-    -> Model      = one Topology + one geometric realization
-       Ensemble   = one Topology + finite non-temporal realizations
-       Trajectory = one Topology + ordered temporal realizations
+    -> format-specific parsing
+    -> FormatDocument
+         -> optional format-specific Record values for record-oriented formats
+    -> interpretation / canonical publication
+         -> connected canonical Molecule components
+              -> Vec<Molecule> when geometry is not requested or retained
+              -> Topology + Positions -> Model when one record carries geometry
+              -> higher geometry objects such as Ensemble when the format
+                 semantically contains several realizations of one topology
 ```
 
 The intended ownership hierarchy is therefore:
@@ -377,7 +378,53 @@ editor and thereby bypass publication validation.
 
 ## Parsing and interpretation
 
-### Component output
+### Two-stage format boundary
+
+Kekule uses a two-stage input architecture:
+
+```text
+source text / bytes
+    -> parse
+format-specific Document
+    -> optional format-specific Record selection
+    -> interpret / canonicalize
+canonical Kekule domain objects
+```
+
+Parsing preserves source-format structure and syntax. Interpretation is the
+boundary that translates those source assertions into Kekule's canonical domain
+model.
+
+A `Document` is format-specific. It may retain syntax, source locations,
+metadata, coordinates, unsupported records, data blocks, or other information
+required for faithful interpretation and diagnostics. It is not itself a
+canonical chemistry object.
+
+Record-oriented formats should expose explicit format-specific record values.
+A record is the semantic unit that can be interpreted independently. Formats
+that intrinsically represent one record do not need an additional public record
+wrapper merely for uniformity.
+
+Conceptually:
+
+```text
+SmilesDocument
+  one molecular record
+
+MolfileDocument
+  one molecular record
+
+SdfDocument
+  records: Vec<SdfRecord>
+
+SdfRecord
+  one independently interpretable SDF record
+```
+
+The exact representation of more complex formats such as mmCIF may follow their
+native structure rather than being forced into this simple record shape.
+
+### Component output and `to_molecules`
 
 The canonical molecule-producing result for one molecular record is:
 
@@ -385,10 +432,8 @@ The canonical molecule-producing result for one molecular record is:
 Result<Vec<Molecule>>
 ```
 
-Every returned element is one valid connected molecule.
-
-Disconnected source syntax is partitioned rather than represented as a
-disconnected `Molecule`.
+Every returned element is one valid connected molecule. Disconnected source
+syntax is partitioned rather than represented as a disconnected `Molecule`.
 
 Examples:
 
@@ -403,35 +448,129 @@ does not carry a semantic guarantee that it is the chemically "main" component.
 A caller may choose the first component if that is its desired policy, or apply
 an explicit largest/organic/main-component policy separately.
 
-A caller that wants a multi-molecule system subsequently assembles a `Topology`
-from the returned molecules.
+At the parsing/interpretation boundary, an owned conversion that returns
+`Vec<Molecule>` should be named `to_molecules()`, not `to_molecule()`. A
+`to_molecule()` API is appropriate only where the input type or operation
+actually guarantees exactly one connected molecule.
 
-### Parsing versus source documents
+### Multi-record formats
 
-Format parsers may internally or publicly retain format-specific `Document` or
-record representations when required for faithful syntax, metadata, coordinates,
-or streaming. The architecture requirement is that the canonical
-chemistry-producing boundary publishes connected `Vec<Molecule>` values, never
-a disconnected molecule.
+Multi-record formats must preserve record boundaries rather than flattening all
+components from an entire source into one undifferentiated vector.
 
-Multi-record formats should preserve record boundaries, for example as a
-stream/iterator whose per-record molecular result is `Vec<Molecule>` rather than
-flattening every component of an entire file into one undifferentiated vector.
+For SDF, the intended public structure is:
 
-### Coordinate-bearing formats
+```text
+SdfDocument
+  records: Vec<SdfRecord>
 
-Coordinate-bearing formats create an important separation:
+SdfRecord
+  molfile representation
+  SDF data fields
+  source metadata / diagnostics
+```
 
-- chemistry extracted from a record becomes geometry-independent `Molecule`
-  values;
-- positions remain geometry-dependent and must not be stored in `Molecule` or
-  `Topology`.
+`SdfRecord` is the independently interpretable unit. It may expose
+`to_molecules()` and, when its coordinates are usable, `to_model()`.
 
-Format-specific loaders may construct higher-level geometry objects when that is
-the natural API, but the same semantic boundary remains: topology is
-coordinate-free and geometry lives above it.
+An `SdfDocument` must not expose a conversion that interprets all of its records
+as one `Model`. Independent SDF records are a collection, not molecule instances
+of one spatial system. Likewise, the primary document API should preserve the
+record boundary rather than flatten every record's molecules. Whole-document
+conveniences may return one result per record if useful, but their semantics must
+remain explicitly record-preserving.
 
-### Interpretation
+The parsed source record should simply be called `SdfRecord`; a parallel
+`SdfRecordDocument` naming layer is unnecessary.
+
+### Coordinate-bearing records and models
+
+A coordinate-bearing record may support two distinct canonical outputs:
+
+```text
+record.to_molecules()
+  -> canonical connected Molecule values
+  -> source geometry is not retained in the returned domain object
+
+record.to_model()
+  -> the same canonical connected Molecule values
+  -> assembled as molecule instances in one Topology
+  -> source geometry transferred into Positions in matching canonical order
+  -> one Model
+```
+
+A single coordinate-bearing record may contain several disconnected molecular
+components. `to_model()` represents them as several connected `Molecule`
+instances in one `Topology`, with the record's coordinates retained as the one
+geometric realization.
+
+The chemistry and geometry paths must share one interpretation/publication
+pipeline. An implementation must not independently reinterpret chemistry for
+`to_molecules()` and `to_model()`. Conceptually, interpretation should first
+produce matched canonical component state:
+
+```text
+source record
+    -> staging chemistry + optional source geometry
+    -> partition connected components
+    -> canonical publication / atom remapping
+    -> canonical Molecule + matching optional component geometry
+```
+
+`to_molecules()` discards the published geometry. `to_model()` assembles the
+published `(Molecule, geometry)` components into `Topology + Positions`.
+Coordinates may still be consulted during canonical publication when a format's
+stereochemical interpretation legitimately requires geometry; "geometry is
+ignored" means it is not retained in the resulting `Molecule`, not that the
+interpreter is forbidden from consulting it.
+
+### Format-specific conversion capabilities
+
+Concrete format document and record types should expose only conversions that
+make semantic sense for that format. Kekule does not need one universal public
+`Document` trait with unsupported operations.
+
+Typical capabilities are conceptually:
+
+```text
+SmilesDocument
+  -> to_molecules()
+
+MolfileDocument
+  -> to_molecules()
+  -> to_model()
+
+SdfDocument
+  -> records()
+
+SdfRecord
+  -> to_molecules()
+  -> to_model()
+
+MmcifDocument
+  -> model/ensemble interpretation according to explicit selection policy
+```
+
+Higher-level coordinate formats may naturally expose `Model`, `Ensemble`, or
+trajectory-oriented interpretation rather than pretending that all formats have
+the same conversion surface.
+
+### Reports, metadata, and source correspondence
+
+Canonical conversion must not require throwing away useful format diagnostics.
+Interpretation may return or retain format-specific reports, source mappings,
+warnings, data fields, provenance, or other sidecars alongside the canonical
+objects.
+
+Source metadata belongs in a canonical domain object only when its semantics are
+part of that object's architecture. Otherwise it remains attached to the format
+record, interpretation result, or another explicit sidecar.
+
+Convenience methods such as `to_molecules()` or `to_model()` may provide the
+common owned result, while lower-level interpretation APIs may continue to
+expose richer reports and mappings.
+
+### Interpretation and perception
 
 Parsing recognizes source syntax. Interpretation translates source assertions
 into canonical Kekule graph/hierarchy state.
@@ -445,6 +584,17 @@ tautomer/protonation state, or invent bonds merely to force connectedness.
 
 If interpretation yields multiple disconnected components, each component is
 published independently as a valid `Molecule`.
+
+Chemical perception remains a separate explicit operation. Neither
+`to_molecules()` nor `to_model()` implicitly runs default perception merely
+because a canonical `Molecule`, `Topology`, or `Model` is being constructed.
+Requesting geometry must not silently change the installed chemical perception
+relative to requesting the geometry-independent molecules from the same record.
+
+If future workflows need an ergonomic way to perceive molecule definitions
+already installed in an immutable `Topology` or `Model`, that should be designed
+as an explicit perception/topology transformation. It is not part of parsing or
+interpretation semantics.
 
 ## `Topology`
 
