@@ -7,6 +7,7 @@ use crate::perception::{
 };
 use crate::sdf::*;
 use crate::smiles::*;
+use crate::structure::Positions;
 use crate::{
     canon, molfile, perception as perception_api, sdf, smiles as smiles_api, stereo as stereo_api,
     stereo::*,
@@ -117,19 +118,20 @@ pub(super) fn read_molfile_with_report(
     if components.len() != 1 {
         return Err(format!("expected one molfile component, found {}", components.len()).into());
     }
-    Ok(components.pop().expect("length checked").to_parts())
+    let (molecule, _positions, report) = components.pop().expect("length checked").to_parts();
+    Ok((molecule, report))
 }
 
 pub(super) fn read_sdf_records(
     input: &str,
-) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
+) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     read_sdf_records_with_options(input, SdfParseOptions::default())
 }
 
 pub(super) fn read_sdf_records_with_options(
     input: &str,
     options: SdfParseOptions,
-) -> std::result::Result<Vec<SdfRecord>, Box<dyn std::error::Error>> {
+) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     let document = sdf::parse_str(input, options)?;
     Ok(sdf::interpret(&document)?.to_records())
 }
@@ -203,7 +205,7 @@ pub(super) trait SdfRecordTestExt {
     fn molecule(&self) -> &Molecule;
 }
 
-impl SdfRecordTestExt for SdfRecord {
+impl SdfRecordTestExt for SdfRecordInterpretation {
     fn molecule(&self) -> &Molecule {
         assert_eq!(
             self.molecules().len(),
@@ -230,7 +232,7 @@ pub(super) fn charged_atom(symbol: &str, formal_charge: i8) -> Atom {
     atom
 }
 
-pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Conformer, BondId) {
+pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Positions, BondId) {
     let mut mol = crate::core::MoleculeEditor::new();
     let left = mol
         .add_atom(aromatic_carbon_no_hydrogens())
@@ -259,63 +261,38 @@ pub(super) fn coordinate_axis_graph(three_dimensional: bool) -> (Molecule, Confo
         .expect("right reference");
     mol.add_bond(right, right_other, BondOrder::Single)
         .expect("right other");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            left,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            right,
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            left_reference,
-            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            left_other,
-            crate::units::Quantity::new(Point3::new(0.0, -1.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    if three_dimensional {
-        conformer
-            .set_position(
-                right_reference,
-                crate::units::Quantity::new(Point3::new(1.0, 0.0, 1.0), crate::units::ANGSTROM),
-            )
-            .unwrap();
-        conformer
-            .set_position(
-                right_other,
-                crate::units::Quantity::new(Point3::new(1.0, 0.0, -1.0), crate::units::ANGSTROM),
-            )
-            .unwrap();
+    let right_reference_point = if three_dimensional {
+        Point3::new(1.0, 0.0, 1.0)
     } else {
-        conformer
-            .set_position(
-                right_reference,
-                crate::units::Quantity::new(Point3::new(1.0, 1.0, 0.0), crate::units::ANGSTROM),
-            )
-            .unwrap();
-        conformer
-            .set_position(
-                right_other,
-                crate::units::Quantity::new(Point3::new(1.0, -1.0, 0.0), crate::units::ANGSTROM),
-            )
-            .unwrap();
-    }
+        Point3::new(1.0, 1.0, 0.0)
+    };
+    let right_other_point = if three_dimensional {
+        Point3::new(1.0, 0.0, -1.0)
+    } else {
+        Point3::new(1.0, -1.0, 0.0)
+    };
+    let positions = Positions::new(crate::units::Quantity::new(
+        vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, -1.0, 0.0),
+            right_reference_point,
+            right_other_point,
+        ],
+        crate::units::ANGSTROM,
+    ))
+    .unwrap();
     let mut mol = mol.finish().expect("connected axis molecule");
     mol.begin_aromaticity(AromaticityModel::RdkitLike);
     mol.set_atom_aromatic(left, true);
     mol.set_atom_aromatic(right, true);
-    (mol, conformer, axis)
+    (mol, positions, axis)
+}
+
+pub(super) fn test_positions(points: Vec<Point3>) -> Positions {
+    Positions::new(crate::units::Quantity::new(points, crate::units::ANGSTROM))
+        .expect("finite test positions")
 }
 
 pub(super) fn ring_molecule(

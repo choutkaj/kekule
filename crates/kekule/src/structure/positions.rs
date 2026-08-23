@@ -13,6 +13,11 @@ pub struct Positions {
 }
 
 impl Positions {
+    pub(super) fn from_model_values(values: Vec<Point3>) -> Self {
+        debug_assert!(values.iter().all(|point| point.is_finite()));
+        Self { values }
+    }
+
     /// Constructs positions from numerical coordinates alone.
     pub fn new<T>(positions: Quantity<T>) -> Result<Self, PositionError>
     where

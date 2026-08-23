@@ -5,10 +5,12 @@ use crate::chemistry::{
     canonicalize_molecule_for_publication, NormalizationError, NormalizationWarning,
 };
 use crate::core::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Conformer, Element, HydrogenDeclaration,
-    Molecule, MoleculeEditor, StereoElementId,
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
+    MoleculeEditor, StereoElementId,
 };
+use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 
+use super::staged_coordinates::StagedCoordinates;
 use super::v2000::{interpret_v2000_syntax, parse_counts_line, parse_v2000_syntax, V2000Syntax};
 use super::v3000::{interpret_v3000_syntax, parse_v3000_syntax, V3000Syntax};
 use super::SdfParseError;
@@ -236,6 +238,22 @@ impl MolfileDocument {
     pub fn unsupported_records(&self) -> &[MolfileLine] {
         &self.unsupported_records
     }
+
+    /// Interprets this source document as connected canonical molecules.
+    ///
+    /// Coordinates may participate in source-stereo normalization, but are not
+    /// retained in the returned molecules. No chemical perception is run.
+    pub fn to_molecules(&self) -> Result<Vec<Molecule>, MolfileInterpretError> {
+        Ok(interpret_molfile_document(self)?.to_molecules())
+    }
+
+    /// Interprets this source document as one geometry-bearing model.
+    ///
+    /// Each disconnected source component becomes one molecule instance in
+    /// the model topology. No chemical perception is run.
+    pub fn to_model(&self) -> Result<Model, MolfileModelError> {
+        Ok(interpret_molfile_document(self)?.to_model()?)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,6 +325,44 @@ impl From<SdfParseError> for MolfileInterpretError {
             line: error.line,
             message: error.message,
         }
+    }
+}
+
+/// Failure to interpret a Molfile and assemble its matching model geometry.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum MolfileModelError {
+    Interpretation(MolfileInterpretError),
+    ModelBuild(Box<ModelBuildError>),
+}
+
+impl fmt::Display for MolfileModelError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interpretation(error) => error.fmt(formatter),
+            Self::ModelBuild(error) => write!(formatter, "could not build Molfile model: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for MolfileModelError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Interpretation(error) => Some(error),
+            Self::ModelBuild(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+impl From<MolfileInterpretError> for MolfileModelError {
+    fn from(error: MolfileInterpretError) -> Self {
+        Self::Interpretation(error)
+    }
+}
+
+impl From<ModelBuildError> for MolfileModelError {
+    fn from(error: ModelBuildError) -> Self {
+        Self::ModelBuild(Box::new(error))
     }
 }
 
@@ -410,11 +466,22 @@ impl MolfileInterpretation {
     pub fn to_components(self) -> Vec<MolfileComponentInterpretation> {
         self.components
     }
+
+    /// Assembles all interpreted components and their matching geometry into one model.
+    pub fn to_model(self) -> Result<Model, ModelBuildError> {
+        let mut builder = ModelBuilder::new();
+        for component in self.components {
+            builder.add_molecule(&component.molecule, &component.positions)?;
+        }
+        builder.build()
+    }
 }
 
+/// One canonical Molfile component with matching dense geometry and source report.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileComponentInterpretation {
     molecule: Molecule,
+    positions: Positions,
     report: MolfileInterpretationReport,
 }
 
@@ -427,12 +494,18 @@ impl MolfileComponentInterpretation {
         &self.report
     }
 
+    /// Dense geometry matched to [`Self::molecule`] atom order.
+    pub fn positions(&self) -> &Positions {
+        &self.positions
+    }
+
     pub fn to_molecule(self) -> Molecule {
         self.molecule
     }
 
-    pub fn to_parts(self) -> (Molecule, MolfileInterpretationReport) {
-        (self.molecule, self.report)
+    /// Consumes the component without dropping matching geometry or its report.
+    pub fn to_parts(self) -> (Molecule, Positions, MolfileInterpretationReport) {
+        (self.molecule, self.positions, self.report)
     }
 }
 
@@ -650,6 +723,18 @@ pub fn interpret_molfile_document(
                 .unwrap_or(1),
             message: error.to_string(),
         })?;
+        let positions =
+            raw.geometry
+                .to_positions(&molecule)
+                .map_err(|error| MolfileInterpretError {
+                    line: raw
+                        .old_atoms
+                        .first()
+                        .and_then(|atom| atom_lines.get(atom.index()))
+                        .copied()
+                        .unwrap_or(1),
+                    message: format!("could not retain published coordinates: {error}"),
+                })?;
         let warnings = publication_report
             .warnings
             .into_iter()
@@ -686,6 +771,7 @@ pub fn interpret_molfile_document(
             .collect();
         components.push(MolfileComponentInterpretation {
             molecule,
+            positions,
             report: MolfileInterpretationReport {
                 atom_mappings,
                 bond_mappings,
@@ -700,7 +786,7 @@ pub fn interpret_molfile_document(
 
 struct RawMolfileComponent {
     editor: MoleculeEditor,
-    geometry: Conformer,
+    geometry: StagedCoordinates,
     source_stereo: Vec<crate::chemistry::SourceStereoBondMark>,
     old_atoms: Vec<AtomId>,
     atom_map: BTreeMap<AtomId, AtomId>,
@@ -709,7 +795,7 @@ struct RawMolfileComponent {
 
 fn partition_molfile_staging(
     staging: MoleculeEditor,
-    geometry: &Conformer,
+    geometry: &StagedCoordinates,
     source_stereo: &[crate::chemistry::SourceStereoBondMark],
 ) -> Result<Vec<RawMolfileComponent>, MolfileInterpretError> {
     let graph = staging.working();
@@ -719,10 +805,12 @@ fn partition_molfile_staging(
         let mut editor = crate::core::MoleculeEditor::new();
         let mut atom_map = BTreeMap::new();
         let mut component_geometry =
-            Conformer::new(geometry.unit()).map_err(|error| MolfileInterpretError {
-                line: 1,
-                message: error.to_string(),
-            })?;
+            StagedCoordinates::with_atom_capacity(old_atoms.len(), geometry.unit()).map_err(
+                |error| MolfileInterpretError {
+                    line: 1,
+                    message: error.to_string(),
+                },
+            )?;
         for old in &old_atoms {
             let atom = graph.atom(*old).map_err(|error| MolfileInterpretError {
                 line: 1,

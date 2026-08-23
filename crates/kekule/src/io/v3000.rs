@@ -10,6 +10,7 @@ use crate::geometry::Point3;
 use crate::io::{MolWriteError, MolfileParseOptions, MolfileVersion, SdfParseError};
 use crate::units::{Quantity, ANGSTROM};
 
+use super::staged_coordinates::StagedCoordinates;
 use super::structure_documents::{
     apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
 };
@@ -358,17 +359,20 @@ pub(super) fn parse_v3000_syntax(
 
 pub(super) fn interpret_v3000_syntax(
     syntax: &V3000Syntax,
-) -> std::result::Result<(MoleculeEditor, Conformer, Vec<SourceStereoBondMark>), SdfParseError> {
+) -> std::result::Result<
+    (MoleculeEditor, StagedCoordinates, Vec<SourceStereoBondMark>),
+    SdfParseError,
+> {
     let mut editor = crate::core::MoleculeEditor::new();
     let mut atom_ids = BTreeMap::<usize, AtomId>::new();
-    let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
-        .expect("angstrom is a length unit");
+    let mut coordinates = StagedCoordinates::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
+        .map_err(|error| SdfParseError::new(1, 1, error.to_string()))?;
     for record in &syntax.atoms {
         let atom = interpret_v3000_atom(record)?;
         let atom_id = editor.add_atom(atom).map_err(|error| {
             SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
         })?;
-        conformer
+        coordinates
             .set_position(
                 atom_id,
                 Quantity::new(
@@ -380,7 +384,7 @@ pub(super) fn interpret_v3000_syntax(
                     ANGSTROM,
                 ),
             )
-            .expect("matching coordinate units");
+            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
         atom_ids.insert(record.index, atom_id);
     }
     let mut source_aromatic_bonds = BTreeSet::new();
@@ -435,7 +439,7 @@ pub(super) fn interpret_v3000_syntax(
         },
     )?;
 
-    Ok((editor, conformer, source_stereo))
+    Ok((editor, coordinates, source_stereo))
 }
 
 fn interpret_v3000_atom(record: &V3000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {

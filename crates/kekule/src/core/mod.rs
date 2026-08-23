@@ -1,5 +1,4 @@
 mod atom_bond;
-mod conformer;
 mod element;
 mod element_reference;
 mod graph;
@@ -12,7 +11,6 @@ mod perception;
 mod stereo;
 
 pub use atom_bond::*;
-pub use conformer::*;
 pub use element::*;
 pub use element_reference::*;
 pub use graph::*;

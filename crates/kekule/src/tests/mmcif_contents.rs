@@ -1,7 +1,7 @@
-use super::deterministic_text_mutations;
+use super::{deterministic_text_mutations, test_positions};
 use crate::bio::{Hierarchy, SmcraAtomSiteMetadata};
 use crate::core::{
-    Atom, AtomId, BondOrder, Conformer, Element, HierarchyValidationError, MoleculePublicationError,
+    Atom, AtomId, BondOrder, Element, HierarchyValidationError, MoleculePublicationError,
 };
 use crate::geometry::Point3;
 use crate::mmcif::{
@@ -9,7 +9,7 @@ use crate::mmcif::{
     MmcifInterpretOptions, MmcifInterpretationReport, MmcifModelSelection, MmcifParseOptions,
     MmcifWriteError, MmcifWriteOptions,
 };
-use crate::structure::{Model, ModelBuilder};
+use crate::structure::{Model, ModelBuilder, Positions};
 use crate::topology::MoleculeInstanceId;
 use crate::units::{Quantity, DIMENSIONLESS, NANOMETER};
 
@@ -1524,19 +1524,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
     graph
         .add_bond(left, right, BondOrder::Single)
         .expect("connected duplicate-identity fixture");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            left,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            right,
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = test_positions(vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)]);
     let mut hierarchy = Hierarchy::new();
     let chain = hierarchy.add_chain("A", None).unwrap();
     let residue = hierarchy
@@ -1557,7 +1545,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
     *graph.hierarchy_mut() = hierarchy;
     let macro_molecule = graph.finish().unwrap();
     let mut builder = ModelBuilder::new();
-    builder.add_molecule(&macro_molecule, &conformer).unwrap();
+    builder.add_molecule(&macro_molecule, &positions).unwrap();
     let model = builder.build().unwrap();
     let report = report_with_entity_kinds(&model, &[MmcifEntityKind::NonPolymer]);
     assert!(matches!(
@@ -1768,19 +1756,13 @@ fn report_with_entity_kinds(model: &Model, kinds: &[MmcifEntityKind]) -> MmcifIn
 
 fn small_single_atom_model(element: &str) -> Model {
     let mut graph = crate::core::MoleculeEditor::new();
-    let atom = graph
+    graph
         .add_atom(Atom::new(Element::from_symbol(element).unwrap()))
         .unwrap();
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            atom,
-            Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = Positions::zeros(1);
     let molecule = graph.finish().unwrap();
     let mut builder = ModelBuilder::new();
-    builder.add_molecule(&molecule, &conformer).unwrap();
+    builder.add_molecule(&molecule, &positions).unwrap();
     builder.build().unwrap()
 }
 
@@ -1805,16 +1787,10 @@ fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &st
         )
         .unwrap();
     *graph.hierarchy_mut() = hierarchy;
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            atom,
-            Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = Positions::zeros(1);
     let molecule = graph.finish().unwrap();
     let mut builder = ModelBuilder::new();
-    builder.add_molecule(&molecule, &conformer).unwrap();
+    builder.add_molecule(&molecule, &positions).unwrap();
     builder.build().unwrap()
 }
 
@@ -1827,21 +1803,9 @@ fn small_model_with_bond(order: BondOrder) -> Model {
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
     graph.add_bond(left, right, order).unwrap();
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            left,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            right,
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = test_positions(vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)]);
     let molecule = graph.finish().unwrap();
     let mut builder = ModelBuilder::new();
-    builder.add_molecule(&molecule, &conformer).unwrap();
+    builder.add_molecule(&molecule, &positions).unwrap();
     builder.build().unwrap()
 }

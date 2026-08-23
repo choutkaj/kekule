@@ -97,31 +97,16 @@ fn default_perception_does_not_assign_coordinate_only_stereo() {
         .expect("left carrier");
     mol.add_bond(right, right_carrier, BondOrder::Single)
         .expect("right carrier");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            left,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            right,
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            left_carrier,
-            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            right_carrier,
-            crate::units::Quantity::new(Point3::new(1.0, -1.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = crate::structure::Positions::new(crate::units::Quantity::new(
+        vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, -1.0, 0.0),
+        ],
+        crate::units::ANGSTROM,
+    ))
+    .unwrap();
     let mut molecule = mol.finish().expect("valid molecule");
 
     molecule
@@ -130,13 +115,13 @@ fn default_perception_does_not_assign_coordinate_only_stereo() {
 
     assert_eq!(molecule.stereo_elements().count(), 0);
 
-    let inferred = stereo_api::infer_coordinate_stereo(&molecule, &conformer)
+    let inferred = stereo_api::infer_coordinate_stereo(&molecule, &positions)
         .expect("direct coordinate inference should succeed");
     assert_eq!(inferred.elements.len(), 1);
     assert_eq!(molecule.stereo_elements().count(), 0);
 
     let mut editor = molecule.edit();
-    let materialized = stereo_api::materialize_coordinate_stereo(&mut editor, &conformer)
+    let materialized = stereo_api::materialize_coordinate_stereo(&mut editor, &positions)
         .expect("explicit coordinate materialization should succeed");
     assert_eq!(materialized.created_elements.len(), 1);
     let molecule = editor.finish().expect("materialized molecule publishes");

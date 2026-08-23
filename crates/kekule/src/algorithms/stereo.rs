@@ -1,8 +1,44 @@
+use crate::chemistry::AtomPositionSource;
 use crate::core::*;
 use crate::geometry::Point3;
+use crate::structure::Positions;
 use std::fmt;
 
 use super::RingMembership;
+
+struct MoleculePositions<'a> {
+    atom_to_dense: Vec<Option<usize>>,
+    positions: &'a Positions,
+}
+
+impl<'a> MoleculePositions<'a> {
+    fn new(molecule: &Molecule, positions: &'a Positions) -> Self {
+        debug_assert_eq!(molecule.atom_count(), positions.len());
+        let capacity = molecule
+            .atom_ids()
+            .map(AtomId::index)
+            .max()
+            .map_or(0, |index| index + 1);
+        let mut atom_to_dense = vec![None; capacity];
+        for (dense_index, atom) in molecule.atom_ids().enumerate() {
+            atom_to_dense[atom.index()] = Some(dense_index);
+        }
+        Self {
+            atom_to_dense,
+            positions,
+        }
+    }
+}
+
+impl AtomPositionSource for MoleculePositions<'_> {
+    fn position_value(&self, atom: AtomId) -> Option<Point3> {
+        let index = self.atom_to_dense.get(atom.index()).copied().flatten()?;
+        self.positions
+            .position_at(index)
+            .ok()
+            .map(|point| point.to_value())
+    }
+}
 
 /// Options for read-only coordinate-derived stereo inference.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -133,6 +169,7 @@ impl std::error::Error for StereoValidationError {}
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoordinateStereoError {
+    PositionCountMismatch { expected: usize, actual: usize },
     InvalidStereo(StereoValidationError),
     CouldNotCreateElement(MoleculeError),
 }
@@ -140,6 +177,10 @@ pub enum CoordinateStereoError {
 impl fmt::Display for CoordinateStereoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::PositionCountMismatch { expected, actual } => write!(
+                formatter,
+                "molecule requires {expected} positions, but received {actual}"
+            ),
             Self::InvalidStereo(error) => write!(formatter, "{error}"),
             Self::CouldNotCreateElement(error) => {
                 write!(
@@ -154,6 +195,7 @@ impl fmt::Display for CoordinateStereoError {
 impl std::error::Error for CoordinateStereoError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::PositionCountMismatch { .. } => None,
             Self::InvalidStereo(error) => Some(error),
             Self::CouldNotCreateElement(error) => Some(error),
         }
@@ -182,45 +224,62 @@ pub fn detect_stereo_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
     candidates
 }
 
-/// Infer coordinate-derived stereo without changing the molecule.
+/// Infers coordinate-derived stereo without changing the molecule.
+///
+/// `positions` must be dense and follow the molecule's atom iteration order.
 pub fn infer_coordinate_stereo(
     mol: &Molecule,
-    conformer: &Conformer,
+    positions: &Positions,
 ) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
-    infer_coordinate_stereo_with_options(mol, conformer, CoordinateStereoOptions::default())
+    infer_coordinate_stereo_with_options(mol, positions, CoordinateStereoOptions::default())
 }
 
-/// Infer coordinate-derived stereo with an explicit axis policy.
+/// Infers coordinate-derived stereo with an explicit axis policy.
+///
+/// `positions` must be dense and follow the molecule's atom iteration order.
 pub fn infer_coordinate_stereo_with_options(
     mol: &Molecule,
-    conformer: &Conformer,
+    positions: &Positions,
     options: CoordinateStereoOptions,
 ) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
+    if positions.len() != mol.atom_count() {
+        return Err(CoordinateStereoError::PositionCountMismatch {
+            expected: mol.atom_count(),
+            actual: positions.len(),
+        });
+    }
     validate_stereo(mol)?;
+    let source = MoleculePositions::new(mol, positions);
     Ok(CoordinateStereoResult {
-        elements: infer_coordinate_stereo_elements(mol, conformer, options.infer_axes),
+        elements: infer_coordinate_stereo_elements(mol, &source, options.infer_axes),
     })
 }
 
-/// Materialize inferred coordinate stereo as represented chemistry.
+/// Materializes inferred coordinate stereo as represented chemistry.
+///
+/// `positions` must be dense and follow the edited molecule's atom iteration
+/// order.
 pub fn materialize_coordinate_stereo(
     editor: &mut MoleculeEditor,
-    conformer: &Conformer,
+    positions: &Positions,
 ) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
     materialize_coordinate_stereo_with_options(
         editor,
-        conformer,
+        positions,
         CoordinateStereoOptions::default(),
     )
 }
 
-/// Materialize inferred coordinate stereo with an explicit axis policy.
+/// Materializes inferred coordinate stereo with an explicit axis policy.
+///
+/// `positions` must be dense and follow the edited molecule's atom iteration
+/// order.
 pub fn materialize_coordinate_stereo_with_options(
     editor: &mut MoleculeEditor,
-    conformer: &Conformer,
+    positions: &Positions,
     options: CoordinateStereoOptions,
 ) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
-    let inferred = infer_coordinate_stereo_with_options(editor.working(), conformer, options)?;
+    let inferred = infer_coordinate_stereo_with_options(editor.working(), positions, options)?;
     let mut staged = editor.clone();
     let mut created_elements = Vec::with_capacity(inferred.elements.len());
     for element in inferred.elements {
@@ -600,19 +659,22 @@ fn atom_is_atropisomeric_sp2_endpoint(
 
 fn infer_coordinate_stereo_elements(
     mol: &Molecule,
-    conformer: &Conformer,
+    coordinates: &dyn AtomPositionSource,
     infer_axes: bool,
 ) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
-    assigned.extend(infer_coordinate_tetrahedral(mol, conformer));
-    assigned.extend(infer_coordinate_double_bonds(mol, conformer));
+    assigned.extend(infer_coordinate_tetrahedral(mol, coordinates));
+    assigned.extend(infer_coordinate_double_bonds(mol, coordinates));
     if infer_axes {
-        assigned.extend(infer_coordinate_axes(mol, conformer));
+        assigned.extend(infer_coordinate_axes(mol, coordinates));
     }
     assigned
 }
 
-fn infer_coordinate_tetrahedral(mol: &Molecule, conformer: &Conformer) -> Vec<StereoElement> {
+fn infer_coordinate_tetrahedral(
+    mol: &Molecule,
+    coordinates: &dyn AtomPositionSource,
+) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
     for candidate in tetrahedral_candidates(mol) {
         let StereoCandidate::Tetrahedral { center, carriers } = candidate else {
@@ -631,7 +693,7 @@ fn infer_coordinate_tetrahedral(mol: &Molecule, conformer: &Conformer) -> Vec<St
         let Some(atom_carriers) = atom_carriers else {
             continue;
         };
-        let Some(points) = tetrahedral_points(conformer, center, &atom_carriers) else {
+        let Some(points) = tetrahedral_points(coordinates, center, &atom_carriers) else {
             continue;
         };
         let Some(orientation) = tetrahedral_orientation_from_points(points) else {
@@ -648,7 +710,10 @@ fn infer_coordinate_tetrahedral(mol: &Molecule, conformer: &Conformer) -> Vec<St
     assigned
 }
 
-fn infer_coordinate_double_bonds(mol: &Molecule, conformer: &Conformer) -> Vec<StereoElement> {
+fn infer_coordinate_double_bonds(
+    mol: &Molecule,
+    coordinates: &dyn AtomPositionSource,
+) -> Vec<StereoElement> {
     let mut assigned = Vec::new();
     for candidate in double_bond_candidates(mol) {
         let StereoCandidate::DoubleBond {
@@ -670,7 +735,8 @@ fn infer_coordinate_double_bonds(mol: &Molecule, conformer: &Conformer) -> Vec<S
         let Some(right_carrier) = only_atom_carrier(&right_carriers) else {
             continue;
         };
-        let Some(points) = double_bond_points(conformer, left, right, left_carrier, right_carrier)
+        let Some(points) =
+            double_bond_points(coordinates, left, right, left_carrier, right_carrier)
         else {
             continue;
         };
@@ -691,7 +757,10 @@ fn infer_coordinate_double_bonds(mol: &Molecule, conformer: &Conformer) -> Vec<S
     assigned
 }
 
-fn infer_coordinate_axes(mol: &Molecule, conformer: &Conformer) -> Vec<StereoElement> {
+fn infer_coordinate_axes(
+    mol: &Molecule,
+    coordinates: &dyn AtomPositionSource,
+) -> Vec<StereoElement> {
     let ring_membership = mol
         .ring_membership()
         .cloned()
@@ -718,9 +787,12 @@ fn infer_coordinate_axes(mol: &Molecule, conformer: &Conformer) -> Vec<StereoEle
         }
         let left_reference = left_carriers[0];
         let right_reference = right_carriers[0];
-        let Some(orientation) =
-            axis_orientation_from_3d_coordinates(conformer, bond, left_reference, right_reference)
-        else {
+        let Some(orientation) = axis_orientation_from_3d_coordinates(
+            coordinates,
+            bond,
+            left_reference,
+            right_reference,
+        ) else {
             continue;
         };
         assigned.push(StereoElement::new(StereoElementKind::Axis(AxisStereo {
@@ -745,32 +817,32 @@ fn only_atom_carrier(carriers: &[StereoCarrier]) -> Option<AtomId> {
 }
 
 pub(crate) fn tetrahedral_points(
-    conformer: &Conformer,
+    coordinates: &dyn AtomPositionSource,
     center: AtomId,
     carriers: &[AtomId],
 ) -> Option<[Point3; 5]> {
     (carriers.len() == 4).then_some(())?;
     Some([
-        conformer.position_value(center)?,
-        conformer.position_value(carriers[0])?,
-        conformer.position_value(carriers[1])?,
-        conformer.position_value(carriers[2])?,
-        conformer.position_value(carriers[3])?,
+        coordinates.position_value(center)?,
+        coordinates.position_value(carriers[0])?,
+        coordinates.position_value(carriers[1])?,
+        coordinates.position_value(carriers[2])?,
+        coordinates.position_value(carriers[3])?,
     ])
 }
 
 fn double_bond_points(
-    conformer: &Conformer,
+    coordinates: &dyn AtomPositionSource,
     left: AtomId,
     right: AtomId,
     left_carrier: AtomId,
     right_carrier: AtomId,
 ) -> Option<[Point3; 4]> {
     Some([
-        conformer.position_value(left)?,
-        conformer.position_value(right)?,
-        conformer.position_value(left_carrier)?,
-        conformer.position_value(right_carrier)?,
+        coordinates.position_value(left)?,
+        coordinates.position_value(right)?,
+        coordinates.position_value(left_carrier)?,
+        coordinates.position_value(right_carrier)?,
     ])
 }
 
@@ -807,16 +879,16 @@ fn double_bond_orientation_from_points(points: [Point3; 4]) -> Option<DoubleBond
 }
 
 fn axis_orientation_from_3d_coordinates(
-    conformer: &Conformer,
+    coordinates: &dyn AtomPositionSource,
     axis_bond: &Bond,
     left_reference: AtomId,
     right_reference: AtomId,
 ) -> Option<AxisOrientation> {
     let (left, right) = axis_bond.endpoints();
-    let left_point = conformer.position_value(left)?;
-    let right_point = conformer.position_value(right)?;
-    let left_reference_point = conformer.position_value(left_reference)?;
-    let right_reference_point = conformer.position_value(right_reference)?;
+    let left_point = coordinates.position_value(left)?;
+    let right_point = coordinates.position_value(right)?;
+    let left_reference_point = coordinates.position_value(left_reference)?;
+    let right_reference_point = coordinates.position_value(right_reference)?;
     let points = [
         left_point,
         right_point,

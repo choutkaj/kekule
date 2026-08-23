@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{Atom, AtomId, Bond, Conformer, Molecule};
+use crate::core::{Atom, Bond, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::topology::{
     InstanceAtomId, InstanceAtomSite, InstanceAtomSiteId, InstanceBondId, InstanceChain,
@@ -9,7 +9,7 @@ use crate::topology::{
     MoleculeInstance, MoleculeInstanceId, Topology, TopologyAtomIndex, TopologyBuildError,
     TopologyBuilder, TopologyError,
 };
-use crate::units::{Quantity, UnitError, MODEL_LENGTH_UNIT};
+use crate::units::Quantity;
 
 use super::{AtomData, AtomDataError, BondData, BondDataError, PositionError, Positions};
 
@@ -81,12 +81,16 @@ impl Model {
         ModelBuilder::new()
     }
 
+    /// Builds a single-molecule model from dense positions in molecule atom order.
+    ///
+    /// Position construction performs unit conversion and finite-value
+    /// validation before this topology-owning operation.
     pub fn from_molecule(
         molecule: &Molecule,
-        conformer: &Conformer,
+        positions: &Positions,
     ) -> Result<Self, ModelBuildError> {
         let mut builder = ModelBuilder::new();
-        builder.add_molecule(molecule, conformer)?;
+        builder.add_molecule(molecule, positions)?;
         builder.build()
     }
 
@@ -691,125 +695,71 @@ impl ModelBuilder {
         Ok(self.topology.add_molecule_definition(molecule)?)
     }
 
-    pub fn add_instance<T>(
+    /// Adds an instance with dense positions in its definition's atom order.
+    pub fn add_instance(
         &mut self,
         definition: MoleculeDefinitionId,
-        positions: Quantity<T>,
-    ) -> Result<MoleculeInstanceId, ModelBuildError>
-    where
-        T: AsRef<[Point3]>,
-    {
-        let molecule = self.topology.definition(definition)?.molecule();
-        let staged = stage_instance_positions(molecule, positions)?;
+        positions: &Positions,
+    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+        let expected = self
+            .topology
+            .definition(definition)?
+            .molecule()
+            .atom_count();
+        validate_position_count(expected, positions.len())?;
         self.positions
-            .try_reserve(staged.len())
+            .try_reserve(positions.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
         let instance = self.topology.add_instance(definition)?;
-        self.positions.extend(staged);
+        self.positions.extend_from_slice(positions.values().value());
         Ok(instance)
     }
 
+    /// Adds a molecule and dense positions in that molecule's atom order.
     pub fn add_molecule(
         &mut self,
         molecule: &Molecule,
-        conformer: &Conformer,
+        positions: &Positions,
     ) -> Result<MoleculeInstanceId, ModelBuildError> {
         if molecule.atom_count() == 0 {
             return Err(ModelBuildError::Topology(
                 TopologyBuildError::EmptyMoleculeDefinition,
             ));
         }
-        let staged = stage_conformer_positions(molecule, conformer)?;
+        validate_position_count(molecule.atom_count(), positions.len())?;
         self.positions
-            .try_reserve(staged.len())
+            .try_reserve(positions.len())
             .map_err(|_| ModelBuildError::CapacityOverflow)?;
         let instance = self.topology.add_molecule(molecule)?;
-        self.positions.extend(staged);
+        self.positions.extend_from_slice(positions.values().value());
         Ok(instance)
     }
 
     pub fn build(self) -> Result<Model, ModelBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        let positions = Positions::new(Quantity::new(self.positions, MODEL_LENGTH_UNIT))?;
+        let positions = Positions::from_model_values(self.positions);
         Ok(Model::new(topology, positions).expect("builder creates dimensionally valid state"))
     }
 }
 
-pub(super) fn stage_conformer_positions(
-    graph: &Molecule,
-    conformer: &Conformer,
-) -> Result<Vec<Point3>, ModelBuildError> {
-    let mut positions = Vec::new();
-    positions
-        .try_reserve_exact(graph.atom_count())
-        .map_err(|_| ModelBuildError::CapacityOverflow)?;
-    for atom in graph.atom_ids() {
-        let point = conformer
-            .position(atom)
-            .ok_or(ModelBuildError::MissingPosition { atom })?
-            .to_unit(MODEL_LENGTH_UNIT)?
-            .to_value();
-        if !point.is_finite() {
-            return Err(ModelBuildError::NonFinitePosition { atom });
-        }
-        positions.push(point);
+fn validate_position_count(expected: usize, actual: usize) -> Result<(), ModelBuildError> {
+    if actual != expected {
+        return Err(ModelBuildError::InstancePositionCountMismatch { expected, actual });
     }
-    Ok(positions)
-}
-
-fn stage_instance_positions<T>(
-    graph: &Molecule,
-    positions: Quantity<T>,
-) -> Result<Vec<Point3>, ModelBuildError>
-where
-    T: AsRef<[Point3]>,
-{
-    let source = positions.value().as_ref();
-    if source.len() != graph.atom_count() {
-        return Err(ModelBuildError::InstancePositionCountMismatch {
-            expected: graph.atom_count(),
-            actual: source.len(),
-        });
-    }
-    let factor = positions.unit().conversion_factor_to(MODEL_LENGTH_UNIT)?;
-    source
-        .iter()
-        .copied()
-        .zip(graph.atom_ids())
-        .map(|(point, atom)| {
-            let point = Point3::new(point.x * factor, point.y * factor, point.z * factor);
-            if !point.is_finite() {
-                return Err(ModelBuildError::NonFinitePosition { atom });
-            }
-            Ok(point)
-        })
-        .collect()
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ModelBuildError {
-    MissingPosition { atom: AtomId },
-    NonFinitePosition { atom: AtomId },
     InstancePositionCountMismatch { expected: usize, actual: usize },
     CapacityOverflow,
     Topology(TopologyBuildError),
-    Position(PositionError),
-    Unit(UnitError),
 }
 
 impl fmt::Display for ModelBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingPosition { atom } => {
-                write!(
-                    formatter,
-                    "source conformer has no position for atom {atom}"
-                )
-            }
-            Self::NonFinitePosition { atom } => {
-                write!(formatter, "source position for atom {atom} is not finite")
-            }
             Self::InstancePositionCountMismatch { expected, actual } => write!(
                 formatter,
                 "definition instance requires {expected} positions, but received {actual}"
@@ -818,8 +768,6 @@ impl fmt::Display for ModelBuildError {
                 formatter.write_str("model construction exceeds coordinate capacity")
             }
             Self::Topology(error) => write!(formatter, "cannot build topology: {error}"),
-            Self::Position(error) => write!(formatter, "cannot build positions: {error}"),
-            Self::Unit(error) => write!(formatter, "invalid source position unit: {error}"),
         }
     }
 }
@@ -829,17 +777,5 @@ impl std::error::Error for ModelBuildError {}
 impl From<TopologyBuildError> for ModelBuildError {
     fn from(error: TopologyBuildError) -> Self {
         Self::Topology(error)
-    }
-}
-
-impl From<PositionError> for ModelBuildError {
-    fn from(error: PositionError) -> Self {
-        Self::Position(error)
-    }
-}
-
-impl From<UnitError> for ModelBuildError {
-    fn from(error: UnitError) -> Self {
-        Self::Unit(error)
     }
 }
