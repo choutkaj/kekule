@@ -1,9 +1,9 @@
-use kekule::core::{Atom, BondOrder, Conformer, Element};
+use kekule::core::{Atom, BondOrder, Element};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::modeling::potential::{
     HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError,
 };
-use kekule::structure::Model;
+use kekule::structure::{Model, Positions};
 use kekule::topology::{InstanceBondId, MoleculeInstanceId};
 use kekule::units::{Quantity, ANGSTROM, MODEL_FORCE_CONSTANT_UNIT};
 use kekule_traj::{FrameBuffer, TrajectoryFrame};
@@ -14,15 +14,13 @@ fn bonded_model() -> (Model, InstanceBondId) {
     let first = molecule.add_atom(Atom::new(carbon)).unwrap();
     let second = molecule.add_atom(Atom::new(carbon)).unwrap();
     let bond = molecule.add_bond(first, second, BondOrder::Single).unwrap();
-    let mut conformer = Conformer::new(ANGSTROM).unwrap();
-    conformer
-        .set_position(first, Quantity::new(Point3::new(0.0, 0.0, 0.0), ANGSTROM))
-        .unwrap();
-    conformer
-        .set_position(second, Quantity::new(Point3::new(1.1, 0.0, 0.0), ANGSTROM))
-        .unwrap();
+    let positions = Positions::new(Quantity::new(
+        vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.1, 0.0, 0.0)],
+        ANGSTROM,
+    ))
+    .unwrap();
     let molecule = molecule.finish().unwrap();
-    let model = Model::from_molecule(&molecule, &conformer).unwrap();
+    let model = Model::from_molecule(&molecule, &positions).unwrap();
     (model, InstanceBondId::new(MoleculeInstanceId::new(0), bond))
 }
 

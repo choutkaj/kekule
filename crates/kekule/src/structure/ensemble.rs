@@ -1,13 +1,11 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::core::{Conformer, Molecule, PropMap};
+use crate::core::{Molecule, PropMap};
 use crate::geometry::PeriodicCell;
 use crate::topology::{Topology, TopologyBuildError, TopologyBuilder};
-use crate::units::{Quantity, MODEL_LENGTH_UNIT};
 
-use super::model::stage_conformer_positions;
-use super::{AtomData, BondData, Model, ModelBuildError, ModelView, PositionError, Positions};
+use super::{AtomData, BondData, Model, ModelView, PositionError, Positions};
 
 /// One finite non-temporal ensemble member.
 #[derive(Debug, Clone, PartialEq)]
@@ -162,19 +160,17 @@ impl Ensemble {
         Ok(ensemble)
     }
 
-    pub fn from_molecule_conformers(
+    /// Builds an ensemble from dense member positions in molecule atom order.
+    pub fn from_molecule_positions(
         molecule: &Molecule,
-        conformers: impl IntoIterator<Item = Conformer>,
+        positions: impl IntoIterator<Item = Positions>,
     ) -> Result<Self, EnsembleError> {
         let mut topology_builder = TopologyBuilder::new();
         let definition = topology_builder.add_molecule_definition(molecule)?;
         topology_builder.add_instance(definition)?;
         let topology = Arc::new(topology_builder.build()?);
         let mut ensemble = Self::new(Arc::clone(&topology));
-        for conformer in conformers {
-            let positions = stage_conformer_positions(molecule, &conformer)
-                .map_err(|error| EnsembleError::ModelBuild(Box::new(error)))?;
-            let positions = Positions::new(Quantity::new(positions, MODEL_LENGTH_UNIT))?;
+        for positions in positions {
             ensemble.push(EnsembleMember::new(positions, topology.bond_count()))?;
         }
         Ok(ensemble)
@@ -272,7 +268,6 @@ pub enum EnsembleError {
     MissingWeight { member: usize },
     ZeroTotalWeight,
     TopologyBuild(TopologyBuildError),
-    ModelBuild(Box<ModelBuildError>),
     Position(PositionError),
     Model(Box<super::ModelError>),
 }
@@ -306,7 +301,6 @@ impl fmt::Display for EnsembleError {
                 formatter.write_str("ensemble weights must have a positive finite total")
             }
             Self::TopologyBuild(error) => write!(formatter, "cannot build topology: {error}"),
-            Self::ModelBuild(error) => write!(formatter, "cannot build ensemble member: {error}"),
             Self::Position(error) => write!(formatter, "cannot build member positions: {error}"),
             Self::Model(error) => write!(formatter, "invalid ensemble member state: {error}"),
         }

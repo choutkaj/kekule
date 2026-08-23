@@ -4,6 +4,7 @@ mod mmcif_interpret;
 mod mmcif_write;
 mod sdf_document;
 mod smiles;
+mod staged_coordinates;
 mod structure_documents;
 mod v2000;
 mod v3000;

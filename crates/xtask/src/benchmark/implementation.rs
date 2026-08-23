@@ -982,10 +982,9 @@ pub(crate) fn stereo_perception_record_json(record: &mut IndexedSmallRecord) -> 
         });
     }
     let candidates = stereo::detect_stereo_candidates(&record.molecule);
-    let conformer =
-        kekule::core::Conformer::new(kekule::units::ANGSTROM).expect("angstrom is a length unit");
+    let positions = kekule::structure::Positions::zeros(record.molecule.atom_count());
     let mut editor = record.molecule.edit();
-    let result = stereo::materialize_coordinate_stereo(&mut editor, &conformer);
+    let result = stereo::materialize_coordinate_stereo(&mut editor, &positions);
     if result.is_ok() {
         record.molecule = editor
             .finish()

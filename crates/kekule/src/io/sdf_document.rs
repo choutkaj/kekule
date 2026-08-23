@@ -440,7 +440,7 @@ pub fn interpret_sdf_document(
         let mut molecules = Vec::new();
         let mut molfile_components = Vec::new();
         for component in interpretation.to_components() {
-            let (molecule, report) = component.to_parts();
+            let (molecule, _positions, report) = component.to_parts();
             molecules.push(molecule);
             molfile_components.push(report);
         }

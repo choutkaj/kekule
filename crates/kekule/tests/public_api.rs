@@ -1,7 +1,7 @@
-use kekule::core::{Atom, BondOrder, Conformer, Element, Molecule, MoleculeEditor};
+use kekule::core::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::geometry::Point3;
 use kekule::sdf::{self, SdfParseOptions};
-use kekule::structure::Model;
+use kekule::structure::{Model, Positions};
 use kekule::units::{Quantity, ANGSTROM};
 
 fn one_smiles(input: &str) -> Molecule {
@@ -37,16 +37,16 @@ fn sdf_preserves_record_boundaries_and_component_order() {
 #[test]
 fn model_consumes_explicit_detached_geometry() {
     let molecule = one_smiles("CO");
-    let mut conformer = Conformer::new(ANGSTROM).unwrap();
-    for (index, atom) in molecule.atom_ids().enumerate() {
-        conformer
-            .set_position(
-                atom,
-                Quantity::new(Point3::new(index as f64, 0.0, 0.0), ANGSTROM),
-            )
-            .unwrap();
-    }
-    let model = Model::from_molecule(&molecule, &conformer).unwrap();
+    let positions = Positions::new(Quantity::new(
+        molecule
+            .atom_ids()
+            .enumerate()
+            .map(|(index, _)| Point3::new(index as f64, 0.0, 0.0))
+            .collect::<Vec<_>>(),
+        ANGSTROM,
+    ))
+    .unwrap();
+    let model = Model::from_molecule(&molecule, &positions).unwrap();
     assert_eq!(model.atom_count(), molecule.atom_count());
     assert_eq!(model.positions().len(), molecule.atom_count());
 }

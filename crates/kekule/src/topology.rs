@@ -1072,7 +1072,7 @@ impl Topology {
 /// Linear, validate-then-commit builder for coordinate-free topology.
 ///
 /// Macro-molecule insertion validates static graph/hierarchy consistency with
-/// coordinate validation disabled. Source conformers are not scanned or
+/// coordinate validation disabled. Detached source coordinates are not scanned or
 /// cloned into topology definitions.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TopologyBuilder {

@@ -4,6 +4,8 @@ use kekule::{molfile, sdf, smiles};
 
 const DISCONNECTED_MOLFILE: &str = "salt-like\nkekule\n\n  2  0  0  0  0  0            999 V2000\n    1.2500    2.5000    3.7500 Na  0  3  0  0  0  0  0  0  0  0  0  0\n   -4.0000    5.5000   -6.2500 Cl  0  5  0  0  0  0  0  0  0  0  0  0\nM  END\n";
 
+const INTERLEAVED_COMPONENT_MOLFILE: &str = "interleaved\nkekule\n\n  4  1  0  0  0  0            999 V2000\n   10.0000   11.0000   12.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   20.0000   21.0000   22.0000 Na  0  3  0  0  0  0  0  0  0  0  0  0\n   30.0000   31.0000   32.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   40.0000   41.0000   42.0000 Cl  0  5  0  0  0  0  0  0  0  0  0  0\n  1  3  1  0  0  0  0\nM  END\n";
+
 fn element(molecule: &Molecule) -> Element {
     molecule
         .atoms()
@@ -46,10 +48,15 @@ fn molfile_document_model_retains_published_component_geometry() {
             .atom_mappings()
             .first()
             .expect("one source atom mapping");
+        let position_index = component
+            .molecule()
+            .atom_ids()
+            .position(|atom| atom == mapping.atom())
+            .expect("mapped canonical atom");
         assert_eq!(
             component
-                .conformer()
-                .position(mapping.atom())
+                .positions()
+                .position_at(position_index)
                 .expect("mapped source coordinate")
                 .to_value(),
             expected
@@ -74,6 +81,38 @@ fn molfile_document_model_retains_published_component_geometry() {
     assert!(model_molecules(&model)
         .iter()
         .all(|molecule| molecule.perception() == &Perception::default()));
+}
+
+#[test]
+fn molfile_model_remaps_interleaved_source_atoms_to_component_positions() {
+    let document = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE).expect("Molfile parses");
+    let molecules = document.to_molecules().expect("Molfile interprets");
+    let model = document.to_model().expect("Molfile model builds");
+
+    assert_eq!(molecules.len(), 3);
+    assert_eq!(model.topology().instance_count(), 3);
+    assert_eq!(
+        model_molecules(&model),
+        molecules.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        molecules[0]
+            .atoms()
+            .map(|(_, atom)| atom.element.symbol())
+            .collect::<Vec<_>>(),
+        ["C", "O"]
+    );
+    assert_eq!(element(&molecules[1]).symbol(), "Na");
+    assert_eq!(element(&molecules[2]).symbol(), "Cl");
+    assert_eq!(
+        model.positions().values().value(),
+        &[
+            Point3::new(10.0, 11.0, 12.0),
+            Point3::new(30.0, 31.0, 32.0),
+            Point3::new(20.0, 21.0, 22.0),
+            Point3::new(40.0, 41.0, 42.0),
+        ]
+    );
 }
 
 #[test]

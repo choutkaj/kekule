@@ -203,11 +203,11 @@ fn cip_skips_axis_with_equivalent_endpoint_ligands_as_nonstereogenic() {
 
 #[test]
 fn cip_assigns_axis_descriptor_after_coordinate_stereo_materialization() {
-    let (molecule, conformer, _axis) = coordinate_axis_graph(true);
+    let (molecule, positions, _axis) = coordinate_axis_graph(true);
     let mut mol = molecule.edit();
     let materialization_report = stereo_api::materialize_coordinate_stereo_with_options(
         &mut mol,
-        &conformer,
+        &positions,
         CoordinateStereoOptions { infer_axes: true },
     )
     .expect("coordinate axis materialization");
