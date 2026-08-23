@@ -11,6 +11,7 @@ use crate::geometry::Point3;
 use crate::units::{Quantity, ANGSTROM};
 
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
+use super::staged_coordinates::StagedCoordinates;
 use super::structure_documents::{
     apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
     MolfileVersion,
@@ -279,17 +280,20 @@ pub(super) fn parse_v2000_syntax(
 
 pub(super) fn interpret_v2000_syntax(
     syntax: &V2000Syntax,
-) -> std::result::Result<(MoleculeEditor, Conformer, Vec<SourceStereoBondMark>), SdfParseError> {
+) -> std::result::Result<
+    (MoleculeEditor, StagedCoordinates, Vec<SourceStereoBondMark>),
+    SdfParseError,
+> {
     let mut editor = crate::core::MoleculeEditor::new();
     let mut atom_ids = Vec::with_capacity(syntax.atoms.len());
-    let mut conformer = Conformer::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
-        .expect("angstrom is a length unit");
+    let mut coordinates = StagedCoordinates::with_atom_capacity(syntax.atoms.len(), ANGSTROM)
+        .map_err(|error| SdfParseError::new(1, 1, error.to_string()))?;
     for record in &syntax.atoms {
         let atom = interpret_v2000_atom(record)?;
         let atom_id = editor.add_atom(atom).map_err(|error| {
             SdfParseError::new(1, record.line, format!("invalid graph atom: {error}"))
         })?;
-        conformer
+        coordinates
             .set_position(
                 atom_id,
                 Quantity::new(
@@ -301,7 +305,7 @@ pub(super) fn interpret_v2000_syntax(
                     ANGSTROM,
                 ),
             )
-            .expect("matching coordinate units");
+            .map_err(|error| SdfParseError::new(1, record.line, error.to_string()))?;
         atom_ids.push(atom_id);
     }
     let mut source_aromatic_bonds = BTreeSet::new();
@@ -348,7 +352,7 @@ pub(super) fn interpret_v2000_syntax(
             )
         },
     )?;
-    Ok((editor, conformer, source_stereo))
+    Ok((editor, coordinates, source_stereo))
 }
 
 fn interpret_v2000_atom(record: &V2000AtomSyntax) -> std::result::Result<Atom, SdfParseError> {

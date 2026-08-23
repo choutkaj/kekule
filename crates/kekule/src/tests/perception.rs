@@ -274,22 +274,6 @@ fn discrete_chemical_perception_changes_only_perception_state() {
         })
         .expect("valid absolute stereo group");
 
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).expect("angstrom conformer");
-    conformer.props_mut().insert(
-        "conformer_note".to_owned(),
-        PropValue::String("source coordinates".to_owned()),
-    );
-    for (index, atom) in atom_ids.iter().copied().enumerate() {
-        conformer
-            .set_position(
-                atom,
-                crate::units::Quantity::new(
-                    Point3::new(index as f64, (index % 3) as f64, 0.25),
-                    crate::units::ANGSTROM,
-                ),
-            )
-            .expect("finite fixture coordinate");
-    }
     assert_eq!(molecule.perception(), &Perception::default());
     let represented_before = represented_molecule_snapshot(&molecule);
 
@@ -435,23 +419,14 @@ fn interpretation_canonicalizes_source_stereo_before_perception() {
 
 #[test]
 fn perceive_does_not_infer_or_materialize_coordinate_stereo() {
-    let (graph, center, carriers, _) = tetrahedral_marked_graph();
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    for (atom, point) in
-        std::iter::once((center, Point3::new(0.0, 0.0, 0.0))).chain(carriers.iter().copied().zip([
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-            Point3::new(0.0, 0.0, 1.0),
-            Point3::new(0.0, 0.0, -1.0),
-        ]))
-    {
-        conformer
-            .set_position(
-                atom,
-                crate::units::Quantity::new(point, crate::units::ANGSTROM),
-            )
-            .unwrap();
-    }
+    let (graph, _center, _carriers, _) = tetrahedral_marked_graph();
+    let positions = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(0.0, 0.0, -1.0),
+    ]);
     let mut molecule = graph.finish().expect("coordinate fixture publishes");
 
     molecule
@@ -460,7 +435,7 @@ fn perceive_does_not_infer_or_materialize_coordinate_stereo() {
 
     assert!(molecule.stereo_elements().next().is_none());
     assert_eq!(
-        stereo_api::infer_coordinate_stereo(&molecule, &conformer)
+        stereo_api::infer_coordinate_stereo(&molecule, &positions)
             .expect("separate coordinate inference")
             .elements
             .len(),
@@ -1718,41 +1693,17 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
 #[test]
 fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo() {
     let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            center,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            carriers[0],
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            carriers[1],
-            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            carriers[2],
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 1.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            carriers[3],
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, -1.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(0.0, 0.0, -1.0),
+    ]);
     mark_all_fresh(mol.working_mut());
     let before = mol.clone();
 
-    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &conformer)
+    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &positions)
         .expect("3D tetrahedral stereo should be inferred");
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
@@ -1773,7 +1724,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
 
-    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &conformer)
+    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
         .expect("3D tetrahedral stereo should materialize");
     assert_eq!(report.created_elements.len(), 1);
     let element = mol
@@ -1798,34 +1749,15 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
         .expect("left carrier");
     mol.add_bond(right, right_carrier, BondOrder::Single)
         .expect("right carrier");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            left,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            right,
-            crate::units::Quantity::new(Point3::new(1.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            left_carrier,
-            crate::units::Quantity::new(Point3::new(0.0, 1.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            right_carrier,
-            crate::units::Quantity::new(Point3::new(1.0, -1.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(1.0, -1.0, 0.0),
+    ]);
     let before = mol.clone();
 
-    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &conformer)
+    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &positions)
         .expect("2D double-bond stereo should be inferred");
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
@@ -1842,7 +1774,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
         other => panic!("expected double-bond stereo, found {other:?}"),
     }
 
-    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &conformer)
+    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
         .expect("2D double-bond stereo should materialize");
     assert_eq!(report.created_elements.len(), 1);
     let element = mol
@@ -1853,15 +1785,15 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
 
 #[test]
 fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
-    let (mol, conformer, axis) = coordinate_axis_graph(true);
+    let (mol, positions, axis) = coordinate_axis_graph(true);
     let before = mol.clone();
 
-    let default = stereo_api::infer_coordinate_stereo(&mol, &conformer)
+    let default = stereo_api::infer_coordinate_stereo(&mol, &positions)
         .expect("default coordinate-stereo inference should succeed");
     assert!(default.elements.is_empty());
     let inferred = stereo_api::infer_coordinate_stereo_with_options(
         &mol,
-        &conformer,
+        &positions,
         CoordinateStereoOptions { infer_axes: true },
     )
     .expect("3D axis stereo should be inferred");
@@ -1886,11 +1818,11 @@ fn coordinate_stereo_inference_assigns_axis_only_when_requested() {
 
 #[test]
 fn coordinate_stereo_inference_skips_axis_without_3d_handedness() {
-    let (mol, conformer, _axis) = coordinate_axis_graph(false);
+    let (mol, positions, _axis) = coordinate_axis_graph(false);
 
     let result = stereo_api::infer_coordinate_stereo_with_options(
         &mol,
-        &conformer,
+        &positions,
         CoordinateStereoOptions { infer_axes: true },
     )
     .expect("flat coordinates should be a successful non-assignment");
@@ -1901,22 +1833,13 @@ fn coordinate_stereo_inference_skips_axis_without_3d_handedness() {
 #[test]
 fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
     let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    for (atom, point) in
-        std::iter::once((center, Point3::new(0.0, 0.0, 0.0))).chain(carriers.iter().copied().zip([
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-            Point3::new(0.0, 0.0, 1.0),
-            Point3::new(0.0, 0.0, -1.0),
-        ]))
-    {
-        conformer
-            .set_position(
-                atom,
-                crate::units::Quantity::new(point, crate::units::ANGSTROM),
-            )
-            .unwrap();
-    }
+    let positions = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(0.0, 0.0, -1.0),
+    ]);
     mol.add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
         TetrahedralStereo {
             center,
@@ -1926,10 +1849,10 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
     )))
     .expect("represented source stereo");
 
-    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &conformer)
+    let inferred = stereo_api::infer_coordinate_stereo(mol.working(), &positions)
         .expect("represented stereo should make coordinate inference a no-op");
     assert!(inferred.elements.is_empty());
-    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &conformer)
+    let report = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
         .expect("represented stereo should make materialization a no-op");
     assert!(report.created_elements.is_empty());
     assert_eq!(mol.stereo_elements().count(), 1);
@@ -1952,8 +1875,8 @@ fn coordinate_stereo_materialization_is_transactional_on_invalid_representation(
     .expect("reference-valid but structurally invalid stereo");
     let before = mol.clone();
 
-    let conformer = Conformer::new(crate::units::ANGSTROM).expect("length unit");
-    let error = stereo_api::materialize_coordinate_stereo(&mut mol, &conformer)
+    let positions = crate::structure::Positions::zeros(mol.atom_count());
+    let error = stereo_api::materialize_coordinate_stereo(&mut mol, &positions)
         .expect_err("invalid represented stereo must reject materialization");
 
     assert!(matches!(error, CoordinateStereoError::InvalidStereo(_)));
@@ -1972,8 +1895,8 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
         kind: SourceStereoBondMarkKind::WedgeEither,
     }];
 
-    let conformer = Conformer::new(crate::units::ANGSTROM).expect("length unit");
-    let coordinate_result = stereo_api::infer_coordinate_stereo(marked.working(), &conformer)
+    let positions = crate::structure::Positions::zeros(marked.atom_count());
+    let coordinate_result = stereo_api::infer_coordinate_stereo(marked.working(), &positions)
         .expect("coordinate inference is independent of detached source marks");
     assert!(coordinate_result.elements.is_empty());
     let marked_before = marked.clone();

@@ -1,12 +1,12 @@
 use super::*;
 use crate::bio::{Hierarchy, SmcraAtomSiteId, SmcraAtomSiteMetadata};
-use crate::core::{Atom, AtomId, BondId, BondOrder, Conformer, Element, Molecule};
+use crate::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::modeling::potential::{
     HarmonicBondParameter, HarmonicBondPotential, Potential, PotentialError, PotentialEvaluation,
     PotentialGeometryError,
 };
-use crate::structure::{Ensemble, Model, ModelBuildError, ModelView, PositionError};
+use crate::structure::{Ensemble, Model, ModelBuildError, ModelView, PositionError, Positions};
 use crate::topology::{
     InstanceAtomId, InstanceAtomSiteId, InstanceBondId, MoleculeInstanceId, TopologyBuildError,
 };
@@ -15,7 +15,7 @@ use crate::units::{
     NANOMETER,
 };
 
-fn two_atom_small(distance: f64) -> (Molecule, Conformer, AtomId, AtomId, BondId) {
+fn two_atom_small(distance: f64) -> (Molecule, Positions, AtomId, AtomId, BondId) {
     let mut graph = crate::core::MoleculeEditor::new();
     let carbon = Element::from_symbol("C").unwrap();
     let a = graph
@@ -29,40 +29,26 @@ fn two_atom_small(distance: f64) -> (Molecule, Conformer, AtomId, AtomId, BondId
         .add_atom(Atom::new(carbon))
         .expect("atom identifier capacity");
     let bond = graph.add_bond(a, b, BondOrder::Single).unwrap();
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            a,
-            crate::units::Quantity::new(Point3::new(0.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
-    conformer
-        .set_position(
-            b,
-            crate::units::Quantity::new(Point3::new(distance, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = Positions::new(Quantity::new(
+        [Point3::origin(), Point3::new(distance, 0.0, 0.0)],
+        ANGSTROM,
+    ))
+    .unwrap();
     (
         graph.finish().expect("connected test molecule"),
-        conformer,
+        positions,
         a,
         b,
         bond,
     )
 }
 
-fn one_atom_macro() -> (Molecule, Conformer, AtomId, SmcraAtomSiteId) {
+fn one_atom_macro() -> (Molecule, Positions, AtomId, SmcraAtomSiteId) {
     let mut graph = crate::core::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("N").unwrap()))
         .expect("atom identifier capacity");
-    let mut conformer = Conformer::new(crate::units::ANGSTROM).unwrap();
-    conformer
-        .set_position(
-            atom,
-            crate::units::Quantity::new(Point3::new(2.0, 0.0, 0.0), crate::units::ANGSTROM),
-        )
-        .unwrap();
+    let positions = Positions::new(Quantity::new([Point3::new(2.0, 0.0, 0.0)], ANGSTROM)).unwrap();
     let mut hierarchy = Hierarchy::new();
     let chain = hierarchy.add_chain("A", None).unwrap();
     let residue = hierarchy
@@ -72,14 +58,14 @@ fn one_atom_macro() -> (Molecule, Conformer, AtomId, SmcraAtomSiteId) {
         .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
         .unwrap();
     *graph.hierarchy_mut() = hierarchy;
-    (graph.finish().unwrap(), conformer, atom, site)
+    (graph.finish().unwrap(), positions, atom, site)
 }
 
 #[test]
 fn model_preserves_local_ids_and_dense_round_trips() {
-    let (small, conformer, a, b, _) = two_atom_small(1.5);
+    let (small, positions, a, b, _) = two_atom_small(1.5);
     let mut builder = Model::builder();
-    let instance = builder.add_molecule(&small, &conformer).unwrap();
+    let instance = builder.add_molecule(&small, &positions).unwrap();
     let model = builder.build().unwrap();
     let qa = InstanceAtomId::new(instance, a);
     let qb = InstanceAtomId::new(instance, b);
@@ -101,29 +87,27 @@ fn model_preserves_local_ids_and_dense_round_trips() {
 }
 
 #[test]
-fn model_converts_source_conformer_units_once_without_mutating_the_source() {
+fn positions_convert_source_units_before_model_construction() {
     let mut graph = crate::core::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
         .expect("atom identifier capacity");
-    let mut conformer = Conformer::new(NANOMETER).unwrap();
-    conformer
-        .set_position(atom, Quantity::new(Point3::new(0.15, 0.0, 0.0), NANOMETER))
-        .unwrap();
+    let source = [Point3::new(0.15, 0.0, 0.0)];
+    let positions = Positions::new(Quantity::new(source, NANOMETER)).unwrap();
     let small = graph.finish().unwrap();
 
-    let model = Model::from_molecule(&small, &conformer).unwrap();
+    let model = Model::from_molecule(&small, &positions).unwrap();
     let qualified = InstanceAtomId::new(MoleculeInstanceId::new(0), atom);
     assert_eq!(model.position(qualified).unwrap().unit(), ANGSTROM);
     assert_eq!(model.position(qualified).unwrap().x, 1.5);
-    assert_eq!(conformer.unit(), NANOMETER);
-    assert_eq!(conformer.position(atom).unwrap().x, 0.15);
+    assert_eq!(positions.values().unit(), ANGSTROM);
+    assert_eq!(source[0].x, 0.15);
 }
 
 #[test]
 fn topology_allocation_is_shared_only_by_model_clones() {
-    let (small, conformer, _, b, _) = two_atom_small(1.5);
-    let model = Model::from_molecule(&small, &conformer).unwrap();
+    let (small, positions, _, b, _) = two_atom_small(1.5);
+    let model = Model::from_molecule(&small, &positions).unwrap();
     let mut cloned = model.clone();
     cloned
         .set_position(
@@ -131,7 +115,7 @@ fn topology_allocation_is_shared_only_by_model_clones() {
             Quantity::new(Point3::new(2.0, 0.0, 0.0), ANGSTROM),
         )
         .unwrap();
-    let rebuilt = Model::from_molecule(&small, &conformer).unwrap();
+    let rebuilt = Model::from_molecule(&small, &positions).unwrap();
 
     assert!(std::sync::Arc::ptr_eq(
         &model.shared_topology(),
@@ -148,12 +132,12 @@ fn topology_allocation_is_shared_only_by_model_clones() {
 
 #[test]
 fn mixed_instances_and_hierarchy_use_qualified_ids() {
-    let (small, small_conformer, _, _, _) = two_atom_small(1.0);
-    let (macromolecule, macro_conformer, atom, site) = one_atom_macro();
+    let (small, small_positions, _, _, _) = two_atom_small(1.0);
+    let (macromolecule, macro_positions, atom, site) = one_atom_macro();
     let mut builder = Model::builder();
-    let small_id = builder.add_molecule(&small, &small_conformer).unwrap();
+    let small_id = builder.add_molecule(&small, &small_positions).unwrap();
     let macro_id = builder
-        .add_molecule(&macromolecule, &macro_conformer)
+        .add_molecule(&macromolecule, &macro_positions)
         .unwrap();
     let model = builder.build().unwrap();
     assert_ne!(small_id, macro_id);
@@ -176,10 +160,10 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
 
 #[test]
 fn repeated_molecules_get_distinct_instance_ids() {
-    let (small, conformer, atom, _, _) = two_atom_small(1.0);
+    let (small, positions, atom, _, _) = two_atom_small(1.0);
     let mut builder = Model::builder();
-    let first = builder.add_molecule(&small, &conformer).unwrap();
-    let second = builder.add_molecule(&small, &conformer).unwrap();
+    let first = builder.add_molecule(&small, &positions).unwrap();
+    let second = builder.add_molecule(&small, &positions).unwrap();
     let model = builder.build().unwrap();
     assert_ne!(first, second);
     assert_ne!(
@@ -191,37 +175,39 @@ fn repeated_molecules_get_distinct_instance_ids() {
 
 #[test]
 fn construction_copies_positions_and_preserves_sources() {
-    let (small, conformer, a, _, _) = two_atom_small(1.0);
+    let (small, positions, _a, _, _) = two_atom_small(1.0);
     let source = small.clone();
-    let mut model = Model::from_molecule(&small, &conformer).unwrap();
-    let atom = InstanceAtomId::new(MoleculeInstanceId::new(0), a);
+    let mut model = Model::from_molecule(&small, &positions).unwrap();
+    let atom = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(0));
     model
         .set_position(atom, Quantity::new(Point3::new(3.0, 0.0, 0.0), ANGSTROM))
         .unwrap();
     assert_eq!(small, source);
     assert_eq!(
-        conformer.position(a),
-        Some(Quantity::new(Point3::new(0.0, 0.0, 0.0), ANGSTROM))
+        positions.position_at(0).unwrap(),
+        Quantity::new(Point3::new(0.0, 0.0, 0.0), ANGSTROM)
     );
     assert_eq!(model.topology().definition_count(), 1);
 }
 
 #[test]
-fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
+fn construction_rejects_empty_and_mismatched_positions_transactionally() {
     assert!(matches!(
         Model::builder().build(),
         Err(ModelBuildError::Topology(
             TopologyBuildError::NoMoleculeInstances
         ))
     ));
-    let (small, mut conformer, a, _, _) = two_atom_small(1.0);
-    conformer
-        .set_position(a, Quantity::new(Point3::new(f64::NAN, 0.0, 0.0), ANGSTROM))
-        .unwrap();
+    let (small, _positions, _, _, _) = two_atom_small(1.0);
+    let wrong_count = Positions::new(Quantity::new([Point3::origin()], ANGSTROM)).unwrap();
     let mut builder = Model::builder();
-    assert!(
-        matches!(builder.add_molecule(&small, &conformer), Err(ModelBuildError::NonFinitePosition { atom }) if atom == a)
-    );
+    assert!(matches!(
+        builder.add_molecule(&small, &wrong_count),
+        Err(ModelBuildError::InstancePositionCountMismatch {
+            expected: 2,
+            actual: 1
+        })
+    ));
     assert!(matches!(
         builder.build(),
         Err(ModelBuildError::Topology(
@@ -232,8 +218,8 @@ fn construction_rejects_empty_missing_and_nonfinite_inputs_transactionally() {
 
 #[test]
 fn position_updates_are_complete_finite_and_transactional() {
-    let (small, conformer, _a, _, _) = two_atom_small(1.0);
-    let mut model = Model::from_molecule(&small, &conformer).unwrap();
+    let (small, positions, _a, _, _) = two_atom_small(1.0);
+    let mut model = Model::from_molecule(&small, &positions).unwrap();
     let original = model.positions().values().value().to_vec();
     assert!(matches!(
         model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
@@ -251,8 +237,8 @@ fn position_updates_are_complete_finite_and_transactional() {
 
 #[test]
 fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
-    let (small, conformer, _, _, bond) = two_atom_small(2.0);
-    let model = Model::from_molecule(&small, &conformer).unwrap();
+    let (small, positions, _, _, bond) = two_atom_small(2.0);
+    let model = Model::from_molecule(&small, &positions).unwrap();
     let qualified = InstanceBondId::new(MoleculeInstanceId::new(0), bond);
     let mut potential = HarmonicBondPotential::new(
         &model.shared_topology(),
@@ -272,7 +258,7 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
         Point3::new(2.0, 0.0, 0.0)
     );
 
-    let rebuilt = Model::from_molecule(&small, &conformer).unwrap();
+    let rebuilt = Model::from_molecule(&small, &positions).unwrap();
     assert_eq!(
         potential.evaluate(rebuilt.view()),
         Err(PotentialError::IncompatibleTopology)
@@ -301,8 +287,8 @@ fn harmonic_potential_and_minimization_use_instance_qualified_topology() {
 
 #[test]
 fn harmonic_potential_rejects_periodic_model_and_ensemble_state() {
-    let (small, conformer, _, _, bond) = two_atom_small(9.8);
-    let mut model = Model::from_molecule(&small, &conformer).unwrap();
+    let (small, positions, _, _, bond) = two_atom_small(9.8);
+    let mut model = Model::from_molecule(&small, &positions).unwrap();
     model
         .set_positions(Quantity::new(
             [Point3::new(0.1, 0.0, 0.0), Point3::new(9.9, 0.0, 0.0)],
@@ -342,7 +328,7 @@ fn harmonic_potential_rejects_periodic_model_and_ensemble_state() {
         potential.evaluate(periodic_ensemble.views().next().unwrap()),
         Err(PotentialError::UnsupportedPeriodicCell)
     );
-    let mut independent = Model::from_molecule(&small, &conformer).unwrap();
+    let mut independent = Model::from_molecule(&small, &positions).unwrap();
     independent.set_cell(Some(cell));
     assert_eq!(
         potential.evaluate(independent.view()),
@@ -396,8 +382,8 @@ impl Potential for BackendFailurePotential {
 
 #[test]
 fn minimization_backtracks_invalid_geometry_but_propagates_backend_failures() {
-    let (small, conformer, _, _, _) = two_atom_small(1.0);
-    let model = Model::from_molecule(&small, &conformer).unwrap();
+    let (small, positions, _, _, _) = two_atom_small(1.0);
+    let model = Model::from_molecule(&small, &positions).unwrap();
     let options = MinimizeOptions {
         max_iterations: 1,
         initial_step: Quantity::new(1.0, ANGSTROM),

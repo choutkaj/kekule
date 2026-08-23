@@ -191,7 +191,7 @@ impl SourceStereoNormalizationError {
 /// publishes represented chemistry only.
 pub(crate) fn canonicalize_molecule_for_publication(
     molecule: &mut Molecule,
-    geometry: Option<&crate::core::Conformer>,
+    geometry: Option<&dyn crate::chemistry::AtomPositionSource>,
     source_stereo: &[SourceStereoBondMark],
 ) -> Result<NormalizationReport, NormalizationError> {
     canonicalize_represented_chemistry(molecule).map_err(|error| {

@@ -1,11 +1,10 @@
 use std::{error::Error, fs};
 
 use kekule::{
-    core::Conformer,
     geometry::Point3,
     modeling::{minimize, MinimizeOptions},
     sdf::{self, SdfParseOptions, SdfRecordInterpretation},
-    structure::Model,
+    structure::{Model, Positions},
     units::{Quantity, ANGSTROM, MODEL_GRADIENT_UNIT},
 };
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
@@ -36,15 +35,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("formal charge: {}", ligand.formal_charge());
 
     // Geometry is detached from Molecule. Supply it explicitly when building a model.
-    let mut conformer = Conformer::new(ANGSTROM)?;
-    for atom in ligand.atom_ids() {
-        conformer.set_position(
-            atom,
-            Quantity::new(Point3::new(atom.index() as f64, 0.0, 0.0), ANGSTROM),
-        )?;
-    }
+    let positions = Positions::new(Quantity::new(
+        ligand
+            .atom_ids()
+            .map(|atom| Point3::new(atom.index() as f64, 0.0, 0.0))
+            .collect::<Vec<_>>(),
+        ANGSTROM,
+    ))?;
     let mut builder = Model::builder();
-    builder.add_molecule(&ligand, &conformer)?;
+    builder.add_molecule(&ligand, &positions)?;
     let model = builder.build()?;
 
     // DREIDING support is explicitly nonperiodic. This SDF-derived model has no

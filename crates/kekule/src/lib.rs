@@ -28,7 +28,7 @@
 //! remain future capabilities.
 //!
 //! Collection-backed public identifiers are fixed-width and every insertion
-//! that creates one is fallible. Exhausting an atom, bond, conformer, stereo,
+//! that creates one is fallible. Exhausting an atom, bond, stereo,
 //! hierarchy, definition, instance, or dense topology index space returns the
 //! corresponding structured capacity error before canonical state is changed.
 #![forbid(unsafe_code)]
