@@ -30,7 +30,7 @@ and its `Perception` stores reconstructible derived chemistry.
 Molecule = Graph + Hierarchy + Perception
 ```
 
-Coordinates and conformers are detached from `Molecule`. They enter at the
+Coordinates are detached from `Molecule`. Dense `Positions` enter at the
 `Model`, `Ensemble`, or trajectory layer. Structural construction and editing
 use `MoleculeEditor`; only `finish()` can publish a molecule, after validating
 that it is non-empty and connected.
@@ -124,10 +124,10 @@ resulting model with the DREIDING force field:
 use std::error::Error;
 
 use kekule::{
-    core::{Conformer, Molecule},
+    core::Molecule,
     geometry::Point3,
     modeling::{minimize, MinimizeOptions},
-    structure::Model,
+    structure::{Model, Positions},
     units::{Quantity, ANGSTROM, MODEL_GRADIENT_UNIT},
 };
 use kekule_potentials::dreiding::{DreidingPotential, DreidingPrepareOptions};
@@ -137,16 +137,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut ligand = molecules.pop().expect("SMILES contains one component");
     ligand.perceive()?;
 
-    // Molecule carries no geometry. Supply a detached conformer explicitly.
-    let mut conformer = Conformer::new(ANGSTROM)?;
-    for atom in ligand.atom_ids() {
-        conformer.set_position(
-            atom,
-            Quantity::new(Point3::new(atom.index() as f64, 0.0, 0.0), ANGSTROM),
-        )?;
-    }
+    // Molecule carries no geometry. Supply dense coordinates in atom order.
+    let positions = Positions::new(Quantity::new(
+        ligand
+            .atom_ids()
+            .enumerate()
+            .map(|(index, _)| Point3::new(index as f64, 0.0, 0.0))
+            .collect::<Vec<_>>(),
+        ANGSTROM,
+    ))?;
     let mut builder = Model::builder();
-    builder.add_molecule(&ligand, &conformer)?;
+    builder.add_molecule(&ligand, &positions)?;
     let model = builder.build()?;
 
     // Prepare DREIDING explicitly, then minimize the model.

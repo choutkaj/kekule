@@ -1734,6 +1734,54 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
 }
 
 #[test]
+fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
+    let mut molecule = crate::core::MoleculeEditor::new();
+    let tombstone = molecule
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let center = molecule
+        .add_atom(carbon())
+        .expect("atom identifier capacity");
+    let carriers = ["F", "Cl", "Br", "I"]
+        .into_iter()
+        .map(element_atom)
+        .map(|atom| molecule.add_atom(atom).expect("atom identifier capacity"))
+        .collect::<Vec<_>>();
+    for carrier in &carriers {
+        molecule
+            .add_bond(center, *carrier, BondOrder::Single)
+            .expect("tetrahedral carrier bond");
+    }
+    molecule.delete_atom(tombstone).expect("isolated tombstone");
+    mark_all_fresh(molecule.working_mut());
+    assert_eq!(center, AtomId::new(1));
+    assert_eq!(molecule.atom_count(), 5);
+
+    let positions = test_positions(vec![
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(0.0, 0.0, 1.0),
+        Point3::new(0.0, 0.0, -1.0),
+    ]);
+    let inferred = stereo_api::infer_coordinate_stereo(molecule.working(), &positions)
+        .expect("dense positions should resolve through non-contiguous atom IDs");
+
+    assert_eq!(inferred.elements.len(), 1);
+    assert!(matches!(
+        &inferred.elements[0].kind,
+        StereoElementKind::Tetrahedral(stereo)
+            if stereo.center == center
+                && stereo.carriers
+                    == carriers
+                        .iter()
+                        .copied()
+                        .map(StereoCarrier::Atom)
+                        .collect::<Vec<_>>()
+    ));
+}
+
+#[test]
 fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo() {
     let mut mol = crate::core::MoleculeEditor::new();
     let left = mol.add_atom(carbon()).expect("atom identifier capacity");
