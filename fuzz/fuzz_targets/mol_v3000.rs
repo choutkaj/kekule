@@ -11,9 +11,11 @@ fuzz_target!(|data: &[u8]| {
         let Ok(interpreted) = interpret(&document) else {
             return;
         };
-        if let Ok(output) = write_v3000(interpreted.molecule()) {
-            if let Ok(document) = parse_str(&output) {
-                let _ = interpret(&document);
+        for molecule in interpreted.molecules() {
+            if let Ok(output) = write_v3000(molecule) {
+                if let Ok(document) = parse_str(&output) {
+                    let _ = interpret(&document);
+                }
             }
         }
     }
