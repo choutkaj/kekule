@@ -7,16 +7,32 @@ use std::fmt;
 use super::RingMembership;
 
 struct MoleculePositions<'a> {
-    molecule: &'a Molecule,
+    atom_to_dense: Vec<Option<usize>>,
     positions: &'a Positions,
+}
+
+impl<'a> MoleculePositions<'a> {
+    fn new(molecule: &Molecule, positions: &'a Positions) -> Self {
+        debug_assert_eq!(molecule.atom_count(), positions.len());
+        let capacity = molecule
+            .atom_ids()
+            .map(AtomId::index)
+            .max()
+            .map_or(0, |index| index + 1);
+        let mut atom_to_dense = vec![None; capacity];
+        for (dense_index, atom) in molecule.atom_ids().enumerate() {
+            atom_to_dense[atom.index()] = Some(dense_index);
+        }
+        Self {
+            atom_to_dense,
+            positions,
+        }
+    }
 }
 
 impl AtomPositionSource for MoleculePositions<'_> {
     fn position_value(&self, atom: AtomId) -> Option<Point3> {
-        let index = self
-            .molecule
-            .atom_ids()
-            .position(|candidate| candidate == atom)?;
+        let index = self.atom_to_dense.get(atom.index()).copied().flatten()?;
         self.positions
             .position_at(index)
             .ok()
@@ -233,10 +249,7 @@ pub fn infer_coordinate_stereo_with_options(
         });
     }
     validate_stereo(mol)?;
-    let source = MoleculePositions {
-        molecule: mol,
-        positions,
-    };
+    let source = MoleculePositions::new(mol, positions);
     Ok(CoordinateStereoResult {
         elements: infer_coordinate_stereo_elements(mol, &source, options.infer_axes),
     })
