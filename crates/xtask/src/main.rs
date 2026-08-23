@@ -22,7 +22,7 @@ use kekule::{
         valence::{self, ValenceModel, ValenceOptions},
     },
     query,
-    sdf::{self, SdfDataField, SdfParseOptions, SdfRecord},
+    sdf::{self, SdfDataField, SdfParseOptions, SdfRecordInterpretation},
     smiles::{self},
     stereo::{
         self, CoordinateStereoError, CoordinateStereoMaterializationReport, StereoCandidate,

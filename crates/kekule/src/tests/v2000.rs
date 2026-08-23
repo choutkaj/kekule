@@ -435,7 +435,7 @@ M  END
 #[test]
 fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_metadata() {
     let molecule = read_smiles("C").expect("methane parses");
-    let record = SdfRecord::new(
+    let record = SdfRecordInterpretation::new(
         "safe title",
         vec![molecule.clone()],
         vec![SdfDataField::new("NOTES", "> leading marker\nsecond line")],
@@ -465,7 +465,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
             "record delimiter",
         ),
     ] {
-        let record = SdfRecord::new(title, vec![molecule.clone()], vec![field]);
+        let record = SdfRecordInterpretation::new(title, vec![molecule.clone()], vec![field]);
         let error =
             sdf::write_v2000(&[record]).expect_err("unrepresentable SDF metadata must fail");
         assert!(error.message().contains(expected), "{expected}: {error}");
@@ -778,8 +778,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
 
     let fields = vec![SdfDataField::new("NOTES", "line one\nline two")];
     let records = vec![
-        SdfRecord::new("metadata title", vec![molecule.clone()], fields.clone()),
-        SdfRecord::new("metadata title", vec![molecule], fields),
+        SdfRecordInterpretation::new("metadata title", vec![molecule.clone()], fields.clone()),
+        SdfRecordInterpretation::new("metadata title", vec![molecule], fields),
     ];
     let sdf_text = sdf::write_v2000(&records).expect("two records should write");
     assert_eq!(sdf_text.lines().nth(1), Some("kekule"));

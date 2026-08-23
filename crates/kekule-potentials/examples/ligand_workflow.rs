@@ -4,7 +4,7 @@ use kekule::{
     core::Conformer,
     geometry::Point3,
     modeling::{minimize, MinimizeOptions},
-    sdf::{self, SdfParseOptions, SdfRecord},
+    sdf::{self, SdfParseOptions, SdfRecordInterpretation},
     structure::Model,
     units::{Quantity, ANGSTROM, MODEL_GRADIENT_UNIT},
 };
@@ -74,7 +74,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     // Reassemble the original record metadata. Molecule output is geometry-independent.
-    let output = sdf::write_v2000(&[SdfRecord::new(title, vec![ligand], data_fields)])?;
+    let output = sdf::write_v2000(&[SdfRecordInterpretation::new(
+        title,
+        vec![ligand],
+        data_fields,
+    )])?;
     fs::write("examples/ligand-minimized.sdf", output)?;
     Ok(())
 }

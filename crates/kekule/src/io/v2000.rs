@@ -10,7 +10,7 @@ use crate::core::*;
 use crate::geometry::Point3;
 use crate::units::{Quantity, ANGSTROM};
 
-use super::sdf_document::{SdfDataField, SdfRecord};
+use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
 use super::structure_documents::{
     apply_molfile_declared_valence, checked_line_number, interpret_molfile_atom_fields,
     MolfileVersion,
@@ -840,7 +840,9 @@ pub fn write_mol_v2000(molecule: &Molecule) -> std::result::Result<String, MolWr
     Ok(out)
 }
 
-pub fn write_sdf_v2000(records: &[SdfRecord]) -> std::result::Result<String, MolWriteError> {
+pub fn write_sdf_v2000(
+    records: &[SdfRecordInterpretation],
+) -> std::result::Result<String, MolWriteError> {
     let mut out = String::new();
     for record in records {
         validate_sdf_title(record.title())?;
