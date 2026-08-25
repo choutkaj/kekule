@@ -68,7 +68,6 @@ macro_rules! fixed_u32_id {
 
 mod algorithms;
 pub mod alignment;
-pub mod bio;
 mod chemistry;
 pub mod core;
 pub mod descriptors;
@@ -400,10 +399,10 @@ pub mod hydrogens {
 }
 
 pub mod prelude {
-    pub use crate::bio::Hierarchy;
     pub use crate::core::{
         Atom, AtomId, Bond, BondId, BondOrder, Element, HydrogenDeclaration, Molecule,
     };
+    pub use crate::topology::Hierarchy;
 }
 
 #[cfg(test)]

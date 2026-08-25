@@ -40,7 +40,7 @@ Molecule
 Topology
   one geometry-independent system made from one or more Molecule instances
   topology-wide atom/bond identity and dense ordering
-  one optional system-level Hierarchy
+  one system-level Hierarchy, which may be empty
 
 Model
   one geometry-dependent realization of a Topology
@@ -230,13 +230,19 @@ Conceptually:
 
 ```text
 Hierarchy
-  ChainId
-    ResidueId
-      AtomSiteId -> InstanceAtomId
+  ChainId -> Chain
+    ResidueId -> Residue
+      AtomSiteId -> AtomSite -> InstanceAtomId
 ```
 
-The exact public type names are not normative, but the ownership and identity
-rules are.
+These are the canonical public hierarchy names. `Chain`, `Residue`, and
+`AtomSite` are topology-owned storage nodes; topology-bound `ChainView`,
+`ResidueView`, and `AtomSiteView` values provide borrowed navigation context.
+
+Kekule intentionally does not reproduce a `Structure -> Model -> Chain ->
+Residue -> Atom` object hierarchy. In particular, hierarchy has no `Model`
+node, and an `AtomSite` remains metadata and organization referring to the
+authoritative chemical atom through `InstanceAtomId`.
 
 ### Hierarchy may cross molecule boundaries
 
@@ -1175,6 +1181,11 @@ Model
 A `Model` does not duplicate molecular chemistry or hierarchy. It interprets
 dense realization state against its topology's authoritative identities, dense
 layout, and hierarchy.
+
+`Model` is specifically Kekule's geometry-bearing `Topology + Positions`
+abstraction. Multiple coordinate models from a source format are several
+realizations of the same topology and therefore belong to `Ensemble`, not to a
+hierarchy-level node.
 
 Construction validates at least:
 

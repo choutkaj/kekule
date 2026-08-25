@@ -1,5 +1,4 @@
 use super::{deterministic_text_mutations, test_positions};
-use crate::bio::SmcraAtomSiteMetadata;
 use crate::core::{Atom, AtomId, BondOrder, Element};
 use crate::geometry::Point3;
 use crate::mmcif::{
@@ -8,6 +7,7 @@ use crate::mmcif::{
     MmcifWriteError, MmcifWriteOptions,
 };
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
+use crate::topology::AtomSiteMetadata;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{Quantity, DIMENSIONLESS, NANOMETER, SQUARE_NANOMETER};
 
@@ -2002,7 +2002,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
         .add_atom_site(
             residue,
             InstanceAtomId::new(instance, AtomId::new(99)),
-            SmcraAtomSiteMetadata::default(),
+            AtomSiteMetadata::default(),
         )
         .unwrap();
     assert!(matches!(
@@ -2083,9 +2083,9 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(instance, atom),
-                SmcraAtomSiteMetadata {
+                AtomSiteMetadata {
                     label_atom_id: Some("CA".to_owned()),
-                    ..SmcraAtomSiteMetadata::default()
+                    ..AtomSiteMetadata::default()
                 },
             )
             .unwrap();
@@ -2335,9 +2335,9 @@ fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &st
         .add_atom_site(
             residue,
             InstanceAtomId::new(instance, atom),
-            SmcraAtomSiteMetadata {
+            AtomSiteMetadata {
                 label_atom_id: Some(atom_name.to_owned()),
-                ..SmcraAtomSiteMetadata::default()
+                ..AtomSiteMetadata::default()
             },
         )
         .unwrap();

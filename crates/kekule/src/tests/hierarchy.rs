@@ -1,5 +1,5 @@
 use super::*;
-use crate::bio::{Hierarchy, HierarchyError, SmcraAtomSiteMetadata, SmcraChainId};
+use crate::topology::{AtomSiteMetadata, ChainId, Hierarchy, HierarchyError};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError, TopologyBuilder};
 
 #[test]
@@ -15,7 +15,7 @@ fn hierarchy_adds_chains_residues_and_atom_sites_in_order() {
             Some("A".to_owned()),
         )
         .unwrap();
-    let metadata = SmcraAtomSiteMetadata {
+    let metadata = AtomSiteMetadata {
         type_symbol: Some("C".to_owned()),
         label_asym_id: Some("A".to_owned()),
         auth_asym_id: Some("authA".to_owned()),
@@ -46,20 +46,20 @@ fn hierarchy_rejects_missing_parents_and_duplicate_atom_placement() {
     let chain = hierarchy.add_chain("A", None).unwrap();
     assert_eq!(
         hierarchy
-            .add_residue(SmcraChainId::new(99), "GLY", None, None, None)
+            .add_residue(ChainId::new(99), "GLY", None, None, None)
             .unwrap_err(),
-        HierarchyError::InvalidChainId(SmcraChainId::new(99))
+        HierarchyError::InvalidChainId(ChainId::new(99))
     );
     let residue = hierarchy
         .add_residue(chain, "GLY", None, None, None)
         .unwrap();
     let atom = InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(2));
     hierarchy
-        .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
+        .add_atom_site(residue, atom, AtomSiteMetadata::default())
         .unwrap();
     assert_eq!(
         hierarchy
-            .add_atom_site(residue, atom, SmcraAtomSiteMetadata::default())
+            .add_atom_site(residue, atom, AtomSiteMetadata::default())
             .unwrap_err(),
         HierarchyError::DuplicateAtomPlacement(atom)
     );
@@ -82,7 +82,7 @@ fn topology_publication_validates_hierarchy_references() {
         .add_atom_site(
             residue,
             InstanceAtomId::new(instance, AtomId::new(99)),
-            SmcraAtomSiteMetadata::default(),
+            AtomSiteMetadata::default(),
         )
         .unwrap();
     assert!(matches!(
@@ -102,7 +102,7 @@ fn topology_publication_validates_hierarchy_references() {
         .add_atom_site(
             residue,
             InstanceAtomId::new(instance, atom),
-            SmcraAtomSiteMetadata::default(),
+            AtomSiteMetadata::default(),
         )
         .unwrap();
     assert_eq!(builder.build().unwrap().hierarchy().atom_sites().count(), 1);
