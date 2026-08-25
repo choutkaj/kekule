@@ -169,7 +169,7 @@ fn model_and_view_preserve_shared_topology_and_qualified_hierarchy_navigation() 
         .add_atom_site(
             first_residue,
             InstanceAtomId::new(first, carbon),
-            SmcraAtomSiteMetadata::default(),
+            AtomSiteMetadata::default(),
         )
         .unwrap();
     for (residue, instance, atom) in [
@@ -182,7 +182,7 @@ fn model_and_view_preserve_shared_topology_and_qualified_hierarchy_navigation() 
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(instance, atom),
-                SmcraAtomSiteMetadata::default(),
+                AtomSiteMetadata::default(),
             )
             .unwrap();
     }
@@ -209,8 +209,8 @@ fn model_and_view_preserve_shared_topology_and_qualified_hierarchy_navigation() 
     assert_eq!(model.residues().count(), 2);
     assert_eq!(model.atom_sites().count(), 4);
     assert_eq!(
-        model.chains().map(InstanceChain::id).collect::<Vec<_>>(),
-        view.chains().map(InstanceChain::id).collect::<Vec<_>>()
+        model.chains().map(ChainView::id).collect::<Vec<_>>(),
+        view.chains().map(ChainView::id).collect::<Vec<_>>()
     );
     assert!(std::ptr::eq(
         model.chain(first_chain).unwrap().local(),
@@ -677,7 +677,7 @@ fn model_and_ensemble_slices_reuse_one_subset_mapping_for_dense_state() {
             .add_atom_site(
                 residue,
                 InstanceAtomId::new(instance, atom),
-                SmcraAtomSiteMetadata::default(),
+                AtomSiteMetadata::default(),
             )
             .unwrap();
     }

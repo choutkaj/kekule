@@ -5,10 +5,9 @@ use crate::core::{Atom, Bond, Molecule};
 use crate::geometry::{PeriodicCell, Point3};
 use crate::topology::transform::TopologySubsetError;
 use crate::topology::{
-    AtomSelection, Hierarchy, InstanceAtomId, InstanceAtomSite, InstanceBondId, InstanceChain,
-    InstanceResidue, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, SmcraAtomSiteId,
-    SmcraChainId, SmcraResidueId, Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder,
-    TopologyError,
+    AtomSelection, AtomSiteId, AtomSiteView, ChainId, ChainView, Hierarchy, InstanceAtomId,
+    InstanceBondId, MoleculeDefinitionId, MoleculeInstance, MoleculeInstanceId, ResidueId,
+    ResidueView, Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder, TopologyError,
 };
 use crate::units::Quantity;
 
@@ -164,72 +163,63 @@ impl Model {
         self.topology.hierarchy()
     }
 
-    pub fn chains(&self) -> impl Iterator<Item = InstanceChain<'_>> {
+    pub fn chains(&self) -> impl Iterator<Item = ChainView<'_>> {
         self.topology.chains()
     }
 
-    pub fn residues(&self) -> impl Iterator<Item = InstanceResidue<'_>> {
+    pub fn residues(&self) -> impl Iterator<Item = ResidueView<'_>> {
         self.topology.residues()
     }
 
-    pub fn atom_sites(&self) -> impl Iterator<Item = InstanceAtomSite<'_>> {
+    pub fn atom_sites(&self) -> impl Iterator<Item = AtomSiteView<'_>> {
         self.topology.atom_sites()
     }
 
-    pub fn chain(&self, chain: SmcraChainId) -> Result<InstanceChain<'_>, TopologyError> {
+    pub fn chain(&self, chain: ChainId) -> Result<ChainView<'_>, TopologyError> {
         self.topology.chain(chain)
     }
 
-    pub fn residue(&self, residue: SmcraResidueId) -> Result<InstanceResidue<'_>, TopologyError> {
+    pub fn residue(&self, residue: ResidueId) -> Result<ResidueView<'_>, TopologyError> {
         self.topology.residue(residue)
     }
 
-    pub fn atom_site(
-        &self,
-        atom_site: SmcraAtomSiteId,
-    ) -> Result<InstanceAtomSite<'_>, TopologyError> {
+    pub fn atom_site(&self, atom_site: AtomSiteId) -> Result<AtomSiteView<'_>, TopologyError> {
         self.topology.atom_site(atom_site)
     }
 
-    pub fn atom_for_site(
-        &self,
-        atom_site: SmcraAtomSiteId,
-    ) -> Result<InstanceAtomId, TopologyError> {
+    pub fn atom_for_site(&self, atom_site: AtomSiteId) -> Result<InstanceAtomId, TopologyError> {
         self.topology.atom_for_site(atom_site)
     }
 
     pub fn atom_site_for_atom(
         &self,
         atom: InstanceAtomId,
-    ) -> Result<Option<InstanceAtomSite<'_>>, TopologyError> {
+    ) -> Result<Option<AtomSiteView<'_>>, TopologyError> {
         self.topology.atom_site_for_atom(atom)
     }
 
     pub fn residue_for_atom(
         &self,
         atom: InstanceAtomId,
-    ) -> Result<Option<InstanceResidue<'_>>, TopologyError> {
+    ) -> Result<Option<ResidueView<'_>>, TopologyError> {
         self.topology.residue_for_atom(atom)
     }
 
     pub fn chain_for_atom(
         &self,
         atom: InstanceAtomId,
-    ) -> Result<Option<InstanceChain<'_>>, TopologyError> {
+    ) -> Result<Option<ChainView<'_>>, TopologyError> {
         self.topology.chain_for_atom(atom)
     }
 
     pub fn residue_for_site(
         &self,
-        atom_site: SmcraAtomSiteId,
-    ) -> Result<InstanceResidue<'_>, TopologyError> {
+        atom_site: AtomSiteId,
+    ) -> Result<ResidueView<'_>, TopologyError> {
         self.topology.residue_for_site(atom_site)
     }
 
-    pub fn chain_for_residue(
-        &self,
-        residue: SmcraResidueId,
-    ) -> Result<InstanceChain<'_>, TopologyError> {
+    pub fn chain_for_residue(&self, residue: ResidueId) -> Result<ChainView<'_>, TopologyError> {
         self.topology.chain_for_residue(residue)
     }
 
@@ -522,72 +512,60 @@ impl<'a> ModelView<'a> {
         self.topology.hierarchy()
     }
 
-    pub fn chains(self) -> impl Iterator<Item = InstanceChain<'a>> + 'a {
+    pub fn chains(self) -> impl Iterator<Item = ChainView<'a>> + 'a {
         self.topology.chains()
     }
 
-    pub fn residues(self) -> impl Iterator<Item = InstanceResidue<'a>> + 'a {
+    pub fn residues(self) -> impl Iterator<Item = ResidueView<'a>> + 'a {
         self.topology.residues()
     }
 
-    pub fn atom_sites(self) -> impl Iterator<Item = InstanceAtomSite<'a>> + 'a {
+    pub fn atom_sites(self) -> impl Iterator<Item = AtomSiteView<'a>> + 'a {
         self.topology.atom_sites()
     }
 
-    pub fn chain(self, chain: SmcraChainId) -> Result<InstanceChain<'a>, TopologyError> {
+    pub fn chain(self, chain: ChainId) -> Result<ChainView<'a>, TopologyError> {
         self.topology.chain(chain)
     }
 
-    pub fn residue(self, residue: SmcraResidueId) -> Result<InstanceResidue<'a>, TopologyError> {
+    pub fn residue(self, residue: ResidueId) -> Result<ResidueView<'a>, TopologyError> {
         self.topology.residue(residue)
     }
 
-    pub fn atom_site(
-        self,
-        atom_site: SmcraAtomSiteId,
-    ) -> Result<InstanceAtomSite<'a>, TopologyError> {
+    pub fn atom_site(self, atom_site: AtomSiteId) -> Result<AtomSiteView<'a>, TopologyError> {
         self.topology.atom_site(atom_site)
     }
 
-    pub fn atom_for_site(
-        self,
-        atom_site: SmcraAtomSiteId,
-    ) -> Result<InstanceAtomId, TopologyError> {
+    pub fn atom_for_site(self, atom_site: AtomSiteId) -> Result<InstanceAtomId, TopologyError> {
         self.topology.atom_for_site(atom_site)
     }
 
     pub fn atom_site_for_atom(
         self,
         atom: InstanceAtomId,
-    ) -> Result<Option<InstanceAtomSite<'a>>, TopologyError> {
+    ) -> Result<Option<AtomSiteView<'a>>, TopologyError> {
         self.topology.atom_site_for_atom(atom)
     }
 
     pub fn residue_for_atom(
         self,
         atom: InstanceAtomId,
-    ) -> Result<Option<InstanceResidue<'a>>, TopologyError> {
+    ) -> Result<Option<ResidueView<'a>>, TopologyError> {
         self.topology.residue_for_atom(atom)
     }
 
     pub fn chain_for_atom(
         self,
         atom: InstanceAtomId,
-    ) -> Result<Option<InstanceChain<'a>>, TopologyError> {
+    ) -> Result<Option<ChainView<'a>>, TopologyError> {
         self.topology.chain_for_atom(atom)
     }
 
-    pub fn residue_for_site(
-        self,
-        atom_site: SmcraAtomSiteId,
-    ) -> Result<InstanceResidue<'a>, TopologyError> {
+    pub fn residue_for_site(self, atom_site: AtomSiteId) -> Result<ResidueView<'a>, TopologyError> {
         self.topology.residue_for_site(atom_site)
     }
 
-    pub fn chain_for_residue(
-        self,
-        residue: SmcraResidueId,
-    ) -> Result<InstanceChain<'a>, TopologyError> {
+    pub fn chain_for_residue(self, residue: ResidueId) -> Result<ChainView<'a>, TopologyError> {
         self.topology.chain_for_residue(residue)
     }
 

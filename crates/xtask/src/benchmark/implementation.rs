@@ -398,7 +398,7 @@ fn dssp_helix_position_json(position: dssp::DsspHelixPosition) -> &'static str {
 
 fn dssp_bond_json(
     bond: Option<dssp::DsspHydrogenBond>,
-    residues: &BTreeMap<kekule::topology::SmcraResidueId, &dssp::DsspResidue>,
+    residues: &BTreeMap<kekule::topology::ResidueId, &dssp::DsspResidue>,
 ) -> Value {
     let Some(bond) = bond else {
         return Value::Null;

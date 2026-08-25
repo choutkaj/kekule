@@ -496,7 +496,7 @@ impl MolfileInterpretation {
                 hierarchy.add_atom_site(
                     residue,
                     crate::topology::InstanceAtomId::new(instance, atom),
-                    crate::topology::SmcraAtomSiteMetadata::default(),
+                    crate::topology::AtomSiteMetadata::default(),
                 )?;
             }
         }
