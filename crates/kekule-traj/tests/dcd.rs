@@ -24,6 +24,14 @@ fn topology() -> Arc<Topology> {
     build_topology(&["C", "H", "O"], &[(0, 1), (0, 2)])
 }
 
+fn assert_xs_close(buffer: &FrameBuffer, expected: &[f64]) {
+    let actual = xs(buffer);
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.into_iter().zip(expected) {
+        assert!((actual - expected).abs() < 1.0e-12);
+    }
+}
+
 fn set_frame(
     buffer: &mut FrameBuffer,
     coordinates: [[f64; 3]; 3],
@@ -103,12 +111,12 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         .unwrap();
         let mut destination = FrameBuffer::new(Arc::clone(&topology));
         assert!(reader.read_next(&mut destination).unwrap());
-        assert_eq!(xs(&destination), vec![0.0, 3.0, 6.0]);
+        assert_xs_close(&destination, &[0.0, 0.3, 0.6]);
         assert_eq!(destination.frame_view().step(), Some(10));
         assert_eq!(destination.frame_view().time().unwrap().value(), &5.0);
         assert!(destination.cell().is_some());
         assert!(reader.read_next(&mut destination).unwrap());
-        assert_eq!(xs(&destination), vec![1.0, 4.0, 7.0]);
+        assert_xs_close(&destination, &[0.1, 0.4, 0.7]);
         assert_eq!(destination.frame_view().step(), Some(12));
         assert!(!reader.read_next(&mut destination).unwrap());
 
@@ -124,9 +132,9 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(2));
         indexed.read_frame(1, &mut destination).unwrap();
-        assert_eq!(xs(&destination), vec![1.0, 4.0, 7.0]);
+        assert_xs_close(&destination, &[0.1, 0.4, 0.7]);
         assert!(indexed.read_next(&mut destination).unwrap());
-        assert_eq!(xs(&destination), vec![0.0, 3.0, 6.0]);
+        assert_xs_close(&destination, &[0.0, 0.3, 0.6]);
     }
 }
 
@@ -145,10 +153,10 @@ fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
     let mut reader = reader.to_indexed().unwrap();
     let mut buffer = FrameBuffer::new(topology);
     reader.read_frame(1, &mut buffer).unwrap();
-    assert_eq!(xs(&buffer), vec![0.0, 10.0, 2.0]);
+    assert_xs_close(&buffer, &[0.0, 1.0, 0.2]);
     assert_eq!(buffer.frame_view().step(), Some(1));
     reader.read_frame(0, &mut buffer).unwrap();
-    assert_eq!(xs(&buffer), vec![0.0, 1.0, 2.0]);
+    assert_xs_close(&buffer, &[0.0, 0.1, 0.2]);
 }
 
 #[test]
@@ -563,10 +571,10 @@ fn independently_generated_mdanalysis_fixture_is_interoperable() {
     .unwrap();
     let mut buffer = FrameBuffer::new(topology);
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_eq!(xs(&buffer), vec![0.0, 3.0, 6.0]);
+    assert_xs_close(&buffer, &[0.0, 0.3, 0.6]);
     assert!(buffer.cell().is_some());
     assert!(reader.read_next(&mut buffer).unwrap());
-    assert_eq!(xs(&buffer), vec![1.0, 4.0, 7.0]);
+    assert_xs_close(&buffer, &[0.1, 0.4, 0.7]);
     assert!(!reader.read_next(&mut buffer).unwrap());
 }
 

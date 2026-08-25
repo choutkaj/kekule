@@ -4,7 +4,7 @@
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
-use crate::units::{Quantity, ScaleValue, UnitError, MODEL_LENGTH_UNIT};
+use crate::units::{Quantity, ScaleValue, UnitError, CANONICAL_LENGTH_UNIT};
 
 /// A Cartesian point.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -239,7 +239,7 @@ impl ScaleValue for Matrix3 {
     }
 }
 
-/// A validated periodic simulation cell in the modelling length unit.
+/// A validated periodic simulation cell in Kekule's canonical length unit.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PeriodicCell {
     vectors: Matrix3,
@@ -252,7 +252,7 @@ impl PeriodicCell {
         lengths: Quantity<Vector3>,
         periodic_axes: [bool; 3],
     ) -> Result<Self, PeriodicCellError> {
-        let lengths = lengths.to_unit(MODEL_LENGTH_UNIT)?.to_value();
+        let lengths = lengths.to_unit(CANONICAL_LENGTH_UNIT)?.to_value();
         if !lengths.is_finite() || lengths.x <= 0.0 || lengths.y <= 0.0 || lengths.z <= 0.0 {
             return Err(PeriodicCellError::InvalidOrthorhombicLengths);
         }
@@ -263,7 +263,7 @@ impl PeriodicCell {
                     Vector3::new(0.0, lengths.y, 0.0),
                     Vector3::new(0.0, 0.0, lengths.z),
                 ],
-                MODEL_LENGTH_UNIT,
+                CANONICAL_LENGTH_UNIT,
             ),
             periodic_axes,
         )
@@ -277,7 +277,7 @@ impl PeriodicCell {
         if !periodic_axes.into_iter().any(|periodic| periodic) {
             return Err(PeriodicCellError::NoPeriodicAxes);
         }
-        let [a, b, c] = vectors.to_unit(MODEL_LENGTH_UNIT)?.to_value();
+        let [a, b, c] = vectors.to_unit(CANONICAL_LENGTH_UNIT)?.to_value();
         let matrix = Matrix3::from_columns(a, b, c);
         if !matrix.is_finite() {
             return Err(PeriodicCellError::NonFiniteVector);
@@ -293,7 +293,7 @@ impl PeriodicCell {
     }
 
     pub fn vectors(self) -> Quantity<[Vector3; 3]> {
-        Quantity::new(self.vectors.columns(), MODEL_LENGTH_UNIT)
+        Quantity::new(self.vectors.columns(), CANONICAL_LENGTH_UNIT)
     }
 
     pub const fn periodic_axes(self) -> [bool; 3] {
@@ -460,12 +460,12 @@ mod tests {
         assert_eq!(
             cell.vectors().value(),
             &[
-                Vector3::new(10.0, 0.0, 0.0),
-                Vector3::new(0.0, 20.0, 0.0),
-                Vector3::new(0.0, 0.0, 30.0)
+                Vector3::new(1.0, 0.0, 0.0),
+                Vector3::new(0.0, 2.0, 0.0),
+                Vector3::new(0.0, 0.0, 3.0)
             ]
         );
-        assert_eq!(cell.vectors().unit(), ANGSTROM);
+        assert_eq!(cell.vectors().unit(), NANOMETER);
         assert_eq!(
             PeriodicCell::new(
                 Quantity::new(

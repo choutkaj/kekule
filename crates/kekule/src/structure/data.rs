@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::units::{Quantity, Unit, UnitError, DIMENSIONLESS, SQUARE_ANGSTROM};
+use crate::units::{Quantity, Unit, UnitError, DIMENSIONLESS, SQUARE_NANOMETER};
 
 const MAX_PROPERTY_NAME_LEN: usize = 128;
 
@@ -285,7 +285,7 @@ impl AtomData {
             .map(|column| column.values.as_slice())
     }
 
-    /// Returns the dense B-factor column in canonical square angstroms.
+    /// Returns the dense B-factor column in canonical square nanometers.
     pub fn b_factors(&self) -> Option<Quantity<&[Option<f64>]>> {
         self.b_factors.as_ref().map(ScalarPropertyColumn::quantity)
     }
@@ -400,7 +400,7 @@ impl AtomData {
     ) -> Result<(), AtomDataError> {
         validate_index(self.atom_count(), index)?;
         let len = self.atom_count();
-        set_optional_property_column_value(&mut self.b_factors, len, index, value, SQUARE_ANGSTROM)
+        set_optional_property_column_value(&mut self.b_factors, len, index, value, SQUARE_NANOMETER)
             .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))
     }
 
@@ -426,13 +426,13 @@ impl AtomData {
     }
 
     /// Replaces the complete B-factor column transactionally. Values are
-    /// converted to canonical square angstroms, and an all-absent column is
+    /// converted to canonical square nanometers, and an all-absent column is
     /// normalized to no allocation.
     pub fn set_b_factors<T>(&mut self, values: Quantity<T>) -> Result<(), AtomDataError>
     where
         T: AsRef<[Option<f64>]>,
     {
-        let staged = stage_property_column(values, self.atom_count(), Some(SQUARE_ANGSTROM))
+        let staged = stage_property_column(values, self.atom_count(), Some(SQUARE_NANOMETER))
             .map_err(|error| atom_data_column_error(AtomDataField::BFactor, error))?;
         self.b_factors = staged;
         Ok(())

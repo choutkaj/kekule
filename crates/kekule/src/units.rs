@@ -40,6 +40,8 @@ impl Dimension {
     pub const AMOUNT: Self = Self::base(BaseDimension::Amount);
     pub const CHARGE: Self = Self::base(BaseDimension::Charge);
     pub const ANGLE: Self = Self::base(BaseDimension::Angle);
+    /// Molar mass (`Mass / Amount`).
+    pub const MOLAR_MASS: Self = Self::new([0, 1, 0, 0, -1, 0, 0]);
 
     pub const fn new(exponents: [i32; DIMENSION_COUNT]) -> Self {
         Self { exponents }
@@ -498,9 +500,12 @@ pub const ANGSTROM: Unit = Unit::named(Dimension::LENGTH, 1.0e-10, "A");
 pub const BOHR: Unit = Unit::named(Dimension::LENGTH, 5.291_772_109_03e-11, "bohr");
 pub const SQUARE_ANGSTROM: Unit =
     Unit::named(Dimension::new([2, 0, 0, 0, 0, 0, 0]), 1.0e-20, "A^2");
+pub const SQUARE_NANOMETER: Unit =
+    Unit::named(Dimension::new([2, 0, 0, 0, 0, 0, 0]), 1.0e-18, "nm^2");
 
 pub const KILOGRAM: Unit = Unit::named(Dimension::MASS, 1.0, "kg");
-pub const DALTON: Unit = Unit::named(Dimension::MASS, 1.660_539_068_92e-27, "Da");
+/// Molecular-scale molar mass, coherent with `1 Da = 1 g/mol`.
+pub const DALTON: Unit = Unit::named(Dimension::MOLAR_MASS, 1.0e-3, "Da");
 
 pub const SECOND: Unit = Unit::named(Dimension::TIME, 1.0, "s");
 pub const PICOSECOND: Unit = Unit::named(Dimension::TIME, 1.0e-12, "ps");
@@ -524,21 +529,33 @@ pub const KILOCALORIE_PER_MOLE: Unit =
     Unit::named(KILOJOULE_PER_MOLE.dimension, 4.184e3, "kcal/mol");
 pub const KILOJOULE_PER_MOLE_PER_ANGSTROM: Unit =
     Unit::named(Dimension::new([1, 1, -2, 0, -1, 0, 0]), 1.0e13, "kJ/mol/A");
+pub const KILOJOULE_PER_MOLE_PER_NANOMETER: Unit =
+    Unit::named(Dimension::new([1, 1, -2, 0, -1, 0, 0]), 1.0e12, "kJ/mol/nm");
 pub const KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM: Unit = Unit::named(
     Dimension::new([0, 1, -2, 0, -1, 0, 0]),
     1.0e23,
     "kJ/mol/A^2",
 );
+pub const KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER: Unit = Unit::named(
+    Dimension::new([0, 1, -2, 0, -1, 0, 0]),
+    1.0e21,
+    "kJ/mol/nm^2",
+);
+pub const NANOMETER_PER_PICOSECOND: Unit =
+    Unit::named(Dimension::new([1, 0, -1, 0, 0, 0, 0]), 1.0e3, "nm/ps");
 
-/// Preferred explicit units used by the fixed-topology modelling kernel.
-pub const MODEL_LENGTH_UNIT: Unit = ANGSTROM;
-pub const MODEL_ENERGY_UNIT: Unit = KILOJOULE_PER_MOLE;
-pub const MODEL_GRADIENT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_ANGSTROM;
-pub const MODEL_FORCE_UNIT: Unit = KILOJOULE_PER_MOLE_PER_ANGSTROM;
-pub const MODEL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM;
-pub const MODEL_VELOCITY_UNIT: Unit =
-    Unit::named(Dimension::new([1, 0, -1, 0, 0, 0, 0]), 1.0e2, "A/ps");
-pub const MODEL_TIME_UNIT: Unit = PICOSECOND;
+/// Library-wide canonical units used for normalized internal numerical storage.
+pub const CANONICAL_LENGTH_UNIT: Unit = NANOMETER;
+pub const CANONICAL_MASS_UNIT: Unit = DALTON;
+pub const CANONICAL_TIME_UNIT: Unit = PICOSECOND;
+pub const CANONICAL_ENERGY_UNIT: Unit = KILOJOULE_PER_MOLE;
+pub const CANONICAL_CHARGE_UNIT: Unit = ELEMENTARY_CHARGE;
+pub const CANONICAL_TEMPERATURE_UNIT: Unit = KELVIN;
+pub const CANONICAL_ANGLE_UNIT: Unit = RADIAN;
+pub const CANONICAL_VELOCITY_UNIT: Unit = NANOMETER_PER_PICOSECOND;
+pub const CANONICAL_FORCE_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
+pub const CANONICAL_GRADIENT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_NANOMETER;
+pub const CANONICAL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER;
 
 #[cfg(test)]
 mod tests {
@@ -546,6 +563,15 @@ mod tests {
 
     #[test]
     fn converts_scalar_and_collection_quantities() {
+        let noncanonical_length = Quantity::new(10.0, ANGSTROM);
+        assert!((noncanonical_length.value_in(NANOMETER).unwrap() - 1.0).abs() < 1.0e-12);
+
+        let energy = Quantity::new(1.0, KILOCALORIE_PER_MOLE);
+        assert!((energy.value_in(KILOJOULE_PER_MOLE).unwrap() - 4.184).abs() < 1.0e-12);
+
+        let angle = Quantity::new(180.0, DEGREE);
+        assert!((angle.value_in(RADIAN).unwrap() - std::f64::consts::PI).abs() < 1.0e-12);
+
         let length = Quantity::new(1.0, NANOMETER);
         assert_eq!(length.value_in(ANGSTROM).unwrap(), 10.0);
 
@@ -556,10 +582,12 @@ mod tests {
     #[test]
     fn composes_and_checks_dimensions() {
         let gradient = KILOJOULE_PER_MOLE / ANGSTROM;
-        assert!(gradient.is_compatible(MODEL_GRADIENT_UNIT));
+        assert!(gradient.is_compatible(CANONICAL_GRADIENT_UNIT));
         assert_eq!(
-            gradient.conversion_factor_to(MODEL_GRADIENT_UNIT).unwrap(),
-            1.0
+            gradient
+                .conversion_factor_to(CANONICAL_GRADIENT_UNIT)
+                .unwrap(),
+            10.0
         );
         assert!(ANGSTROM.conversion_factor_to(KELVIN).is_err());
     }
@@ -571,11 +599,11 @@ mod tests {
             .unwrap();
         assert_eq!(sum, Quantity::new(1.5, NANOMETER));
 
-        let energy = Quantity::new(2.0, MODEL_FORCE_CONSTANT_UNIT)
-            * Quantity::new(3.0, ANGSTROM)
-            * Quantity::new(3.0, ANGSTROM);
-        assert!(energy.unit().is_compatible(MODEL_ENERGY_UNIT));
-        assert_eq!(energy.value_in(MODEL_ENERGY_UNIT).unwrap(), 18.0);
+        let energy = Quantity::new(2.0, CANONICAL_FORCE_CONSTANT_UNIT)
+            * Quantity::new(0.3, NANOMETER)
+            * Quantity::new(0.3, NANOMETER);
+        assert!(energy.unit().is_compatible(CANONICAL_ENERGY_UNIT));
+        assert!((energy.value_in(CANONICAL_ENERGY_UNIT).unwrap() - 0.18).abs() < 1.0e-15);
     }
 
     #[test]
@@ -586,5 +614,39 @@ mod tests {
         assert!(Quantity::new(1.0, NANOMETER)
             .is_close(&Quantity::new(10.0, ANGSTROM), 1.0e-12, 0.0)
             .unwrap());
+    }
+
+    #[test]
+    fn canonical_units_match_the_library_wide_basis() {
+        assert_eq!(CANONICAL_LENGTH_UNIT, NANOMETER);
+        assert_eq!(CANONICAL_MASS_UNIT, DALTON);
+        assert_eq!(CANONICAL_TIME_UNIT, PICOSECOND);
+        assert_eq!(CANONICAL_ENERGY_UNIT, KILOJOULE_PER_MOLE);
+        assert_eq!(CANONICAL_CHARGE_UNIT, ELEMENTARY_CHARGE);
+        assert_eq!(CANONICAL_TEMPERATURE_UNIT, KELVIN);
+        assert_eq!(CANONICAL_ANGLE_UNIT, RADIAN);
+    }
+
+    #[test]
+    fn dalton_is_molar_mass_and_composes_coherently() {
+        assert_eq!(DALTON.dimension(), Dimension::MOLAR_MASS);
+        assert_ne!(DALTON.dimension(), KILOGRAM.dimension());
+
+        let energy = DALTON * NANOMETER.powi(2) / PICOSECOND.powi(2);
+        let force = DALTON * NANOMETER / PICOSECOND.powi(2);
+        let force_constant = DALTON / PICOSECOND.powi(2);
+
+        assert!(energy.is_compatible(KILOJOULE_PER_MOLE));
+        assert!(force.is_compatible(CANONICAL_FORCE_UNIT));
+        assert!(force_constant.is_compatible(CANONICAL_FORCE_CONSTANT_UNIT));
+        for factor in [
+            energy.conversion_factor_to(KILOJOULE_PER_MOLE).unwrap(),
+            force.conversion_factor_to(CANONICAL_FORCE_UNIT).unwrap(),
+            force_constant
+                .conversion_factor_to(CANONICAL_FORCE_CONSTANT_UNIT)
+                .unwrap(),
+        ] {
+            assert!((factor - 1.0).abs() <= 4.0 * f64::EPSILON);
+        }
     }
 }

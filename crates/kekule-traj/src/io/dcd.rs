@@ -10,7 +10,7 @@ use crate::{
 };
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT, MODEL_TIME_UNIT};
+use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
@@ -1371,7 +1371,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 "DCD cell presence must match the writer header policy",
             ));
         }
-        let factor = MODEL_LENGTH_UNIT
+        let factor = CANONICAL_LENGTH_UNIT
             .conversion_factor_to(ANGSTROM)
             .map_err(|error| {
                 codec_context(
@@ -1536,7 +1536,7 @@ fn validate_title_record(
 
 fn validate_time_policy(policy: DcdTimePolicy, source_label: &str) -> Result<(), TrajectoryError> {
     if let DcdTimePolicy::HeaderDelta { unit } = policy {
-        unit.conversion_factor_to(MODEL_TIME_UNIT)
+        unit.conversion_factor_to(CANONICAL_TIME_UNIT)
             .map_err(|error| {
                 codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,

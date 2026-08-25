@@ -13,7 +13,7 @@ use kekule::modeling::potential::{
 };
 use kekule::structure::ModelView;
 use kekule::topology::InstanceAtomId;
-use kekule::units::{Quantity, MODEL_ENERGY_UNIT, MODEL_GRADIENT_UNIT};
+use kekule::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIENT_UNIT};
 
 impl Potential for DreidingPotential {
     fn evaluate(&mut self, model: ModelView<'_>) -> Result<PotentialEvaluation, PotentialError> {
@@ -167,8 +167,8 @@ impl Potential for DreidingPotential {
 
         PotentialEvaluation::new(
             model,
-            Quantity::new(energy, MODEL_ENERGY_UNIT),
-            Quantity::new(gradient, MODEL_GRADIENT_UNIT),
+            Quantity::new(energy, CANONICAL_ENERGY_UNIT),
+            Quantity::new(gradient, CANONICAL_GRADIENT_UNIT),
         )
     }
 }

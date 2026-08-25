@@ -388,7 +388,7 @@ fn prepared_potential_uses_exact_shared_topology() {
             InstanceAtomId::new(MoleculeInstanceId::new(0), AtomId::new(1)),
             kekule::units::Quantity::new(
                 singular.positions().values().value()[0],
-                kekule::units::ANGSTROM,
+                kekule::units::CANONICAL_LENGTH_UNIT,
             ),
         )
         .unwrap();

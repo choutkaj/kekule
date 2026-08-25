@@ -12,7 +12,7 @@ use kekule::structure::{
 use kekule::topology::transform::TopologySubsetError;
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
-    Quantity, Unit, UnitError, MODEL_FORCE_UNIT, MODEL_TIME_UNIT, MODEL_VELOCITY_UNIT,
+    Quantity, Unit, UnitError, CANONICAL_FORCE_UNIT, CANONICAL_TIME_UNIT, CANONICAL_VELOCITY_UNIT,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -157,8 +157,8 @@ macro_rules! vector_array {
     };
 }
 
-vector_array!(Velocities, MODEL_VELOCITY_UNIT);
-vector_array!(Forces, MODEL_FORCE_UNIT);
+vector_array!(Velocities, CANONICAL_VELOCITY_UNIT);
+vector_array!(Forces, CANONICAL_FORCE_UNIT);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrajectoryFrame {
@@ -283,7 +283,7 @@ impl TrajectoryFrame {
     pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), FrameError> {
         self.time = match time {
             Some(time) => {
-                let time = time.to_unit(MODEL_TIME_UNIT)?;
+                let time = time.to_unit(CANONICAL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }
@@ -614,7 +614,7 @@ impl FrameBuffer {
     pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), FrameError> {
         self.time = match time {
             Some(time) => {
-                let time = time.to_unit(MODEL_TIME_UNIT)?;
+                let time = time.to_unit(CANONICAL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }
@@ -727,7 +727,7 @@ impl FrameBuffer {
         let time = data
             .time
             .map(|time| {
-                let time = time.to_unit(MODEL_TIME_UNIT)?;
+                let time = time.to_unit(CANONICAL_TIME_UNIT)?;
                 if !time.value().is_finite() {
                     return Err(FrameError::NonFiniteTime);
                 }
@@ -1158,7 +1158,7 @@ impl TrajectoryReader for CoordinateFrameReader {
         };
         destination.set_positions(Quantity::new(
             frame.as_slice(),
-            kekule::units::MODEL_LENGTH_UNIT,
+            kekule::units::CANONICAL_LENGTH_UNIT,
         ))?;
         destination.reset_dynamic_state();
         self.cursor += 1;
@@ -1729,31 +1729,31 @@ mod tests {
     }
 
     fn positions(values: &[Point3]) -> Positions {
-        Positions::new(Quantity::new(values, ANGSTROM)).unwrap()
+        Positions::new(Quantity::new(values, NANOMETER)).unwrap()
     }
 
     #[test]
     fn vector_arrays_are_topology_free_unit_aware_and_equal_by_values() {
         let vectors = [Vector3::new(1.0, 2.0, 3.0)];
-        let velocities = Velocities::new(Quantity::new(vectors, NANOMETER / PICOSECOND)).unwrap();
-        let same = Velocities::new(Quantity::new(vectors, MODEL_VELOCITY_UNIT)).unwrap();
+        let velocities = Velocities::new(Quantity::new(vectors, ANGSTROM / PICOSECOND)).unwrap();
+        let same = Velocities::new(Quantity::new(vectors, CANONICAL_VELOCITY_UNIT)).unwrap();
         let converted_velocity = velocities.values().value()[0];
-        assert!((converted_velocity.x - 10.0).abs() < 1.0e-12);
-        assert!((converted_velocity.y - 20.0).abs() < 1.0e-12);
-        assert!((converted_velocity.z - 30.0).abs() < 1.0e-12);
+        assert!((converted_velocity.x - 0.1).abs() < 1.0e-12);
+        assert!((converted_velocity.y - 0.2).abs() < 1.0e-12);
+        assert!((converted_velocity.z - 0.3).abs() < 1.0e-12);
         assert_ne!(velocities, same);
         assert_eq!(velocities.len(), 1);
         assert!(!velocities.is_empty());
 
-        let forces = Forces::new(Quantity::new(vectors, KILOJOULE_PER_MOLE / NANOMETER)).unwrap();
+        let forces = Forces::new(Quantity::new(vectors, KILOJOULE_PER_MOLE / ANGSTROM)).unwrap();
         let converted_force = forces.values().value()[0];
-        assert!((converted_force.x - 0.1).abs() < 1.0e-12);
-        assert!((converted_force.y - 0.2).abs() < 1.0e-12);
-        assert!((converted_force.z - 0.3).abs() < 1.0e-12);
+        assert!((converted_force.x - 10.0).abs() < 1.0e-12);
+        assert!((converted_force.y - 20.0).abs() < 1.0e-12);
+        assert!((converted_force.z - 30.0).abs() < 1.0e-12);
         assert!(matches!(
             Velocities::new(Quantity::new(
                 [Vector3::new(f64::NAN, 0.0, 0.0)],
-                MODEL_VELOCITY_UNIT
+                CANONICAL_VELOCITY_UNIT
             )),
             Err(FrameError::NonFiniteVector { index: 0 })
         ));
@@ -1878,7 +1878,7 @@ mod tests {
             .set_velocities(Some(
                 Velocities::new(Quantity::new(
                     [Vector3::new(3.0, 0.0, 0.0), Vector3::new(4.0, 0.0, 0.0)],
-                    MODEL_VELOCITY_UNIT,
+                    CANONICAL_VELOCITY_UNIT,
                 ))
                 .unwrap(),
             ))
@@ -1887,7 +1887,7 @@ mod tests {
             .set_forces(Some(
                 Forces::new(Quantity::new(
                     [Vector3::new(5.0, 0.0, 0.0), Vector3::new(6.0, 0.0, 0.0)],
-                    MODEL_FORCE_UNIT,
+                    CANONICAL_FORCE_UNIT,
                 ))
                 .unwrap(),
             ))
@@ -1935,8 +1935,8 @@ mod tests {
         buffer
             .replace_from_data(
                 FrameBufferData::new(Quantity::new(points.as_slice(), ANGSTROM))
-                    .with_velocities(Quantity::new(vectors.as_slice(), MODEL_VELOCITY_UNIT))
-                    .with_forces(Quantity::new(vectors.as_slice(), MODEL_FORCE_UNIT))
+                    .with_velocities(Quantity::new(vectors.as_slice(), CANONICAL_VELOCITY_UNIT))
+                    .with_forces(Quantity::new(vectors.as_slice(), CANONICAL_FORCE_UNIT))
                     .with_time(Quantity::new(1.0, PICOSECOND))
                     .with_step(4)
                     .with_atom_data(&atom_data)
@@ -2070,7 +2070,7 @@ mod tests {
         .unwrap();
         let mut buffer = FrameBuffer::new(Arc::clone(&topology));
         assert!(reader.read_next(&mut buffer).unwrap());
-        assert_eq!(buffer.positions().values().value()[0].x, 6.0);
+        assert!((buffer.positions().values().value()[0].x - 0.6).abs() < 1.0e-15);
 
         let assertion = AtomOrderAssertion::assert_file_uses_topology_order(&topology);
         let mut reader = CoordinateFrameReader::new(

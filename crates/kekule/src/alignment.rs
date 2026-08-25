@@ -4,7 +4,7 @@
 //! coordinates:
 //!
 //! ```text
-//! aligned = result.transform().transform_point(moving)
+//! aligned = result.transform().transform_point(canonical_moving)
 //! ```
 //!
 //! Alignment is read-only. It does not image periodic coordinates or
@@ -59,8 +59,10 @@
 //! )?;
 //!
 //! let result = kabsch(moving.view(), reference.view(), &selection)?;
-//! let aligned = result.transform().transform_point(moving_points[1]);
-//! assert!((aligned.x - reference_points[1].x).abs() < 1.0e-12);
+//! let canonical_moving = moving.positions().position_at(1)?.to_value();
+//! let canonical_reference = reference.positions().position_at(1)?.to_value();
+//! let aligned = result.transform().transform_point(canonical_moving);
+//! assert!((aligned.x - canonical_reference.x).abs() < 1.0e-12);
 //! assert!(result.rmsd().to_value() < 1.0e-12);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -71,7 +73,7 @@ use std::sync::Arc;
 use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
 use crate::structure::ModelView;
 use crate::topology::AtomSelection;
-use crate::units::{Quantity, MODEL_LENGTH_UNIT};
+use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 const MIN_SELECTED_ATOMS: usize = 3;
 
@@ -104,7 +106,7 @@ pub fn kabsch(
 ///
 /// The fit minimizes `sum(w_i * |R x_i + t - y_i|^2)` subject to a proper
 /// right-handed rotation. The returned RMSD is the weighted post-fit value in
-/// [`MODEL_LENGTH_UNIT`].
+/// [`CANONICAL_LENGTH_UNIT`].
 pub fn kabsch_with_options(
     moving: ModelView<'_>,
     reference: ModelView<'_>,
@@ -180,7 +182,7 @@ pub fn kabsch_with_options(
 
     Ok(RigidAlignment {
         transform,
-        rmsd: Quantity::new(mean_squared_residual.sqrt(), MODEL_LENGTH_UNIT),
+        rmsd: Quantity::new(mean_squared_residual.sqrt(), CANONICAL_LENGTH_UNIT),
         selected_atom_count,
     })
 }
@@ -233,7 +235,7 @@ impl RigidAlignment {
         self.transform
     }
 
-    /// Returns post-fit weighted RMSD in [`MODEL_LENGTH_UNIT`].
+    /// Returns post-fit weighted RMSD in [`CANONICAL_LENGTH_UNIT`].
     pub const fn rmsd(&self) -> Quantity<f64> {
         self.rmsd
     }
@@ -816,7 +818,7 @@ mod tests {
     use crate::geometry::PeriodicCell;
     use crate::structure::{Model, Positions};
     use crate::topology::{AtomSelection, Topology, TopologyBuilder};
-    use crate::units::{Quantity, ANGSTROM, NANOMETER};
+    use crate::units::{Quantity, NANOMETER};
 
     fn topology(atom_count: usize) -> Arc<Topology> {
         let mut graph = crate::core::MoleculeEditor::new();
@@ -838,7 +840,7 @@ mod tests {
     }
 
     fn model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
-        let positions = Positions::new(Quantity::new(points, ANGSTROM)).unwrap();
+        let positions = Positions::new(Quantity::new(points, NANOMETER)).unwrap();
         Model::new(Arc::clone(topology), positions).unwrap()
     }
 
@@ -931,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn identity_fit_reports_model_units_and_preserves_inputs() {
+    fn identity_fit_reports_canonical_units_and_preserves_inputs() {
         let points = fixture_points();
         let (topology, moving, reference) = models(&points, &points);
         let selection = all(&topology);
@@ -943,7 +945,7 @@ mod tests {
 
         assert_transform_close(result.transform(), RigidTransform::identity(), 1.0e-12);
         assert_close(result.rmsd().to_value(), 0.0, 1.0e-14);
-        assert_eq!(result.rmsd().unit(), MODEL_LENGTH_UNIT);
+        assert_eq!(result.rmsd().unit(), CANONICAL_LENGTH_UNIT);
         assert_eq!(result.selected_atom_count(), points.len());
         assert_eq!(
             moving.positions().values().to_value(),

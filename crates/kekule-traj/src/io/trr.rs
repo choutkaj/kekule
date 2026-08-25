@@ -12,7 +12,7 @@ use crate::{
 use kekule::core::{PropMap, PropValue};
 use kekule::geometry::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
-use kekule::units::{Quantity, KILOJOULE_PER_MOLE, MODEL_LENGTH_UNIT, NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
 
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
@@ -934,7 +934,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     "TRR cell requires all three periodic axes",
                 ));
             }
-            let factor = MODEL_LENGTH_UNIT
+            let factor = CANONICAL_LENGTH_UNIT
                 .conversion_factor_to(NANOMETER)
                 .map_err(|error| writer_unit(&self.source_label, "cell", error))?;
             Some((cell.vectors().to_value(), factor))
@@ -942,7 +942,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             None
         };
         let positions = frame.positions().values();
-        let position_factor = MODEL_LENGTH_UNIT
+        let position_factor = CANONICAL_LENGTH_UNIT
             .conversion_factor_to(NANOMETER)
             .map_err(|error| writer_unit(&self.source_label, "positions", error))?;
         let velocity_factor = frame

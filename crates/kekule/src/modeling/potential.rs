@@ -6,15 +6,14 @@ use crate::geometry::Vector3;
 use crate::structure::ModelView;
 use crate::topology::{InstanceAtomId, InstanceBondId, Topology};
 use crate::units::{
-    Quantity, UnitError, MODEL_ENERGY_UNIT, MODEL_FORCE_CONSTANT_UNIT, MODEL_GRADIENT_UNIT,
-    MODEL_LENGTH_UNIT,
+    Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_CONSTANT_UNIT,
+    CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
 };
 
 #[derive(Debug, Clone)]
 /// Validated energy and Cartesian gradient from a [`Potential`].
 ///
-/// Values are converted once to the modelling kernel's explicit canonical
-/// energy and gradient units.
+/// Values are converted once to Kekule's canonical energy and gradient units.
 pub struct PotentialEvaluation {
     topology: Arc<Topology>,
     energy: Quantity<f64>,
@@ -35,8 +34,8 @@ impl PotentialEvaluation {
         energy: Quantity<f64>,
         gradient: Quantity<Vec<Vector3>>,
     ) -> Result<Self, PotentialError> {
-        let energy = energy.to_unit(MODEL_ENERGY_UNIT)?;
-        let gradient = gradient.to_unit(MODEL_GRADIENT_UNIT)?;
+        let energy = energy.to_unit(CANONICAL_ENERGY_UNIT)?;
+        let gradient = gradient.to_unit(CANONICAL_GRADIENT_UNIT)?;
         if !energy.value().is_finite() {
             return Err(PotentialError::NonFiniteEnergy);
         }
@@ -161,11 +160,11 @@ impl HarmonicBondPotential {
             }
             let equilibrium_length = parameter
                 .equilibrium_length
-                .to_unit(MODEL_LENGTH_UNIT)?
+                .to_unit(CANONICAL_LENGTH_UNIT)?
                 .to_value();
             let force_constant = parameter
                 .force_constant
-                .to_unit(MODEL_FORCE_CONSTANT_UNIT)?
+                .to_unit(CANONICAL_FORCE_CONSTANT_UNIT)?
                 .to_value();
             if !equilibrium_length.is_finite() || equilibrium_length <= 0.0 {
                 return Err(PotentialError::InvalidBondParameter {
@@ -243,8 +242,8 @@ impl Potential for HarmonicBondPotential {
         }
         PotentialEvaluation::new(
             model,
-            Quantity::new(energy, MODEL_ENERGY_UNIT),
-            Quantity::new(gradient, MODEL_GRADIENT_UNIT),
+            Quantity::new(energy, CANONICAL_ENERGY_UNIT),
+            Quantity::new(gradient, CANONICAL_GRADIENT_UNIT),
         )
     }
 }

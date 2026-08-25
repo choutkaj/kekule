@@ -800,7 +800,7 @@ impl ModelBuilder {
 
     pub fn build(self) -> Result<Model, ModelBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        let positions = Positions::from_model_values(self.positions);
+        let positions = Positions::from_canonical_values(self.positions);
         Ok(Model::new(topology, positions).expect("builder creates dimensionally valid state"))
     }
 }

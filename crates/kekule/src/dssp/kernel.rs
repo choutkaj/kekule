@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::bio::{Hierarchy, SmcraChain, SmcraResidue, SmcraResidueId};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
+use crate::units::ANGSTROM;
 
 use super::*;
 
@@ -418,7 +419,10 @@ fn extract_chain(
                     .map_err(|error| DsspError::InvalidHierarchy {
                         message: error.to_string(),
                     })?
-                    .to_value(),
+                    .value_in(ANGSTROM)
+                    .map_err(|error| DsspError::InvalidHierarchy {
+                        message: error.to_string(),
+                    })?,
             ));
         }
 

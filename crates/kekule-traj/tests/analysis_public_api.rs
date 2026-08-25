@@ -51,7 +51,7 @@ fn downstream_code_can_split_or_fuse_superposition_and_rmsd() {
             },
         )
         .unwrap();
-    assert!(direct.value()[1] > 4.0);
+    assert!(direct.value()[1] > 0.4);
 
     let fused = trajectory
         .aligned_rmsd_to_frame_with_options(

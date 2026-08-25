@@ -9,13 +9,19 @@ use dreid_forge::{
 use kekule::core::BondOrder;
 use kekule::structure::ModelView;
 use kekule::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId, Topology};
-use kekule::units::{Quantity, ELEMENTARY_CHARGE};
+use kekule::units::{
+    Quantity, ANGSTROM, CANONICAL_ENERGY_UNIT, CANONICAL_LENGTH_UNIT, ELEMENTARY_CHARGE,
+    KILOCALORIE_PER_MOLE,
+};
 use std::sync::Arc;
 
 use super::DreidingPrepareError;
 
-pub(crate) const KCAL_TO_KJ: f64 = 4.184;
-pub(crate) const COULOMB_KJ_ANGSTROM_PER_MOL_E2: f64 = 1_389.354_576_443_82;
+const ANGSTROM_TO_CANONICAL_LENGTH: f64 = ANGSTROM.scale() / CANONICAL_LENGTH_UNIT.scale();
+const SQUARE_ANGSTROM_TO_CANONICAL_AREA: f64 =
+    ANGSTROM_TO_CANONICAL_LENGTH * ANGSTROM_TO_CANONICAL_LENGTH;
+const KCAL_TO_CANONICAL_ENERGY: f64 = KILOCALORIE_PER_MOLE.scale() / CANONICAL_ENERGY_UNIT.scale();
+const COULOMB_KJ_ANGSTROM_PER_MOL_E2: f64 = 1_389.354_576_443_82;
 
 /// Scope used for fixed QEq charge preparation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,7 +289,8 @@ fn system_from_selection(
         let point = reference
             .position(atom_id)
             .expect("complete reference positions")
-            .to_value();
+            .value_in(ANGSTROM)
+            .expect("canonical positions are compatible with angstroms");
         system
             .atoms
             .push(ForgeAtom::new(element, [point.x, point.y, point.z]));
@@ -378,8 +385,8 @@ fn prepare_bonds(forged: &ForgedSystem) -> Result<Vec<BondTerm>, DreidingPrepare
                 Ok(BondTerm {
                     a: atoms.0,
                     b: atoms.1,
-                    k_half: k_half * KCAL_TO_KJ,
-                    r0,
+                    k_half: k_half * KCAL_TO_CANONICAL_ENERGY / SQUARE_ANGSTROM_TO_CANONICAL_AREA,
+                    r0: r0 * ANGSTROM_TO_CANONICAL_LENGTH,
                 })
             }
             BondPotential::Morse { .. } => Err(DreidingPrepareError::InvalidPreparedData {
@@ -404,7 +411,7 @@ fn prepare_angles(forged: &ForgedSystem) -> Result<Vec<AngleTerm>, DreidingPrepa
                 require_finite("angle", &[c_half, cos0])?;
                 Ok(AngleTerm::Harmonic {
                     atoms: [atoms.0, atoms.1, atoms.2],
-                    c_half: c_half * KCAL_TO_KJ,
+                    c_half: c_half * KCAL_TO_CANONICAL_ENERGY,
                     cos0,
                 })
             }
@@ -412,7 +419,7 @@ fn prepare_angles(forged: &ForgedSystem) -> Result<Vec<AngleTerm>, DreidingPrepa
                 require_finite("angle", &[c])?;
                 Ok(AngleTerm::Linear {
                     atoms: [atoms.0, atoms.1, atoms.2],
-                    c: c * KCAL_TO_KJ,
+                    c: c * KCAL_TO_CANONICAL_ENERGY,
                 })
             }
             AnglePotential::ThetaHarmonic { .. } => {
@@ -436,7 +443,7 @@ fn prepare_torsions(forged: &ForgedSystem) -> Result<Vec<TorsionTerm>, DreidingP
             require_finite("torsion", &[term.v_half, term.cos_n_phi0, term.sin_n_phi0])?;
             Ok(TorsionTerm {
                 atoms: [term.atoms.0, term.atoms.1, term.atoms.2, term.atoms.3],
-                v_half: term.v_half * KCAL_TO_KJ,
+                v_half: term.v_half * KCAL_TO_CANONICAL_ENERGY,
                 n: term.n,
                 cos_n_phi0: term.cos_n_phi0,
                 sin_n_phi0: term.sin_n_phi0,
@@ -455,7 +462,7 @@ fn prepare_inversions(forged: &ForgedSystem) -> Result<Vec<InversionTerm>, Dreid
                 require_finite("inversion", &[c_half])?;
                 Ok(InversionTerm::Planar {
                     atoms: [atoms.0, atoms.1, atoms.2, atoms.3],
-                    c_half: c_half * KCAL_TO_KJ,
+                    c_half: c_half * KCAL_TO_CANONICAL_ENERGY,
                 })
             }
             InversionPotential::Umbrella {
@@ -466,7 +473,7 @@ fn prepare_inversions(forged: &ForgedSystem) -> Result<Vec<InversionTerm>, Dreid
                 require_finite("inversion", &[c_half, cos_psi0])?;
                 Ok(InversionTerm::Umbrella {
                     atoms: [atoms.0, atoms.1, atoms.2, atoms.3],
-                    c_half: c_half * KCAL_TO_KJ,
+                    c_half: c_half * KCAL_TO_CANONICAL_ENERGY,
                     cos_psi0,
                 })
             }
@@ -490,7 +497,13 @@ fn prepare_nonbonded(
                 r0_sq,
             } => {
                 require_finite("van der Waals", &[d0, r0_sq])?;
-                vdw.insert(ordered_pair(type1_idx, type2_idx), (d0 * KCAL_TO_KJ, r0_sq));
+                vdw.insert(
+                    ordered_pair(type1_idx, type2_idx),
+                    (
+                        d0 * KCAL_TO_CANONICAL_ENERGY,
+                        r0_sq * SQUARE_ANGSTROM_TO_CANONICAL_AREA,
+                    ),
+                );
             }
             VdwPairPotential::Buckingham { .. } => {
                 return Err(DreidingPrepareError::InvalidPreparedData {
@@ -517,7 +530,10 @@ fn prepare_nonbonded(
                     second: topology.atom_ids()[second],
                 },
             )?;
-            let coulomb = COULOMB_KJ_ANGSTROM_PER_MOL_E2 * charges[first] * charges[second];
+            let coulomb = COULOMB_KJ_ANGSTROM_PER_MOL_E2
+                * ANGSTROM_TO_CANONICAL_LENGTH
+                * charges[first]
+                * charges[second];
             require_finite("electrostatic", &[coulomb])?;
             terms.push(NonbondedTerm {
                 first,
@@ -548,7 +564,10 @@ fn prepare_hydrogen_bonds(
         require_finite("hydrogen bond", &[d_hb, r_hb_sq])?;
         parameters.insert(
             (donor_type_idx, hydrogen_type_idx, acceptor_type_idx),
-            (d_hb * KCAL_TO_KJ, r_hb_sq),
+            (
+                d_hb * KCAL_TO_CANONICAL_ENERGY,
+                r_hb_sq * SQUARE_ANGSTROM_TO_CANONICAL_AREA,
+            ),
         );
     }
 

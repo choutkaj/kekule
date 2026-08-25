@@ -9,7 +9,7 @@ use crate::mmcif::{
 };
 use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
-use crate::units::{Quantity, DIMENSIONLESS, NANOMETER};
+use crate::units::{Quantity, DIMENSIONLESS, NANOMETER, SQUARE_NANOMETER};
 
 const MIXED: &str = r#"
 data_mixed
@@ -994,7 +994,7 @@ fn multiple_coordinate_models_require_explicit_selection() {
     .unwrap();
     assert_eq!(selected.report().selected_model.as_deref(), Some("2"));
     assert_eq!(selected.model().atom_count(), 1);
-    assert_eq!(selected.model().positions().values().value()[0].x, 8.0);
+    assert!((selected.model().positions().values().value()[0].x - 0.8).abs() < 1.0e-15);
     assert_eq!(selected.report().ignored_coordinate_models, vec!["1"]);
 
     let first = mmcif::interpret(
@@ -1070,13 +1070,12 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
             && member.atom_data().len() == shared_topology.atom_count()
             && member.bond_data().len() == shared_topology.bond_count()
     }));
-    assert_eq!(
-        ensemble
-            .members()
-            .map(|member| member.positions().values().value()[0].x)
-            .collect::<Vec<_>>(),
-        vec![0.0, 5.0]
-    );
+    let first_positions = ensemble
+        .members()
+        .map(|member| member.positions().values().value()[0].x)
+        .collect::<Vec<_>>();
+    assert!((first_positions[0] - 0.0).abs() < 1.0e-15);
+    assert!((first_positions[1] - 0.5).abs() < 1.0e-15);
 
     assert_eq!(interpreted.reports()[0].selected_model(), Some("1"));
     assert_eq!(interpreted.reports()[1].selected_model(), Some("2"));
@@ -1093,9 +1092,15 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_atom_data() {
         Some(&[Some(0.8), Some(0.9)][..])
     );
     let first_b_factors = atom_data[0].b_factors().unwrap();
-    assert_eq!(*first_b_factors.value(), [Some(10.0), Some(11.0)]);
+    assert_eq!(first_b_factors.unit(), SQUARE_NANOMETER);
+    for (actual, expected) in first_b_factors.value().iter().zip([0.1, 0.11]) {
+        assert!((actual.unwrap() - expected).abs() < 1.0e-15);
+    }
     let second_b_factors = atom_data[1].b_factors().unwrap();
-    assert_eq!(*second_b_factors.value(), [Some(20.0), Some(21.0)]);
+    assert_eq!(second_b_factors.unit(), SQUARE_NANOMETER);
+    for (actual, expected) in second_b_factors.value().iter().zip([0.2, 0.21]) {
+        assert!((actual.unwrap() - expected).abs() < 1.0e-15);
+    }
 }
 
 #[test]
@@ -1251,13 +1256,12 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
     let ensemble = interpreted.ensemble();
     assert_eq!(ensemble.len(), 2);
     assert_eq!(ensemble.topology().atom_count(), 1);
-    assert_eq!(
-        ensemble
-            .members()
-            .map(|member| member.positions().values().value()[0].x)
-            .collect::<Vec<_>>(),
-        [0.0, 11.0]
-    );
+    let selected_positions = ensemble
+        .members()
+        .map(|member| member.positions().values().value()[0].x)
+        .collect::<Vec<_>>();
+    assert!((selected_positions[0] - 0.0).abs() < 1.0e-15);
+    assert!((selected_positions[1] - 1.1).abs() < 1.0e-15);
     let topology = ensemble.shared_topology();
     let atom = topology.atom_ids()[0];
     assert_eq!(
@@ -1300,7 +1304,7 @@ fn alternate_location_policy_is_explicit_and_reported() {
         .replace(" 3.0 0.0 0.0 1", " . 1.0 3.0 0.0 0.0 1");
     let document = parse(&input);
     let result = mmcif::interpret(&document, MmcifInterpretOptions::default()).unwrap();
-    assert_eq!(result.model().positions().values().value()[0].x, 5.0);
+    assert!((result.model().positions().values().value()[0].x - 0.5).abs() < 1.0e-15);
     assert!(result.report().issues.iter().any(|issue| matches!(
         issue,
         mmcif::MmcifInterpretIssue::AlternateLocationOmitted { alt_id: Some(id), .. } if id == "A"

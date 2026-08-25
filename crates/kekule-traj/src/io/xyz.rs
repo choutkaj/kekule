@@ -11,7 +11,7 @@ use crate::{
 use kekule::core::Element;
 use kekule::geometry::Point3;
 use kekule::topology::Topology;
-use kekule::units::{Quantity, Unit, ANGSTROM, MODEL_LENGTH_UNIT};
+use kekule::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::{
     codec_context, io_context, projected_index_limit, require_nonempty_writer,
@@ -103,7 +103,7 @@ impl<R: BufRead> XyzReader<R> {
         let source_label = source_label.into();
         options
             .length_unit
-            .conversion_factor_to(MODEL_LENGTH_UNIT)
+            .conversion_factor_to(CANONICAL_LENGTH_UNIT)
             .map_err(|error| {
                 codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -639,7 +639,7 @@ impl<W: Write> XyzWriter<W> {
         let source_label = source_label.into();
         options
             .length_unit
-            .conversion_factor_to(MODEL_LENGTH_UNIT)
+            .conversion_factor_to(CANONICAL_LENGTH_UNIT)
             .map_err(|error| {
                 codec_context(
                     TrajectoryCodecErrorKind::InconsistentMetadata,
@@ -755,7 +755,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 field,
             ));
         }
-        let factor = MODEL_LENGTH_UNIT
+        let factor = CANONICAL_LENGTH_UNIT
             .conversion_factor_to(self.options.length_unit)
             .map_err(|error| {
                 codec_context(

@@ -1,6 +1,7 @@
 use kekule::geometry::Point3;
 
-const MIN_NORM_SQ: f64 = 1.0e-24;
+// Preserve the former 1e-24 A^2 singularity threshold in canonical nm^2.
+const MIN_NORM_SQ: f64 = 1.0e-26;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum GeometryError {

@@ -129,17 +129,17 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
         let pointer = destination.positions().values().value().as_ptr();
         assert!(reader.read_next(&mut destination).unwrap());
         let expected = (0..atom_count)
-            .map(|index| index as f64)
+            .map(|index| 0.1 * index as f64)
             .collect::<Vec<_>>();
-        assert_x_close(&destination, &expected, 0.011);
+        assert_x_close(&destination, &expected, 0.0011);
         assert_eq!(destination.frame_view().step(), Some(4));
         assert_eq!(destination.frame_view().time().unwrap().value(), &1.0);
         assert!(destination.cell().is_some());
         assert!(reader.read_next(&mut destination).unwrap());
         let expected = (0..atom_count)
-            .map(|index| index as f64 + 0.1)
+            .map(|index| 0.1 * index as f64 + 0.01)
             .collect::<Vec<_>>();
-        assert_x_close(&destination, &expected, 0.011);
+        assert_x_close(&destination, &expected, 0.0011);
         assert_eq!(destination.positions().values().value().as_ptr(), pointer);
         assert!(!reader.read_next(&mut destination).unwrap());
 
@@ -155,12 +155,12 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
         .unwrap();
         assert_eq!(indexed.frame_count(), Some(2));
         indexed.read_frame(1, &mut destination).unwrap();
-        assert_x_close(&destination, &expected, 0.011);
+        assert_x_close(&destination, &expected, 0.0011);
         assert!(indexed.read_next(&mut destination).unwrap());
         let expected = (0..atom_count)
-            .map(|index| index as f64)
+            .map(|index| 0.1 * index as f64)
             .collect::<Vec<_>>();
-        assert_x_close(&destination, &expected, 0.011);
+        assert_x_close(&destination, &expected, 0.0011);
     }
 }
 
@@ -673,15 +673,15 @@ fn independently_generated_mdanalysis_xtc_matches_lossy_profile() {
     .unwrap();
     let mut buffer = FrameBuffer::new(topology);
     assert!(reader.read_next(&mut buffer).unwrap());
-    let expected = (0..12).map(|index| index as f64 * 0.1).collect::<Vec<_>>();
-    assert_x_close(&buffer, &expected, 0.011);
+    let expected = (0..12).map(|index| index as f64 * 0.01).collect::<Vec<_>>();
+    assert_x_close(&buffer, &expected, 0.0011);
     assert!(buffer.cell().is_some());
     assert_eq!(buffer.frame_view().step(), Some(0));
     assert!(reader.read_next(&mut buffer).unwrap());
     let expected = (0..12)
-        .map(|index| index as f64 * 0.1 + 0.01)
+        .map(|index| index as f64 * 0.01 + 0.001)
         .collect::<Vec<_>>();
-    assert_x_close(&buffer, &expected, 0.011);
+    assert_x_close(&buffer, &expected, 0.0011);
     assert_eq!(buffer.frame_view().step(), Some(1));
     assert!(!reader.read_next(&mut buffer).unwrap());
 }
