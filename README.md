@@ -22,12 +22,21 @@ The architectural contract lives in [`ARCHITECTURE.md`](ARCHITECTURE.md). Option
 ## Concept
 
 `Molecule` is the single universal molecular type: one non-empty, connected,
-geometry-independent entity. Its `Graph` owns authoritative chemistry, its
-optional `Hierarchy` owns coordinate-independent residue and chain organization,
-and its `Perception` stores reconstructible derived chemistry.
+geometry-independent entity. Its `Graph` owns authoritative chemistry, while
+its `Perception` stores reconstructible derived chemistry. Coordinate-independent
+residue and chain organization belongs to the system-level `Hierarchy` owned by
+`Topology`; the hierarchy may be empty.
 
 ```text
-Molecule = Graph + Hierarchy + Perception
+Molecule = Graph + Perception
+
+Topology = molecule definitions + instances + dense ordering + Hierarchy
+
+Hierarchy = Chain -> Residue -> AtomSite -> InstanceAtomId
+
+Model      = Topology + Positions + optional cell + AtomData + BondData
+Ensemble   = Topology + finite non-temporal realizations
+Trajectory = Topology + temporally ordered frames
 ```
 
 Coordinates are detached from `Molecule`. Dense `Positions` enter at the
@@ -35,15 +44,11 @@ Coordinates are detached from `Molecule`. Dense `Positions` enter at the
 use `MoleculeEditor`; only `finish()` can publish a molecule, after validating
 that it is non-empty and connected.
 
-Higher, modeling-based objects are built around `Topology`: an immutable topological construct containing one or multiple molecule instances. Source-level identities such as an mmCIF entity or chain may map to more than one represented molecule instance when the observed structure contains a genuine unresolved gap.
-
-
-```text
-Topology = reusable definitions + explicit instances + dense ordering
-┣ Model      = Topology + Positions + optional cell + AtomData + BondData
-┣ Ensemble   = Topology + finite non-temporal members
-┗ Trajectory = Topology + ordered frames / reusable streaming buffers
-```
+Higher, modeling-based objects are built around `Topology`: an immutable
+topological system containing one or more molecule instances. Source-level
+identities such as an mmCIF entity or chain may map to more than one represented
+molecule instance when the observed structure contains a genuine unresolved
+gap.
 
 ### Molecular pipeline
 

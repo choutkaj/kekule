@@ -40,7 +40,7 @@ Molecule
 Topology
   one geometry-independent system made from one or more Molecule instances
   topology-wide atom/bond identity and dense ordering
-  one optional system-level Hierarchy
+  one system-level Hierarchy, which may be empty
 
 Model
   one geometry-dependent realization of a Topology
