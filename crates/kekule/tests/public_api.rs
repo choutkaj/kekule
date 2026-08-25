@@ -69,6 +69,27 @@ fn topology_changes_require_an_editor_and_invalidate_perception() {
 }
 
 #[test]
-fn editor_rejects_empty_publication() {
-    assert!(MoleculeEditor::new().finish().is_err());
+fn editor_enforces_molecule_publication_invariants() {
+    assert!(matches!(
+        MoleculeEditor::new().finish(),
+        Err(kekule::core::MoleculePublicationError::EmptyGraph)
+    ));
+
+    let mut single_atom = MoleculeEditor::new();
+    single_atom
+        .add_atom(Atom::new(Element::from_symbol("He").unwrap()))
+        .unwrap();
+    assert_eq!(single_atom.finish().unwrap().atom_count(), 1);
+
+    let mut disconnected = MoleculeEditor::new();
+    disconnected
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .unwrap();
+    disconnected
+        .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+        .unwrap();
+    assert!(matches!(
+        disconnected.finish(),
+        Err(kekule::core::MoleculePublicationError::DisconnectedGraph(_))
+    ));
 }
