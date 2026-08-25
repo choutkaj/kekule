@@ -4,9 +4,9 @@ use std::fmt;
 use super::InstanceAtomId;
 use crate::core::PropMap;
 
-fixed_u32_id!(SmcraChainId, "chain");
-fixed_u32_id!(SmcraResidueId, "residue");
-fixed_u32_id!(SmcraAtomSiteId, "atom-site");
+fixed_u32_id!(ChainId, "chain");
+fixed_u32_id!(ResidueId, "residue");
+fixed_u32_id!(AtomSiteId, "atom-site");
 
 /// Coordinate-independent residue, chain, polymer, and atom-site organization.
 ///
@@ -14,10 +14,10 @@ fixed_u32_id!(SmcraAtomSiteId, "atom-site");
 /// [`InstanceAtomId`] values and may span molecule-instance boundaries.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Hierarchy {
-    chains: Vec<SmcraChain>,
-    pub(crate) residues: Vec<SmcraResidue>,
-    atom_sites: Vec<SmcraAtomSite>,
-    atom_lookup: BTreeMap<InstanceAtomId, SmcraAtomSiteId>,
+    chains: Vec<Chain>,
+    pub(crate) residues: Vec<Residue>,
+    atom_sites: Vec<AtomSite>,
+    atom_lookup: BTreeMap<InstanceAtomId, AtomSiteId>,
     props: PropMap,
 }
 
@@ -35,7 +35,7 @@ impl Hierarchy {
         &mut self,
         label_id: impl Into<String>,
         author_id: Option<String>,
-    ) -> std::result::Result<SmcraChainId, HierarchyError> {
+    ) -> std::result::Result<ChainId, HierarchyError> {
         self.add_chain_at_slot(label_id.into(), author_id, self.chains.len())
     }
 
@@ -44,10 +44,10 @@ impl Hierarchy {
         label_id: String,
         author_id: Option<String>,
         slot: usize,
-    ) -> std::result::Result<SmcraChainId, HierarchyError> {
-        let id = checked_hierarchy_id(slot, SmcraIdKind::Chain, SmcraChainId::new)?;
+    ) -> std::result::Result<ChainId, HierarchyError> {
+        let id = checked_hierarchy_id(slot, HierarchyIdKind::Chain, ChainId::new)?;
         debug_assert_eq!(slot, self.chains.len());
-        self.chains.push(SmcraChain {
+        self.chains.push(Chain {
             id,
             label_id,
             author_id,
@@ -60,20 +60,20 @@ impl Hierarchy {
     /// Adds a residue to an existing chain transactionally.
     pub fn add_residue(
         &mut self,
-        chain: SmcraChainId,
+        chain: ChainId,
         name: impl Into<String>,
         label_seq_id: Option<i32>,
         author_seq_id: Option<String>,
         insertion_code: Option<String>,
-    ) -> std::result::Result<SmcraResidueId, HierarchyError> {
+    ) -> std::result::Result<ResidueId, HierarchyError> {
         self.chain(chain)?;
         let name = name.into();
         let id = checked_hierarchy_id(
             self.residues.len(),
-            SmcraIdKind::Residue,
-            SmcraResidueId::new,
+            HierarchyIdKind::Residue,
+            ResidueId::new,
         )?;
-        self.residues.push(SmcraResidue {
+        self.residues.push(Residue {
             id,
             chain,
             name: name.clone(),
@@ -92,20 +92,20 @@ impl Hierarchy {
     /// Adds one atom site after validating residue, atom placement, and capacity.
     pub fn add_atom_site(
         &mut self,
-        residue: SmcraResidueId,
+        residue: ResidueId,
         atom: InstanceAtomId,
-        metadata: SmcraAtomSiteMetadata,
-    ) -> std::result::Result<SmcraAtomSiteId, HierarchyError> {
+        metadata: AtomSiteMetadata,
+    ) -> std::result::Result<AtomSiteId, HierarchyError> {
         self.residue(residue)?;
         if self.atom_lookup.contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
         }
         let id = checked_hierarchy_id(
             self.atom_sites.len(),
-            SmcraIdKind::AtomSite,
-            SmcraAtomSiteId::new,
+            HierarchyIdKind::AtomSite,
+            AtomSiteId::new,
         )?;
-        self.atom_sites.push(SmcraAtomSite {
+        self.atom_sites.push(AtomSite {
             id,
             residue,
             atom,
@@ -117,31 +117,25 @@ impl Hierarchy {
         Ok(id)
     }
 
-    pub fn chain(&self, id: SmcraChainId) -> std::result::Result<&SmcraChain, HierarchyError> {
+    pub fn chain(&self, id: ChainId) -> std::result::Result<&Chain, HierarchyError> {
         self.chains
             .get(id.index())
             .ok_or(HierarchyError::InvalidChainId(id))
     }
 
-    pub fn residue(
-        &self,
-        id: SmcraResidueId,
-    ) -> std::result::Result<&SmcraResidue, HierarchyError> {
+    pub fn residue(&self, id: ResidueId) -> std::result::Result<&Residue, HierarchyError> {
         self.residues
             .get(id.index())
             .ok_or(HierarchyError::InvalidResidueId(id))
     }
 
-    pub fn atom_site(
-        &self,
-        id: SmcraAtomSiteId,
-    ) -> std::result::Result<&SmcraAtomSite, HierarchyError> {
+    pub fn atom_site(&self, id: AtomSiteId) -> std::result::Result<&AtomSite, HierarchyError> {
         self.atom_sites
             .get(id.index())
             .ok_or(HierarchyError::InvalidAtomSiteId(id))
     }
 
-    pub fn atom_site_for_atom(&self, atom: InstanceAtomId) -> Option<&SmcraAtomSite> {
+    pub fn atom_site_for_atom(&self, atom: InstanceAtomId) -> Option<&AtomSite> {
         self.atom_lookup
             .get(&atom)
             .and_then(|id| self.atom_sites.get(id.index()))
@@ -149,14 +143,14 @@ impl Hierarchy {
 
     pub(crate) fn atom_lookup_entries(
         &self,
-    ) -> impl Iterator<Item = (InstanceAtomId, SmcraAtomSiteId)> + '_ {
+    ) -> impl Iterator<Item = (InstanceAtomId, AtomSiteId)> + '_ {
         self.atom_lookup.iter().map(|(atom, site)| (*atom, *site))
     }
 
     /// Restores distinct label and author component identifiers on one residue.
     pub fn set_residue_component_ids(
         &mut self,
-        residue: SmcraResidueId,
+        residue: ResidueId,
         label_comp_id: Option<String>,
         author_comp_id: Option<String>,
     ) -> std::result::Result<(), HierarchyError> {
@@ -172,7 +166,7 @@ impl Hierarchy {
     /// Returns checked mutable access to one chain's property map.
     pub fn chain_props_mut(
         &mut self,
-        chain: SmcraChainId,
+        chain: ChainId,
     ) -> std::result::Result<&mut PropMap, HierarchyError> {
         self.chains
             .get_mut(chain.index())
@@ -183,7 +177,7 @@ impl Hierarchy {
     /// Returns checked mutable access to one residue's property map.
     pub fn residue_props_mut(
         &mut self,
-        residue: SmcraResidueId,
+        residue: ResidueId,
     ) -> std::result::Result<&mut PropMap, HierarchyError> {
         self.residues
             .get_mut(residue.index())
@@ -194,7 +188,7 @@ impl Hierarchy {
     /// Returns checked mutable access to one atom site's property map.
     pub fn atom_site_props_mut(
         &mut self,
-        site: SmcraAtomSiteId,
+        site: AtomSiteId,
     ) -> std::result::Result<&mut PropMap, HierarchyError> {
         self.atom_sites
             .get_mut(site.index())
@@ -202,15 +196,15 @@ impl Hierarchy {
             .ok_or(HierarchyError::InvalidAtomSiteId(site))
     }
 
-    pub fn chains(&self) -> impl Iterator<Item = (SmcraChainId, &SmcraChain)> {
+    pub fn chains(&self) -> impl Iterator<Item = (ChainId, &Chain)> {
         self.chains.iter().map(|chain| (chain.id, chain))
     }
 
-    pub fn residues(&self) -> impl Iterator<Item = (SmcraResidueId, &SmcraResidue)> {
+    pub fn residues(&self) -> impl Iterator<Item = (ResidueId, &Residue)> {
         self.residues.iter().map(|residue| (residue.id, residue))
     }
 
-    pub fn atom_sites(&self) -> impl Iterator<Item = (SmcraAtomSiteId, &SmcraAtomSite)> {
+    pub fn atom_sites(&self) -> impl Iterator<Item = (AtomSiteId, &AtomSite)> {
         self.atom_sites.iter().map(|site| (site.id, site))
     }
 
@@ -224,16 +218,16 @@ impl Hierarchy {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SmcraChain {
-    pub(crate) id: SmcraChainId,
+pub struct Chain {
+    pub(crate) id: ChainId,
     pub(crate) label_id: String,
     pub(crate) author_id: Option<String>,
-    pub(crate) residues: Vec<SmcraResidueId>,
+    pub(crate) residues: Vec<ResidueId>,
     pub(crate) props: PropMap,
 }
 
-impl SmcraChain {
-    pub const fn id(&self) -> SmcraChainId {
+impl Chain {
+    pub const fn id(&self) -> ChainId {
         self.id
     }
 
@@ -245,7 +239,7 @@ impl SmcraChain {
         self.author_id.as_deref()
     }
 
-    pub fn residues(&self) -> &[SmcraResidueId] {
+    pub fn residues(&self) -> &[ResidueId] {
         &self.residues
     }
 
@@ -255,25 +249,25 @@ impl SmcraChain {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SmcraResidue {
-    pub(crate) id: SmcraResidueId,
-    pub(crate) chain: SmcraChainId,
+pub struct Residue {
+    pub(crate) id: ResidueId,
+    pub(crate) chain: ChainId,
     pub(crate) name: String,
     pub(crate) label_comp_id: Option<String>,
     pub(crate) author_comp_id: Option<String>,
     pub(crate) label_seq_id: Option<i32>,
     pub(crate) author_seq_id: Option<String>,
     pub(crate) insertion_code: Option<String>,
-    pub(crate) atom_sites: Vec<SmcraAtomSiteId>,
+    pub(crate) atom_sites: Vec<AtomSiteId>,
     pub(crate) props: PropMap,
 }
 
-impl SmcraResidue {
-    pub const fn id(&self) -> SmcraResidueId {
+impl Residue {
+    pub const fn id(&self) -> ResidueId {
         self.id
     }
 
-    pub const fn chain(&self) -> SmcraChainId {
+    pub const fn chain(&self) -> ChainId {
         self.chain
     }
 
@@ -301,7 +295,7 @@ impl SmcraResidue {
         self.insertion_code.as_deref()
     }
 
-    pub fn atom_sites(&self) -> &[SmcraAtomSiteId] {
+    pub fn atom_sites(&self) -> &[AtomSiteId] {
         &self.atom_sites
     }
 
@@ -311,20 +305,20 @@ impl SmcraResidue {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SmcraAtomSite {
-    pub(crate) id: SmcraAtomSiteId,
-    pub(crate) residue: SmcraResidueId,
+pub struct AtomSite {
+    pub(crate) id: AtomSiteId,
+    pub(crate) residue: ResidueId,
     pub(crate) atom: InstanceAtomId,
-    pub(crate) metadata: SmcraAtomSiteMetadata,
+    pub(crate) metadata: AtomSiteMetadata,
     pub(crate) props: PropMap,
 }
 
-impl SmcraAtomSite {
-    pub const fn id(&self) -> SmcraAtomSiteId {
+impl AtomSite {
+    pub const fn id(&self) -> AtomSiteId {
         self.id
     }
 
-    pub const fn residue(&self) -> SmcraResidueId {
+    pub const fn residue(&self) -> ResidueId {
         self.residue
     }
 
@@ -332,7 +326,7 @@ impl SmcraAtomSite {
         self.atom
     }
 
-    pub fn metadata(&self) -> &SmcraAtomSiteMetadata {
+    pub fn metadata(&self) -> &AtomSiteMetadata {
         &self.metadata
     }
 
@@ -342,7 +336,7 @@ impl SmcraAtomSite {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct SmcraAtomSiteMetadata {
+pub struct AtomSiteMetadata {
     pub type_symbol: Option<String>,
     pub label_asym_id: Option<String>,
     pub auth_asym_id: Option<String>,
@@ -353,7 +347,7 @@ pub struct SmcraAtomSiteMetadata {
 /// Fixed-width identifier spaces owned by [`Hierarchy`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SmcraIdKind {
+pub enum HierarchyIdKind {
     /// Chain identifiers.
     Chain,
     /// Residue identifiers.
@@ -362,7 +356,7 @@ pub enum SmcraIdKind {
     AtomSite,
 }
 
-impl fmt::Display for SmcraIdKind {
+impl fmt::Display for HierarchyIdKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Chain => "chain",
@@ -375,12 +369,12 @@ impl fmt::Display for SmcraIdKind {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HierarchyError {
-    InvalidChainId(SmcraChainId),
-    InvalidResidueId(SmcraResidueId),
-    InvalidAtomSiteId(SmcraAtomSiteId),
+    InvalidChainId(ChainId),
+    InvalidResidueId(ResidueId),
+    InvalidAtomSiteId(AtomSiteId),
     DuplicateAtomPlacement(InstanceAtomId),
     /// A new hierarchy node cannot be represented by the fixed-width ID for `kind`.
-    IdentifierCapacityExceeded(SmcraIdKind),
+    IdentifierCapacityExceeded(HierarchyIdKind),
 }
 
 impl fmt::Display for HierarchyError {
@@ -401,7 +395,7 @@ impl std::error::Error for HierarchyError {}
 
 fn checked_hierarchy_id<T>(
     length: usize,
-    kind: SmcraIdKind,
+    kind: HierarchyIdKind,
     construct: impl FnOnce(u32) -> T,
 ) -> std::result::Result<T, HierarchyError> {
     crate::core::checked_raw_id(length)

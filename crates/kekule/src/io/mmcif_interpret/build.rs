@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::bio::{Hierarchy, SmcraAtomSiteMetadata};
 use crate::chemistry::canonicalize_molecule_for_publication;
 use crate::core::{Atom, AtomId, Molecule, MoleculeEditor};
 use crate::geometry::Point3;
 use crate::structure::Positions;
+use crate::topology::{AtomSiteMetadata, Hierarchy};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
@@ -677,7 +677,7 @@ pub(super) fn build_topology_hierarchy(
             .add_atom_site(
                 residue,
                 atom.atom,
-                SmcraAtomSiteMetadata {
+                AtomSiteMetadata {
                     type_symbol: Some(atom.type_symbol.clone()),
                     label_asym_id: atom.label_asym_id.clone(),
                     auth_asym_id: atom.auth_asym_id.clone(),

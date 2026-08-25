@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use crate::bio::{Hierarchy, SmcraChain, SmcraResidue, SmcraResidueId};
 use crate::geometry::Point3;
 use crate::structure::ModelView;
+use crate::topology::{Chain, Hierarchy, Residue, ResidueId};
 use crate::units::ANGSTROM;
 
 use super::*;
@@ -115,7 +115,7 @@ struct BetaSlot {
 
 #[derive(Debug, Clone)]
 struct BackboneResidue {
-    key: SmcraResidueId,
+    key: ResidueId,
     source: DsspResidueSource,
     chain: usize,
     n: Vec3,
@@ -146,15 +146,15 @@ struct BackboneResidue {
 #[derive(Debug, Clone, Copy)]
 struct ChainFragment<'a> {
     hierarchy: &'a Hierarchy,
-    chain: &'a SmcraChain,
+    chain: &'a Chain,
     discovery_order: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ChainResidue<'a> {
     hierarchy: &'a Hierarchy,
-    chain: &'a SmcraChain,
-    residue: SmcraResidueId,
+    chain: &'a Chain,
+    residue: ResidueId,
     discovery_order: usize,
 }
 
@@ -526,7 +526,7 @@ fn backbone_index(name: &str) -> Option<usize> {
         .position(|candidate| *candidate == name)
 }
 
-fn residue_source(chain: &SmcraChain, residue: &SmcraResidue) -> DsspResidueSource {
+fn residue_source(chain: &Chain, residue: &Residue) -> DsspResidueSource {
     DsspResidueSource {
         residue_name: residue.name.clone(),
         chain_label_id: chain.label_id.clone(),
@@ -1265,7 +1265,7 @@ mod tests {
         let mut residues = (0..count)
             .zip(0..=u32::MAX)
             .map(|(index, raw)| BackboneResidue {
-                key: crate::bio::SmcraResidueId::new(raw),
+                key: crate::topology::ResidueId::new(raw),
                 source: DsspResidueSource {
                     residue_name: "ALA".to_owned(),
                     chain_label_id: "A".to_owned(),

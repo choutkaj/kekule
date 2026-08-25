@@ -518,12 +518,12 @@ pub(super) fn rdkit_macrocycle8_ortho_hash_molblock() -> &'static str {
     )
 }
 
-mod bio;
 mod canonical;
 mod chemistry;
 mod cip;
 mod core_payload;
 mod graph;
+mod hierarchy;
 mod hydrogens;
 mod mmcif_contents;
 mod normalization;

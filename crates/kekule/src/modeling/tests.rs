@@ -1,5 +1,4 @@
 use super::*;
-use crate::bio::SmcraAtomSiteMetadata;
 use crate::core::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::modeling::potential::{
@@ -7,6 +6,7 @@ use crate::modeling::potential::{
     PotentialGeometryError,
 };
 use crate::structure::{Ensemble, Model, ModelBuildError, ModelView, PositionError, Positions};
+use crate::topology::AtomSiteMetadata;
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{
     Quantity, ANGSTROM, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
@@ -147,7 +147,7 @@ fn mixed_instances_and_hierarchy_use_qualified_ids() {
         .add_atom_site(
             residue,
             InstanceAtomId::new(macro_id, atom),
-            SmcraAtomSiteMetadata::default(),
+            AtomSiteMetadata::default(),
         )
         .unwrap();
     let model = builder.build().unwrap();

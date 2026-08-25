@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::bio::{Hierarchy, SmcraAtomSite, SmcraResidueId};
 use crate::core::{AtomId, BondOrder, HydrogenDeclaration};
 use crate::geometry::Point3;
 use crate::io::mmcif_interpret::{MmcifEntityKind, MmcifInterpretationReport};
 use crate::structure::Model;
+use crate::topology::{AtomSite, Hierarchy, ResidueId};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, MoleculeInstanceId,
 };
@@ -324,7 +324,7 @@ struct EntityPlan {
 #[derive(Debug, Clone)]
 struct AtomRow {
     atom: InstanceAtomId,
-    residue: Option<SmcraResidueId>,
+    residue: Option<ResidueId>,
     entity_id: String,
     asym_id: String,
     group_pdb: String,
@@ -941,7 +941,7 @@ fn collect_macro_rows(
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), MmcifWriteError> {
-    let mut sites = BTreeMap::<InstanceAtomId, &SmcraAtomSite>::new();
+    let mut sites = BTreeMap::<InstanceAtomId, &AtomSite>::new();
     for (_, site) in hierarchy.atom_sites() {
         if site.atom.molecule() == molecule.id() && sites.insert(site.atom, site).is_some() {
             return Err(MmcifWriteError::DuplicateAtomSite(site.atom));
