@@ -473,6 +473,58 @@ SdfRecord
 The exact representation of more complex formats such as mmCIF may follow their
 native structure rather than being forced into this simple record shape.
 
+### Format namespaces and domain-object independence
+
+Format-specific syntax belongs to the format boundary, not to canonical domain
+objects. Parsing, interpretation, writing, and ergonomic whole-source helpers
+should therefore live in a format namespace or on a format-specific
+`Document`/`Record` value.
+
+The intended dependency direction is:
+
+```text
+format namespace / Document / Record
+    -> parse / interpret / write
+    -> Molecule / Topology / Model / Ensemble
+
+canonical domain objects
+    -> do not depend on a particular source or serialization syntax
+```
+
+Consequently, canonical domain objects should not accumulate format-specific
+constructors or writers such as:
+
+```text
+Molecule::from_smiles(...)
+Molecule::to_smiles(...)
+Model::from_mmcif(...)
+```
+
+Equivalent functionality belongs under the corresponding format surface, for
+example conceptually:
+
+```rust
+let molecules = smiles::to_molecules("CCO")?;
+let text = smiles::write(&molecule)?;
+```
+
+Format-specific source objects may still expose natural conversions such as
+`SdfRecord::to_molecules()`, `SdfRecord::to_model()`, or an mmCIF interpretation
+result's `to_model()`, because those types already represent the format boundary.
+
+High-level conveniences are encouraged when they materially improve ordinary
+usage, but they must compose the same authoritative parse -> interpret -> publish
+pipeline rather than implement a second interpretation path. Expert callers
+must remain able to access the explicit `Document`/`Record`, interpretation
+options, reports, mappings, and diagnostics beneath the convenience.
+
+Convenience naming must expose semantic cardinality. If one source record can
+produce several connected molecular components, the convenience should return
+and be named for `Vec<Molecule>`/`to_molecules()` rather than present itself as a
+singular `Molecule` constructor. Likewise, a convenience that promises one
+`Model` is appropriate only where its format and selection policy actually
+define one model.
+
 ### Component output and `to_molecules`
 
 The canonical molecule-producing result for one molecular record is:
@@ -1374,6 +1426,11 @@ When deciding where new state belongs:
     units at the boundary and normalize it to the one library-wide canonical
     unit for that quantity rather than creating a subsystem-specific unit
     convention.
+11. Is an operation specific to a file or serialization format? Put it in that
+    format namespace or on a format-specific `Document`/`Record`, not on
+    `Molecule`, `Topology`, `Model`, `Ensemble`, or `Trajectory`. Ergonomic
+    helpers may compose the canonical parse/interpret pipeline but must not
+    create an independent conversion path.
 
 The core invariants are intentionally simple:
 
